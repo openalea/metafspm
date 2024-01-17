@@ -111,3 +111,5 @@ class CompositeModel:
                         translator[receiver_model][which][var] = com_dict
 
         return translator
+
+    # TODO later think of a multiprocessing possibility for shoot + soil or C + N

@@ -1,6 +1,6 @@
-from dataclasses import dataclass, field, fields
-import inspect as ins
-from functools import partial
+from dataclasses import fields
+
+from component_factory import *
 
 
 @dataclass
@@ -11,7 +11,12 @@ class ComponentBase:
     HYPOTHESES:
         self.g.properties() must have been stored self.props during child class __init__
     """
+
+    executor = Executor()
     available_inputs = []
+
+    def __call__(self):
+        self.executor()
 
     @property
     def inputs(self):
@@ -124,57 +129,8 @@ class ComponentBase:
 
         return max(modified_process, 0.)
 
-
-class ComponentIndependentSegments(ComponentBase):
-    """
-    Base component for modules considering methods affecting all segments in parallel.
-
-    HYPOTHESES :
-        self.keywords_method_filters, a list containing methods to aggregate for parallel resolution, will have to be
-        declared on child class __init__
-        self.struct_mass must be a state variable.
-    """
-
     def post_coupling_init(self):
         self.get_available_inputs()
-        self.store_functions_call()
         self.check_if_coupled()
 
-    def store_functions_call(self):
-        """
-        Storing function calls in self for later mapping of processes
 
-        self.keywords_method_filters should be probided in child class!
-        This indicates which methods to gather by keyword name for parallel resolution.
-        """
-        for keyword in self.keywords_method_filters:
-            setattr(self, keyword + "_methods", [getattr(self, func) for func in dir(self) if
-                                                 (callable(
-                                                     getattr(self, func)) and '__' not in func and 'process' in func)])
-            setattr(self, keyword + "_arguments", [[partial(self.get_up_to_date, arg) for arg in ins.getfullargspec(
-                getattr(self, func))[0] if arg != "self"] for func in dir(self) if (callable(getattr(self, func))
-                                                                                    and '__' not in func and 'process' in func)])
-            setattr(self, keyword + "_names", [func[len(keyword) + 1:] for func in dir(self) if
-                                               (callable(
-                                                   getattr(self, func)) and '__' not in func and 'process' in func)])
-
-    def parallel_resolution(self, keyword, fcn):
-        names = getattr(self, keyword + "_names")
-        methods = getattr(self, keyword + "_methods")
-        arguments = getattr(self, keyword + "_arguments")
-        return dict(zip([name for name in names], map(fcn, *(methods, arguments))))
-
-    def dict_mapper(self, fcn, args):
-        return dict(zip(args[0](), map(fcn, *(d().values() for d in args))))
-
-    def dict_no_mapping(self, fcn, args):
-        return {1: fcn(*(d() for d in args))}
-
-    def get_up_to_date(self, prop):
-        return getattr(self, prop)
-
-    def resolution_over_vertices(self, chunk, fncs):
-        for vid in chunk:
-            if self.struct_mass[vid] > 0:
-                for method in fncs:
-                    method(v=vid)

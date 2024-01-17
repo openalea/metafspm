@@ -1,5 +1,6 @@
 from dataclasses import field
 
+
 def model_var(default, min_value: float, max_value: float, unit: str, unit_comment: str, description: str, value_comment: str, references: str, DOI: list,
               variable_type: str, by: str, state_variable_type: str, edit_by: str):
     """
