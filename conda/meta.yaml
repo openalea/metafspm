@@ -18,10 +18,8 @@ requirements:
     - python {{PY_VER}}
     - setuptools
   run:
-    - python >=3.9
+    - python >=3.8
     - dataclasses
-    - inspect
-    - functools
 
 test:
   requires:

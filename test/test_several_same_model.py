@@ -1,18 +1,15 @@
-from test_model1 import Model1
-from importlib import import_module, reload
-import sys
+from test_model_carbon import Carbon
+from generic_fspm.composite_wrapper import CompositeModel
 
-
-# TODO integrate to wrapper
-def load(model, *args):
-    """
-    This utility is intended to ensure separated Executor instances between each component"""
-    module = import_module(name=model.__module__)
-    del sys.modules["generic_fspm.component"]
-    reload(module)
-    model = getattr(module, model.__name__)
-    return model(*args)
-
+class Model(CompositeModel):
+    def __init__(self, g_properties):
+        self.model_carbon_1 = self.load(Carbon, g_properties)
+        self.model_carbon_2 = self.load(Carbon, g_properties)
+        # Note, unlinked here
+    
+    def run(self):
+        self.model_carbon_1()
+        self.model_carbon_2()
 
 def test_several_instances():
     g_properties = {"emerged_elements": ["1", "2", "3"],
@@ -20,8 +17,8 @@ def test_several_instances():
                     "sucrose": {"1": 0., "2": 0., "3": 0., "4": 0.},
                     "hexose_exudation": {"1": 0., "2": 0., "3": 0., "4": 0.},
                     "sucrose_unloading": {"1": 0., "2": 0., "3": 0., "4": 0.}}
-    model_1_1 = load(Model1, g_properties)
-    model_1_2 = load(Model1, g_properties)
-    assert id(model_1_1.executor) != (model_1_2.executor)
-    assert id(model_1_1.executor.data_structure) == id(model_1_1.executor.data_structure)
+    composite_model = Model(g_properties)
+    assert id(composite_model.model_carbon_1.choregrapher) != (composite_model.model_carbon_1.choregrapher)
+    assert id(composite_model.model_carbon_1.choregrapher.data_structure) == id(composite_model.model_carbon_1.choregrapher.data_structure)
+    composite_model.run()
 

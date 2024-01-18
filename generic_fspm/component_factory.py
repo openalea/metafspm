@@ -1,6 +1,5 @@
 import inspect as ins
 from functools import partial
-from dataclasses import dataclass
 
 
 # General process resolution method
@@ -36,7 +35,7 @@ class Singleton(object):
         return class_._instance[-1]
 
 
-class Executor(Singleton):
+class  Choregrapher(Singleton):
     """
     This Singleton class retreives the processes tagged by a decorator in a model class.
     It also provides a __call__ method to schedule model execution.
@@ -52,6 +51,27 @@ class Executor(Singleton):
         for k in self.scheduled_groups.keys():
             for f in range(len(self.scheduled_groups[k])):
                 self.scheduled_groups[k][f] = partial(self.scheduled_groups[k][f], self.data_structure)
+
+    def add_schedule(self, schedule):
+        """
+        Method to edit standarded scheduling proposed by the choregrapher. 
+        Guidelines :
+        - Rows' index in the list are priority order.
+        - Elements' index in the rows are in priority order.
+        Thus, you should design the priority of this schedule so that "actual rate" comming before "potential state" is indeed the expected behavior in computation scheduling.
+        :param schedule: List of lists of stings associated to available decorators :
+
+        For metabolic models, soil models (priority order) : 
+        - rate : for process rate computation that will affect model states (ex : transport flow, metabolic consumption) 
+        - state : for state balance computation, from previous state and integration of rates' modification (ex : concentrations and contents)
+        - deficit : for abnormal state values resulting from rate balance, cumulative deficits are computed before thresholding state values (ex : negative concentrations)
+
+        For growth models (priority order) : 
+        - potential : potential element growth computations regarding element initial state
+        - actual : actual element growth computations regarding element states actualizing structural states (belongs to state)
+        - segmentation : single element partitionning in several uppon actual growth if size exceeds a threshold.
+        """
+        self.consensus_scheduling = schedule
 
     def add_process(self, f, name):
         getattr(self, name).append(f)
@@ -92,57 +112,41 @@ class Executor(Singleton):
 # Decorators
 def state(func):
     def wrapper():
-        Executor(new_instance=False).add_process(Functor(func), name="state")
+        Choregrapher(new_instance=False).add_process(Functor(func), name="state")
         return func
     return wrapper()
 
 
 def rate(func):
     def wrapper():
-        Executor(new_instance=False).add_process(Functor(func), name="rate")
+        Choregrapher(new_instance=False).add_process(Functor(func), name="rate")
         return func
     return wrapper()
 
 def deficit(func):
     def wrapper():
-        Executor(new_instance=False).add_process(Functor(func), name="deficit")
+        Choregrapher(new_instance=False).add_process(Functor(func), name="deficit")
         return func
     return wrapper()
 
 
 def potential(func):
     def wrapper():
-        Executor(new_instance=False).add_process(Functor(func), name="potential")
+        Choregrapher(new_instance=False).add_process(Functor(func), name="potential")
         return func
     return wrapper()
 
 
 def actual(func):
     def wrapper():
-        Executor(new_instance=False).add_process(Functor(func), name="actual")
+        Choregrapher(new_instance=False).add_process(Functor(func), name="actual")
         return func
     return wrapper()
 
 
 def segmentation(func):
     def wrapper():
-        Executor(new_instance=False).add_process(Functor(func), name="segmentation")
+        Choregrapher(new_instance=False).add_process(Functor(func), name="segmentation")
         return func
     return wrapper()
-
-
-# Only demo here
-# Actual base component wich can use decorators
-# @dataclass
-# class Component:
-#     executor = Executor()
-
-#     def __call__(self):
-#         self.executor()
-
-#     # + d'autres méthodes génériques bien sûr, injection de scenario, initialisations, etc
-
-
-
-
 

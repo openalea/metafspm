@@ -1,7 +1,20 @@
 from dataclasses import fields
+from importlib import import_module, reload
+import sys
 
 
 class CompositeModel:
+
+    def load(self, model, *args):
+        """
+        This utility is intended to ensure separated Choregrapher instances between each component
+        """
+        module = import_module(name=model.__module__)
+        del sys.modules["generic_fspm.component"]
+        reload(module)
+        model = getattr(module, model.__name__)
+        return model(*args)
+
     def get_documentation(self, filters: dict, models: list):
         """
         Documentation of the RootCyNAPS parameters
