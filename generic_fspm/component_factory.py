@@ -32,6 +32,7 @@ class Singleton(object):
             class_._instance[-1].potential = []
             class_._instance[-1].actual = []
             class_._instance[-1].segmentation = []
+            class_._instance[-1].wrap = []
         return class_._instance[-1]
 
 
@@ -43,7 +44,8 @@ class  Choregrapher(Singleton):
 
     consensus_scheduling = [
             ["rate", "state", "deficit"],  # metabolic models
-            ["potential", "actual", "segmentation"]  # growth models
+            ["potential", "actual", "segmentation"],  # growth models
+            ["wrap"] # if a mix different types of processes is gathered under a big function
         ]
 
     def add_data(self, data):
@@ -147,6 +149,12 @@ def actual(func):
 def segmentation(func):
     def wrapper():
         Choregrapher(new_instance=False).add_process(Functor(func), name="segmentation")
+        return func
+    return wrapper()
+
+def wrap(func):
+    def wrapper():
+        Choregrapher(new_instance=False).add_process(Functor(func), name="wrap")
         return func
     return wrapper()
 

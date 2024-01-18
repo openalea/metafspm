@@ -30,16 +30,16 @@ from setuptools import setup
         $Id$
 """
 
-if sys.version_info < (3, 9):
+if sys.version_info < (3, 8):
     print('ERROR: Requires at least Python 3.9 to run.')
     sys.exit(1)
 
 setup(
     name="generic_fspm",
-    version="0.1.0",
+    version="0.0.1",
     packages=["generic_fspm"],
     include_package_data=True,
-    author="T.Gerault, F.Rees, R.Barillot and C.Pradal",
+    author="T.Gerault, F.Rees, C.Pradal and R.Barillot",
     author_email="tristan.gerault@inrae.fr, frederic.rees@inrae.fr, romain.barillot@inrae.fr, christophe.pradal@cirad.fr",
     description="This package provides ressources for building a generic FSPM and linking it in a composite framework",
     long_description="""TODO""",
