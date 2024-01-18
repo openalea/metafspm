@@ -1,7 +1,8 @@
 from generic_fspm.component_factory import *
+from generic_fspm.component import ComponentBase
 
 
-class Model2(Component):
+class Model2(ComponentBase):
     executor = Executor()
 
     # constrained field initialization

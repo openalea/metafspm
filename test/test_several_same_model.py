@@ -22,10 +22,6 @@ def test_several_instances():
                     "sucrose_unloading": {"1": 0., "2": 0., "3": 0., "4": 0.}}
     model_1_1 = load(Model1, g_properties)
     model_1_2 = load(Model1, g_properties)
+    assert id(model_1_1.executor) != (model_1_2.executor)
+    assert id(model_1_1.executor.data_structure) == id(model_1_1.executor.data_structure)
 
-    for step in range(10):
-        model_1_1()
-        model_1_2()
-    print(g_properties)
-
-test_several_instances()
