@@ -1,6 +1,5 @@
-from dataclasses import fields
-
-from component_factory import *
+from dataclasses import dataclass, fields
+from generic_fspm.component_factory import *
 
 
 @dataclass

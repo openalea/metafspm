@@ -2,9 +2,13 @@ README.md
 setup.py
 generic_fspm/__init__.py
 generic_fspm/component.py
+generic_fspm/component_factory.py
 generic_fspm/composite_wrapper.py
+generic_fspm/field_consensus.py
 generic_fspm.egg-info/PKG-INFO
 generic_fspm.egg-info/SOURCES.txt
 generic_fspm.egg-info/dependency_links.txt
 generic_fspm.egg-info/top_level.txt
+test/test_component_base.py
+test/test_field_consensus.py
 test/test_wrapper.py
