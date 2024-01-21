@@ -4,10 +4,11 @@ from functools import partial
 
 # General process resolution method
 class Functor:
-    def __init__(self, fun, iteraring: bool = False):
+    def __init__(self, fun, iteraring: bool = False, total: bool = False):
         self.fun = fun
-        self.name = self.fun.__name__
+        self.name = self.fun.__name__[1:]
         self.iterating = iteraring
+        self.total = total
         self.input_names = self.inputs(self.fun)
         if len(self.input_names) == 0:
             self.iterating = True
@@ -20,6 +21,9 @@ class Functor:
     def __call__(self, data):
         if self.iterating:
             self.fun()
+        elif self.total:
+            data[self.name].update(
+                {1: self.fun(self, *(data[arg] for arg in self.input_names))})
         else:
             data[self.name].update(
                 {vid: self.fun(self, *(data[arg][vid] for arg in self.input_names)) for vid in data["emerged_elements"]})
@@ -53,8 +57,8 @@ class  Choregrapher(Singleton):
     """
 
     consensus_scheduling = [
-            ["rate", "state", "deficit"],  # metabolic models
-            ["axial", "total"],  # subcategoy for metabolic models
+            ["rate", "state", "totalstate", "deficit"],  # metabolic models
+            ["axial"],  # subcategoy for metabolic models
             ["potential", "actual", "segmentation"],  # growth models
             # Note : this has to be placed at the end to held the first places in time step
             ["getinput", "postgrowth", "stepinit"],  # General time step priority 
@@ -162,9 +166,9 @@ def deficit(func):
     return wrapper()
 
 
-def total(func):
+def totalstate(func):
     def wrapper():
-        Choregrapher(new_instance=False).add_process(Functor(func), name="total")
+        Choregrapher(new_instance=False).add_process(Functor(func, total=True), name="total")
         return func
     return wrapper()
 
