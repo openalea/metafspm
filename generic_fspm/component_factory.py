@@ -4,10 +4,13 @@ from functools import partial
 
 # General process resolution method
 class Functor:
-    def __init__(self, fun):
+    def __init__(self, fun, iteraring: bool = False):
         self.fun = fun
         self.name = self.fun.__name__
+        self.iterating = iteraring
         self.input_names = self.inputs(self.fun)
+        if len(self.input_names) == 0:
+            self.iterating = True
 
     def inputs(self, fun):
         arguments = ins.getfullargspec(fun)[0]
@@ -15,8 +18,11 @@ class Functor:
         return arguments
 
     def __call__(self, data):
-        data[self.name].update(
-            {vid: self.fun(self, *(data[arg][vid] for arg in self.input_names)) for vid in data["emerged_elements"]})
+        if self.iterating:
+            self.fun()
+        else:
+            data[self.name].update(
+                {vid: self.fun(self, *(data[arg][vid] for arg in self.input_names)) for vid in data["emerged_elements"]})
 
 
 # Executor singleton
@@ -26,13 +32,17 @@ class Singleton(object):
     def __new__(class_, new_instance = True, **kwargs):
         if new_instance:
             class_._instance.append(object.__new__(class_, **kwargs))
+            class_._instance[-1].getinput = []
+            class_._instance[-1].postgrowth = []
+            class_._instance[-1].stepinit = []
             class_._instance[-1].state = []
             class_._instance[-1].rate = []
             class_._instance[-1].deficit = []
+            class_._instance[-1].axial = []
+            class_._instance[-1].total = []
             class_._instance[-1].potential = []
             class_._instance[-1].actual = []
             class_._instance[-1].segmentation = []
-            class_._instance[-1].wrap = []
         return class_._instance[-1]
 
 
@@ -44,8 +54,10 @@ class  Choregrapher(Singleton):
 
     consensus_scheduling = [
             ["rate", "state", "deficit"],  # metabolic models
+            ["axial", "total"],  # subcategoy for metabolic models
             ["potential", "actual", "segmentation"],  # growth models
-            ["wrap"] # if a mix different types of processes is gathered under a big function
+            # Note : this has to be placed at the end to held the first places in time step
+            ["getinput", "postgrowth", "stepinit"],  # General time step priority 
         ]
 
     def add_data(self, data):
@@ -112,6 +124,24 @@ class  Choregrapher(Singleton):
 
 
 # Decorators
+def getinput(func):
+    def wrapper():
+        Choregrapher(new_instance=False).add_process(Functor(func, iteraring=True), name="getinput")
+        return func
+    return wrapper()
+
+def postgrowth(func):
+    def wrapper():
+        Choregrapher(new_instance=False).add_process(Functor(func, iteraring=True), name="postgrowth")
+        return func
+    return wrapper()
+
+def stepinit(func):
+    def wrapper():
+        Choregrapher(new_instance=False).add_process(Functor(func, iteraring=True), name="stepinit")
+        return func
+    return wrapper()                
+
 def state(func):
     def wrapper():
         Choregrapher(new_instance=False).add_process(Functor(func), name="state")
@@ -128,6 +158,19 @@ def rate(func):
 def deficit(func):
     def wrapper():
         Choregrapher(new_instance=False).add_process(Functor(func), name="deficit")
+        return func
+    return wrapper()
+
+
+def total(func):
+    def wrapper():
+        Choregrapher(new_instance=False).add_process(Functor(func), name="total")
+        return func
+    return wrapper()
+
+def axial(func):
+    def wrapper():
+        Choregrapher(new_instance=False).add_process(Functor(func), name="axial")
         return func
     return wrapper()
 
@@ -149,12 +192,6 @@ def actual(func):
 def segmentation(func):
     def wrapper():
         Choregrapher(new_instance=False).add_process(Functor(func), name="segmentation")
-        return func
-    return wrapper()
-
-def wrap(func):
-    def wrapper():
-        Choregrapher(new_instance=False).add_process(Functor(func), name="wrap")
         return func
     return wrapper()
 

@@ -43,7 +43,7 @@ class Model:
     """
 
     choregrapher = Choregrapher()
-    available_inputs = []
+    available_inputs = []  # Will be incremented during the coupling
 
     def __call__(self):
         self.choregrapher()
@@ -110,6 +110,7 @@ class Model:
                 # link mtg dict to self dict
                 setattr(self, inpt, self.props[inpt])
 
+    @getinput
     def get_available_inputs(self):
         for inputs in self.available_inputs:
             source_model = inputs["applier"]
