@@ -12,7 +12,7 @@ class Carbon(Model):
 
     def __init__(self, g_properties):
         self.props = g_properties
-        self.choregrapher.add_data(instance=self, data_name="props")
+        self.choregrapher.add_data(instance=self, data_name="props", filter=["Normal segment after emergence"])
 
     @rate
     def _hexose_exudation(self, hexose):

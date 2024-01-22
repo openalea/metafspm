@@ -26,7 +26,7 @@ class Functor:
                 {1: self.fun(instance, *(data[arg] for arg in self.input_names))})
         else:
             data[self.name].update(
-                {vid: self.fun(instance, *(data[arg][vid] for arg in self.input_names)) for vid in data["emerged_elements"]})
+                {vid: self.fun(instance, *(data[arg][vid] for arg in self.input_names)) for vid in data["focus_elements"]})
 
 
 # Executor singleton
@@ -71,8 +71,9 @@ class Choregrapher(Singleton):
             ["getinput", "postgrowth", "stepinit"],  # General time step priority 
         ]
 
-    def add_data(self, instance, data_name):
+    def add_data(self, instance, data_name, filter):
         self.data_structure = getattr(instance, data_name)
+        self.filter = filter
         for k in self.scheduled_groups.keys():
             for f in range(len(self.scheduled_groups[k])):
                 self.scheduled_groups[k][f] = partial(self.scheduled_groups[k][f], *(instance, self.data_structure))
@@ -129,6 +130,7 @@ class Choregrapher(Singleton):
         self.scheduled_groups = {k: self.scheduled_groups[k] for k in sorted(self.scheduled_groups.keys())}
 
     def __call__(self):
+        self.data_structure["focus_elements"] = [vid for vid in self.data_structure["struct_mass"].keys() if self.data_structure["label"][vid] in self.filter]
         for step in self.scheduled_groups.keys():
             for functor in self.scheduled_groups[step]:
                 functor()

@@ -12,7 +12,8 @@ class Model(CompositeModel):
         self.model_carbon_2()
 
 def test_several_instances():
-    g_properties = {"emerged_elements": ["1", "2", "3"],
+    g_properties = {"label": {"1": "Normal segment after emergence", "2": "Normal segment after emergence", "3": "Normal segment after emergence", "4": "Dead root"},
+                    "struct_mass": {"1": 1., "2": 1., "3": 1., "4": 1.},
                     "hexose": {"1": 0., "2": 0., "3": 0., "4": 0.},
                     "sucrose": {"1": 0., "2": 0., "3": 0., "4": 0.},
                     "hexose_exudation": {"1": 0., "2": 0., "3": 0., "4": 0.},
@@ -21,4 +22,3 @@ def test_several_instances():
     assert id(composite_model.model_carbon_1.choregrapher) != (composite_model.model_carbon_1.choregrapher)
     assert id(composite_model.model_carbon_1.choregrapher.data_structure) == id(composite_model.model_carbon_1.choregrapher.data_structure)
     composite_model.run()
-
