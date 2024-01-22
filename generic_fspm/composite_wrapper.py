@@ -5,7 +5,7 @@ import sys
 
 class CompositeModel:
 
-    def load(self, model, *args):
+    def load(self, model, *args, **kwargs):
         """
         This utility is intended to ensure separated Choregrapher instances between each component
         """
@@ -13,7 +13,7 @@ class CompositeModel:
         del sys.modules["generic_fspm.component"]
         reload(module)
         model = getattr(module, model.__name__)
-        return model(*args)
+        return model(*args, **kwargs)
 
     def get_documentation(self, filters: dict, models: list):
         """
@@ -70,7 +70,7 @@ class CompositeModel:
     def inputs(self):
         return self.get_documentation(filters=dict(variable_type="input"), models=self.models)
 
-    def link_around_mtg(self, translator: list):
+    def link_around_mtg(self, translator_path: list):
         """
         Description : linker function that will enable properties sharing through MTG.
 
@@ -81,6 +81,16 @@ class CompositeModel:
         it will be accessed through the first vertice with the [1] indice. Not spatialized properties like xylem pressure or
         single point properties like collar flows are only stored in the indice [1] vertice.
         """
+
+        try:
+            with open(translator_path + "/coupling_translator.yaml", "r") as f:
+                translator = yaml.safe_load(f)
+        except FileNotFoundError:
+            print("NOTE : You will now have to provide information about shared variables between the modules composing this model :\n")
+            translator = self.translator_matrix_builder()
+            with open(translator_path + "/coupling_translator.yaml", "w") as f:
+                yaml.dump(translator, f)
+
         L = len(self.models)
         for receiver_index in range(L):
             receiver = self.models[receiver_index]
@@ -98,7 +108,7 @@ class CompositeModel:
         # TODO surely not working, debug with a working Root-CyNAPS wrapping
         """
         L = len(self.models)
-        translator = [[{} for k in range(L)] for i in range(L)]
+        translator = {self.models[i].__class__.__name__:{self.models[k].__class__.__name__:{} for k in range(L)} for i in range(L)}
         for receiver_model in range(L):
             inputs = [f for f in fields(self.models[receiver_model]) if f.metadata["variable_type"] == "input"]
             needed_models = list(set([f.metadata["by"] for f in inputs]))
@@ -121,7 +131,8 @@ class CompositeModel:
                                 com_dict[var] = 1.
                             else:
                                 com_dict[expression.replace(" ", "")] = 1.
-                        translator[receiver_model][which][var] = com_dict
+                        translator[self.models[receiver_model].__class__.__name__][self.models[which].__class__.__name__][var] = com_dict
+                        break
 
         return translator
 

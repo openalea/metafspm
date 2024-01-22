@@ -40,6 +40,7 @@ class Singleton(object):
             class_._instance[-1].postgrowth = []
             class_._instance[-1].stepinit = []
             class_._instance[-1].state = []
+            class_._instance[-1].totalstate = []
             class_._instance[-1].rate = []
             class_._instance[-1].deficit = []
             class_._instance[-1].axial = []
@@ -47,6 +48,7 @@ class Singleton(object):
             class_._instance[-1].potential = []
             class_._instance[-1].actual = []
             class_._instance[-1].segmentation = []
+            class_._instance[-1].postsegmentation = []
         return class_._instance[-1]
 
 
@@ -57,9 +59,9 @@ class  Choregrapher(Singleton):
     """
 
     consensus_scheduling = [
-            ["rate", "state", "totalstate", "deficit"],  # metabolic models
+            ["rate", "state", "totalstate"],  # metabolic models
             ["axial"],  # subcategoy for metabolic models
-            ["potential", "actual", "segmentation"],  # growth models
+            ["potential", "deficit", "actual", "segmentation", "postsegmentation"],  # growth models
             # Note : this has to be placed at the end to held the first places in time step
             ["getinput", "postgrowth", "stepinit"],  # General time step priority 
         ]
@@ -199,3 +201,8 @@ def segmentation(func):
         return func
     return wrapper()
 
+def postsegmentation(func):
+    def wrapper():
+        Choregrapher(new_instance=False).add_process(Functor(func), name="postsegmentation")
+        return func
+    return wrapper()
