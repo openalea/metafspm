@@ -71,7 +71,7 @@ class Choregrapher(Singleton):
             ["getinput", "postgrowth", "stepinit"],  # General time step priority 
         ]
 
-    def add_data(self, instance, data_name, filter):
+    def add_data(self, instance, data_name: str, filter: dict = {"label":[""], "type":[""]}):
         self.data_structure = getattr(instance, data_name)
         self.filter = filter
         for k in self.scheduled_groups.keys():
@@ -130,7 +130,9 @@ class Choregrapher(Singleton):
         self.scheduled_groups = {k: self.scheduled_groups[k] for k in sorted(self.scheduled_groups.keys())}
 
     def __call__(self):
-        self.data_structure["focus_elements"] = [vid for vid in self.data_structure["struct_mass"].keys() if self.data_structure["label"][vid] in self.filter]
+        self.data_structure["focus_elements"] = [vid for vid in self.data_structure["struct_mass"].keys() if (
+            self.data_structure["label"][vid] in self.filter["label"] 
+            and self.data_structure["type"][vid] in self.filter["type"])]
         for step in self.scheduled_groups.keys():
             for functor in self.scheduled_groups[step]:
                 functor()

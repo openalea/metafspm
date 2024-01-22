@@ -12,7 +12,8 @@ class Model(CompositeModel):
         self.model_carbon_2()
 
 def test_several_instances():
-    g_properties = {"label": {"1": "Normal segment after emergence", "2": "Normal segment after emergence", "3": "Normal segment after emergence", "4": "Dead root"},
+    g_properties = {"label": {"1": "Segment", "2": "Segment", "3": "Segment", "4": "Apex"},
+                    "type": {"1": "Base_of_the_root_system", "2": "Normal_root_after_emergence", "3": "Normal_root_after_emergence", "4": "Dead"},
                     "struct_mass": {"1": 1., "2": 1., "3": 1., "4": 1.},
                     "hexose": {"1": 0., "2": 0., "3": 0., "4": 0.},
                     "sucrose": {"1": 0., "2": 0., "3": 0., "4": 0.},
