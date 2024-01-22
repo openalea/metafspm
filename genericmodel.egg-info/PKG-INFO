@@ -1,0 +1,12 @@
+Metadata-Version: 2.1
+Name: genericmodel
+Version: 0.0.1
+Summary: This package provides ressources for building a generic FSPM and linking it in a composite framework
+Home-page: https://forgemia.inra.fr/tristan.gerault/root_cynaps.git
+Download-URL: https://forgemia.inra.fr/tristan.gerault/root_cynaps.git
+Author: T.Gerault, F.Rees, C.Pradal and R.Barillot
+Author-email: tristan.gerault@inrae.fr, frederic.rees@inrae.fr, romain.barillot@inrae.fr, christophe.pradal@cirad.fr
+License: CeCILL-C
+Keywords: functional-structural plant model,wheat,uptake,rhizodeposition,trophic status,carbon,nitrogen,metabolism,remobilisation,source-sink relation,resource allocation
+
+TODO

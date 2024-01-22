@@ -1,4 +1,4 @@
-from generic_fspm.component import Model
+from genericmodel.component import Model
 
 
 class TestComponent:

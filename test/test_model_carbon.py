@@ -1,5 +1,5 @@
-from generic_fspm.component_factory import *
-from generic_fspm.component import Model, declare
+from genericmodel.component_factory import *
+from genericmodel.component import Model, declare
 
 
 
@@ -12,24 +12,24 @@ class Carbon(Model):
 
     def __init__(self, g_properties):
         self.props = g_properties
-        self.choregrapher.add_data(data=self.props)
+        self.choregrapher.add_data(instance=self, data_name="props")
 
     @rate
-    def hexose_exudation(self, hexose):
+    def _hexose_exudation(self, hexose):
         return hexose + 1
 
     @rate
-    def sucrose_unloading(self, sucrose, hexose):
+    def _sucrose_unloading(self, sucrose, hexose):
         return 1.
 
     @actual
     @state
-    def hexose(self, hexose, hexose_exudation):
+    def _hexose(self, hexose, hexose_exudation):
         return 1.
 
     @potential
     @state
-    def sucrose(self, sucrose, sucrose_unloading):
+    def _sucrose(self, sucrose, sucrose_unloading):
         return 1.
     
 def test_model1():

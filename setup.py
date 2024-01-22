@@ -35,9 +35,9 @@ if sys.version_info < (3, 8):
     sys.exit(1)
 
 setup(
-    name="generic_fspm",
+    name="genericmodel",
     version="0.0.1",
-    packages=["generic_fspm"],
+    packages=["genericmodel"],
     include_package_data=True,
     author="T.Gerault, F.Rees, C.Pradal and R.Barillot",
     author_email="tristan.gerault@inrae.fr, frederic.rees@inrae.fr, romain.barillot@inrae.fr, christophe.pradal@cirad.fr",

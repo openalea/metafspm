@@ -10,7 +10,7 @@ class CompositeModel:
         This utility is intended to ensure separated Choregrapher instances between each component
         """
         module = import_module(name=model.__module__)
-        del sys.modules["generic_fspm.component"]
+        del sys.modules["genericmodel.component"]
         reload(module)
         model = getattr(module, model.__name__)
         return model(*args, **kwargs)

@@ -1,4 +1,4 @@
-from generic_fspm.component import declare
+from genericmodel.component import declare
 
 
 def test_field_consensus():

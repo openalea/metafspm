@@ -1,4 +1,4 @@
-from generic_fspm.composite_wrapper import CompositeModel
+from genericmodel.composite_wrapper import CompositeModel
 
 
 class Model(CompositeModel):

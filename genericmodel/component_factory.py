@@ -18,15 +18,15 @@ class Functor:
         arguments.remove("self")
         return arguments
 
-    def __call__(self, data):
+    def __call__(self, instance, data):
         if self.iterating:
-            self.fun()
+            self.fun(instance)
         elif self.total:
             data[self.name].update(
-                {1: self.fun(self, *(data[arg] for arg in self.input_names))})
+                {1: self.fun(instance, *(data[arg] for arg in self.input_names))})
         else:
             data[self.name].update(
-                {vid: self.fun(self, *(data[arg][vid] for arg in self.input_names)) for vid in data["emerged_elements"]})
+                {vid: self.fun(instance, *(data[arg][vid] for arg in self.input_names)) for vid in data["emerged_elements"]})
 
 
 # Executor singleton
@@ -36,6 +36,9 @@ class Singleton(object):
     def __new__(class_, new_instance = True, **kwargs):
         if new_instance:
             class_._instance.append(object.__new__(class_, **kwargs))
+            # We initiate the decorators lists to agregate methods
+            class_._instance[-1].priorbalance = []
+            class_._instance[-1].selfbalance = []
             class_._instance[-1].getinput = []
             class_._instance[-1].postgrowth = []
             class_._instance[-1].stepinit = []
@@ -46,31 +49,33 @@ class Singleton(object):
             class_._instance[-1].axial = []
             class_._instance[-1].total = []
             class_._instance[-1].potential = []
+            class_._instance[-1].allocation = []
             class_._instance[-1].actual = []
             class_._instance[-1].segmentation = []
             class_._instance[-1].postsegmentation = []
         return class_._instance[-1]
 
 
-class  Choregrapher(Singleton):
+class Choregrapher(Singleton):
     """
     This Singleton class retreives the processes tagged by a decorator in a model class.
     It also provides a __call__ method to schedule model execution.
     """
 
     consensus_scheduling = [
+            ["priorbalance", "selfbalance"],
             ["rate", "state", "totalstate"],  # metabolic models
             ["axial"],  # subcategoy for metabolic models
-            ["potential", "deficit", "actual", "segmentation", "postsegmentation"],  # growth models
+            ["potential", "deficit", "allocation", "actual", "segmentation", "postsegmentation"],  # growth models
             # Note : this has to be placed at the end to held the first places in time step
             ["getinput", "postgrowth", "stepinit"],  # General time step priority 
         ]
 
-    def add_data(self, data):
-        self.data_structure = data
+    def add_data(self, instance, data_name):
+        self.data_structure = getattr(instance, data_name)
         for k in self.scheduled_groups.keys():
             for f in range(len(self.scheduled_groups[k])):
-                self.scheduled_groups[k][f] = partial(self.scheduled_groups[k][f], self.data_structure)
+                self.scheduled_groups[k][f] = partial(self.scheduled_groups[k][f], *(instance, self.data_structure))
 
     def add_schedule(self, schedule):
         """
@@ -129,7 +134,19 @@ class  Choregrapher(Singleton):
                 functor()
 
 
-# Decorators
+# Decorators    
+def priorbalance(func):
+    def wrapper():
+        Choregrapher(new_instance=False).add_process(Functor(func, iteraring=True), name="priorbalance")
+        return func
+    return wrapper()
+
+def selfbalance(func):
+    def wrapper():
+        Choregrapher(new_instance=False).add_process(Functor(func, iteraring=True), name="selfbalance")
+        return func
+    return wrapper()
+
 def getinput(func):
     def wrapper():
         Choregrapher(new_instance=False).add_process(Functor(func, iteraring=True), name="getinput")
@@ -187,6 +204,11 @@ def potential(func):
         return func
     return wrapper()
 
+def allocation(func):
+    def wrapper():
+        Choregrapher(new_instance=False).add_process(Functor(func), name="allocation")
+        return func
+    return wrapper()
 
 def actual(func):
     def wrapper():
