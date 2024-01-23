@@ -1,18 +1,30 @@
+from dataclasses import dataclass
 from genericmodel.component_factory import *
 from genericmodel.component import Model, declare
 
 
-
+@dataclass
 class Carbon(Model):
 
     # constrained field initialization
     hexose: float = declare(default=0., unit="mol.s-1", unit_comment="", description="", 
                             min_value="", max_value="", value_comment="", references="", DOI="", 
-                            variable_type="", by="", state_variable_type="", edit_by="")
+                            variable_type="state_variable", by="", state_variable_type="intensive", edit_by="")
+    sucrose: float = declare(default=0., unit="mol.s-1", unit_comment="", description="", 
+                            min_value="", max_value="", value_comment="", references="", DOI="", 
+                            variable_type="state_variable", by="", state_variable_type="intensive", edit_by="")
+    hexose_exudation: float = declare(default=0., unit="mol.s-1", unit_comment="", description="", 
+                            min_value="", max_value="", value_comment="", references="", DOI="", 
+                            variable_type="state_variable", by="", state_variable_type="intensive", edit_by="")
+    sucrose_unloading: float = declare(default=0., unit="mol.s-1", unit_comment="", description="", 
+                            min_value="", max_value="", value_comment="", references="", DOI="", 
+                            variable_type="state_variable", by="", state_variable_type="intensive", edit_by="")
 
     def __init__(self, g_properties):
         self.props = g_properties
+        self.vertices = self.props["struct_mass"].keys()
         self.choregrapher.add_data(instance=self, data_name="props", filter={"label": ["Segment", "Apex"], "type":["Base_of_the_root_system", "Normal_root_after_emergence", "Stopped", "Just_Stopped", "Root_nodule"]})
+        self.link_self_to_mtg()
 
     @rate
     def _hexose_exudation(self, hexose):
@@ -33,4 +45,4 @@ class Carbon(Model):
         return 1.
     
 def test_model1():
-    model = Carbon(g_properties={})
+    model = Carbon(g_properties={"struct_mass": {"1":0.}})

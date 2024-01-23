@@ -18,7 +18,7 @@ class Functor:
         arguments.remove("self")
         return arguments
 
-    def __call__(self, instance, data):
+    def __call__(self, instance, data, *args):
         if self.iterating:
             self.fun(instance)
         elif self.total:
@@ -39,7 +39,6 @@ class Singleton(object):
             # We initiate the decorators lists to agregate methods
             class_._instance[-1].priorbalance = []
             class_._instance[-1].selfbalance = []
-            class_._instance[-1].postgrowth = []
             class_._instance[-1].stepinit = []
             class_._instance[-1].state = []
             class_._instance[-1].totalstate = []
@@ -67,7 +66,7 @@ class Choregrapher(Singleton):
             ["axial"],  # subcategoy for metabolic models
             ["potential", "deficit", "allocation", "actual", "segmentation", "postsegmentation"],  # growth models
             # Note : this has to be placed at the end to held the first places in time step
-            ["postgrowth", "stepinit"],  # General time step priority 
+            ["stepinit"],  # General time step priority 
         ]
 
     def add_data(self, instance, data_name: str, filter: dict = {"label":[""], "type":[""]}):
@@ -147,12 +146,6 @@ def priorbalance(func):
 def selfbalance(func):
     def wrapper():
         Choregrapher(new_instance=False).add_process(Functor(func, iteraring=True), name="selfbalance")
-        return func
-    return wrapper()
-
-def postgrowth(func):
-    def wrapper():
-        Choregrapher(new_instance=False).add_process(Functor(func, iteraring=True), name="postgrowth")
         return func
     return wrapper()
 
