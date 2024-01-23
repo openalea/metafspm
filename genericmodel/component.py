@@ -103,7 +103,6 @@ class Model:
             # link mtg dict to self dict
             setattr(self, name, self.props[name])
 
-    @getinput
     def get_available_inputs(self):
         for inputs in self.available_inputs:
             source_model = inputs["applier"]

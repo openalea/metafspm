@@ -39,7 +39,6 @@ class Singleton(object):
             # We initiate the decorators lists to agregate methods
             class_._instance[-1].priorbalance = []
             class_._instance[-1].selfbalance = []
-            class_._instance[-1].getinput = []
             class_._instance[-1].postgrowth = []
             class_._instance[-1].stepinit = []
             class_._instance[-1].state = []
@@ -68,7 +67,7 @@ class Choregrapher(Singleton):
             ["axial"],  # subcategoy for metabolic models
             ["potential", "deficit", "allocation", "actual", "segmentation", "postsegmentation"],  # growth models
             # Note : this has to be placed at the end to held the first places in time step
-            ["getinput", "postgrowth", "stepinit"],  # General time step priority 
+            ["postgrowth", "stepinit"],  # General time step priority 
         ]
 
     def add_data(self, instance, data_name: str, filter: dict = {"label":[""], "type":[""]}):
@@ -77,7 +76,7 @@ class Choregrapher(Singleton):
         for k in self.scheduled_groups.keys():
             for f in range(len(self.scheduled_groups[k])):
                 self.scheduled_groups[k][f] = partial(self.scheduled_groups[k][f], *(instance, self.data_structure))
-    
+
     def add_schedule(self, schedule):
         """
         Method to edit standarded scheduling proposed by the choregrapher. 
@@ -148,12 +147,6 @@ def priorbalance(func):
 def selfbalance(func):
     def wrapper():
         Choregrapher(new_instance=False).add_process(Functor(func, iteraring=True), name="selfbalance")
-        return func
-    return wrapper()
-
-def getinput(func):
-    def wrapper():
-        Choregrapher(new_instance=False).add_process(Functor(func, iteraring=True), name="getinput")
         return func
     return wrapper()
 
