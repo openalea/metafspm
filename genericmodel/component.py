@@ -50,7 +50,7 @@ class Model:
 
     @property
     def inputs(self):
-        return [f.name for f in fields(self) if f.metadata["variable_type"] == "state_variable"]
+        return [f.name for f in fields(self) if f.metadata["variable_type"] == "input"]
 
     @property
     def state_variables(self):
@@ -58,7 +58,7 @@ class Model:
 
     @property
     def plant_scale_state(self):
-        return [f.name for f in fields(self) if f.metadata["variable_type"] == "state_variable"]
+        return [f.name for f in fields(self) if f.metadata["variable_type"] == "plant_scale_state"]
 
     @property
     def parameter(self):
@@ -75,14 +75,22 @@ class Model:
                 setattr(self, changed_parameter, value)
 
     def link_self_to_mtg(self):
+        # for input variables
+        for name in self.inputs:
+            if name in self.props.keys():
+                setattr(self, name, self.props[name])
+            # if it is not provided by mtg file, override by default
+            else:
+                self.props.setdefault(name, {})
+                self.props[name].update({key: getattr(self, name) for key in self.vertices})
+                setattr(self, name, self.props[name])
+
         # for segment scale state variables
         for name in self.state_variables:
             if name not in self.props.keys():
                 self.props.setdefault(name, {})
                 # set default in mtg
-                self.props[name].update({key: getattr(self, name) for key in self.vertices})
-            else:
-                self.props[name].update({1: getattr(self, name)})
+            self.props[name].update({key: getattr(self, name) for key in self.vertices})
             # link mtg dict to self dict
             setattr(self, name, self.props[name])
 
@@ -91,24 +99,9 @@ class Model:
             if name not in self.props.keys():
                 self.props.setdefault(name, {})
                 # set default in mtg
-                self.props[name].update({key: getattr(self, name) for key in self.vertices})
-            else:
-                self.props[name].update({1: getattr(self, name)})
+            self.props[name].update({1: getattr(self, name)})
             # link mtg dict to self dict
             setattr(self, name, self.props[name])
-
-    def check_if_coupled(self):
-        # For all expected input...
-        for inpt in self.inputs:
-            # If variable type has not gone to dictionary as it is part of the coupling process
-            # we use provided default value to create the dictionnary used in the rest of the model
-            if type(getattr(self, inpt)) != dict:
-                if inpt not in self.props.keys():
-                    self.props.setdefault(inpt, {})
-                # set default in mtg
-                self.props[inpt].update({key: getattr(self, inpt) for key in self.vertices})
-                # link mtg dict to self dict
-                setattr(self, inpt, self.props[inpt])
 
     @getinput
     def get_available_inputs(self):
@@ -118,11 +111,16 @@ class Model:
             for name, source_variables in linker.items():
                 # if variables have to be summed
                 if len(source_variables.keys()) > 1:
-                    return setattr(self, name, dict(zip(getattr(source_model, "vertices"), [
+                    setattr(self, name, dict(zip(getattr(source_model, "vertices"), [
                         sum([getattr(source_model, source_name)[vid] * unit_conversion for source_name, unit_conversion
                              in source_variables.items()]) for vid in getattr(source_model, "vertices")])))
                 else:
-                    return setattr(self, name, getattr(source_model, list(source_variables.keys())[0]))
+                    setattr(self, name, self.props[list(source_variables.keys())[0]])
+                    if name != list(source_variables.keys())[0] and name in self.props.keys():
+                        self.props.pop(name)
+
+    def post_coupling_init(self):
+        self.get_available_inputs()
 
     def temperature_modification(self, soil_temperature=15, process_at_T_ref=1., T_ref=0., A=-0.05, B=3., C=1.):
         """
@@ -160,6 +158,3 @@ class Model:
 
         return max(modified_process, 0.)
 
-    def post_coupling_init(self):
-        self.get_available_inputs()
-        self.check_if_coupled()

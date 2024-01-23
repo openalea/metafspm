@@ -23,10 +23,10 @@ class Functor:
             self.fun(instance)
         elif self.total:
             data[self.name].update(
-                {1: self.fun(instance, *(data[arg] for arg in self.input_names))})
+                {1: self.fun(instance, *(getattr(instance, arg) for arg in self.input_names))})
         else:
             data[self.name].update(
-                {vid: self.fun(instance, *(data[arg][vid] for arg in self.input_names)) for vid in data["focus_elements"]})
+                {vid: self.fun(instance, *(getattr(instance, arg)[vid] for arg in self.input_names)) for vid in data["focus_elements"]})
 
 
 # Executor singleton
@@ -45,9 +45,9 @@ class Singleton(object):
             class_._instance[-1].state = []
             class_._instance[-1].totalstate = []
             class_._instance[-1].rate = []
+            class_._instance[-1].totalrate = []
             class_._instance[-1].deficit = []
             class_._instance[-1].axial = []
-            class_._instance[-1].total = []
             class_._instance[-1].potential = []
             class_._instance[-1].allocation = []
             class_._instance[-1].actual = []
@@ -64,7 +64,7 @@ class Choregrapher(Singleton):
 
     consensus_scheduling = [
             ["priorbalance", "selfbalance"],
-            ["rate", "state", "totalstate"],  # metabolic models
+            ["rate", "totalrate", "state", "totalstate"],  # metabolic models
             ["axial"],  # subcategoy for metabolic models
             ["potential", "deficit", "allocation", "actual", "segmentation", "postsegmentation"],  # growth models
             # Note : this has to be placed at the end to held the first places in time step
@@ -77,7 +77,7 @@ class Choregrapher(Singleton):
         for k in self.scheduled_groups.keys():
             for f in range(len(self.scheduled_groups[k])):
                 self.scheduled_groups[k][f] = partial(self.scheduled_groups[k][f], *(instance, self.data_structure))
-
+    
     def add_schedule(self, schedule):
         """
         Method to edit standarded scheduling proposed by the choregrapher. 
@@ -182,6 +182,12 @@ def rate(func):
         return func
     return wrapper()
 
+def totalrate(func):
+    def wrapper():
+        Choregrapher(new_instance=False).add_process(Functor(func, total=True), name="totalrate")
+        return func
+    return wrapper()
+
 def deficit(func):
     def wrapper():
         Choregrapher(new_instance=False).add_process(Functor(func), name="deficit")
@@ -191,7 +197,7 @@ def deficit(func):
 
 def totalstate(func):
     def wrapper():
-        Choregrapher(new_instance=False).add_process(Functor(func, total=True), name="total")
+        Choregrapher(new_instance=False).add_process(Functor(func, total=True), name="totalstate")
         return func
     return wrapper()
 

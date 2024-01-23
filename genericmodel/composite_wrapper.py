@@ -93,12 +93,10 @@ class CompositeModel:
                 yaml.dump(translator, f)
 
         L = len(self.models)
-        for receiver_index in range(L):
-            receiver = self.models[receiver_index]
-            for applier_index in range(L):
-                if receiver_index != applier_index:
-                    applier = self.models[applier_index]
-                    linker = translator[receiver_index][applier_index]
+        for receiver in self.models:
+            for applier in self.models:
+                if id(receiver) != id(applier):
+                    linker = translator[receiver.__class__.__name__][applier.__class__.__name__]
                     # If a model has been targeted on this position
                     if len(linker.keys()) > 0:
                         receiver.available_inputs += [dict(applier=applier, linker=linker)]
@@ -133,7 +131,6 @@ class CompositeModel:
                             else:
                                 com_dict[expression.replace(" ", "")] = 1.
                         translator[self.models[receiver_model].__class__.__name__][self.models[which].__class__.__name__][var] = com_dict
-                        break
 
         return translator
 
