@@ -12,8 +12,8 @@ This package is intended to provide minimal tools to assist Functionnal Structur
 
 - Create an environment dedicated to your model
 ```
-conda create -n your_model python==3.10
-
+conda create -n your_model_env python==3.10
+conda activate your_model_env
 ```
 Then :
 ### First option : install from the requirements.txt
@@ -26,6 +26,7 @@ git clone https://github.com/GeraultTr/genericmodel.git
 
 - Then, cd into the directory and install necessary packages with the following requirements files : 
 ```
+
 ```
 
 - Finally, run the setup.py :
@@ -33,7 +34,7 @@ git clone https://github.com/GeraultTr/genericmodel.git
 python -m setup develop
 ```
 
-### Second option TODO : when package is released, just create a new environment :
+### Second option TODO : when package is released, just create in:
 ```
 conda install -c conda-forge genericfspm
 ```
@@ -42,7 +43,7 @@ conda install -c conda-forge genericfspm
 
 ### For model design
 
-- First, the model has to be packaged as a class and decorated by @dataclass from the dataclasses module.
+- First, in a single python .py file the model has to be packaged as a class and decorated by @dataclass from the dataclasses module.
 
 - Then, you must import utilities :  
 ```
@@ -84,8 +85,20 @@ All the fields of the declare function have to be filled, see declare() docstrin
         self.link_self_to_mtg()
 ```
 
+- Finally implement your model processes in individual methods and decorate them with available decorators. For example :
 
-- Finally implement your model processes in individual methods
+```
+    @rate
+    def hexose_exudation(self, hexose_root, hexose_soil, root_surface):
+        return self.parameter * (hexose_root - hexose_soil) * root_surface
+
+    @state
+    def hexose(self, hexose, hexose_exudation):
+        return hexose + (self.time_step / struct_mass) * 
+            (-hexose_exudation 
+             + ...
+            )
+```
 
 - Choregrapher will then call method groups according to the consensus scheduling table presented above.
 
@@ -135,6 +148,11 @@ class WrappedModel(CompositeModel):
         self.model_1()
         self.model_2()
 ```     
+2 comments : 
+- link_around_mtg(translator_path) searches for the "coupling_translator.yaml" configuration file that explicits which state variables from a source model can be considered as input for a receiver model. If it doesn't exist, you will be guided through a step-by-step guide to build this coupling transltor. It is based on which state variables are flaged as input and state_variable in the model file. Usually the coupling_translator.yaml file is already provided by the modeller.
+- post_coupling_init() is a method inherited from genericmodel.component.Model that creates a dynamic pointer to mtg properties in the model self instance. Thus each time a property is modified as self.hexose[vertex_id] = 0., it is also modified in mtg.properties(). Don't hesitate to superimpose this method if you need additionnal operations after models initialization and coupling.
+
+Note : If a growth model is included, you need to define a "post_growth_updating()" method in each model to be called after the growth so that the length of the properties managed by each non-growth model matches the actualized number of elements actualized by the growth model.
 
 
 
