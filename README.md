@@ -8,6 +8,36 @@ This package is intended to provide minimal tools to assist Functionnal Structur
 
 ## Installation
 
+- Intall the lastest version of conda : https://docs.conda.io/projects/miniconda/en/latest/miniconda-install.html 
+
+- Create an environment dedicated to your model
+```
+conda create -n your_model python==3.10
+
+```
+Then :
+### First option : install from the requirements.txt
+- Make sure you have git installed : https://git-scm.com/downloads
+
+- From terminal, clone this package and then , then run the command :
+```
+git clone https://github.com/GeraultTr/genericmodel.git
+```
+
+- Then, cd into the directory and install necessary packages with the following requirements files : 
+```
+```
+
+- Finally, run the setup.py :
+```
+python -m setup develop
+```
+
+### Second option TODO : when package is released, just create a new environment :
+```
+conda install -c conda-forge genericfspm
+```
+
 ## Example use
 
 ### For model design
