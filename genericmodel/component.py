@@ -55,7 +55,11 @@ class Model:
     @property
     def state_variables(self):
         return [f.name for f in fields(self) if f.metadata["variable_type"] == "state_variable"]
-
+    
+    @property
+    def extensive_variables(self):
+        return [f.name for f in fields(self) if (f.metadata["variable_type"] == "state_variable" and f.metadata["state_variable_type"] == "extensive")]
+    
     @property
     def plant_scale_state(self):
         return [f.name for f in fields(self) if f.metadata["variable_type"] == "plant_scale_state"]

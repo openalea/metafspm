@@ -11,7 +11,6 @@ class CompositeModel:
         This utility is intended to ensure separated Choregrapher instances between each component
         """
         module = import_module(name=model.__module__)
-        print(sys.modules)
         del sys.modules["genericmodel.component"]
         reload(module)
         model = getattr(module, model.__name__)
