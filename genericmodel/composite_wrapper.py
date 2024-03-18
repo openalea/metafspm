@@ -4,6 +4,14 @@ from importlib import import_module, reload
 import sys
 
 
+def recursive_reload(module):
+    whitelist = ["rhizodep.root_carbon", "rhizodep.root_growth", "rhizodep.root_anatomy", "rhizodep.rhizo_soil", "root_cynaps.root_nitrogen", "root_cynaps.root_water"]
+    reload(module)
+    for child_module in vars(module).values():
+        if isinstance(child_module, type) and module.__name__ != child_module.__module__ and child_module.__module__ in whitelist:
+            module_to_reload = import_module(name=child_module.__module__)
+            recursive_reload(module_to_reload)
+
 class CompositeModel:
 
     def load(self, model, *args, **kwargs):
@@ -12,7 +20,7 @@ class CompositeModel:
         """
         module = import_module(name=model.__module__)
         del sys.modules["genericmodel.component"]
-        reload(module)
+        recursive_reload(module)
         model = getattr(module, model.__name__)
         return model(*args, **kwargs)
 
