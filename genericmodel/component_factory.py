@@ -31,27 +31,27 @@ class Functor:
 
 # Executor singleton
 class Singleton(object):
-    _instance = []
+    _instance = None
 
-    def __new__(class_, new_instance = True, **kwargs):
-        if new_instance:
-            class_._instance.append(object.__new__(class_, **kwargs))
-            # We initiate the decorators lists to agregate methods
-            class_._instance[-1].priorbalance = []
-            class_._instance[-1].selfbalance = []
-            class_._instance[-1].stepinit = []
-            class_._instance[-1].state = []
-            class_._instance[-1].totalstate = []
-            class_._instance[-1].rate = []
-            class_._instance[-1].totalrate = []
-            class_._instance[-1].deficit = []
-            class_._instance[-1].axial = []
-            class_._instance[-1].potential = []
-            class_._instance[-1].allocation = []
-            class_._instance[-1].actual = []
-            class_._instance[-1].segmentation = []
-            class_._instance[-1].postsegmentation = []
-        return class_._instance[-1]
+    def __new__(class_, *args, **kwargs):
+        if not isinstance(class_._instance, class_):
+            class_._instance = object.__new__(class_, *args, **kwargs)
+            class_._instance.priorbalance = {}
+            class_._instance.selfbalance = {}
+            class_._instance.stepinit = {}
+            class_._instance.state = {}
+            class_._instance.totalstate = {}
+            class_._instance.rate = {}
+            class_._instance.totalrate = {}
+            class_._instance.deficit = {}
+            class_._instance.axial = {}
+            class_._instance.potential = {}
+            class_._instance.allocation = {}
+            class_._instance.actual = {}
+            class_._instance.segmentation = {}
+            class_._instance.postsegmentation = {}
+
+        return class_._instance
 
 
 class Choregrapher(Singleton):
@@ -59,6 +59,8 @@ class Choregrapher(Singleton):
     This Singleton class retreives the processes tagged by a decorator in a model class.
     It also provides a __call__ method to schedule model execution.
     """
+
+    scheduled_groups = {}
 
     consensus_scheduling = [
             ["priorbalance", "selfbalance"],
@@ -70,11 +72,12 @@ class Choregrapher(Singleton):
         ]
 
     def add_data(self, instance, data_name: str, filter: dict = {"label":[""], "type":[""]}):
+        module_name = instance.__module__.split(".")[-1]
         self.data_structure = getattr(instance, data_name)
         self.filter = filter
-        for k in self.scheduled_groups.keys():
-            for f in range(len(self.scheduled_groups[k])):
-                self.scheduled_groups[k][f] = partial(self.scheduled_groups[k][f], *(instance, self.data_structure))
+        for k in self.scheduled_groups[module_name].keys():
+            for f in range(len(self.scheduled_groups[module_name][k])):
+                self.scheduled_groups[module_name][k][f] = partial(self.scheduled_groups[module_name][k][f], *(instance, self.data_structure))
 
     def add_schedule(self, schedule):
         """
@@ -98,18 +101,22 @@ class Choregrapher(Singleton):
         self.consensus_scheduling = schedule
 
     def add_process(self, f, name):
-        getattr(self, name).append(f)
-        self.build_schedule()
+        module_name = f.fun.__module__.split(".")[-1]
+        if module_name not in getattr(self, name).keys():
+            getattr(self, name)[module_name] = []
+        getattr(self, name)[module_name].append(f)
+        self.build_schedule(module_name=module_name)
 
-    def build_schedule(self):
-        self.scheduled_groups = {}
+    def build_schedule(self, module_name):
+        self.scheduled_groups[module_name] = {}
         # As functors can belong two multiple categories, we store unique names to avoid duplicated instances
         unique_functors = {}
         for attribute in dir(self):
             if not callable(getattr(self, attribute)) and "_" not in attribute:
-                for functor in getattr(self, attribute):
-                    if functor.name not in unique_functors.keys():
-                        unique_functors[functor.name] = functor
+                if module_name in getattr(self, attribute).keys():
+                    for functor in getattr(self, attribute)[module_name]:
+                        if functor.name not in unique_functors.keys():
+                            unique_functors[functor.name] = functor
         # Then, We go through these unique functors
         for name, functor in unique_functors.items():
             priority = [0 for k in range(len(self.consensus_scheduling))]
@@ -117,110 +124,113 @@ class Choregrapher(Singleton):
             for schedule in range(len(self.consensus_scheduling)):
                 # We attribute a number in the functor's tuple to provided decorator.
                 for process_type in range(len(self.consensus_scheduling[schedule])):
-                    if name in [f.name for f in getattr(self, self.consensus_scheduling[schedule][process_type])]:
-                        priority[schedule] = process_type
+                    considered_step = getattr(self, self.consensus_scheduling[schedule][process_type])
+                    if module_name in considered_step.keys():
+                        if name in [f.name for f in considered_step[module_name]]:
+                            priority[schedule] = process_type
             # We append the priority tuple to she scheduled groups dictionnary
-            if str(priority) not in self.scheduled_groups.keys():
-                self.scheduled_groups[str(priority)] = []
-            self.scheduled_groups[str(priority)].append(functor)
+            if str(priority) not in self.scheduled_groups[module_name].keys():
+                self.scheduled_groups[module_name][str(priority)] = []
+            self.scheduled_groups[module_name][str(priority)].append(functor)
 
         # Finally, we sort the dictionnary by key so that the call function can go through functor groups in the expected order
-        self.scheduled_groups = {k: self.scheduled_groups[k] for k in sorted(self.scheduled_groups.keys())}
+        self.scheduled_groups[module_name] = {k: self.scheduled_groups[module_name][k] for k in sorted(self.scheduled_groups[module_name].keys())}
 
-    def __call__(self):
+    def __call__(self, module_name):
         self.data_structure["focus_elements"] = [vid for vid in self.data_structure["struct_mass"].keys() if (
             self.data_structure["label"][vid] in self.filter["label"] 
             and self.data_structure["type"][vid] in self.filter["type"])]
-        for step in self.scheduled_groups.keys():
-            for functor in self.scheduled_groups[step]:
+        
+        for step in self.scheduled_groups[module_name].keys():
+            for functor in self.scheduled_groups[module_name][step]:
                 functor()
 
 
 # Decorators    
 def priorbalance(func):
     def wrapper():
-        Choregrapher(new_instance=False).add_process(Functor(func, iteraring=True), name="priorbalance")
+        Choregrapher().add_process(Functor(func, iteraring=True), name="priorbalance")
         return func
     return wrapper()
 
 def selfbalance(func):
     def wrapper():
-        Choregrapher(new_instance=False).add_process(Functor(func, iteraring=True), name="selfbalance")
+        Choregrapher().add_process(Functor(func, iteraring=True), name="selfbalance")
         return func
     return wrapper()
 
 def stepinit(func):
     def wrapper():
-        Choregrapher(new_instance=False).add_process(Functor(func, iteraring=True), name="stepinit")
+        Choregrapher().add_process(Functor(func, iteraring=True), name="stepinit")
         return func
     return wrapper()                
 
 def state(func):
     def wrapper():
-        Choregrapher(new_instance=False).add_process(Functor(func), name="state")
+        Choregrapher().add_process(Functor(func), name="state")
         return func
     return wrapper()
 
 
 def rate(func):
     def wrapper():
-        Choregrapher(new_instance=False).add_process(Functor(func), name="rate")
+        Choregrapher().add_process(Functor(func), name="rate")
         return func
     return wrapper()
 
 def totalrate(func):
     def wrapper():
-        Choregrapher(new_instance=False).add_process(Functor(func, total=True), name="totalrate")
+        Choregrapher().add_process(Functor(func, total=True), name="totalrate")
         return func
     return wrapper()
 
 def deficit(func):
     def wrapper():
-        Choregrapher(new_instance=False).add_process(Functor(func), name="deficit")
+        Choregrapher().add_process(Functor(func), name="deficit")
         return func
     return wrapper()
 
 
 def totalstate(func):
     def wrapper():
-        Choregrapher(new_instance=False).add_process(Functor(func, total=True), name="totalstate")
+        Choregrapher().add_process(Functor(func, total=True), name="totalstate")
         return func
     return wrapper()
 
 def axial(func):
     def wrapper():
-        Choregrapher(new_instance=False).add_process(Functor(func), name="axial")
+        Choregrapher().add_process(Functor(func), name="axial")
         return func
     return wrapper()
 
 
 def potential(func):
     def wrapper():
-        Choregrapher(new_instance=False).add_process(Functor(func), name="potential")
+        Choregrapher().add_process(Functor(func), name="potential")
         return func
     return wrapper()
 
 def allocation(func):
     def wrapper():
-        Choregrapher(new_instance=False).add_process(Functor(func), name="allocation")
+        Choregrapher().add_process(Functor(func), name="allocation")
         return func
     return wrapper()
 
 def actual(func):
     def wrapper():
-        Choregrapher(new_instance=False).add_process(Functor(func), name="actual")
+        Choregrapher().add_process(Functor(func), name="actual")
         return func
     return wrapper()
 
 
 def segmentation(func):
     def wrapper():
-        Choregrapher(new_instance=False).add_process(Functor(func), name="segmentation")
+        Choregrapher().add_process(Functor(func), name="segmentation")
         return func
     return wrapper()
 
 def postsegmentation(func):
     def wrapper():
-        Choregrapher(new_instance=False).add_process(Functor(func), name="postsegmentation")
+        Choregrapher().add_process(Functor(func), name="postsegmentation")
         return func
     return wrapper()
