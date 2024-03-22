@@ -30,21 +30,21 @@ from setuptools import setup
         $Id$
 """
 
-if sys.version_info < (3, 8):
-    print('ERROR: Requires at least Python 3.9 to run.')
+if sys.version_info < (3, 7):
+    print('ERROR: Requires at least Python 3.7 to run.')
     sys.exit(1)
 
 setup(
-    name="genericmodel",
+    name="metafspm",
     version="0.0.1",
-    packages=["genericmodel"],
+    packages=["metafspm"],
     include_package_data=True,
     author="T.Gerault, F.Rees, C.Pradal and R.Barillot",
     author_email="tristan.gerault@inrae.fr, frederic.rees@inrae.fr, romain.barillot@inrae.fr, christophe.pradal@cirad.fr",
-    description="This package provides ressources for building a generic FSPM and linking it in a composite framework",
+    description="This package provides ressources for building basic a FSPM and linking it in a composite framework",
     long_description="""TODO""",
     license="CeCILL-C",
     keywords="functional-structural plant model, wheat, uptake, rhizodeposition, trophic status, carbon, nitrogen, metabolism, remobilisation, source-sink relation, resource allocation",
-    url="https://forgemia.inra.fr/tristan.gerault/root_cynaps.git",
-    download_url="https://forgemia.inra.fr/tristan.gerault/root_cynaps.git"
+    url="https://github.com/GeraultTr/metafspm.git",
+    download_url="https://github.com/GeraultTr/metafspm.git"
 )

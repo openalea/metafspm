@@ -1,4 +1,4 @@
-from genericmodel.component import Model
+from metafspm.component import Model
 
 
 class TestComponent:

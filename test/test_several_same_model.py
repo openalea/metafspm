@@ -1,5 +1,5 @@
 from test_model_carbon import Carbon
-from genericmodel.composite_wrapper import CompositeModel
+from metafspm.composite_wrapper import CompositeModel
 
 class Model(CompositeModel):
     def __init__(self, g_properties):

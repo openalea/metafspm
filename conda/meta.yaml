@@ -1,7 +1,7 @@
 {% set data = load_setup_py_data() %}
 
 package:
-  name: genericmodel
+  name: metafspm
   version: {{ data.get('version') }}
 
 source:
@@ -18,14 +18,14 @@ requirements:
     - python {{PY_VER}}
     - setuptools
   run:
-    - python >=3.8
-    - dataclasses
+    - python
+    - yaml
 
 test:
   requires:
     - pytest
   imports:
-    - genericmodel
+    - metafspm
   source_files:
     - test/**
   commands:

@@ -1,6 +1,6 @@
 from dataclasses import dataclass, field, fields
 
-from genericmodel.component_factory import *
+from metafspm.component_factory import *
 
 
 

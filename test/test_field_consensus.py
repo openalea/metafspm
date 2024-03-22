@@ -1,4 +1,4 @@
-from genericmodel.component import declare
+from metafspm.component import declare
 
 
 def test_field_consensus():
