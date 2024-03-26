@@ -122,7 +122,8 @@ class Model:
                         sum([getattr(source_model, source_name)[vid] * unit_conversion for source_name, unit_conversion
                              in source_variables.items()]) for vid in getattr(source_model, "vertices")])))
                 else:
-                    setattr(self, name, self.props[list(source_variables.keys())[0]])
+                    shared_variable = list(source_variables.keys())[0]
+                    setattr(self, name, source_model.props[shared_variable])
                     if name != list(source_variables.keys())[0] and name in self.props.keys():
                         self.props.pop(name)
 
