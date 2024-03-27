@@ -100,7 +100,20 @@ class CompositeModel:
                     linker = translator[receiver.__class__.__name__][applier.__class__.__name__]
                     # If a model has been targeted on this position
                     if len(linker.keys()) > 0:
-                        receiver.available_inputs += [dict(applier=applier, linker=linker)]
+                        applier_name = applier.__class__.__name__
+                        # First we create a link to applier class so that created properties refer to it properly
+                        setattr(receiver, applier_name, applier)
+                        # We set properties with getter method only to retrieve the values dynamically from inputs
+                        for name, source_variables in linker.items():
+                            formula = ""
+                            for source_name, unit_conversion in source_variables.items():
+                                formula += f"(self.{applier_name}.{source_name}[vid]*{unit_conversion})+"
+                            # First get the dimensions of the dictionnaries that will be managed, !!! supposing every input has the same dimension
+                            iterator = f"self.{applier_name}.{list(source_variables.keys())[0]}.keys()"
+                            # Then we sum every targetted variable for every vertex, with same iteration as for keys
+                            setattr(receiver.__class__, name, property(eval(f"""lambda self: dict(zip({iterator}, [{formula[:-1]} for vid in {iterator}]))""")))
+                            
+                        #receiver.available_inputs += [dict(applier=applier, linker=linker)]
 
     def translator_matrix_builder(self):
         """
