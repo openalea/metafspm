@@ -106,8 +106,11 @@ class CompositeModel:
                         # We set properties with getter method only to retrieve the values dynamically from inputs
                         for name, source_variables in linker.items():
                             formula = ""
-                            for source_name, unit_conversion in source_variables.items():
-                                formula += f"(self.{applier_name}.{source_name}[vid]*{unit_conversion})+"
+                            for source_name, unit_conversion in source_variables.items():                                
+                                if type(list(getattr(applier, source_name).values())[0]) != str:
+                                    formula += f"(self.{applier_name}.{source_name}[vid]*{unit_conversion})+"
+                                else:
+                                    formula += f"self.{applier_name}.{source_name}[vid] "
                             # First get the dimensions of the dictionnaries that will be managed, !!! supposing every input has the same dimension
                             iterator = f"self.{applier_name}.{list(source_variables.keys())[0]}.keys()"
                             # Then we sum every targetted variable for every vertex, with same iteration as for keys
