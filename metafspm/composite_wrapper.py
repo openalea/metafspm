@@ -46,7 +46,7 @@ class CompositeModel:
                         to_print += width_format.format(max_format.format(header)) + " | "
                     to_print += "\n\n"
                     first = False
-                filtering = [f.metadata[k] == v for k, v in filters.items()]
+                filtering = [f.metadata[k] in v for k, v in filters.items()]
                 if False not in filtering or len(filtering) == 0:
                     to_print += width_format.format(max_format.format(f.name)) +  " | "
                     values = list(f.metadata.values())
@@ -70,7 +70,7 @@ class CompositeModel:
 
     @property
     def inputs(self):
-        return self.get_documentation(filters=dict(variable_type="input"), models=self.models)
+        return self.get_documentation(filters=dict(variable_type=["input"]), models=self.models)
 
     def link_around_mtg(self, translator_path: list):
         """
@@ -131,7 +131,7 @@ class CompositeModel:
                 which = int(input(f"[for {self.models[receiver_model].__class__.__name__}] Which is {name}? (0 for None): ")) - 1
                 needed_inputs = [f.name for f in inputs if f.metadata["by"] == name]
                 if 0 <= which < L:
-                    available = self.get_documentation(filters=dict(variable_type="state_variable"), models=[self.models[which]])
+                    available = self.get_documentation(filters=dict(variable_type=["state_variable", "plant_scale_state"]), models=[self.models[which]])
                     print(available)
                     for var in needed_inputs:
                         selected = input(f"For {var}, Nothing for same name / enter target names * conversion factor / Separate by ; -> ").split(";")
@@ -147,5 +147,3 @@ class CompositeModel:
                         translator[self.models[receiver_model].__class__.__name__][self.models[which].__class__.__name__][var] = com_dict
 
         return translator
-
-    # TODO later think of a multiprocessing possibility for shoot + soil or C + N
