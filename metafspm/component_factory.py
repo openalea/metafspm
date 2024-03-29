@@ -18,15 +18,18 @@ class Functor:
         arguments.remove("self")
         return arguments
 
-    def __call__(self, instance, data, *args):
+    def __call__(self, instance, data, data_type="<class 'dict'>", *args):
         if self.iterating:
             self.fun(instance)
-        elif self.total:
-            data[self.name].update(
-                {1: self.fun(instance, *(getattr(instance, arg) for arg in self.input_names))})
-        else:
-            data[self.name].update(
-                {vid: self.fun(instance, *(getattr(instance, arg)[vid] for arg in self.input_names)) for vid in data["focus_elements"]})
+        elif data_type == "<class 'dict'>":
+            if self.total:
+                data[self.name].update(
+                    {1: self.fun(instance, *(getattr(instance, arg) for arg in self.input_names))})
+            else:
+                data[self.name].update(
+                    {vid: self.fun(instance, *(getattr(instance, arg)[vid] for arg in self.input_names)) for vid in data["focus_elements"]})
+        elif data_type == "<class 'numpy.ndarray'>":
+            data[self.name] = self.fun(instance, *(getattr(instance, arg) for arg in self.input_names))
 
 
 # Executor singleton
@@ -74,10 +77,11 @@ class Choregrapher(Singleton):
     def add_data(self, instance, data_name: str, filter: dict = {"label":[""], "type":[""]}):
         module_name = instance.__module__.split(".")[-1]
         self.data_structure = getattr(instance, data_name)
+        data_structure_type = str(type(list(self.data_structure.values())[0]))
         self.filter = filter
         for k in self.scheduled_groups[module_name].keys():
             for f in range(len(self.scheduled_groups[module_name][k])):
-                self.scheduled_groups[module_name][k][f] = partial(self.scheduled_groups[module_name][k][f], *(instance, self.data_structure))
+                self.scheduled_groups[module_name][k][f] = partial(self.scheduled_groups[module_name][k][f], *(instance, self.data_structure, data_structure_type))
 
     def add_schedule(self, schedule):
         """
@@ -137,9 +141,11 @@ class Choregrapher(Singleton):
         self.scheduled_groups[module_name] = {k: self.scheduled_groups[module_name][k] for k in sorted(self.scheduled_groups[module_name].keys())}
 
     def __call__(self, module_name):
-        self.data_structure["focus_elements"] = [vid for vid in self.data_structure["struct_mass"].keys() if (
-            self.data_structure["label"][vid] in self.filter["label"] 
-            and self.data_structure["type"][vid] in self.filter["type"])]
+        # If a filter is mentionned, we assume it uses label and type keys for now (specific to roots, TODO extend)
+        if self.filter != None:
+            self.data_structure["focus_elements"] = [vid for vid in self.data_structure["struct_mass"].keys() if (
+                self.data_structure["label"][vid] in self.filter["label"] 
+                and self.data_structure["type"][vid] in self.filter["type"])]
         
         for step in self.scheduled_groups[module_name].keys():
             for functor in self.scheduled_groups[module_name][step]:
