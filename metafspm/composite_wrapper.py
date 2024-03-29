@@ -106,7 +106,7 @@ class CompositeModel:
                         # We set properties with getter method only to retrieve the values dynamically from inputs
                         for name, source_variables in linker.items():
                             formula = ""
-                            for source_name, unit_conversion in source_variables.items():                                
+                            for source_name, unit_conversion in source_variables.items():                          
                                 if type(list(getattr(applier, source_name).values())[0]) != str:
                                     formula += f"(self.{applier_name}.{source_name}[vid]*{unit_conversion})+"
                                 else:
