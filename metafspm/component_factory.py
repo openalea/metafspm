@@ -107,9 +107,17 @@ class Choregrapher(Singleton):
 
     def add_process(self, f, name):
         module_name = f.fun.__module__.split(".")[-1]
+        exists = False
         if module_name not in getattr(self, name).keys():
             getattr(self, name)[module_name] = []
-        getattr(self, name)[module_name].append(f)
+        else:
+            for k in range(len(getattr(self, name)[module_name])):
+                f_name = getattr(self, name)[module_name][k].name
+                if f_name == f.name:
+                    getattr(self, name)[module_name][k] = f
+                    exists = True
+        if not exists:
+            getattr(self, name)[module_name].append(f)
         self.build_schedule(module_name=module_name)
 
     def build_schedule(self, module_name):
