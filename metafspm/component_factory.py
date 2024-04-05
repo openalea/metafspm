@@ -68,11 +68,9 @@ class Choregrapher(Singleton):
 
     consensus_scheduling = [
             ["priorbalance", "selfbalance"],
-            ["rate", "totalrate", "state", "totalstate"],  # metabolic models
+            ["stepinit", "rate", "totalrate", "state", "totalstate"],  # metabolic models
             ["axial"],  # subcategoy for metabolic models
             ["potential", "deficit", "allocation", "actual", "segmentation", "postsegmentation"],  # growth models
-            # Note : this has to be placed at the end to held the first places in time step
-            ["stepinit"],  # General time step priority 
         ]
 
     def add_data(self, instance, data_name: str, compartment: str = "root"):
@@ -140,7 +138,8 @@ class Choregrapher(Singleton):
                     considered_step = getattr(self, self.consensus_scheduling[schedule][process_type])
                     if module_name in considered_step.keys():
                         if name in [f.name for f in considered_step[module_name]]:
-                            priority[schedule] = process_type
+                            priority[schedule] = process_type + 1
+                            
             # We append the priority tuple to she scheduled groups dictionnary
             if str(priority) not in self.scheduled_groups[module_name].keys():
                 self.scheduled_groups[module_name][str(priority)] = []
