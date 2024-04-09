@@ -63,6 +63,7 @@ class Choregrapher(Singleton):
     """
 
     scheduled_groups = {}
+    sub_time_step = {}
     data_structure = {"soil":None, "root":None}
     filter =  {"label": ["Segment", "Apex"], "type":["Base_of_the_root_system", "Normal_root_after_emergence", "Stopped", "Just_Stopped", "Root_nodule"]}
 
@@ -73,14 +74,23 @@ class Choregrapher(Singleton):
             ["potential", "deficit", "allocation", "actual", "segmentation", "postsegmentation"],  # growth models
         ]
 
-    def add_data(self, instance, data_name: str, compartment: str = "root"):
+    def add_time_and_data(self, instance, sub_time_step: int, data: dict, compartment: str = "root"):
         module_name = instance.__module__.split(".")[-1]
+        self.sub_time_step[module_name] = sub_time_step
         if self.data_structure[compartment] == None:
-            self.data_structure[compartment] = getattr(instance, data_name)
+            self.data_structure[compartment] = data
         data_structure_type = str(type(list(self.data_structure[compartment].values())[0]))
         for k in self.scheduled_groups[module_name].keys():
             for f in range(len(self.scheduled_groups[module_name][k])):
                 self.scheduled_groups[module_name][k][f] = partial(self.scheduled_groups[module_name][k][f], *(instance, self.data_structure[compartment], data_structure_type))
+
+    def add_simulation_time_step(self, simulation_time_step: int):
+        """
+        Enables to add a global simulation time step to the Choregrapher for it to slice subtimesteps accordingly
+        :param simulation_time_step: global simulation time step in seconds
+        :return:
+        """
+        self.simulation_time_step = simulation_time_step
 
     def add_schedule(self, schedule):
         """
@@ -152,10 +162,11 @@ class Choregrapher(Singleton):
         self.data_structure["root"]["focus_elements"] = [vid for vid in self.data_structure["root"]["struct_mass"].keys() if (
             self.data_structure["root"]["label"][vid] in self.filter["label"] 
             and self.data_structure["root"]["type"][vid] in self.filter["type"])]
-        
-        for step in self.scheduled_groups[module_name].keys():
-            for functor in self.scheduled_groups[module_name][step]:
-                functor()
+
+        for increment in range(int(self.simulation_time_step/self.sub_time_step[module_name])):
+            for step in self.scheduled_groups[module_name].keys():
+                for functor in self.scheduled_groups[module_name][step]:
+                    functor()
 
 
 # Decorators    
