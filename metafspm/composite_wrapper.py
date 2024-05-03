@@ -12,6 +12,7 @@ def recursive_reload(module):
             module_to_reload = import_module(name=child_module.__module__)
             recursive_reload(module_to_reload)
 
+
 class CompositeModel:
 
     def get_documentation(self, filters: dict, models: list):
@@ -72,7 +73,7 @@ class CompositeModel:
     def inputs(self):
         return self.get_documentation(filters=dict(variable_type=["input"]), models=self.models)
 
-    def link_around_mtg(self, translator_path: list):
+    def link_around_mtg(self, translator_path: str):
         """
         Description : linker function that will enable properties sharing through MTG.
 
@@ -150,3 +151,11 @@ class CompositeModel:
                         translator[self.models[receiver_model].__class__.__name__][self.models[which].__class__.__name__][var] = com_dict
 
         return translator
+
+    def apply_input_tables(self, tables: dict, to: tuple, when: float):
+        if not hasattr(self, "models_data_requirements"):
+            self.models_data_requirements = [[var for var in tables.keys() if var in model.state_variables] for model in to]
+
+        for model in range(len(to)):
+            for var in self.models_data_requirements[model]:
+                setattr(to[model], var, float(tables[var].loc[tables[var]["t"] == when][var]))
