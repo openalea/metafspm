@@ -1,3 +1,4 @@
+import numpy as np
 import yaml
 from dataclasses import fields
 from importlib import import_module, reload
@@ -153,9 +154,23 @@ class CompositeModel:
         return translator
 
     def apply_input_tables(self, tables: dict, to: tuple, when: float):
-        if not hasattr(self, "models_data_requirements"):
-            self.models_data_requirements = [[var for var in tables.keys() if var in model.state_variables] for model in to]
+        if not hasattr(self, "models_data_required"):
+            all_available_state_variables = []
+            for model in to:
+                all_available_state_variables += model.state_variables
+            self.models_data_required = [[var for var in tables.keys() if (
+                                            # Either the input is not provided by another coupled module
+                                            (var in model.inputs) and (var not in all_available_state_variables)) or (
+                                            # Or the considered model provides the variable but gets it from input data only
+                                            var in model.state_variables)]
+                                         for model in to]
 
         for model in range(len(to)):
-            for var in self.models_data_requirements[model]:
-                setattr(to[model], var, float(tables[var].loc[tables[var]["t"] == when][var]))
+            for var in self.models_data_required[model]:
+                if hasattr(to[model], "voxels"):
+                    # supposed True : if isinstance(getattr(to[model].voxels, var), np.ndarray):
+                    to[model].voxels[var].fill(tables[var][when])
+                elif isinstance(getattr(to[model], var), dict):
+                    setattr(to[model], var, {1: tables[var][when]})
+                else:
+                    raise TypeError("Unknown data structure to apply input data to")

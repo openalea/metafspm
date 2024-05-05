@@ -1,11 +1,20 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <module type="PYTHON_MODULE" version="4">
   <component name="NewModuleRootManager">
+    <content url="file://$MODULE_DIR$/../data_utility/analyze">
+      <sourceFolder url="file://$MODULE_DIR$/../data_utility/analyze" isTestSource="false" />
+    </content>
+    <content url="file://$MODULE_DIR$/../data_utility/initialize">
+      <sourceFolder url="file://$MODULE_DIR$/../data_utility/initialize" isTestSource="false" />
+    </content>
+    <content url="file://$MODULE_DIR$/../data_utility/log">
+      <sourceFolder url="file://$MODULE_DIR$/../data_utility/log" isTestSource="false" />
+    </content>
     <content url="file://$MODULE_DIR$" />
     <content url="file://$MODULE_DIR$/../rhizodep/src">
       <sourceFolder url="file://$MODULE_DIR$/../rhizodep/src" isTestSource="false" />
     </content>
-    <orderEntry type="inheritedJdk" />
+    <orderEntry type="jdk" jdkName="wheat-bridges" jdkType="Python SDK" />
     <orderEntry type="sourceFolder" forTests="false" />
   </component>
 </module>
