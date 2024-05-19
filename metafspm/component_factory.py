@@ -75,14 +75,14 @@ class Choregrapher(Singleton):
         ]
 
     def add_time_and_data(self, instance, sub_time_step: int, data: dict, compartment: str = "root"):
-        module_name = instance.__module__.split(".")[-1]
-        self.sub_time_step[module_name] = sub_time_step
+        module_family = instance.family
+        self.sub_time_step[module_family] = sub_time_step
         if self.data_structure[compartment] == None:
             self.data_structure[compartment] = data
         data_structure_type = str(type(list(self.data_structure[compartment].values())[0]))
-        for k in self.scheduled_groups[module_name].keys():
-            for f in range(len(self.scheduled_groups[module_name][k])):
-                self.scheduled_groups[module_name][k][f] = partial(self.scheduled_groups[module_name][k][f], *(instance, self.data_structure[compartment], data_structure_type))
+        for k in self.scheduled_groups[module_family].keys():
+            for f in range(len(self.scheduled_groups[module_family][k])):
+                self.scheduled_groups[module_family][k][f] = partial(self.scheduled_groups[module_family][k][f], *(instance, self.data_structure[compartment], data_structure_type))
 
     def add_simulation_time_step(self, simulation_time_step: int):
         """
@@ -114,28 +114,28 @@ class Choregrapher(Singleton):
         self.consensus_scheduling = schedule
 
     def add_process(self, f, name):
-        module_name = f.fun.__module__.split(".")[-1]
+        module_family = f.fun.__globals__["family"]
         exists = False
-        if module_name not in getattr(self, name).keys():
-            getattr(self, name)[module_name] = []
+        if module_family not in getattr(self, name).keys():
+            getattr(self, name)[module_family] = []
         else:
-            for k in range(len(getattr(self, name)[module_name])):
-                f_name = getattr(self, name)[module_name][k].name
+            for k in range(len(getattr(self, name)[module_family])):
+                f_name = getattr(self, name)[module_family][k].name
                 if f_name == f.name:
-                    getattr(self, name)[module_name][k] = f
+                    getattr(self, name)[module_family][k] = f
                     exists = True
         if not exists:
-            getattr(self, name)[module_name].append(f)
-        self.build_schedule(module_name=module_name)
+            getattr(self, name)[module_family].append(f)
+        self.build_schedule(module_family=module_family)
 
-    def build_schedule(self, module_name):
-        self.scheduled_groups[module_name] = {}
+    def build_schedule(self, module_family):
+        self.scheduled_groups[module_family] = {}
         # As functors can belong two multiple categories, we store unique names to avoid duplicated instances
         unique_functors = {}
         for attribute in dir(self):
             if not callable(getattr(self, attribute)) and "_" not in attribute:
-                if module_name in getattr(self, attribute).keys():
-                    for functor in getattr(self, attribute)[module_name]:
+                if module_family in getattr(self, attribute).keys():
+                    for functor in getattr(self, attribute)[module_family]:
                         if functor.name not in unique_functors.keys():
                             unique_functors[functor.name] = functor
         # Then, We go through these unique functors
@@ -146,26 +146,26 @@ class Choregrapher(Singleton):
                 # We attribute a number in the functor's tuple to provided decorator.
                 for process_type in range(len(self.consensus_scheduling[schedule])):
                     considered_step = getattr(self, self.consensus_scheduling[schedule][process_type])
-                    if module_name in considered_step.keys():
-                        if name in [f.name for f in considered_step[module_name]]:
+                    if module_family in considered_step.keys():
+                        if name in [f.name for f in considered_step[module_family]]:
                             priority[schedule] = process_type + 1
                             
             # We append the priority tuple to she scheduled groups dictionnary
-            if str(priority) not in self.scheduled_groups[module_name].keys():
-                self.scheduled_groups[module_name][str(priority)] = []
-            self.scheduled_groups[module_name][str(priority)].append(functor)
+            if str(priority) not in self.scheduled_groups[module_family].keys():
+                self.scheduled_groups[module_family][str(priority)] = []
+            self.scheduled_groups[module_family][str(priority)].append(functor)
 
         # Finally, we sort the dictionnary by key so that the call function can go through functor groups in the expected order
-        self.scheduled_groups[module_name] = {k: self.scheduled_groups[module_name][k] for k in sorted(self.scheduled_groups[module_name].keys())}
+        self.scheduled_groups[module_family] = {k: self.scheduled_groups[module_family][k] for k in sorted(self.scheduled_groups[module_family].keys())}
 
-    def __call__(self, module_name):
+    def __call__(self, module_family):
         self.data_structure["root"]["focus_elements"] = [vid for vid in self.data_structure["root"]["struct_mass"].keys() if (
             self.data_structure["root"]["label"][vid] in self.filter["label"] 
             and self.data_structure["root"]["type"][vid] in self.filter["type"])]
 
-        for increment in range(int(self.simulation_time_step/self.sub_time_step[module_name])):
-            for step in self.scheduled_groups[module_name].keys():
-                for functor in self.scheduled_groups[module_name][step]:
+        for increment in range(int(self.simulation_time_step/self.sub_time_step[module_family])):
+            for step in self.scheduled_groups[module_family].keys():
+                for functor in self.scheduled_groups[module_family][step]:
                     functor()
 
 

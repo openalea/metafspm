@@ -46,7 +46,7 @@ class Model:
     available_inputs = []  # Will be incremented during the coupling
 
     def __call__(self, *args):
-        self.choregrapher(module_name=self.__module__.split(".")[-1], *args)
+        self.choregrapher(module_family=self.family, *args)
 
     @property
     def inputs(self):
