@@ -83,11 +83,12 @@ class Model:
                 setattr(self, changed_parameter, value)
 
     def link_self_to_mtg(self):
-        # for input variables
+        # for input variables, initialize homogeneous values on each vertices. 
+        # This behavior will be overwritten in case of module providing the input variable
         for name in self.inputs:
-            if name in self.props.keys():
+            if name in self.props.keys() and len(self.props[name]) == len(self.vertices):
                 setattr(self, name, self.props[name])
-            # if it is not provided by mtg file, override by default
+            # if it is not provided by mtg file, Use by default value everywhere
             else:
                 self.props.setdefault(name, {})
                 self.props[name].update({key: getattr(self, name) for key in self.vertices})
