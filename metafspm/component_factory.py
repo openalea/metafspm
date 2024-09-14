@@ -159,6 +159,12 @@ class Choregrapher(Singleton):
         self.scheduled_groups[module_family] = {k: self.scheduled_groups[module_family][k] for k in sorted(self.scheduled_groups[module_family].keys())}
 
     def __call__(self, module_family):
+        
+        if "focus_elements" not in self.data_structure["root"].keys():
+            self.data_structure["root"]["focus_elements"] = [vid for vid in self.data_structure["root"]["struct_mass"].keys() if (
+                self.data_structure["root"]["label"][vid] in self.filter["label"] 
+                and self.data_structure["root"]["type"][vid] in self.filter["type"])]
+
         for increment in range(int(self.simulation_time_step/self.sub_time_step[module_family])):
             for step in self.scheduled_groups[module_family].keys():
                 for functor in self.scheduled_groups[module_family][step]:
@@ -168,6 +174,8 @@ class Choregrapher(Singleton):
             self.data_structure["root"]["focus_elements"] = [vid for vid in self.data_structure["root"]["struct_mass"].keys() if (
                 self.data_structure["root"]["label"][vid] in self.filter["label"] 
                 and self.data_structure["root"]["type"][vid] in self.filter["type"])]
+
+        
 
 
 # Decorators    

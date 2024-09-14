@@ -7,9 +7,7 @@
     <list default="true" id="5c4b9cb6-6ac1-4ed7-a546-9aa19cb09563" name="Changes" comment="">
       <change beforePath="$PROJECT_DIR$/../data_utility/analyze/analyze/analyze.py" beforeDir="false" afterPath="$PROJECT_DIR$/../data_utility/analyze/analyze/analyze.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/../data_utility/initialize/initialize/initialize.py" beforeDir="false" afterPath="$PROJECT_DIR$/../data_utility/initialize/initialize/initialize.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/.idea/generic_fspm.iml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/generic_fspm.iml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/metafspm/composite_wrapper.py" beforeDir="false" afterPath="$PROJECT_DIR$/metafspm/composite_wrapper.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/metafspm/component_factory.py" beforeDir="false" afterPath="$PROJECT_DIR$/metafspm/component_factory.py" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
