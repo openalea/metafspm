@@ -1,4 +1,4 @@
-# Generic_FSPM
+# MetaFSPM
 
 ## Purpose 
 
@@ -8,25 +8,30 @@ This package is intended to provide minimal tools to assist Functionnal Structur
 
 ## Installation
 
-- Intall the lastest version of conda : https://docs.conda.io/projects/miniconda/en/latest/miniconda-install.html 
+Prerequisites to installation :
+- miniconda (https://docs.anaconda.com/free/miniconda/miniconda-install/) 
+- git (https://git-scm.com/downloads)
 
-- Create an environment dedicated to your model
+In a terminal, optionally install mamba for faster installation
 ```
-conda create -n your_model_env python==3.10
-conda activate your_model_env
+conda install -y -c conda-forge mamba
 ```
-Then :
-### First option : install from the requirements.txt
-- Make sure you have git installed : https://git-scm.com/downloads
 
 - From terminal, clone this package and then , then run the command :
 ```
-git clone https://github.com/GeraultTr/genericmodel.git
+git clone https://github.com/GeraultTr/metafspm.git
 ```
 
-- Then, cd into the directory and install necessary packages with the following requirements files : 
+- Create an environment dedicated to your model
+```
+mamba create -n your_model_env python==3.10
+mamba activate your_model_env
 ```
 
+Then, create an environment for your model with the necessary requirements
+```
+mamba create -n root_bridges -c conda-forge -c openalea3 --strict-channel-priority --file requirements.txt
+mamba activate root_bridges
 ```
 
 - Finally, run the setup.py :
@@ -36,7 +41,7 @@ python -m setup develop
 
 ### Second option TODO : when package is released, just create in:
 ```
-conda install -c conda-forge genericfspm
+mamba install -c conda-forge -c openalea3 metafspm
 ```
 
 ## Example use
@@ -47,8 +52,8 @@ conda install -c conda-forge genericfspm
 
 - Then, you must import utilities :  
 ```
-from genericfspm.component import Model, declare
-from genericfspm.component_factory import *
+from metafspm.component import Model, declare
+from metafspm.component_factory import *
 ```
 
 - Make your model class inherit the imported "Model" class to benefit from the utilities of this package.
