@@ -106,22 +106,63 @@ All the fields of the declare function have to be filled, see declare() docstrin
 - Create a python file with the name of your wrapp (the published name of the model)
 - Import your model class and the composite_wrapper utility :
 ```
-from your_package.your_model import YourModel
+from your_package.your_model import YourModule1
+from your_package.your_model import YourModule2
+from your_package.your_model import YourModule3
+
 from composite_wrapper import CompositeModel
+from metafspm.component_factory import Choregrapher
 ```
 
-- Wrapp your model in the following format :
+- You can use the 3 components example bellow to wrapp your model. Here we suppose that module 1 is initializing the MTG, and supposing module 2 is initializing the soil:
 ```
 class WrappedModel(CompositeModel):
-    def__init__(self, g, **scenario):
-        self.your_model = self.load(YourModel, g, **scenario)
+    def__init__(self, time_step, **scenario):
+
+        # DECLARE GLOBAL SIMULATION TIME STEP
+        Choregrapher().add_simulation_time_step(time_step)
+        self.time = 0
+        self.input_tables = scenario["input_tables")
+
+        # INIT INDIVIDUAL MODULES
+        # Manage mtg source
+        if scenario["input_mtg"]:
+            self.g = scenario["input_mtg"]
+            self.component_1 = YourModule1(g, time_step, **scenario)
+        else:
+            self.component_1 = YourModule1(time_step, **scenario)
+            self.g = self.your_model.g
+
+        # Manage voxel soil source
+        if scenario["input_soil"]:
+            self.soil_voxels = scenario["input_soil"]
+            self.component_2 = YourModule2(self.soil_voxels, time_step, **scenario)
+        else:
+            self.component_2 = YourModule2(time_step, **scenario)
+            self.soil_voxels = self.soil.voxels
+
+        # Other component just need to be initialized normally
+        self.component_3 = YourComponent3(self.g, time_step, **scenario)
+
+        # LINKING MODULES
+        self.declare_and_couple_components(self.component_1, self.component_2, self.component_3,
+                                           translator_path=pythonfilename.__path__[0])
+        
+        self.declare_data_structures(root=self.g_root, shoot=self.g_shoot, soil=self.soil_voxels)
+
     def run(self):
-        self.your_model()
+        self.apply_input_table(tables=self.input_tables, to=self.models, when=self.time)
+        
+        self.component_1()
+        self.component_2()
+        self.component_3()
+
+        self.component_2.custom_method()
+
+        self.time += 1 
 ```
 
-Two commentaries here : 
-First, you need to use the load function here as your model execution depends on the Choregrapher class, which is a singleton. However you don't want this single Choregrapher instance to be shared among all instances of your model (imagine two independant plants).
-Second commentary is the use of self.your_model() : this refers to the __call__ method you inherited during model design from the "Model" class. This simply calls choregrapher execution.
+Commentary : the use of self.your_module() refers to the __call__ method you inherited during model design from the "Model" class. This simply calls choregrapher execution.
 
 - If you intend to couple several models after importing them, two steps have to be added :
 ```
@@ -130,7 +171,7 @@ from your_model_packages import FirstModel, SecondModel
 
 class WrappedModel(CompositeModel):
     def__init__(self, g, **scenario):
-        self.model_1 = self.load(FirstModel, g, **scenario)
+        self.model_1 = FirstModel(g,  **scenario)
         self.model_2 = self.load(SecondModel, g, **scenario)
         
         # Store the list of instances
