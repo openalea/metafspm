@@ -68,13 +68,14 @@ All the fields of the declare function have to be filled, see declare() docstrin
 - Then, build the __init__ method of you class. Provide the inputs that are not model parameters or value input. In our example it is the instantiated MTG object that can be imported from file or provided by a growth model if coupled.
 - The dictionnary of properties should be stored in the self.props attribute. If you use MTG, it means :
 ```
-    def __init__(self, g, **scenario):
+    def __init__(self, g, time_step, **scenario):
         self.g = g
         self.props = self.g.properties()
+        self.time_step = time_step
 ```
 - Then add data to your model inherited choregrapher with filters depending on which elements this model should focus (example exclude null mass or dead elements)
 ```
-        self.choregrapher.add_data(instance=self, data_name="props", filter={"property":["positive_filter"]})
+        self.choregrapher.add_time_and_data(instance=self, sub_time_step=self.time_step, data=self.props)
 ```
 - Before any other operation, we apply the provided scenario by changing default parameters and initialization
 ```
