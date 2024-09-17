@@ -46,6 +46,7 @@ mamba install -c conda-forge -c openalea3 metafspm
 
 - Then, you must import utilities :  
 ```
+from dataclasses import dataclass
 from metafspm.component import Model, declare
 from metafspm.component_factory import *
 ```
