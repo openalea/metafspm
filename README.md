@@ -114,7 +114,7 @@ from composite_wrapper import CompositeModel
 from metafspm.component_factory import Choregrapher
 ```
 
-- You can use the 3 components example bellow to wrapp your model. Here we suppose that module 1 is initializing the MTG, and supposing module 2 is initializing the soil:
+If you intend to to couple several components, you can use the 3 components example bellow to wrapp your model. Here we suppose that module 1 is initializing the MTG, and supposing module 2 is initializing the soil:
 ```
 class WrappedModel(CompositeModel):
     def__init__(self, time_step, **scenario):
@@ -164,32 +164,9 @@ class WrappedModel(CompositeModel):
 
 Commentary : the use of self.your_module() refers to the __call__ method you inherited during model design from the "Model" class. This simply calls choregrapher execution.
 
-- If you intend to couple several models after importing them, two steps have to be added :
-```
-import your_wrap_package
-from your_model_packages import FirstModel, SecondModel
-
-class WrappedModel(CompositeModel):
-    def__init__(self, g, **scenario):
-        self.model_1 = FirstModel(g,  **scenario)
-        self.model_2 = self.load(SecondModel, g, **scenario)
-        
-        # Store the list of instances
-        self.models = (self.model_1, self.model_2)
-
-        # LINKING MODULES
-        self.link_around_mtg(translator_path=your_wrap_package.__path__[0])
-
-        # Some initialization must be performed AFTER linking modules
-        [m.post_coupling_init() for m in self.models]
-
-    def run(self):
-        # Run the models sequence according to your scheduling hypotheses
-        self.model_1()
-        self.model_2()
-```     
+    
 2 comments : 
-- link_around_mtg(translator_path) searches for the "coupling_translator.yaml" configuration file that explicits which state variables from a source model can be considered as input for a receiver model. If it doesn't exist, you will be guided through a step-by-step guide to build this coupling transltor. It is based on which state variables are flaged as input and state_variable in the model file. Usually the coupling_translator.yaml file is already provided by the modeller.
+- declare_and_couple_components() searches for the "coupling_translator.yaml" configuration file that explicits which state variables from a source model can be considered as input for a receiver model. If it doesn't exist, you will be guided through a step-by-step guide to build this coupling transltor. It is based on which state variables are flaged as input and state_variable in the model file. Usually the coupling_translator.yaml file is already provided by the modeller.
 - post_coupling_init() is a method inherited from genericmodel.component.Model that creates a dynamic pointer to mtg properties in the model self instance. Thus each time a property is modified as self.hexose[vertex_id] = 0., it is also modified in mtg.properties(). Don't hesitate to superimpose this method if you need additionnal operations after models initialization and coupling.
 
 Note : If a growth model is included, you need to define a "post_growth_updating()" method in each model to be called after the growth so that the length of the properties managed by each non-growth model matches the actualized number of elements actualized by the growth model.
