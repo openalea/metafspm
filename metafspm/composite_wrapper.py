@@ -68,23 +68,26 @@ class CompositeModel:
 
     @property
     def documentation(self):
-        return self.get_documentation(filters={}, models=self.models)
+        return self.get_documentation(filters={}, models=self.components)
 
     @property
     def inputs(self):
-        return self.get_documentation(filters=dict(variable_type=["input"]), models=self.models)
+        return self.get_documentation(filters=dict(variable_type=["input"]), models=self.components)
 
-    def link_around_mtg(self, translator_path: str):
+    def declare_and_couple_components(self, *args, translator_path: str = ""):
         """
         Description : linker function that will enable properties sharing through MTG.
 
         Parameters :
         :param translator: list matrix containing translator dictionnaries for each model pair
+        :param components: inistances of components that should be coupled as indicated by the coupling_translator.yaml
 
         Note :  The whole property is transfered, so if only the collar value of a spatial property is needed,
         it will be accessed through the first vertice with the [1] indice. Not spatialized properties like xylem pressure or
         single point properties like collar flows are only stored in the indice [1] vertice.
         """
+
+        self.components = [component for component in args]
 
         try:
             with open(translator_path + "/coupling_translator.yaml", "r") as f:
@@ -95,9 +98,9 @@ class CompositeModel:
             with open(translator_path + "/coupling_translator.yaml", "w") as f:
                 yaml.dump(translator, f)
 
-        L = len(self.models)
-        for receiver in self.models:
-            for applier in self.models:
+        L = len(self.components)
+        for receiver in self.components:
+            for applier in self.components:
                 if id(receiver) != id(applier):
                     linker = translator[receiver.__class__.__name__][applier.__class__.__name__]
                     # If a model has been targeted on this position
@@ -123,20 +126,21 @@ class CompositeModel:
     def translator_matrix_builder(self):
         """
         Translator matrix builder utility, to be used if no translator dictionay is available on modules' directory
-        # TODO surely not working, debug with a working Root-CyNAPS wrapping
+
+        :param components: inistances of components that should be coupled as indicated by the coupling_translator.yaml
         """
-        L = len(self.models)
-        translator = {self.models[i].__class__.__name__:{self.models[k].__class__.__name__:{} for k in range(L)} for i in range(L)}
+        L = len(self.components)
+        translator = {self.components[i].__class__.__name__:{self.components[k].__class__.__name__:{} for k in range(L)} for i in range(L)}
         for receiver_model in range(L):
-            inputs = [f for f in fields(self.models[receiver_model]) if f.metadata["variable_type"] == "input"]
+            inputs = [f for f in fields(self.components[receiver_model]) if f.metadata["variable_type"] == "input"]
             needed_models = list(set([f.metadata["by"] for f in inputs]))
             needed_models.sort()
             for name in needed_models:
-                print([(model + 1, self.models[model].__class__.__name__) for model in range(len(self.models))])
-                which = int(input(f"[for {self.models[receiver_model].__class__.__name__}] Which is {name}? (0 for None): ")) - 1
+                print([(model + 1, self.components[model].__class__.__name__) for model in range(len(self.components))])
+                which = int(input(f"[for {self.components[receiver_model].__class__.__name__}] Which is {name}? (0 for None): ")) - 1
                 needed_inputs = [f.name for f in inputs if f.metadata["by"] == name]
                 if 0 <= which < L:
-                    available = self.get_documentation(filters=dict(variable_type=["state_variable", "plant_scale_state"]), models=[self.models[which]])
+                    available = self.get_documentation(filters=dict(variable_type=["state_variable", "plant_scale_state"]), models=[self.components[which]])
                     print(available)
                     for var in needed_inputs:
                         selected = input(f"For {var}, Nothing for same name / enter target names * conversion factor / Separate by ; -> ").split(";")
@@ -149,9 +153,20 @@ class CompositeModel:
                                 com_dict[var] = 1.
                             else:
                                 com_dict[expression.replace(" ", "")] = 1.
-                        translator[self.models[receiver_model].__class__.__name__][self.models[which].__class__.__name__][var] = com_dict
+                        translator[self.components[receiver_model].__class__.__name__][self.components[which].__class__.__name__][var] = com_dict
 
         return translator
+
+    def declare_data_structures(self, shoot=None, root=None, atmosphere=None, soil=None):
+        self.data_structures = {}
+        if shoot:
+            self.data_structures["shoot"] = shoot
+        if root:
+            self.data_structures["root"] = root
+        if atmosphere:
+            self.data_structures["atmosphere"] = atmosphere
+        if soil:
+            self.data_structures["soil"] = soil
 
     def apply_input_tables(self, tables: dict, to: tuple, when: float):
         if not hasattr(self, "models_data_required"):
