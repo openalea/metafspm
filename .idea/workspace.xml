@@ -8,7 +8,7 @@
       <change beforePath="$PROJECT_DIR$/../data_utility/analyze/analyze/analyze.py" beforeDir="false" afterPath="$PROJECT_DIR$/../data_utility/analyze/analyze/analyze.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/../data_utility/log/log/logging.py" beforeDir="false" afterPath="$PROJECT_DIR$/../data_utility/log/log/logging.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/metafspm/composite_wrapper.py" beforeDir="false" afterPath="$PROJECT_DIR$/metafspm/composite_wrapper.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/doc/user/template_documentation.rst" beforeDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -33,6 +33,11 @@
     &quot;last_opened_file_path&quot;: &quot;C:/Users/tigerault/package/metafspm&quot;
   }
 }</component>
+  <component name="RecentsManager">
+    <key name="CopyFile.RECENT_KEYS">
+      <recent name="C:\Users\tigerault\package\metafspm" />
+    </key>
+  </component>
   <component name="SharedIndexes">
     <attachedChunks>
       <set>
