@@ -182,7 +182,7 @@ Note : If a growth model is included, you need to define a "post_growth_updating
 
 
 
-For a more practical example, please see Root_CyNAPS package : https://github.com/GeraultTr/Root_CyNAPS
+For a more practical example, please see Root_CyNAPS package : [Root_CyNAPS](https://github.com/GeraultTr/Root_CyNAPS)
 
 ## Contributing
 
@@ -190,7 +190,7 @@ We are open to contributions on the develop branch of this package.
 
 ## Authors and acknowledgment
 
-Gerault T., Rees F., Farra S., Barillot R., Pradal C.
+Gerault T., Rees F., Barillot R., Pradal C.
 
 ## License
 This project is licensed under the CeCILL-C License - see file [LICENSE](LICENSE) for details

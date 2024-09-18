@@ -2,6 +2,7 @@ from dataclasses import dataclass
 from metafspm.component_factory import *
 from metafspm.component import Model, declare
 
+family = "metabolic"
 
 @dataclass
 class Carbon(Model):
