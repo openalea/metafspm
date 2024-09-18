@@ -1,3 +1,5 @@
+[![License](https://img.shields.io/badge/license-CeCILL--C-blue )](https://img.shields.io/badge/license-CeCILL--C-blue )
+
 # MetaFSPM
 
 ## Purpose 
@@ -191,4 +193,4 @@ We are open to contributions on the develop branch of this package.
 Gerault T., Rees F., Farra S., Barillot R., Pradal C.
 
 ## License
-
+This project is licensed under the CeCILL-C License - see file [LICENSE](LICENSE) for details
