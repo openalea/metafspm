@@ -74,7 +74,7 @@ class CompositeModel:
     def inputs(self):
         return self.get_documentation(filters=dict(variable_type=["input"]), models=self.components)
 
-    def declare_and_couple_components(self, *args, translator_path: str = ""):
+    def couple_components(self, *args, translator_path: str = ""):
         """
         Description : linker function that will enable properties sharing through MTG.
 
@@ -98,30 +98,40 @@ class CompositeModel:
             with open(translator_path + "/coupling_translator.yaml", "w") as f:
                 yaml.dump(translator, f)
 
-        L = len(self.components)
+        props = self.data_structures["root"].properties()
+
         for receiver in self.components:
+            receiver.pullable_inputs = {}
+
             for applier in self.components:
                 if id(receiver) != id(applier):
                     linker = translator[receiver.__class__.__name__][applier.__class__.__name__]
                     # If a model has been targeted on this position
                     if len(linker.keys()) > 0:
-                        applier_name = applier.__class__.__name__
-                        # First we create a link to applier class so that created properties refer to it properly
-                        setattr(receiver, applier_name, applier)
                         # We set properties with getter method only to retrieve the values dynamically from inputs
                         for name, source_variables in linker.items():
-                            formula = ""
-                            for source_name, unit_conversion in source_variables.items():                          
-                                if type(list(getattr(applier, source_name).values())[0]) != str:
-                                    formula += f"(self.{applier_name}.{source_name}[vid]*{unit_conversion})+"
+                            if len(source_variables.keys()) > 0:
+                                # Handling exception where operations are put in the coupling translator for unit conversion
+                                for source_name, unit_conversion in source_variables.items():
+                                    if isinstance(unit_conversion, str):
+                                        source_variables[source_name] = eval(unit_conversion)
+
+                                if len(source_variables.keys()) == 1:
+                                    for source_name, unit_conversion in source_variables.items():
+                                        # If there is only one variable to associate
+                                        if source_name == name:
+                                            # Do nothing the coupling should already be done during initialization
+                                            continue
+                                        else:
+                                            # If only the name is different, just create an alias in the dictionnary and then recreate the pointer of the receiver class to this alias.
+                                            if unit_conversion == 1.:
+                                                props[name]  = props[source_name]
+                                                setattr(receiver, name, props[name])
+                                            else:
+                                                receiver.pullable_inputs[name] = {source_name: unit_conversion}
+
                                 else:
-                                    formula += f"self.{applier_name}.{source_name}[vid] "
-                            # First get the dimensions of the dictionnaries that will be managed, !!! supposing every input has the same dimension
-                            iterator = f"self.{applier_name}.{list(source_variables.keys())[0]}.keys()"
-                            # Then we sum every targetted variable for every vertex, with same iteration as for keys
-                            setattr(receiver.__class__, name, property(eval(f"""lambda self: dict(zip({iterator}, [{formula[:-1]} for vid in {iterator}]))""")))
-                            
-                        #receiver.available_inputs += [dict(applier=applier, linker=linker)]
+                                    receiver.pullable_inputs[name] = source_variables
 
     def translator_matrix_builder(self):
         """
@@ -157,7 +167,7 @@ class CompositeModel:
 
         return translator
 
-    def declare_data_structures(self, shoot=None, root=None, atmosphere=None, soil=None):
+    def declare_data_and_couple_components(self, shoot=None, root=None, atmosphere=None, soil=None, translator_path: str = "", components: tuple = ()):
         self.data_structures = {}
         if shoot:
             self.data_structures["shoot"] = shoot
@@ -167,6 +177,9 @@ class CompositeModel:
             self.data_structures["atmosphere"] = atmosphere
         if soil:
             self.data_structures["soil"] = soil
+
+        self.couple_components(translator_path=translator_path, *components)
+
 
     def apply_input_tables(self, tables: dict, to: tuple, when: float):
         if not hasattr(self, "models_data_required"):
