@@ -118,9 +118,10 @@ class Model:
         # Pointer to avoid repeated lookups in self (Usefull?)
         props = self.props
         for input, source_variables in self.pullable_inputs.items():
+            vertices = props[list(source_variables.keys())[0]].keys()
             props[input].update({vid: sum([props[variable][vid]*unit_conversion 
                                            for variable, unit_conversion in source_variables.items()]) 
-                                 for vid in self.vertices})
+                                 for vid in vertices})
 
     # def post_coupling_init(self):
     #     self.get_available_inputs()
