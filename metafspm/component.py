@@ -43,9 +43,11 @@ class Model:
     """
 
     choregrapher = Choregrapher()
-    available_inputs = []  # Will be incremented during the coupling
+    #available_inputs = []  # Will be incremented during the coupling
+    # pullable_inputs = {}
 
     def __call__(self, *args):
+        self.pull_available_inputs()
         self.choregrapher(module_family=self.family, *args)
 
     @property
@@ -112,24 +114,16 @@ class Model:
             # link mtg dict to self dict
             setattr(self, name, self.props[name])
 
-    def get_available_inputs(self):
-        for inputs in self.available_inputs:
-            source_model = inputs["applier"]
-            linker = inputs["linker"]
-            for name, source_variables in linker.items():
-                # if variables have to be summed
-                if len(source_variables.keys()) > 1:
-                    setattr(self, name, dict(zip(getattr(source_model, "vertices"), [
-                        sum([getattr(source_model, source_name)[vid] * unit_conversion for source_name, unit_conversion
-                             in source_variables.items()]) for vid in getattr(source_model, "vertices")])))
-                else:
-                    shared_variable = list(source_variables.keys())[0]
-                    setattr(self, name, source_model.props[shared_variable])
-                    if name != list(source_variables.keys())[0] and name in self.props.keys():
-                        self.props.pop(name)
+    def pull_available_inputs(self):
+        # Pointer to avoid repeated lookups in self (Usefull?)
+        props = self.props
+        for input, source_variables in self.pullable_inputs.items():
+            props[input].update({vid: sum([props[variable][vid]*unit_conversion 
+                                           for variable, unit_conversion in source_variables.items()]) 
+                                 for vid in self.vertices})
 
-    def post_coupling_init(self):
-        self.get_available_inputs()
+    # def post_coupling_init(self):
+    #     self.get_available_inputs()
 
     def temperature_modification(self, soil_temperature=15, process_at_T_ref=1., T_ref=0., A=-0.05, B=3., C=1.):
         """
