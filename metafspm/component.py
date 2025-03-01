@@ -1,11 +1,14 @@
 from dataclasses import dataclass, field, fields
+from typing import Literal
 
 from metafspm.component_factory import *
 
 
 
 def declare(default, unit: str, unit_comment: str, description: str,  min_value: float, max_value: float, value_comment: str, references: str, DOI: list,
-              variable_type: str, by: str, state_variable_type: str, edit_by: str):
+              variable_type: Literal["state_variable", "plant_scale_state", "input", "parameter"], by: str,
+              state_variable_type: Literal["massic_concentration", "self_rate_state", "intensive", "extensive"], 
+              edit_by: Literal["user", "dev"]):
     """
     Resulting from a consensus, this function is used to constrain component variables declaration in a dataclass in a commonly admitted way.
 
@@ -61,6 +64,10 @@ class Model:
     @property
     def extensive_variables(self):
         return [f.name for f in fields(self) if (f.metadata["variable_type"] == "state_variable" and f.metadata["state_variable_type"] == "extensive")]
+    
+    @property
+    def massic_concentration(self):
+        return [f.name for f in fields(self) if (f.metadata["variable_type"] == "state_variable" and f.metadata["state_variable_type"] == "massic_concentration")]
     
     @property
     def intensive_variables(self):
