@@ -1,5 +1,6 @@
 import inspect as ins
 from functools import partial
+import sys
 
 
 # General process resolution method
@@ -7,6 +8,7 @@ class Functor:
     def __init__(self, fun, iteraring: bool = False, total: bool = False):
         self.fun = fun
         self.name = self.fun.__name__[1:]
+        self.class_name = self.fun.__qualname__.split('.')[0]
         self.iterating = iteraring
         self.total = total
         self.input_names = self.inputs(self.fun)
@@ -26,6 +28,8 @@ class Functor:
                 data[self.name].update(
                     {1: self.fun(instance, *(getattr(instance, arg) for arg in self.input_names))})
             else:
+                # print(self.name, self.input_names)
+                # print([getattr(instance, arg) for arg in self.input_names])
                 data[self.name].update(
                     {vid: self.fun(instance, *(getattr(instance, arg)[vid] for arg in self.input_names)) for vid in data["focus_elements"]})
         elif data_type == "<class 'numpy.ndarray'>":
@@ -75,7 +79,8 @@ class Choregrapher(Singleton):
         ]
 
     def add_time_and_data(self, instance, sub_time_step: int, data: dict, compartment: str = "root"):
-        module_family = instance.family
+        # module_family = instance.family
+        module_family = instance.__class__.__name__
         self.sub_time_step[module_family] = sub_time_step
         if self.data_structure[compartment] == None:
             self.data_structure[compartment] = data
@@ -114,7 +119,16 @@ class Choregrapher(Singleton):
         self.consensus_scheduling = schedule
 
     def add_process(self, f, name):
-        module_family = f.fun.__globals__["family"]
+        module_family = f.class_name
+
+        class_globals = f.fun.__globals__
+        if "inheriting" in class_globals:
+            parent_names = [cls.__name__ for cls in class_globals["inheriting"] if cls.__name__ not in ("object", "Model")]
+            print("")
+            print("Now you have to use these names to merge the module families under one step, didn't have time to do it yet")
+            print(parent_names)
+            print("")
+
         exists = False
         if module_family not in getattr(self, name).keys():
             getattr(self, name)[module_family] = []
@@ -170,7 +184,7 @@ class Choregrapher(Singleton):
                 for functor in self.scheduled_groups[module_family][step]:
                     functor()
 
-        if module_family == "growth":
+        if module_family.lower().startswith("rootgrowth"):
             self.data_structure["root"]["focus_elements"] = [vid for vid in self.data_structure["root"]["struct_mass"].keys() if (
                 self.data_structure["root"]["label"][vid] in self.filter["label"] 
                 and self.data_structure["root"]["type"][vid] in self.filter["type"])]
