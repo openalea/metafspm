@@ -5,10 +5,10 @@ from metafspm.component_factory import *
 
 
 
-def declare(default, unit: str, unit_comment: str, description: str,  min_value: float, max_value: float, value_comment: str, references: str, DOI: list,
+def declare(unit: str, unit_comment: str, description: str,  min_value: float, max_value: float, value_comment: str, references: str, DOI: list,
               variable_type: Literal["state_variable", "plant_scale_state", "input", "parameter"], by: str,
-              state_variable_type: Literal["massic_concentration", "self_rate_state", "intensive", "extensive"], 
-              edit_by: Literal["user", "dev"]):
+              state_variable_type: Literal["massic_concentration", "intensive", "extensive", "NonInertialExtensive", "NonInertialIntensive", "descriptor"], 
+              edit_by: Literal["user", "dev"], default=None, default_factory=None):
     """
     Resulting from a consensus, this function is used to constrain component variables declaration in a dataclass in a commonly admitted way.
 
@@ -29,11 +29,20 @@ def declare(default, unit: str, unit_comment: str, description: str,  min_value:
     :raise BadStateTypeError: If 'state_variable_type not in ("intensive", "extensive")'
     :raise BadEditError: If 'edit_by not in ("user", "developer")'
     """
-    return field(default=default,
-                 metadata=dict(unit=unit, unit_comment=unit_comment, description=description, min_value=min_value,
-                               max_value=max_value, value_comment=value_comment, references=references, DOI=DOI,
-                               variable_type=variable_type, by=by,
-                               state_variable_type=state_variable_type, edit_by=edit_by))
+    if default_factory:
+        return field(default_factory=default_factory,
+                        metadata=dict(unit=unit, unit_comment=unit_comment, description=description, min_value=min_value,
+                                    max_value=max_value, value_comment=value_comment, references=references, DOI=DOI,
+                                    variable_type=variable_type, by=by,
+                                    state_variable_type=state_variable_type, edit_by=edit_by))
+    else:
+        return field(default=default,
+                        metadata=dict(unit=unit, unit_comment=unit_comment, description=description, min_value=min_value,
+                                    max_value=max_value, value_comment=value_comment, references=references, DOI=DOI,
+                                    variable_type=variable_type, by=by,
+                                    state_variable_type=state_variable_type, edit_by=edit_by))
+
+
 
 
 @dataclass
@@ -51,7 +60,7 @@ class Model:
 
     def __call__(self, *args):
         self.pull_available_inputs()
-        self.choregrapher(module_family=self.family, *args)
+        self.choregrapher(module_family=self.__class__.__name__, *args)
 
     @property
     def inputs(self):
@@ -73,6 +82,18 @@ class Model:
     def intensive_variables(self):
         return [f.name for f in fields(self) if (f.metadata["variable_type"] == "state_variable" and f.metadata["state_variable_type"] == "intensive")]
     
+    @property
+    def non_inertial_extensive(self):
+        return [f.name for f in fields(self) if (f.metadata["variable_type"] == "state_variable" and f.metadata["state_variable_type"] == "NonInertialExtensive")]
+
+    @property
+    def non_inertial_intensive(self):
+        return [f.name for f in fields(self) if (f.metadata["variable_type"] == "state_variable" and f.metadata["state_variable_type"] == "NonInertialIntensive")]
+    
+    @property
+    def descriptor(self):
+        return [f.name for f in fields(self) if (f.metadata["variable_type"] == "state_variable" and f.metadata["state_variable_type"] == "descriptor")]
+
     @property
     def plant_scale_state(self):
         return [f.name for f in fields(self) if f.metadata["variable_type"] == "plant_scale_state"]
@@ -108,7 +129,7 @@ class Model:
             if name not in self.props.keys():
                 self.props.setdefault(name, {})
                 # set default in mtg
-            self.props[name].update({key: getattr(self, name) for key in self.vertices})
+                self.props[name].update({key: getattr(self, name) for key in self.vertices})
             # link mtg dict to self dict
             setattr(self, name, self.props[name])
 
@@ -117,7 +138,7 @@ class Model:
             if name not in self.props.keys():
                 self.props.setdefault(name, {})
                 # set default in mtg
-            self.props[name].update({1: getattr(self, name)})
+                self.props[name].update({1: getattr(self, name)})
             # link mtg dict to self dict
             setattr(self, name, self.props[name])
 
