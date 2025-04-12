@@ -4,6 +4,11 @@ import multiprocessing as mp
 from multiprocessing.managers import BaseManager
 import time
 import numpy as np
+from typing import Literal
+
+# Utility packages
+from metafspm.component_factory import Choregrapher
+from log.logging import Logger
 
 
 # Define a manager that will manage instances of model classes
@@ -11,137 +16,180 @@ class MyManager(BaseManager):
     pass
 
 ### metafspm zone
-
-class SceneWrapper:
-
-    planting_pattern = dict(
-        pattern_name="rows",
-        inter_rows=0.1,
-        density=20,
-        pattern_model_alternance=1,
-        sowing_depth=[-2.5]
-    )
-
-    def __init__(self, scene_name, planting_pattern,
+def play_Orchestra(scene_name, output_folder,
                  plant_models: list, plant_scenarios: list,
                  soil_model=None, soil_scenario: dict = {"parameters": {}, "input_tables": {}},
                  light_model = None, light_scenario: dict = {},
-                 dt=3600, dx=0.3, dy=0.3, dz=1,
-                 voxel_widht=0.01, voxel_height=0.01,
-                 ):
+                 n_iterations = 2500, time_step=3600, xrange=0.3, yrange=0.3, max_depth=1.3,
+                 voxel_widht=0.01, voxel_height=0.01):
+    """
+    Orchestrator function launching in parallel plant models and then environment models
+    ---
+    TODO : Check how this implementation would behave when needing to "pull_available_inputs" from models in other processes. As I think it rely on pulling from the data structures and not the classes anymore, should be fine except minor adaptations.
+    TODO : Scene orientation regarding an angle relative to North
+    TODO : Check the synchronicity using barriers to check the basic Idea behind this
+    TODO : Model have to be addapted to change the coordinates and orientation at initialization and thus ensure that the plant model position car be edited (that it doesn't rely on soil and that when soil queries for neighbor computation, everything is straightforward)
+    TODO : See which adaptations are needed for the soil to work on the shared dictionnary holding MTGs, simple iteration is enough but need to be done, and would still work for only one model.
 
-        self.dx = dx
-        self.dy = dy
-        self.dz = dz
-        self.time_step = dt
+    TODO : Later, Also adapt Caribu
+    
+    """
 
-        manager = mp.Manager()
+    # Compute the placement of individual plants in the scene and for each position get the information on how to initialize the plant model at that location
+    xrange, yrange, planting_sequence = planting_initialization(xrange=xrange, yrange=yrange, sowing_density=20, 
+                                                                sowing_depth=-0.025, row_spacing=0.1, plant_models=plant_models,
+                                                                plant_scenarios=plant_scenarios, plant_model_frequency=[1.])
 
-        for plant_model in plant_models:
-            MyManager.register(plant_model.__name__, plant_model)
+    n_environments = 0
+    if soil_model is not None:
+        n_environments += 1
+    if light_model is not None:
+        n_environments += 1
 
-        planting_sequence = self.planting_initialization(pattern=planting_pattern, plant_models=plant_models, plant_scenarios=plant_scenarios)
-        self.plant_ids = [plant["plant_ID"] for plant in planting_sequence]
+    # Barriers ensure synchronization. The barrier count includes the main process.
+    start_plants_barrier = mp.Barrier(len(planting_sequence) + 1)
+    finish_plants_barrier = mp.Barrier(len(planting_sequence) + 1)
 
-        # to define from inputs, and then pass on to the models, including soil
-        shared_soil = manager.dict()
-        shared_atmosphere = ()
+    start_environments_barrier = mp.Barrier(n_environments + 1)
+    finish_environments_barrier = mp.Barrier(n_environments + 1)
 
-        soil_scenario["input_soil"] = shared_soil
-        light_scenario["input_atmosphere"] = shared_atmosphere
+    manager = mp.Manager()
+    shared_mtgs = manager.dict()
+    shared_soil = manager.dict()
 
-        # Integrate in scenarios the presence of the environmental models
-        for k in range(len(plant_scenarios)):
-            plant_scenarios[k]["input_soil"] = shared_soil
-            plant_scenarios[k]["input_atmosphese"] = shared_atmosphere
+    processes = []
+    for plant_id, init_info in range(planting_sequence.items()):
+        p = mp.Process(
+                target=plant_worker,
+                kwargs=dict(shared_mtgs=shared_mtgs, shared_soil=shared_soil,
+                            plant_model=init_info["model"], plant_id=plant_id, output_dirpath=os.path.join(output_folder, scene_name, plant_id),
+                            start_barrier=start_plants_barrier, finish_barrier=finish_plants_barrier, n_iterations=n_iterations,
+                            time_step=time_step, coordinates=init_info["coordinates"], rotation=init_info["rotation"], scenario=init_info["scenario"], log_settings=Logger.light_log) )
+        
+        processes.append(p)
+        p.start()
 
-        # Initialize model instances
-        processes = []
-        soil_model = None
-        if soil_model:
-            # Soil model
-            p = mp.Process(target=self.initialize_model, args=(self.environment_instances_dict, soil_model.__module__, soil_model.__name__, "Soil", soil_scenario))
-            p.start()
-            processes.append(p)
-            print("instances", self.environment_instances_dict)
+    if soil_model is not None:
+        p = mp.Process(
+                target=soil_worker,
+                kwargs=dict(shared_mtgs=shared_mtgs, shared_soil=shared_soil,
+                            soil_model=soil_model, output_dirpath=os.path.join(output_folder, scene_name, 'Soil'),
+                            start_barrier=start_environments_barrier, finish_barrier=finish_environments_barrier, n_iterations=n_iterations,
+                            time_step=time_step, scenario=plant_scenarios[0], log_settings=Logger.light_log) )
+        
+        processes.append(p)
+        p.start()
+    
 
-        if light_model:
-            print(True)
-            # Light model
-            p = mp.Process(target=self.initialize_model, args=(self.environment_instances_dict, light_model, "Light", light_scenario))
-            p.start()
-            processes.append(p)
+    # Main process loop synchronizes each iteration:
+    for _ in range(n_iterations):
+        # FIRST RUN ENVIRONMENT MODELS (sometimes may not be used)
+        if n_environments > 0:
+            # Signal workers to start the iteration.
+            start_environments_barrier.wait()
+            # Wait until all workers signal they have finished the iteration.
+            finish_environments_barrier.wait()
 
-        self.managers = {}
-        self.plant_proxies = {}
-        # Plant models
-        for plant in planting_sequence:
-            print(f"Initializing {plant['plant_ID']}")
-            manager, instance_proxy = self.create_manager_instance(plant["model"], *(plant["plant_ID"], self.time_step, plant["coordinates"]), **plant["scenario"])
-            self.managers[plant["plant_ID"]] = manager
-            self.plant_proxies[plant["plant_ID"]] = instance_proxy
+        # THEN RUN PLANT MODELS (there will always be)
+        # Signal workers to start the iteration.
+        start_plants_barrier.wait()
+        # Wait until all workers signal they have finished the iteration.
+        finish_plants_barrier.wait()
 
-        # AFTER INITIALIZATION, HOW TO USE A SCENE TRANSLATOR?
-        # If each of the models perform the get / apply to the env, how to tell them which variable to target?
-        # Get everybody's input output and couple it by defining lambda to each, but getting in the shared data structure and not .
+    # Wait for all processes to exit.
+    for p in processes:
+        p.join()
 
-    def create_manager_instance(self, myclass, *args, **kwargs):
-        """Function to create a separate manager process for each class instance"""
-        manager = MyManager()
-        manager.start()  # Starts a new manager process
-        proxy_instance = getattr(manager, myclass.__name__)(*args, **kwargs)  # Instantiate singleton MyClass in the manager process
-        return manager, proxy_instance
+    # Ensure proper closing of manager after loggers have all exited
+    manager.shutdown()
 
-    def planting_initialization(self, pattern, plant_models, plant_scenarios):
-        unique_plant_ID = 0
-        planting_sequence = []
-        row_number = int(self.dx / pattern["inter_rows"])
-        number_per_row = max(int(self.dy * pattern["density"] / row_number), 1)
-        print(row_number, number_per_row, row_number * number_per_row)
-        intra_row_distance = self.dy / number_per_row
-        current_model_index = -1
-        for x in range(row_number):
-            alternance = x % pattern["pattern_model_alternance"]
-            if alternance == 0:
-                current_model_index = (current_model_index + 1) % len(plant_models)
-            for y in range(number_per_row):
-                planting_sequence += [dict(model=plant_models[current_model_index],
-                                           scenario=plant_scenarios[current_model_index],
-                                            plant_ID=f"{plant_models[current_model_index].__name__}_{unique_plant_ID}",
-                                            coordinates=[x*pattern["inter_rows"],
-                                                        y*intra_row_distance,
-                                                        -pattern["sowing_depth"][current_model_index]])]
-                unique_plant_ID += 1
 
-        return planting_sequence
+def planting_initialization(xrange, yrange, sowing_density, sowing_depth, row_spacing,
+                            plant_models, plant_scenarios, plant_model_frequency, row_alternance=None):
+    # TODO : In the current state, field orientation relative to south cannot be chosen
+    plant_rotation = np.random.random() * 360
+    unique_plant_ID = 0
+    
+    n_rows = int(xrange / row_spacing)
+    actual_xrange = n_rows * row_spacing # Reccomputed to make sure the scene size is adapted to symetry
+    number_per_row = max(int(yrange * xrange * sowing_density / n_rows), 1)
+    intra_row_distance = yrange / number_per_row
 
-    def run_model(self, plant_id, queue):
-        """Retrieve the proxy instance based on plant ID and run the model."""
-        model_proxy = self.plant_proxies.get(plant_id)
-        if model_proxy:
-            model_proxy.run()  # Call the run method on the proxy
-            queue.put(f"{plant_id} completed")
+    print("Launching scene with", n_rows, number_per_row, n_rows * number_per_row)
+    
+    current_model_index = -1
+    planting_sequence = {}
+    for x in range(n_rows):
+        row_random_shear = np.random.random() * intra_row_distance
+        for y in range(number_per_row):
+            model_picker = np.random.random()
 
-    def play(self, max_processes=mp.cpu_count()):
+            low_bound = 0
+            for i, frequency in enumerate(plant_model_frequency):
+                if low_bound < model_picker and model_picker <= frequency:
+                    current_model_index = i
+                low_bound += frequency
+            
+            plant_ID=f"{plant_models[current_model_index].__name__}_{unique_plant_ID}",
+            planting_sequence[plant_ID] = dict( model=plant_models[current_model_index],
+                                                scenario=plant_scenarios[current_model_index],
+                                                coordinates=[(row_spacing / 2) + x * row_spacing,
+                                                            row_random_shear + y * intra_row_distance,
+                                                            - sowing_depth[current_model_index]],
+                                                rotation=np.random.random() * 360)
+            unique_plant_ID += 1
 
-        processes = []
+    return actual_xrange, yrange, planting_sequence
 
-        for plant_id, plant in self.plant_proxies.items():
+def plant_worker(shared_mtgs, shared_soil, 
+                 plant_model, plant_id, outputs_dirpath,
+                 start_barrier, finish_barrier, n_iterations, 
+                 time_step, scenario, log_settings):
+    
+    # Each process creates its local instance (which includes the unique property).
+    instance = plant_model(shared_mtgs, shared_soil, plant_id, 
+                           time_step, **scenario)
+    
+    logger = Logger(model_instance=instance, components=instance.components,
+                    outputs_dirpath=outputs_dirpath, 
+                    time_step_in_hours=1, logging_period_in_hours=24,
+                    recording_shoot=False,
+                    echo=True, **log_settings)
 
-            while len(processes) == max_processes:
-                for proc in processes:
-                    if not proc.is_alive():
-                        processes.remove(proc)
-                time.sleep(0.1)
+    for _ in range(n_iterations):
+        # Wait until the main process allows starting the iteration.
+        start_barrier.wait()
+        # Run plant time step
+        logger()
+        instance.run()
+        # Signal that this iteration is finished.
+        finish_barrier.wait()
 
-            p = mp.Process(target=plant.run)
-            p.start()
-            print(f"Computing plant {plant_id}")
-            processes.append(p)
+    logger.stop()
 
-        for p in processes:
-            p.join()
 
-    def close(self):
-        for manager in self.managers.values():
-            manager.shutdown()
+def soil_worker(shared_mtgs, shared_soil, 
+                 soil_model, outputs_dirpath,
+                 start_barrier, finish_barrier, n_iterations, 
+                 time_step, scenario, log_settings):
+    
+    # Each process creates its local instance (which includes the unique property).
+    instance = soil_model(shared_mtgs, shared_soil, 
+                           time_step, **scenario)
+    
+    logger = Logger(model_instance=instance, components=instance.components,
+                    outputs_dirpath=outputs_dirpath, 
+                    time_step_in_hours=1, logging_period_in_hours=24,
+                    recording_shoot=False,
+                    echo=True, **log_settings)
+
+    for _ in range(n_iterations):
+        # Wait until the main process allows starting the iteration.
+        start_barrier.wait()
+        # Run plant time step
+        logger()
+        instance.run()
+        # Signal that this iteration is finished.
+        finish_barrier.wait()
+
+    logger.stop()
