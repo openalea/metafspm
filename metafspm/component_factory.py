@@ -38,6 +38,8 @@ class Functor:
 # Executor singleton
 class Singleton(object):
     _instance = None
+    universal_steps = ["priorbalance", "selfbalance", "stepinit", "state", "totalstate", "rate", "totalrate", "deficit", 
+                       "axial", "potential", "allocation", "actual", "segmentation", "postsegmentation"]
 
     def __new__(class_, *args, **kwargs):
         if not isinstance(class_._instance, class_):
@@ -78,6 +80,7 @@ class Choregrapher(Singleton):
             ["potential", "deficit", "allocation", "actual", "segmentation", "postsegmentation"],  # growth models
         ]
 
+
     def add_time_and_data(self, instance, sub_time_step: int, data: dict, compartment: str = "root"):
         # module_family = instance.family
         module_family = instance.__class__.__name__
@@ -89,6 +92,7 @@ class Choregrapher(Singleton):
             for f in range(len(self.scheduled_groups[module_family][k])):
                 self.scheduled_groups[module_family][k][f] = partial(self.scheduled_groups[module_family][k][f], *(instance, self.data_structure[compartment], data_structure_type))
 
+
     def add_simulation_time_step(self, simulation_time_step: int):
         """
         Enables to add a global simulation time step to the Choregrapher for it to slice subtimesteps accordingly
@@ -96,6 +100,7 @@ class Choregrapher(Singleton):
         :return:
         """
         self.simulation_time_step = simulation_time_step
+
 
     def add_schedule(self, schedule):
         """
@@ -118,22 +123,35 @@ class Choregrapher(Singleton):
         """
         self.consensus_scheduling = schedule
 
+
     def add_process(self, f, name):
         module_family = f.class_name
 
         class_globals = f.fun.__globals__
         if "inheriting" in class_globals:
             parent_names = [cls.__name__ for cls in class_globals["inheriting"] if cls.__name__ not in ("object", "Model")]
-            print("")
-            print("Now you have to use these names to merge the module families under one step, didn't have time to do it yet")
-            print(parent_names)
-            print("")
+            # We check all step to transfer them to module familly instead of their base class
+            for step in self.universal_steps:
+                for parent in parent_names:
+                    if parent in getattr(self, step).keys():
+                        # In case this is the very first process
+                        if module_family not in getattr(self, step).keys():
+                            getattr(self, step)[module_family] = []
+
+                        # Gather all the processes from the parent
+                        # NOTE : normally the bellow code would replace same names by children's process, as expected by inheritance
+                        for process in getattr(self, step)[parent]:
+                             getattr(self, step)[module_family].append(process)
+                        # Remove parents from the registered modules
+                        del getattr(self, step)[parent]
 
         exists = False
         if module_family not in getattr(self, name).keys():
             getattr(self, name)[module_family] = []
         else:
             for k in range(len(getattr(self, name)[module_family])):
+                # If current function already has been flagged, it is replaced cause we suppose that execution order reflects inheritance from parent to children
+                # So override is the expected behavior
                 f_name = getattr(self, name)[module_family][k].name
                 if f_name == f.name:
                     getattr(self, name)[module_family][k] = f
@@ -141,6 +159,7 @@ class Choregrapher(Singleton):
         if not exists:
             getattr(self, name)[module_family].append(f)
         self.build_schedule(module_family=module_family)
+
 
     def build_schedule(self, module_family):
         self.scheduled_groups[module_family] = {}
@@ -171,6 +190,7 @@ class Choregrapher(Singleton):
 
         # Finally, we sort the dictionnary by key so that the call function can go through functor groups in the expected order
         self.scheduled_groups[module_family] = {k: self.scheduled_groups[module_family][k] for k in sorted(self.scheduled_groups[module_family].keys())}
+
 
     def __call__(self, module_family):
         
