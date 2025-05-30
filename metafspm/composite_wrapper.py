@@ -74,6 +74,18 @@ class CompositeModel:
     def inputs(self):
         return self.get_documentation(filters=dict(variable_type=["input"]), models=self.components)
 
+
+    def declare_data(self, shoot=None, root=None, atmosphere=None, soil=None):
+        self.data_structures = {}
+        if shoot:
+            self.data_structures["shoot"] = shoot
+        if root:
+            self.data_structures["root"] = root
+        if atmosphere:
+            self.data_structures["atmosphere"] = atmosphere
+        if soil:
+            self.data_structures["soil"] = soil
+
     def couple_components(self, *args, translator_path: str = ""):
         """
         Description : linker function that will enable properties sharing through MTG.
@@ -89,6 +101,14 @@ class CompositeModel:
 
         self.components = [component for component in args]
 
+        translator = self.open_or_create_translator(translator_path)
+
+        props = self.data_structures["root"].properties()
+
+        for receiver in self.components:
+            self.couple_current_with_components_list(receiver=receiver, components=[c.__class__.__name__ for c in self.components], translator=translator, common_props=props)
+            
+    def open_or_create_translator(self, translator_path):
         try:
             with open(translator_path + "/coupling_translator.yaml", "r") as f:
                 translator = yaml.safe_load(f)
@@ -97,15 +117,23 @@ class CompositeModel:
             translator = self.translator_matrix_builder()
             with open(translator_path + "/coupling_translator.yaml", "w") as f:
                 yaml.dump(translator, f)
+        
+        return translator
 
-        props = self.data_structures["root"].properties()
+    def couple_current_with_components_list(self, receiver, components, translator, common_props=None, subcategory=None):
 
-        for receiver in self.components:
+        if not hasattr(receiver, "pullable_inputs"):
             receiver.pullable_inputs = {}
 
-            for applier in self.components:
-                if id(receiver) != id(applier):
-                    linker = translator[receiver.__class__.__name__][applier.__class__.__name__]
+        if subcategory is not None and subcategory in receiver.pullable_inputs.keys():
+            pass
+        else:
+            if subcategory is not None:
+                receiver.pullable_inputs[subcategory] = {}
+
+            for applier in components:
+                if receiver.__class__.__name__ != applier:
+                    linker = translator[receiver.__class__.__name__][applier]
                     # If a model has been targeted on this position
                     if len(linker.keys()) > 0:
                         # We set properties with getter method only to retrieve the values dynamically from inputs
@@ -124,14 +152,22 @@ class CompositeModel:
                                             continue
                                         else:
                                             # If only the name is different, just create an alias in the dictionnary and then recreate the pointer of the receiver class to this alias.
-                                            if unit_conversion == 1.:
-                                                props[name]  = props[source_name]
-                                                setattr(receiver, name, props[name])
+                                            if unit_conversion == 1. and common_props is not None:
+                                                common_props[name]  = common_props[source_name]
+                                                setattr(receiver, name, common_props[name])
                                             else:
-                                                receiver.pullable_inputs[name] = {source_name: unit_conversion}
+                                                # NOTE TODO : We will probably need to switch only the the second option later
+                                                if subcategory is None:
+                                                    receiver.pullable_inputs[name] = {source_name: unit_conversion}
+                                                else:
+                                                    receiver.pullable_inputs[subcategory][name] = {source_name: unit_conversion}
 
                                 else:
-                                    receiver.pullable_inputs[name] = source_variables
+                                    if subcategory is None:
+                                        receiver.pullable_inputs[name] = source_variables
+                                    else:
+                                        receiver.pullable_inputs[subcategory][name] = {source_name: unit_conversion}
+
 
     def translator_matrix_builder(self):
         """
@@ -168,15 +204,7 @@ class CompositeModel:
         return translator
 
     def declare_data_and_couple_components(self, shoot=None, root=None, atmosphere=None, soil=None, translator_path: str = "", components: tuple = ()):
-        self.data_structures = {}
-        if shoot:
-            self.data_structures["shoot"] = shoot
-        if root:
-            self.data_structures["root"] = root
-        if atmosphere:
-            self.data_structures["atmosphere"] = atmosphere
-        if soil:
-            self.data_structures["soil"] = soil
+        self.declare_data(shoot=shoot, root=root, atmosphere=atmosphere, soil=soil)
 
         self.couple_components(translator_path=translator_path, *components)
 
