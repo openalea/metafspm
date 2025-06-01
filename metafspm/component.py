@@ -116,13 +116,10 @@ class Model:
         # for input variables, initialize homogeneous values on each vertices. 
         # This behavior will be overwritten in case of module providing the input variable
         for name in self.inputs:
-            if name in self.props.keys() and len(self.props[name]) == len(self.vertices):
-                setattr(self, name, self.props[name])
-            # if it is not provided by mtg file, Use by default value everywhere
-            else:
+            if not (name in self.props.keys() and len(self.props[name]) == len(self.vertices)): 
+                # if it is not provided by mtg file, Use by default value everywhere
                 self.props.setdefault(name, {})
                 self.props[name].update({key: getattr(self, name) for key in self.vertices})
-                setattr(self, name, self.props[name])
 
         # for segment scale state variables
         for name in self.state_variables:
@@ -130,8 +127,6 @@ class Model:
                 self.props.setdefault(name, {})
                 # set default in mtg
                 self.props[name].update({key: getattr(self, name) for key in self.vertices})
-            # link mtg dict to self dict
-            setattr(self, name, self.props[name])
 
         # for plant scale state variables
         for name in self.plant_scale_state:
@@ -139,8 +134,7 @@ class Model:
                 self.props.setdefault(name, {})
                 # set default in mtg
                 self.props[name].update({1: getattr(self, name)})
-            # link mtg dict to self dict
-            setattr(self, name, self.props[name])
+                
 
     def pull_available_inputs(self):
         # Pointer to avoid repeated lookups in self (Usefull?)

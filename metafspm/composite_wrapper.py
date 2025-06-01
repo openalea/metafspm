@@ -226,7 +226,7 @@ class CompositeModel:
                 if hasattr(to[model], "voxels"):
                     # supposed True : if isinstance(getattr(to[model].voxels, var), np.ndarray):
                     to[model].voxels[var].fill(tables[var][when])
-                elif isinstance(getattr(to[model], var), dict):
-                    setattr(to[model], var, {1: tables[var][when]})
+                elif hasattr(to[model], "props"):
+                    to[model].props[var].update({1: tables[var][when]})
                 else:
                     raise TypeError("Unknown data structure to apply input data to")
