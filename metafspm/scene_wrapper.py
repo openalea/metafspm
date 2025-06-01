@@ -72,8 +72,7 @@ def play_Orchestra(scene_name, output_folder,
         p.start()
 
     # We wait for plant initializations to complete before initializing soil from it (we need shared mtgs content)
-    import time
-    time.sleep(5)
+    finish_plants_barrier.wait()
 
     if soil_model is not None:
         p = mp.Process(
@@ -162,6 +161,9 @@ def plant_worker(shared_root_mtgs, shared_soil,
                     time_step_in_hours=1, logging_period_in_hours=24,
                     recording_shoot=True,
                     echo=False, **log_settings)
+    
+    # Signals that initialization is finished
+    finish_barrier.wait()
 
     for _ in range(n_iterations):
         # Wait until the main process allows starting the iteration.

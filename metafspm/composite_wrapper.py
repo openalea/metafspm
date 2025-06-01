@@ -103,10 +103,13 @@ class CompositeModel:
 
         translator = self.open_or_create_translator(translator_path)
 
+        soil_name = "SoilModel" # TODO : find a way to generalize this
+        self.soil_inputs, self.soil_outputs = self.get_component_inputs_outputs(translator=translator, components_names=[c.__class__.__name__ for c in self.components], target_name=soil_name, names_for_others=False)
+
         props = self.data_structures["root"].properties()
 
         for receiver in self.components:
-            self.couple_current_with_components_list(receiver=receiver, components=[c.__class__.__name__ for c in self.components], translator=translator, common_props=props)
+            self.couple_current_with_components_list(receiver=receiver, components=[c.__class__.__name__ for c in self.components] + [soil_name], translator=translator, common_props=props)
             
     def open_or_create_translator(self, translator_path):
         try:
@@ -153,8 +156,11 @@ class CompositeModel:
                                         else:
                                             # If only the name is different, just create an alias in the dictionnary and then recreate the pointer of the receiver class to this alias.
                                             if unit_conversion == 1. and common_props is not None:
+                                                # If not created yet, for example in case of secondary soil initialization, we set default and suppose it will be modified later
+                                                if source_name not in common_props.keys():
+                                                    common_props[source_name] = {}
+
                                                 common_props[name]  = common_props[source_name]
-                                                setattr(receiver, name, common_props[name])
                                             else:
                                                 # NOTE TODO : We will probably need to switch only the the second option later
                                                 if subcategory is None:
@@ -230,3 +236,35 @@ class CompositeModel:
                     to[model].props[var].update({1: tables[var][when]})
                 else:
                     raise TypeError("Unknown data structure to apply input data to")
+
+
+    def get_component_inputs_outputs(self, translator, components_names, target_name, names_for_others=True):
+        expected_inputs = []
+        expected_outputs = []
+
+        target_component = translator[target_name]
+
+        for component in components_names:
+            if component != target_name:
+                # Get outputs from all others
+                input_components = translator[component]
+                for provider, source_variables in input_components.items():
+                    # Among inputs if the target is found
+                    if provider == target_name:
+                        if names_for_others:
+                            expected_outputs += list(source_variables.keys())
+                        else:
+                            for _, translation in source_variables.items():
+                                expected_outputs += list(translation.keys())
+            
+                # Get inputs from all for target component
+                if names_for_others:
+                    for _, translation in target_component[component].items():
+                                expected_inputs += list(translation.keys())
+                else:
+                    expected_inputs += list(target_component[component].keys())
+
+        expected_inputs = list(set(expected_inputs))
+        expected_outputs = list(set(expected_outputs))
+
+        return expected_inputs, expected_outputs

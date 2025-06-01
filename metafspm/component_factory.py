@@ -30,7 +30,8 @@ class Functor:
             else:
                 # print(self.name, self.input_names)
                 # print([getattr(instance, arg) for arg in self.input_names])
-                # print(self.name, {arg: getattr(instance, arg) for arg in self.input_names})
+                # print(self.name, {arg: data[arg] for arg in self.input_names})
+                # print(self.name, [arg for arg in self.input_names if 254 not in data[arg].keys()])
                 data[self.name].update(
                     {vid: self.fun(instance, *(data[arg][vid] for arg in self.input_names)) for vid in data["focus_elements"]})
                 
