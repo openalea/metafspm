@@ -36,8 +36,8 @@ def play_Orchestra(scene_name, output_folder,
     """
 
     # Compute the placement of individual plants in the scene and for each position get the information on how to initialize the plant model at that location
-    xrange, yrange, planting_sequence = planting_initialization(xrange=xrange, yrange=yrange, sowing_density=250, 
-                                                                sowing_depth=[-0.025], row_spacing=0.15, plant_models=plant_models,
+    xrange, yrange, planting_sequence = stand_initialization(xrange=xrange, yrange=yrange, sowing_density=250, 
+                                                                sowing_depth=[0.025], row_spacing=0.15, plant_models=plant_models,
                                                                 plant_scenarios=plant_scenarios, plant_model_frequency=[1.])
 
     n_environments = 0
@@ -110,7 +110,7 @@ def play_Orchestra(scene_name, output_folder,
     # NOTE : For now, each model iteration will log its data in its own data folder (1 per plant + 1 for soil)
 
 
-def planting_initialization(xrange, yrange, sowing_density, sowing_depth, row_spacing,
+def stand_initialization(xrange, yrange, sowing_density, sowing_depth, row_spacing,
                             plant_models, plant_scenarios, plant_model_frequency, row_alternance=None):
     # TODO : In the current state, field orientation relative to south cannot be chosen
     plant_rotation = np.random.random() * 360
@@ -142,7 +142,7 @@ def planting_initialization(xrange, yrange, sowing_density, sowing_depth, row_sp
                                                 coordinates=[(row_spacing / 2) + x * row_spacing,
                                                             row_random_shear + y * intra_row_distance,
                                                             - sowing_depth[current_model_index]],
-                                                rotation=np.random.random() * 360)
+                                                rotation=np.random.uniform(0, 360))
             unique_plant_ID += 1
 
     return actual_xrange, yrange, planting_sequence
