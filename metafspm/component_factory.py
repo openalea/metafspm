@@ -26,12 +26,14 @@ class Functor:
         elif data_type == "<class 'dict'>":
             if self.total:
                 data[self.name].update(
-                    {1: self.fun(instance, *(getattr(instance, arg) for arg in self.input_names))})
+                    {1: self.fun(instance, *(data[arg] for arg in self.input_names))})
             else:
                 # print(self.name, self.input_names)
                 # print([getattr(instance, arg) for arg in self.input_names])
+                # print(self.name, {arg: getattr(instance, arg) for arg in self.input_names})
                 data[self.name].update(
-                    {vid: self.fun(instance, *(getattr(instance, arg)[vid] for arg in self.input_names)) for vid in data["focus_elements"]})
+                    {vid: self.fun(instance, *(data[arg][vid] for arg in self.input_names)) for vid in data["focus_elements"]})
+                
         elif data_type == "<class 'numpy.ndarray'>":
             data[self.name] = self.fun(instance, *(data[arg] for arg in self.input_names))
 
@@ -210,8 +212,6 @@ class Choregrapher(Singleton):
                 and self.data_structure["root"]["type"][vid] in self.filter["type"])]
 
         
-
-
 # Decorators    
 def priorbalance(func):
     def wrapper():

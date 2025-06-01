@@ -39,7 +39,6 @@ def play_Orchestra(scene_name, output_folder,
     xrange, yrange, planting_sequence = planting_initialization(xrange=xrange, yrange=yrange, sowing_density=250, 
                                                                 sowing_depth=[-0.025], row_spacing=0.15, plant_models=plant_models,
                                                                 plant_scenarios=plant_scenarios, plant_model_frequency=[1.])
-    
 
     n_environments = 0
     if soil_model is not None:
@@ -56,7 +55,7 @@ def play_Orchestra(scene_name, output_folder,
 
     # Creation of shared dictionnaries with manager to contain the data structures of each model
     manager = mp.Manager()
-    shared_mtgs = manager.dict()
+    shared_root_mtgs = manager.dict()
     shared_soil = manager.dict()
 
     # Then we start workers which namely take the barriers as input so that even when execution is parallel, the resolution loop is synchronized
@@ -64,7 +63,7 @@ def play_Orchestra(scene_name, output_folder,
     for plant_id, init_info in planting_sequence.items():
         p = mp.Process(
                 target=plant_worker,
-                kwargs=dict(shared_mtgs=shared_mtgs, shared_soil=shared_soil,
+                kwargs=dict(shared_root_mtgs=shared_root_mtgs, shared_soil=shared_soil,
                             plant_model=init_info["model"], plant_id=plant_id, output_dirpath=os.path.join(output_folder, scene_name, plant_id),
                             start_barrier=start_plants_barrier, finish_barrier=finish_plants_barrier, n_iterations=n_iterations,
                             time_step=time_step, coordinates=init_info["coordinates"], rotation=init_info["rotation"], scenario=init_info["scenario"], log_settings=Logger.light_log) )
@@ -79,7 +78,7 @@ def play_Orchestra(scene_name, output_folder,
     if soil_model is not None:
         p = mp.Process(
                 target=soil_worker,
-                kwargs=dict(shared_mtgs=shared_mtgs, shared_soil=shared_soil,
+                kwargs=dict(shared_root_mtgs=shared_root_mtgs, shared_soil=shared_soil,
                             soil_model=soil_model, output_dirpath=os.path.join(output_folder, scene_name, 'Soil'),
                             start_barrier=start_environments_barrier, finish_barrier=finish_environments_barrier, n_iterations=n_iterations,
                             time_step=time_step, scenario=plant_scenarios[0], log_settings=Logger.light_log) )
@@ -149,20 +148,20 @@ def planting_initialization(xrange, yrange, sowing_density, sowing_depth, row_sp
 
     return actual_xrange, yrange, planting_sequence
 
-def plant_worker(shared_mtgs, shared_soil, 
+def plant_worker(shared_root_mtgs, shared_soil, 
                  plant_model, plant_id, output_dirpath,
                  start_barrier, finish_barrier, n_iterations, 
                  time_step, coordinates, rotation, scenario, log_settings):
     
     # Each process creates its local instance (which includes the unique property).
-    instance = plant_model(mtg_dict=shared_mtgs, soil_dict=shared_soil, name=plant_id, 
+    instance = plant_model(shared_root_mtgs=shared_root_mtgs, soil_dict=shared_soil, name=plant_id, 
                            time_step=time_step, coordinates=coordinates, rotation=rotation, **scenario)
     
     logger = Logger(model_instance=instance, components=instance.components,
                     outputs_dirpath=output_dirpath, 
                     time_step_in_hours=1, logging_period_in_hours=24,
                     recording_shoot=True,
-                    echo=True, **log_settings)
+                    echo=False, **log_settings)
 
     for _ in range(n_iterations):
         # Wait until the main process allows starting the iteration.
@@ -176,13 +175,13 @@ def plant_worker(shared_mtgs, shared_soil,
     logger.stop()
 
 
-def soil_worker(shared_mtgs, shared_soil, 
+def soil_worker(shared_root_mtgs, shared_soil, 
                  soil_model, output_dirpath,
                  start_barrier, finish_barrier, n_iterations, 
                  time_step, scenario, log_settings):
     
     # Each process creates its local instance (which includes the unique property).
-    instance = soil_model(shared_mtgs, shared_soil, 
+    instance = soil_model(shared_root_mtgs, shared_soil, 
                            time_step, **scenario)
     
     logger = Logger(model_instance=instance, components=instance.components,
@@ -196,7 +195,7 @@ def soil_worker(shared_mtgs, shared_soil,
         start_barrier.wait()
         # Run plant time step
         logger()
-        instance.run()
+        instance.run(shared_root_mtgs=shared_root_mtgs)
         # Signal that this iteration is finished.
         finish_barrier.wait()
 
