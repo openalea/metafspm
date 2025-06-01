@@ -20,7 +20,7 @@ def play_Orchestra(scene_name, output_folder,
                  plant_models: list, plant_scenarios: list,
                  soil_model=None, soil_scenario: dict = {"parameters": {}, "input_tables": {}},
                  light_model = None, light_scenario: dict = {},
-                 n_iterations = 2500, time_step=3600, xrange=1, yrange=1, max_depth=1.3,
+                 n_iterations = 2500, time_step=3600, scene_xrange=1, scene_yrange=1, max_depth=1.3,
                  voxel_widht=0.01, voxel_height=0.01):
     """
     Orchestrator function launching in parallel plant models and then environment models
@@ -36,7 +36,7 @@ def play_Orchestra(scene_name, output_folder,
     """
 
     # Compute the placement of individual plants in the scene and for each position get the information on how to initialize the plant model at that location
-    xrange, yrange, planting_sequence = stand_initialization(xrange=xrange, yrange=yrange, sowing_density=250, 
+    xrange, yrange, planting_sequence = stand_initialization(xrange=scene_xrange, yrange=scene_yrange, sowing_density=250, 
                                                                 sowing_depth=[0.025], row_spacing=0.15, plant_models=plant_models,
                                                                 plant_scenarios=plant_scenarios, plant_model_frequency=[1.])
 
@@ -78,7 +78,8 @@ def play_Orchestra(scene_name, output_folder,
         p = mp.Process(
                 target=soil_worker,
                 kwargs=dict(shared_root_mtgs=shared_root_mtgs, shared_soil=shared_soil,
-                            soil_model=soil_model, output_dirpath=os.path.join(output_folder, scene_name, 'Soil'),
+                            soil_model=soil_model, scene_xrange=scene_xrange, scene_yrange=scene_yrange, 
+                            output_dirpath=os.path.join(output_folder, scene_name, 'Soil'),
                             start_barrier=start_environments_barrier, finish_barrier=finish_environments_barrier, n_iterations=n_iterations,
                             time_step=time_step, scenario=plant_scenarios[0], log_settings=Logger.light_log) )
         
@@ -178,13 +179,13 @@ def plant_worker(shared_root_mtgs, shared_soil,
 
 
 def soil_worker(shared_root_mtgs, shared_soil, 
-                 soil_model, output_dirpath,
+                 soil_model, scene_xrange, scene_yrange, output_dirpath,
                  start_barrier, finish_barrier, n_iterations, 
                  time_step, scenario, log_settings):
     
     # Each process creates its local instance (which includes the unique property).
-    instance = soil_model(shared_root_mtgs, shared_soil, 
-                           time_step, **scenario)
+    instance = soil_model(shared_root_mtgs=shared_root_mtgs, shared_soil=shared_soil, 
+                           time_step=time_step, scene_xrange=scene_xrange, scene_yrange=scene_yrange, **scenario)
     
     logger = Logger(model_instance=instance, components=instance.components,
                     outputs_dirpath=output_dirpath, 
