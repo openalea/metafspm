@@ -25,18 +25,12 @@ def play_Orchestra(scene_name, output_folder,
     """
     Orchestrator function launching in parallel plant models and then environment models
     ---
-    TODO : Check how this implementation would behave when needing to "pull_available_inputs" from models in other processes. As I think it rely on pulling from the data structures and not the classes anymore, should be fine except minor adaptations.
     TODO : Scene orientation regarding an angle relative to North
-    TODO : Check the synchronicity using barriers to check the basic Idea behind this
-    TODO : Model have to be addapted to change the coordinates and orientation at initialization and thus ensure that the plant model position car be edited (that it doesn't rely on soil and that when soil queries for neighbor computation, everything is straightforward)
-    TODO : See which adaptations are needed for the soil to work on the shared dictionnary holding MTGs, simple iteration is enough but need to be done, and would still work for only one model.
-
-    TODO : Later, Also adapt Caribu
     
     """
 
     # Compute the placement of individual plants in the scene and for each position get the information on how to initialize the plant model at that location
-    xrange, yrange, planting_sequence = stand_initialization(xrange=scene_xrange, yrange=scene_yrange, sowing_density=250, 
+    scene_xrange, scene_yrange, planting_sequence = stand_initialization(xrange=scene_xrange, yrange=scene_yrange, sowing_density=250, 
                                                                 sowing_depth=[0.025], row_spacing=0.15, plant_models=plant_models,
                                                                 plant_scenarios=plant_scenarios, plant_model_frequency=[1.])
 
@@ -56,14 +50,14 @@ def play_Orchestra(scene_name, output_folder,
     # Creation of shared dictionnaries with manager to contain the data structures of each model
     manager = mp.Manager()
     shared_root_mtgs = manager.dict()
-    shared_soil = manager.dict()
+    shared_shoot_mtgs = manager.dict()
 
     # Then we start workers which namely take the barriers as input so that even when execution is parallel, the resolution loop is synchronized
     processes = []
     for plant_id, init_info in planting_sequence.items():
         p = mp.Process(
                 target=plant_worker,
-                kwargs=dict(shared_root_mtgs=shared_root_mtgs, shared_soil=shared_soil,
+                kwargs=dict(shared_root_mtgs=shared_root_mtgs, shared_shoot_mtgs=shared_shoot_mtgs,
                             plant_model=init_info["model"], plant_id=plant_id, output_dirpath=os.path.join(output_folder, scene_name, plant_id),
                             start_barrier=start_plants_barrier, finish_barrier=finish_plants_barrier, n_iterations=n_iterations,
                             time_step=time_step, coordinates=init_info["coordinates"], rotation=init_info["rotation"], scenario=init_info["scenario"], log_settings=Logger.light_log) )
@@ -77,9 +71,21 @@ def play_Orchestra(scene_name, output_folder,
     if soil_model is not None:
         p = mp.Process(
                 target=soil_worker,
-                kwargs=dict(shared_root_mtgs=shared_root_mtgs, shared_soil=shared_soil,
+                kwargs=dict(shared_root_mtgs=shared_root_mtgs,
                             soil_model=soil_model, scene_xrange=scene_xrange, scene_yrange=scene_yrange, 
                             output_dirpath=os.path.join(output_folder, scene_name, 'Soil'),
+                            start_barrier=start_environments_barrier, finish_barrier=finish_environments_barrier, n_iterations=n_iterations,
+                            time_step=time_step, scenario=plant_scenarios[0], log_settings=Logger.light_log) )
+        
+        processes.append(p)
+        p.start()
+
+    if light_model is not None:
+        p = mp.Process(
+                target=light_worker,
+                kwargs=dict(shared_shoot_mtgs=shared_shoot_mtgs,
+                            light_model=light_model, scene_xrange=scene_xrange, scene_yrange=scene_yrange, 
+                            output_dirpath=os.path.join(output_folder, scene_name, 'Light'),
                             start_barrier=start_environments_barrier, finish_barrier=finish_environments_barrier, n_iterations=n_iterations,
                             time_step=time_step, scenario=plant_scenarios[0], log_settings=Logger.light_log) )
         
@@ -108,13 +114,12 @@ def play_Orchestra(scene_name, output_folder,
     # Ensure proper closing of manager after loggers have all exited
     manager.shutdown()
 
-    # NOTE : For now, each model iteration will log its data in its own data folder (1 per plant + 1 for soil)
+    # NOTE : For now, each model iteration will log its data in its own data folder (1 per plant + 1 for soil + 1 for Light)
 
 
 def stand_initialization(xrange, yrange, sowing_density, sowing_depth, row_spacing,
                             plant_models, plant_scenarios, plant_model_frequency, row_alternance=None):
     # TODO : In the current state, field orientation relative to south cannot be chosen
-    plant_rotation = np.random.random() * 360
     unique_plant_ID = 0
     
     n_rows = int(xrange / row_spacing)
@@ -148,13 +153,14 @@ def stand_initialization(xrange, yrange, sowing_density, sowing_depth, row_spaci
 
     return actual_xrange, yrange, planting_sequence
 
-def plant_worker(shared_root_mtgs, shared_soil, 
+
+def plant_worker(shared_root_mtgs, shared_shoot_mtgs,
                  plant_model, plant_id, output_dirpath,
                  start_barrier, finish_barrier, n_iterations, 
                  time_step, coordinates, rotation, scenario, log_settings):
     
-    # Each process creates its local instance (which includes the unique property).
-    instance = plant_model(shared_root_mtgs=shared_root_mtgs, soil_dict=shared_soil, name=plant_id, 
+    # Each process creates its local instance (which includes the unique properties).
+    instance = plant_model(shared_root_mtgs=shared_root_mtgs, shared_shoot_mtgs=shared_shoot_mtgs, name=plant_id, 
                            time_step=time_step, coordinates=coordinates, rotation=rotation, **scenario)
     
     logger = Logger(model_instance=instance, components=instance.components,
@@ -178,13 +184,13 @@ def plant_worker(shared_root_mtgs, shared_soil,
     logger.stop()
 
 
-def soil_worker(shared_root_mtgs, shared_soil, 
+def soil_worker(shared_root_mtgs, 
                  soil_model, scene_xrange, scene_yrange, output_dirpath,
                  start_barrier, finish_barrier, n_iterations, 
                  time_step, scenario, log_settings):
     
-    # Each process creates its local instance (which includes the unique property).
-    instance = soil_model(shared_root_mtgs=shared_root_mtgs, shared_soil=shared_soil, 
+    # Each process creates its local instance (which includes the unique properties).
+    instance = soil_model(shared_root_mtgs=shared_root_mtgs, 
                            time_step=time_step, scene_xrange=scene_xrange, scene_yrange=scene_yrange, **scenario)
     
     logger = Logger(model_instance=instance, components=instance.components,
@@ -203,3 +209,25 @@ def soil_worker(shared_root_mtgs, shared_soil,
         finish_barrier.wait()
 
     logger.stop()
+
+
+def light_worker(shared_shoot_mtgs, 
+                 light_model, scene_xrange, scene_yrange, output_dirpath,
+                 start_barrier, finish_barrier, n_iterations, 
+                 time_step, scenario, log_settings):
+    
+    # Maybe a little bit too specific here, since we used only Caribu we didn't use a metafspm utility to create the light model class
+    import pandas as pd
+    meteo = pd.read_csv(os.path.join("inputs", "meteo_Ljutovac2002.csv"), index_col='t')
+
+    instance = light_model(scene_xrange=scene_xrange, scene_yrange=scene_yrange, meteo=meteo, **scenario)
+
+    # Here no logging of the interception is performed as shoot models already log the energy they captured
+
+    for _ in range(n_iterations):
+        # Wait until the main process allows starting the iteration.
+        start_barrier.wait()
+        # Run time step
+        instance.run(shared_shoot_mtgs=shared_shoot_mtgs)
+        # Signal that this iteration is finished.
+        finish_barrier.wait()
