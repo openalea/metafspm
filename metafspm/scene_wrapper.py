@@ -1,26 +1,16 @@
 # Public packages
-import os, sys
+import os
 import multiprocessing as mp
-from multiprocessing.managers import BaseManager
-import time
 import numpy as np
-from typing import Literal
 
-# Utility packages
-from metafspm.component_factory import Choregrapher
-from log.logging import Logger
-
-
-# Define a manager that will manage instances of model classes
-class MyManager(BaseManager):
-    pass
 
 ### metafspm zone
 def play_Orchestra(scene_name, output_folder,
                  plant_models: list, plant_scenarios: list,
                  soil_model=None, soil_scenario: dict = {"parameters": {}, "input_tables": {}},
                  light_model = None, light_scenario: dict = {},
-                 n_iterations = 2500, time_step=3600, scene_xrange=1, scene_yrange=1, max_depth=1.3,
+                 logger_class = None, log_settings: dict = {}, 
+                 n_iterations = 2500, time_step=3600, scene_xrange=1, scene_yrange=1, sowing_density=250, max_depth=1.3,
                  voxel_widht=0.01, voxel_height=0.01):
     """
     Orchestrator function launching in parallel plant models and then environment models
@@ -30,7 +20,7 @@ def play_Orchestra(scene_name, output_folder,
     """
 
     # Compute the placement of individual plants in the scene and for each position get the information on how to initialize the plant model at that location
-    scene_xrange, scene_yrange, planting_sequence = stand_initialization(xrange=scene_xrange, yrange=scene_yrange, sowing_density=250, 
+    scene_xrange, scene_yrange, planting_sequence = stand_initialization(xrange=scene_xrange, yrange=scene_yrange, sowing_density=sowing_density, 
                                                                 sowing_depth=[0.025], row_spacing=0.15, plant_models=plant_models,
                                                                 plant_scenarios=plant_scenarios, plant_model_frequency=[1.])
 
@@ -40,42 +30,34 @@ def play_Orchestra(scene_name, output_folder,
     if light_model is not None:
         n_environments += 1
 
-    # Barriers ensure synchronization. The barrier count includes the main process.
-    start_plants_barrier = mp.Barrier(len(planting_sequence) + 1)
-    finish_plants_barrier = mp.Barrier(len(planting_sequence) + 1)
-
-    start_environments_barrier = mp.Barrier(n_environments + 1)
-    finish_environments_barrier = mp.Barrier(n_environments + 1)
-
-    # Creation of shared dictionnaries with manager to contain the data structures of each model
-    manager = mp.Manager()
-    shared_root_mtgs = manager.dict()
-    shared_shoot_mtgs = manager.dict()
+    # Queues to perform synchronization and data sharing of the processes
+    queues_soil_to_plants = {pid: mp.Queue() for pid in planting_sequence.keys()}
+    queue_plants_to_soil = mp.Queue()
+    queues_light_to_plants = {pid: mp.Queue() for pid in planting_sequence.keys()}
+    queue_plants_to_light = mp.Queue()
+    stop_event = mp.Event()
 
     # Then we start workers which namely take the barriers as input so that even when execution is parallel, the resolution loop is synchronized
     processes = []
     for plant_id, init_info in planting_sequence.items():
         p = mp.Process(
                 target=plant_worker,
-                kwargs=dict(shared_root_mtgs=shared_root_mtgs, shared_shoot_mtgs=shared_shoot_mtgs,
+                kwargs=dict(queues_soil_to_plants=queues_soil_to_plants, queue_plants_to_soil=queue_plants_to_soil, 
+                            queues_light_to_plants=queues_light_to_plants, queue_plants_to_light=queue_plants_to_light, stop_event=stop_event,
                             plant_model=init_info["model"], plant_id=plant_id, output_dirpath=os.path.join(output_folder, scene_name, plant_id),
-                            start_barrier=start_plants_barrier, finish_barrier=finish_plants_barrier, n_iterations=n_iterations,
-                            time_step=time_step, coordinates=init_info["coordinates"], rotation=init_info["rotation"], scenario=init_info["scenario"], log_settings=Logger.light_log) )
+                            n_iterations=n_iterations, time_step=time_step, coordinates=init_info["coordinates"], rotation=init_info["rotation"], 
+                            scenario=init_info["scenario"], logger_class=logger_class, log_settings=log_settings) )
         
         processes.append(p)
         p.start()
 
-    # We wait for plant initializations to complete before initializing soil from it (we need shared mtgs content)
-    finish_plants_barrier.wait()
-
     if soil_model is not None:
         p = mp.Process(
                 target=soil_worker,
-                kwargs=dict(shared_root_mtgs=shared_root_mtgs,
+                kwargs=dict(queues_soil_to_plants=queues_soil_to_plants, queue_plants_to_soil=queue_plants_to_soil, stop_event=stop_event,
                             soil_model=soil_model, scene_xrange=scene_xrange, scene_yrange=scene_yrange, 
-                            output_dirpath=os.path.join(output_folder, scene_name, 'Soil'),
-                            start_barrier=start_environments_barrier, finish_barrier=finish_environments_barrier, n_iterations=n_iterations,
-                            time_step=time_step, scenario=plant_scenarios[0], log_settings=Logger.light_log) )
+                            output_dirpath=os.path.join(output_folder, scene_name, 'Soil'), n_iterations=n_iterations,
+                            time_step=time_step, scenario=plant_scenarios[0], logger_class=logger_class, log_settings=log_settings) )
         
         processes.append(p)
         p.start()
@@ -83,36 +65,17 @@ def play_Orchestra(scene_name, output_folder,
     if light_model is not None:
         p = mp.Process(
                 target=light_worker,
-                kwargs=dict(shared_shoot_mtgs=shared_shoot_mtgs,
+                kwargs=dict(queues_light_to_plants=queues_light_to_plants, queue_plants_to_light=queue_plants_to_light, stop_event=stop_event,
                             light_model=light_model, scene_xrange=scene_xrange, scene_yrange=scene_yrange, 
-                            output_dirpath=os.path.join(output_folder, scene_name, 'Light'),
-                            start_barrier=start_environments_barrier, finish_barrier=finish_environments_barrier, n_iterations=n_iterations,
-                            time_step=time_step, scenario=plant_scenarios[0], log_settings=Logger.light_log) )
+                            output_dirpath=os.path.join(output_folder, scene_name, 'Light'), n_iterations=n_iterations,
+                            time_step=time_step, scenario=plant_scenarios[0]))
         
         processes.append(p)
         p.start()
-    
-    # Main process loop synchronizes each iteration:
-    for _ in range(n_iterations):
-        # FIRST RUN ENVIRONMENT MODELS (sometimes may not be used)
-        if n_environments > 0:
-            # Signal workers to start the iteration.
-            start_environments_barrier.wait()
-            # Wait until all workers signal they have finished the iteration.
-            finish_environments_barrier.wait()
-
-        # THEN RUN PLANT MODELS (there will always be)
-        # Signal workers to start the iteration.
-        start_plants_barrier.wait()
-        # Wait until all workers signal they have finished the iteration.
-        finish_plants_barrier.wait()
 
     # Wait for all processes to exit.
     for p in processes:
         p.join()
-
-    # Ensure proper closing of manager after loggers have all exited
-    manager.shutdown()
 
     # NOTE : For now, each model iteration will log its data in its own data folder (1 per plant + 1 for soil + 1 for Light)
 
@@ -154,67 +117,66 @@ def stand_initialization(xrange, yrange, sowing_density, sowing_depth, row_spaci
     return actual_xrange, yrange, planting_sequence
 
 
-def plant_worker(shared_root_mtgs, shared_shoot_mtgs,
-                 plant_model, plant_id, output_dirpath,
-                 start_barrier, finish_barrier, n_iterations, 
-                 time_step, coordinates, rotation, scenario, log_settings):
+def plant_worker(queues_soil_to_plants, queue_plants_to_soil, queues_light_to_plants, queue_plants_to_light, stop_event,
+                 plant_model, plant_id, output_dirpath, n_iterations, 
+                 time_step, coordinates, rotation, scenario, logger_class, log_settings):
     
     # Each process creates its local instance (which includes the unique properties).
-    instance = plant_model(shared_root_mtgs=shared_root_mtgs, shared_shoot_mtgs=shared_shoot_mtgs, name=plant_id, 
-                           time_step=time_step, coordinates=coordinates, rotation=rotation, **scenario)
+    instance = plant_model(queues_soil_to_plants=queues_soil_to_plants, queue_plants_to_soil=queue_plants_to_soil, 
+                            queues_light_to_plants=queues_light_to_plants, queue_plants_to_light=queue_plants_to_light,
+                            name=plant_id, time_step=time_step, coordinates=coordinates, rotation=rotation, **scenario)
     
-    logger = Logger(model_instance=instance, components=instance.components,
+    logger = logger_class(model_instance=instance, components=instance.components,
                     outputs_dirpath=output_dirpath, 
                     time_step_in_hours=1, logging_period_in_hours=24,
                     recording_shoot=True,
                     echo=False, **log_settings)
-    
-    # Signals that initialization is finished
-    finish_barrier.wait()
 
-    for _ in range(n_iterations):
-        # Wait until the main process allows starting the iteration.
-        start_barrier.wait()
+    iteration = 0
+    while not stop_event.is_set() and iteration < n_iterations: 
         # Run plant time step
         logger()
         instance.run()
-        # Signal that this iteration is finished.
-        finish_barrier.wait()
+
+        iteration += 1
+
+    print("Plant stopped")
+    stop_event.set()
 
     logger.stop()
 
 
-def soil_worker(shared_root_mtgs, 
-                 soil_model, scene_xrange, scene_yrange, output_dirpath,
-                 start_barrier, finish_barrier, n_iterations, 
-                 time_step, scenario, log_settings):
+def soil_worker(queues_soil_to_plants, queue_plants_to_soil, stop_event,
+                 soil_model, scene_xrange, scene_yrange, output_dirpath, n_iterations, 
+                 time_step, scenario, logger_class, log_settings):
     
     # Each process creates its local instance (which includes the unique properties).
-    instance = soil_model(shared_root_mtgs=shared_root_mtgs, 
+    instance = soil_model(queues_soil_to_plants=queues_soil_to_plants, queue_plants_to_soil=queue_plants_to_soil, 
                            time_step=time_step, scene_xrange=scene_xrange, scene_yrange=scene_yrange, **scenario)
     
-    logger = Logger(model_instance=instance, components=instance.components,
+    logger = logger_class(model_instance=instance, components=instance.components,
                     outputs_dirpath=output_dirpath, 
                     time_step_in_hours=1, logging_period_in_hours=24,
                     recording_shoot=False,
                     echo=True, **log_settings)
 
-    for _ in range(n_iterations):
-        # Wait until the main process allows starting the iteration.
-        start_barrier.wait()
+    iteration = 0
+    while not stop_event.is_set() and iteration < n_iterations: 
         # Run plant time step
         logger()
-        instance.run(shared_root_mtgs=shared_root_mtgs)
-        # Signal that this iteration is finished.
-        finish_barrier.wait()
+        instance.run()
+
+        iteration += 1
+
+    print("Soil stopped")
+    stop_event.set()
 
     logger.stop()
 
 
-def light_worker(shared_shoot_mtgs, 
-                 light_model, scene_xrange, scene_yrange, output_dirpath,
-                 start_barrier, finish_barrier, n_iterations, 
-                 time_step, scenario, log_settings):
+def light_worker(queues_light_to_plants, queue_plants_to_light, stop_event,
+                 light_model, scene_xrange, scene_yrange, output_dirpath, n_iterations, 
+                 time_step, scenario):
     
     # Maybe a little bit too specific here, since we used only Caribu we didn't use a metafspm utility to create the light model class
     import pandas as pd
@@ -224,10 +186,14 @@ def light_worker(shared_shoot_mtgs,
 
     # Here no logging of the interception is performed as shoot models already log the energy they captured
 
-    for _ in range(n_iterations):
-        # Wait until the main process allows starting the iteration.
-        start_barrier.wait()
+    iteration = 0
+    while not stop_event.is_set() and iteration < n_iterations: 
         # Run time step
-        instance.run(shared_shoot_mtgs=shared_shoot_mtgs)
-        # Signal that this iteration is finished.
-        finish_barrier.wait()
+        instance.run(queues_light_to_plants=queues_light_to_plants, queue_plants_to_light=queue_plants_to_light)
+
+        iteration += 1
+
+    print("Light stopped")
+    stop_event.set()
+
+    
