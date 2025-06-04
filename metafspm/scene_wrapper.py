@@ -10,6 +10,7 @@ def play_Orchestra(scene_name, output_folder,
                  plant_models: list, plant_scenarios: list,
                  soil_model=None, soil_scenario: dict = {"parameters": {}, "input_tables": {}},
                  light_model = None, light_scenario: dict = {},
+                 translator_path: dict = {},
                  logger_class = None, log_settings: dict = {}, 
                  n_iterations = 2500, time_step=3600, scene_xrange=1, scene_yrange=1, sowing_density=250, max_depth=1.3,
                  voxel_widht=0.01, voxel_height=0.01):
@@ -54,7 +55,7 @@ def play_Orchestra(scene_name, output_folder,
                 target=plant_worker,
                 kwargs=dict(queues_soil_to_plants=queues_soil_to_plants, queue_plants_to_soil=queue_plants_to_soil, 
                             queues_light_to_plants=queues_light_to_plants, queue_plants_to_light=queue_plants_to_light, stop_event=stop_event,
-                            plant_model=init_info["model"], plant_id=plant_id, output_dirpath=os.path.join(output_folder, scene_name, plant_id),
+                            plant_model=init_info["model"], plant_id=plant_id, translator_path=translator_path, output_dirpath=os.path.join(output_folder, scene_name, plant_id),
                             n_iterations=n_iterations, time_step=time_step, coordinates=init_info["coordinates"], rotation=init_info["rotation"], 
                             scenario=init_info["scenario"], logger_class=logger_class, log_settings=log_settings) )
 
@@ -65,9 +66,9 @@ def play_Orchestra(scene_name, output_folder,
         p = mp.Process(
                 target=soil_worker,
                 kwargs=dict(queues_soil_to_plants=queues_soil_to_plants, queue_plants_to_soil=queue_plants_to_soil, stop_event=stop_event,
-                            soil_model=soil_model, scene_xrange=scene_xrange, scene_yrange=scene_yrange, 
+                            soil_model=soil_model, scene_xrange=scene_xrange, scene_yrange=scene_yrange, translator_path=translator_path,
                             output_dirpath=os.path.join(output_folder, scene_name, 'Soil'), n_iterations=n_iterations,
-                            time_step=time_step, scenario=plant_scenarios[0], logger_class=logger_class, log_settings=log_settings) )
+                            time_step=time_step, scenario=soil_scenario, logger_class=logger_class, log_settings=log_settings) )
         
         processes.append(p)
         p.start()
@@ -133,13 +134,13 @@ def stand_initialization(xrange, yrange, sowing_density, sowing_depth, row_spaci
 
 
 def plant_worker(queues_soil_to_plants, queue_plants_to_soil, queues_light_to_plants, queue_plants_to_light, stop_event,
-                 plant_model, plant_id, output_dirpath, n_iterations, 
+                 plant_model, plant_id, translator_path, output_dirpath, n_iterations, 
                  time_step, coordinates, rotation, scenario, logger_class, log_settings):
     
     # Each process creates its local instance (which includes the unique properties).
     instance = plant_model(queues_soil_to_plants=queues_soil_to_plants, queue_plants_to_soil=queue_plants_to_soil, 
                             queues_light_to_plants=queues_light_to_plants, queue_plants_to_light=queue_plants_to_light,
-                            name=plant_id, time_step=time_step, coordinates=coordinates, rotation=rotation, **scenario)
+                            name=plant_id, time_step=time_step, coordinates=coordinates, rotation=rotation, translator_path=translator_path, **scenario)
     
     logger = logger_class(model_instance=instance, components=instance.components,
                     outputs_dirpath=output_dirpath, 
@@ -161,12 +162,12 @@ def plant_worker(queues_soil_to_plants, queue_plants_to_soil, queues_light_to_pl
 
 
 def soil_worker(queues_soil_to_plants, queue_plants_to_soil, stop_event,
-                 soil_model, scene_xrange, scene_yrange, output_dirpath, n_iterations, 
+                 soil_model, scene_xrange, scene_yrange, translator_path, output_dirpath, n_iterations, 
                  time_step, scenario, logger_class, log_settings):
     
     # Each process creates its local instance (which includes the unique properties).
     instance = soil_model(queues_soil_to_plants=queues_soil_to_plants, queue_plants_to_soil=queue_plants_to_soil, 
-                           time_step=time_step, scene_xrange=scene_xrange, scene_yrange=scene_yrange, **scenario)
+                           time_step=time_step, scene_xrange=scene_xrange, scene_yrange=scene_yrange, translator_path=translator_path, **scenario)
     
     logger = logger_class(model_instance=instance, components=instance.components,
                     outputs_dirpath=output_dirpath, 
