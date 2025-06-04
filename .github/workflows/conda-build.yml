@@ -1,4 +1,4 @@
-name: build_publish_anaconda
+name: Building Package
 
 on:
   push:
@@ -9,6 +9,7 @@ on:
   pull_request:
     branches:
       - '**'
+
 
 jobs:
   build:

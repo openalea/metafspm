@@ -1,7 +1,7 @@
 # Public packages
 import os, shutil
 import multiprocessing as mp
-import numpy as np
+import random
 import time
 
 
@@ -111,9 +111,9 @@ def stand_initialization(xrange, yrange, sowing_density, sowing_depth, row_spaci
     current_model_index = -1
     planting_sequence = {}
     for x in range(n_rows):
-        row_random_shear = np.random.random() * intra_row_distance
+        row_random_shear = random.random() * intra_row_distance
         for y in range(number_per_row):
-            model_picker = np.random.random()
+            model_picker = random.random()
 
             low_bound = 0
             for i, frequency in enumerate(plant_model_frequency):
@@ -127,7 +127,7 @@ def stand_initialization(xrange, yrange, sowing_density, sowing_depth, row_spaci
                                                 coordinates=[(row_spacing / 2) + x * row_spacing,
                                                             row_random_shear + y * intra_row_distance,
                                                             - sowing_depth[current_model_index]],
-                                                rotation=np.random.uniform(0, 360))
+                                                rotation=random.uniform(0, 360))
             unique_plant_ID += 1
 
     return actual_xrange, yrange, planting_sequence
