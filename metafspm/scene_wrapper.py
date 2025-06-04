@@ -32,17 +32,17 @@ def play_Orchestra(scene_name, output_folder,
                                                                 sowing_depth=[0.025], row_spacing=0.15, plant_models=plant_models,
                                                                 plant_scenarios=plant_scenarios, plant_model_frequency=[1.])
 
-    n_environments = 0
-    if soil_model is not None:
-        n_environments += 1
-    if light_model is not None:
-        n_environments += 1
-
     # Queues to perform synchronization and data sharing of the processes
     queues_soil_to_plants = {pid: mp.Queue() for pid in planting_sequence.keys()}
     queue_plants_to_soil = mp.Queue()
-    queues_light_to_plants = {pid: mp.Queue() for pid in planting_sequence.keys()}
-    queue_plants_to_light = mp.Queue()
+
+    if light_model is not None:
+        queues_light_to_plants = {pid: mp.Queue() for pid in planting_sequence.keys()}
+        queue_plants_to_light = mp.Queue()
+    else:
+        queues_light_to_plants=None
+        queue_plants_to_light=None
+
     stop_event = mp.Event()
     stop_file = os.path.join(output_folder, scene_name, "Delete_to_Stop")
     open(stop_file, "w").close()
@@ -144,7 +144,6 @@ def plant_worker(queues_soil_to_plants, queue_plants_to_soil, queues_light_to_pl
     logger = logger_class(model_instance=instance, components=instance.components,
                     outputs_dirpath=output_dirpath, 
                     time_step_in_hours=1, logging_period_in_hours=24,
-                    recording_shoot=True,
                     echo=False, **log_settings)
 
     iteration = 0
@@ -172,7 +171,6 @@ def soil_worker(queues_soil_to_plants, queue_plants_to_soil, stop_event,
     logger = logger_class(model_instance=instance, components=instance.components,
                     outputs_dirpath=output_dirpath, 
                     time_step_in_hours=1, logging_period_in_hours=24,
-                    recording_shoot=False,
                     echo=True, **log_settings)
 
     iteration = 0

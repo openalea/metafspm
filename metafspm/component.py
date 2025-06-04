@@ -112,7 +112,7 @@ class Model:
             if changed_parameter in dir(self):
                 setattr(self, changed_parameter, value)
 
-    def link_self_to_mtg(self):
+    def link_self_to_mtg(self, ignore=[]):
         # for input variables, initialize homogeneous values on each vertices. 
         # This behavior will be overwritten in case of module providing the input variable
         for name in self.inputs:
@@ -125,15 +125,16 @@ class Model:
         for name in self.state_variables:
             if name not in self.props.keys():
                 self.props.setdefault(name, {})
-                # set default in mtg
+            if name not in ignore:
+                # set default in mtg, state_variable prevail on inputs
                 self.props[name].update({key: getattr(self, name) for key in self.vertices})
 
         # for plant scale state variables
         for name in self.plant_scale_state:
             if name not in self.props.keys():
                 self.props.setdefault(name, {})
-                # set default in mtg
-                self.props[name].update({1: getattr(self, name)})
+            # set default in mtg, state_variable prevail on inputs
+            self.props[name].update({1: getattr(self, name)})
                 
 
     def pull_available_inputs(self):
