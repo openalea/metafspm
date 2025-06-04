@@ -2,6 +2,7 @@
 import os
 import multiprocessing as mp
 import numpy as np
+import time
 
 
 ### metafspm zone
@@ -36,6 +37,8 @@ def play_Orchestra(scene_name, output_folder,
     queues_light_to_plants = {pid: mp.Queue() for pid in planting_sequence.keys()}
     queue_plants_to_light = mp.Queue()
     stop_event = mp.Event()
+    stop_file = os.path.join(output_folder, scene_name, "Delete_to_Stop")
+    open(stop_file, "w").close()
 
     # Then we start workers which namely take the barriers as input so that even when execution is parallel, the resolution loop is synchronized
     processes = []
@@ -47,7 +50,7 @@ def play_Orchestra(scene_name, output_folder,
                             plant_model=init_info["model"], plant_id=plant_id, output_dirpath=os.path.join(output_folder, scene_name, plant_id),
                             n_iterations=n_iterations, time_step=time_step, coordinates=init_info["coordinates"], rotation=init_info["rotation"], 
                             scenario=init_info["scenario"], logger_class=logger_class, log_settings=log_settings) )
-        
+
         processes.append(p)
         p.start()
 
@@ -63,19 +66,20 @@ def play_Orchestra(scene_name, output_folder,
         p.start()
 
     if light_model is not None:
-        light_worker(queues_light_to_plants=queues_light_to_plants, queue_plants_to_light=queue_plants_to_light, stop_event=stop_event,
+        p = mp.Process(
+                target=light_worker,
+                kwargs=dict(queues_light_to_plants=queues_light_to_plants, queue_plants_to_light=queue_plants_to_light, stop_event=stop_event,
                             light_model=light_model, scene_xrange=scene_xrange, scene_yrange=scene_yrange, 
                             output_dirpath=os.path.join(output_folder, scene_name, 'Light'), n_iterations=n_iterations,
-                            time_step=time_step, scenario=plant_scenarios[0])
-        # p = mp.Process(
-        #         target=light_worker,
-        #         kwargs=dict(queues_light_to_plants=queues_light_to_plants, queue_plants_to_light=queue_plants_to_light, stop_event=stop_event,
-        #                     light_model=light_model, scene_xrange=scene_xrange, scene_yrange=scene_yrange, 
-        #                     output_dirpath=os.path.join(output_folder, scene_name, 'Light'), n_iterations=n_iterations,
-        #                     time_step=time_step, scenario=plant_scenarios[0]))
+                            time_step=time_step, scenario=plant_scenarios[0]))
         
-        # processes.append(p)
-        # p.start()
+        processes.append(p)
+        p.start()
+
+    while not stop_event.is_set():
+        if not os.path.exists(stop_file):
+            stop_event.set()
+        time.sleep(10)
 
     # Wait for all processes to exit.
     for p in processes:
