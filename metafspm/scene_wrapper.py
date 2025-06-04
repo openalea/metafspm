@@ -1,5 +1,5 @@
 # Public packages
-import os
+import os, shutil
 import multiprocessing as mp
 import numpy as np
 import time
@@ -19,6 +19,13 @@ def play_Orchestra(scene_name, output_folder,
     TODO : Scene orientation regarding an angle relative to North
     
     """
+    # Specific output structure for scenes not managed by per process loggers
+    if not os.path.exists(output_folder):
+        os.mkdir(output_folder)
+    scene_folder = os.path.join(output_folder, scene_name)
+    if os.path.exists(scene_folder):
+        shutil.rmtree(scene_folder)
+    os.mkdir(scene_folder)
 
     # Compute the placement of individual plants in the scene and for each position get the information on how to initialize the plant model at that location
     scene_xrange, scene_yrange, planting_sequence = stand_initialization(xrange=scene_xrange, yrange=scene_yrange, sowing_density=sowing_density, 
