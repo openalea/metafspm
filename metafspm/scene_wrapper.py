@@ -63,15 +63,19 @@ def play_Orchestra(scene_name, output_folder,
         p.start()
 
     if light_model is not None:
-        p = mp.Process(
-                target=light_worker,
-                kwargs=dict(queues_light_to_plants=queues_light_to_plants, queue_plants_to_light=queue_plants_to_light, stop_event=stop_event,
+        light_worker(queues_light_to_plants=queues_light_to_plants, queue_plants_to_light=queue_plants_to_light, stop_event=stop_event,
                             light_model=light_model, scene_xrange=scene_xrange, scene_yrange=scene_yrange, 
                             output_dirpath=os.path.join(output_folder, scene_name, 'Light'), n_iterations=n_iterations,
-                            time_step=time_step, scenario=plant_scenarios[0]))
+                            time_step=time_step, scenario=plant_scenarios[0])
+        # p = mp.Process(
+        #         target=light_worker,
+        #         kwargs=dict(queues_light_to_plants=queues_light_to_plants, queue_plants_to_light=queue_plants_to_light, stop_event=stop_event,
+        #                     light_model=light_model, scene_xrange=scene_xrange, scene_yrange=scene_yrange, 
+        #                     output_dirpath=os.path.join(output_folder, scene_name, 'Light'), n_iterations=n_iterations,
+        #                     time_step=time_step, scenario=plant_scenarios[0]))
         
-        processes.append(p)
-        p.start()
+        # processes.append(p)
+        # p.start()
 
     # Wait for all processes to exit.
     for p in processes:
