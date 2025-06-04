@@ -10,7 +10,7 @@ def play_Orchestra(scene_name, output_folder,
                  plant_models: list, plant_scenarios: list,
                  soil_model=None, soil_scenario: dict = {"parameters": {}, "input_tables": {}},
                  light_model = None, light_scenario: dict = {},
-                 translator_path: dict = {},
+                 translator_path: str = "",
                  logger_class = None, log_settings: dict = {}, 
                  n_iterations = 2500, time_step=3600, scene_xrange=1, scene_yrange=1, sowing_density=250, max_depth=1.3,
                  voxel_widht=0.01, voxel_height=0.01):
