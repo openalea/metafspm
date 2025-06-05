@@ -160,6 +160,8 @@ def plant_worker(queues_soil_to_plants, queue_plants_to_soil, queues_light_to_pl
 
     logger.stop()
 
+    os._exit(0)
+
 
 def soil_worker(queues_soil_to_plants, queue_plants_to_soil, stop_event,
                  soil_model, scene_xrange, scene_yrange, translator_path, output_dirpath, n_iterations, 
@@ -186,6 +188,8 @@ def soil_worker(queues_soil_to_plants, queue_plants_to_soil, stop_event,
     stop_event.set()
 
     logger.stop()
+
+    os._exit(0)
 
 
 def light_worker(queues_light_to_plants, queue_plants_to_light, stop_event,
