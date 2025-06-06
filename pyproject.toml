@@ -54,7 +54,7 @@ dependencies = []
 
 
 dependencies = [
-    "yaml"
+    "pyyaml"
 ]
 
 [project.optional-dependencies]
