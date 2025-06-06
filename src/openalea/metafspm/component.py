@@ -123,16 +123,14 @@ class Model:
 
         # for segment scale state variables
         for name in self.state_variables:
-            if name not in self.props.keys():
-                self.props.setdefault(name, {})
             if name not in ignore:
+                self.props.setdefault(name, {})
                 # set default in mtg, state_variable prevail on inputs
                 self.props[name].update({key: getattr(self, name) for key in self.vertices})
 
         # for plant scale state variables
         for name in self.plant_scale_state:
-            if name not in self.props.keys():
-                self.props.setdefault(name, {})
+            self.props.setdefault(name, {})
             # set default in mtg, state_variable prevail on inputs
             self.props[name].update({1: getattr(self, name)})
                 
