@@ -1,6 +1,5 @@
 import inspect as ins
 from functools import partial
-import sys
 
 
 # General process resolution method
