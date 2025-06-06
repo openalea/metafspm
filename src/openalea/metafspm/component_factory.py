@@ -40,7 +40,7 @@ class Functor:
             data[self.name] = self.fun(instance, *(data[arg] for arg in self.input_names))
 
 # Executor singleton
-class Singleton(object):
+class Singleton:
     _instance = None
     universal_steps = ["priorbalance", "selfbalance", "stepinit", "state", "totalstate", "rate", "totalrate", "deficit", 
                        "axial", "potential", "allocation", "actual", "segmentation", "postsegmentation"]
