@@ -1,0 +1,9 @@
+name: metafspm
+channels:
+  - openalea3
+  - conda-forge
+dependencies:
+  - python
+  - pip
+  - pandoc
+  - yaml
