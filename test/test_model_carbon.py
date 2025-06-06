@@ -1,6 +1,6 @@
 from dataclasses import dataclass
-from metafspm.component_factory import *
-from metafspm.component import Model, declare
+from openalea.metafspm.component_factory import *
+from openalea.metafspm.component import Model, declare
 
 family = "metabolic"
 
