@@ -30,7 +30,7 @@ class Functor:
                 # print(self.name, self.input_names)
                 # print([getattr(instance, arg) for arg in self.input_names])
                 # print(self.name, {arg: data[arg] for arg in self.input_names})
-                # if self.name == "mycorrhizal_mediated_import_Nm":
+                # if self.name == "C_sucrose_root":
                 #     print(self.name, {arg: data[arg] for arg in self.input_names})
                 # print(self.name, [arg for arg in self.input_names if 254 not in data[arg].keys()])
                 data[self.name].update(
