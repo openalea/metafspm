@@ -1,4 +1,4 @@
-from metafspm.component import Model
+from openalea.metafspm.component import Model
 
 
 class TestComponent:
