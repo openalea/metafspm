@@ -30,16 +30,13 @@ conda install -y -c conda-forge mamba
 git clone https://github.com/GeraultTr/metafspm.git
 ```
 
-- Create an environment dedicated to your model with the necessary requirements
+- Create an environment dedicated to your model with the necessary requirements and install MetaFSPM in it
 ```
-mamba create -n your_model_env -c conda-forge -c openalea3 --strict-channel-priority --file requirements.txt
+mamba create -n your_model_env -c conda-forge -c openalea3 --strict-channel-priority --file conda/environment.yaml
 mamba activate your_model_env
+pip install .
 ```
 
-- Finally, run the setup.py :
-```
-python -m setup develop
-```
 
 ### Second option TODO : when package is released, just create in:
 ```
