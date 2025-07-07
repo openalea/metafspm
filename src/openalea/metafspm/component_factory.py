@@ -75,7 +75,7 @@ class Choregrapher(Singleton):
     scheduled_groups = {}
     sub_time_step = {}
     data_structure = {"soil":None, "root":None}
-    filter =  {"label": ["Segment", "Apex"], "type":["Base_of_the_root_system", "Normal_root_after_emergence", "Stopped", "Just_Stopped", "Root_nodule"]}
+    filter =  {"label": ["Segment", "Apex"], "type":["Base_of_the_root_system", "Normal_root_after_emergence", "Stopped", "Just_stopped", "Dead", "Just_dead", "Root_nodule"]}
 
     consensus_scheduling = [
             ["priorbalance", "selfbalance"],
@@ -200,7 +200,8 @@ class Choregrapher(Singleton):
         if self.data_structure['root'] is not None:
             if "focus_elements" not in self.data_structure["root"].keys():
                 self.data_structure["root"]["focus_elements"] = [vid for vid in self.data_structure["root"]["struct_mass"].keys() if (
-                    self.data_structure["root"]["label"][vid] in self.filter["label"] 
+                    self.data_structure["root"]["struct_mass"][vid] > 0 # NOTE : Check if robust, don't we need any calculation for non emerged elements?
+                    and self.data_structure["root"]["label"][vid] in self.filter["label"] 
                     and self.data_structure["root"]["type"][vid] in self.filter["type"])]
 
         for increment in range(int(self.simulation_time_step/self.sub_time_step[module_family])):
