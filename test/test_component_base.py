@@ -1,6 +1,6 @@
-from metafspm.component import Model
+from openalea.metafspm.component import Model
 
 
 class TestComponent:
-    def test_component_base(self):
+    def test_bare_component(self):
         model = Model()
