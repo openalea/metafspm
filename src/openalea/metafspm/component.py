@@ -1,7 +1,7 @@
 from dataclasses import dataclass, field, fields
 from typing import Literal
 
-from metafspm.component_factory import *
+from .component_factory import *
 
 
 

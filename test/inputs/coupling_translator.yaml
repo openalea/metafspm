@@ -1,0 +1,22 @@
+Carbon:
+  Carbon: {}
+  Nitrogen:
+    amino_acids: 
+      amino_acids: 1.0
+  SoilModel: {}
+
+Nitrogen:
+  Carbon:
+    hexose:
+      hexose: 1.0
+  Nitrogen: {}
+  SoilModel: {}
+
+SoilModel:
+  Carbon:
+      hexose_exudation:
+        hexose_exudation: 1.0
+  Nitrogen: 
+    amino_acids_exudation:
+      amino_acids_exudation: 1.0
+  SoilModel: {}
