@@ -1,4 +1,4 @@
-from metafspm.composite_wrapper import CompositeModel
+from openalea.metafspm.composite_wrapper import CompositeModel
 
 
 class Model(CompositeModel):
