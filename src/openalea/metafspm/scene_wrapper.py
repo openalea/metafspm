@@ -12,8 +12,9 @@ def play_Orchestra(scene_name, output_folder,
                  light_model = None, light_scenario: dict = {},
                  translator_path: str = "",
                  logger_class = None, log_settings: dict = {}, 
-                 n_iterations = 2500, time_step=3600, scene_xrange=1, scene_yrange=1, sowing_density=250, max_depth=1.3,
-                 voxel_widht=0.01, voxel_height=0.01):
+                 n_iterations = 2500, time_step=3600, scene_xrange=1, scene_yrange=1, sowing_density=250, row_spacing=0.15, max_depth=1.3,
+                 voxel_widht=0.01, voxel_height=0.01,
+                 record_performance=False):
     """
     Orchestrator function launching in parallel plant models and then environment models
     ---
@@ -30,7 +31,7 @@ def play_Orchestra(scene_name, output_folder,
 
     # Compute the placement of individual plants in the scene and for each position get the information on how to initialize the plant model at that location
     scene_xrange, scene_yrange, planting_sequence = stand_initialization(xrange=scene_xrange, yrange=scene_yrange, sowing_density=sowing_density, 
-                                                                sowing_depth=[0.025], row_spacing=0.15, plant_models=plant_models,
+                                                                sowing_depth=[0.025], row_spacing=row_spacing, plant_models=plant_models,
                                                                 plant_scenarios=plant_scenarios, plant_model_frequency=[1.])
 
     # Queues to perform synchronization and data sharing of the processes
@@ -57,7 +58,7 @@ def play_Orchestra(scene_name, output_folder,
                             queues_light_to_plants=queues_light_to_plants, queue_plants_to_light=queue_plants_to_light, stop_event=stop_event,
                             plant_model=init_info["model"], plant_id=plant_id, translator_path=translator_path, output_dirpath=os.path.join(output_folder, scene_name, plant_id),
                             n_iterations=n_iterations, time_step=time_step, coordinates=init_info["coordinates"], rotation=init_info["rotation"], 
-                            scenario=init_info["scenario"], logger_class=logger_class, log_settings=log_settings) )
+                            scenario=init_info["scenario"], logger_class=logger_class, log_settings=log_settings, record_performance=record_performance) )
 
         processes.append(p)
         p.start()
@@ -135,7 +136,7 @@ def stand_initialization(xrange, yrange, sowing_density, sowing_depth, row_spaci
 
 def plant_worker(queues_soil_to_plants, queue_plants_to_soil, queues_light_to_plants, queue_plants_to_light, stop_event,
                  plant_model, plant_id, translator_path, output_dirpath, n_iterations, 
-                 time_step, coordinates, rotation, scenario, logger_class, log_settings):
+                 time_step, coordinates, rotation, scenario, logger_class, log_settings, record_performance: bool = False):
     
     # Each process creates its local instance (which includes the unique properties).
     instance = plant_model(queues_soil_to_plants=queues_soil_to_plants, queue_plants_to_soil=queue_plants_to_soil, 
@@ -150,8 +151,11 @@ def plant_worker(queues_soil_to_plants, queue_plants_to_soil, queues_light_to_pl
     iteration = 0
     while not stop_event.is_set() and iteration < n_iterations: 
         # Run plant time step
-        logger()
-        instance.run()
+        if record_performance:
+            logger.run_and_monitor_model_step()
+        else:
+            logger()
+            instance.run()
 
         iteration += 1
 
