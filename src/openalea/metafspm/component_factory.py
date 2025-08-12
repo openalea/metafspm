@@ -4,6 +4,8 @@ from functools import partial
 
 # General process resolution method
 class Functor:
+    numba_speedup = False
+    
     def __init__(self, fun, iteraring: bool = False, total: bool = False):
         self.fun = fun
         self.name = self.fun.__name__[1:]
@@ -35,6 +37,15 @@ class Functor:
                 # print(self.name, [arg for arg in self.input_names if 254 not in data[arg].keys()])
                 data[self.name].update(
                     {vid: self.fun(instance, *(data[arg][vid] for arg in self.input_names)) for vid in data["focus_elements"]})
+                
+        elif data_type == "<class 'openalea.metafspm.utils.ArrayDict'>":
+            if self.total:
+                data[self.name].update(
+                    {1: self.fun(instance, *(data[arg] for arg in self.input_names))})
+            else:
+                data[self.name].update(
+                        {vid: self.fun(instance, *(data[arg][vid] for arg in self.input_names)) for vid in data["focus_elements"]})
+            # data[self.name].assign_all(self.fun(instance, *(data[arg].values_array() for arg in self.input_names)))
                 
         elif data_type == "<class 'numpy.ndarray'>":
             data[self.name] = self.fun(instance, *(data[arg] for arg in self.input_names))
@@ -91,7 +102,7 @@ class Choregrapher(Singleton):
         self.sub_time_step[module_family] = sub_time_step
         if self.data_structure[compartment] == None:
             self.data_structure[compartment] = data
-        data_structure_type = str(type(list(self.data_structure[compartment].values())[0]))
+        data_structure_type = str(type(self.data_structure[compartment]["length"])) # TODO : length is common property of all used modules, but might not be generic enough
         for k in self.scheduled_groups[module_family].keys():
             for f in range(len(self.scheduled_groups[module_family][k])):
                 self.scheduled_groups[module_family][k][f] = partial(self.scheduled_groups[module_family][k][f], *(instance, self.data_structure[compartment], data_structure_type))

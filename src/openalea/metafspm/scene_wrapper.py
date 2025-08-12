@@ -98,7 +98,7 @@ def play_Orchestra(scene_name, output_folder,
 
 
 def stand_initialization(xrange, yrange, sowing_density, sowing_depth, row_spacing,
-                            plant_models, plant_scenarios, plant_model_frequency, row_alternance=None):
+                            plant_models, plant_scenarios, plant_model_frequency, row_alternance=None, exact=False):
     # TODO : In the current state, field orientation relative to south cannot be chosen
     unique_plant_ID = 0
     
@@ -112,7 +112,10 @@ def stand_initialization(xrange, yrange, sowing_density, sowing_depth, row_spaci
     current_model_index = -1
     planting_sequence = {}
     for x in range(n_rows):
-        row_random_shear = random.random() * intra_row_distance
+        if exact:
+            row_random_shear = lambda x: 0
+        else:
+            row_random_shear = lambda x: (random.random()-0.5) * x / 2.
         for y in range(number_per_row):
             model_picker = random.random()
 
@@ -126,7 +129,7 @@ def stand_initialization(xrange, yrange, sowing_density, sowing_depth, row_spaci
             planting_sequence[plant_ID] = dict( model=plant_models[current_model_index],
                                                 scenario=plant_scenarios[current_model_index],
                                                 coordinates=[(row_spacing / 2) + x * row_spacing,
-                                                            row_random_shear + y * intra_row_distance,
+                                                             (intra_row_distance/2) + y * intra_row_distance + row_random_shear(intra_row_distance),
                                                             - sowing_depth[current_model_index]],
                                                 rotation=random.uniform(0, 360))
             unique_plant_ID += 1
@@ -182,7 +185,7 @@ def soil_worker(queues_soil_to_plants, queue_plants_to_soil, stop_event,
 
     iteration = 0
     while not stop_event.is_set() and iteration < n_iterations: 
-        # Run plant time step
+        # Run time step
         logger()
         instance.run()
 
