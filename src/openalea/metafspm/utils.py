@@ -59,13 +59,17 @@ class ArrayDict(MutableMapping):
 
     def scatter(self, keys, values):
         self.assign_at(self.indices_of(keys), values)
-    
+
+    def to_dict(self):
+        return {k: v for k, v in self.items()}
+
     
 
-def mtg_to_arraydict(g):
+def mtg_to_arraydict(g, ignore: list = []):
     props = g.properties()
     for k, v in props.items():
-        if isinstance(v, dict) and len(v) > 0:
+        if isinstance(v, dict) and len(v) > 0 and k not in ignore:
             first_element = list(v.values())[0]
             if isinstance(first_element, float) or isinstance(first_element, int):
                 props[k] = ArrayDict(v)
+                
