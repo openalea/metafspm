@@ -1,6 +1,8 @@
 # Public packages
 import os, shutil
 import multiprocessing as mp
+from multiprocessing.shared_memory import SharedMemory
+import numpy as np
 import random
 import time
 
@@ -30,7 +32,7 @@ def play_Orchestra(scene_name, output_folder,
     os.mkdir(scene_folder)
 
     # Compute the placement of individual plants in the scene and for each position get the information on how to initialize the plant model at that location
-    scene_xrange, scene_yrange, planting_sequence = stand_initialization(xrange=scene_xrange, yrange=scene_yrange, sowing_density=sowing_density, 
+    scene_xrange, scene_yrange, planting_sequence = stand_initialization(scene_name=scene_name, xrange=scene_xrange, yrange=scene_yrange, sowing_density=sowing_density, 
                                                                 sowing_depth=[0.025], row_spacing=row_spacing, plant_models=plant_models,
                                                                 plant_scenarios=plant_scenarios, plant_model_frequency=[1.])
 
@@ -49,9 +51,18 @@ def play_Orchestra(scene_name, output_folder,
     stop_file = os.path.join(output_folder, scene_name, "Delete_to_Stop")
     open(stop_file, "w").close()
 
+    handshake_size = 35
     # Then we start workers which namely take the barriers as input so that even when execution is parallel, the resolution loop is synchronized
     processes = []
+    sharememories = []
     for plant_id, init_info in planting_sequence.items():
+        a = np.empty((handshake_size, 10000), dtype=np.float64)
+        shm = SharedMemory(create=True, name=plant_id, size=a.nbytes)
+        b = np.ndarray(a.shape, dtype=a.dtype, buffer=shm.buf)
+        b[:] = a[:]
+        shm.close()
+        sharememories.append(shm)
+
         p = mp.Process(
                 target=plant_worker,
                 kwargs=dict(queues_soil_to_plants=queues_soil_to_plants, queue_plants_to_soil=queue_plants_to_soil, 
@@ -94,10 +105,15 @@ def play_Orchestra(scene_name, output_folder,
     for p in processes:
         p.join()
 
+    del b # Delete any remaining nympy handle used at creation
+    for shm in sharememories:
+        shm.close()
+        shm.unlink()
+
     # NOTE : For now, each model iteration will log its data in its own data folder (1 per plant + 1 for soil + 1 for Light)
 
 
-def stand_initialization(xrange, yrange, sowing_density, sowing_depth, row_spacing,
+def stand_initialization(scene_name, xrange, yrange, sowing_density, sowing_depth, row_spacing,
                             plant_models, plant_scenarios, plant_model_frequency, row_alternance=None, exact=False):
     # TODO : In the current state, field orientation relative to south cannot be chosen
     unique_plant_ID = 0
@@ -125,7 +141,7 @@ def stand_initialization(xrange, yrange, sowing_density, sowing_depth, row_spaci
                     current_model_index = i
                 low_bound += frequency
             
-            plant_ID=f"{plant_models[current_model_index].__name__}_{unique_plant_ID}"
+            plant_ID=f"{plant_models[current_model_index].__name__}_{unique_plant_ID}_{scene_name}"
             planting_sequence[plant_ID] = dict( model=plant_models[current_model_index],
                                                 scenario=plant_scenarios[current_model_index],
                                                 coordinates=[(row_spacing / 2) + x * row_spacing,

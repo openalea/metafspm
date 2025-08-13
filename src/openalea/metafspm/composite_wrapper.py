@@ -102,8 +102,14 @@ class CompositeModel:
         translator = self.open_or_create_translator(translator_path)
 
         soil_name = "SoilModel" # TODO : find a way to generalize this
-        self.soil_inputs, self.soil_outputs = self.get_component_inputs_outputs(translator=translator, components_names=[c.__class__.__name__ for c in self.components], target_name=soil_name, names_for_others=False)
+        self.plant_side_soil_inputs = ["vertex_index", "x1", "x2", "y1", "y2", "z1", "z2"]
+        for v in translator[soil_name].values():
+            for t in v.values():
+                for name in t.keys():
+                    self.plant_side_soil_inputs.append(name)
 
+        self.soil_inputs, self.soil_outputs = self.get_component_inputs_outputs(translator=translator, components_names=[c.__class__.__name__ for c in self.components], target_name=soil_name, names_for_others=False)
+        
         props = self.data_structures["root"].properties()
 
         for receiver in self.components:
