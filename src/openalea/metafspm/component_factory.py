@@ -1,5 +1,7 @@
 import inspect as ins
+from typing import get_type_hints, get_origin, get_args
 from functools import partial
+from openalea.metafspm.specializer import specialize_method_recursive
 
 
 # General process resolution method
@@ -13,6 +15,7 @@ class Functor:
         self.iterating = iteraring
         self.total = total
         self.input_names = self.inputs(self.fun)
+        self.supplementary_outputs = int((self.num_outputs(fun) - 1) / 2)
         if len(self.input_names) == 0:
             self.iterating = True
 
@@ -20,6 +23,24 @@ class Functor:
         arguments = ins.getfullargspec(fun)[0]
         arguments.remove("self")
         return arguments
+    
+    def num_outputs(self, func):
+        """
+        Convention: multiple outputs must be annotated as `-> tuple[...]`.
+        Returns an int, "variadic" for tuple[T, ...], or 1 for non-tuple returns.
+        Returns None if there's no return annotation.
+        """
+        ret = get_type_hints(func).get("return")
+        # print(ret)
+        if ret is None:
+            return 1  # no annotation → unknown
+
+        elif get_origin(ret) is tuple:
+            return len(get_args(ret))
+        
+        else:
+            return 1
+        
 
     def __call__(self, instance, data, data_type="<class 'dict'>", *args):
         if self.iterating:
@@ -43,8 +64,41 @@ class Functor:
                 data[self.name].update(
                     {1: self.fun(instance, *(data[arg] for arg in self.input_names))})
             else:
-                data[self.name].update(
-                        {vid: self.fun(instance, *(data[arg][vid] for arg in self.input_names)) for vid in data["focus_elements"]})
+                if self.numba_speedup:
+                    mask = data["focus_elements"]
+                    # mask = data["focus_elements"]
+                    if self.supplementary_outputs != 0:
+                        out = self.fun(*(data[arg].values_array()[mask] for arg in self.input_names))
+                        print(out)
+                        data[self.name].assign_at(mask, out[0])
+                        for s in range(self.supplementary_outputs):
+                            data[out[2*s + 1]].assign_at(mask, out[2*s + 2])
+
+                        print(True)
+                        pass
+                    else:
+                        # print(self.name, {arg: data[arg] for arg in self.input_names})
+                        data[self.name].assign_at(mask, self.fun(*(data[arg].values_array()[mask] for arg in self.input_names)))
+                else:
+                    if self.supplementary_outputs != 0:
+                        outputs = [{} for _ in range(self.supplementary_outputs + 1)]
+                        supplementary_names = []
+                        for vid in data["focus_elements"]:
+                            out = self.fun(instance, *(data[arg][vid] for arg in self.input_names))
+                            outputs[0][vid] = out[0]
+                            for s in range(self.supplementary_outputs):
+                                output_name = out[2*s + 1]
+                                if output_name not in supplementary_names:
+                                    supplementary_names.append(output_name)
+                                outputs[s+1][vid] = out[2*s + 2]
+                        data[self.name].update(outputs[0])
+                        for k, name in enumerate(supplementary_names):
+                            data[name].update(outputs[k+1])
+
+                    
+                    else:
+                        data[self.name].update(
+                                {vid: self.fun(instance, *(data[arg][vid] for arg in self.input_names)) for vid in data["focus_elements"]})
             # data[self.name].assign_all(self.fun(instance, *(data[arg].values_array() for arg in self.input_names)))
                 
         elif data_type == "<class 'numpy.ndarray'>":
@@ -106,7 +160,21 @@ class Choregrapher(Singleton):
         data_structure_type = str(type(self.data_structure[compartment]["length"])) # TODO : length is common property of all used modules, but might not be generic enough
         for k in self.scheduled_groups[module_family].keys():
             for f in range(len(self.scheduled_groups[module_family][k])):
-                self.scheduled_groups[module_family][k][f] = partial(self.scheduled_groups[module_family][k][f], *(instance, self.data_structure[compartment], data_structure_type))
+                functor = self.scheduled_groups[module_family][k][f]
+                if data_structure_type == "<class 'openalea.metafspm.utils.ArrayDict'>" and not functor.iterating and not functor.total and module_family != "RootAnatomy" and module_family != "RootWaterModel":
+                    try:
+                        # print(self.scheduled_groups[module_family][k][f].fun, instance)
+                        functor.reg = {}
+                        fun, reg = specialize_method_recursive(functor.fun, instance, registry=functor.reg, max_depth=2, print_src=False)
+                        if fun is not None:
+                            functor.fun = fun
+                            functor.numba_speedup = True
+                        # else:
+                        #     # print(functor.name, "NOT NUMBA")
+                    except:
+                        pass
+                # It is fine in any situation because this is the functor call, not the function that is passed to partial
+                self.scheduled_groups[module_family][k][f] = partial(functor, *(instance, self.data_structure[compartment], data_structure_type))
 
 
     def add_simulation_time_step(self, simulation_time_step: int):
