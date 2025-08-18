@@ -1,6 +1,7 @@
 import yaml
 from dataclasses import fields
 from importlib import import_module, reload
+from openalea.metafspm.utils import ArrayDict
 
 
 def recursive_reload(module):
@@ -111,6 +112,10 @@ class CompositeModel:
         self.soil_inputs, self.soil_outputs = self.get_component_inputs_outputs(translator=translator, components_names=[c.__class__.__name__ for c in self.components], target_name=soil_name, names_for_others=False)
         
         props = self.data_structures["root"].properties()
+
+        # Soil did not initialted its properties in the MTG itself since we stopped pickling it, so we do it here
+        for name in self.soil_outputs:
+            props[name] = ArrayDict(dict(zip(props["struct_mass"].keys(), [0. for k in range(len(props["struct_mass"]))])), dtype=float)
 
         for receiver in self.components:
             self.couple_current_with_components_list(receiver=receiver, components=[c.__class__.__name__ for c in self.components] + [soil_name], translator=translator, common_props=props)

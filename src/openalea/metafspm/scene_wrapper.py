@@ -56,7 +56,7 @@ def play_Orchestra(scene_name, output_folder,
     processes = []
     sharememories = []
     for plant_id, init_info in planting_sequence.items():
-        a = np.empty((handshake_size, 10000), dtype=np.float64)
+        a = np.empty((handshake_size, 20000), dtype=np.float64)
         shm = SharedMemory(create=True, name=plant_id, size=a.nbytes)
         b = np.ndarray(a.shape, dtype=a.dtype, buffer=shm.buf)
         b[:] = a[:]

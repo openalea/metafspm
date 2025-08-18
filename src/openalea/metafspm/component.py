@@ -136,7 +136,6 @@ class Model:
                 
 
     def pull_available_inputs(self):
-        # Pointer to avoid repeated lookups in self (Usefull?)
         props = self.props
         for input, source_variables in self.pullable_inputs.items():
             vertices = props[list(source_variables.keys())[0]].keys()
@@ -144,8 +143,6 @@ class Model:
                                            for variable, unit_conversion in source_variables.items()]) 
                                  for vid in vertices})
 
-    # def post_coupling_init(self):
-    #     self.get_available_inputs()
 
     def temperature_modification(self, soil_temperature=15, process_at_T_ref=1., T_ref=0., A=-0.05, B=3., C=1.):
         """

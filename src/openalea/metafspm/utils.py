@@ -50,9 +50,48 @@ class ArrayDict(MutableMapping):
     def assign_all(self, values):
         self.arr[:self.size] = values
 
-    def update(self, dictionnary):
+    def update_old(self, dictionnary):
         for k, v in dictionnary.items():
             self.__setitem__(k, v)
+
+
+    def update(self, dictionnary: dict):
+        self_keys = self.keys()
+        existing_keys = []
+        new_keys = []
+        existing_values = []
+        new_values = []
+        has = self.vid2idx.__contains__
+
+        for k, v in dictionnary.items():
+            if has(k):
+                existing_keys.append(k)
+                existing_values.append(v)
+            else:
+                new_keys.append(k)
+                new_values.append(v)
+
+        if existing_keys:
+            self.scatter(existing_keys, existing_values)
+
+        # Bulk append for new
+        if new_keys:
+            n_new = len(new_keys)
+            self._ensure(self.size + n_new)
+            start = self.size
+            end   = start + n_new
+
+            # register indices + order
+            idx = start
+            for k in new_keys:
+                self.vid2idx[k] = idx
+                self.order[idx] = k
+                idx += 1
+
+            # one vectorized write for values
+            np.copyto(self.arr[start:end], np.asarray(new_values, dtype=self.arr.dtype))
+            self.size = end
+            
 
     def assign_at(self, idxs, values):
         self.arr[np.asarray(idxs, np.int64)] = np.asarray(values, dtype=float)
