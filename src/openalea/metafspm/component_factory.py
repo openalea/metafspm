@@ -86,7 +86,8 @@ class Choregrapher(Singleton):
     scheduled_groups = {}
     sub_time_step = {}
     data_structure = {"soil":None, "root":None}
-    filter =  {"label": ["Segment", "Apex"], "type":["Base_of_the_root_system", "Normal_root_after_emergence", "Stopped", "Just_stopped", "Dead", "Just_dead", "Root_nodule"]}
+    filter =  {"label": [1, 2], "type":[1, 7, 8, 9, 10, 11, 12]} # see bellow
+    # filter =  {"label": ["Segment", "Apex"], "type":["Base_of_the_root_system", "Normal_root_after_emergence", "Stopped", "Just_stopped", "Dead", "Just_dead", "Root_nodule"]}
 
     consensus_scheduling = [
             ["priorbalance", "selfbalance"],
