@@ -92,6 +92,10 @@ class Model:
         return [f.name for f in fields(self) if (f.metadata["variable_type"] == "state_variable" and f.metadata["state_variable_type"] == "NonInertialIntensive")]
     
     @property
+    def non_inertial_variables(self):
+        return [f.name for f in fields(self) if (f.metadata["variable_type"] == "state_variable" and f.metadata["state_variable_type"] in ("NonInertialIntensive", "NonInertialExtensive"))]
+
+    @property
     def descriptor(self):
         return [f.name for f in fields(self) if (f.metadata["variable_type"] == "state_variable" and f.metadata["state_variable_type"] == "descriptor")]
 
