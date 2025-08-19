@@ -50,11 +50,6 @@ class Functor:
                 data[self.name].update(
                     {1: self.fun(instance, *(data[arg] for arg in self.input_names))})
             else:
-                # print(self.name, self.input_names)
-                # print([getattr(instance, arg) for arg in self.input_names])
-                # print(self.name, {arg: data[arg] for arg in self.input_names})
-                # if self.name == "C_sucrose_root":
-                #     print(self.name, {arg: data[arg] for arg in self.input_names})
                 # print(self.name, [arg for arg in self.input_names if 254 not in data[arg].keys()])
                 data[self.name].update(
                     {vid: self.fun(instance, *(data[arg][vid] for arg in self.input_names)) for vid in data["focus_elements"]})
@@ -65,19 +60,19 @@ class Functor:
                     {1: self.fun(instance, *(data[arg] for arg in self.input_names))})
             else:
                 if self.numba_speedup:
-                    mask = data["focus_elements"]
-                    # mask = data["focus_elements"]
+                    mask = data["vertex_index"].indices_of(data["focus_elements"])
+
                     if self.supplementary_outputs != 0:
+                        # import numpy as np
+                        # print({arg: data[arg].values_array()[mask] for arg in self.input_names if (np.any((np.isnan(data[arg].values_array()[mask])) | (np.isinf(data[arg].values_array()[mask]))))})
+                        # print({arg: data[arg].check_invariant() for arg in self.input_names})
                         out = self.fun(*(data[arg].values_array()[mask] for arg in self.input_names))
-                        print(out)
                         data[self.name].assign_at(mask, out[0])
                         for s in range(self.supplementary_outputs):
                             data[out[2*s + 1]].assign_at(mask, out[2*s + 2])
-
-                        print(True)
                         pass
                     else:
-                        # print(self.name, {arg: data[arg] for arg in self.input_names})
+                        print(self.name, {arg: data[arg] for arg in self.input_names})
                         data[self.name].assign_at(mask, self.fun(*(data[arg].values_array()[mask] for arg in self.input_names)))
                 else:
                     if self.supplementary_outputs != 0:
@@ -161,16 +156,14 @@ class Choregrapher(Singleton):
         for k in self.scheduled_groups[module_family].keys():
             for f in range(len(self.scheduled_groups[module_family][k])):
                 functor = self.scheduled_groups[module_family][k][f]
-                if data_structure_type == "<class 'openalea.metafspm.utils.ArrayDict'>" and not functor.iterating and not functor.total and module_family != "RootAnatomy" and module_family != "RootWaterModel":
+                if (data_structure_type == "<class 'openalea.metafspm.utils.ArrayDict'>" and not functor.iterating and not functor.total 
+                    and module_family != "RootAnatomy" and module_family != "RootWaterModel" and module_family != "RootGrowthModelCoupled"): # TODO manual exclusions for now
                     try:
-                        # print(self.scheduled_groups[module_family][k][f].fun, instance)
                         functor.reg = {}
-                        fun, reg = specialize_method_recursive(functor.fun, instance, registry=functor.reg, max_depth=2, print_src=False)
+                        fun, _ = specialize_method_recursive(functor.fun, instance, registry=functor.reg, max_depth=2, print_src=False)
                         if fun is not None:
                             functor.fun = fun
                             functor.numba_speedup = True
-                        # else:
-                        #     # print(functor.name, "NOT NUMBA")
                     except:
                         pass
                 # It is fine in any situation because this is the functor call, not the function that is passed to partial
@@ -291,7 +284,8 @@ class Choregrapher(Singleton):
 
         if module_family.lower().startswith("rootgrowth"):
             self.data_structure["root"]["focus_elements"] = [vid for vid in self.data_structure["root"]["struct_mass"].keys() if (
-                self.data_structure["root"]["label"][vid] in self.filter["label"] 
+                self.data_structure["root"]["struct_mass"][vid] > 0
+                and self.data_structure["root"]["label"][vid] in self.filter["label"] 
                 and self.data_structure["root"]["type"][vid] in self.filter["type"])]
 
         
