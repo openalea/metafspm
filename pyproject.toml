@@ -54,7 +54,9 @@ dependencies = []
 
 
 dependencies = [
-    "pyyaml"
+    "pyyaml",
+    "numpy",
+    "numba"
 ]
 
 [project.optional-dependencies]
