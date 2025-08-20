@@ -59,21 +59,20 @@ class Functor:
                 data[self.name].update(
                     {1: self.fun(instance, *(data[arg] for arg in self.input_names))})
             else:
+                # Array based and numba accelerated computations if compatible
                 if self.numba_speedup:
                     mask = data["vertex_index"].indices_of(data["focus_elements"])
-
+                    
                     if self.supplementary_outputs != 0:
-                        # import numpy as np
-                        # print({arg: data[arg].values_array()[mask] for arg in self.input_names if (np.any((np.isnan(data[arg].values_array()[mask])) | (np.isinf(data[arg].values_array()[mask]))))})
-                        # print({arg: data[arg].check_invariant() for arg in self.input_names})
                         out = self.fun(*(data[arg].values_array()[mask] for arg in self.input_names))
                         data[self.name].assign_at(mask, out[0])
                         for s in range(self.supplementary_outputs):
                             data[out[2*s + 1]].assign_at(mask, out[2*s + 2])
-                        pass
                     else:
-                        print(self.name, {arg: data[arg] for arg in self.input_names})
+                        # print(self.name, {arg: data[arg] for arg in self.input_names})
                         data[self.name].assign_at(mask, self.fun(*(data[arg].values_array()[mask] for arg in self.input_names)))
+
+                # Else per element dictionnary-based computations
                 else:
                     if self.supplementary_outputs != 0:
                         outputs = [{} for _ in range(self.supplementary_outputs + 1)]
@@ -147,6 +146,15 @@ class Choregrapher(Singleton):
 
 
     def add_time_and_data(self, instance, sub_time_step: int, data: dict, compartment: str = "root"):
+        """
+        Method used to prepare collected functors for repeated computations, should be used after model class have received their parameters.
+
+        Args:
+            instance (_type_): instance of the class the functors have been sourced from
+            sub_time_step (int): sub time-stepping
+            data (dict): dictionnary whose items represent unique property sets for each elements
+            compartment (str, optional): data compartment. Defaults to "root".
+        """
         # module_family = instance.family
         module_family = instance.__class__.__name__
         self.sub_time_step[module_family] = sub_time_step
@@ -271,6 +279,7 @@ class Choregrapher(Singleton):
 
     def __call__(self, module_family):
         if self.data_structure['root'] is not None:
+            # This is requiered on static architectures if no growth model adds it
             if "focus_elements" not in self.data_structure["root"].keys():
                 self.data_structure["root"]["focus_elements"] = [vid for vid in self.data_structure["root"]["struct_mass"].keys() if (
                     self.data_structure["root"]["struct_mass"][vid] > 0 # NOTE : Check if robust, don't we need any calculation for non emerged elements?
@@ -282,11 +291,11 @@ class Choregrapher(Singleton):
                 for functor in self.scheduled_groups[module_family][step]:
                     functor()
 
-        if module_family.lower().startswith("rootgrowth"):
-            self.data_structure["root"]["focus_elements"] = [vid for vid in self.data_structure["root"]["struct_mass"].keys() if (
-                self.data_structure["root"]["struct_mass"][vid] > 0
-                and self.data_structure["root"]["label"][vid] in self.filter["label"] 
-                and self.data_structure["root"]["type"][vid] in self.filter["type"])]
+        # if module_family.lower().startswith("rootgrowth"):
+        #     self.data_structure["root"]["focus_elements"] = [vid for vid in self.data_structure["root"]["struct_mass"].keys() if (
+        #         self.data_structure["root"]["struct_mass"][vid] > 0
+        #         and self.data_structure["root"]["label"][vid] in self.filter["label"] 
+        #         and self.data_structure["root"]["type"][vid] in self.filter["type"])]
 
         
 # Decorators    
