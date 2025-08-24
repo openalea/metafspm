@@ -3,6 +3,8 @@ from typing import get_type_hints, get_origin, get_args
 from functools import partial
 from openalea.metafspm.specializer import specialize_method_recursive
 
+# TP
+import time
 
 # General process resolution method
 class Functor:
@@ -50,9 +52,25 @@ class Functor:
                 data[self.name].update(
                     {1: self.fun(instance, *(data[arg] for arg in self.input_names))})
             else:
-                # print(self.name, [arg for arg in self.input_names if 254 not in data[arg].keys()])
-                data[self.name].update(
-                    {vid: self.fun(instance, *(data[arg][vid] for arg in self.input_names)) for vid in data["focus_elements"]})
+                if self.supplementary_outputs != 0:
+                    outputs = [{} for _ in range(self.supplementary_outputs + 1)]
+                    supplementary_names = []
+                    for vid in data["focus_elements"]:
+                        out = self.fun(instance, *(data[arg][vid] for arg in self.input_names))
+                        outputs[0][vid] = out[0]
+                        for s in range(self.supplementary_outputs):
+                            output_name = out[2*s + 1]
+                            if output_name not in supplementary_names:
+                                supplementary_names.append(output_name)
+                            outputs[s+1][vid] = out[2*s + 2]
+                            
+                    data[self.name].update(outputs[0])
+                    for k, name in enumerate(supplementary_names):
+                        data[name].update(outputs[k+1])
+                else:
+                    # print(self.name, [arg for arg in self.input_names if 254 not in data[arg].keys()])
+                    data[self.name].update(
+                        {vid: self.fun(instance, *(data[arg][vid] for arg in self.input_names)) for vid in data["focus_elements"]})
                 
         elif data_type == "<class 'openalea.metafspm.utils.ArrayDict'>":
             if self.total:
@@ -285,7 +303,7 @@ class Choregrapher(Singleton):
                     self.data_structure["root"]["struct_mass"][vid] > 0 # NOTE : Check if robust, don't we need any calculation for non emerged elements?
                     and self.data_structure["root"]["label"][vid] in self.filter["label"] 
                     and self.data_structure["root"]["type"][vid] in self.filter["type"])]
-
+        
         for increment in range(int(self.simulation_time_step/self.sub_time_step[module_family])):
             for step in self.scheduled_groups[module_family].keys():
                 for functor in self.scheduled_groups[module_family][step]:
