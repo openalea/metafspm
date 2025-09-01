@@ -69,7 +69,7 @@ def play_Orchestra(scene_name, output_folder,
     processes = []
     sharememories = []
     cpu_set = 0
-    
+
     try:
         for plant_id, init_info in planting_sequence.items():
             a = np.empty((handshake_size, 20000), dtype=np.float64)
@@ -119,7 +119,7 @@ def play_Orchestra(scene_name, output_folder,
                 clean_exit = False
             time.sleep(10)
 
-    except KeyboardInterrupt:
+    except:
         clean_exit = False
 
     finally:

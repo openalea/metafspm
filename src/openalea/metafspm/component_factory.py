@@ -109,6 +109,7 @@ class Functor:
 
                     
                     else:
+                        # print(self.name, [arg for arg in self.input_names])
                         data[self.name].update(
                                 {vid: self.fun(instance, *(data[arg][vid] for arg in self.input_names)) for vid in data["focus_elements"]})
             # data[self.name].assign_all(self.fun(instance, *(data[arg].values_array() for arg in self.input_names)))
@@ -141,6 +142,9 @@ class Singleton:
             class_._instance.postsegmentation = {}
 
         return class_._instance
+    
+    def reload(class_):
+        class_._instance = None
 
 
 class Choregrapher(Singleton):

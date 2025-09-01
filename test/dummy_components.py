@@ -27,6 +27,9 @@ class Carbon(Model):
     sucrose_unloading: float = declare(default=0., unit="mol.s-1", unit_comment="", description="", 
                             min_value="", max_value="", value_comment="", references="", DOI="", 
                             variable_type="state_variable", by="", state_variable_type="NonInertialExtensive", edit_by="")
+    length: float = declare(default=0., unit="m", unit_comment="", description="", 
+                            min_value="", max_value="", value_comment="", references="", DOI="", 
+                            variable_type="state_variable", by="", state_variable_type="NonInertialExtensive", edit_by="")
 
     def __init__(self, g_properties, time_step, **scenario: dict):
         
@@ -35,13 +38,14 @@ class Carbon(Model):
         # normally g.vertices(scale=g.max_scale())
         self.vertices = list(self.props["struct_mass"].keys())
         self.time_step = time_step
-        self.choregrapher.add_time_and_data(instance=self, sub_time_step=self.time_step, data=self.props)
-
+        
         # Would be injected by the Component wrapper normally
         self.pullable_inputs = {}
         
         self.apply_scenario(**scenario)
         self.link_self_to_mtg()
+
+        self.choregrapher.add_time_and_data(instance=self, sub_time_step=self.time_step, data=self.props)
 
     @rate
     def _hexose_exudation(self, hexose, temperature):
@@ -83,6 +87,9 @@ class Nitrogen(Model):
     amino_acids_unloading: float = declare(default=0., unit="mol.s-1", unit_comment="", description="", 
                             min_value="", max_value="", value_comment="", references="", DOI="", 
                             variable_type="state_variable", by="", state_variable_type="NonInertialExtensive", edit_by="")
+    length: float = declare(default=0., unit="m", unit_comment="", description="", 
+                            min_value="", max_value="", value_comment="", references="", DOI="", 
+                            variable_type="state_variable", by="", state_variable_type="NonInertialExtensive", edit_by="")
 
     def __init__(self, g_properties, time_step, **scenario: dict):
         
@@ -91,13 +98,14 @@ class Nitrogen(Model):
         # normally g.vertices(scale=g.max_scale())
         self.vertices = list(self.props["struct_mass"].keys())
         self.time_step = time_step
-        self.choregrapher.add_time_and_data(instance=self, sub_time_step=self.time_step, data=self.props)
 
         # Would be injected by the Component wrapper normally
         self.pullable_inputs = {}
         
         self.apply_scenario(**scenario)
         self.link_self_to_mtg()
+
+        self.choregrapher.add_time_and_data(instance=self, sub_time_step=self.time_step, data=self.props)
 
     @rate
     def _amino_acids_exudation(self, amino_acids, temperature):
