@@ -1,10 +1,12 @@
 import pandas as pd
+from utils import deep_reload_package
+deep_reload_package(["openalea", "dummy_components"])
 
 # Utilities
 from openalea.metafspm.composite_wrapper import CompositeModel
 from openalea.metafspm.component_factory import Choregrapher
-Choregrapher().reload()
-
+# Choregrapher._instance = None
+# Choregrapher()
 # Edited models
 from dummy_components import Carbon, Nitrogen, SoilModel
 from openalea.mtg import MTG
