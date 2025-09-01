@@ -125,27 +125,17 @@ class Singleton:
 
     def __new__(class_, *args, **kwargs):
         if not isinstance(class_._instance, class_):
-            class_._instance = object.__new__(class_, *args, **kwargs)
-            class_._instance.priorbalance = {}
-            class_._instance.selfbalance = {}
-            class_._instance.stepinit = {}
-            class_._instance.state = {}
-            class_._instance.totalstate = {}
-            class_._instance.rate = {}
-            class_._instance.totalrate = {}
-            class_._instance.deficit = {}
-            class_._instance.axial = {}
-            class_._instance.potential = {}
-            class_._instance.allocation = {}
-            class_._instance.actual = {}
-            class_._instance.segmentation = {}
-            class_._instance.postsegmentation = {}
+            inst = object.__new__(class_, *args, **kwargs)
+            inst._init_state()
+            class_._instance = inst
 
         return class_._instance
     
-    def reload(class_):
-        class_._instance = None
-
+    def _init_state(self):
+        # centralize state initialization
+        for name in self.universal_steps:
+            setattr(self, name, {})
+    
 
 class Choregrapher(Singleton):
     """
@@ -153,9 +143,6 @@ class Choregrapher(Singleton):
     It also provides a __call__ method to schedule model execution.
     """
 
-    scheduled_groups = {}
-    sub_time_step = {}
-    data_structure = {"soil":None, "root":None}
     filter =  {"label": [1, 2], "type":[1, 7, 8, 9, 10, 11, 12]} # see bellow
     # filter =  {"label": ["Segment", "Apex"], "type":["Base_of_the_root_system", "Normal_root_after_emergence", "Stopped", "Just_stopped", "Dead", "Just_dead", "Root_nodule"]}
 
@@ -165,6 +152,13 @@ class Choregrapher(Singleton):
             ["axial"],  # subcategoy for metabolic models
             ["potential", "deficit", "allocation", "actual", "segmentation", "postsegmentation"],  # growth models
         ]
+
+
+    def _init_state(self):
+        super()._init_state()
+        self.scheduled_groups = {}
+        self.sub_time_step = {}
+        self.data_structure = {"soil":None, "root":None}
 
 
     def add_time_and_data(self, instance, sub_time_step: int, data: dict, compartment: str = "root"):

@@ -1,5 +1,5 @@
-from openalea.metafspm.component_factory import Choregrapher
-Choregrapher().reload()
+from utils import deep_reload_package
+deep_reload_package(["openalea", "dummy_components"])
 from dummy_components import Carbon
 
   
