@@ -1,5 +1,4 @@
 # MetaFSPM
-(Not yet)
 [![Docs](https://readthedocs.org/projects/mtg/badge/?version=latest)](https://metafspm.readthedocs.io/)
 (Not yet)
 [![Build Status](https://github.com/openalea/mtg/actions/workflows/conda-package-build.yml/badge.svg?branch=master)](https://github.com/openalea/mtg/actions/workflows/conda-package-build.yml?query=branch%3Amaster)
