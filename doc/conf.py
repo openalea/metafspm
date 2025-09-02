@@ -119,7 +119,7 @@ htmlhelp_basename = project + '_documentation'
 html_context = {
     # "github_url": "https://github.com", # or your GitHub Enterprise site
     "github_user": "openalea",
-    "github_repo": "my_pkg",
+    "github_repo": "metafspm",
     "github_version": "main",
     "doc_path": "doc",
 }
@@ -128,8 +128,8 @@ html_context = {
 latex_elements = {
 }
 latex_documents = [
-    (master_doc, 'pkg_name.tex', u'pkg_name Documentation',
-     u'INRA / INRIA / CIRAD', 'manual'),
+    (master_doc, 'metafspm.tex', u'metafspm Documentation',
+     u'INRAE / inria / CIRAD', 'manual'),
 ]
 
 # -- Options for manual page output ---------------------------------------
