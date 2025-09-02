@@ -19,16 +19,16 @@ include-package-data = false # force explicit declaration of data (disable autom
 name = "openalea.metafspm"
 authors = [
   { name = "Tristan Gérault", email = "tristan.gerault@inrae.fr" },
-  { name = "Christophe Pradal", email = "christophe.pradal@fnria.fr" }
+  { name = "Christophe Pradal", email = "christophe.pradal@cirad.fr" }
 ]
-description = "FSPM modelling toolkit for OpenAlea"
+description = "Generic Management of FSPM dynamic processes and scheduling for OpenAlea"
 readme = "README.md"
 license = "CECILL-C"
 license-files = ["LICEN[CS]E*"]
 requires-python = ">=3.8"
 dynamic = ["version"]
 classifiers = [
-  "Development Status :: 1 - Planning",
+  "Development Status :: 3 - Alpha Copy",
   "Intended Audience :: Science/Research",
   "Intended Audience :: Developers",
   #"License :: OSI Approved :: CeCILL-C License",
@@ -41,6 +41,7 @@ classifiers = [
   "Programming Language :: Python :: 3.10",
   "Programming Language :: Python :: 3.11",
   "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
   "Topic :: Scientific/Engineering",
   "Framework :: OpenAlea",
 ]
@@ -80,6 +81,9 @@ doc = [
 
 [project.urls]
 Repository = "https://github.com/openalea/metafpsm"
+Homepage = "https://metafspm.readthedocs.io/"
+"Bug Tracker" = "https://github.com/openalea/metafspm/issues"
+Discussions = "https://github.com/openalea/metafspm/discussions"
 
 [project.entry-points."wralea"]
 "my_pkg" = "openalea.metafspm_wralea"
