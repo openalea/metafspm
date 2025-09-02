@@ -62,7 +62,8 @@ dependencies = [
 [project.optional-dependencies]
 test = [
   "pytest",
-  "nbmake"
+  "nbmake",
+  "pandas",
 ]
 dev = [
   "pytest >=6",
@@ -85,4 +86,4 @@ Homepage = "https://metafspm.readthedocs.io/"
 Discussions = "https://github.com/openalea/metafspm/discussions"
 
 [project.entry-points."wralea"]
-"my_pkg" = "openalea.metafspm_wralea"
+"metafspm" = "openalea.metafspm_wralea"
