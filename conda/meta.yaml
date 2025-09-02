@@ -1,16 +1,15 @@
 {% set pyproject = load_file_data('../pyproject.toml', from_recipe_dir=True) %}
-{% set name = pyproject.get('project').get('name') %}
-{% set description = pyproject.get('project').get('description') %}
-{% set version = GIT_DESCRIBE_TAG | replace("v", "") %}
-{% set license = pyproject.get('project').get('license') %}
-{% set home = pyproject.get('project', {}).get('urls', {}).get('Homepage', '') %}
-{% set build_deps = pyproject.get("build-system", {}).get("requires", []) %}
-{% set deps = pyproject.get('project', {}).get('dependencies', []) %}
-{% set conda_deps = pyproject.get('tool', {}).get('conda-environment', {}).get('dependencies',[]) %}
-
+{# Align version with the one computed by setuptools_scm #}
+{% set base_tag = GIT_DESCRIBE_TAG | default("0.1.0.dev0") | replace("v", "") %}
+{% set distance = GIT_DESCRIBE_NUMBER | default("0") | int %}
+{% set base_parts = base_tag.split('.') %}
+{% set micro = base_parts[2] | int %}
+{% set next_version = base_parts[0] + "." + base_parts[1] + "." + (micro + 1)|string %}
+{% set scm_version = next_version + ".dev" + distance|string if distance > 0 else base_tag %}
+{% set version = environ.get('SETUPTOOLS_SCM_PRETEND_VERSION', scm_version) %}
 
 package:
-  name: {{ name }}
+  name: {{ pyproject["project"]["name"] }}
   version: {{ version }}
 
 source:
@@ -18,6 +17,7 @@ source:
 
 build:
   noarch: python
+  string: py{{ PY_VER }}
   preserve_egg_dir: True
   # pip install options mainly ensure that dependencies are handled by conda (and not pip)
   # --no-deps ensure pip will not install deps not declared in meta.yaml (but declared in pyproject.toml)
@@ -26,24 +26,25 @@ build:
   script: {{ PYTHON }} -m pip install . --no-deps --ignore-installed --no-build-isolation -vv
 
 requirements:
-  host:
+  build:
     - python
-    {% for dep in build_deps %}
-    - {{ dep }}
-    {% endfor  %}
+    {% for dep in pyproject["build-system"]["requires"] %}
+    - {{ dep.lower() }}
+    {% endfor %}
 
   run:
-    - python
-    {% for dep in deps + conda_deps %}
-    - {{ dep }}
+    - python {{ pyproject["project"]["requires-python"] }}
+    {% for dep in pyproject["project"]["dependencies"] %}
+    - {{ dep.lower() }}
     {% endfor %}
 
 test:
   requires:
-    - pytest
-    - nbmake
+    {% for dep in pyproject["project"]["optional-dependencies"]["test"] %}
+    - {{ dep.lower() }}
+    {% endfor %}
   imports:
-    - {{ name }}
+    - {{ pyproject["project"]["name"] }}
   source_files:
     - test/test_*.py
     - doc/notebooks/*.ipynb
@@ -51,7 +52,8 @@ test:
    - pytest -v
    - pytest --nbmake
 
+
 about:
-  home: {{ home }}
-  license: {{ license }}
-  summary: {{ description }}
+  home: {{ pyproject["project"]["urls"]["Homepage"] }}
+  license: {{ pyproject["project"]["license"] }}
+  summary: {{ pyproject["project"]["description"] }}
