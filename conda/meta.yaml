@@ -28,14 +28,11 @@ build:
   script: {{ PYTHON }} -m pip install . --no-deps --ignore-installed --no-build-isolation -vv
 
 requirements:
-  host:
+  build:
     - python
     {% for dep in build_deps %}
     - {{ dep }}
     {% endfor  %}
-
-  build:
-    - {{ compiler("cxx") }}
 
   run:
     - python
