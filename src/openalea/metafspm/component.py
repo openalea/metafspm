@@ -1,5 +1,6 @@
 from dataclasses import dataclass, field, fields
 from typing import Literal
+import numpy as np
 
 from .component_factory import *
 
@@ -91,6 +92,10 @@ class Model:
         return [f.name for f in fields(self) if (f.metadata["variable_type"] == "state_variable" and f.metadata["state_variable_type"] == "NonInertialIntensive")]
     
     @property
+    def non_inertial_variables(self):
+        return [f.name for f in fields(self) if (f.metadata["variable_type"] == "state_variable" and f.metadata["state_variable_type"] in ("NonInertialIntensive", "NonInertialExtensive"))]
+
+    @property
     def descriptor(self):
         return [f.name for f in fields(self) if (f.metadata["variable_type"] == "state_variable" and f.metadata["state_variable_type"] == "descriptor")]
 
@@ -136,7 +141,6 @@ class Model:
                 
 
     def pull_available_inputs(self):
-        # Pointer to avoid repeated lookups in self (Usefull?)
         props = self.props
         for input, source_variables in self.pullable_inputs.items():
             vertices = props[list(source_variables.keys())[0]].keys()
@@ -144,10 +148,8 @@ class Model:
                                            for variable, unit_conversion in source_variables.items()]) 
                                  for vid in vertices})
 
-    # def post_coupling_init(self):
-    #     self.get_available_inputs()
 
-    def temperature_modification(self, soil_temperature=15, process_at_T_ref=1., T_ref=0., A=-0.05, B=3., C=1.):
+    def temperature_modification_old(self, soil_temperature=15, process_at_T_ref=1., T_ref=0., A=-0.05, B=3., C=1.):
         """
         This function calculates how the value of a process should be modified according to soil temperature (in degrees Celsius).
         Parameters correspond to the value of the process at reference temperature T_ref (process_at_T_ref),
@@ -182,4 +184,29 @@ class Model:
                                    C * (soil_temperature - T_ref) / 10.)
 
         return max(modified_process, 0.)
+    
+
+    def temperature_modification(self, soil_temperature=15, process_at_T_ref=1., T_ref=0., A=-0.05, B=3., C=1.):
+        """
+        This function calculates how the value of a process should be modified according to soil temperature (in degrees Celsius).
+        Parameters correspond to the value of the process at reference temperature T_ref (process_at_T_ref),
+        to two empirical coefficients A and B, and to a coefficient C used to switch between different formalisms.
+        If C=0 and B=1, then the relationship corresponds to a classical linear increase with temperature (thermal time).
+        If C=1, A=0 and B>1, then the relationship corresponds to a classical exponential increase with temperature (Q10).
+        If C=1, A<0 and B>0, then the relationship corresponds to bell-shaped curve, close to the one from Parent et al. (2010).
+        :param T_ref: the reference temperature
+        :param A: parameter A (may be equivalent to the coefficient of linear increase)
+        :param B: parameter B (may be equivalent to the Q10 value)
+        :param C: parameter C (either 0 or 1)
+        :return: the new value of the process
+        """
+
+        # We compute a temperature-modified process, correspond to a Q10-modified relationship,
+        # based on the work of Tjoelker et al. (2001):
+        modified_process = process_at_T_ref * (A * (soil_temperature - T_ref) + B) ** (1 - C) \
+                           * (A * (soil_temperature - T_ref) + B) ** (
+                                   C * (soil_temperature - T_ref) / 10.)
+        
+        return np.where(((C != 0) & (C != 1)) | ((C == 1) & ((A * (soil_temperature - T_ref) + B) < 0.)), 0.,
+                        np.maximum(modified_process, 0.))
 

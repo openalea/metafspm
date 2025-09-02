@@ -1,7 +1,0 @@
-name: metafspm
-channels:
-  - openalea3
-  - conda-forge
-dependencies:
-  - python
-  - pyyaml

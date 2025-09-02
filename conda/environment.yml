@@ -1,0 +1,15 @@
+name: metafspm
+channels:
+  - openalea3
+  - conda-forge
+dependencies:
+  - python
+  - pyyaml
+  - numpy
+  - numba
+  - openalea.mtg
+  - pandas
+  - pip
+  # let pip install the rest using pyproject.toml (if you are okay with conda/pip mix)
+  - pip:
+      - -e .."[doc]"

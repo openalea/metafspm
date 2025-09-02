@@ -1,9 +1,15 @@
 import inspect as ins
+from typing import get_type_hints, get_origin, get_args
 from functools import partial
+from openalea.metafspm.specializer import specialize_method_recursive
 
+# TP
+import time
 
 # General process resolution method
 class Functor:
+    numba_speedup = False
+    
     def __init__(self, fun, iteraring: bool = False, total: bool = False):
         self.fun = fun
         self.name = self.fun.__name__[1:]
@@ -11,6 +17,7 @@ class Functor:
         self.iterating = iteraring
         self.total = total
         self.input_names = self.inputs(self.fun)
+        self.supplementary_outputs = int((self.num_outputs(fun) - 1) / 2)
         if len(self.input_names) == 0:
             self.iterating = True
 
@@ -18,6 +25,24 @@ class Functor:
         arguments = ins.getfullargspec(fun)[0]
         arguments.remove("self")
         return arguments
+    
+    def num_outputs(self, func):
+        """
+        Convention: multiple outputs must be annotated as `-> tuple[...]`.
+        Returns an int, "variadic" for tuple[T, ...], or 1 for non-tuple returns.
+        Returns None if there's no return annotation.
+        """
+        ret = get_type_hints(func).get("return")
+        # print(ret)
+        if ret is None:
+            return 1  # no annotation → unknown
+
+        elif get_origin(ret) is tuple:
+            return len(get_args(ret))
+        
+        else:
+            return 1
+        
 
     def __call__(self, instance, data, data_type="<class 'dict'>", *args):
         if self.iterating:
@@ -27,14 +52,67 @@ class Functor:
                 data[self.name].update(
                     {1: self.fun(instance, *(data[arg] for arg in self.input_names))})
             else:
-                # print(self.name, self.input_names)
-                # print([getattr(instance, arg) for arg in self.input_names])
-                # print(self.name, {arg: data[arg] for arg in self.input_names})
-                # if self.name == "C_sucrose_root":
-                #     print(self.name, {arg: data[arg] for arg in self.input_names})
-                # print(self.name, [arg for arg in self.input_names if 254 not in data[arg].keys()])
+                if self.supplementary_outputs != 0:
+                    outputs = [{} for _ in range(self.supplementary_outputs + 1)]
+                    supplementary_names = []
+                    for vid in data["focus_elements"]:
+                        out = self.fun(instance, *(data[arg][vid] for arg in self.input_names))
+                        outputs[0][vid] = out[0]
+                        for s in range(self.supplementary_outputs):
+                            output_name = out[2*s + 1]
+                            if output_name not in supplementary_names:
+                                supplementary_names.append(output_name)
+                            outputs[s+1][vid] = out[2*s + 2]
+                            
+                    data[self.name].update(outputs[0])
+                    for k, name in enumerate(supplementary_names):
+                        data[name].update(outputs[k+1])
+                else:
+                    # print(self.name, [arg for arg in self.input_names if 254 not in data[arg].keys()])
+                    data[self.name].update(
+                        {vid: self.fun(instance, *(data[arg][vid] for arg in self.input_names)) for vid in data["focus_elements"]})
+                
+        elif data_type == "<class 'openalea.metafspm.utils.ArrayDict'>":
+            if self.total:
                 data[self.name].update(
-                    {vid: self.fun(instance, *(data[arg][vid] for arg in self.input_names)) for vid in data["focus_elements"]})
+                    {1: self.fun(instance, *(data[arg] for arg in self.input_names))})
+            else:
+                # Array based and numba accelerated computations if compatible
+                if self.numba_speedup:
+                    mask = data["vertex_index"].indices_of(data["focus_elements"])
+                    
+                    if self.supplementary_outputs != 0:
+                        out = self.fun(*(data[arg].values_array()[mask] for arg in self.input_names))
+                        data[self.name].assign_at(mask, out[0])
+                        for s in range(self.supplementary_outputs):
+                            data[out[2*s + 1]].assign_at(mask, out[2*s + 2])
+                    else:
+                        # print(self.name, {arg: data[arg] for arg in self.input_names})
+                        data[self.name].assign_at(mask, self.fun(*(data[arg].values_array()[mask] for arg in self.input_names)))
+
+                # Else per element dictionnary-based computations
+                else:
+                    if self.supplementary_outputs != 0:
+                        outputs = [{} for _ in range(self.supplementary_outputs + 1)]
+                        supplementary_names = []
+                        for vid in data["focus_elements"]:
+                            out = self.fun(instance, *(data[arg][vid] for arg in self.input_names))
+                            outputs[0][vid] = out[0]
+                            for s in range(self.supplementary_outputs):
+                                output_name = out[2*s + 1]
+                                if output_name not in supplementary_names:
+                                    supplementary_names.append(output_name)
+                                outputs[s+1][vid] = out[2*s + 2]
+                        data[self.name].update(outputs[0])
+                        for k, name in enumerate(supplementary_names):
+                            data[name].update(outputs[k+1])
+
+                    
+                    else:
+                        # print(self.name, [arg for arg in self.input_names])
+                        data[self.name].update(
+                                {vid: self.fun(instance, *(data[arg][vid] for arg in self.input_names)) for vid in data["focus_elements"]})
+            # data[self.name].assign_all(self.fun(instance, *(data[arg].values_array() for arg in self.input_names)))
                 
         elif data_type == "<class 'numpy.ndarray'>":
             data[self.name] = self.fun(instance, *(data[arg] for arg in self.input_names))
@@ -47,24 +125,17 @@ class Singleton:
 
     def __new__(class_, *args, **kwargs):
         if not isinstance(class_._instance, class_):
-            class_._instance = object.__new__(class_, *args, **kwargs)
-            class_._instance.priorbalance = {}
-            class_._instance.selfbalance = {}
-            class_._instance.stepinit = {}
-            class_._instance.state = {}
-            class_._instance.totalstate = {}
-            class_._instance.rate = {}
-            class_._instance.totalrate = {}
-            class_._instance.deficit = {}
-            class_._instance.axial = {}
-            class_._instance.potential = {}
-            class_._instance.allocation = {}
-            class_._instance.actual = {}
-            class_._instance.segmentation = {}
-            class_._instance.postsegmentation = {}
+            inst = object.__new__(class_, *args, **kwargs)
+            inst._init_state()
+            class_._instance = inst
 
         return class_._instance
-
+    
+    def _init_state(self):
+        # centralize state initialization
+        for name in self.universal_steps:
+            setattr(self, name, {})
+    
 
 class Choregrapher(Singleton):
     """
@@ -72,10 +143,8 @@ class Choregrapher(Singleton):
     It also provides a __call__ method to schedule model execution.
     """
 
-    scheduled_groups = {}
-    sub_time_step = {}
-    data_structure = {"soil":None, "root":None}
-    filter =  {"label": ["Segment", "Apex"], "type":["Base_of_the_root_system", "Normal_root_after_emergence", "Stopped", "Just_stopped", "Dead", "Just_dead", "Root_nodule"]}
+    filter =  {"label": [1, 2], "type":[1, 7, 8, 9, 10, 11, 12]} # see bellow
+    # filter =  {"label": ["Segment", "Apex"], "type":["Base_of_the_root_system", "Normal_root_after_emergence", "Stopped", "Just_stopped", "Dead", "Just_dead", "Root_nodule"]}
 
     consensus_scheduling = [
             ["priorbalance", "selfbalance"],
@@ -85,16 +154,44 @@ class Choregrapher(Singleton):
         ]
 
 
+    def _init_state(self):
+        super()._init_state()
+        self.scheduled_groups = {}
+        self.sub_time_step = {}
+        self.data_structure = {"soil":None, "root":None}
+
+
     def add_time_and_data(self, instance, sub_time_step: int, data: dict, compartment: str = "root"):
+        """
+        Method used to prepare collected functors for repeated computations, should be used after model class have received their parameters.
+
+        Args:
+            instance (_type_): instance of the class the functors have been sourced from
+            sub_time_step (int): sub time-stepping
+            data (dict): dictionnary whose items represent unique property sets for each elements
+            compartment (str, optional): data compartment. Defaults to "root".
+        """
         # module_family = instance.family
         module_family = instance.__class__.__name__
         self.sub_time_step[module_family] = sub_time_step
         if self.data_structure[compartment] == None:
             self.data_structure[compartment] = data
-        data_structure_type = str(type(list(self.data_structure[compartment].values())[0]))
+        data_structure_type = str(type(self.data_structure[compartment]["length"])) # TODO : length is common property of all used modules, but might not be generic enough
         for k in self.scheduled_groups[module_family].keys():
             for f in range(len(self.scheduled_groups[module_family][k])):
-                self.scheduled_groups[module_family][k][f] = partial(self.scheduled_groups[module_family][k][f], *(instance, self.data_structure[compartment], data_structure_type))
+                functor = self.scheduled_groups[module_family][k][f]
+                if (data_structure_type == "<class 'openalea.metafspm.utils.ArrayDict'>" and not functor.iterating and not functor.total 
+                    and module_family != "RootAnatomy" and module_family != "RootWaterModel" and module_family != "RootGrowthModelCoupled"): # TODO manual exclusions for now
+                    try:
+                        functor.reg = {}
+                        fun, _ = specialize_method_recursive(functor.fun, instance, registry=functor.reg, max_depth=2, print_src=False)
+                        if fun is not None:
+                            functor.fun = fun
+                            functor.numba_speedup = True
+                    except:
+                        pass
+                # It is fine in any situation because this is the functor call, not the function that is passed to partial
+                self.scheduled_groups[module_family][k][f] = partial(functor, *(instance, self.data_structure[compartment], data_structure_type))
 
 
     def add_simulation_time_step(self, simulation_time_step: int):
@@ -198,21 +295,23 @@ class Choregrapher(Singleton):
 
     def __call__(self, module_family):
         if self.data_structure['root'] is not None:
+            # This is requiered on static architectures if no growth model adds it
             if "focus_elements" not in self.data_structure["root"].keys():
                 self.data_structure["root"]["focus_elements"] = [vid for vid in self.data_structure["root"]["struct_mass"].keys() if (
                     self.data_structure["root"]["struct_mass"][vid] > 0 # NOTE : Check if robust, don't we need any calculation for non emerged elements?
                     and self.data_structure["root"]["label"][vid] in self.filter["label"] 
                     and self.data_structure["root"]["type"][vid] in self.filter["type"])]
-
+        
         for increment in range(int(self.simulation_time_step/self.sub_time_step[module_family])):
             for step in self.scheduled_groups[module_family].keys():
                 for functor in self.scheduled_groups[module_family][step]:
                     functor()
 
-        if module_family.lower().startswith("rootgrowth"):
-            self.data_structure["root"]["focus_elements"] = [vid for vid in self.data_structure["root"]["struct_mass"].keys() if (
-                self.data_structure["root"]["label"][vid] in self.filter["label"] 
-                and self.data_structure["root"]["type"][vid] in self.filter["type"])]
+        # if module_family.lower().startswith("rootgrowth"):
+        #     self.data_structure["root"]["focus_elements"] = [vid for vid in self.data_structure["root"]["struct_mass"].keys() if (
+        #         self.data_structure["root"]["struct_mass"][vid] > 0
+        #         and self.data_structure["root"]["label"][vid] in self.filter["label"] 
+        #         and self.data_structure["root"]["type"][vid] in self.filter["type"])]
 
         
 # Decorators    

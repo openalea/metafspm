@@ -1,12 +1,17 @@
 import pandas as pd
-
-# Edited models
-from dummy_components import Carbon, Nitrogen, SoilModel
-from openalea.mtg import MTG
+from utils import deep_reload_package
+deep_reload_package(["openalea", "dummy_components"])
 
 # Utilities
 from openalea.metafspm.composite_wrapper import CompositeModel
 from openalea.metafspm.component_factory import Choregrapher
+# Choregrapher._instance = None
+# Choregrapher()
+# Edited models
+from dummy_components import Carbon, Nitrogen, SoilModel
+from openalea.mtg import MTG
+
+
 
 
 class Model(CompositeModel):
@@ -41,7 +46,7 @@ class Model(CompositeModel):
         self.input_tables = scenario["input_tables"]
 
         # Should have been created by an architecture model init here
-        g_properties = {"struct_mass": {1:0.001}, "type": {1: "Normal_root_after_emergence"}, "label": {1: "Apex"}}
+        g_properties = {"struct_mass": {1:0.001}, "length": {1:0.001}, "type": {1: 7}, "label": {1: 2}}
         g = MTG()
         props = g.properties()
         props.update(g_properties)
