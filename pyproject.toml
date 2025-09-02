@@ -64,6 +64,7 @@ test = [
   "pytest",
   "nbmake",
   "pandas",
+  "openalea.mtg",
 ]
 dev = [
   "pytest >=6",
