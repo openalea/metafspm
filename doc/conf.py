@@ -14,12 +14,16 @@ author = meta['Author-email'].split(' <')[0]
 desc = meta['Summary']
 urls = {k:v for k,v in [item.split(',') for item in meta.get_all('Project-URL')]}
 
+# Get the project root dir, which is the parent dir of this
+cwd = os.getcwd()
+project_root = os.path.dirname(cwd)
+src_dir = os.path.abspath(os.path.join(project_root, "src"))
 
 # If extensions (or modules to document with autodoc) are in another directory,
 # add these directories to sys.path here. If the directory is relative to the
 # documentation root, use os.path.abspath to make it absolute, like shown here.
 # sys.path.insert(0, os.path.abspath('.'))
-sys.path.insert(0, os.path.abspath('..')) # to include the root of the package
+sys.path.insert(0, os.path.join(project_root, 'src'))
 
 # -- General configuration ------------------------------------------------
 # Add any Sphinx extension module names here, as strings. They can be
@@ -151,3 +155,26 @@ texinfo_documents = [
 ]
 # Example configuration for intersphinx: refer to the Python standard library.
 intersphinx_mapping = {'python': ('https://docs.python.org/', None)}
+
+# use apidoc to generate developer doc
+from sphinx.ext import apidoc
+
+
+def run_apidoc(_):
+    here = os.path.dirname(__file__)
+    out_dir = os.path.join(here, "api")
+    module_dir = os.path.abspath(os.path.join(here, "..", "src")) 
+
+    os.makedirs(out_dir, exist_ok=True)
+
+    apidoc.main([
+        "--force",          # overwrite existing files
+        "--module-first",   # put module docs before submodules
+        "--separate",       # separate .rst file per module
+        "-o", out_dir,      # output directory
+        module_dir,         # your package
+    ])
+
+def setup(app):
+    app.connect("builder-inited", run_apidoc)
+
