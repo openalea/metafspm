@@ -7,4 +7,4 @@ API References
    :template: custom-module-template.rst
    :recursive:
 
-   openalea.phenomenal
+   openalea.metafspm
