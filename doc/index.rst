@@ -2,10 +2,10 @@
 :Source: See  `https://github.com/openalea/metafspm <https://github.com/openalea/metafspm/>`__.
 :Issues: Please fill a report on `github <https://github.com/openalea/metafspm/issues>`__
 
-README
-###############################
 
-.. mdinclude:: ../README.md
+.. include:: ../README.md
+   :parser: myst_parser.sphinx_
+
 
 OpenAlea MetFSPM documentation
 ###############################
@@ -21,9 +21,8 @@ OpenAlea MetFSPM documentation
    :maxdepth: 2
    :caption: Contents:
 
-   ../README.md
    user
-   guide
+   api
    ..  code_example
    ..  notebook_examples.rst
 

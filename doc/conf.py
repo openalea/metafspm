@@ -156,25 +156,4 @@ texinfo_documents = [
 # Example configuration for intersphinx: refer to the Python standard library.
 intersphinx_mapping = {'python': ('https://docs.python.org/', None)}
 
-# use apidoc to generate developer doc
-from sphinx.ext import apidoc
-
-
-def run_apidoc(_):
-    here = os.path.dirname(__file__)
-    out_dir = os.path.join(here, "api")
-    module_dir = os.path.abspath(os.path.join(here, "..", "src")) 
-
-    os.makedirs(out_dir, exist_ok=True)
-
-    apidoc.main([
-        "--force",          # overwrite existing files
-        "--module-first",   # put module docs before submodules
-        "--separate",       # separate .rst file per module
-        "-o", out_dir,      # output directory
-        module_dir,         # your package
-    ])
-
-def setup(app):
-    app.connect("builder-inited", run_apidoc)
 
