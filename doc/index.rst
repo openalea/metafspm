@@ -16,8 +16,6 @@ OpenAlea MetFSPM documentation
 ###############################
 
 
-
-
 .. toctree::
    :maxdepth: 2
    :caption: Contents:
@@ -27,14 +25,6 @@ OpenAlea MetFSPM documentation
    ..  code_example
    ..  notebook_examples.rst
 
-
-Sources
-=======
-
-.. toctree::
-   :maxdepth: 2
-
-   api/modules
 
 
 Indices and tables
