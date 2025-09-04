@@ -11,19 +11,25 @@ OpenAlea MetFSPM documentation
     :Release: |release|
     :Date: |today|
 
-.. include:: ../README.md
-   :parser: myst_parser.sphinx_
-
 
 .. toctree::
    :maxdepth: 2
    :caption: Contents:
 
+   ../README.md
    user
    guide
    ..  code_example
    ..  notebook_examples.rst
 
+
+Sources
+=======
+
+.. toctree::
+   :maxdepth: 2
+
+   api/modules
 
 
 Indices and tables
