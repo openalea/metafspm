@@ -2,6 +2,11 @@
 :Source: See  `https://github.com/openalea/metafspm <https://github.com/openalea/metafspm/>`__.
 :Issues: Please fill a report on `github <https://github.com/openalea/metafspm/issues>`__
 
+README
+###############################
+
+.. mdinclude:: ../README.md
+
 OpenAlea MetFSPM documentation
 ###############################
 
