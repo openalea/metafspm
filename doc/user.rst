@@ -1,5 +1,4 @@
 
-.. _cnwheat_user:
 
 MetaFSPM User Guide
 ###################
