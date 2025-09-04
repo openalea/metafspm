@@ -2,6 +2,11 @@
 :Source: See  `https://github.com/openalea/metafspm <https://github.com/openalea/metafspm/>`__.
 :Issues: Please fill a report on `github <https://github.com/openalea/metafspm/issues>`__
 
+.. sidebar:: Summary
+
+    :Version: |version|
+    :Release: |release|
+    :Date: |today|
 
 .. include:: ../README.md
    :parser: myst_parser.sphinx_
@@ -10,11 +15,7 @@
 OpenAlea MetFSPM documentation
 ###############################
 
-.. sidebar:: Summary
 
-    :Version: |version|
-    :Release: |release|
-    :Date: |today|
 
 
 .. toctree::
