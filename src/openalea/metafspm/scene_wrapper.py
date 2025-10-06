@@ -197,22 +197,27 @@ def plant_worker(queues_soil_to_plants, queue_plants_to_soil, queues_light_to_pl
                     echo=False, **log_settings)
 
     iteration = 0
-    while not stop_event.is_set() and iteration < n_iterations: 
-        # Run plant time step
-        if record_performance:
-            logger.run_and_monitor_model_step()
-        else:
-            logger()
-            instance.run()
+    try:
+        while not stop_event.is_set() and iteration < n_iterations: 
+            # Run plant time step
+            if record_performance:
+                logger.run_and_monitor_model_step()
+            else:
+                logger()
+                instance.run()
 
-        iteration += 1
+            iteration += 1
+            
+    except Exception as e:
+        print("Plant interrupted by : ", e)
 
-    print("Plant stopped")
-    stop_event.set()
+    finally:
+        print("Plant stopped")
+        stop_event.set()
 
-    logger.stop()
+        logger.stop()
 
-    os._exit(0)
+        os._exit(0)
 
 
 def soil_worker(queues_soil_to_plants, queue_plants_to_soil, stop_event,
