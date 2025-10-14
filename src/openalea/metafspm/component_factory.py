@@ -161,7 +161,7 @@ class Choregrapher(Singleton):
         self.data_structure = {"soil":None, "root":None}
 
 
-    def add_time_and_data(self, instance, sub_time_step: int, data: dict, compartment: str = "root"):
+    def add_time_and_data(self, instance, sub_time_step: int, data: dict, compartment: str = "root", use_njit=False):
         """
         Method used to prepare collected functors for repeated computations, should be used after model class have received their parameters.
 
@@ -180,16 +180,17 @@ class Choregrapher(Singleton):
         for k in self.scheduled_groups[module_family].keys():
             for f in range(len(self.scheduled_groups[module_family][k])):
                 functor = self.scheduled_groups[module_family][k][f]
-                if (data_structure_type == "<class 'openalea.metafspm.utils.ArrayDict'>" and not functor.iterating and not functor.total 
-                    and module_family != "RootAnatomy" and module_family != "RootWaterModel" and module_family != "RootGrowthModelCoupled"): # TODO manual exclusions for now
-                    try:
-                        functor.reg = {}
-                        fun, _ = specialize_method_recursive(functor.fun, instance, registry=functor.reg, max_depth=2, print_src=False)
-                        if fun is not None:
-                            functor.fun = fun
-                            functor.numba_speedup = True
-                    except:
-                        pass
+                if use_njit:
+                    if (data_structure_type == "<class 'openalea.metafspm.utils.ArrayDict'>" and not functor.iterating and not functor.total 
+                        and module_family != "RootAnatomy" and module_family != "RootWaterModel" and module_family != "RootGrowthModelCoupled"): # TODO manual exclusions for now
+                        try:
+                            functor.reg = {}
+                            fun, _ = specialize_method_recursive(functor.fun, instance, registry=functor.reg, max_depth=2, print_src=False)
+                            if fun is not None:
+                                functor.fun = fun
+                                functor.numba_speedup = True
+                        except:
+                            pass
                 # It is fine in any situation because this is the functor call, not the function that is passed to partial
                 self.scheduled_groups[module_family][k][f] = partial(functor, *(instance, self.data_structure[compartment], data_structure_type))
 
