@@ -5,6 +5,7 @@ from multiprocessing.shared_memory import SharedMemory
 import numpy as np
 import random
 import time
+import traceback
 
 
 ### metafspm zone
@@ -209,6 +210,7 @@ def plant_worker(queues_soil_to_plants, queue_plants_to_soil, queues_light_to_pl
             iteration += 1
             
     except Exception as e:
+        traceback.print_exc()
         print("Plant interrupted by : ", e)
 
     finally:
