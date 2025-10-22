@@ -48,7 +48,8 @@ def play_Orchestra(scene_name, output_folder,
                                                                 sowing_depth=[0.025], row_spacing=row_spacing, plant_models=plant_models,
                                                                 plant_scenarios=plant_scenarios, plant_model_frequency=[1.])
     
-    cpu_assignments = plan_affinity(len(planting_sequence), 1) # TODO : only 1 cpu per plant as for now, see if we need to adapt this if we start leveraging intense vectorization with numba
+    debug_runs = True
+    cpu_assignments = plan_affinity(len(planting_sequence), 1, debug_runs=debug_runs) # TODO : only 1 cpu per plant as for now, see if we need to adapt this if we start leveraging intense vectorization with numba
     
     # Queues to perform synchronization and data sharing of the processes
     queues_soil_to_plants = {pid: mp.Queue() for pid in planting_sequence.keys()}
@@ -274,7 +275,7 @@ def light_worker(queues_light_to_plants, queue_plants_to_light, stop_event,
     stop_event.set()
 
     
-def plan_affinity(n_workers: int, threads_per_worker: int = 1, ids=None):
+def plan_affinity(n_workers: int, threads_per_worker: int = 1, ids=None, debug_runs=False):
     ids = sorted(ids or psutil.Process().cpu_affinity())
     
     lock_file = "outputs/lock"
@@ -289,7 +290,7 @@ def plan_affinity(n_workers: int, threads_per_worker: int = 1, ids=None):
         f.seek(0)
         cpu_string = f.read()
 
-        if len(cpu_string) == 0:
+        if len(cpu_string) == 0 or debug_runs:
             cpu_string = ('0;' * len(ids))[:-1]
 
         if len(cpu_string) != (len(ids) * 2) - 1:
