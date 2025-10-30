@@ -17,7 +17,7 @@ def play_Orchestra(scene_name, output_folder,
                  logger_class = None, log_settings: dict = {}, heavy_log_period: int = 24,
                  n_iterations = 2500, time_step=3600, scene_xrange=1, scene_yrange=1, sowing_density=250, row_spacing=0.15, max_depth=1.3,
                  voxel_widht=0.01, voxel_height=0.01,
-                 record_performance=False):
+                 record_performance=False, log_only_one: bool = False):
     """
     Orchestrator function launching in parallel plant models and then environment models
     ---
@@ -71,6 +71,7 @@ def play_Orchestra(scene_name, output_folder,
     processes = []
     sharememories = []
     cpu_set = 0
+    logging = True
 
     try:
         for plant_id, init_info in planting_sequence.items():
@@ -81,13 +82,16 @@ def play_Orchestra(scene_name, output_folder,
             shm.close()
             sharememories.append(shm)
 
+            if len(processes) > 0 and log_only_one:
+                logging = False
+
             p = mp.Process(
                     target=plant_worker,
                     kwargs=dict(queues_soil_to_plants=queues_soil_to_plants, queue_plants_to_soil=queue_plants_to_soil, 
                                 queues_light_to_plants=queues_light_to_plants, queue_plants_to_light=queue_plants_to_light, cpu_ids=cpu_assignments[cpu_set], stop_event=stop_event,
                                 plant_model=init_info["model"], plant_id=plant_id, translator_path=translator_path, output_dirpath=os.path.join(output_folder, scene_name, plant_id),
                                 n_iterations=n_iterations, time_step=time_step, coordinates=init_info["coordinates"], rotation=init_info["rotation"], 
-                                scenario=init_info["scenario"], logger_class=logger_class, log_settings=log_settings, heavy_log_period=heavy_log_period, record_performance=record_performance) )
+                                scenario=init_info["scenario"], logger_class=logger_class, log_settings=log_settings, heavy_log_period=heavy_log_period, record_performance=record_performance, logging=logging) )
 
             processes.append(p)
             p.start()
@@ -183,7 +187,7 @@ def stand_initialization(scene_name, xrange, yrange, sowing_density, sowing_dept
 
 def plant_worker(queues_soil_to_plants, queue_plants_to_soil, queues_light_to_plants, queue_plants_to_light, cpu_ids, stop_event,
                  plant_model, plant_id, translator_path, output_dirpath, n_iterations, 
-                 time_step, coordinates, rotation, scenario, logger_class, log_settings, heavy_log_period, record_performance: bool = False):
+                 time_step, coordinates, rotation, scenario, logger_class, log_settings, heavy_log_period, record_performance: bool = False, logging: bool = True):
     
     # Pin to a specific set of cpus to avoid concurrency
     psutil.Process().cpu_affinity(cpu_ids)
@@ -193,19 +197,21 @@ def plant_worker(queues_soil_to_plants, queue_plants_to_soil, queues_light_to_pl
                             queues_light_to_plants=queues_light_to_plants, queue_plants_to_light=queue_plants_to_light,
                             name=plant_id, time_step=time_step, coordinates=coordinates, rotation=rotation, translator_path=translator_path, **scenario)
     
-    logger = logger_class(model_instance=instance, components=instance.components,
-                    outputs_dirpath=output_dirpath, 
-                    time_step_in_hours=1, logging_period_in_hours=heavy_log_period,
-                    echo=False, **log_settings)
-
+    if logging:
+        logger = logger_class(model_instance=instance, components=instance.components,
+                        outputs_dirpath=output_dirpath, 
+                        time_step_in_hours=1, logging_period_in_hours=heavy_log_period,
+                        echo=False, **log_settings)
+    
     iteration = 0
     try:
         while not stop_event.is_set() and iteration < n_iterations: 
             # Run plant time step
-            if record_performance:
+            if record_performance and logging:
                 logger.run_and_monitor_model_step()
             else:
-                logger()
+                if logging:
+                    logger()
                 instance.run()
 
             iteration += 1
@@ -218,7 +224,8 @@ def plant_worker(queues_soil_to_plants, queue_plants_to_soil, queues_light_to_pl
         print("Plant stopped")
         stop_event.set()
 
-        logger.stop()
+        if logging:
+            logger.stop()
 
         os._exit(0)
 
