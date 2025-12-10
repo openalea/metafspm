@@ -125,7 +125,7 @@ def play_Orchestra(scene_name, output_folder,
                 clean_exit = False
             time.sleep(10)
 
-    except:
+    except Exception as e:
         clean_exit = False
 
     finally:
@@ -133,7 +133,8 @@ def play_Orchestra(scene_name, output_folder,
         for p in processes:
             p.join()
 
-        del b # Delete any remaining nympy handle used at creation
+        if clean_exit:
+            del b # Delete any remaining numpy handle used at creation
         for shm in sharememories:
             shm.close()
             shm.unlink()
