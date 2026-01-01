@@ -171,7 +171,7 @@ class CompositeModel:
 
                                                 common_props[name]  = common_props[source_name]
                                             else:
-                                                # NOTE TODO : We will probably need to switch only the the second option later
+                                                # NOTE TODO : We will probably need to switch only to the second option later
                                                 if subcategory is None:
                                                     receiver.pullable_inputs[name] = {source_name: unit_conversion}
                                                 else:

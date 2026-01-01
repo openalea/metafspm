@@ -126,6 +126,8 @@ def play_Orchestra(scene_name, output_folder,
             time.sleep(10)
 
     except Exception as e:
+        traceback.print_exc()
+        print("Force Exiting with error :", e)
         clean_exit = False
 
     finally:
