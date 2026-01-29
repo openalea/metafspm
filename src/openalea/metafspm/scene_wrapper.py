@@ -76,7 +76,16 @@ def play_Orchestra(scene_name, output_folder,
     try:
         for plant_id, init_info in planting_sequence.items():
             a = np.empty((handshake_size, 20000), dtype=np.float64)
-            shm = SharedMemory(create=True, name=plant_id, size=a.nbytes)
+            try:
+                shm = SharedMemory(create=True, name=plant_id, size=a.nbytes)
+            except FileExistsError:
+                print(f"Have too wipe an existing shared memory, {plant_id}, before creating a new one")
+                old = SharedMemory(name=plant_id, create=False)
+                old.close()
+                old.unlink()
+                shm = SharedMemory(create=True, name=plant_id, size=a.nbytes)
+                print("Successfully recreated")
+
             b = np.ndarray(a.shape, dtype=a.dtype, buffer=shm.buf)
             b[:] = a[:]
             shm.close()
@@ -204,7 +213,7 @@ def plant_worker(queues_soil_to_plants, queue_plants_to_soil, queues_light_to_pl
         logger = logger_class(model_instance=instance, components=instance.components,
                         outputs_dirpath=output_dirpath, 
                         time_step_in_hours=1, logging_period_in_hours=heavy_log_period,
-                        echo=False, **log_settings)
+                        echo=True, **log_settings)
     
     iteration = 0
     try:
