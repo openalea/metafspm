@@ -213,7 +213,7 @@ def plant_worker(queues_soil_to_plants, queue_plants_to_soil, queues_light_to_pl
         logger = logger_class(model_instance=instance, components=instance.components,
                         outputs_dirpath=output_dirpath, 
                         time_step_in_hours=1, logging_period_in_hours=heavy_log_period,
-                        echo=True, **log_settings)
+                        echo=False, **log_settings)
     
     iteration = 0
     try:
