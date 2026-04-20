@@ -45,7 +45,13 @@ import numpy as np
 from scipy.sparse import csc_matrix, coo_matrix, diags, eye, lil_matrix
 from scipy.sparse.linalg import spsolve
 
-from test_mtg import build_three_cell_mtg, e_type, n_type, scales
+from generate_mtg import (
+    build_seedling_mtg,
+    e_type,
+    get_representative_segment_id,
+    n_type,
+    scales,
+)
 
 
 @dataclass(frozen=True)
@@ -460,26 +466,28 @@ class MixedTransportSystem:
 
 def build_cell_symplast_open_graph():
     """
-    Extract a very small subnetwork from the three-cell MTG.
+    Extract a very small subnetwork from one segment inside the seedling MTG.
 
     We only keep:
     - the cell-center nodes
     - the symplastic edges connecting those cell centers
 
-    This gives us a tiny 3-node / 2-edge chain, which is much easier to read
-    than the full detailed wall/junction/cell graph.
+    This still gives us a tiny 3-node / 2-edge chain, but now that chain comes
+    from a realistic seedling-scale MTG instead of from an isolated single
+    segment built from scratch.
     """
-    g = build_three_cell_mtg()
+    g = build_seedling_mtg()
+    segment_id = get_representative_segment_id(g)
 
-    node_ids = np.asarray(g.array_at_scale("vertex_id", scale=scales["node"]), dtype=np.int64)
-    node_types = np.asarray(g.array_at_scale("n_type", scale=scales["node"]), dtype=np.int64)
-    edge_ids = np.asarray(g.array_at_scale("vertex_id", scale=scales["edge"]), dtype=np.int64)
-    edge_types = np.asarray(g.array_at_scale("e_type", scale=scales["edge"]), dtype=np.int64)
+    node_ids = np.asarray(g.component_roots_at_scale(segment_id, scale=scales["node"]), dtype=np.int64)
+    edge_ids = np.asarray(g.component_roots_at_scale(segment_id, scale=scales["edge"]), dtype=np.int64)
+    node_type_map = {int(vid): int(g.node(vid).n_type) for vid in node_ids}
+    edge_type_map = {int(vid): int(g.node(vid).e_type) for vid in edge_ids}
 
     # Keep only the "cell" nodes as the coarse unknown locations.
-    cell_nodes = node_ids[node_types == n_type["cell"]]
+    cell_nodes = np.asarray([vid for vid in node_ids if node_type_map[int(vid)] == n_type["cell"]], dtype=np.int64)
     # Keep only the symplastic edges between these cell nodes.
-    symplastic_edges = edge_ids[edge_types == e_type["symplastic"]]
+    symplastic_edges = np.asarray([vid for vid in edge_ids if edge_type_map[int(vid)] == e_type["symplastic"]], dtype=np.int64)
 
     # Add one external sink at the right-most cell.
     boundary_fluxes = (
@@ -569,7 +577,7 @@ def test_mtg_to_network():
     The point of this test is not physics yet; it is just to validate the idea
     that scale-based MTG data can be vectorized into graph operators.
     """
-    g = build_three_cell_mtg()
+    g = build_seedling_mtg()
 
     nids = np.asarray(g.array_at_scale("vertex_id", scale=scales["node"]), dtype=np.int64)
     n = len(nids)
@@ -577,8 +585,9 @@ def test_mtg_to_network():
     n_id_b = np.asarray(g.array_at_scale("n_id_b", scale=scales["edge"]), dtype=np.int64)
     length = np.asarray(g.array_at_scale("length", scale=scales["edge"]), dtype=np.float64)
 
-    idx_a = np.searchsorted(nids, n_id_a)
-    idx_b = np.searchsorted(nids, n_id_b)
+    nid_to_index = {int(vid): idx for idx, vid in enumerate(nids)}
+    idx_a = np.asarray([nid_to_index[int(vid)] for vid in n_id_a], dtype=np.int64)
+    idx_b = np.asarray([nid_to_index[int(vid)] for vid in n_id_b], dtype=np.int64)
 
     # Standard symmetric edge contribution:
     #  +w on both diagonals, -w on both off-diagonal positions.
@@ -598,9 +607,9 @@ def test_open_graph_subset_from_mtg_supports_boundary_edges():
 
     Expected structure:
 
-        node 12 --edge--> node 21 --edge--> node 30
-                                          |
-                                          boundary sink
+        node_0 --edge--> node_1 --edge--> node_2
+                                       |
+                                       boundary sink
 
     The incidence matrix should therefore be:
 
@@ -610,7 +619,8 @@ def test_open_graph_subset_from_mtg_supports_boundary_edges():
     """
     _, graph, _ = build_cell_symplast_open_graph()
 
-    np.testing.assert_array_equal(graph.node_ids, np.asarray([12, 21, 30], dtype=np.int64))
+    assert graph.n_nodes == 3
+    assert graph.n_edges == 2
     np.testing.assert_array_equal(graph.tail, np.asarray([0, 1], dtype=np.int64))
     np.testing.assert_array_equal(graph.head, np.asarray([1, 2], dtype=np.int64))
     np.testing.assert_allclose(
