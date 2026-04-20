@@ -37,7 +37,13 @@ from typing import Callable
 
 import numpy as np
 
-from test_mtg import build_three_cell_mtg, e_type, n_type, scales
+from generate_mtg import (
+    build_seedling_mtg,
+    e_type,
+    get_representative_segment_id,
+    n_type,
+    scales,
+)
 from test_mtg_to_generic_equation_system import (
     EquationBlock,
     EquationContext,
@@ -107,8 +113,8 @@ class OptionalJacobianEquationSystem(GenericEquationSystem):
 
 def build_rooted_cell_open_graph():
     """
-    Reuse the same tiny 3-node / 2-edge chain as the previous tests, but attach a
-    collar boundary on the left-most node.
+    Reuse one tiny 3-node / 2-edge chain extracted from the seedling MTG, then
+    attach a collar boundary on the left-most node.
 
     This gives us exactly the ingredients needed to mimic the Root-CyNAPS water
     solve:
@@ -118,14 +124,13 @@ def build_rooted_cell_open_graph():
     - one compact graph small enough to inspect by hand
     """
 
-    g = build_three_cell_mtg()
-    node_ids = np.asarray(g.array_at_scale("vertex_id", scale=scales["node"]), dtype=np.int64)
-    node_types = np.asarray(g.array_at_scale("n_type", scale=scales["node"]), dtype=np.int64)
-    edge_ids = np.asarray(g.array_at_scale("vertex_id", scale=scales["edge"]), dtype=np.int64)
-    edge_types = np.asarray(g.array_at_scale("e_type", scale=scales["edge"]), dtype=np.int64)
+    g = build_seedling_mtg()
+    segment_id = get_representative_segment_id(g)
+    node_ids = np.asarray(g.component_roots_at_scale(segment_id, scale=scales["node"]), dtype=np.int64)
+    edge_ids = np.asarray(g.component_roots_at_scale(segment_id, scale=scales["edge"]), dtype=np.int64)
 
-    cell_nodes = node_ids[node_types == n_type["cell"]]
-    symplastic_edges = edge_ids[edge_types == e_type["symplastic"]]
+    cell_nodes = np.asarray([vid for vid in node_ids if g.node(int(vid)).n_type == n_type["cell"]], dtype=np.int64)
+    symplastic_edges = np.asarray([vid for vid in edge_ids if g.node(int(vid)).e_type == e_type["symplastic"]], dtype=np.int64)
 
     boundary_fluxes = (
         BoundaryFlux(
