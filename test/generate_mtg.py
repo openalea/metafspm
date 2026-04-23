@@ -87,7 +87,9 @@ def _segment_metadata(
     )
 
 
-def _main_segment_origin(axis_order: int, metamer_rank: int, organ_kind: int, segment_rank: int) -> tuple[float, float]:
+def _main_segment_origin(
+    axis_order: int, metamer_rank: int, organ_kind: int, segment_rank: int
+) -> tuple[float, float]:
     axis_spacing = 8.0e-4
     metamer_spacing = 3.0e-4
     shoot_segment_spacing = 7.0e-5
@@ -99,14 +101,20 @@ def _main_segment_origin(axis_order: int, metamer_rank: int, organ_kind: int, se
     if organ_kind == organ_type["stem"]:
         return base_x, base_y + (segment_rank - 1) * shoot_segment_spacing
     if organ_kind == organ_type["leaf"]:
-        return base_x + 2.0e-4 + (segment_rank - 1) * shoot_segment_spacing, base_y + 1.2e-4
+        return base_x + 2.0e-4 + (
+            segment_rank - 1
+        ) * shoot_segment_spacing, base_y + 1.2e-4
     if organ_kind == organ_type["root"]:
-        return base_x - 1.5e-4, -metamer_rank * metamer_spacing - (segment_rank - 1) * root_segment_spacing
+        return base_x - 1.5e-4, -metamer_rank * metamer_spacing - (
+            segment_rank - 1
+        ) * root_segment_spacing
 
     raise ValueError(f"Unsupported organ kind: {organ_kind}")
 
 
-def _branch_segment_origin(parent_origin: tuple[float, float], branch_order: int, segment_rank: int) -> tuple[float, float]:
+def _branch_segment_origin(
+    parent_origin: tuple[float, float], branch_order: int, segment_rank: int
+) -> tuple[float, float]:
     branch_spacing = 2.0e-5
     return (
         parent_origin[0] + 2.2e-4 + (segment_rank - 1) * 7.0e-5,
@@ -114,7 +122,9 @@ def _branch_segment_origin(parent_origin: tuple[float, float], branch_order: int
     )
 
 
-def _populate_three_cell_segment(g: MTG, segment_id: int, origin_x: float, origin_y: float, metadata: dict):
+def _populate_three_cell_segment(
+    g: MTG, segment_id: int, origin_x: float, origin_y: float, metadata: dict
+):
     props = g.properties()
 
     layer_common = dict(segment_id=segment_id, **metadata)
@@ -185,7 +195,9 @@ def _populate_three_cell_segment(g: MTG, segment_id: int, origin_x: float, origi
             c_type_c=-1,
         )
         init_dict.update(node_common)
-        cell_nid = g.add_component(symbolic_anchoring, label=scales["node"], **init_dict)
+        cell_nid = g.add_component(
+            symbolic_anchoring, label=scales["node"], **init_dict
+        )
 
         for k, (x, y) in enumerate(props["polygon"][cell_id]):
             init_dict = dict(
@@ -325,7 +337,9 @@ def build_three_cell_mtg():
 
     g = myMTG()
     plant_id = g.add_component(g.root, label=scales["plant"], plant_rank=1)
-    axis_id = g.add_component(plant_id, label=scales["axis"], axis_kind=axis_type["shoot_main"], axis_order=1)
+    axis_id = g.add_component(
+        plant_id, label=scales["axis"], axis_kind=axis_type["shoot_main"], axis_order=1
+    )
     metamer_id = g.add_component(
         axis_id,
         label=scales["metamer"],
@@ -360,7 +374,9 @@ def build_three_cell_mtg():
         y_origin=0.0,
         **metadata,
     )
-    _populate_three_cell_segment(g, segment_id=segment_id, origin_x=0.0, origin_y=0.0, metadata=metadata)
+    _populate_three_cell_segment(
+        g, segment_id=segment_id, origin_x=0.0, origin_y=0.0, metadata=metadata
+    )
 
     for vid in g.vertices():
         g.node(vid).vertex_id = vid
@@ -436,7 +452,11 @@ def build_seedling_mtg(
                     origin_segment_id=-1,
                 )
 
-                segment_count = primary_root_segments if organ_kind == organ_type["root"] else shoot_segments_per_organ
+                segment_count = (
+                    primary_root_segments
+                    if organ_kind == organ_type["root"]
+                    else shoot_segments_per_organ
+                )
                 primary_root_segment_ids = []
                 for segment_rank in range(1, segment_count + 1):
                     metadata = _segment_metadata(
@@ -477,7 +497,9 @@ def build_seedling_mtg(
 
                 if organ_kind == organ_type["root"] and lateral_root_segments > 0:
                     branch_axis_counter += 1
-                    origin_segment_id = primary_root_segment_ids[min(1, len(primary_root_segment_ids) - 1)]
+                    origin_segment_id = primary_root_segment_ids[
+                        min(1, len(primary_root_segment_ids) - 1)
+                    ]
                     parent_origin = segment_origins[origin_segment_id]
                     branch_axis_id = g.add_component(
                         plant_id,
@@ -565,12 +587,24 @@ def get_representative_segment_id(
     Return a stable representative segment for tests that need one local segment.
     """
 
-    segment_ids = np.asarray(g.array_at_scale("vertex_id", scale=scales["segment"]), dtype=np.int64)
-    axis_kinds = np.asarray(g.array_at_scale("axis_kind", scale=scales["segment"]), dtype=np.int64)
-    axis_orders = np.asarray(g.array_at_scale("axis_order", scale=scales["segment"]), dtype=np.int64)
-    metamer_ranks = np.asarray(g.array_at_scale("metamer_rank", scale=scales["segment"]), dtype=np.int64)
-    organ_kinds = np.asarray(g.array_at_scale("organ_kind", scale=scales["segment"]), dtype=np.int64)
-    segment_ranks = np.asarray(g.array_at_scale("segment_rank", scale=scales["segment"]), dtype=np.int64)
+    segment_ids = np.asarray(
+        g.array_at_scale("vertex_id", scale=scales["segment"]), dtype=np.int64
+    )
+    axis_kinds = np.asarray(
+        g.array_at_scale("axis_kind", scale=scales["segment"]), dtype=np.int64
+    )
+    axis_orders = np.asarray(
+        g.array_at_scale("axis_order", scale=scales["segment"]), dtype=np.int64
+    )
+    metamer_ranks = np.asarray(
+        g.array_at_scale("metamer_rank", scale=scales["segment"]), dtype=np.int64
+    )
+    organ_kinds = np.asarray(
+        g.array_at_scale("organ_kind", scale=scales["segment"]), dtype=np.int64
+    )
+    segment_ranks = np.asarray(
+        g.array_at_scale("segment_rank", scale=scales["segment"]), dtype=np.int64
+    )
 
     mask = (
         (axis_kinds == axis_kind)
