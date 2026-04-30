@@ -143,4 +143,5 @@ def test_mecha_kr_kx():
 
 if __name__ == "__main__":
     g = build_seedling_mtg()
+    # g = build_three_cell_mtg()
     plot_mtg_network(g)
