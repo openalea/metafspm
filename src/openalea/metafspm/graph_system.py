@@ -278,16 +278,27 @@ class GraphSystem:
     parameters: dict[str, Any] = field(default_factory=dict)
 
     def pack_unknowns(self, node_overrides=None, edge_overrides=None) -> np.ndarray:
+        """Concatenate all unknown fields into a single flat vector x.
+
+        Layout (fixed, matching ``UnknownLayout``):
+          [node_field_0 | node_field_1 | … | edge_field_0 | edge_field_1 | …]
+        Each node block has length ``n_nodes``; each edge block ``n_edges``.
+
+        ``node_overrides`` / ``edge_overrides`` let the caller substitute a
+        trial sub-vector for one field without touching the others — used
+        internally by the FD Jacobian.
+        """
         node_overrides = {} if node_overrides is None else node_overrides
         edge_overrides = {} if edge_overrides is None else edge_overrides
         blocks: list[np.ndarray] = []
 
         for field_name in self.unknowns.node_fields:
+            # Use the override if provided; otherwise pull the current field values.
             blocks.append(
                 np.asarray(
                     node_overrides.get(field_name, self.node_fields[field_name].values),
                     dtype=np.float64,
-                ).reshape(-1)
+                ).reshape(-1)  # guarantee 1-D even if stored as (n,1)
             )
 
         for field_name in self.unknowns.edge_fields:
@@ -304,24 +315,37 @@ class GraphSystem:
         return np.concatenate(blocks)
 
     def unpack_unknowns(self, packed_unknowns: np.ndarray):
+        """Inverse of ``pack_unknowns``: slice packed x back into per-field arrays.
+
+        Returns ``(node_unknowns, edge_unknowns)`` — two dicts mapping
+        field name → sub-array view into ``packed_unknowns``.  The views are
+        not copies; modifying them would corrupt the Newton iterate.
+        """
         packed_unknowns = np.asarray(packed_unknowns, dtype=np.float64).reshape(-1)
         cursor = 0
         node_unknowns: dict[str, np.ndarray] = {}
         edge_unknowns: dict[str, np.ndarray] = {}
 
         for field_name in self.unknowns.node_fields:
-            width = self.graph.n_nodes
+            width = self.graph.n_nodes  # one scalar per node per field
             node_unknowns[field_name] = packed_unknowns[cursor : cursor + width]
             cursor += width
 
         for field_name in self.unknowns.edge_fields:
-            width = self.graph.n_edges
+            width = self.graph.n_edges  # one scalar per edge per field
             edge_unknowns[field_name] = packed_unknowns[cursor : cursor + width]
             cursor += width
 
         return node_unknowns, edge_unknowns
 
     def make_context(self, packed_unknowns, previous_node_fields=None, dt=None) -> EquationContext:
+        """Build the ``EquationContext`` passed to every evaluator during a solve.
+
+        Splits the packed iterate into per-field views and bundles them with
+        the frozen graph topology, snapshotted field states, boundary ports,
+        and solver parameters.  This is the single object all residual,
+        Jacobian, and output callables receive.
+        """
         node_unknowns, edge_unknowns = self.unpack_unknowns(packed_unknowns)
         return EquationContext(
             graph=self.graph,
@@ -336,6 +360,11 @@ class GraphSystem:
         )
 
     def matrix(self, packed_unknowns=None, previous_node_fields=None, dt=None):
+        """Evaluate the system matrix A for linear-assembly mode (A x = b).
+
+        Only valid when ``matrix_evaluator`` is set.  For nonlinear / residual
+        mode use ``jacobian`` instead.
+        """
         if self.matrix_evaluator is None:
             raise ValueError("no linear matrix evaluator defined")
         if packed_unknowns is None:
@@ -345,6 +374,10 @@ class GraphSystem:
         )
 
     def rhs(self, packed_unknowns=None, previous_node_fields=None, dt=None) -> np.ndarray:
+        """Evaluate the right-hand side b for linear-assembly mode (A x = b).
+
+        Only valid when ``rhs_evaluator`` is set.
+        """
         if self.rhs_evaluator is None:
             raise ValueError("no linear rhs evaluator defined")
         if packed_unknowns is None:
@@ -355,8 +388,22 @@ class GraphSystem:
         return np.asarray(rhs, dtype=np.float64).reshape(-1)
 
     def residual(self, packed_unknowns, previous_node_fields=None, dt=None) -> np.ndarray:
+        """Evaluate the full residual vector R(x).
+
+        Two modes, tried in order:
+
+        1. **Equation-block mode** (preferred): each ``EquationBlock.evaluator``
+           returns a sub-residual; they are concatenated in declaration order.
+           The total length must equal the number of unknowns for Newton to work.
+
+        2. **Linear-assembly mode**: residual expressed as A(x)·x - b using the
+           matrix and rhs evaluators.  Useful when the assembly already exists
+           and Newton is used only for mild nonlinearity in the coefficients.
+        """
         if self.equation_blocks:
             context = self.make_context(packed_unknowns, previous_node_fields=previous_node_fields, dt=dt)
+            # Each block contributes a contiguous chunk; flatten in case a block
+            # returns a 2-D array (e.g. a multi-component balance).
             return np.concatenate(
                 [
                     np.asarray(block.evaluator(context), dtype=np.float64).reshape(-1)
@@ -365,6 +412,7 @@ class GraphSystem:
             )
 
         if self.matrix_evaluator is not None and self.rhs_evaluator is not None:
+            # Linear assembly used as a residual: R(x) = A x - b.
             matrix = self.matrix(packed_unknowns, previous_node_fields=previous_node_fields, dt=dt)
             rhs = self.rhs(packed_unknowns, previous_node_fields=previous_node_fields, dt=dt)
             vector = np.asarray(packed_unknowns, dtype=np.float64).reshape(-1)
@@ -373,11 +421,21 @@ class GraphSystem:
         raise ValueError("system has neither residual blocks nor linear assembly evaluators")
 
     def finite_difference_jacobian(self, packed_unknowns, previous_node_fields=None, dt=None) -> np.ndarray:
+        """Approximate ∂R/∂x column-by-column with central finite differences.
+
+        Each column j is  (R(x + h eⱼ) - R(x - h eⱼ)) / 2h  where h = fd_eps.
+        Central differences give O(h²) accuracy, halving the truncation error
+        relative to a forward-difference scheme for the same step size.
+
+        Cost: 2·n_unknowns residual evaluations — use only as a fallback or for
+        Jacobian verification.
+        """
         packed_unknowns = np.asarray(packed_unknowns, dtype=np.float64).reshape(-1)
         base_residual = self.residual(packed_unknowns, previous_node_fields=previous_node_fields, dt=dt)
         jacobian = np.zeros((base_residual.size, packed_unknowns.size), dtype=np.float64)
 
         for index in range(packed_unknowns.size):
+            # Unit perturbation along coordinate `index`.
             delta = np.zeros_like(packed_unknowns)
             delta[index] = self.solver.fd_eps
             forward = self.residual(packed_unknowns + delta, previous_node_fields=previous_node_fields, dt=dt)
@@ -387,11 +445,19 @@ class GraphSystem:
         return jacobian
 
     def jacobian(self, packed_unknowns, previous_node_fields=None, dt=None) -> np.ndarray:
+        """Return the Jacobian matrix ∂R/∂x at the current iterate.
+
+        Priority cascade:
+        1. Analytic ``jacobian_evaluator`` — fastest, preferred when available.
+        2. Linear-assembly matrix — exact for linear systems (J = A).
+        3. Central finite-difference fallback — always correct, but O(n) cost.
+        """
         if self.jacobian_evaluator is not None:
             context = self.make_context(packed_unknowns, previous_node_fields=previous_node_fields, dt=dt)
             return np.asarray(self.jacobian_evaluator(context), dtype=np.float64)
 
         if self.matrix_evaluator is not None and self.rhs_evaluator is not None:
+            # For a linear system R = Ax - b, ∂R/∂x = A exactly.
             matrix = self.matrix(packed_unknowns, previous_node_fields=previous_node_fields, dt=dt)
             if issparse(matrix):
                 return matrix.toarray()
@@ -400,6 +466,19 @@ class GraphSystem:
         return self.finite_difference_jacobian(packed_unknowns, previous_node_fields=previous_node_fields, dt=dt)
 
     def solve(self, previous_node_fields=None, dt=None) -> np.ndarray:
+        """Run the solver and return the converged packed unknown vector.
+
+        Dispatcher for two solver families:
+
+        - ``"linear_direct"``: one-shot A x = b solve (sparse or dense).
+        - ``"newton"`` / ``"newton_fd"`` / ``"newton_optional_jacobian"``:
+          Newton–Raphson iteration  x ← x - J⁻¹ R(x) until ‖R‖∞ < tol.
+          All three names resolve to the same loop; the name conveys intent
+          (e.g. ``"newton_fd"`` signals that no analytic Jacobian is provided).
+
+        Raises ``AssertionError`` if Newton does not converge in ``max_iter``
+        steps.
+        """
         method = self.solver.method
 
         if method == "linear_direct":
@@ -413,10 +492,16 @@ class GraphSystem:
 
             for _ in range(self.solver.max_iter):
                 residual = self.residual(packed, previous_node_fields=previous_node_fields, dt=dt)
+                # Convergence check before forming J: if x₀ already satisfies
+                # R = 0 (e.g. after a trivial time step), we skip a Jacobian
+                # solve entirely.
                 if np.linalg.norm(residual, ord=np.inf) < self.solver.tol:
                     return packed
 
                 jac = self.jacobian(packed, previous_node_fields=previous_node_fields, dt=dt)
+                # Solve J δx = -R, then apply the full Newton step x ← x + δx.
+                # No line-search or damping: assumes the problem is well-conditioned
+                # or that the caller has set a tight time step.
                 correction = np.linalg.solve(np.asarray(jac, dtype=np.float64), -residual)
                 packed = packed + correction
 
@@ -425,18 +510,32 @@ class GraphSystem:
         raise ValueError(f"unsupported solver method: {method!r}")
 
     def derive_outputs(self, packed_unknowns, previous_node_fields=None, dt=None) -> dict[str, Any]:
+        """Evaluate all ``OutputBlock`` callables on the converged solution.
+
+        Called once after ``solve``.  Returns a dict mapping block name →
+        whatever the output evaluator returns (array, scalar, dict, …).
+        """
         context = self.make_context(packed_unknowns, previous_node_fields=previous_node_fields, dt=dt)
         return {block.name: block.evaluator(context) for block in self.output_blocks}
 
     def _solve_linear(self, matrix, rhs: np.ndarray) -> np.ndarray:
+        """Direct solve of A x = b, dispatching between sparse and dense paths.
+
+        Sparse path (``prefer_sparse=True``): converts to CSR for ``spsolve``
+        (faster fill-in reuse than CSC for factorisation).
+        Dense path: falls back to ``numpy.linalg.solve`` after materialising
+        the matrix — only sensible for small systems.
+        """
         if issparse(matrix):
             if self.solver.prefer_sparse:
+                # CSR is the preferred format for scipy sparse direct solvers.
                 return np.asarray(spsolve(matrix.tocsr(), rhs), dtype=np.float64).reshape(-1)
             matrix = matrix.toarray()
         return np.asarray(np.linalg.solve(np.asarray(matrix, dtype=np.float64), rhs), dtype=np.float64).reshape(-1)
 
     @staticmethod
     def _matvec(matrix, vector: np.ndarray) -> np.ndarray:
+        """Sparse-aware matrix–vector product, always returning a flat float64 array."""
         if issparse(matrix):
             return np.asarray(matrix @ vector, dtype=np.float64).reshape(-1)
         return np.asarray(np.asarray(matrix, dtype=np.float64) @ vector, dtype=np.float64).reshape(-1)
