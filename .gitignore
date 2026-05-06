@@ -101,3 +101,6 @@ doc/_dvlpt/
 # VS Code
 .vscode
 *.code-workspace
+
+*CLAUDE.md
+*metafspm_solver_plant.md
