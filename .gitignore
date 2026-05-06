@@ -102,5 +102,5 @@ doc/_dvlpt/
 .vscode
 *.code-workspace
 
-*CLAUDE.md
-*metafspm_solver_plant.md
+*/CLAUDE.md
+*/metafspm_solver_plan.md
