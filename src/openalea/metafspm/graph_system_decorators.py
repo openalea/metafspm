@@ -61,7 +61,7 @@ from .component_factory import Choregrapher, Functor
 
 # ── Method-level decorators ───────────────────────────────────────────────────
 
-def node_balance(field=None, types=None):
+def node_balance(field=None, types=None, explicit=False):
     """Tag a method as a node residual block for *field*.
 
     Parameters
@@ -72,14 +72,22 @@ def node_balance(field=None, types=None):
         Node-property filter, e.g. ``{"tissue_type": ["cortex", "endodermis"]}``.
         The method receives sub-arrays for matching nodes; its returned residual
         is scattered additively back into the full n-node vector.
+    explicit : bool
+        When ``True`` the method returns the **value** the field should take
+        (assignment form) rather than a residual.  The framework generates
+        ``R = field_unknown − method(…)`` automatically.  The field name must
+        not appear in the method's argument list.
     """
     def decorator(func):
-        func.__graph_tag__ = {"kind": "node_balance", "field": field, "types": types}
+        func.__graph_tag__ = {
+            "kind": "node_balance", "field": field,
+            "types": types, "explicit": explicit,
+        }
         return func
     return decorator
 
 
-def edge_law(func=None, *, field=None, types=None):
+def edge_law(func=None, *, field=None, types=None, explicit=False, integrate=False):
     """Tag a method as an edge residual block.
 
     Can be used bare (``@edge_law``) or with keyword arguments
@@ -92,16 +100,31 @@ def edge_law(func=None, *, field=None, types=None):
         ``edge_unknowns[0]`` at assembly time.
     types : dict[str, list], optional
         Edge-property filter; semantics mirror ``node_balance``.
+    explicit : bool
+        When ``True`` the method returns the **value** the edge field should
+        take (assignment form) rather than a residual.  The framework generates
+        ``R = edge_unknown − method(…)`` automatically.  The edge field name
+        must not appear in the method's argument list.
+    integrate : bool
+        When ``True`` the framework writes the converged flux as
+        ``props["{field}_mean"]`` after every solve.  This value represents
+        the mean flux over the timestep (= converged flux for quasi-static and
+        implicit Euler; will be the true trajectory mean in Phase 2 solve_ivp).
+        Use ``{field}_mean`` in coupled modules for conservative mass exchange:
+        total amount exchanged = ``{field}_mean * dt``.
     """
     def _decorate(f):
-        f.__graph_tag__ = {"kind": "edge_law", "field": field, "types": types}
+        f.__graph_tag__ = {
+            "kind": "edge_law", "field": field,
+            "types": types, "explicit": explicit, "integrate": integrate,
+        }
         return f
     if func is not None:
         return _decorate(func)
     return _decorate
 
 
-def boundary_condition(location, kind, field=None, types=None):
+def boundary_condition(location, kind, field=None, types=None, explicit=False):
     """Tag a method as a boundary condition that superimposes on the field's node_balance.
 
     Parameters
@@ -115,6 +138,10 @@ def boundary_condition(location, kind, field=None, types=None):
         Unknown field this BC applies to.
     types : dict[str, list], optional
         Node/edge-property filter selecting BC-active entities.
+    explicit : bool
+        Accepted for API symmetry with ``node_balance`` / ``edge_law``.
+        Boundary conditions always return values (not residuals), so this flag
+        has no behavioral effect.
     """
     def decorator(func):
         func.__graph_tag__ = {
@@ -123,6 +150,7 @@ def boundary_condition(location, kind, field=None, types=None):
             "bc_kind": kind,
             "field": field,
             "types": types,
+            "explicit": explicit,
         }
         return func
     return decorator
@@ -296,7 +324,7 @@ def _invoke_graph_system(self, method_name):
     # ── Collect tagged methods via inner class MRO ────────────────────────────
     inner_cls = spec["inner_class"]
     seen: set[str] = set()
-    node_balance_items = []   # (field, types, attr_name, bound, raw)
+    node_balance_items = []   # (field, types, attr_name, bound, raw, explicit)
     edge_law_items    = []    # (field, types, attr_name, bound, raw)
     bc_items          = []    # (attr_name, bound, raw)
     jacobian_raw      = None  # (bound, raw)
@@ -313,11 +341,11 @@ def _invoke_graph_system(self, method_name):
             bound = obj.__get__(self, type(self))
             kind = tag["kind"]
             if kind == "node_balance":
-                node_balance_items.append((tag["field"], tag.get("types"), attr_name, bound, obj))
+                node_balance_items.append((tag["field"], tag.get("types"), attr_name, bound, obj, tag.get("explicit", False)))
             elif kind == "edge_law":
-                edge_law_items.append((tag.get("field"), tag.get("types"), attr_name, bound, obj))
+                edge_law_items.append((tag.get("field"), tag.get("types"), attr_name, bound, obj, tag.get("explicit", False), tag.get("integrate", False)))
             elif kind == "boundary_condition":
-                bc_items.append((tag.get("field"), tag.get("types"), tag.get("bc_kind"), attr_name, bound, obj))
+                bc_items.append((tag.get("field"), tag.get("types"), tag.get("bc_kind"), attr_name, bound, obj, tag.get("explicit", False)))
             elif kind == "graph_jacobian":
                 jacobian_raw = (bound, obj)
             elif kind == "graph_output":
@@ -329,16 +357,16 @@ def _invoke_graph_system(self, method_name):
 
     default_edge_field = edge_unknowns[0] if edge_unknowns else None
     edge_law_items = [
-        (f if f is not None else default_edge_field, tf, an, b, r)
-        for f, tf, an, b, r in edge_law_items
+        (f if f is not None else default_edge_field, tf, an, b, r, ex, intg)
+        for f, tf, an, b, r, ex, intg in edge_law_items
     ]
     edge_law_items.sort(key=lambda x: x[2])  # stable by attr_name
 
     # ── Inspect-first: collect required prop names ────────────────────────────
     all_raws = (
-        [r for _, _, _, _, r in node_balance_items]
-        + [r for _, _, _, _, r in edge_law_items]
-        + [r for _, _, _, _, _, r in bc_items]
+        [r for _, _, _, _, r, _ in node_balance_items]
+        + [r for _, _, _, _, r, _, _ in edge_law_items]
+        + [r for _, _, _, _, _, r, _ in bc_items]
         + ([jacobian_raw[1]] if jacobian_raw else [])
         + [r for _, _, r in output_items]
     )
@@ -349,13 +377,13 @@ def _invoke_graph_system(self, method_name):
                 required.add(aname)
 
     # Props used only in type filters (not as method args) must also be snapshotted.
-    for _, tf, _, _, _ in node_balance_items:
+    for _, tf, _, _, _, _ in node_balance_items:
         if tf:
             required.update(tf.keys())
-    for _, tf, _, _, _ in edge_law_items:
+    for _, tf, _, _, _, _, _ in edge_law_items:
         if tf:
             required.update(tf.keys())
-    for _, tf, _, _, _, _ in bc_items:
+    for _, tf, _, _, _, _, _ in bc_items:
         if tf:
             required.update(tf.keys())
 
@@ -435,8 +463,14 @@ def _invoke_graph_system(self, method_name):
 
     equation_blocks: list[EquationBlock] = []
 
-    def _make_bc_eval(raw_func, bound_method, type_filter):
-        """Return ``(ctx) -> (idx_array, vals_array)`` for a BC method."""
+    def _make_bc_eval(raw_func, bound_method, type_filter, bc_kind="dirichlet", field=None, explicit=False):
+        """Return ``(ctx) -> (idx_array, vals_array)`` for a BC method.
+
+        When ``explicit=True`` and ``bc_kind == "dirichlet"``, the method returns
+        the **target value** (e.g. ``P_collar``); the framework computes the
+        Dirichlet residual as ``unknown[idx] − target``.  For Neumann BCs,
+        ``explicit`` has no effect (the method already returns the flux value).
+        """
         arg_names = inspect.getfullargspec(raw_func)[0][1:]
 
         def bc_eval(ctx):
@@ -465,6 +499,11 @@ def _invoke_graph_system(self, method_name):
             else:
                 idx = np.arange(n)
                 vals = np.asarray(bound_method(*args), dtype=np.float64)
+
+            if explicit and bc_kind == "dirichlet" and field is not None:
+                # Method returned the target; generate residual = unknown − target
+                vals = ctx.node_unknowns[field][idx] - vals
+
             return idx, vals
 
         return bc_eval
@@ -485,34 +524,59 @@ def _invoke_graph_system(self, method_name):
         return evaluator
 
     node_groups: dict[str, list] = defaultdict(list)
-    for field, tf, _, bound, raw in node_balance_items:
-        node_groups[field].append((tf, bound, raw))
+    for field, tf, _, bound, raw, ex in node_balance_items:
+        node_groups[field].append((tf, bound, raw, ex))
 
     bc_groups: dict[str, list] = defaultdict(list)
-    for field, tf, bc_kind, _, bound, raw in bc_items:
-        bc_groups[field].append((tf, bc_kind, bound, raw))
+    for field, tf, bc_kind, _, bound, raw, ex in bc_items:
+        bc_groups[field].append((tf, bc_kind, bound, raw, ex))
 
     for field in node_unknowns:
         grp = node_groups.get(field, [])
         bc_grp = bc_groups.get(field, [])
         if not grp and not bc_grp:
             continue
-        bulk_wrapped = [make_evaluator(r, b, tf, "node") for tf, b, r in grp]
-        bc_wrapped = [(bk, _make_bc_eval(r, b, tf)) for tf, bk, b, r in bc_grp]
+        bulk_wrapped = []
+        for tf, b, r, ex in grp:
+            inner = make_evaluator(r, b, tf, "node")
+            if ex:
+                # Explicit form: R = node_unknown − formula(…)
+                bulk_wrapped.append(
+                    lambda ctx, _f=field, _e=inner: ctx.node_unknowns[_f] - _e(ctx)
+                )
+            else:
+                bulk_wrapped.append(inner)
+        bc_wrapped = [
+            (bk, _make_bc_eval(r, b, tf, bc_kind=bk, field=field, explicit=ex))
+            for tf, bk, b, r, ex in bc_grp
+        ]
         equation_blocks.append(EquationBlock(
             name=f"node_balance_{field}",
             evaluator=_make_combined_node_ev(bulk_wrapped, bc_wrapped),
         ))
 
     edge_groups: dict[str, list] = defaultdict(list)
-    for field, tf, _, bound, raw in edge_law_items:
-        edge_groups[field].append((tf, bound, raw))
+    for field, tf, _, bound, raw, ex, intg in edge_law_items:
+        edge_groups[field].append((tf, bound, raw, ex, intg))
+
+    integrate_edge_fields: set[str] = set()
 
     for field in edge_unknowns:
         grp = edge_groups.get(field, [])
         if not grp:
             continue
-        wrapped = [make_evaluator(r, b, tf, "edge") for tf, b, r in grp]
+        wrapped = []
+        for tf, b, r, ex, intg in grp:
+            if intg:
+                integrate_edge_fields.add(field)
+            inner = make_evaluator(r, b, tf, "edge")
+            if ex:
+                # Explicit form: R = edge_unknown − formula(…)
+                wrapped.append(
+                    lambda ctx, _f=field, _e=inner: ctx.edge_unknowns[_f] - _e(ctx)
+                )
+            else:
+                wrapped.append(inner)
         ev = wrapped[0] if len(wrapped) == 1 else (lambda ctx, _w=wrapped: sum(w(ctx) for w in _w))
         equation_blocks.append(EquationBlock(name=f"edge_law_{field}", evaluator=ev))
 
@@ -527,7 +591,16 @@ def _invoke_graph_system(self, method_name):
 
     # ── Build and solve ────────────────────────────────────────────────────────
     boundary_ports = tuple(getattr(self, "_boundary_ports", None) or ())
-    previous_fields = getattr(self, "_previous_fields", None)
+    # Advance u_prev: the solution from the last timestep becomes this timestep's
+    # starting point.  We do this at the START of the call so that during and
+    # after this solve _previous_fields still holds the value from BEFORE this
+    # step (the test residual check relies on this).
+    _saved_key = f"_gsol_{method_name}"
+    _prev_key = f"_gprev_{method_name}"
+    _saved = getattr(self, _saved_key, None)
+    if _saved is not None:
+        setattr(self, _prev_key, _saved)
+    previous_fields = getattr(self, _prev_key, None)
     dt = getattr(self, "time_step", None)
 
     system = GraphSystem(
@@ -545,6 +618,7 @@ def _invoke_graph_system(self, method_name):
             tol=spec["tol"],
             fd_eps=spec["fd_eps"],
             prefer_sparse=spec["prefer_sparse"],
+            linesearch=spec["linesearch"],
         ),
         equation_blocks=tuple(equation_blocks),
         output_blocks=output_blocks,
@@ -561,6 +635,12 @@ def _invoke_graph_system(self, method_name):
 
     # Write back unknowns and graph outputs to self.props.
     node_u, edge_u = system.unpack_unknowns(packed)
+    # Save the converged solution so the NEXT call can promote it to _previous_fields.
+    # We must not overwrite _previous_fields here: the balance evaluators still read
+    # self._previous_fields during the remainder of this timestep (e.g. test checks).
+    setattr(self, _saved_key, {fn: node_u[fn].copy() for fn in node_unknowns})
+    self._graph_solution_fields = {fn: node_u[fn].copy() for fn in node_unknowns}
+
     for fn in node_unknowns:
         target = self.props.setdefault(fn, {})
         for i, vid in enumerate(node_vids_int):
@@ -569,6 +649,15 @@ def _invoke_graph_system(self, method_name):
         target = self.props.setdefault(fn, {})
         for i, vid in enumerate(edge_vids_int):
             target[vid] = float(edge_u[fn][i])
+
+    # integrate=True: write {field}_mean = converged flux (= mean for quasi-static
+    # and implicit Euler; Phase 2 solve_ivp will replace this with the trajectory mean).
+    # Use {field}_mean in coupled modules: total exchanged = {field}_mean * dt.
+    for fn in integrate_edge_fields:
+        target = self.props.setdefault(f"{fn}_mean", {})
+        for i, vid in enumerate(edge_vids_int):
+            target[vid] = float(edge_u[fn][i])
+
     for oname, arr in outputs.items():
         target = self.props.setdefault(oname, {})
         arr = np.asarray(arr, dtype=np.float64).reshape(-1)
@@ -592,6 +681,7 @@ def graph_system(
     tol=1e-10,
     fd_eps=1e-8,
     prefer_sparse=True,
+    linesearch=False,
     schedule_as="axial",
 ):
     """
@@ -621,8 +711,19 @@ def graph_system(
     edge_unknowns : list[str]
         Ordered edge-unknown field names.
     method : str
-        ``"newton"`` (analytic or FD Jacobian), ``"newton_fd"`` (always FD),
-        or ``"linear_direct"`` (matrix / rhs evaluators).
+        ``"newton"`` (analytic or FD Jacobian, quasi-static — transport
+        equilibrates fully each timestep),
+        ``"newton_fd"`` (always FD Jacobian),
+        ``"linear_direct"`` (matrix / rhs evaluators),
+        ``"implicit_euler"`` (backward-Euler transient: spatial residual
+        augmented with ``(u − u_prev) / dt``; requires ``self.time_step``
+        to be set; falls back to quasi-static on the first timestep),
+        ``"scipy_krylov"`` (Jacobian-free Newton-Krylov),
+        ``"scipy_anderson"`` (Anderson acceleration),
+        ``"scipy_hybr"`` (MINPACK hybrd trust-region Newton).
+    linesearch : bool
+        Enable Armijo backtracking in the Newton loop.  Ignored for
+        ``scipy_*`` and ``implicit_euler`` methods.
     max_iter, tol, fd_eps, prefer_sparse
         Forwarded to ``SolverSpec``.
     schedule_as : str
@@ -636,6 +737,7 @@ def graph_system(
         "tol": tol,
         "fd_eps": fd_eps,
         "prefer_sparse": prefer_sparse,
+        "linesearch": linesearch,
         "schedule_as": schedule_as,
     }
 
