@@ -223,8 +223,9 @@ def _declared_locations(instance):
     locs = {}
     try:
         for f in dc_fields(type(instance)):
-            if "location" in f.metadata:
-                locs[f.name] = f.metadata["location"]
+            loc = f.metadata.get("location")
+            if loc is not None:
+                locs[f.name] = loc
     except TypeError:
         pass
     return locs
@@ -602,6 +603,12 @@ def _invoke_graph_system(self, method_name):
         setattr(self, _prev_key, _saved)
     previous_fields = getattr(self, _prev_key, None)
     dt = getattr(self, "time_step", None)
+
+    # For implicit_euler on the first call (no saved previous state), use the
+    # current field values as u_prev so the step integrates forward in time
+    # rather than collapsing to the quasi-static (steady-state) solution.
+    if previous_fields is None and spec["method"] == "implicit_euler":
+        previous_fields = {fn: node_fields_gs[fn].values.copy() for fn in node_unknowns}
 
     system = GraphSystem(
         graph=gv,
