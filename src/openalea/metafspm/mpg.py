@@ -13,7 +13,7 @@ class MPG(MTG):
 
     """
 
-    scale_names = ["plant", "axis", "metamer", "organ", "segment", "layer", "cell", "node", "edge"]
+    scale_names = ["Plant", "Axis", "GrowthUnit", "Phytomer", "Organ", "SubOrgan", "Layer", "Cell", "Compartment", "Connection"]
     scales = {scale_name: 1 + k for k, scale_name in enumerate(scale_names)}
 
     def __init__(self):

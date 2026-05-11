@@ -514,12 +514,17 @@ class GraphSystem:
                 u_prev = self.pack_unknowns(node_overrides=previous_node_fields)
                 packed = self.pack_unknowns()
                 N = len(packed)
-                for _ in range(self.solver.max_iter):
+                for step_i in range(self.solver.max_iter):
                     R = (
                         self.residual(packed, previous_node_fields=previous_node_fields, dt=dt)
                         + (packed - u_prev) / dt
                     )
-                    if np.linalg.norm(R, ord=np.inf) < self.solver.tol:
+                    # Skip the convergence check on the first iteration: the initial
+                    # guess is Cm_prev (the previous timestep's solution), and
+                    # |R(Cm_prev)| can be below tol for slowly-evolving nodes even
+                    # though Cm_true ≠ Cm_prev.  Always taking at least one Newton
+                    # step ensures the backward-Euler solution is actually computed.
+                    if step_i > 0 and np.linalg.norm(R, ord=np.inf) < self.solver.tol:
                         return packed
                     J_spatial = self.jacobian(packed, previous_node_fields=previous_node_fields, dt=dt)
                     if issparse(J_spatial):
