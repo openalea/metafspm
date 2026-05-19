@@ -188,8 +188,7 @@ For a more practical example, please see Root_CyNAPS package : [Root_CyNAPS](htt
 
 ## Code Structure
 
-Bellow is a preview of OpenAlea.MetaFSPM's code structure
-![Call graph](doc/callgraph/output/preview.svg)
+Here is a dynamic view of OpenAlea.MetaFSPM's code structure : https://openalea.github.io/metafspm/
 
 ## Contributing
 
