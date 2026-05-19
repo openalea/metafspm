@@ -23,7 +23,7 @@ PACKAGE_NAME = openalea.metafspm.__name__
 PACKAGE_DIR = Path(openalea.metafspm.__path__[0]).resolve()
 
 # Output directory for GitHub Pages / docs
-OUTDIR = Path("./output/")
+OUTDIR = Path("../")
 
 # Optional subdirectories to ignore during docstring extraction
 # Example: {"adrien", "legacy", "sandbox"}
@@ -35,7 +35,7 @@ SKIP_FILE_NAMES: set[str] = set()
 # Node labels to drop from the callgraph (applied to both node declarations
 # and any edge that references them).  Use this for noisy dunder methods or
 # ubiquitous helpers that clutter the graph.
-SKIP_NODE_NAMES: set[str] = {"__iter__", "__next__", "__init__", "__repr__", "__str__"}
+SKIP_NODE_NAMES: set[str] = {"__iter__", "__next__", "__repr__", "__str__"}
 
 # Which pyan edge types to include.  Running both simultaneously causes graphviz
 # to hang — the script works around this by calling pyan twice and merging edges.
@@ -55,26 +55,38 @@ MAX_DOC_CHARS = 900
 LAYOUT_ENGINE: str = "fdp"
 
 # Edge drawing style:
-#   "spline"   classic cubic splines, smooth and readable  (recommended)
-#   "polyline" bent straight lines, faster than spline
-#   "line"     straight lines, fastest to render
-#   "none"     raw lines ignoring node boundaries (very fast, ugly)
-# Note: "curved" hangs with fdp on clustered graphs — avoid it.
-# Note: "ortho" (right-angle bends) only works with the "dot" engine.
-SPLINES: str = "spline"
+#   "line"     straight lines — only mode that doesn't hang fdp on large graphs (default)
+#   "spline"   cubic splines — hangs on the full merged graph, avoid
+#   "polyline" bent straight lines — also hangs on large graphs, avoid
+#   "none"     no routing, lines through nodes (fast but ugly)
+# Note: "curved" and "spline"/"polyline" all hang with fdp once the graph is large.
+# Note: "ortho" only works with the "dot" engine.
+SPLINES: str = "line"
 
 # Overlap removal after layout:
-#   "prism"    iterative removal, best quality for large graphs  (recommended)
+#   "prism"    iterative overlap removal — correct, avoids node collision (default)
+#   "compress" shrinks bounding box only — causes overlaps with compound=true, avoid
 #   "false"    basic removal
-#   "scale"    scale the graph up until nodes stop overlapping
-#   "compress" try to reduce bounding box after removing overlaps
+#   "scale"    scale the graph up — makes things larger, avoid
 OVERLAP: str = "prism"
 
 # Merge parallel edges that share the same endpoints — reduces visual clutter.
 CONCENTRATE: bool = True
 
-# Ideal spring length for fdp/sfdp.  Increase to spread nodes further apart.
-SPRING_K: float = 1.5
+# Ideal spring length for fdp.  compound=true (used for cluster-boundary edges)
+# inflates spacing, so this needs to be much smaller than without it.
+# 0.3 is compact; raise toward 1.0 if clusters overlap too much.
+SPRING_K: float = 0.3
+
+# Extra padding (points) around each node during overlap removal.
+# Default Graphviz value is +4; lower values give tighter packing.
+# Use "+1" for compact output; increase if node labels clip each other.
+SEP: str = "+1"
+
+# Maximum canvas size in inches (width,height).  Graphviz scales the layout
+# to fit within these dimensions.  Use "" to disable.
+# Tip: compound=true inflates natural spacing; size reins it back in.
+GRAPH_SIZE: str = "20,15"
 
 
 # ============================================================================
@@ -270,6 +282,12 @@ def filter_dot_external_nodes(dot_source: str) -> str:
     dot_source = re.sub(r',?\s*layout\s*=\s*\w+', '', dot_source)
     dot_source = re.sub(r',?\s*clusterrank\s*=\s*"[^"]*"', '', dot_source)
 
+    # Rounded-rectangle nodes: inject global shape default and promote per-node
+    # style="filled" → style="rounded,filled".  Cluster graph attrs use
+    # style="filled,rounded" (already has rounded) so they are unaffected.
+    dot_source = re.sub(r'(digraph\s+\w+\s*\{)', r'\1\n    node [shape=box];', dot_source)
+    dot_source = dot_source.replace('style="filled"', 'style="rounded,filled"')
+
     # Node declaration:  "some__id" [label="short_name", ...]
     node_decl_re = re.compile(r'^\s*"([^"]+)"\s*\[.*\blabel\s*=\s*"([^"]*)"')
     # Edge line:  "some__id" -> "other__id" [...]
@@ -305,11 +323,109 @@ def filter_dot_external_nodes(dot_source: str) -> str:
 
 
 _EDGE_LINE_RE = re.compile(r'^\s*"[^"]+"\s*->\s*"[^"]+"')
+_SUBGRAPH_RE = re.compile(r'subgraph\s+"cluster_([^"]+)"')
+_NODE_DECL_RE = re.compile(r'^\s*"([^"]+)"\s*\[')
+_EDGE_FULL_RE = re.compile(r'^\s*"([^"]+)"\s*->\s*"([^"]+)"\s*(\[.*?\])', re.DOTALL)
+
+
+def collapse_class_nodes(dot_source: str) -> str:
+    """Remove nodes that duplicate their cluster box (applies to all nesting levels).
+
+    With nested_groups=True pyan emits both a subgraph cluster AND a standalone
+    node for every module and class.  This function:
+      - collects all cluster IDs and builds a proxy-node map (first leaf node
+        inside each cluster, used as the edge anchor for compound edges)
+      - removes standalone node declarations whose ID matches a cluster
+      - drops containment edges (dst.startswith(src+"__")) — already shown by nesting
+      - redirects all other edges touching a removed node via lhead/ltail so that
+        arrows terminate at the cluster boundary
+    Applied to the fully-merged DOT so that both defines and uses edges are handled.
+    """
+    cluster_ids: set[str] = set()
+    proxy: dict[str, str] = {}
+    stack: list[str] = []
+
+    for line in dot_source.splitlines():
+        m = _SUBGRAPH_RE.search(line)
+        if m:
+            cid = m.group(1)
+            cluster_ids.add(cid)
+            stack.append(cid)
+            continue
+        if line.strip() == '}' and stack:
+            stack.pop()
+            continue
+        m = _NODE_DECL_RE.match(line)
+        if m and stack:
+            nid = m.group(1)
+            if nid not in cluster_ids:
+                for cid in stack:
+                    proxy.setdefault(cid, nid)
+
+    if not cluster_ids:
+        return dot_source
+
+    # Also drop namespace/package ancestor nodes that have no cluster of their own
+    # but ARE a prefix of existing clusters (e.g. openalea__metafspm when only
+    # openalea__metafspm__coupling__* clusters exist).  These float outside all boxes.
+    def _is_cluster_ancestor(nid: str) -> bool:
+        prefix = nid + "__"
+        return any(cid.startswith(prefix) for cid in cluster_ids)
+
+    drop_ids: set[str] = cluster_ids | {
+        nid for nid in (
+            _NODE_DECL_RE.match(l).group(1)
+            for l in dot_source.splitlines()
+            if _NODE_DECL_RE.match(l)
+        )
+        if nid not in cluster_ids and _is_cluster_ancestor(nid)
+    }
+
+    dot_source = re.sub(
+        r'(digraph\s+\w+\s*\{)',
+        r'\1\n    graph [compound=true];',
+        dot_source, count=1,
+    )
+
+    out = []
+    for line in dot_source.splitlines(keepends=True):
+        m_decl = _NODE_DECL_RE.match(line)
+        if m_decl and m_decl.group(1) in drop_ids:
+            continue  # drop redundant / ancestor node declaration
+
+        m_edge = _EDGE_FULL_RE.match(line)
+        if m_edge:
+            src, dst, attrs = m_edge.group(1), m_edge.group(2), m_edge.group(3)
+            # Drop containment edges and edges referencing any dropped node
+            if dst.startswith(src + "__"):
+                continue
+            if src in drop_ids or dst in drop_ids:
+                continue
+            src_c = src in cluster_ids
+            dst_c = dst in cluster_ids
+            if src_c or dst_c:
+                new_src = proxy.get(src) if src_c else src
+                new_dst = proxy.get(dst) if dst_c else dst
+                # Skip if no proxy available (empty cluster)
+                if (src_c and not new_src) or (dst_c and not new_dst):
+                    continue
+                extra = ""
+                if src_c:
+                    extra += f', ltail="cluster_{src}"'
+                if dst_c:
+                    extra += f', lhead="cluster_{dst}"'
+                indent = re.match(r'^\s*', line).group(0)
+                new_attrs = attrs[:-1].rstrip() + extra + "]"
+                out.append(f'{indent}"{new_src}" -> "{new_dst}" {new_attrs}\n')
+                continue
+
+        out.append(line)
+    return "".join(out)
 
 
 def _pyan_call(*, draw_defines: bool, draw_uses: bool) -> str:
     return pyan.create_callgraph(
-        filenames=[str(f) for f in PACKAGE_DIR.rglob("*.py")],
+        filenames=[str(f) for f in PACKAGE_DIR.rglob("*.py") if not should_skip_file(f)],
         format="dot",
         colored=True,
         nested_groups=True,
@@ -328,19 +444,20 @@ def build_dot_source() -> str:
     combined graph that causes graphviz to hang.
     """
     if DRAW_DEFINES and DRAW_USES:
-        # Use defines as the base (it carries all node/cluster declarations).
         base = filter_dot_external_nodes(_pyan_call(draw_defines=True, draw_uses=False))
         uses = filter_dot_external_nodes(_pyan_call(draw_defines=False, draw_uses=True))
-        # Extract only edge lines from the uses graph and inject before closing '}'.
-        extra_edges = [l for l in uses.splitlines(keepends=True) if _EDGE_LINE_RE.match(l)]
-        return base.rstrip().rstrip("}").rstrip() + "\n" + "".join(extra_edges) + "\n}\n"
+        def _tag_uses(line: str) -> str:
+            return re.sub(r'\](\s*;)', r', class="uses"]\1', line)
+        extra_edges = [_tag_uses(l) for l in uses.splitlines(keepends=True) if _EDGE_LINE_RE.match(l)]
+        merged = base.rstrip().rstrip("}").rstrip() + "\n" + "".join(extra_edges) + "\n}\n"
+        return collapse_class_nodes(merged)
 
-    return filter_dot_external_nodes(
+    return collapse_class_nodes(filter_dot_external_nodes(
         _pyan_call(draw_defines=DRAW_DEFINES, draw_uses=DRAW_USES)
-    )
+    ))
 
 
-GRAPHVIZ_TIMEOUT = 120  # seconds before we give up and raise TimeoutExpired
+GRAPHVIZ_TIMEOUT = 30  # seconds before we give up and raise TimeoutExpired
 
 
 def render_svg_from_dot(dot_source: str) -> str:
@@ -349,8 +466,10 @@ def render_svg_from_dot(dot_source: str) -> str:
         LAYOUT_ENGINE, "-Tsvg",
         f"-Gsplines={SPLINES}",
         f"-Goverlap={OVERLAP}",
+        f"-Gsep={SEP}",
         f"-Gconcentrate={'true' if CONCENTRATE else 'false'}",
         f"-GK={SPRING_K}",
+        *([ f"-Gsize={GRAPH_SIZE}" ] if GRAPH_SIZE else []),
     ]
     result = subprocess.run(
         cmd,
@@ -427,6 +546,19 @@ def build_html(svg: str, docs_map: dict[str, dict[str, str]]) -> str:
 
     .node {{
       cursor: pointer;
+    }}
+
+    g.cluster {{
+      cursor: pointer;
+    }}
+
+    /* defines edges (structural containment) */
+    g.edge:not(.uses) path {{ stroke: black; }}
+    g.edge:not(.uses) polygon {{ fill: black; stroke: black; }}
+
+    /* uses edges (calls/references) are shown faint so structure is readable */
+    g.edge.uses path, g.edge.uses polygon {{
+      opacity: 0.3;
     }}
 
     #tooltip {{
@@ -520,9 +652,14 @@ def build_html(svg: str, docs_map: dict[str, dict[str, str]]) -> str:
     const nodesByKey = new Map();
     for (const node of nodeEls) {{
       const key = getTitleText(node);
-      if (key) {{
-        nodesByKey.set(key, node);
-      }}
+      if (key) nodesByKey.set(key, node);
+    }}
+    // Add cluster boxes (class containers) so they participate in highlight/dim.
+    for (const cluster of graphDiv.querySelectorAll("g.cluster")) {{
+      const title = getTitleText(cluster);
+      if (!title) continue;
+      const key = title.startsWith("cluster_") ? title.slice("cluster_".length) : title;
+      nodesByKey.set(key, cluster);
     }}
 
     const outgoing = new Map();
@@ -582,7 +719,7 @@ def build_html(svg: str, docs_map: dict[str, dict[str, str]]) -> str:
     }}
 
     function resetHighlight() {{
-      for (const n of nodeEls) {{
+      for (const n of nodesByKey.values()) {{
         n.classList.remove("dim", "focus");
       }}
       for (const e of edgeEls) {{
@@ -645,16 +782,13 @@ def build_html(svg: str, docs_map: dict[str, dict[str, str]]) -> str:
       tooltip.style.display = "none";
     }}
 
+    // Wire up all elements in nodesByKey (nodes + cluster boxes) uniformly.
     for (const [key, el] of nodesByKey.entries()) {{
       el.addEventListener("click", (evt) => {{
         evt.stopPropagation();
         highlightFrom(key);
       }});
-
-      el.addEventListener("mouseenter", (evt) => {{
-        showTooltip(evt, key);
-      }});
-
+      el.addEventListener("mouseenter", (evt) => showTooltip(evt, key));
       el.addEventListener("mousemove", moveTooltip);
       el.addEventListener("mouseleave", hideTooltip);
     }}
