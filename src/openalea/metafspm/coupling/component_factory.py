@@ -1,7 +1,7 @@
 import inspect as ins
 from typing import get_type_hints, get_origin, get_args
 from functools import partial
-from openalea.metafspm.specializer import specialize_method_recursive
+from openalea.metafspm.solve.specializer import specialize_method_recursive
 
 # TP
 import time
