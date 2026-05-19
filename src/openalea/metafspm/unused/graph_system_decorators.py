@@ -141,7 +141,7 @@ def boundary_condition(location, kind, field=None, types=None, explicit=False):
     explicit : bool
         Accepted for API symmetry with ``node_balance`` / ``edge_law``.
         Boundary conditions always return values (not residuals), so this flag
-        has no behavioral effect.
+        has no behavioral for Neumann Boundary Conditions.
     """
     def decorator(func):
         func.__graph_tag__ = {
@@ -425,7 +425,11 @@ def _invoke_graph_system(self, method_name):
         def evaluator(ctx):
             args = []
             for aname in arg_names:
-                if aname in node_unknowns:
+                if aname == "_node_fields":
+                    val = node_unknowns
+                elif aname == "_edge_fields":
+                    val = edge_unknowns
+                elif aname in node_unknowns:
                     val = ctx.node_unknowns[aname]
                 elif aname in edge_unknowns:
                     val = ctx.edge_unknowns[aname]
@@ -588,6 +592,13 @@ def _invoke_graph_system(self, method_name):
 
     jac_evaluator = None
     if jacobian_raw is not None:
+        jac_arg_names = inspect.getfullargspec(jacobian_raw[1])[0][1:]  # skip self
+        if "_node_fields" not in jac_arg_names:
+            raise TypeError(
+                f"@graph_jacobian method '{jacobian_raw[1].__name__}' must declare "
+                f"'_node_fields' as a parameter. Use _node_fields.index(field_name) * n_nodes "
+                f"to compute block offsets instead of hardcoded slices."
+            )
         jac_evaluator = make_evaluator(jacobian_raw[1], jacobian_raw[0], None, "node")
 
     # ── Build and solve ────────────────────────────────────────────────────────

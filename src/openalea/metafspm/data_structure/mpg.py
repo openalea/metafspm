@@ -1,6 +1,6 @@
 from openalea.mtg import MTG
 import numpy as np
-from .utils import mtg_to_arraydict
+from openalea.metafspm.data_structure.arraydict import mtg_to_arraydict
 
 
 class MPG(MTG):

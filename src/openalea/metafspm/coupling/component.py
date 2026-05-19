@@ -2,13 +2,13 @@ from dataclasses import dataclass, field, fields
 from typing import Literal
 import numpy as np
 
-from .component_factory import *
+from openalea.metafspm.coupling.component_factory import *
 
 
 
 def declare(unit: str, unit_comment: str, description: str,  min_value: float, max_value: float, value_comment: str, references: str, DOI: list,
               variable_type: Literal["state_variable", "plant_scale_state", "input", "parameter"], by: str,
-              state_variable_type: Literal["massic_concentration", "intensive", "extensive", "NonInertialExtensive", "NonInertialIntensive", "descriptor"],
+              state_variable_type: str,
               edit_by: Literal["user", "dev"], default=None, default_factory=None, location=None):
     """
     Resulting from a consensus, this function is used to constrain component variables declaration in a dataclass in a commonly admitted way.
@@ -46,6 +46,17 @@ def declare(unit: str, unit_comment: str, description: str,  min_value: float, m
                                     location=location))
 
 
+def input_variable(unit: str, unit_comment: str, description: str,  min_value: float, max_value: float, value_comment: str, references: str, DOI: list, 
+                   by: str, initialize=None, location=None):
+    return declare(default=initialize, unit=unit, unit_comment=unit_comment, description=description, min_value=min_value, 
+                   max_value=max_value, value_comment=value_comment, variable_type="input", by=by, state_variable_type=None, edit_by="user", location=location)
+
+
+def state_variable(unit: str, unit_comment: str, description: str,  min_value: float, max_value: float, value_comment: str, references: str, DOI: list, 
+                   by: str, state_variable_type: Literal["massic_concentration", "intensive", "extensive", "NonInertialExtensive", "NonInertialIntensive", "descriptor"],
+                   initialize=None, location=None):
+    return declare(default=initialize, unit=unit, unit_comment=unit_comment, description=description, min_value=min_value, 
+                   max_value=max_value, value_comment=value_comment, variable_type="state_variable", by=by, state_variable_type=state_variable_type, edit_by="user", location=location)
 
 
 @dataclass
@@ -148,67 +159,18 @@ class Model:
             vertices = props[list(source_variables.keys())[0]].keys()
             props[input].update({vid: sum([props[variable][vid]*unit_conversion 
                                            for variable, unit_conversion in source_variables.items()]) 
-                                 for vid in vertices})
+                                 for vid in vertices}) 
 
 
-    def temperature_modification_old(self, soil_temperature=15, process_at_T_ref=1., T_ref=0., A=-0.05, B=3., C=1.):
-        """
-        This function calculates how the value of a process should be modified according to soil temperature (in degrees Celsius).
-        Parameters correspond to the value of the process at reference temperature T_ref (process_at_T_ref),
-        to two empirical coefficients A and B, and to a coefficient C used to switch between different formalisms.
-        If C=0 and B=1, then the relationship corresponds to a classical linear increase with temperature (thermal time).
-        If C=1, A=0 and B>1, then the relationship corresponds to a classical exponential increase with temperature (Q10).
-        If C=1, A<0 and B>0, then the relationship corresponds to bell-shaped curve, close to the one from Parent et al. (2010).
-        :param T_ref: the reference temperature
-        :param A: parameter A (may be equivalent to the coefficient of linear increase)
-        :param B: parameter B (may be equivalent to the Q10 value)
-        :param C: parameter C (either 0 or 1)
-        :return: the new value of the process
-        """
-        # We avoid unwanted cases:
-        if C != 0 and C != 1:
-            print("The modification of the process at T =", soil_temperature,
-                  "only works for C=0 or C=1!")
-            print("The modified process has been set to 0.")
-            return 0.
-        elif C == 1:
-            if (A * (soil_temperature - T_ref) + B) < 0.:
-                print("The modification of the process at T =", soil_temperature,
-                      "is unstable with this set of parameters!")
-                print("The modified process has been set to 0.")
-                modified_process = 0.
-                return modified_process
 
-        # We compute a temperature-modified process, correspond to a Q10-modified relationship,
-        # based on the work of Tjoelker et al. (2001):
-        modified_process = process_at_T_ref * (A * (soil_temperature - T_ref) + B) ** (1 - C) \
-                           * (A * (soil_temperature - T_ref) + B) ** (
-                                   C * (soil_temperature - T_ref) / 10.)
 
-        return max(modified_process, 0.)
-    
+@dataclass
+class StructuralComponent(Component):
+    pass
 
-    def temperature_modification(self, soil_temperature=15, process_at_T_ref=1., T_ref=0., A=-0.05, B=3., C=1.):
-        """
-        This function calculates how the value of a process should be modified according to soil temperature (in degrees Celsius).
-        Parameters correspond to the value of the process at reference temperature T_ref (process_at_T_ref),
-        to two empirical coefficients A and B, and to a coefficient C used to switch between different formalisms.
-        If C=0 and B=1, then the relationship corresponds to a classical linear increase with temperature (thermal time).
-        If C=1, A=0 and B>1, then the relationship corresponds to a classical exponential increase with temperature (Q10).
-        If C=1, A<0 and B>0, then the relationship corresponds to bell-shaped curve, close to the one from Parent et al. (2010).
-        :param T_ref: the reference temperature
-        :param A: parameter A (may be equivalent to the coefficient of linear increase)
-        :param B: parameter B (may be equivalent to the Q10 value)
-        :param C: parameter C (either 0 or 1)
-        :return: the new value of the process
-        """
 
-        # We compute a temperature-modified process, correspond to a Q10-modified relationship,
-        # based on the work of Tjoelker et al. (2001):
-        modified_process = process_at_T_ref * (A * (soil_temperature - T_ref) + B) ** (1 - C) \
-                           * (A * (soil_temperature - T_ref) + B) ** (
-                                   C * (soil_temperature - T_ref) / 10.)
-        
-        return np.where(((C != 0) & (C != 1)) | ((C == 1) & ((A * (soil_temperature - T_ref) + B) < 0.)), 0.,
-                        np.maximum(modified_process, 0.))
+@dataclass
+class FunctionalComponent(Component):
+    pass
 
+                          

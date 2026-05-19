@@ -1,7 +1,7 @@
 import yaml
 from dataclasses import fields
 from importlib import import_module, reload
-from openalea.metafspm.utils import ArrayDict
+from openalea.metafspm.data_structure.arraydict import ArrayDict
 
 
 def recursive_reload(module):
