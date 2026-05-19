@@ -2,7 +2,7 @@ from dataclasses import dataclass, field, fields
 from typing import Literal
 import numpy as np
 
-from openalea.metafspm.coupling.component_factory import *
+from openalea.metafspm.solve.decorator import *
 
 
 
@@ -60,7 +60,7 @@ def state_variable(unit: str, unit_comment: str, description: str,  min_value: f
 
 
 @dataclass
-class Model:
+class Component:
     """
     Base component for structuring base FSPM modules
 

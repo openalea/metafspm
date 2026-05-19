@@ -59,11 +59,39 @@ from openalea.metafspm.solve.system_specs   import (
 from openalea.metafspm.solve.solver         import SolverConfig, SolverSpec, make_solver
 
 # ── Choregrapher (unchanged) ──────────────────────────────────────────────────
-from openalea.metafspm.coupling.component_factory import Choregrapher, Functor
+from openalea.metafspm.coupling.choregrapher import Choregrapher
+from openalea.metafspm.solve.legacy_functor import Functor
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# Method-level decorators  (public API — unchanged signatures)
+# Method-level decorators for Euler steps (public API)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def _step(name: str, *, total: bool = False, iterating: bool = False):
+    """Return a decorator that registers func as a Choregrapher step."""
+    def decorator(func):
+        Choregrapher().add_process(Functor(func, total=total, iteraring=iterating), name=name)
+        return func
+    return decorator
+
+priorbalance     = _step("priorbalance", iterating=True)
+selfbalance      = _step("selfbalance", iterating=True)
+stepinit         = _step("stepinit", iterating=True)
+state            = _step("state")
+rate             = _step("rate")
+totalrate        = _step("totalrate", total=True)
+deficit          = _step("deficit")
+totalstate       = _step("totalstate", total=True)
+axial            = _step("axial")
+potential        = _step("potential")
+allocation       = _step("allocation")
+actual           = _step("actual")
+segmentation     = _step("segmentation")
+postsegmentation = _step("postsegmentation")
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Method-level decorators for graph systems  (public API)
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def node_balance(field=None, types=None, explicit=False):

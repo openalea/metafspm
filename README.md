@@ -186,6 +186,11 @@ Note : If a growth model is included, you need to define a "post_growth_updating
 
 For a more practical example, please see Root_CyNAPS package : [Root_CyNAPS](https://github.com/GeraultTr/Root_CyNAPS)
 
+## Code Structure
+
+Bellow is a preview of OpenAlea.MetaFSPM's code structure
+![Call graph](doc/callgraph/output/preview.svg)
+
 ## Contributing
 
 We are open to contributions on the develop branch of this package.
