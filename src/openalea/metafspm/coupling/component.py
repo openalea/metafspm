@@ -166,7 +166,8 @@ class Component:
 
 @dataclass
 class StructuralComponent(Component):
-    pass
+    def non_empty(self):
+        pass
 
 
 @dataclass

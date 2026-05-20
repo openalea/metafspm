@@ -479,19 +479,52 @@ def build_dot_source() -> str:
             return re.sub(r'\](\s*;)', r', class="uses"]\1', line)
         extra_edges = [_tag_uses(l) for l in uses.splitlines(keepends=True) if _EDGE_LINE_RE.match(l)]
         merged = base.rstrip().rstrip("}").rstrip() + "\n" + "".join(extra_edges) + "\n}\n"
-        return apply_inheritance_edges(collapse_class_nodes(merged, inh_pairs), inh_pairs)
+        nested = nest_inheritance_clusters(merged, inh_pairs)
+        return drop_compound_inheritance_edges(collapse_class_nodes(nested, inh_pairs), inh_pairs)
 
-    return apply_inheritance_edges(
-        collapse_class_nodes(filter_dot_external_nodes(
-            _pyan_call(draw_defines=DRAW_DEFINES, draw_uses=DRAW_USES)
-        ), inh_pairs),
-        inh_pairs,
-    )
+    filtered = filter_dot_external_nodes(_pyan_call(draw_defines=DRAW_DEFINES, draw_uses=DRAW_USES))
+    nested = nest_inheritance_clusters(filtered, inh_pairs)
+    return drop_compound_inheritance_edges(collapse_class_nodes(nested, inh_pairs), inh_pairs)
 
 
 _COMPOUND_EDGE_RE = re.compile(
     r'"([^"]+)"\s*->\s*"([^"]+)"\s*\[([^\]]+)\]', re.DOTALL
 )
+
+
+def _cluster_of(node_id: str, cluster_set: set[str]) -> str | None:
+    """Return the cluster from cluster_set that node_id belongs to, or None.
+
+    Matches either the cluster ID itself (class-level pyan node) or any node
+    whose ID starts with <cluster_id>__ (method node inside that cluster).
+    Handles dunder method names like __init__ correctly since we match the
+    cluster ID as a prefix, not by splitting on __.
+    """
+    if node_id in cluster_set:
+        return node_id
+    return next((c for c in cluster_set if node_id.startswith(c + '__')), None)
+
+
+def _find_cluster_bounds(dot: str, cluster_id: str) -> tuple[int, int]:
+    """Return (start, end) char positions of the subgraph block for cluster_id.
+
+    start is the index of 's' in 'subgraph "cluster_<id>"';
+    end is one past the closing '}' (exclusive).
+    Returns (-1, -1) if not found.
+    """
+    marker = f'subgraph "cluster_{cluster_id}"'
+    pos = dot.find(marker)
+    if pos == -1:
+        return -1, -1
+    brace = dot.index('{', pos)
+    depth, i = 1, brace + 1
+    while depth > 0 and i < len(dot):
+        if dot[i] == '{':
+            depth += 1
+        elif dot[i] == '}':
+            depth -= 1
+        i += 1
+    return pos, i
 
 
 def build_proxy_to_cluster(dot_source: str) -> dict[str, str]:
@@ -557,138 +590,168 @@ def collect_inheritance_pairs(files: list[Path]) -> set[tuple[str, str]]:
     return pairs
 
 
-def apply_inheritance_edges(dot_source: str,
-                            inheritance_pairs: set[tuple[str, str]]) -> str:
-    """Rework inheritance representation in the DOT source:
+def build_cluster_hierarchy(
+    dot_source: str,
+    inh_pairs: set[tuple[str, str]],
+) -> tuple[dict[str, list[str]], dict[str, str]]:
+    """Return (children, parent) maps for clusters that are actually nested.
 
-    1. Remove bare subclass nodes — classes that inherit but own no methods
-       (no cluster of their own) appear as plain rectangle nodes alongside
-       cluster boxes, which looks inconsistent and cluttered.
+    children[par_id] = [sub_id, ...]   (direct children only)
+    parent[sub_id]   = par_id          (direct parent)
+    """
+    cluster_ids: set[str] = set(
+        re.findall(r'subgraph\s+"cluster_([^"]+)"', dot_source)
+    )
+    children: dict[str, list[str]] = {}
+    parent: dict[str, str] = {}
+    for sub, par in inh_pairs:
+        if sub in cluster_ids and par in cluster_ids:
+            children.setdefault(par, []).append(sub)
+            parent[sub] = par
+    return children, parent
 
-    2. Remove individual method-level uses edges that cross an inheritance
-       boundary (subclass method → parent method).  These show up as many
-       thin uses arrows between clusters and are confusing alongside the
-       dedicated inheritance arrow.
 
-    3. Keep (or inject) exactly one compound uses edge per inheritance pair
-       where both classes have clusters, tagged class="uses inherits" so CSS
-       can colour it darkred.  The edge is the class-level compound edge that
-       collapse_class_nodes already built from pyan's class→parent uses edge;
-       we simply tag it.  If both proxy nodes happen to be the same (rare edge
-       case), we skip.
+def nest_inheritance_clusters(dot_source: str,
+                               inheritance_pairs: set[tuple[str, str]]) -> str:
+    """Represent inheritance visually by nesting the subclass cluster inside
+    the parent class cluster ("class box inside class box").
+
+    For each (sub, par) pair where both classes have their own cluster the
+    entire subgraph block for sub is extracted from its current position and
+    re-inserted just before the closing brace of the par cluster.
+
+    Also removes:
+    - Bare subclass nodes (classes that inherit but have no methods/cluster).
+    - Any pre-collapse uses edges that cross an inheritance boundary (they
+      become visually redundant once sub is nested inside par).
     """
     if not inheritance_pairs:
         return dot_source
 
-    # ── 1. Find which class IDs actually have a cluster ───────────────────
     cluster_ids: set[str] = set(
         re.findall(r'subgraph\s+"cluster_([^"]+)"', dot_source)
     )
-
-    # Bare subclasses: in inheritance but no cluster of their own
     bare_sub_ids: set[str] = {
-        sub for sub, _par in inheritance_pairs if sub not in cluster_ids
+        sub for sub, _ in inheritance_pairs if sub not in cluster_ids
     }
-
-    # Pairs where both ends have a cluster → valid for compound edge
-    clustered_pairs: set[tuple[str, str]] = {
+    inh_set: set[tuple[str, str]] = {
         (sub, par) for sub, par in inheritance_pairs
         if sub in cluster_ids and par in cluster_ids
     }
+    sub_ids = {sub for sub, _ in inh_set}
+    par_ids = {par for _, par in inh_set}
 
-    # Build {(sub_cluster, par_cluster)} lookup for fast membership test
-    inh_set = clustered_pairs
+    # ── Move each sub cluster inside its par cluster ──────────────────────
+    for sub_id, par_id in sorted(inh_set):
+        sub_s, sub_e = _find_cluster_bounds(dot_source, sub_id)
+        if sub_s == -1:
+            continue
+        par_s, par_e = _find_cluster_bounds(dot_source, par_id)
+        if par_s == -1:
+            continue
+        if par_s <= sub_s < sub_e <= par_e:
+            continue  # already nested
 
-    # ── 2. Build a proxy map from existing compound edges ─────────────────
-    # proxy_of[cluster_id] = the proxy node ID found in ltail/lhead
-    proxy_of: dict[str, str] = {}
-    for m in re.finditer(
-            r'"([^"]+)"\s*->\s*"([^"]+)"\s*\[[^\]]*\]', dot_source, re.DOTALL):
-        src_n, dst_n, full = m.group(1), m.group(2), m.group(0)
-        lt = re.search(r'ltail\s*=\s*"cluster_([^"]+)"', full)
-        lh = re.search(r'lhead\s*=\s*"cluster_([^"]+)"', full)
-        if lt:
-            proxy_of.setdefault(lt.group(1), src_n)
-        if lh:
-            proxy_of.setdefault(lh.group(1), dst_n)
+        # Include leading whitespace of the sub line
+        nl = dot_source.rfind('\n', 0, sub_s)
+        ws_start = nl + 1 if nl != -1 else 0
+        sub_block = dot_source[ws_start:sub_e]
 
-    # ── 3. Track which class→class inheritance compound edges pyan already
-    #       built (these will be tagged; extra ones injected if missing) ───
-    existing_inh_edges: set[tuple[str, str]] = set()
+        # Consume trailing semicolon and single newline after closing brace
+        tail = sub_e
+        while tail < len(dot_source) and dot_source[tail] in ' \t;':
+            tail += 1
+        if tail < len(dot_source) and dot_source[tail] == '\n':
+            tail += 1
 
+        dot_source = dot_source[:ws_start] + dot_source[tail:]
+
+        # Re-find parent after removal (offsets may have changed)
+        par_s2, par_e2 = _find_cluster_bounds(dot_source, par_id)
+        if par_s2 == -1:
+            dot_source = dot_source[:ws_start] + sub_block + '\n' + dot_source[ws_start:]
+            continue
+
+        par_close = par_e2 - 1  # index of par's closing '}'
+
+        # Compute indentation for the re-inserted block
+        par_nl = dot_source.rfind('\n', 0, par_s2)
+        par_col = par_s2 - (par_nl + 1) if par_nl != -1 else par_s2
+        extra = ' ' * (par_col + 4)
+
+        # Re-indent sub block to match the new nesting depth
+        lines = sub_block.rstrip('\n').splitlines()
+        cur_ind = len(lines[0]) - len(lines[0].lstrip()) if lines else 0
+        reindented = '\n'.join(
+            extra + ln[cur_ind:] if ln[:cur_ind].strip() == '' else ln
+            for ln in lines
+        ) + '\n'
+
+        dot_source = dot_source[:par_close] + reindented + dot_source[par_close:]
+
+    # ── Remove bare subclass nodes and inheritance-crossing edges ─────────
     node_re = re.compile(r'^\s*"([^"]+)"\s*\[')
     edge_re = re.compile(r'^\s*"([^"]+)"\s*->\s*"([^"]+)"')
 
     out: list[str] = []
     for line in dot_source.splitlines(keepends=True):
-        # ── Remove bare subclass node declarations ──────────────────────
         m_n = node_re.match(line)
         if m_n and m_n.group(1) in bare_sub_ids:
             continue
 
-        # ── Process edges ────────────────────────────────────────────────
         m_e = edge_re.match(line)
         if m_e:
             src_raw, dst_raw = m_e.group(1), m_e.group(2)
-
-            # Drop edges that reference a bare subclass node
             if src_raw in bare_sub_ids or dst_raw in bare_sub_ids:
                 continue
-
-            # Identify the clusters this edge crosses (via ltail/lhead)
-            lt_m = re.search(r'ltail\s*=\s*"cluster_([^"]+)"', line)
-            lh_m = re.search(r'lhead\s*=\s*"cluster_([^"]+)"', line)
-            src_c = lt_m.group(1) if lt_m else None
-            dst_c = lh_m.group(1) if lh_m else None
-
-            # Drop method-level uses edges that cross an inheritance boundary
-            # (subclass cluster → parent cluster for a pair we know about)
-            if 'class="uses"' in line and src_c and dst_c:
-                if (src_c, dst_c) in inh_set:
-                    # Tag as inherits (this IS the class-level compound edge)
-                    existing_inh_edges.add((src_c, dst_c))
-                    line = line.replace('class="uses"', 'class="uses inherits"')
-                    line = re.sub(r'\bcolor\s*=\s*"[^"]*"', 'color="darkred"', line)
-                    out.append(line)
-                    continue
-                # Method edge that merely CROSSES a known inheritance boundary
-                # (e.g. SubClass.method → ParentClass.method override calls)
-                if src_c in cluster_ids and dst_c in cluster_ids:
-                    # Is src_c a subclass of dst_c in our inheritance chain?
-                    if (src_c, dst_c) in inh_set:
-                        continue  # absorbed into the class-level inherits edge
-                # Regular cross-cluster uses edge → keep
-            elif 'class="uses"' in line and not src_c and not dst_c:
-                # Direct method-to-method edge — check if it crosses
-                # an inheritance boundary we know about
-                # src/dst are method nodes: strip last segment to get class ID
-                src_cls = src_raw.rsplit("__", 1)[0] if "__" in src_raw else None
-                dst_cls = dst_raw.rsplit("__", 1)[0] if "__" in dst_raw else None
-                if src_cls and dst_cls and (src_cls, dst_cls) in inh_set:
-                    continue  # suppress: absorbed into class-level inherits edge
+            # Drop edges crossing an inheritance boundary (sub → par direction)
+            src_c = _cluster_of(src_raw, sub_ids)
+            dst_c = _cluster_of(dst_raw, par_ids)
+            if src_c and dst_c and (src_c, dst_c) in inh_set:
+                continue
 
         out.append(line)
 
-    # ── 4. Inject missing class-level inheritance compound edges ──────────
-    # For pairs that pyan didn't generate a class→class uses edge for
-    # (rare, but can happen when the class body has no direct reference to
-    # the parent beyond the class declaration).
-    closing = out[-1] if out and out[-1].strip() == "}" else None
-    if closing:
-        out = out[:-1]
-    for sub_c, par_c in sorted(clustered_pairs - existing_inh_edges):
-        p_sub = proxy_of.get(sub_c)
-        p_par = proxy_of.get(par_c)
-        if not p_sub or not p_par or p_sub == p_par:
-            continue
-        out.append(
-            f'    "{p_sub}" -> "{p_par}" '
-            f'[style="solid", color="darkred", class="uses inherits", '
-            f'ltail="cluster_{sub_c}", lhead="cluster_{par_c}"];\n'
-        )
-    if closing:
-        out.append(closing)
-    return "".join(out)
+    return ''.join(out)
+
+
+def drop_compound_inheritance_edges(dot_source: str,
+                                     inheritance_pairs: set[tuple[str, str]]) -> str:
+    """Drop compound and semi-compound edges crossing inheritance boundaries.
+
+    Called after collapse_class_nodes which converts class-level pyan edges
+    into compound edges with lhead/ltail.  Those are now redundant: the
+    sub→par relationship is already expressed by visual nesting.
+    """
+    if not inheritance_pairs:
+        return dot_source
+
+    cluster_ids: set[str] = set(
+        re.findall(r'subgraph\s+"cluster_([^"]+)"', dot_source)
+    )
+    inh_set: set[tuple[str, str]] = {
+        (sub, par) for sub, par in inheritance_pairs
+        if sub in cluster_ids and par in cluster_ids
+    }
+    sub_ids = {sub for sub, _ in inh_set}
+    par_ids = {par for _, par in inh_set}
+
+    edge_re = re.compile(r'^\s*"([^"]+)"\s*->\s*"([^"]+)"')
+    out: list[str] = []
+    for line in dot_source.splitlines(keepends=True):
+        m = edge_re.match(line)
+        if m:
+            src_raw, dst_raw = m.group(1), m.group(2)
+            lt_m = re.search(r'ltail\s*=\s*"cluster_([^"]+)"', line)
+            lh_m = re.search(r'lhead\s*=\s*"cluster_([^"]+)"', line)
+            # For src: prefer explicit ltail; fall back to prefix match
+            src_c = lt_m.group(1) if lt_m else _cluster_of(src_raw, sub_ids)
+            # For dst: prefer explicit lhead; fall back to prefix match
+            dst_c = lh_m.group(1) if lh_m else _cluster_of(dst_raw, par_ids)
+            if src_c and dst_c and (src_c, dst_c) in inh_set:
+                continue
+        out.append(line)
+    return ''.join(out)
 
 
 GRAPHVIZ_TIMEOUT = 30  # seconds before we give up and raise TimeoutExpired
@@ -721,7 +784,9 @@ def render_svg_from_dot(dot_source: str) -> str:
 # ============================================================================
 
 def build_html(svg: str, docs_map: dict[str, dict[str, str]],
-               proxy_to_cluster: dict[str, str] | None = None) -> str:
+               proxy_to_cluster: dict[str, str] | None = None,
+               cluster_children: dict[str, list[str]] | None = None,
+               cluster_parent: dict[str, str] | None = None) -> str:
     """Return a self-contained interactive HTML page."""
     return f"""<!DOCTYPE html>
 <html lang="en">
@@ -796,10 +861,6 @@ def build_html(svg: str, docs_map: dict[str, dict[str, str]],
       opacity: 0.3;
     }}
 
-    /* inheritance edges: prominent darkred, distinguishable from regular uses */
-    g.edge.uses.inherits path {{ stroke: darkred !important; opacity: 0.85; }}
-    g.edge.uses.inherits polygon {{ fill: darkred !important; stroke: darkred !important; opacity: 0.85; }}
-
     #tooltip {{
       position: fixed;
       z-index: 1000;
@@ -858,6 +919,12 @@ def build_html(svg: str, docs_map: dict[str, dict[str, str]],
     // cluster IDs, so click-highlight can resolve node-level edge titles back
     // to the cluster they visually represent.
     const proxyToCluster = {json.dumps(proxy_to_cluster or {})};
+    // Inheritance nesting maps — used so that clicking a parent class also
+    // highlights its nested child classes, and vice versa.
+    // clusterChildren[parId] = [childId, ...]   (direct children)
+    // clusterParent[childId] = parId            (direct parent)
+    const clusterChildren = {json.dumps(cluster_children or {})};
+    const clusterParent   = {json.dumps(cluster_parent or {})};
 
     const graphDiv = document.getElementById("graph");
     const wrap = document.getElementById("graph-wrap");
@@ -978,6 +1045,22 @@ def build_html(svg: str, docs_map: dict[str, dict[str, str]],
       const upstream = walk(nodeKey, incoming);
       const downstream = walk(nodeKey, outgoing);
       const keepNodes = new Set([nodeKey, ...upstream, ...downstream]);
+
+      // Expand keepNodes to include:
+      //   descendants — nested child clusters (and their children, recursively)
+      //   ancestors   — parent clusters up to the root (so container boxes stay lit)
+      // for...of on a Set visits items added during iteration, so one pass suffices.
+      for (const key of keepNodes) {{
+        for (const child of (clusterChildren[key] || [])) {{
+          keepNodes.add(child);
+        }}
+        let anc = clusterParent[key];
+        while (anc && !keepNodes.has(anc)) {{
+          keepNodes.add(anc);
+          anc = clusterParent[anc];
+        }}
+      }}
+
       const keepEdges = new Set();
 
       for (const e of edges) {{
@@ -1100,7 +1183,13 @@ def main() -> None:
 
     preview_path.write_text(svg, encoding="utf-8")
     proxy_to_cluster = build_proxy_to_cluster(dot_source)
-    html_path.write_text(build_html(svg, docs_map, proxy_to_cluster), encoding="utf-8")
+    files = [f for f in PACKAGE_DIR.rglob("*.py") if not should_skip_file(f)]
+    inh_pairs = collect_inheritance_pairs(files)
+    cluster_children, cluster_parent = build_cluster_hierarchy(dot_source, inh_pairs)
+    html_path.write_text(
+        build_html(svg, docs_map, proxy_to_cluster, cluster_children, cluster_parent),
+        encoding="utf-8",
+    )
 
     print(f"\nWrote: {preview_path.resolve()}")
     print(f"Wrote: {html_path.resolve()}")
