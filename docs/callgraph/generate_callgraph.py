@@ -328,7 +328,8 @@ _NODE_DECL_RE = re.compile(r'^\s*"([^"]+)"\s*\[')
 _EDGE_FULL_RE = re.compile(r'^\s*"([^"]+)"\s*->\s*"([^"]+)"\s*(\[.*?\])', re.DOTALL)
 
 
-def collapse_class_nodes(dot_source: str) -> str:
+def collapse_class_nodes(dot_source: str,
+                          inh_pairs: set[tuple[str, str]] | None = None) -> str:
     """Remove nodes that duplicate their cluster box (applies to all nesting levels).
 
     With nested_groups=True pyan emits both a subgraph cluster AND a standalone
@@ -340,17 +341,44 @@ def collapse_class_nodes(dot_source: str) -> str:
       - redirects all other edges touching a removed node via lhead/ltail so that
         arrows terminate at the cluster boundary
     Applied to the fully-merged DOT so that both defines and uses edges are handled.
-    """
-    cluster_ids: set[str] = set()
-    proxy: dict[str, str] = {}
-    stack: list[str] = []
 
+    inh_pairs: if provided, bare subclass nodes (classes with no cluster of their
+    own that inherit from another class) are excluded from proxy selection.  pyan
+    declares these class nodes inside their module cluster before the module's real
+    method nodes, so without this exclusion they would be chosen as module proxies,
+    then removed later by apply_inheritance_edges, leaving undeclared proxy references.
+    """
+    # Pass 1: collect ALL cluster IDs before selecting proxies so that class nodes
+    # declared inside their module cluster (before their own subgraph appears) are
+    # correctly recognised as cluster IDs and skipped during proxy selection.
+    cluster_ids: set[str] = set()
     for line in dot_source.splitlines():
         m = _SUBGRAPH_RE.search(line)
         if m:
-            cid = m.group(1)
-            cluster_ids.add(cid)
-            stack.append(cid)
+            cluster_ids.add(m.group(1))
+
+    if not cluster_ids:
+        return dot_source
+
+    def _is_cluster_ancestor(nid: str) -> bool:
+        prefix = nid + "__"
+        return any(cid.startswith(prefix) for cid in cluster_ids)
+
+    # Bare subclass nodes: in inh_pairs but have no cluster of their own.
+    # pyan declares them inside their module cluster before any method nodes,
+    # so they would be selected as module proxies if not excluded here.
+    bare_sub_ids: set[str] = set()
+    if inh_pairs:
+        bare_sub_ids = {sub for sub, _par in inh_pairs if sub not in cluster_ids}
+
+    # Pass 2: collect proxy nodes — first leaf node inside each cluster, skipping
+    # cluster IDs themselves, bare subclass nodes, and namespace ancestors.
+    proxy: dict[str, str] = {}
+    stack: list[str] = []
+    for line in dot_source.splitlines():
+        m = _SUBGRAPH_RE.search(line)
+        if m:
+            stack.append(m.group(1))
             continue
         if line.strip() == '}' and stack:
             stack.pop()
@@ -358,21 +386,17 @@ def collapse_class_nodes(dot_source: str) -> str:
         m = _NODE_DECL_RE.match(line)
         if m and stack:
             nid = m.group(1)
-            if nid not in cluster_ids:
+            if nid not in cluster_ids and nid not in bare_sub_ids:
                 for cid in stack:
                     proxy.setdefault(cid, nid)
-
-    if not cluster_ids:
-        return dot_source
 
     # Also drop namespace/package ancestor nodes that have no cluster of their own
     # but ARE a prefix of existing clusters (e.g. openalea__metafspm when only
     # openalea__metafspm__coupling__* clusters exist).  These float outside all boxes.
-    def _is_cluster_ancestor(nid: str) -> bool:
-        prefix = nid + "__"
-        return any(cid.startswith(prefix) for cid in cluster_ids)
 
-    drop_ids: set[str] = cluster_ids | {
+    # Namespace/package ancestor nodes that have no cluster of their own —
+    # drop their declarations AND any edges referencing them (not redirected).
+    ancestor_ids: set[str] = {
         nid for nid in (
             _NODE_DECL_RE.match(l).group(1)
             for l in dot_source.splitlines()
@@ -380,6 +404,8 @@ def collapse_class_nodes(dot_source: str) -> str:
         )
         if nid not in cluster_ids and _is_cluster_ancestor(nid)
     }
+    # All node IDs whose declarations should be suppressed
+    drop_ids: set[str] = cluster_ids | ancestor_ids
 
     dot_source = re.sub(
         r'(digraph\s+\w+\s*\{)',
@@ -396,10 +422,10 @@ def collapse_class_nodes(dot_source: str) -> str:
         m_edge = _EDGE_FULL_RE.match(line)
         if m_edge:
             src, dst, attrs = m_edge.group(1), m_edge.group(2), m_edge.group(3)
-            # Drop containment edges and edges referencing any dropped node
+            # Drop containment edges and edges referencing ancestor-only nodes
             if dst.startswith(src + "__"):
                 continue
-            if src in drop_ids or dst in drop_ids:
+            if src in ancestor_ids or dst in ancestor_ids:
                 continue
             src_c = src in cluster_ids
             dst_c = dst in cluster_ids
@@ -443,6 +469,9 @@ def build_dot_source() -> str:
     the edge sets are merged.  Running both in a single pyan call produces a
     combined graph that causes graphviz to hang.
     """
+    files = [f for f in PACKAGE_DIR.rglob("*.py") if not should_skip_file(f)]
+    inh_pairs = collect_inheritance_pairs(files)
+
     if DRAW_DEFINES and DRAW_USES:
         base = filter_dot_external_nodes(_pyan_call(draw_defines=True, draw_uses=False))
         uses = filter_dot_external_nodes(_pyan_call(draw_defines=False, draw_uses=True))
@@ -450,11 +479,216 @@ def build_dot_source() -> str:
             return re.sub(r'\](\s*;)', r', class="uses"]\1', line)
         extra_edges = [_tag_uses(l) for l in uses.splitlines(keepends=True) if _EDGE_LINE_RE.match(l)]
         merged = base.rstrip().rstrip("}").rstrip() + "\n" + "".join(extra_edges) + "\n}\n"
-        return collapse_class_nodes(merged)
+        return apply_inheritance_edges(collapse_class_nodes(merged, inh_pairs), inh_pairs)
 
-    return collapse_class_nodes(filter_dot_external_nodes(
-        _pyan_call(draw_defines=DRAW_DEFINES, draw_uses=DRAW_USES)
-    ))
+    return apply_inheritance_edges(
+        collapse_class_nodes(filter_dot_external_nodes(
+            _pyan_call(draw_defines=DRAW_DEFINES, draw_uses=DRAW_USES)
+        ), inh_pairs),
+        inh_pairs,
+    )
+
+
+_COMPOUND_EDGE_RE = re.compile(
+    r'"([^"]+)"\s*->\s*"([^"]+)"\s*\[([^\]]+)\]', re.DOTALL
+)
+
+
+def build_proxy_to_cluster(dot_source: str) -> dict[str, str]:
+    """Return {proxy_node_id: cluster_id} for every compound edge in the DOT.
+
+    Graphviz compound edges use a real node as the visual anchor (proxy) while
+    lhead/ltail attributes make the arrow terminate at the cluster boundary.
+    The SVG edge title contains the proxy IDs, not the cluster names, so the
+    JS highlight logic needs this map to resolve proxy → cluster.
+    """
+    result: dict[str, str] = {}
+    for m in _COMPOUND_EDGE_RE.finditer(dot_source):
+        src_node, dst_node, attrs = m.group(1), m.group(2), m.group(3)
+        lt = re.search(r'ltail\s*=\s*"cluster_([^"]+)"', attrs)
+        lh = re.search(r'lhead\s*=\s*"cluster_([^"]+)"', attrs)
+        if lt:
+            result[src_node] = lt.group(1)
+        if lh:
+            result[dst_node] = lh.group(1)
+    return result
+
+
+def collect_inheritance_pairs(files: list[Path]) -> set[tuple[str, str]]:
+    """Return {(subclass_cluster_id, parent_cluster_id)} from class base declarations.
+
+    Uses AST to find class X(Base) relationships and maps them to pyan-style
+    cluster IDs so we can tag the corresponding DOT edges.
+    """
+    # Pass 1: register every class name → list of pyan cluster IDs (may be ambiguous)
+    class_registry: dict[str, list[str]] = {}
+    parsed: list[tuple[str, ast.Module]] = []
+
+    for f in files:
+        try:
+            tree = ast.parse(f.read_text(encoding="utf-8", errors="replace"))
+        except SyntaxError:
+            continue
+        module_id = pyan_node_id_from_dotted(module_name_from_file(f))
+        parsed.append((module_id, tree))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ClassDef):
+                class_registry.setdefault(node.name, []).append(
+                    f"{module_id}__{node.name}"
+                )
+
+    # Pass 2: for each class, add (subclass, parent) for each base
+    pairs: set[tuple[str, str]] = set()
+    for module_id, tree in parsed:
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.ClassDef):
+                continue
+            sub_id = f"{module_id}__{node.name}"
+            for base in node.bases:
+                if isinstance(base, ast.Name):
+                    name = base.id
+                elif isinstance(base, ast.Attribute):
+                    name = base.attr
+                else:
+                    continue
+                for parent_id in class_registry.get(name, []):
+                    if parent_id != sub_id:
+                        pairs.add((sub_id, parent_id))
+    return pairs
+
+
+def apply_inheritance_edges(dot_source: str,
+                            inheritance_pairs: set[tuple[str, str]]) -> str:
+    """Rework inheritance representation in the DOT source:
+
+    1. Remove bare subclass nodes — classes that inherit but own no methods
+       (no cluster of their own) appear as plain rectangle nodes alongside
+       cluster boxes, which looks inconsistent and cluttered.
+
+    2. Remove individual method-level uses edges that cross an inheritance
+       boundary (subclass method → parent method).  These show up as many
+       thin uses arrows between clusters and are confusing alongside the
+       dedicated inheritance arrow.
+
+    3. Keep (or inject) exactly one compound uses edge per inheritance pair
+       where both classes have clusters, tagged class="uses inherits" so CSS
+       can colour it darkred.  The edge is the class-level compound edge that
+       collapse_class_nodes already built from pyan's class→parent uses edge;
+       we simply tag it.  If both proxy nodes happen to be the same (rare edge
+       case), we skip.
+    """
+    if not inheritance_pairs:
+        return dot_source
+
+    # ── 1. Find which class IDs actually have a cluster ───────────────────
+    cluster_ids: set[str] = set(
+        re.findall(r'subgraph\s+"cluster_([^"]+)"', dot_source)
+    )
+
+    # Bare subclasses: in inheritance but no cluster of their own
+    bare_sub_ids: set[str] = {
+        sub for sub, _par in inheritance_pairs if sub not in cluster_ids
+    }
+
+    # Pairs where both ends have a cluster → valid for compound edge
+    clustered_pairs: set[tuple[str, str]] = {
+        (sub, par) for sub, par in inheritance_pairs
+        if sub in cluster_ids and par in cluster_ids
+    }
+
+    # Build {(sub_cluster, par_cluster)} lookup for fast membership test
+    inh_set = clustered_pairs
+
+    # ── 2. Build a proxy map from existing compound edges ─────────────────
+    # proxy_of[cluster_id] = the proxy node ID found in ltail/lhead
+    proxy_of: dict[str, str] = {}
+    for m in re.finditer(
+            r'"([^"]+)"\s*->\s*"([^"]+)"\s*\[[^\]]*\]', dot_source, re.DOTALL):
+        src_n, dst_n, full = m.group(1), m.group(2), m.group(0)
+        lt = re.search(r'ltail\s*=\s*"cluster_([^"]+)"', full)
+        lh = re.search(r'lhead\s*=\s*"cluster_([^"]+)"', full)
+        if lt:
+            proxy_of.setdefault(lt.group(1), src_n)
+        if lh:
+            proxy_of.setdefault(lh.group(1), dst_n)
+
+    # ── 3. Track which class→class inheritance compound edges pyan already
+    #       built (these will be tagged; extra ones injected if missing) ───
+    existing_inh_edges: set[tuple[str, str]] = set()
+
+    node_re = re.compile(r'^\s*"([^"]+)"\s*\[')
+    edge_re = re.compile(r'^\s*"([^"]+)"\s*->\s*"([^"]+)"')
+
+    out: list[str] = []
+    for line in dot_source.splitlines(keepends=True):
+        # ── Remove bare subclass node declarations ──────────────────────
+        m_n = node_re.match(line)
+        if m_n and m_n.group(1) in bare_sub_ids:
+            continue
+
+        # ── Process edges ────────────────────────────────────────────────
+        m_e = edge_re.match(line)
+        if m_e:
+            src_raw, dst_raw = m_e.group(1), m_e.group(2)
+
+            # Drop edges that reference a bare subclass node
+            if src_raw in bare_sub_ids or dst_raw in bare_sub_ids:
+                continue
+
+            # Identify the clusters this edge crosses (via ltail/lhead)
+            lt_m = re.search(r'ltail\s*=\s*"cluster_([^"]+)"', line)
+            lh_m = re.search(r'lhead\s*=\s*"cluster_([^"]+)"', line)
+            src_c = lt_m.group(1) if lt_m else None
+            dst_c = lh_m.group(1) if lh_m else None
+
+            # Drop method-level uses edges that cross an inheritance boundary
+            # (subclass cluster → parent cluster for a pair we know about)
+            if 'class="uses"' in line and src_c and dst_c:
+                if (src_c, dst_c) in inh_set:
+                    # Tag as inherits (this IS the class-level compound edge)
+                    existing_inh_edges.add((src_c, dst_c))
+                    line = line.replace('class="uses"', 'class="uses inherits"')
+                    line = re.sub(r'\bcolor\s*=\s*"[^"]*"', 'color="darkred"', line)
+                    out.append(line)
+                    continue
+                # Method edge that merely CROSSES a known inheritance boundary
+                # (e.g. SubClass.method → ParentClass.method override calls)
+                if src_c in cluster_ids and dst_c in cluster_ids:
+                    # Is src_c a subclass of dst_c in our inheritance chain?
+                    if (src_c, dst_c) in inh_set:
+                        continue  # absorbed into the class-level inherits edge
+                # Regular cross-cluster uses edge → keep
+            elif 'class="uses"' in line and not src_c and not dst_c:
+                # Direct method-to-method edge — check if it crosses
+                # an inheritance boundary we know about
+                # src/dst are method nodes: strip last segment to get class ID
+                src_cls = src_raw.rsplit("__", 1)[0] if "__" in src_raw else None
+                dst_cls = dst_raw.rsplit("__", 1)[0] if "__" in dst_raw else None
+                if src_cls and dst_cls and (src_cls, dst_cls) in inh_set:
+                    continue  # suppress: absorbed into class-level inherits edge
+
+        out.append(line)
+
+    # ── 4. Inject missing class-level inheritance compound edges ──────────
+    # For pairs that pyan didn't generate a class→class uses edge for
+    # (rare, but can happen when the class body has no direct reference to
+    # the parent beyond the class declaration).
+    closing = out[-1] if out and out[-1].strip() == "}" else None
+    if closing:
+        out = out[:-1]
+    for sub_c, par_c in sorted(clustered_pairs - existing_inh_edges):
+        p_sub = proxy_of.get(sub_c)
+        p_par = proxy_of.get(par_c)
+        if not p_sub or not p_par or p_sub == p_par:
+            continue
+        out.append(
+            f'    "{p_sub}" -> "{p_par}" '
+            f'[style="solid", color="darkred", class="uses inherits", '
+            f'ltail="cluster_{sub_c}", lhead="cluster_{par_c}"];\n'
+        )
+    if closing:
+        out.append(closing)
+    return "".join(out)
 
 
 GRAPHVIZ_TIMEOUT = 30  # seconds before we give up and raise TimeoutExpired
@@ -486,7 +720,8 @@ def render_svg_from_dot(dot_source: str) -> str:
 # HTML generation
 # ============================================================================
 
-def build_html(svg: str, docs_map: dict[str, dict[str, str]]) -> str:
+def build_html(svg: str, docs_map: dict[str, dict[str, str]],
+               proxy_to_cluster: dict[str, str] | None = None) -> str:
     """Return a self-contained interactive HTML page."""
     return f"""<!DOCTYPE html>
 <html lang="en">
@@ -561,6 +796,10 @@ def build_html(svg: str, docs_map: dict[str, dict[str, str]]) -> str:
       opacity: 0.3;
     }}
 
+    /* inheritance edges: prominent darkred, distinguishable from regular uses */
+    g.edge.uses.inherits path {{ stroke: darkred !important; opacity: 0.85; }}
+    g.edge.uses.inherits polygon {{ fill: darkred !important; stroke: darkred !important; opacity: 0.85; }}
+
     #tooltip {{
       position: fixed;
       z-index: 1000;
@@ -615,6 +854,10 @@ def build_html(svg: str, docs_map: dict[str, dict[str, str]]) -> str:
   <script>
     const svgText = {json.dumps(svg)};
     const docsMap = {json.dumps(docs_map)};
+    // Maps proxy-node IDs (used as edge anchors in compound edges) to their
+    // cluster IDs, so click-highlight can resolve node-level edge titles back
+    // to the cluster they visually represent.
+    const proxyToCluster = {json.dumps(proxy_to_cluster or {})};
 
     const graphDiv = document.getElementById("graph");
     const wrap = document.getElementById("graph-wrap");
@@ -673,6 +916,9 @@ def build_html(svg: str, docs_map: dict[str, dict[str, str]]) -> str:
       map.get(key).add(value);
     }}
 
+    // Resolve a node ID to its cluster ID when it acts as a compound-edge proxy.
+    function canonical(id) {{ return proxyToCluster[id] ?? id; }}
+
     for (const edge of edgeEls) {{
       const text = getTitleText(edge);
       if (!text || !text.includes("->")) {{
@@ -684,14 +930,15 @@ def build_html(svg: str, docs_map: dict[str, dict[str, str]]) -> str:
         continue;
       }}
 
-      const [src, dst] = parts;
-      const edgeKey = `${{src}}->${{dst}}`;
+      const [rawSrc, rawDst] = parts;
+      const src = canonical(rawSrc);
+      const dst = canonical(rawDst);
 
       edges.push({{
         el: edge,
         src: src,
         dst: dst,
-        key: edgeKey
+        key: `${{rawSrc}}->${{rawDst}}`
       }});
 
       addMapSet(outgoing, src, dst);
@@ -740,7 +987,10 @@ def build_html(svg: str, docs_map: dict[str, dict[str, str]]) -> str:
       }}
 
       for (const [key, el] of nodesByKey.entries()) {{
-        const on = keepNodes.has(key);
+        // A method/node is "on" if it's directly in keepNodes, OR if its
+        // enclosing cluster is (so method boxes inside a focused cluster stay visible).
+        const on = keepNodes.has(key) ||
+          [...keepNodes].some(ck => key.startsWith(ck + "__"));
         el.classList.toggle("dim", !on);
         el.classList.toggle("focus", on);
       }}
@@ -849,7 +1099,8 @@ def main() -> None:
     html_path = OUTDIR / "index.html"
 
     preview_path.write_text(svg, encoding="utf-8")
-    html_path.write_text(build_html(svg, docs_map), encoding="utf-8")
+    proxy_to_cluster = build_proxy_to_cluster(dot_source)
+    html_path.write_text(build_html(svg, docs_map, proxy_to_cluster), encoding="utf-8")
 
     print(f"\nWrote: {preview_path.resolve()}")
     print(f"Wrote: {html_path.resolve()}")
