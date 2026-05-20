@@ -37,13 +37,17 @@ SKIP_FILE_NAMES: set[str] = set()
 # ubiquitous helpers that clutter the graph.
 SKIP_NODE_NAMES: set[str] = {"__iter__", "__next__", "__repr__", "__str__"}
 
+# Font size (pt) for all node and cluster labels in the graph.
+# pyan defaults to 14; increase for high-DPI / large-display use.
+FONT_SIZE: int = 14
+
 # Which pyan edge types to include.  Running both simultaneously causes graphviz
 # to hang — the script works around this by calling pyan twice and merging edges.
 DRAW_DEFINES: bool = True   # "X is defined inside Y" structural edges
 DRAW_USES: bool = True      # "X calls / uses Y" call edges
 
 # Truncate long docstrings for tooltip readability
-MAX_DOC_CHARS = 900
+MAX_DOC_CHARS = 1800
 
 # ---- Layout ----------------------------------------------------------------
 # Engine — pick one depending on graph size:
@@ -282,11 +286,19 @@ def filter_dot_external_nodes(dot_source: str) -> str:
     dot_source = re.sub(r',?\s*layout\s*=\s*\w+', '', dot_source)
     dot_source = re.sub(r',?\s*clusterrank\s*=\s*"[^"]*"', '', dot_source)
 
-    # Rounded-rectangle nodes: inject global shape default and promote per-node
-    # style="filled" → style="rounded,filled".  Cluster graph attrs use
+    # Rounded-rectangle nodes: inject global shape default, fontsize, and promote
+    # per-node style="filled" → style="rounded,filled".  Cluster graph attrs use
     # style="filled,rounded" (already has rounded) so they are unaffected.
-    dot_source = re.sub(r'(digraph\s+\w+\s*\{)', r'\1\n    node [shape=box];', dot_source)
+    dot_source = re.sub(
+        r'(digraph\s+\w+\s*\{)',
+        rf'\1\n    node [shape=box, fontsize={FONT_SIZE}];'
+        rf'\n    graph [fontsize={FONT_SIZE}];',
+        dot_source,
+    )
     dot_source = dot_source.replace('style="filled"', 'style="rounded,filled"')
+
+    # Replace any explicit per-element fontsize values (e.g. from future pyan versions).
+    dot_source = re.sub(r'\bfontsize\s*=\s*\d+(?:\.\d+)?', f'fontsize={FONT_SIZE}', dot_source)
 
     # Node declaration:  "some__id" [label="short_name", ...]
     node_decl_re = re.compile(r'^\s*"([^"]+)"\s*\[.*\blabel\s*=\s*"([^"]*)"')
@@ -776,7 +788,11 @@ def render_svg_from_dot(dot_source: str) -> str:
         check=True,
         timeout=GRAPHVIZ_TIMEOUT,
     )
-    return result.stdout
+    svg = result.stdout
+    # Graphviz embeds font sizes as presentation attributes (font-size="14.00").
+    # Replace the default 14pt value with FONT_SIZE so cluster labels also scale.
+    svg = re.sub(r'font-size="14\.00"', f'font-size="{FONT_SIZE:.2f}"', svg)
+    return svg
 
 
 # ============================================================================
@@ -852,13 +868,38 @@ def build_html(svg: str, docs_map: dict[str, dict[str, str]],
       cursor: pointer;
     }}
 
+    #mode-buttons {{
+      display: inline-flex;
+      gap: 4px;
+      margin-left: 14px;
+      vertical-align: middle;
+    }}
+    .mode-btn {{
+      padding: 2px 10px;
+      font-size: 12px;
+      border: 1px solid #bbb;
+      border-radius: 4px;
+      background: #f0f0f0;
+      cursor: pointer;
+      user-select: none;
+      line-height: 1.6;
+    }}
+    .mode-btn.active {{
+      background: #0066cc;
+      color: #fff;
+      border-color: #004fa3;
+    }}
+    .mode-btn:hover:not(.active) {{
+      background: #e0e0e0;
+    }}
+
     /* defines edges (structural containment) */
     g.edge:not(.uses) path {{ stroke: black; }}
     g.edge:not(.uses) polygon {{ fill: black; stroke: black; }}
 
     /* uses edges (calls/references) are shown faint so structure is readable */
     g.edge.uses path, g.edge.uses polygon {{
-      opacity: 0.3;
+      opacity: 0.18;
     }}
 
     #tooltip {{
@@ -866,6 +907,8 @@ def build_html(svg: str, docs_map: dict[str, dict[str, str]],
       z-index: 1000;
       max-width: 560px;
       min-width: 280px;
+      max-height: 40vh;
+      overflow-y: auto;
       display: none;
       background: rgba(30, 30, 30, 0.97);
       color: white;
@@ -874,7 +917,7 @@ def build_html(svg: str, docs_map: dict[str, dict[str, str]],
       box-shadow: 0 8px 30px rgba(0,0,0,0.28);
       font-size: 13px;
       line-height: 1.45;
-      pointer-events: none;
+      pointer-events: auto;
       white-space: pre-wrap;
     }}
 
@@ -899,7 +942,12 @@ def build_html(svg: str, docs_map: dict[str, dict[str, str]],
 <body>
   <div id="topbar">
     <strong>{PACKAGE_NAME} call graph</strong>
-    <span class="hint">Click a node to highlight dependencies · Hover to see docstrings · Shift+wheel to zoom · Esc to reset</span>
+    <span id="mode-buttons">
+      <button class="mode-btn active" data-mode="select" title="Click nodes to highlight dependencies">&#9011; Select</button>
+      <button class="mode-btn" data-mode="pan" title="Drag to pan">&#10021; Pan</button>
+      <button class="mode-btn" data-mode="boxzoom" title="Drag a rectangle to zoom in">&#8853; Box Zoom</button>
+    </span>
+    <span class="hint">Hover for docstrings &middot; Shift+wheel to zoom &middot; Esc to reset</span>
   </div>
 
   <div id="graph-wrap">
@@ -1086,6 +1134,7 @@ def build_html(svg: str, docs_map: dict[str, dict[str, str]],
     }}
 
     function moveTooltip(evt) {{
+      if (tooltipPinned) return;
       const margin = 16;
       const x = evt.clientX + margin;
       const y = evt.clientY + margin;
@@ -1111,13 +1160,126 @@ def build_html(svg: str, docs_map: dict[str, dict[str, str]],
       moveTooltip(evt);
     }}
 
+    let tooltipPinned = false;  // true while cursor is over the tooltip itself
+
     function hideTooltip() {{
+      if (tooltipPinned) return;
       tooltip.style.display = "none";
     }}
 
-    // Wire up all elements in nodesByKey (nodes + cluster boxes) uniformly.
+    // Keep tooltip visible while the user scrolls it; stop following the cursor.
+    tooltip.addEventListener("mouseenter", () => {{ tooltipPinned = true; }});
+    tooltip.addEventListener("mouseleave", () => {{
+      tooltipPinned = false;
+      tooltip.style.display = "none";
+    }});
+
+    // ── Interaction mode ────────────────────────────────────────────────────
+    let mode = "select";  // "select" | "pan" | "boxzoom"
+
+    const modeButtons = document.querySelectorAll(".mode-btn");
+    function setMode(m) {{
+      mode = m;
+      modeButtons.forEach(b => b.classList.toggle("active", b.dataset.mode === m));
+      const cursors = {{ select: "default", pan: "grab", boxzoom: "crosshair" }};
+      wrap.style.cursor = cursors[m] || "default";
+    }}
+    modeButtons.forEach(b => b.addEventListener("click", () => setMode(b.dataset.mode)));
+
+    // ── Pan & box-zoom drag state ────────────────────────────────────────────
+    let dragging  = false;
+    let dragMoved = false;
+    let dragOrigin = null;
+    let selBox = null;
+
+    wrap.addEventListener("mousedown", evt => {{
+      if (mode === "pan") {{
+        dragging   = true;
+        dragMoved  = false;
+        dragOrigin = {{
+          clientX: evt.clientX, clientY: evt.clientY,
+          scrollLeft: wrap.scrollLeft, scrollTop: wrap.scrollTop,
+        }};
+        wrap.style.cursor = "grabbing";
+        evt.preventDefault();
+      }} else if (mode === "boxzoom") {{
+        dragging   = true;
+        dragMoved  = false;
+        dragOrigin = {{ clientX: evt.clientX, clientY: evt.clientY }};
+        selBox = document.createElement("div");
+        selBox.style.cssText =
+          "position:fixed;pointer-events:none;z-index:200;" +
+          "border:2px solid #0066cc;background:rgba(0,102,204,0.08);";
+        selBox.style.left = evt.clientX + "px";
+        selBox.style.top  = evt.clientY + "px";
+        selBox.style.width  = "0";
+        selBox.style.height = "0";
+        document.body.appendChild(selBox);
+        evt.preventDefault();
+      }}
+    }});
+
+    document.addEventListener("mousemove", evt => {{
+      if (!dragging) return;
+      if (mode === "pan" && dragOrigin) {{
+        const dx = evt.clientX - dragOrigin.clientX;
+        const dy = evt.clientY - dragOrigin.clientY;
+        if (Math.abs(dx) > 2 || Math.abs(dy) > 2) dragMoved = true;
+        wrap.scrollLeft = dragOrigin.scrollLeft - dx;
+        wrap.scrollTop  = dragOrigin.scrollTop  - dy;
+      }} else if (mode === "boxzoom" && selBox && dragOrigin) {{
+        const x = Math.min(evt.clientX, dragOrigin.clientX);
+        const y = Math.min(evt.clientY, dragOrigin.clientY);
+        const w = Math.abs(evt.clientX - dragOrigin.clientX);
+        const h = Math.abs(evt.clientY - dragOrigin.clientY);
+        selBox.style.left   = x + "px";
+        selBox.style.top    = y + "px";
+        selBox.style.width  = w + "px";
+        selBox.style.height = h + "px";
+        if (w > 4 || h > 4) dragMoved = true;
+      }}
+    }});
+
+    document.addEventListener("mouseup", evt => {{
+      if (!dragging) return;
+      dragging = false;
+
+      if (mode === "pan") {{
+        wrap.style.cursor = "grab";
+      }} else if (mode === "boxzoom" && selBox) {{
+        if (dragMoved) {{
+          const wrapRect = wrap.getBoundingClientRect();
+          const x1c = Math.min(evt.clientX, dragOrigin.clientX);
+          const y1c = Math.min(evt.clientY, dragOrigin.clientY);
+          const x2c = Math.max(evt.clientX, dragOrigin.clientX);
+          const y2c = Math.max(evt.clientY, dragOrigin.clientY);
+          // Convert viewport coords → graph coords (before scaling)
+          const x1g = (x1c - wrapRect.left + wrap.scrollLeft) / scale;
+          const y1g = (y1c - wrapRect.top  + wrap.scrollTop)  / scale;
+          const x2g = (x2c - wrapRect.left + wrap.scrollLeft) / scale;
+          const y2g = (y2c - wrapRect.top  + wrap.scrollTop)  / scale;
+          const selW = x2g - x1g;
+          const selH = y2g - y1g;
+          if (selW > 10 && selH > 10) {{
+            scale = Math.max(0.2, Math.min(8,
+              Math.min(wrapRect.width / selW, wrapRect.height / selH) * 0.92
+            ));
+            graphDiv.style.transform = `scale(${{scale}})`;
+            wrap.scrollLeft = x1g * scale;
+            wrap.scrollTop  = y1g * scale;
+          }}
+        }}
+        document.body.removeChild(selBox);
+        selBox = null;
+      }}
+      dragOrigin = null;
+      dragMoved  = false;
+    }});
+
+    // ── Node / cluster interaction (select mode only) ────────────────────────
     for (const [key, el] of nodesByKey.entries()) {{
       el.addEventListener("click", (evt) => {{
+        if (mode !== "select") return;
         evt.stopPropagation();
         highlightFrom(key);
       }});
@@ -1127,6 +1289,7 @@ def build_html(svg: str, docs_map: dict[str, dict[str, str]],
     }}
 
     graphDiv.addEventListener("click", () => {{
+      if (mode !== "select") return;
       resetHighlight();
     }});
 
@@ -1139,7 +1302,6 @@ def build_html(svg: str, docs_map: dict[str, dict[str, str]],
 
     wrap.addEventListener("wheel", (evt) => {{
       if (!evt.shiftKey) return;
-
       evt.preventDefault();
       const factor = evt.deltaY < 0 ? 1.1 : (1 / 1.1);
       scale = Math.max(0.2, Math.min(8, scale * factor));

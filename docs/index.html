@@ -62,13 +62,38 @@
       cursor: pointer;
     }
 
+    #mode-buttons {
+      display: inline-flex;
+      gap: 4px;
+      margin-left: 14px;
+      vertical-align: middle;
+    }
+    .mode-btn {
+      padding: 2px 10px;
+      font-size: 12px;
+      border: 1px solid #bbb;
+      border-radius: 4px;
+      background: #f0f0f0;
+      cursor: pointer;
+      user-select: none;
+      line-height: 1.6;
+    }
+    .mode-btn.active {
+      background: #0066cc;
+      color: #fff;
+      border-color: #004fa3;
+    }
+    .mode-btn:hover:not(.active) {
+      background: #e0e0e0;
+    }
+
     /* defines edges (structural containment) */
     g.edge:not(.uses) path { stroke: black; }
     g.edge:not(.uses) polygon { fill: black; stroke: black; }
 
     /* uses edges (calls/references) are shown faint so structure is readable */
     g.edge.uses path, g.edge.uses polygon {
-      opacity: 0.3;
+      opacity: 0.18;
     }
 
     #tooltip {
@@ -76,6 +101,8 @@
       z-index: 1000;
       max-width: 560px;
       min-width: 280px;
+      max-height: 40vh;
+      overflow-y: auto;
       display: none;
       background: rgba(30, 30, 30, 0.97);
       color: white;
@@ -84,7 +111,7 @@
       box-shadow: 0 8px 30px rgba(0,0,0,0.28);
       font-size: 13px;
       line-height: 1.45;
-      pointer-events: none;
+      pointer-events: auto;
       white-space: pre-wrap;
     }
 
@@ -109,7 +136,12 @@
 <body>
   <div id="topbar">
     <strong>openalea.metafspm call graph</strong>
-    <span class="hint">Click a node to highlight dependencies · Hover to see docstrings · Shift+wheel to zoom · Esc to reset</span>
+    <span id="mode-buttons">
+      <button class="mode-btn active" data-mode="select" title="Click nodes to highlight dependencies">&#9011; Select</button>
+      <button class="mode-btn" data-mode="pan" title="Drag to pan">&#10021; Pan</button>
+      <button class="mode-btn" data-mode="boxzoom" title="Drag a rectangle to zoom in">&#8853; Box Zoom</button>
+    </span>
+    <span class="hint">Hover for docstrings &middot; Shift+wheel to zoom &middot; Esc to reset</span>
   </div>
 
   <div id="graph-wrap">
@@ -133,8 +165,8 @@
     // highlights its nested child classes, and vice versa.
     // clusterChildren[parId] = [childId, ...]   (direct children)
     // clusterParent[childId] = parId            (direct parent)
-    const clusterChildren = {"openalea__metafspm__solve__solver__DAESolver": ["openalea__metafspm__solve__solver__ImplicitEulerSolver", "openalea__metafspm__solve__solver__NewtonSolver", "openalea__metafspm__solve__solver__ScipyIVPSolver", "openalea__metafspm__solve__solver__LinearDirectSolver", "openalea__metafspm__solve__solver__ExplicitEulerSolver", "openalea__metafspm__solve__solver__ScipyRootSolver"], "openalea__metafspm__data_structure__data_api__MTGDataStructure": ["openalea__metafspm__data_structure__data_api__SparseMTGDataStructure", "openalea__metafspm__data_structure__data_api__LegacyMTGDataStructure"], "openalea__metafspm__solve__system_specs__BaseSystemSpec": ["openalea__metafspm__solve__system_specs__ODESystemSpec", "openalea__metafspm__solve__system_specs__GraphDAESpec"], "openalea__metafspm__solve__solver__ODESolver": ["openalea__metafspm__solve__solver__DAESolver"], "openalea__metafspm__data_structure__data_api__DataStructure": ["openalea__metafspm__data_structure__data_api__GraphDataStructure", "openalea__metafspm__data_structure__data_api__FieldDataStructure"], "openalea__metafspm__data_structure__data_api__FieldDataStructure": ["openalea__metafspm__data_structure__data_api__MultiGridDataStructure", "openalea__metafspm__data_structure__data_api__ArrayDataStructure"], "openalea__metafspm__solve__solver__AbstractSolver": ["openalea__metafspm__solve__solver__ODESolver"], "openalea__metafspm__data_structure__data_api__GraphDataStructure": ["openalea__metafspm__data_structure__data_api__MTGDataStructure"], "openalea__metafspm__coupling__component__Component": ["openalea__metafspm__coupling__component__StructuralComponent"]};
-    const clusterParent   = {"openalea__metafspm__solve__solver__ImplicitEulerSolver": "openalea__metafspm__solve__solver__DAESolver", "openalea__metafspm__data_structure__data_api__SparseMTGDataStructure": "openalea__metafspm__data_structure__data_api__MTGDataStructure", "openalea__metafspm__solve__system_specs__ODESystemSpec": "openalea__metafspm__solve__system_specs__BaseSystemSpec", "openalea__metafspm__solve__solver__DAESolver": "openalea__metafspm__solve__solver__ODESolver", "openalea__metafspm__data_structure__data_api__LegacyMTGDataStructure": "openalea__metafspm__data_structure__data_api__MTGDataStructure", "openalea__metafspm__solve__solver__NewtonSolver": "openalea__metafspm__solve__solver__DAESolver", "openalea__metafspm__solve__solver__ScipyIVPSolver": "openalea__metafspm__solve__solver__DAESolver", "openalea__metafspm__solve__solver__LinearDirectSolver": "openalea__metafspm__solve__solver__DAESolver", "openalea__metafspm__data_structure__data_api__GraphDataStructure": "openalea__metafspm__data_structure__data_api__DataStructure", "openalea__metafspm__data_structure__data_api__MultiGridDataStructure": "openalea__metafspm__data_structure__data_api__FieldDataStructure", "openalea__metafspm__solve__solver__ODESolver": "openalea__metafspm__solve__solver__AbstractSolver", "openalea__metafspm__solve__solver__ExplicitEulerSolver": "openalea__metafspm__solve__solver__DAESolver", "openalea__metafspm__data_structure__data_api__MTGDataStructure": "openalea__metafspm__data_structure__data_api__GraphDataStructure", "openalea__metafspm__coupling__component__StructuralComponent": "openalea__metafspm__coupling__component__Component", "openalea__metafspm__data_structure__data_api__FieldDataStructure": "openalea__metafspm__data_structure__data_api__DataStructure", "openalea__metafspm__solve__system_specs__GraphDAESpec": "openalea__metafspm__solve__system_specs__BaseSystemSpec", "openalea__metafspm__data_structure__data_api__ArrayDataStructure": "openalea__metafspm__data_structure__data_api__FieldDataStructure", "openalea__metafspm__solve__solver__ScipyRootSolver": "openalea__metafspm__solve__solver__DAESolver"};
+    const clusterChildren = {"openalea__metafspm__solve__solver__DAESolver": ["openalea__metafspm__solve__solver__ScipyRootSolver", "openalea__metafspm__solve__solver__ImplicitEulerSolver", "openalea__metafspm__solve__solver__ScipyIVPSolver", "openalea__metafspm__solve__solver__LinearDirectSolver", "openalea__metafspm__solve__solver__NewtonSolver", "openalea__metafspm__solve__solver__ExplicitEulerSolver"], "openalea__metafspm__coupling__component__Component": ["openalea__metafspm__coupling__component__StructuralComponent"], "openalea__metafspm__data_structure__data_api__DataStructure": ["openalea__metafspm__data_structure__data_api__GraphDataStructure", "openalea__metafspm__data_structure__data_api__FieldDataStructure"], "openalea__metafspm__solve__solver__AbstractSolver": ["openalea__metafspm__solve__solver__ODESolver"], "openalea__metafspm__solve__solver__ODESolver": ["openalea__metafspm__solve__solver__DAESolver"], "openalea__metafspm__data_structure__data_api__FieldDataStructure": ["openalea__metafspm__data_structure__data_api__ArrayDataStructure", "openalea__metafspm__data_structure__data_api__MultiGridDataStructure"], "openalea__metafspm__solve__system_specs__BaseSystemSpec": ["openalea__metafspm__solve__system_specs__GraphDAESpec", "openalea__metafspm__solve__system_specs__ODESystemSpec"], "openalea__metafspm__data_structure__data_api__MTGDataStructure": ["openalea__metafspm__data_structure__data_api__SparseMTGDataStructure", "openalea__metafspm__data_structure__data_api__LegacyMTGDataStructure"], "openalea__metafspm__data_structure__data_api__GraphDataStructure": ["openalea__metafspm__data_structure__data_api__MTGDataStructure"]};
+    const clusterParent   = {"openalea__metafspm__solve__solver__ScipyRootSolver": "openalea__metafspm__solve__solver__DAESolver", "openalea__metafspm__coupling__component__StructuralComponent": "openalea__metafspm__coupling__component__Component", "openalea__metafspm__solve__solver__ImplicitEulerSolver": "openalea__metafspm__solve__solver__DAESolver", "openalea__metafspm__data_structure__data_api__GraphDataStructure": "openalea__metafspm__data_structure__data_api__DataStructure", "openalea__metafspm__solve__solver__ScipyIVPSolver": "openalea__metafspm__solve__solver__DAESolver", "openalea__metafspm__solve__solver__ODESolver": "openalea__metafspm__solve__solver__AbstractSolver", "openalea__metafspm__data_structure__data_api__FieldDataStructure": "openalea__metafspm__data_structure__data_api__DataStructure", "openalea__metafspm__solve__solver__LinearDirectSolver": "openalea__metafspm__solve__solver__DAESolver", "openalea__metafspm__solve__solver__DAESolver": "openalea__metafspm__solve__solver__ODESolver", "openalea__metafspm__solve__solver__NewtonSolver": "openalea__metafspm__solve__solver__DAESolver", "openalea__metafspm__data_structure__data_api__ArrayDataStructure": "openalea__metafspm__data_structure__data_api__FieldDataStructure", "openalea__metafspm__solve__system_specs__GraphDAESpec": "openalea__metafspm__solve__system_specs__BaseSystemSpec", "openalea__metafspm__data_structure__data_api__MultiGridDataStructure": "openalea__metafspm__data_structure__data_api__FieldDataStructure", "openalea__metafspm__data_structure__data_api__SparseMTGDataStructure": "openalea__metafspm__data_structure__data_api__MTGDataStructure", "openalea__metafspm__solve__solver__ExplicitEulerSolver": "openalea__metafspm__solve__solver__DAESolver", "openalea__metafspm__solve__system_specs__ODESystemSpec": "openalea__metafspm__solve__system_specs__BaseSystemSpec", "openalea__metafspm__data_structure__data_api__MTGDataStructure": "openalea__metafspm__data_structure__data_api__GraphDataStructure", "openalea__metafspm__data_structure__data_api__LegacyMTGDataStructure": "openalea__metafspm__data_structure__data_api__MTGDataStructure"};
 
     const graphDiv = document.getElementById("graph");
     const wrap = document.getElementById("graph-wrap");
@@ -296,6 +328,7 @@
     }
 
     function moveTooltip(evt) {
+      if (tooltipPinned) return;
       const margin = 16;
       const x = evt.clientX + margin;
       const y = evt.clientY + margin;
@@ -321,13 +354,126 @@
       moveTooltip(evt);
     }
 
+    let tooltipPinned = false;  // true while cursor is over the tooltip itself
+
     function hideTooltip() {
+      if (tooltipPinned) return;
       tooltip.style.display = "none";
     }
 
-    // Wire up all elements in nodesByKey (nodes + cluster boxes) uniformly.
+    // Keep tooltip visible while the user scrolls it; stop following the cursor.
+    tooltip.addEventListener("mouseenter", () => { tooltipPinned = true; });
+    tooltip.addEventListener("mouseleave", () => {
+      tooltipPinned = false;
+      tooltip.style.display = "none";
+    });
+
+    // ── Interaction mode ────────────────────────────────────────────────────
+    let mode = "select";  // "select" | "pan" | "boxzoom"
+
+    const modeButtons = document.querySelectorAll(".mode-btn");
+    function setMode(m) {
+      mode = m;
+      modeButtons.forEach(b => b.classList.toggle("active", b.dataset.mode === m));
+      const cursors = { select: "default", pan: "grab", boxzoom: "crosshair" };
+      wrap.style.cursor = cursors[m] || "default";
+    }
+    modeButtons.forEach(b => b.addEventListener("click", () => setMode(b.dataset.mode)));
+
+    // ── Pan & box-zoom drag state ────────────────────────────────────────────
+    let dragging  = false;
+    let dragMoved = false;
+    let dragOrigin = null;
+    let selBox = null;
+
+    wrap.addEventListener("mousedown", evt => {
+      if (mode === "pan") {
+        dragging   = true;
+        dragMoved  = false;
+        dragOrigin = {
+          clientX: evt.clientX, clientY: evt.clientY,
+          scrollLeft: wrap.scrollLeft, scrollTop: wrap.scrollTop,
+        };
+        wrap.style.cursor = "grabbing";
+        evt.preventDefault();
+      } else if (mode === "boxzoom") {
+        dragging   = true;
+        dragMoved  = false;
+        dragOrigin = { clientX: evt.clientX, clientY: evt.clientY };
+        selBox = document.createElement("div");
+        selBox.style.cssText =
+          "position:fixed;pointer-events:none;z-index:200;" +
+          "border:2px solid #0066cc;background:rgba(0,102,204,0.08);";
+        selBox.style.left = evt.clientX + "px";
+        selBox.style.top  = evt.clientY + "px";
+        selBox.style.width  = "0";
+        selBox.style.height = "0";
+        document.body.appendChild(selBox);
+        evt.preventDefault();
+      }
+    });
+
+    document.addEventListener("mousemove", evt => {
+      if (!dragging) return;
+      if (mode === "pan" && dragOrigin) {
+        const dx = evt.clientX - dragOrigin.clientX;
+        const dy = evt.clientY - dragOrigin.clientY;
+        if (Math.abs(dx) > 2 || Math.abs(dy) > 2) dragMoved = true;
+        wrap.scrollLeft = dragOrigin.scrollLeft - dx;
+        wrap.scrollTop  = dragOrigin.scrollTop  - dy;
+      } else if (mode === "boxzoom" && selBox && dragOrigin) {
+        const x = Math.min(evt.clientX, dragOrigin.clientX);
+        const y = Math.min(evt.clientY, dragOrigin.clientY);
+        const w = Math.abs(evt.clientX - dragOrigin.clientX);
+        const h = Math.abs(evt.clientY - dragOrigin.clientY);
+        selBox.style.left   = x + "px";
+        selBox.style.top    = y + "px";
+        selBox.style.width  = w + "px";
+        selBox.style.height = h + "px";
+        if (w > 4 || h > 4) dragMoved = true;
+      }
+    });
+
+    document.addEventListener("mouseup", evt => {
+      if (!dragging) return;
+      dragging = false;
+
+      if (mode === "pan") {
+        wrap.style.cursor = "grab";
+      } else if (mode === "boxzoom" && selBox) {
+        if (dragMoved) {
+          const wrapRect = wrap.getBoundingClientRect();
+          const x1c = Math.min(evt.clientX, dragOrigin.clientX);
+          const y1c = Math.min(evt.clientY, dragOrigin.clientY);
+          const x2c = Math.max(evt.clientX, dragOrigin.clientX);
+          const y2c = Math.max(evt.clientY, dragOrigin.clientY);
+          // Convert viewport coords → graph coords (before scaling)
+          const x1g = (x1c - wrapRect.left + wrap.scrollLeft) / scale;
+          const y1g = (y1c - wrapRect.top  + wrap.scrollTop)  / scale;
+          const x2g = (x2c - wrapRect.left + wrap.scrollLeft) / scale;
+          const y2g = (y2c - wrapRect.top  + wrap.scrollTop)  / scale;
+          const selW = x2g - x1g;
+          const selH = y2g - y1g;
+          if (selW > 10 && selH > 10) {
+            scale = Math.max(0.2, Math.min(8,
+              Math.min(wrapRect.width / selW, wrapRect.height / selH) * 0.92
+            ));
+            graphDiv.style.transform = `scale(${scale})`;
+            wrap.scrollLeft = x1g * scale;
+            wrap.scrollTop  = y1g * scale;
+          }
+        }
+        document.body.removeChild(selBox);
+        selBox = null;
+      }
+      dragOrigin = null;
+      dragMoved  = false;
+    });
+
+    // ── Node / cluster interaction (select mode only) ────────────────────────
     for (const [key, el] of nodesByKey.entries()) {
       el.addEventListener("click", (evt) => {
+        if (mode !== "select") return;
         evt.stopPropagation();
         highlightFrom(key);
       });
@@ -337,6 +483,7 @@
     }
 
     graphDiv.addEventListener("click", () => {
+      if (mode !== "select") return;
       resetHighlight();
     });
 
@@ -349,7 +496,6 @@
 
     wrap.addEventListener("wheel", (evt) => {
       if (!evt.shiftKey) return;
-
       evt.preventDefault();
       const factor = evt.deltaY < 0 ? 1.1 : (1 / 1.1);
       scale = Math.max(0.2, Math.min(8, scale * factor));
