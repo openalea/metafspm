@@ -37,9 +37,13 @@ SKIP_FILE_NAMES: set[str] = set()
 # ubiquitous helpers that clutter the graph.
 SKIP_NODE_NAMES: set[str] = {"__iter__", "__next__", "__repr__", "__str__"}
 
-# Font size (pt) for all node and cluster labels in the graph.
+# Font size (pt) for method/function node labels.
 # pyan defaults to 14; increase for high-DPI / large-display use.
-FONT_SIZE: int = 14
+FONT_SIZE: int = 20
+
+# Font size (pt) for module and class cluster box labels (the box titles).
+# Kept larger than FONT_SIZE so module/class names are easy to read at a glance.
+CLUSTER_FONT_SIZE: int = 30
 
 # Which pyan edge types to include.  Running both simultaneously causes graphviz
 # to hang — the script works around this by calling pyan twice and merging edges.
@@ -289,16 +293,52 @@ def filter_dot_external_nodes(dot_source: str) -> str:
     # Rounded-rectangle nodes: inject global shape default, fontsize, and promote
     # per-node style="filled" → style="rounded,filled".  Cluster graph attrs use
     # style="filled,rounded" (already has rounded) so they are unaffected.
+    # node [fontsize=N] → default for all method/function node labels
     dot_source = re.sub(
         r'(digraph\s+\w+\s*\{)',
-        rf'\1\n    node [shape=box, fontsize={FONT_SIZE}];'
-        rf'\n    graph [fontsize={FONT_SIZE}];',
+        rf'\1\n    node [shape=box, fontsize={FONT_SIZE}];',
         dot_source,
     )
     dot_source = dot_source.replace('style="filled"', 'style="rounded,filled"')
 
-    # Replace any explicit per-element fontsize values (e.g. from future pyan versions).
-    dot_source = re.sub(r'\bfontsize\s*=\s*\d+(?:\.\d+)?', f'fontsize={FONT_SIZE}', dot_source)
+    # Shorten labels context-sensitively:
+    #   - cluster graph[...] lines: shorten class names (uppercase first) to last component;
+    #     keep module labels (all-lowercase) in full.
+    #   - node declaration lines ("id" [...]): strip any dotted prefix, keep only last component.
+    def _shorten_labels_in_line(line: str) -> str:
+        is_node_decl  = bool(re.match(r'\s*"[^"]+"\s*\[', line))
+        is_graph_attr = bool(re.match(r'\s*graph\s*\[', line))
+        if not (is_node_decl or is_graph_attr):
+            return line
+
+        def _replace(m: re.Match) -> str:
+            full = m.group(2)
+            parts = full.split('.')
+            last = parts[-1]
+            if is_graph_attr:
+                # Shorten if any component is class-like (uppercase after leading underscores).
+                # Pure module paths (all-lowercase) are kept in full.
+                if any(c.lstrip('_')[:1].isupper() for c in parts):
+                    return m.group(1) + last + m.group(3)
+                return m.group(0)
+            else:
+                if '.' in full:
+                    return m.group(1) + last + m.group(3)
+                return m.group(0)
+
+        return re.sub(r'(\blabel\s*=\s*")([^"]+)(")', _replace, line)
+
+    dot_source = '\n'.join(_shorten_labels_in_line(l) for l in dot_source.splitlines())
+
+    # Add fontsize to every cluster's graph-attr line (the one pyan emits with style=).
+    # graph [fontsize=N] at the digraph level does NOT inherit into subgraphs, so we
+    # must inject it into each cluster's own graph [...] declaration.
+    dot_source = re.sub(
+        r'(graph\s*\[[^\]]*\bstyle\s*=\s*"[^"]*"[^\]]*)\]',
+        rf'\1, fontsize={CLUSTER_FONT_SIZE}]',
+        dot_source,
+    )
+
 
     # Node declaration:  "some__id" [label="short_name", ...]
     node_decl_re = re.compile(r'^\s*"([^"]+)"\s*\[.*\blabel\s*=\s*"([^"]*)"')
@@ -789,9 +829,14 @@ def render_svg_from_dot(dot_source: str) -> str:
         timeout=GRAPHVIZ_TIMEOUT,
     )
     svg = result.stdout
-    # Graphviz embeds font sizes as presentation attributes (font-size="14.00").
-    # Replace the default 14pt value with FONT_SIZE so cluster labels also scale.
-    svg = re.sub(r'font-size="14\.00"', f'font-size="{FONT_SIZE:.2f}"', svg)
+    # Safety net: if graphviz still emits the 14pt default anywhere, patch it.
+    # Nodes in a <g class="node"> get FONT_SIZE; everything else (clusters) gets CLUSTER_FONT_SIZE.
+    def _svg_font_patch(m: re.Match) -> str:
+        before = svg[:m.start()]
+        in_node = before.rfind('class="node"') > before.rfind('class="cluster"')
+        size = FONT_SIZE if in_node else CLUSTER_FONT_SIZE
+        return f'font-size="{size:.2f}"'
+    svg = re.sub(r'font-size="14\.00"', _svg_font_patch, svg)
     return svg
 
 
@@ -944,6 +989,7 @@ def build_html(svg: str, docs_map: dict[str, dict[str, str]],
     <strong>{PACKAGE_NAME} call graph</strong>
     <span id="mode-buttons">
       <button class="mode-btn active" data-mode="select" title="Click nodes to highlight dependencies">&#9011; Select</button>
+      <button class="mode-btn" data-mode="selectzoom" title="Click a box to zoom to it">&#8982; Zoom to</button>
       <button class="mode-btn" data-mode="pan" title="Drag to pan">&#10021; Pan</button>
       <button class="mode-btn" data-mode="boxzoom" title="Drag a rectangle to zoom in">&#8853; Box Zoom</button>
     </span>
@@ -998,6 +1044,14 @@ def build_html(svg: str, docs_map: dict[str, dict[str, str]],
     }})();
 
     let scale = 1.0;
+    const INITIAL_SCALE = 1.0;
+
+    function resetView() {{
+      scale = INITIAL_SCALE;
+      graphDiv.style.transform = `scale(${{scale}})`;
+      wrap.scrollLeft = 0;
+      wrap.scrollTop  = 0;
+    }}
 
     const nodeEls = Array.from(graphDiv.querySelectorAll("g.node"));
     const edgeEls = Array.from(graphDiv.querySelectorAll("g.edge"));
@@ -1175,16 +1229,37 @@ def build_html(svg: str, docs_map: dict[str, dict[str, str]],
     }});
 
     // ── Interaction mode ────────────────────────────────────────────────────
-    let mode = "select";  // "select" | "pan" | "boxzoom"
+    let mode = "select";  // "select" | "selectzoom" | "pan" | "boxzoom"
 
     const modeButtons = document.querySelectorAll(".mode-btn");
     function setMode(m) {{
       mode = m;
       modeButtons.forEach(b => b.classList.toggle("active", b.dataset.mode === m));
-      const cursors = {{ select: "default", pan: "grab", boxzoom: "crosshair" }};
+      const cursors = {{ select: "default", selectzoom: "zoom-in", pan: "grab", boxzoom: "crosshair" }};
       wrap.style.cursor = cursors[m] || "default";
     }}
     modeButtons.forEach(b => b.addEventListener("click", () => setMode(b.dataset.mode)));
+
+    // ── Zoom-to-element ──────────────────────────────────────────────────────
+    function zoomToElement(el) {{
+      const elRect   = el.getBoundingClientRect();
+      const wrapRect = wrap.getBoundingClientRect();
+      // Convert current viewport rect → pre-scale graph coordinates
+      const x1g = (elRect.left   - wrapRect.left + wrap.scrollLeft) / scale;
+      const y1g = (elRect.top    - wrapRect.top  + wrap.scrollTop)  / scale;
+      const x2g = (elRect.right  - wrapRect.left + wrap.scrollLeft) / scale;
+      const y2g = (elRect.bottom - wrapRect.top  + wrap.scrollTop)  / scale;
+      const w = x2g - x1g;
+      const h = y2g - y1g;
+      if (w < 1 || h < 1) return;
+      scale = Math.max(0.2, Math.min(8,
+        Math.min(wrapRect.width / w, wrapRect.height / h) * 0.85
+      ));
+      graphDiv.style.transform = `scale(${{scale}})`;
+      // Centre the element in the viewport
+      wrap.scrollLeft = x1g * scale - (wrapRect.width  - w * scale) / 2;
+      wrap.scrollTop  = y1g * scale - (wrapRect.height - h * scale) / 2;
+    }}
 
     // ── Pan & box-zoom drag state ────────────────────────────────────────────
     let dragging  = false;
@@ -1279,9 +1354,13 @@ def build_html(svg: str, docs_map: dict[str, dict[str, str]],
     // ── Node / cluster interaction (select mode only) ────────────────────────
     for (const [key, el] of nodesByKey.entries()) {{
       el.addEventListener("click", (evt) => {{
-        if (mode !== "select") return;
-        evt.stopPropagation();
-        highlightFrom(key);
+        if (mode === "select") {{
+          evt.stopPropagation();
+          highlightFrom(key);
+        }} else if (mode === "selectzoom") {{
+          evt.stopPropagation();
+          zoomToElement(el);
+        }}
       }});
       el.addEventListener("mouseenter", (evt) => showTooltip(evt, key));
       el.addEventListener("mousemove", moveTooltip);
@@ -1297,6 +1376,7 @@ def build_html(svg: str, docs_map: dict[str, dict[str, str]],
       if (evt.key === "Escape") {{
         resetHighlight();
         hideTooltip();
+        resetView();
       }}
     }});
 
