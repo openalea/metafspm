@@ -278,7 +278,7 @@ _INTERNAL_PREFIX = PACKAGE_NAME.replace(".", "__")
 _EDGE_RE = re.compile(r"^\s*(\w+)\s*->\s*(\w+)")
 
 
-def filter_dot_external_nodes(dot_source: str) -> str:
+def filter_dot_external_nodes(dot_source: str, module_paths: set[str] | None = None) -> str:
     """Drop external edges, banned nodes, and layout attributes that override the engine.
 
     pyan embeds ``layout=dot`` and ``clusterrank="local"`` in the graph header,
@@ -302,8 +302,7 @@ def filter_dot_external_nodes(dot_source: str) -> str:
     dot_source = dot_source.replace('style="filled"', 'style="rounded,filled"')
 
     # Shorten labels context-sensitively:
-    #   - cluster graph[...] lines: shorten class names (uppercase first) to last component;
-    #     keep module labels (all-lowercase) in full.
+    #   - cluster graph[...] lines: keep label if it is a known module path; shorten everything else.
     #   - node declaration lines ("id" [...]): strip any dotted prefix, keep only last component.
     def _shorten_labels_in_line(line: str) -> str:
         is_node_decl  = bool(re.match(r'\s*"[^"]+"\s*\[', line))
@@ -313,12 +312,11 @@ def filter_dot_external_nodes(dot_source: str) -> str:
 
         def _replace(m: re.Match) -> str:
             full = m.group(2)
-            parts = full.split('.')
-            last = parts[-1]
+            last = full.split('.')[-1]
             if is_graph_attr:
-                # Shorten if any component is class-like (uppercase after leading underscores).
-                # Pure module paths (all-lowercase) are kept in full.
-                if any(c.lstrip('_')[:1].isupper() for c in parts):
+                if module_paths and full in module_paths:
+                    return m.group(0)  # real module → keep full
+                if '.' in full:
                     return m.group(1) + last + m.group(3)
                 return m.group(0)
             else:
@@ -523,10 +521,11 @@ def build_dot_source() -> str:
     """
     files = [f for f in PACKAGE_DIR.rglob("*.py") if not should_skip_file(f)]
     inh_pairs = collect_inheritance_pairs(files)
+    module_paths = {module_name_from_file(f) for f in files}
 
     if DRAW_DEFINES and DRAW_USES:
-        base = filter_dot_external_nodes(_pyan_call(draw_defines=True, draw_uses=False))
-        uses = filter_dot_external_nodes(_pyan_call(draw_defines=False, draw_uses=True))
+        base = filter_dot_external_nodes(_pyan_call(draw_defines=True, draw_uses=False), module_paths)
+        uses = filter_dot_external_nodes(_pyan_call(draw_defines=False, draw_uses=True), module_paths)
         def _tag_uses(line: str) -> str:
             return re.sub(r'\](\s*;)', r', class="uses"]\1', line)
         extra_edges = [_tag_uses(l) for l in uses.splitlines(keepends=True) if _EDGE_LINE_RE.match(l)]
@@ -534,7 +533,9 @@ def build_dot_source() -> str:
         nested = nest_inheritance_clusters(merged, inh_pairs)
         return drop_compound_inheritance_edges(collapse_class_nodes(nested, inh_pairs), inh_pairs)
 
-    filtered = filter_dot_external_nodes(_pyan_call(draw_defines=DRAW_DEFINES, draw_uses=DRAW_USES))
+    filtered = filter_dot_external_nodes(
+        _pyan_call(draw_defines=DRAW_DEFINES, draw_uses=DRAW_USES), module_paths
+    )
     nested = nest_inheritance_clusters(filtered, inh_pairs)
     return drop_compound_inheritance_edges(collapse_class_nodes(nested, inh_pairs), inh_pairs)
 
