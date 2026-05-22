@@ -16,6 +16,8 @@ class MPG(MTG):
     scale_names = ["Plant", "Axis", "GrowthUnit", "Phytomer", "Organ", "SubOrgan", "Layer", "Cell", "Compartment", "Connection"]
     scales = {scale_name: 1 + k for k, scale_name in enumerate(scale_names)}
 
+    filters: dict = {}
+
     def __init__(self):
         super().__init__()
 
@@ -173,3 +175,5 @@ class MPG(MTG):
         ids_at_scale = [v for v in self.components_at_scale(self.root, scale=scale) if v in prop]
         idx = prop.indices_of(ids_at_scale)
         return np.asarray(prop.values_array()[idx])
+
+    

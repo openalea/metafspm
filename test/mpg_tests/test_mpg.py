@@ -1,4 +1,4 @@
-from openalea.metafspm.mpg import MPG
+from openalea.metafspm.data_structure.mpg import MPG
 
 
 def test_mpg_init():

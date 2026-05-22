@@ -1,12 +1,12 @@
 from utils import deep_reload_package
 deep_reload_package("openalea")
-from openalea.metafspm.component import Model, declare
-from openalea.metafspm.component_factory import *
+from openalea.metafspm.coupling.component import FunctionalComponent, declare
+from openalea.metafspm.solve.decorator import *
 from dataclasses import dataclass
 
 
 @dataclass
-class Carbon(Model):
+class Carbon(FunctionalComponent):
 
     # constrained field initialization
     amino_acids: float = declare(default=0., unit="mol.s-1", unit_comment="", description="", 
@@ -69,15 +69,14 @@ class Carbon(Model):
     
 
 @dataclass
-class Nitrogen(Model):
+class Nitrogen(FunctionalComponent):
 
     # constrained field initialization
     hexose: float = declare(default=0., unit="mol.s-1", unit_comment="", description="", 
                             min_value="", max_value="", value_comment="", references="", DOI="", 
                             variable_type="input", by="N_model", state_variable_type="", edit_by="")
     temperature: float = declare(default=0., unit="mol.s-1", unit_comment="", description="", 
-                            min_value="", max_value="", value_comment="", references="", DOI="", 
-                            variable_type="input", by="temperature_model", state_variable_type="", edit_by="")
+                            min_value="", max_value="", value_comment="", references="", DOI="", variable_type="input", by="temperature_model", state_variable_type="", edit_by="")
 
     # constrained field initialization
     amino_acids: float = declare(default=0., unit="mol.s-1", unit_comment="", description="", 
@@ -123,7 +122,7 @@ class Nitrogen(Model):
     
 
 @dataclass
-class SoilModel(Model):
+class SoilModel(FunctionalComponent):
 
     # constrained field initialization
     amino_acids_exudation: float = declare(default=0., unit="mol.s-1", unit_comment="", description="", 
@@ -158,3 +157,11 @@ class SoilModel(Model):
     @state
     def _DOC(self, DOC, amino_acids_exudation, hexose_exudation):
         return DOC + self.time_step * hexose_exudation
+
+
+
+def test_dummy_components_declaration():
+    g_properties = {"struct_mass":{1: 1e-6}}
+    c = Carbon(g_properties, 3600)
+    n = Nitrogen(g_properties, 3600)
+    s = SoilModel(g_properties, 3600)
