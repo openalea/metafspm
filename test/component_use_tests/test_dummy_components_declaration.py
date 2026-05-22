@@ -1,6 +1,6 @@
 from utils import deep_reload_package
 deep_reload_package("openalea")
-from openalea.metafspm.coupling.component import FunctionalComponent, declare
+from openalea.metafspm.coupling.component import FunctionalComponent, declare, input_variable, state_variable
 from openalea.metafspm.solve.decorator import *
 from dataclasses import dataclass
 
@@ -9,12 +9,11 @@ from dataclasses import dataclass
 class Carbon(FunctionalComponent):
 
     # constrained field initialization
-    amino_acids: float = declare(default=0., unit="mol.s-1", unit_comment="", description="", 
+    amino_acids: float = input_variable(initialize=0., unit="mol.s-1", unit_comment="", description="", 
+                            min_value="", max_value="", value_comment="", references="", DOI="", by="N_model",)
+    temperature: float = input_variable(initialize=0., unit="mol.s-1", unit_comment="", description="", 
                             min_value="", max_value="", value_comment="", references="", DOI="", 
-                            variable_type="input", by="N_model", state_variable_type="", edit_by="")
-    temperature: float = declare(default=0., unit="mol.s-1", unit_comment="", description="", 
-                            min_value="", max_value="", value_comment="", references="", DOI="", 
-                            variable_type="input", by="temperature_model", state_variable_type="", edit_by="")
+                            by="temperature_model")
 
     # constrained field initialization
     hexose: float = declare(default=0., unit="mol.s-1", unit_comment="", description="", 

@@ -1,6 +1,10 @@
 from openalea.mtg import MTG
 import numpy as np
 from openalea.metafspm.data_structure.arraydict import mtg_to_arraydict
+from openalea.metafspm.data_structure.configs import ScalesConfig, PropsConfig, LabelsConfig
+from dataclasses import dataclass, field, fields
+from typing import Literal
+
 
 
 class MPG(MTG):
@@ -13,20 +17,25 @@ class MPG(MTG):
 
     """
 
-    scale_names = ["Plant", "Axis", "GrowthUnit", "Phytomer", "Organ", "SubOrgan", "Layer", "Cell", "Compartment", "Connection"]
-    scales = {scale_name: 1 + k for k, scale_name in enumerate(scale_names)}
-
     filters: dict = {}
 
     def __init__(self):
         super().__init__()
+        
+        self.scales = ScalesConfig() # declared twice so MTG scales are discovered by LSPs
+        self.labels = LabelsConfig()
+        self.scales.anchors[self.scales.Plant] = self.root
+        for scale in self.scales:
+            lower_scale_anchor = self.add_component(self.scales.anchors[scale], **PropsConfig(isanchor=True, scale=scale))
+            self.scales.anchors[scale + 1] = lower_scale_anchor
+    
 
-        self.anchors = {}   # instance-level; avoids sharing across instances
-        root = self.root
-        anchor = root
-        for scale_label, scale in self.scales.items():
-            anchor = self.add_component(anchor, isanchor=True, label=scale_label)
-            self.anchors[scale] = anchor
+    def add_system_root_at_scale(self, scale, **propargs):
+        """
+        Method used to create a root for current modelled achitecture at one of the systematic scales of the MPG
+        """
+        return self.add_component(self.scales.anchors[scale], **PropsConfig(scale=scale, **propargs))
+
 
     @classmethod
     def from_mtg(cls, mtg):
@@ -48,6 +57,7 @@ class MPG(MTG):
         mpg = cls()
         mpg._source_mtg = mtg
         return mpg
+
 
     def populate_node_edge_scales(self, focus_vids, skip_predicate=None):
         """
@@ -126,20 +136,6 @@ class MPG(MTG):
         mtg_to_arraydict(self)
         return is_collar
 
-    def remove_anchors(self):
-        """
-        Clean up unused lower-scale anchors.
-        """
-        for scale, anchor in self.anchors.items():
-            subtree = {anchor: scale}
-            for subscale in self.scales.values():
-                if subscale > scale:
-                    subtree.update({vid: subscale for vid in self.components_at_scale(anchor, scale=subscale)})
-
-            if np.all([self.node(int(vid)).isanchor for vid in subtree.keys()]):
-                for vid in dict(sorted(subtree.items(), key=lambda item: item[1], reverse=True)):
-                    self.remove_vertex(vid)
-                break
 
     def graph(self, property_name):
         node_scale = self.scales["node"]
@@ -176,4 +172,6 @@ class MPG(MTG):
         idx = prop.indices_of(ids_at_scale)
         return np.asarray(prop.values_array()[idx])
 
-    
+
+if __name__ == "__main__":
+    g = MPG()
