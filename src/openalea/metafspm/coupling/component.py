@@ -48,24 +48,16 @@ def declare(unit: str, unit_comment: str, description: str,  min_value: float, m
 
 def input_variable(unit: str, unit_comment: str, description: str,  min_value: float, max_value: float, value_comment: str, references: str, DOI: list, 
                    by: str, initialize=None, location=None):
-    return declare(default=initialize, unit=unit, unit_comment=unit_comment, description=description, min_value=min_value, 
+    return declare(default=initialize, unit=unit, unit_comment=unit_comment, description=description, min_value=min_value, references=references, DOI=DOI, 
                    max_value=max_value, value_comment=value_comment, variable_type="input", by=by, state_variable_type=None, edit_by="user", location=location)
 
 
 def state_variable(unit: str, unit_comment: str, description: str,  min_value: float, max_value: float, value_comment: str, references: str, DOI: list, 
                    by: str, state_variable_type: Literal["massic_concentration", "intensive", "extensive", "NonInertialExtensive", "NonInertialIntensive", "descriptor"],
                    initialize=None, location=None):
-    return declare(default=initialize, unit=unit, unit_comment=unit_comment, description=description, min_value=min_value, 
+    return declare(default=initialize, unit=unit, unit_comment=unit_comment, description=description, min_value=min_value, references=references, DOI=DOI, 
                    max_value=max_value, value_comment=value_comment, variable_type="state_variable", by=by, state_variable_type=state_variable_type, edit_by="user", location=location)
 
-def filter_as_unique_int(filter: str):
-    filters = MPG.filters
-    if filter in filters.keys():
-        raise ValueError("already declared")
-    else:
-        integer = int(np.max(list(filters.values())) + 1)
-        MPG.filters[filter] = integer
-        return integer
 
 
 
