@@ -3,7 +3,7 @@ from typing import Literal
 import numpy as np
 
 from openalea.metafspm.solve.decorator import *
-
+from openalea.metafspm.data_structure.mpg import MPG
 
 
 def declare(unit: str, unit_comment: str, description: str,  min_value: float, max_value: float, value_comment: str, references: str, DOI: list,
@@ -57,6 +57,16 @@ def state_variable(unit: str, unit_comment: str, description: str,  min_value: f
                    initialize=None, location=None):
     return declare(default=initialize, unit=unit, unit_comment=unit_comment, description=description, min_value=min_value, 
                    max_value=max_value, value_comment=value_comment, variable_type="state_variable", by=by, state_variable_type=state_variable_type, edit_by="user", location=location)
+
+def filter_as_unique_int(filter: str):
+    filters = MPG.filters
+    if filter in filters.keys():
+        raise ValueError("already declared")
+    else:
+        integer = int(np.max(list(filters.values())) + 1)
+        MPG.filters[filter] = integer
+        return integer
+
 
 
 @dataclass

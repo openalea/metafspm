@@ -1,4 +1,4 @@
-from openalea.metafspm.component import declare
+from openalea.metafspm.coupling.component import declare
 
 
 def test_field_consensus():
