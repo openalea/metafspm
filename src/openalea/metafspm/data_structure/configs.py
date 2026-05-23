@@ -81,6 +81,9 @@ class PropsConfig:
     ))
 
     # Vertex description properties
+    edge_type: str = field(default='<', metadata=dict(
+        description="relationship between adjacent vertices. / for decomposition = anchoring between scales; < for edge on same axis; + for a branching relationship"
+    ))
     label: int = field(default=0, metadata=dict(
         description="Vertex label stored as unique integer to enable vectorized elemet filtering, common scale specific examples are proposed by ScalesConfig"
     ))

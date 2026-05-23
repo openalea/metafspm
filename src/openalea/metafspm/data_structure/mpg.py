@@ -26,7 +26,7 @@ class MPG(MTG):
         self.labels = LabelsConfig()
         self.scales.anchors[self.scales.Plant] = self.root
         for scale in self.scales:
-            lower_scale_anchor = self.add_component(self.scales.anchors[scale], **PropsConfig(isanchor=True, scale=scale))
+            lower_scale_anchor = self.add_component(self.scales.anchors[scale], **PropsConfig(isanchor=True, edge_type='/', scale=scale))
             self.scales.anchors[scale + 1] = lower_scale_anchor
     
 
@@ -34,7 +34,7 @@ class MPG(MTG):
         """
         Method used to create a root for current modelled achitecture at one of the systematic scales of the MPG
         """
-        return self.add_component(self.scales.anchors[scale], **PropsConfig(scale=scale, **propargs))
+        return self.add_component(self.scales.anchors[scale], **PropsConfig(scale=scale, edge_type='/', **propargs))
 
 
     @classmethod
