@@ -37,6 +37,43 @@ class MPG(MTG):
         return self.add_component(self.scales.anchors[scale], **PropsConfig(scale=scale, edge_type='/', **propargs))
 
 
+    def add_lateral_component(self, complex_parent, topo_parent, **propargs):
+        """Add a fine-scale vertex that belongs to complex_parent but branches from topo_parent.
+
+        Standard add_component sets complex membership and leaves same-scale parent as None.
+        This method decouples the two axes:
+
+          complex(v) == complex_parent   — scale / biological identity  (set by add_component)
+          parent(v)  == topo_parent      — topological / physical adjacency (cross-complex)
+
+        This is the multiscale branching pattern: a lateral organ's first segment physically
+        emerges from a specific segment of the parent organ, even though biologically it
+        belongs to its own Organ-scale complex.  Example:
+
+            root_internode1 ← (Organ scale, primary root)
+              root_segment1 < root_segment2 < root_segment3
+                                  |  (+)
+            root_internode2 ← (Organ scale, lateral root — branches off root_internode1)
+              root_segment4   ← complex = root_internode2, parent = root_segment2
+
+        topo_parent must be at the same scale as the new vertex and in a different complex
+        than complex_parent.  Pass edge_type='+' in propargs to mark the branching.
+
+        Parameters
+        ----------
+        complex_parent : int  — coarse-scale vertex this component belongs to (scale hierarchy)
+        topo_parent    : int  — same-scale vertex this component branches from (physical adjacency)
+        **propargs     : passed verbatim to add_component; set edge_type='+' for a lateral branch
+        """
+        v = self.add_component(complex_parent, **propargs)
+        # Override the None same-scale parent that add_component leaves.
+        # _parent and _children live in tree.py; _complex and _components in mtg.py.
+        # Setting only _parent/_children leaves complex membership untouched.
+        self._parent[v] = topo_parent
+        self._children.setdefault(topo_parent, []).append(v)
+        return v
+
+
     @classmethod
     def from_mtg(cls, mtg):
         """
@@ -321,5 +358,84 @@ class MPG(MTG):
                     yield v
 
 
-if __name__ == "__main__":
-    g = MPG()
+    # UPSCALING METHODS
+    def integrate_at_scale(self, property_name, from_scale, target_scale):
+        """Sum property_name from from_scale into every ancestor at every coarser scale.
+
+        Writes the aggregated value at every scale in [target_scale, from_scale),
+        so all intermediate scales are populated in a single pass.
+
+        Parameters
+        ----------
+        g              : MPG
+        property_name  : str — read at from_scale, written at all coarser scales.
+                        Vertices missing an entry are treated as 0.
+        from_scale     : int — fine scale (larger number)
+        target_scale   : int — coarsest scale to write (smaller number, < from_scale)
+        """
+        assert from_scale > target_scale, "from_scale must be finer (larger) than target_scale"
+
+        scale_prop = self.property('scale')
+        props      = self.property(property_name)   # setdefault → always internal dict
+        accum      = {}
+
+        for v in self.post_order_mpg():
+            sv = scale_prop.get(v)
+            if sv is None or sv < target_scale or sv > from_scale:
+                continue
+
+            if sv == from_scale:
+                accum[v] = props.get(v, 0.0)
+            else:
+                total    = sum(accum.get(c, 0.0) for c in self.components_iter(v))
+                props[v] = total
+                accum[v] = total
+
+
+    def average_at_scale(self, property_name, from_scale, target_scale,
+                        normalization_property=None):
+        """Weighted-average property_name from from_scale up to every coarser scale.
+
+        Without normalization_property every source vertex has weight 1
+        (plain arithmetic mean over all from_scale descendants).
+
+        With normalization_property, weight = normalization_property[v] at
+        from_scale (mass- or volume-weighted mean).  Typical use: pass a
+        concentration and its associated mass/volume so that the aggregated value
+        is the correct bulk concentration at each scale.
+
+        Parameters
+        ----------
+        g                      : MPG
+        property_name          : str — property to average (read at from_scale, written elsewhere)
+        from_scale             : int — fine scale (larger number)
+        target_scale           : int — coarsest scale to write (smaller number, < from_scale)
+        normalization_property : str or None
+            If given, its value at from_scale is used as the weight.
+            Vertices missing an entry default to weight 0.
+        """
+        assert from_scale > target_scale, "from_scale must be finer (larger) than target_scale"
+
+        scale_prop = self.property('scale')
+        props      = self.property(property_name)
+        norm_props = self.property(normalization_property) if normalization_property else None
+
+        accum_sum = {}   # weighted sum: Σ (value × weight)
+        accum_wt  = {}   # total weight: Σ weight
+
+        for v in self.post_order_mpg():
+            sv = scale_prop.get(v)
+            if sv is None or sv < target_scale or sv > from_scale:
+                continue
+
+            if sv == from_scale:
+                w            = norm_props.get(v, 0.0) if norm_props else 1.0
+                accum_sum[v] = props.get(v, 0.0) * w
+                accum_wt[v]  = w
+            else:
+                S = sum(accum_sum.get(c, 0.0) for c in self.components_iter(v))
+                W = sum(accum_wt.get(c,  0.0) for c in self.components_iter(v))
+                props[v]     = S / W if W > 0 else 0.0
+                accum_sum[v] = S   # relay numerator
+                accum_wt[v]  = W   # relay denominator
+
