@@ -84,7 +84,7 @@ class PropsConfig:
     edge_type: str = field(default='<', metadata=dict(
         description="relationship between adjacent vertices. / for decomposition = anchoring between scales; < for edge on same axis; + for a branching relationship"
     ))
-    label: int = field(default=0, metadata=dict(
+    label: int = field(default=1, metadata=dict(
         description="Vertex label stored as unique integer to enable vectorized elemet filtering, common scale specific examples are proposed by ScalesConfig"
     ))
     type: int = field(default=0, metadata=dict(
@@ -106,6 +106,9 @@ class PropsConfig:
 
 
 class LabelsConfig:
+    class Multiscale:
+        Anchor: int = 'Anchor'
+
     class Plant:
         scale = ScalesConfig.Plant
         Wheat: int = 'Wheat'
@@ -188,11 +191,14 @@ class LabelsConfig:
     
     def __init__(self):
         self.filters = {}
+        self.translator = {}
         for name, value in inspect.getmembers(self.__class__):
             if inspect.isclass(value) and not name.startswith('_'):
                 for attr, val in vars(value).items():
                     if not attr.startswith('_') and isinstance(val, str):
-                        setattr(value, attr, self.filter_as_unique_int(val))
+                        unique_integer = self.filter_as_unique_int(val)
+                        setattr(value, attr, unique_integer)
+                        self.translator[unique_integer] = attr
 
     def filter_as_unique_int(self, filter: str):
         if filter in self.filters.keys():

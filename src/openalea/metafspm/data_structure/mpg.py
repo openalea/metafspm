@@ -26,7 +26,7 @@ class MPG(MTG):
         self.labels = LabelsConfig()
         self.scales.anchors[self.scales.Plant] = self.root
         for scale in self.scales:
-            lower_scale_anchor = self.add_component(self.scales.anchors[scale], **PropsConfig(isanchor=True, edge_type='/', scale=scale))
+            lower_scale_anchor = self.add_component(self.scales.anchors[scale], **PropsConfig(isanchor=True, edge_type='/', scale=scale, label=self.labels.Multiscale.Anchor))
             self.scales.anchors[scale + 1] = lower_scale_anchor
     
 
@@ -171,6 +171,154 @@ class MPG(MTG):
         ids_at_scale = [v for v in self.components_at_scale(self.root, scale=scale) if v in prop]
         idx = prop.indices_of(ids_at_scale)
         return np.asarray(prop.values_array()[idx])
+
+
+    # MULTISCALE TRAVERSALS (combining ordered scale and element iteration)
+    def _component_topo_preorder(self, comps):
+        """Yield the vertices in `comps` in topological pre-order.
+
+        `comps` is the set of direct components of some vertex v (all at the same
+        scale, connected by same-scale topological edges among themselves).
+
+        Algorithm — iterative DFS (matches pre_order2 style):
+        1. Find topological roots: components whose same-scale parent is absent
+            from `comps` (i.e. their parent is the complex v or None).
+        2. Push roots onto a LIFO stack in reverse order so the first root pops
+            first.
+        3. Pop a vertex, yield it, push its children-within-comps in reverse
+            order so the left-most child is processed next.
+        """
+        # Topological roots of the component set: vertices whose same-scale parent
+        # is outside the set (parent is v itself, or None — both ∉ comps).
+        roots = [c for c in comps if self.parent(c) not in comps]
+
+        stack = list(reversed(roots))   # reversed so first root pops first (LIFO)
+        while stack:
+            c = stack.pop()
+            yield c
+            # Only follow edges that stay within this component set (same complex).
+            children = [ch for ch in self.children_iter(c) if ch in comps]
+            stack.extend(reversed(children))   # reversed: left-most child pops first
+
+
+    def _component_topo_postorder(self, comps):
+        """Yield the vertices in `comps` in topological post-order.
+
+        Algorithm — iterative, "peek-don't-pop" pattern (matches post_order2 style):
+        For each topological root in the component set:
+            • Push (root, iterator-over-children-within-comps) on the stack.
+            • Each iteration: peek at the top entry.
+                – If its child iterator has a next child: push that child (with its
+                own child iterator).  Don't pop the current entry yet.
+                – If exhausted: pop the entry and yield its vertex.
+        This guarantees every child is yielded before its parent, with no
+        Python recursion.
+        """
+        roots = [c for c in comps if self.parent(c) not in comps]
+
+        for root in roots:
+            # Each stack entry: (vertex, iterator over remaining children in comps)
+            stack = [(root, iter(ch for ch in self.children_iter(root) if ch in comps))]
+            while stack:
+                node, children = stack[-1]   # peek — do not pop yet
+                try:
+                    child = next(children)
+                    # child has unvisited children: push it and continue descending
+                    stack.append((child, iter(ch for ch in self.children_iter(child) if ch in comps)))
+                except StopIteration:
+                    # no more children → this node is ready to yield
+                    stack.pop()
+                    yield node
+
+
+    def pre_order_mpg(self, vtx_id=None, skip_anchors=True):
+        """Pre-order multiscale traversal of an MPG.
+
+        Yields each vertex *before* its descendants, combining two axes:
+        • Scale axis  : a complex is yielded before its fine-scale components.
+        • Topo axis   : within a complex's component set, a topological parent
+                        is yielded before its same-scale children.
+
+        Algorithm — iterative explicit stack (matches pre_order2 style):
+        Pop v from the stack → yield v (if not an anchor) → compute v's
+        components in topological pre-order → push them in *reverse* order so
+        the first component pops next (LIFO).
+
+        Parameters
+        ----------
+        skip_anchors : bool
+            If True (default), structural MPG anchor vertices (isanchor=True)
+            are not yielded but are still traversed so their descendants are
+            reachable.
+        """
+        if vtx_id is None:
+            vtx_id = self.root
+
+        isanchor = self.property('isanchor') if skip_anchors else {}
+
+        stack = [vtx_id]
+        while stack:
+            v = stack.pop()
+
+            # Yield v unless it is a structural anchor (isanchor vertices are
+            # scaffolding for the MPG; they have no biological meaning).
+            if not isanchor.get(v, False):
+                yield v
+
+            # Compute v's direct fine-scale components and order them
+            # topologically so the traversal respects same-scale parent→child
+            # edges, not just the arbitrary iteration order of components_iter.
+            comps = set(self.components_iter(v))
+            if comps:
+                # Push in reverse so the first (topological root) pops next.
+                stack.extend(reversed(list(self._component_topo_preorder(comps))))
+
+
+    def post_order_mpg(self, vtx_id=None, skip_anchors=True):
+        """Post-order multiscale traversal of an MPG.
+
+        Yields each vertex *after* all its descendants, combining two axes:
+        • Scale axis  : fine-scale components are yielded before their complex.
+        • Topo axis   : within a complex's component set, topological children
+                        are yielded before their same-scale parent.
+
+        Algorithm — iterative, "peek-don't-pop" (matches post_order2 style):
+        Each stack entry is (vertex, iterator-over-post-ordered-components).
+        • Peek at the top: if the component iterator has a next component c,
+            push a new entry for c (with c's own component iterator) and continue.
+        • When the iterator is exhausted, pop the entry and yield the vertex
+            (if not an anchor).
+        No Python recursion is used, so depth is limited only by the stack.
+
+        Parameters
+        ----------
+        skip_anchors : bool
+            If True (default), structural MPG anchor vertices are not yielded.
+        """
+        if vtx_id is None:
+            vtx_id = self.root
+
+        isanchor = self.property('isanchor') if skip_anchors else {}
+
+        def _make_entry(v):
+            """Return (v, iterator-over-post-ordered-components-of-v)."""
+            comps = set(self.components_iter(v))
+            return (v, iter(self._component_topo_postorder(comps)) if comps else iter([]))
+
+        # Initialise the stack with the root entry.
+        stack = [_make_entry(vtx_id)]
+
+        while stack:
+            v, comp_iter = stack[-1]   # peek — do not pop yet
+            try:
+                c = next(comp_iter)
+                # c still has descendants to visit: push it and descend.
+                stack.append(_make_entry(c))
+            except StopIteration:
+                # All components of v have been yielded → v itself is ready.
+                stack.pop()
+                if not isanchor.get(v, False):
+                    yield v
 
 
 if __name__ == "__main__":
