@@ -250,115 +250,80 @@ def test_edges_on_existing_anatomy():
         f"expected 13 xylem-xylem (Apoplastic) inter-organ edges, got {len(apoplastic_inter)}"
 
 
+def test_ordered_connections():
+    """ordering key in connections spec matches nodes by nearest value in a property.
 
+    Setup: each of the 14 SubOrgan vertices gets 2 MetaXylem nodes:
+      - xylem_near : angle = 30.0
+      - xylem_far  : angle = 150.0
 
+    With ordering='angle': greedy nearest-neighbour matches near↔near and
+    far↔far across each of the 13 adjacencies → 13 × 2 = 26 inter-organ edges.
+    Every matched pair must share the same angle value.
 
-def _plot_transport_graph(title="Transport graph", mpg=None):
-    try:
-        import matplotlib.pyplot as plt
-        import matplotlib.patches as mpatches
-    except ImportError:
-        print("matplotlib not available — skipping plot")
-        return
+    Without ordering (all-to-all): 4 pairs per adjacency → 13 × 4 = 52 edges.
+    """
+    from simple_seedling import generate_simple_mpg_seedling
+    from openalea.metafspm.data_structure.configs import PropsConfig
 
-    mpg = mpg or g
-    n_id_a_prop = mpg.property('n_id_a')
-    n_id_b_prop = mpg.property('n_id_b')
-    vid_prop    = mpg.property('vertex_id')
-    label_prop  = mpg.property('label')
-
-    def _node_vids_of(m):
-        return [v for v in m.components_at_scale(m.root, scale=m.scales.Compartment)
-                if not m.property('isanchor').get(v, False)]
-
-    def _edge_vids_of(m):
-        return [v for v in m.components_at_scale(m.root, scale=m.scales.Connection)
-                if not m.property('isanchor').get(v, False)]
-
-    edges_ev  = _edge_vids_of(mpg)
-    node_vids = _node_vids_of(mpg)
-
-    leaf_label  = mpg.labels.SubOrgan.LeafElement
-    stem_label  = mpg.labels.SubOrgan.StemElement
-
-    # Build children adjacency (keyed by SubOrgan VID)
-    children    = {}
-    graph_nodes = set()
-    for ev in edges_ev:
-        a, b = int(n_id_a_prop[ev]), int(n_id_b_prop[ev])
-        children.setdefault(a, []).append(b)
-        graph_nodes.add(a)
-        graph_nodes.add(b)
-    # Include isolated nodes (no edges)
-    for nv in node_vids:
-        graph_nodes.add(int(vid_prop[nv]))
-
-    # Find graph roots (no incoming edge)
-    has_incoming = {b for kids in children.values() for b in kids}
-    roots = [v for v in graph_nodes if v not in has_incoming]
-
-    # BFS layout from each root; subgraphs stacked vertically
-    pos   = {}
-    y_top = 0.0
-    for root in sorted(roots):
-        branch_y = {root: 0.0}
-        depth    = {root: 0}
-        queue, visited = [root], set()
-        while queue:
-            vid = queue.pop(0)
-            if vid in visited:
+    def _setup():
+        g, _ = generate_simple_mpg_seedling()
+        node_anchor = g.scales.anchors[g.scales.Compartment]
+        angle_p     = g.property('angle')
+        for vid in g.vertices(scale=g.scales.SubOrgan):
+            if g.property('isanchor').get(vid, False):
                 continue
-            visited.add(vid)
-            for i, kid in enumerate(sorted(children.get(vid, []))):
-                if kid not in visited:
-                    branch_y[kid] = branch_y[vid] + i * 1.2
-                    depth[kid]    = depth[vid] + 1
-                    queue.append(kid)
-        for vid in visited:
-            pos[vid] = (float(depth[vid]), y_top - branch_y[vid])
-        y_top -= max(branch_y.values(), default=0) + 2.0
+            nv_near = g.add_component_with_topo(node_anchor, vid, **PropsConfig(
+                scale=g.scales.Compartment, edge_type='/', label=g.labels.Cell.MetaXylem))
+            nv_far  = g.add_component_with_topo(node_anchor, vid, **PropsConfig(
+                scale=g.scales.Compartment, edge_type='/', label=g.labels.Cell.MetaXylem))
+            angle_p[nv_near] = 30.0
+            angle_p[nv_far]  = 150.0
+        return g
 
-    node_r = 0.3
-    fig, ax = plt.subplots(figsize=(11, 8))
+    def _inter_edges(g):
+        n_a_p = g.property('n_id_a')
+        n_b_p = g.property('n_id_b')
+        return [ev for ev in g.components_at_scale(g.root, scale=g.scales.Connection)
+                if not g.property('isanchor').get(ev, False)
+                and ev in n_a_p and ev in n_b_p
+                and g.parent(int(n_a_p[ev])) != g.parent(int(n_b_p[ev]))]
 
-    for ev in edges_ev:
-        a, b = int(n_id_a_prop[ev]), int(n_id_b_prop[ev])
-        if a not in pos or b not in pos:
-            continue
-        x1, y1 = pos[a];  x2, y2 = pos[b]
-        dx, dy = x2 - x1, y2 - y1
-        dist = (dx**2 + dy**2) ** 0.5
-        if dist == 0:
-            continue
-        ax.annotate("", xy=(x2 - node_r*dx/dist, y2 - node_r*dy/dist),
-                    xytext=(x1 + node_r*dx/dist, y1 + node_r*dy/dist),
-                    arrowprops=dict(arrowstyle='-', color='dimgray', lw=1.5))
+    # ── Ordered: near↔near, far↔far ──────────────────────────────────────────
+    g_ord = _setup()
+    g_ord.populate_node_edge_scales(
+        g_ord.scales.SubOrgan,
+        connections=[dict(node_label=g_ord.labels.Cell.MetaXylem,
+                          edge_label=g_ord.labels.Connection.Apoplastic,
+                          ordering='angle')],
+    )
+    g_ord.convert_properties_to_arraydict()
 
-    _label_map = {
-        leaf_label: 'seagreen',
-        stem_label: 'darkorange',
-    }
-    for vid in graph_nodes:
-        if vid not in pos:
-            continue
-        x, y = pos[vid]
-        lbl = label_prop.get(vid)
-        color = _label_map.get(lbl, 'brown')  # default = root segment
-        ax.add_patch(plt.Circle((x, y), node_r, color=color, zorder=3))
-        ax.text(x, y, _VID_NAME.get(vid, str(vid)),
-                ha='center', va='center', fontsize=8, fontweight='bold', zorder=4)
+    inter_ord = _inter_edges(g_ord)
+    assert len(inter_ord) == 13 * 2, \
+        f"ordered: expected {13 * 2} inter-organ edges, got {len(inter_ord)}"
 
-    ax.legend(handles=[
-        mpatches.Patch(color='darkorange', label='StemElement'),
-        mpatches.Patch(color='steelblue',  label='LeafElement'),
-        mpatches.Patch(color='seagreen',   label='RootSegment'),
-    ], loc='upper right')
-    ax.set_title(title)
-    ax.set_aspect('equal')
-    ax.autoscale()
-    ax.axis('off')
-    plt.tight_layout()
-    plt.show()
+    angle_p = g_ord.property('angle')
+    n_a_p   = g_ord.property('n_id_a')
+    n_b_p   = g_ord.property('n_id_b')
+    for ev in inter_ord:
+        a_angle = float(angle_p.get(int(n_a_p[ev])))
+        b_angle = float(angle_p.get(int(n_b_p[ev])))
+        assert abs(a_angle - b_angle) < 1e-6, \
+            f"ordered matching linked different angles: {a_angle} vs {b_angle}"
+
+    # ── All-to-all (no ordering): every pair among the 2 near/far nodes ───────
+    g_all = _setup()
+    g_all.populate_node_edge_scales(
+        g_all.scales.SubOrgan,
+        connections=[dict(node_label=g_all.labels.Cell.MetaXylem,
+                          edge_label=g_all.labels.Connection.Apoplastic)],
+    )
+    g_all.convert_properties_to_arraydict()
+
+    inter_all = _inter_edges(g_all)
+    assert len(inter_all) == 13 * 4, \
+        f"all-to-all: expected {13 * 4} inter-organ edges, got {len(inter_all)}"
 
 
 if __name__ == "__main__":
@@ -386,4 +351,41 @@ if __name__ == "__main__":
 
     # ── Anatomy-wiring mode ───────────────────────────────────────────────────
     g_anat = put_edges_on_existing_anatomy()
-    plot_mpg(g_anat, title="Anatomy-wiring mode (Symplastic + MetaXylem + Phloem)", node_property="label", edge_property='conductance')
+    plot_mpg(g_anat, "Anatomy-wiring mode (Symplastic + MetaXylem + Phloem)", node_property="label")
+
+    # ── Ordered vs all-to-all connections ─────────────────────────────────────
+    def _xylem_setup():
+        g_x, _ = generate_simple_mpg_seedling()
+        node_anchor = g_x.scales.anchors[g_x.scales.Compartment]
+        angle_p     = g_x.property('angle')
+        for vid in g_x.vertices(scale=g_x.scales.SubOrgan):
+            if g_x.property('isanchor').get(vid, False):
+                continue
+            nv_near = g_x.add_component_with_topo(node_anchor, vid, **PropsConfig(
+                scale=g_x.scales.Compartment, edge_type='/', label=g_x.labels.Cell.MetaXylem))
+            nv_far  = g_x.add_component_with_topo(node_anchor, vid, **PropsConfig(
+                scale=g_x.scales.Compartment, edge_type='/', label=g_x.labels.Cell.MetaXylem))
+            angle_p[nv_near] = 30.0
+            angle_p[nv_far]  = 150.0
+        return g_x
+
+    g_ord = _xylem_setup()
+    g_ord.populate_node_edge_scales(
+        g_ord.scales.SubOrgan,
+        connections=[dict(node_label=g_ord.labels.Cell.MetaXylem,
+                          edge_label=g_ord.labels.Connection.Apoplastic,
+                          ordering='angle')],
+    )
+    g_ord.convert_properties_to_arraydict()
+    plot_mpg(g_ord, "Ordered — 2 xylem vessels matched by angle (26 inter-organ edges)",
+             node_property='angle')
+
+    g_all = _xylem_setup()
+    g_all.populate_node_edge_scales(
+        g_all.scales.SubOrgan,
+        connections=[dict(node_label=g_all.labels.Cell.MetaXylem,
+                          edge_label=g_all.labels.Connection.Apoplastic)],
+    )
+    g_all.convert_properties_to_arraydict()
+    plot_mpg(g_all, "All-to-all — 2 xylem vessels, no ordering (52 inter-organ edges)",
+             node_property='angle')

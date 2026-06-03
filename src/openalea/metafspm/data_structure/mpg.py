@@ -129,6 +129,12 @@ class MPG(MTG):
             Each entry specifies one inter-organ link type:
               node_label — label of the Compartment nodes to pair
               edge_label — label of the Connection edge to create
+              ordering   — (optional) name of a numerical property stored on the
+                           Compartment nodes.  When given, nodes on each side are
+                           matched by minimum absolute distance in that property
+                           (greedy nearest-neighbour, each node used at most once).
+                           When absent, all-to-all edges are created between the
+                           two sets.
             When None (default), one Symplastic Compartment node is created per
             from_scale vertex and connected with Symplastic Connection edges.
 
@@ -172,7 +178,8 @@ class MPG(MTG):
                     self.property("vertex_id")[nv] = vid
                     seg_to_node[vid] = nv
 
-        # Anatomy-wiring mode: build {suborgan_vid → {label → compartment_vid}}.
+        # Anatomy-wiring mode: build {suborgan_vid → {label → [compartment_vid, ...]}}.
+        # Lists allow multiple nodes with the same label (e.g. several xylem vessels).
         # parent(compartment_node) == suborgan_vid via the cross-scale topo link
         # set by add_component_with_topo(node_anchor, suborgan_vid, ...).
         vid2comps = {}
@@ -184,7 +191,7 @@ class MPG(MTG):
                 src = self.parent(nv)
                 if src is None or scale_prop.get(src) != from_scale or src not in valid_vids:
                     continue
-                vid2comps.setdefault(src, {})[label_prop.get(nv)] = nv
+                vid2comps.setdefault(src, {}).setdefault(label_prop.get(nv), []).append(nv)
 
         # _tip_component: tip from_scale vertex directly owned by a coarser-scale vertex.
         # After Pass 1, seg_to_node.keys() == valid_vids, so valid_vids works for both modes.
@@ -233,17 +240,40 @@ class MPG(MTG):
                 parent_comps = vid2comps.get(parent_found, {})
                 child_comps  = vid2comps.get(vid, {})
                 for conn in connections:
-                    n_a = parent_comps.get(conn['node_label'])
-                    n_b = child_comps.get(conn['node_label'])
-                    if n_a is None or n_b is None:
+                    n_as = parent_comps.get(conn['node_label'], [])
+                    n_bs = child_comps.get(conn['node_label'], [])
+                    if not n_as or not n_bs:
                         continue
-                    ev = self.add_component(edge_anchor, **PropsConfig(
-                        scale=self.scales.Connection,
-                        label=conn['edge_label'],
-                        edge_type='/',
-                    ))
-                    self.property("n_id_a")[ev] = n_a
-                    self.property("n_id_b")[ev] = n_b
+                    ordering_name = conn.get('ordering')
+                    if ordering_name is None:
+                        pairs = [(n_a, n_b) for n_a in n_as for n_b in n_bs]
+                    else:
+                        ordering_p = self.property(ordering_name)
+                        def _val(nv, _p=ordering_p):
+                            v = _p.get(nv)
+                            return float(v) if v is not None else 0.0
+                        sorted_a = sorted(n_as, key=_val)
+                        sorted_b = sorted(n_bs, key=_val)
+                        used_b, pairs = set(), []
+                        for n_a in sorted_a:
+                            best_b, best_dist = None, float('inf')
+                            for n_b in sorted_b:
+                                if n_b in used_b:
+                                    continue
+                                d = abs(_val(n_a) - _val(n_b))
+                                if d < best_dist:
+                                    best_dist, best_b = d, n_b
+                            if best_b is not None:
+                                used_b.add(best_b)
+                                pairs.append((n_a, best_b))
+                    for n_a, n_b in pairs:
+                        ev = self.add_component(edge_anchor, **PropsConfig(
+                            scale=self.scales.Connection,
+                            label=conn['edge_label'],
+                            edge_type='/',
+                        ))
+                        self.property("n_id_a")[ev] = n_a
+                        self.property("n_id_b")[ev] = n_b
 
         # Pass 3 (node-creation mode only) — reconnect orphans from filtered branching nodes.
         if connections is not None:
