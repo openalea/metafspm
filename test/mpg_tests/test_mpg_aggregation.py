@@ -60,21 +60,25 @@ def test_sum_missing_source_values_default_to_zero():
 # ── average_at_scale tests ────────────────────────────────────────────────────
 
 def test_average_unweighted():
-    """Plain mean of leaf element lengths (1, 2, 3) → 2.0 up to Phytomer scale.
+    """Plain mean of leaf element lengths (1, 2, 3).
 
-    Only tested up to Phytomer: the seedling has additional SubOrgan vertices
-    (a second leaf + root segments) that have no length value and would dilute
-    the unweighted mean at GrowthUnit and above.
+    leaf     → (1+2+3)/3 = 2.0  (3 LeafElement components)
+    internode→ 0/1       = 0.0  (internodeelement has no length set → S=0, W=1)
+    meristem → 0.0              (no SubOrgan components → W=0)
+    phytomer → 6/4       = 1.5  (relay from leaf: S=6,W=3; from internode: S=0,W=1)
+
+    Only tested up to Phytomer: other SubOrgan vertices (second leaf + root segments)
+    with no length value would further dilute the mean at GrowthUnit and above.
     """
     _set_lengths()
     g.average_at_scale('length', from_scale=g.scales.SubOrgan, target_scale=g.scales.Phytomer)
 
     length = g.property('length')
-    assert math.isclose(length[leaf],      _MEAN)   # (1+2+3)/3
-    assert math.isclose(length[internode], 0.0)      # no SubOrgan descendants → W=0
+    assert math.isclose(length[leaf],      _MEAN)        # (1+2+3)/3 = 2.0
+    assert math.isclose(length[internode], 0.0)           # internodeelement length=0 → mean=0.0
     assert math.isclose(length[meristem],  0.0)
-    # Phytomer: relayed (S=6, W=3) from Leaf; internode/meristem W=0 → mean=2.0
-    assert math.isclose(length[phytomer],  _MEAN)
+    # Phytomer: relay(leaf)=(S=6,W=3) + relay(internode)=(S=0,W=1) → 6/4 = 1.5
+    assert math.isclose(length[phytomer],  6.0 / 4)
 
 
 def test_average_weighted_concentration():

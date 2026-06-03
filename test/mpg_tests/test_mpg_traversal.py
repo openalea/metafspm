@@ -32,6 +32,8 @@ root_segment3      = seedling.root_segment3
 root_segment4      = seedling.root_segment4
 root_segment5      = seedling.root_segment5
 root_segment6      = seedling.root_segment6
+internodeelement   = seedling.internodeelement
+internodeelement2  = seedling.internodeelement2
 
 # All biological (non-anchor) vertices created in the seedling
 _ALL_VERTICES = {
@@ -39,6 +41,7 @@ _ALL_VERTICES = {
     phytomer, phytomer2,
     internode, meristem, leaf,
     internode2, meristem2, leaf2,
+    internodeelement, internodeelement2,
     leafelement1, leafelement2, leafelement3,
     leafelement4, leafelement5, leafelement6,
     root_axis, growth_unit_root, phytomer_root,
@@ -61,6 +64,8 @@ _SCALE_PAIRS = [
     (root_axis,      growth_unit_root),
     (root_internode1, root_segment1),
     (root_internode2, root_segment4),  # lateral root: complex is root_internode2
+    (internode,  internodeelement),    # SubOrgan decomposes Organ
+    (internode2, internodeelement2),
 ]
 
 _TOPO_PAIRS = [
