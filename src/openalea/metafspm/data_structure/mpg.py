@@ -1,6 +1,6 @@
 from openalea.mtg import MTG
 import numpy as np
-from openalea.metafspm.data_structure.arraydict import mtg_to_arraydict
+from openalea.metafspm.data_structure.arraydict import ArrayDict
 from openalea.metafspm.data_structure.configs import ScalesConfig, PropsConfig, LabelsConfig
 from dataclasses import dataclass, field, fields
 from typing import Literal
@@ -28,6 +28,8 @@ class MPG(MTG):
         for scale in self.scales:
             lower_scale_anchor = self.add_component(self.scales.anchors[scale], **PropsConfig(isanchor=True, edge_type='/', scale=scale, label=self.labels.Multiscale.Anchor))
             self.scales.anchors[scale + 1] = lower_scale_anchor
+
+        self.convert_properties_to_arraydict()
     
 
     def add_system_root_at_scale(self, scale, **propargs):
@@ -37,7 +39,7 @@ class MPG(MTG):
         return self.add_component(self.scales.anchors[scale], **PropsConfig(scale=scale, edge_type='/', **propargs))
 
 
-    def add_lateral_component(self, complex_parent, topo_parent, **propargs):
+    def add_component_with_topo(self, complex_parent, topo_parent, **propargs):
         """Add a fine-scale vertex that belongs to complex_parent but branches from topo_parent.
 
         Standard add_component sets complex membership and leaves same-scale parent as None.
@@ -96,100 +98,192 @@ class MPG(MTG):
         return mpg
 
 
-    def populate_node_edge_scales(self, focus_vids, skip_predicate=None):
+    def populate_node_edge_scales(self, from_scale, filter_in=None, filter_out=None):
         """
-        One-pass population of node and edge scales from parent-child topology.
-
-        Iterates over *focus_vids*, creates one vertex at node_scale per
-        non-skipped VID, then walks each node's parent chain in the source MTG
-        to locate its functional parent (skipping structural connector segments)
-        and creates one vertex at edge_scale per parent→child connection.
+        Two-pass population of Compartment (node) and Connection (edge) scales
+        from all vertices at *from_scale*, discovered via post_order_mpg traversal.
 
         Parameters
         ----------
-        focus_vids : iterable[int]
-            Segment-scale VIDs to include as transport graph nodes.
-        skip_predicate : callable(int) -> bool, optional
-            Returns True for structural connector segments (e.g.
-            Support_for_seminal_root / Support_for_adventitious_root) that
-            should be absent from node and edge scales.  Their children are
-            re-parented upward to the nearest non-skipped functional ancestor.
+        from_scale : int
+            Scale whose vertices become transport-graph nodes (e.g.
+            ``g.scales.SubOrgan``).  All vertices at this scale present in the
+            MPG are included automatically — no explicit vertex list is needed.
+        filter_in : dict, optional
+            ``{property_name: value}`` — only vertices whose property equals
+            *value* are included as Compartment nodes.  Filtered-out vertices
+            are still used topologically: the parent-chain walk in pass 2
+            naturally bridges over any vertex absent from *seg_to_node*, so
+            two included vertices separated by an excluded one remain connected.
+        filter_out : dict, optional
+            ``{property_name: value}`` — vertices whose property equals *value*
+            are excluded (complementary to *filter_in*).
 
-        Returns
-        -------
-        dict[int, bool]
-            ``{segment_vid: is_collar}`` — True only for the single root node
-            (the node whose functional parent is None after all skip-walks).
-            Write this dict to ``self.props["is_collar"]`` so that
-            ``@node_balance(types={"is_collar": [True/False]})`` filters work.
+        Algorithm
+        ---------
+        Pre-filter — valid_vids set:
+            Start from all VIDs at *from_scale* (numpy mask on scale property).
+            Apply filter_in / filter_out intersections via np.isin, same pattern
+            as array_filtering.  The resulting set controls which vertices get
+            Compartment nodes; excluded vertices are transparent to topology.
+
+        Pass 1 — vertex discovery (post_order_mpg):
+            post_order_mpg visits fine-scale vertices before their coarser-scale
+            complexes, naturally traversing from *from_scale* up to the plant
+            root.  For each vertex at *from_scale* in *valid_vids*, one
+            Compartment node is created and mapped in *seg_to_node*.
+
+            Two passes are required because post_order_mpg yields a lateral
+            subgraph before its topological-parent subgraph at the same organ
+            scale (e.g. root_internode2's segments before root_internode1's).
+            A lateral vertex whose topo-parent lives in the preceding subgraph
+            would therefore be encountered before that parent is registered,
+            making one-pass edge wiring impossible.
+
+        Pass 2 — edge wiring:
+            For each from_scale vertex, walk the parent chain upward.  At each
+            coarser-scale vertex *p* that is not itself in *seg_to_node*, also
+            check whether *p* directly owns any from_scale component in
+            *seg_to_node* — if so, the tip of that component chain is used as
+            the transport parent.  This handles lateral vertices (e.g. a leaf
+            base element whose topo-parent is the Organ-scale internode that
+            also owns an internode element at from_scale).
+
+            Vertices whose parent chain exits the graph without finding any
+            candidate become transport-graph roots (entry points with no
+            incoming edge).
 
         Notes
         -----
-        Node vertices are added at node_scale (scale 8) as components of the
-        cell-scale anchor.  Edge vertices are added at edge_scale (scale 9) as
-        components of the node-scale anchor.  Each node vertex carries
-        ``vertex_id = segment_vid``; each edge vertex carries
-        ``vertex_id = child_vid``, ``n_id_a = parent_vid``,
-        ``n_id_b = child_vid``.
-
-        For cell-scale use cases (explicit plasmodesmata, symplastic channels,
-        etc.) axial connections are not parent-child MTG edges — a different
-        population method should be used there.
+        Compartment vertices (scale 9) are added as components of
+        ``scales.anchors[Compartment]``.  Connection vertices (scale 10) are
+        added as components of ``scales.anchors[Connection]``.
+        Call ``convert_properties_to_arraydict()`` after this method so that
+        ``array_filtering()`` and ``graph()`` can operate on the new properties.
         """
-        mtg = self._source_mtg
-        skip = skip_predicate or (lambda v: False)
+        node_anchor = self.scales.anchors[self.scales.Compartment]
+        edge_anchor = self.scales.anchors[self.scales.Connection]
+        scale_prop  = self.property('scale')
 
-        # Anchors one level above the target data scales:
-        #   node data at scale 8  →  add_component(anchors[7]) (cell_anchor, scale 7)
-        #   edge data at scale 9  →  add_component(anchors[8]) (node_anchor, scale 8)
-        node_data_anchor = self.anchors[self.scales["node"] - 1]
-        edge_data_anchor = self.anchors[self.scales["edge"] - 1]
+        # Pre-filter — build the set of included VIDs using numpy intersection.
+        valid_keys = scale_prop.order[:scale_prop.size][scale_prop.values_array() == from_scale]
+        for fp_name, fp_val in (filter_in or {}).items():
+            fp = self.property(fp_name)
+            match = fp.order[:fp.size][fp.values_array() == fp_val]
+            valid_keys = valid_keys[np.isin(valid_keys, match, assume_unique=True)]
+        for fp_name, fp_val in (filter_out or {}).items():
+            fp = self.property(fp_name)
+            match = fp.order[:fp.size][fp.values_array() == fp_val]
+            valid_keys = valid_keys[~np.isin(valid_keys, match, assume_unique=True)]
+        valid_vids = set(int(v) for v in valid_keys)
 
+        # Pass 1 — discover included from_scale vertices and create Compartment nodes.
         seg_to_node = {}
-        for vid in focus_vids:
-            if not skip(vid):
-                nv = self.add_component(node_data_anchor, label="node")
+        for vid in self.post_order_mpg():
+            if scale_prop.get(vid) == from_scale and vid in valid_vids:
+                # Here we use add_component_with_topo because we want to traceback nodes' element parentship
+                # WARNING implicitely we use passed fine scale to anchor populated nodes 
+                nv = self.add_component_with_topo(node_anchor, vid, **PropsConfig(
+                    scale=self.scales.Compartment,
+                    label=self.labels.Compartment.Symplastic,
+                    edge_type='/',
+                ))
                 self.property("vertex_id")[nv] = vid
                 seg_to_node[vid] = nv
 
-        is_collar = {}
-        for vid in seg_to_node:
-            p = mtg.parent(vid)
-            # Walk up the source MTG, skipping structural connectors and
-            # vertices not present in the transport graph.
-            while p is not None and (skip(p) or p not in seg_to_node):
-                p = mtg.parent(p)
-            if p is not None:
-                ev = self.add_component(edge_data_anchor, label="edge")
-                self.property("vertex_id")[ev] = vid   # edge_id = child vid
-                self.property("n_id_a")[ev] = p
-                self.property("n_id_b")[ev] = vid
-                is_collar[vid] = False
-            else:
-                is_collar[vid] = True   # no functional parent → collar / root node
+        def _tip_component(complex_v, exclude):
+            """Tip from_scale vertex directly owned by complex_v, or None."""
+            candidates = [
+                c for c in self.components_iter(complex_v)
+                if scale_prop.get(c) == from_scale and c in seg_to_node and c != exclude
+            ]
+            if not candidates:
+                return None
+            if len(candidates) == 1:
+                return candidates[0]
+            # Tip = the candidate that is not a parent of any other candidate.
+            cset = set(candidates)
+            for c in candidates:
+                if not any(self.parent(other) == c for other in cset if other != c):
+                    return c
+            return candidates[0]
 
-        # Convert plain-dict properties to ArrayDict so array_at_scale()
-        # (which calls prop.indices_of / prop.values_array) works correctly.
-        mtg_to_arraydict(self)
-        return is_collar
+        # Pass 2 — wire Compartment nodes into Connection edges.
+        # At each coarser-scale ancestor, also check its direct from_scale
+        # components (handles lateral connections whose topo-parent is Organ-scale).
+        has_parent = set()
+        for vid in seg_to_node:
+            parent_found = None
+            p = self.parent(vid)
+            while p is not None:
+                if p in seg_to_node:
+                    parent_found = p
+                    break
+                tip = _tip_component(p, exclude=vid)
+                if tip is not None:
+                    parent_found = tip
+                    break
+                p = self.parent(p)
+            if parent_found is not None:
+                has_parent.add(vid)
+                ev = self.add_component(edge_anchor, **PropsConfig(
+                    scale=self.scales.Connection,
+                    label=self.labels.Connection.Symplastic,
+                    edge_type='/',
+                ))
+                self.property("n_id_a")[ev] = parent_found
+                self.property("n_id_b")[ev] = vid
+
+        # Pass 3 — reconnect orphans produced by filtered branching nodes.
+        # When a filtered vertex was the bridge between multiple included subgraphs,
+        # Pass 2 leaves those subgraph heads as orphans.  Group them by their
+        # topmost filtered from_scale ancestor and chain each group so the
+        # overall graph remains connected.
+        orphans = [vid for vid in seg_to_node if vid not in has_parent]
+        if not orphans:
+            return
+
+        def _root_filtered_ancestor(vid):
+            """Topmost filtered from_scale vertex reachable upward from vid."""
+            p = self.parent(vid)
+            last = None
+            while p is not None:
+                if scale_prop.get(p) == from_scale and p not in valid_vids:
+                    last = p
+                p = self.parent(p)
+            return last
+
+        from collections import defaultdict
+        groups = defaultdict(list)
+        for vid in orphans:
+            groups[_root_filtered_ancestor(vid)].append(vid)
+
+        for group in groups.values():
+            for i in range(1, len(group)):
+                ev = self.add_component(edge_anchor, **PropsConfig(
+                    scale=self.scales.Connection,
+                    label=self.labels.Connection.Symplastic,
+                    edge_type='/',
+                ))
+                self.property("n_id_a")[ev] = group[i - 1]
+                self.property("n_id_b")[ev] = group[i]
 
 
     def graph(self, property_name):
-        node_scale = self.scales["node"]
-        edge_scale = self.scales["edge"]
+        node_scale = self.scales.Compartment
+        edge_scale = self.scales.Connection
 
         nids = np.asarray(
-            self.array_at_scale("vertex_id", scale=node_scale), dtype=np.int64
+            self.array_filtering("vertex_id", filter_in=dict(scale=node_scale)), dtype=np.int64
         )
         n_id_a = np.asarray(
-            self.array_at_scale("n_id_a", scale=edge_scale), dtype=np.int64
+            self.array_filtering("n_id_a", filter_in=dict(scale=edge_scale)), dtype=np.int64
         )
         n_id_b = np.asarray(
-            self.array_at_scale("n_id_b", scale=edge_scale), dtype=np.int64
+            self.array_filtering("n_id_b", filter_in=dict(scale=edge_scale)), dtype=np.int64
         )
-        length = np.asarray(
-            self.array_at_scale(property_name, scale=edge_scale),
-            dtype=np.float64,
+        target_prop = np.asarray(
+            self.array_filtering(property_name, filter_in=dict(scale=edge_scale)), dtype=np.float64,
         )
 
         nid_to_index = {vid: idx for idx, vid in enumerate(nids)}
@@ -198,16 +292,89 @@ class MPG(MTG):
 
         rows = np.r_[idx_a, idx_b, idx_a, idx_b]
         cols = np.r_[idx_a, idx_b, idx_b, idx_a]
-        data = np.r_[length, length, -length, -length]
+        data = np.r_[target_prop, target_prop, -target_prop, -target_prop]
         return rows, cols, data
+   
 
-    def array_at_scale(self, name, scale):
+    def array_filtering(self, name: str, filter_in: dict = None, filter_out: dict = None):
+        """Return the values of property *name* for the subset of vertices that
+        satisfy all filter conditions, without requiring every property to be
+        defined on the same set of vertices.
+
+        Each MPG property is a sparse ArrayDict: it only stores entries for
+        the vertices where it was explicitly set.  Properties at different
+        biological scales therefore have different sizes and cannot be aligned
+        by position.  This method performs a VID-set intersection so that each
+        filter property is queried independently, then the result is restricted
+        to vertices that actually carry *name*.
+
+        Parameters
+        ----------
+        name : str
+            Property whose values are returned.
+        filter_in : dict[str, scalar], optional
+            ``{property_name: value}`` — keep only vertices where
+            ``property_name == value``.  Multiple entries are ANDed.
+        filter_out : dict[str, scalar], optional
+            ``{property_name: value}`` — keep only vertices where
+            ``property_name != value``.  Multiple entries are ANDed.
+
+        Returns
+        -------
+        np.ndarray
+            Values of *name* for the matched vertices, in ascending VID order.
+            Returns an empty array of the correct dtype when no vertex matches.
+
+        Algorithm
+        ---------
+        1. For each ``filter_in`` condition, scan the filter property's sorted
+           key array with a boolean mask to obtain the matching VIDs (a sorted
+           numpy array).  Intersect with *valid_keys* using ``np.isin``
+           (binary-search, O(M log N)); this shrinks *valid_keys* each step.
+        2. Repeat for ``filter_out`` conditions (mask inverted).
+        3. Intersect *valid_keys* with the keys present in *name*'s ArrayDict
+           to exclude vertices that were never assigned a value for *name*.
+        4. Use ``np.searchsorted`` on the sorted ArrayDict key array to convert
+           the remaining VIDs to positional indices in O(M log N), then index
+           ``values_array()`` directly — no Python-level loops.
+
+        Notes
+        -----
+        ``assume_unique=True`` is passed to ``np.isin`` because ArrayDict
+        maintains a sorted, deduplicated key invariant, which allows numpy to
+        skip internal uniqueness checks and go straight to binary search.
+        """
         prop = self.property(name)
-        # Filter to vertices that carry this property; anchor vertices at the
-        # same scale (created in __init__) do not, so they are excluded here.
-        ids_at_scale = [v for v in self.components_at_scale(self.root, scale=scale) if v in prop]
-        idx = prop.indices_of(ids_at_scale)
-        return np.asarray(prop.values_array()[idx])
+        if filter_in is None and filter_out is None:
+            return prop.values_array()
+
+        # Step 1-2: build valid_keys by intersecting each filter condition.
+        valid_keys = None   # sorted int64 numpy array, shrinks each iteration
+
+        for fp_name, fp_val in (filter_in or {}).items():
+            fp    = self.property(fp_name)
+            match = fp.order[:fp.size][fp.values_array() == fp_val]
+            valid_keys = match if valid_keys is None else \
+                         valid_keys[np.isin(valid_keys, match, assume_unique=True)]
+
+        for fp_name, fp_val in (filter_out or {}).items():
+            fp    = self.property(fp_name)
+            match = fp.order[:fp.size][fp.values_array() != fp_val]
+            valid_keys = match if valid_keys is None else \
+                         valid_keys[np.isin(valid_keys, match, assume_unique=True)]
+
+        if valid_keys is None or len(valid_keys) == 0:
+            return np.array([], dtype=prop.arr.dtype)
+
+        # Step 3: restrict to vertices that carry the requested property.
+        prop_keys = prop.order[:prop.size]
+        ids = valid_keys[np.isin(valid_keys, prop_keys, assume_unique=True)]
+
+        if len(ids) == 0:
+            return np.array([], dtype=prop.arr.dtype)
+
+        # Step 4: convert VIDs to array positions and read values.
+        return prop.values_array()[np.searchsorted(prop_keys, ids)]
 
 
     # MULTISCALE TRAVERSALS (combining ordered scale and element iteration)
@@ -438,4 +605,25 @@ class MPG(MTG):
                 props[v]     = S / W if W > 0 else 0.0
                 accum_sum[v] = S   # relay numerator
                 accum_wt[v]  = W   # relay denominator
+
+
+    def convert_properties_to_arraydict(self, g = None, ignore: list = []):
+        if g is not None:
+            props = g.properties()
+        else:
+            props = self.properties()
+
+        for k, v in props.items():
+            # print(k, v)
+            if isinstance(v, dict) and len(v) > 0 and k not in ignore:
+                assigned_values = [value for value in v.values() if value is not None]
+                if len(assigned_values) > 0:
+                    first_element = assigned_values[0]
+                    if isinstance(first_element, float) or isinstance(first_element, int) or isinstance(first_element, np.int32) or isinstance(first_element, np.int64) or isinstance(first_element, np.float64):
+                        props[k] = ArrayDict(v)
+            
+            # If any was already existing, recreate it to make sure this is the right version with the invariant vid ordering # TODO remove after ArrayDict is stable
+            elif isinstance(v, ArrayDict):
+                stored = v.to_dict()
+                props[k] = ArrayDict(stored)
 

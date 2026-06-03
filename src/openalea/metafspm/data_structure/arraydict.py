@@ -209,19 +209,4 @@ class ArrayDict(MutableMapping):
         return True
 
 
-def mtg_to_arraydict(g, ignore: list = []):
-    props = g.properties()
-    for k, v in props.items():
-        # print(k, v)
-        if isinstance(v, dict) and len(v) > 0 and k not in ignore:
-            assigned_values = [value for value in v.values() if value is not None]
-            if len(assigned_values) > 0:
-                first_element = assigned_values[0]
-                if isinstance(first_element, float) or isinstance(first_element, int) or isinstance(first_element, np.int32) or isinstance(first_element, np.int64) or isinstance(first_element, np.float64):
-                    props[k] = ArrayDict(v)
-        
-        # If any was already existing, recreate it to make sure this is the right version with the invariant vid ordering # TODO remove after ArrayDict is stable
-        elif isinstance(v, ArrayDict):
-            stored = v.to_dict()
-            props[k] = ArrayDict(stored)
                 
