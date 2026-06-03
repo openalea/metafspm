@@ -179,26 +179,77 @@ def test_graph_visualization():
     assert sum(len(v) for v in adj.values()) == 13
 
 
+def put_edges_on_existing_anatomy():
+    """populate_connection_edges wires matching compartments between adjacent SubOrgan vertices.
+
+    Setup: for each of 14 SubOrgan vertices, 4 Compartment nodes (Symplastic, MetaXylem,
+    Phloem, Apoplastic) and 4 intra-organ Connection edges are created by the anatomy generator.
+
+    populate_connection_edges then adds inter-organ edges for 3 connection specs:
+      - Symplastic → Symplastic : Symplastic edge   \
+      - MetaXylem  → MetaXylem  : Apoplastic edge    } × 13 adjacencies = 39 inter-organ edges
+      - Phloem     → Phloem     : Symplastic edge   /
+
+    Total Connection edges = 14 × 4 (intra-organ) + 39 (inter-organ) = 95.
+    """
+    from simple_seedling import generate_simple_mpg_seedling
+    from openalea.metafspm.data_structure.configs import PropsConfig
+    g2, _ = generate_simple_mpg_seedling()
+
+    node_anchor = g2.scales.anchors[g2.scales.Compartment]
+    edge_anchor = g2.scales.anchors[g2.scales.Connection]
+
+    for vid in g2.vertices(scale=g2.scales.SubOrgan):
+        if g2.property('isanchor').get(vid, False):
+            continue
+        symplasm    = g2.add_component_with_topo(node_anchor, vid, **PropsConfig(scale=g2.scales.Compartment, edge_type='/', label=g2.labels.Compartment.Symplastic))
+        xylem       = g2.add_component_with_topo(node_anchor, vid, **PropsConfig(scale=g2.scales.Compartment, edge_type='/', label=g2.labels.Cell.MetaXylem))
+        phloem      = g2.add_component_with_topo(node_anchor, vid, **PropsConfig(scale=g2.scales.Compartment, edge_type='/', label=g2.labels.Cell.Phloem))
+        environment = g2.add_component_with_topo(node_anchor, vid, **PropsConfig(scale=g2.scales.Compartment, edge_type='/', label=g2.labels.Compartment.Apoplastic))
+        g2.add_component_with_topo(edge_anchor, vid, **PropsConfig(scale=g2.scales.Connection, edge_type='/', label=g2.labels.Connection.Transmembrane, n_id_a=symplasm, n_id_b=environment))
+        g2.add_component_with_topo(edge_anchor, vid, **PropsConfig(scale=g2.scales.Connection, edge_type='/', label=g2.labels.Connection.Transmembrane, n_id_a=symplasm, n_id_b=xylem))
+        g2.add_component_with_topo(edge_anchor, vid, **PropsConfig(scale=g2.scales.Connection, edge_type='/', label=g2.labels.Connection.Symplastic,    n_id_a=symplasm, n_id_b=phloem))
+        g2.add_component_with_topo(edge_anchor, vid, **PropsConfig(scale=g2.scales.Connection, edge_type='/', label=g2.labels.Connection.Transmembrane, n_id_a=xylem,    n_id_b=phloem))
+
+    g2.populate_node_edge_scales(
+        g2.scales.SubOrgan,
+        connections=[
+            dict(node_label=g2.labels.Compartment.Symplastic, edge_label=g2.labels.Connection.Symplastic),
+            dict(node_label=g2.labels.Cell.MetaXylem,         edge_label=g2.labels.Connection.Apoplastic),
+            dict(node_label=g2.labels.Cell.Phloem,            edge_label=g2.labels.Connection.Symplastic),
+        ]
+    )
+    g2.convert_properties_to_arraydict()
+
+    return g2
+
 def test_edges_on_existing_anatomy():
 
-    # Example encapsulated anatomical compartements generation and wiring that mimics what models like GRANAP would generate
-    node_anchor = g.scales.anchors[g.scales.Compartment]
-    edge_anchor = g.scales.anchors[g.scales.Connection]
-    from openalea.metafspm.data_structure.configs import PropsConfig
-    for vid in g.vertices(scale=g.scales.SubOrgan):
-        # Example compartments
-        symplasm = g.add_component_with_topo(node_anchor, vid, **PropsConfig(scale=g.scales.Compartment, edge_type='/', label=g.labels.Compartment.Symplastic))
-        xylem = g.add_component_with_topo(node_anchor, vid, **PropsConfig(scale=g.scales.Compartment, edge_type='/', label=g.labels.Cell.MetaXylem))
-        phloem = g.add_component_with_topo(node_anchor, vid, **PropsConfig(scale=g.scales.Compartment, edge_type='/', label=g.labels.Cell.Phloem))
-        environment = g.add_component_with_topo(node_anchor, vid, **PropsConfig(scale=g.scales.Compartment, edge_type='/', label=g.labels.Compartment.Apoplastic))
-        # Example edges
-        n_symp_env = g.add_component_with_topo(edge_anchor, vid, **PropsConfig(scale=g.scales.Connection, edge_type='/', label=g.labels.Connection.Transmembrane, n_id_a=symplasm, n_id_b=environment))
-        n_symp_xylem = g.add_component_with_topo(edge_anchor, vid, **PropsConfig(scale=g.scales.Connection, edge_type='/', label=g.labels.Connection.Transmembrane, n_id_a=symplasm, n_id_b=xylem))
-        n_symp_phloem = g.add_component_with_topo(edge_anchor, vid, **PropsConfig(scale=g.scales.Connection, edge_type='/', label=g.labels.Connection.Symplastic, n_id_a=symplasm, n_id_b=phloem))
-        n_xylem_phloem = g.add_component_with_topo(edge_anchor, vid, **PropsConfig(scale=g.scales.Connection, edge_type='/', label=g.labels.Connection.Transmembrane, n_id_a=xylem, n_id_b=phloem))
-    
-    
-        
+    g2 = put_edges_on_existing_anatomy()
+
+    all_edges = [ev for ev in g2.components_at_scale(g2.root, scale=g2.scales.Connection)
+                 if not g2.property('isanchor').get(ev, False)]
+    assert len(all_edges) == 14 * 4 + 13 * 3, \
+        f"expected {14*4 + 13*3} edges (56 intra + 39 inter), got {len(all_edges)}"
+
+    n_id_a_prop = g2.property('n_id_a')
+    n_id_b_prop = g2.property('n_id_b')
+    lbl_prop    = g2.property('label')
+
+    inter_organ = [
+        ev for ev in all_edges
+        if ev in n_id_a_prop and ev in n_id_b_prop
+        and g2.parent(int(n_id_a_prop[ev])) != g2.parent(int(n_id_b_prop[ev]))
+    ]
+    assert len(inter_organ) == 13 * 3, \
+        f"expected 39 inter-organ edges, got {len(inter_organ)}"
+
+    apoplastic_inter = [ev for ev in inter_organ
+                        if lbl_prop.get(ev) == g2.labels.Connection.Apoplastic]
+    assert len(apoplastic_inter) == 13, \
+        f"expected 13 xylem-xylem (Apoplastic) inter-organ edges, got {len(apoplastic_inter)}"
+
+
 
 
 
@@ -311,20 +362,28 @@ def _plot_transport_graph(title="Transport graph", mpg=None):
 
 
 if __name__ == "__main__":
-    for fn in [test_node_edge_population, test_graph_building, test_graph_visualization]:
+    from plotting import plot_mpg
+    from openalea.metafspm.data_structure.configs import PropsConfig
+
+    for fn in [test_node_edge_population, test_graph_building, test_graph_visualization,
+               test_edges_on_existing_anatomy]:
         fn()
         print(f"{fn.__name__} passed")
     print("All tests passed.")
 
-    _plot_transport_graph("Transport graph")
+    # ── Node-creation mode ────────────────────────────────────────────────────
+    plot_mpg(g, "Node-creation mode (all SubOrgan)")
 
-    # Demonstrate filter_in: root-only subgraph.
+    # ── filter_out=StemElement ────────────────────────────────────────────────
     from simple_seedling import generate_simple_mpg_seedling as _gen
-    g2, s2 = _gen()
-    g2.populate_node_edge_scales(
-        g2.scales.SubOrgan,
-        filter_out=dict(label=g2.labels.SubOrgan.StemElement),
+    g_filt, _ = _gen()
+    g_filt.populate_node_edge_scales(
+        g_filt.scales.SubOrgan,
+        filter_out=dict(label=g_filt.labels.SubOrgan.StemElement),
     )
-    g2.convert_properties_to_arraydict()
-    print("filter_in=RootSegment demo passed.")
-    _plot_transport_graph("Root-only subgraph (filter_out=StemSegment)", mpg=g2)
+    g_filt.convert_properties_to_arraydict()
+    plot_mpg(g_filt, "Node-creation mode (filter_out=StemElement)")
+
+    # ── Anatomy-wiring mode ───────────────────────────────────────────────────
+    g_anat = put_edges_on_existing_anatomy()
+    plot_mpg(g_anat, title="Anatomy-wiring mode (Symplastic + MetaXylem + Phloem)", node_property="label", edge_property='conductance')

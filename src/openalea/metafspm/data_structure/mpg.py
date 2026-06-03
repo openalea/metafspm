@@ -98,74 +98,50 @@ class MPG(MTG):
         return mpg
 
 
-    def populate_node_edge_scales(self, from_scale, filter_in=None, filter_out=None):
-        """
-        Two-pass population of Compartment (node) and Connection (edge) scales
-        from all vertices at *from_scale*, discovered via post_order_mpg traversal.
+    def populate_node_edge_scales(self, from_scale, filter_in=None, filter_out=None,
+                                  connections=None):
+        """Populate Compartment nodes and Connection edges from all vertices at *from_scale*.
+
+        Two modes, selected by the *connections* parameter:
+
+        Node-creation mode (connections=None, default)
+            One Compartment node is created per included from_scale vertex (Pass 1).
+            Connection edges between adjacent vertices are then wired (Pass 2).
+            A third pass reconnects any subgraph heads left as orphans when a
+            filtered vertex was the branching bridge between multiple subgraphs.
+
+        Anatomy-wiring mode (connections=list)
+            Compartment nodes are assumed to already exist, linked to their
+            from_scale vertex via add_component_with_topo(node_anchor, vid, ...).
+            The method discovers the same topology and creates one Connection edge
+            per entry in *connections* between matching compartments of adjacent
+            from_scale vertices (selected by label).
 
         Parameters
         ----------
         from_scale : int
-            Scale whose vertices become transport-graph nodes (e.g.
-            ``g.scales.SubOrgan``).  All vertices at this scale present in the
-            MPG are included automatically — no explicit vertex list is needed.
-        filter_in : dict, optional
-            ``{property_name: value}`` — only vertices whose property equals
-            *value* are included as Compartment nodes.  Filtered-out vertices
-            are still used topologically: the parent-chain walk in pass 2
-            naturally bridges over any vertex absent from *seg_to_node*, so
-            two included vertices separated by an excluded one remain connected.
-        filter_out : dict, optional
-            ``{property_name: value}`` — vertices whose property equals *value*
-            are excluded (complementary to *filter_in*).
-
-        Algorithm
-        ---------
-        Pre-filter — valid_vids set:
-            Start from all VIDs at *from_scale* (numpy mask on scale property).
-            Apply filter_in / filter_out intersections via np.isin, same pattern
-            as array_filtering.  The resulting set controls which vertices get
-            Compartment nodes; excluded vertices are transparent to topology.
-
-        Pass 1 — vertex discovery (post_order_mpg):
-            post_order_mpg visits fine-scale vertices before their coarser-scale
-            complexes, naturally traversing from *from_scale* up to the plant
-            root.  For each vertex at *from_scale* in *valid_vids*, one
-            Compartment node is created and mapped in *seg_to_node*.
-
-            Two passes are required because post_order_mpg yields a lateral
-            subgraph before its topological-parent subgraph at the same organ
-            scale (e.g. root_internode2's segments before root_internode1's).
-            A lateral vertex whose topo-parent lives in the preceding subgraph
-            would therefore be encountered before that parent is registered,
-            making one-pass edge wiring impossible.
-
-        Pass 2 — edge wiring:
-            For each from_scale vertex, walk the parent chain upward.  At each
-            coarser-scale vertex *p* that is not itself in *seg_to_node*, also
-            check whether *p* directly owns any from_scale component in
-            *seg_to_node* — if so, the tip of that component chain is used as
-            the transport parent.  This handles lateral vertices (e.g. a leaf
-            base element whose topo-parent is the Organ-scale internode that
-            also owns an internode element at from_scale).
-
-            Vertices whose parent chain exits the graph without finding any
-            candidate become transport-graph roots (entry points with no
-            incoming edge).
+            Scale whose vertices provide topology (e.g. g.scales.SubOrgan).
+        filter_in, filter_out : dict, optional
+            ``{property_name: value}`` — include / exclude from_scale vertices.
+            Excluded vertices remain topologically transparent (the parent-chain
+            walk bridges over them).
+        connections : list of dict, optional
+            Each entry specifies one inter-organ link type:
+              node_label — label of the Compartment nodes to pair
+              edge_label — label of the Connection edge to create
+            When None (default), one Symplastic Compartment node is created per
+            from_scale vertex and connected with Symplastic Connection edges.
 
         Notes
         -----
-        Compartment vertices (scale 9) are added as components of
-        ``scales.anchors[Compartment]``.  Connection vertices (scale 10) are
-        added as components of ``scales.anchors[Connection]``.
-        Call ``convert_properties_to_arraydict()`` after this method so that
-        ``array_filtering()`` and ``graph()`` can operate on the new properties.
+        Call convert_properties_to_arraydict() after this method.
         """
-        node_anchor = self.scales.anchors[self.scales.Compartment]
-        edge_anchor = self.scales.anchors[self.scales.Connection]
-        scale_prop  = self.property('scale')
+        node_anchor   = self.scales.anchors[self.scales.Compartment]
+        edge_anchor   = self.scales.anchors[self.scales.Connection]
+        scale_prop    = self.property('scale')
+        isanchor_prop = self.property('isanchor')
 
-        # Pre-filter — build the set of included VIDs using numpy intersection.
+        # Pre-filter — valid from_scale VIDs via numpy intersection.
         valid_keys = scale_prop.order[:scale_prop.size][scale_prop.values_array() == from_scale]
         for fp_name, fp_val in (filter_in or {}).items():
             fp = self.property(fp_name)
@@ -175,48 +151,65 @@ class MPG(MTG):
             fp = self.property(fp_name)
             match = fp.order[:fp.size][fp.values_array() == fp_val]
             valid_keys = valid_keys[~np.isin(valid_keys, match, assume_unique=True)]
+        # Anatomy-wiring mode iterates valid_vids directly; exclude anchors explicitly.
+        # Node-creation mode uses post_order_mpg(skip_anchors=True) which handles this.
+        if connections is not None:
+            anchor_keys = isanchor_prop.order[:isanchor_prop.size][isanchor_prop.values_array() != 0]
+            valid_keys  = valid_keys[~np.isin(valid_keys, anchor_keys, assume_unique=False)]
         valid_vids = set(int(v) for v in valid_keys)
 
-        # Pass 1 — discover included from_scale vertices and create Compartment nodes.
+        # Pass 1 (node-creation mode): one Compartment node per from_scale vertex.
+        # seg_to_node preserves post_order insertion order, required by Pass 3 chaining.
         seg_to_node = {}
-        for vid in self.post_order_mpg():
-            if scale_prop.get(vid) == from_scale and vid in valid_vids:
-                # Here we use add_component_with_topo because we want to traceback nodes' element parentship
-                # WARNING implicitely we use passed fine scale to anchor populated nodes 
-                nv = self.add_component_with_topo(node_anchor, vid, **PropsConfig(
-                    scale=self.scales.Compartment,
-                    label=self.labels.Compartment.Symplastic,
-                    edge_type='/',
-                ))
-                self.property("vertex_id")[nv] = vid
-                seg_to_node[vid] = nv
+        if connections is None:
+            for vid in self.post_order_mpg():
+                if scale_prop.get(vid) == from_scale and vid in valid_vids:
+                    nv = self.add_component_with_topo(node_anchor, vid, **PropsConfig(
+                        scale=self.scales.Compartment,
+                        label=self.labels.Compartment.Symplastic,
+                        edge_type='/',
+                    ))
+                    self.property("vertex_id")[nv] = vid
+                    seg_to_node[vid] = nv
 
+        # Anatomy-wiring mode: build {suborgan_vid → {label → compartment_vid}}.
+        # parent(compartment_node) == suborgan_vid via the cross-scale topo link
+        # set by add_component_with_topo(node_anchor, suborgan_vid, ...).
+        vid2comps = {}
+        if connections is not None:
+            label_prop = self.property('label')
+            for nv in self.components_at_scale(self.root, scale=self.scales.Compartment):
+                if isanchor_prop.get(nv, False):
+                    continue
+                src = self.parent(nv)
+                if src is None or scale_prop.get(src) != from_scale or src not in valid_vids:
+                    continue
+                vid2comps.setdefault(src, {})[label_prop.get(nv)] = nv
+
+        # _tip_component: tip from_scale vertex directly owned by a coarser-scale vertex.
+        # After Pass 1, seg_to_node.keys() == valid_vids, so valid_vids works for both modes.
         def _tip_component(complex_v, exclude):
-            """Tip from_scale vertex directly owned by complex_v, or None."""
             candidates = [
                 c for c in self.components_iter(complex_v)
-                if scale_prop.get(c) == from_scale and c in seg_to_node and c != exclude
+                if scale_prop.get(c) == from_scale and c in valid_vids and c != exclude
             ]
             if not candidates:
                 return None
             if len(candidates) == 1:
                 return candidates[0]
-            # Tip = the candidate that is not a parent of any other candidate.
             cset = set(candidates)
             for c in candidates:
                 if not any(self.parent(other) == c for other in cset if other != c):
                     return c
             return candidates[0]
 
-        # Pass 2 — wire Compartment nodes into Connection edges.
-        # At each coarser-scale ancestor, also check its direct from_scale
-        # components (handles lateral connections whose topo-parent is Organ-scale).
-        has_parent = set()
-        for vid in seg_to_node:
+        # Pass 2 — wire edges between adjacent from_scale vertices.
+        has_parent  = set()
+        for vid in (seg_to_node if connections is None else valid_vids):
             parent_found = None
             p = self.parent(vid)
             while p is not None:
-                if p in seg_to_node:
+                if p in valid_vids:
                     parent_found = p
                     break
                 tip = _tip_component(p, exclude=vid)
@@ -224,8 +217,11 @@ class MPG(MTG):
                     parent_found = tip
                     break
                 p = self.parent(p)
-            if parent_found is not None:
-                has_parent.add(vid)
+            if parent_found is None:
+                continue
+            has_parent.add(vid)
+
+            if connections is None:
                 ev = self.add_component(edge_anchor, **PropsConfig(
                     scale=self.scales.Connection,
                     label=self.labels.Connection.Symplastic,
@@ -233,18 +229,31 @@ class MPG(MTG):
                 ))
                 self.property("n_id_a")[ev] = parent_found
                 self.property("n_id_b")[ev] = vid
+            else:
+                parent_comps = vid2comps.get(parent_found, {})
+                child_comps  = vid2comps.get(vid, {})
+                for conn in connections:
+                    n_a = parent_comps.get(conn['node_label'])
+                    n_b = child_comps.get(conn['node_label'])
+                    if n_a is None or n_b is None:
+                        continue
+                    ev = self.add_component(edge_anchor, **PropsConfig(
+                        scale=self.scales.Connection,
+                        label=conn['edge_label'],
+                        edge_type='/',
+                    ))
+                    self.property("n_id_a")[ev] = n_a
+                    self.property("n_id_b")[ev] = n_b
 
-        # Pass 3 — reconnect orphans produced by filtered branching nodes.
-        # When a filtered vertex was the bridge between multiple included subgraphs,
-        # Pass 2 leaves those subgraph heads as orphans.  Group them by their
-        # topmost filtered from_scale ancestor and chain each group so the
-        # overall graph remains connected.
+        # Pass 3 (node-creation mode only) — reconnect orphans from filtered branching nodes.
+        if connections is not None:
+            return
+
         orphans = [vid for vid in seg_to_node if vid not in has_parent]
         if not orphans:
             return
 
         def _root_filtered_ancestor(vid):
-            """Topmost filtered from_scale vertex reachable upward from vid."""
             p = self.parent(vid)
             last = None
             while p is not None:
