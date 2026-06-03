@@ -1,6 +1,6 @@
 """Tests for MPG node/edge population and transport-graph construction.
 
-populate_node_edge_scales(from_scale) discovers ALL vertices at from_scale
+populate_graph(from_scale) discovers ALL vertices at from_scale
 via post_order_mpg — no explicit vertex list required.  The seedling's g is
 used directly; calling with SubOrgan discovers all 14 SubOrgan vertices:
   - shoot phytomer 1 : internodeelement (StemElement), leafelement1-3 (LeafElement)
@@ -71,7 +71,7 @@ _EXPECTED_EDGES = {
     (root_segment5,     root_segment6),
 }
 
-g.populate_node_edge_scales(g.scales.SubOrgan)
+g.populate_graph(g.scales.SubOrgan)
 g.convert_properties_to_arraydict()
 
 
@@ -94,8 +94,8 @@ def _edge_vids():
 # ── Test 1: node and edge population ─────────────────────────────────────────
 
 def test_node_edge_population():
-    """populate_node_edge_scales(SubOrgan) discovers all 14 SubOrgan vertices
-    and creates 11 directed Connection edges."""
+    """populate_graph(SubOrgan) discovers all 14 SubOrgan vertices
+    and creates 13 Connection edges."""
 
     nodes = _node_vids()
     assert len(nodes) == 14, f"expected 14 Compartment nodes, got {len(nodes)}"
@@ -211,9 +211,9 @@ def put_edges_on_existing_anatomy():
         g2.add_component_with_topo(edge_anchor, vid, **PropsConfig(scale=g2.scales.Connection, edge_type='/', label=g2.labels.Connection.Symplastic,    n_id_a=symplasm, n_id_b=phloem))
         g2.add_component_with_topo(edge_anchor, vid, **PropsConfig(scale=g2.scales.Connection, edge_type='/', label=g2.labels.Connection.Transmembrane, n_id_a=xylem,    n_id_b=phloem))
 
-    g2.populate_node_edge_scales(
+    g2.populate_graph_custom_connections(
         g2.scales.SubOrgan,
-        connections=[
+        [
             dict(node_label=g2.labels.Compartment.Symplastic, edge_label=g2.labels.Connection.Symplastic),
             dict(node_label=g2.labels.Cell.MetaXylem,         edge_label=g2.labels.Connection.Apoplastic),
             dict(node_label=g2.labels.Cell.Phloem,            edge_label=g2.labels.Connection.Symplastic),
@@ -291,11 +291,11 @@ def test_ordered_connections():
 
     # ── Ordered: near↔near, far↔far ──────────────────────────────────────────
     g_ord = _setup()
-    g_ord.populate_node_edge_scales(
+    g_ord.populate_graph_custom_connections(
         g_ord.scales.SubOrgan,
-        connections=[dict(node_label=g_ord.labels.Cell.MetaXylem,
-                          edge_label=g_ord.labels.Connection.Apoplastic,
-                          ordering='angle')],
+        [dict(node_label=g_ord.labels.Cell.MetaXylem,
+              edge_label=g_ord.labels.Connection.Apoplastic,
+              ordering='angle')],
     )
     g_ord.convert_properties_to_arraydict()
 
@@ -314,10 +314,10 @@ def test_ordered_connections():
 
     # ── All-to-all (no ordering): every pair among the 2 near/far nodes ───────
     g_all = _setup()
-    g_all.populate_node_edge_scales(
+    g_all.populate_graph_custom_connections(
         g_all.scales.SubOrgan,
-        connections=[dict(node_label=g_all.labels.Cell.MetaXylem,
-                          edge_label=g_all.labels.Connection.Apoplastic)],
+        [dict(node_label=g_all.labels.Cell.MetaXylem,
+              edge_label=g_all.labels.Connection.Apoplastic)],
     )
     g_all.convert_properties_to_arraydict()
 
@@ -342,7 +342,7 @@ if __name__ == "__main__":
     # ── filter_out=StemElement ────────────────────────────────────────────────
     from simple_seedling import generate_simple_mpg_seedling as _gen
     g_filt, _ = _gen()
-    g_filt.populate_node_edge_scales(
+    g_filt.populate_graph(
         g_filt.scales.SubOrgan,
         filter_out=dict(label=g_filt.labels.SubOrgan.StemElement),
     )
@@ -370,21 +370,21 @@ if __name__ == "__main__":
         return g_x
 
     g_ord = _xylem_setup()
-    g_ord.populate_node_edge_scales(
+    g_ord.populate_graph_custom_connections(
         g_ord.scales.SubOrgan,
-        connections=[dict(node_label=g_ord.labels.Cell.MetaXylem,
-                          edge_label=g_ord.labels.Connection.Apoplastic,
-                          ordering='angle')],
+        [dict(node_label=g_ord.labels.Cell.MetaXylem,
+              edge_label=g_ord.labels.Connection.Apoplastic,
+              ordering='angle')],
     )
     g_ord.convert_properties_to_arraydict()
     plot_mpg(g_ord, "Ordered — 2 xylem vessels matched by angle (26 inter-organ edges)",
              node_property='angle')
 
     g_all = _xylem_setup()
-    g_all.populate_node_edge_scales(
+    g_all.populate_graph_custom_connections(
         g_all.scales.SubOrgan,
-        connections=[dict(node_label=g_all.labels.Cell.MetaXylem,
-                          edge_label=g_all.labels.Connection.Apoplastic)],
+        [dict(node_label=g_all.labels.Cell.MetaXylem,
+              edge_label=g_all.labels.Connection.Apoplastic)],
     )
     g_all.convert_properties_to_arraydict()
     plot_mpg(g_all, "All-to-all — 2 xylem vessels, no ordering (52 inter-organ edges)",

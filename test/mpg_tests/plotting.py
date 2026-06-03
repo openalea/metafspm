@@ -8,9 +8,9 @@ plot_mpg(mpg, title="...", node_property=None, edge_property=None, show=True)
 Generic: works from any MPG's Compartment nodes and Connection edges using
 only the label, n_id_a / n_id_b, and vertex_id properties.
 
-Handles both populate_node_edge_scales modes:
-- node-creation mode  : nodes colored by SubOrgan label by default (vertex_id present)
-- anatomy-wiring mode : nodes colored by own Compartment/Cell label by default
+Handles both population modes:
+- populate_graph (node-creation)             : nodes colored by SubOrgan label (vertex_id present)
+- populate_graph_custom_connections (wiring) : nodes colored by own Compartment/Cell label
 
 When node_property / edge_property are provided, the corresponding elements are
 colored via a continuous colormap (viridis for nodes, plasma for edges) and a
