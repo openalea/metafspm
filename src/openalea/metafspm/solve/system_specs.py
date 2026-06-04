@@ -262,7 +262,7 @@ class GraphDAESpec(BaseSystemSpec):
 
     Together ODESystemSpec and GraphDAESpec cover the two main use cases:
       ODESystemSpec  →  ArrayDataStructure / FieldSpecBuilder (env models)
-      GraphDAESpec   →  SparseMTGDataStructure / GraphSystemBuilder (plant graph)
+      GraphDAESpec   →  MPGDataStructure / GraphSystemBuilder (plant graph)
 
     This class is the spec-and-evaluation half of the old GraphSystem.
     The solve half lives in solver.py.  GraphSystem (below) is the

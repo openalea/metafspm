@@ -1,6 +1,6 @@
 from utils import deep_reload_package
 deep_reload_package("openalea")
-from openalea.metafspm.component_factory import Choregrapher
+from openalea.metafspm.coupling.choregrapher import Choregrapher
 
 
 def test_reinit_Choregrapher():
