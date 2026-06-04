@@ -6,15 +6,15 @@ Data structure hierarchy for metafspm graph models.
 DataStructure (abstract)                 storage, topology, state I/O
   ├── GraphDataStructure (abstract)       nodes, edges, incidence matrix B
   │     └── MTGDataStructure (abstract)  OpenAlea MTG plant graph
-  │           ├── LegacyMTGDataStructure  properties in g.property() dicts
-  │           └── SparseMTGDataStructure  properties as numpy arrays + index map
+  │           ├── LegacyMPGDataStructure  properties in g.property() dicts
+  │           └── MPGDataStructure  properties as numpy arrays + index map
   └── FieldDataStructure (abstract)       spatial grid (env models)
         ├── ArrayDataStructure            1-D or 3-D numpy grid
         └── MultiGridDataStructure        hierarchy of ArrayDataStructures
 
 GraphView and BoundaryPort (formerly in graph_system.py) are also defined here —
 they are the "compiled" solver-facing view of a graph, produced by
-SparseMTGDataStructure.to_graph_view().
+MPGDataStructure.to_graph_view().
 """
 
 from __future__ import annotations
@@ -341,7 +341,7 @@ class MTGDataStructure(GraphDataStructure):
         return len(self.edges())
 
     def incidence_matrix(self) -> np.ndarray:
-        """Dense B matrix.  Overridden by SparseMTGDataStructure."""
+        """Dense B matrix.  Overridden by MPGDataStructure."""
         B = np.zeros((self.n_nodes(), self.n_edges()))
         for e_idx, (src, tgt) in enumerate(self.edges()):
             B[self._vid_to_idx[src], e_idx] = -1.0
@@ -350,14 +350,14 @@ class MTGDataStructure(GraphDataStructure):
 
     def validate(self) -> None:
         if self._mtg is None:
-            raise ValueError("MTGDataStructure has no MTG instance.")
+            raise ValueError("MPGDataStructure has no MTG instance.")
         if self.n_nodes() == 0:
             raise ValueError(f"No vertices at scale {self._scale}.")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
 
-class LegacyMTGDataStructure(MTGDataStructure):
+class LegacyMPGDataStructure(MTGDataStructure):
     """
     Level 4a — MTG with properties in g.property() dicts.
 
@@ -393,7 +393,7 @@ class LegacyMTGDataStructure(MTGDataStructure):
 
 # ─────────────────────────────────────────────────────────────────────────────
 
-class SparseMTGDataStructure(MTGDataStructure):
+class MPGDataStructure(MTGDataStructure):
     """
     Level 4b — MTG with properties as numpy arrays + index map.
 
@@ -413,8 +413,8 @@ class SparseMTGDataStructure(MTGDataStructure):
         self._B_cached  = None
 
     @classmethod
-    def from_legacy(cls, legacy: LegacyMTGDataStructure,
-                    property_names: list[str]) -> "SparseMTGDataStructure":
+    def from_legacy(cls, legacy: LegacyMPGDataStructure,
+                    property_names: list[str]) -> "MPGDataStructure":
         """Migrate dict-based properties to numpy arrays."""
         sparse = cls(legacy.mtg, legacy.scale)
         for name in property_names:
