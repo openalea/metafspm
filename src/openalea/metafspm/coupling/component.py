@@ -1,9 +1,10 @@
 from dataclasses import dataclass, field, fields
-from typing import Literal
+from typing import Literal, Optional
 import numpy as np
 
 from openalea.metafspm.solve.decorator import *
 from openalea.metafspm.data_structure.mpg import MPG
+from openalea.metafspm.data_structure.data_api import DataStructure, MPGDataStructure
 
 
 def declare(unit: str, unit_comment: str, description: str,  min_value: float, max_value: float, value_comment: str, references: str, DOI: list,
@@ -80,47 +81,47 @@ class Component:
 
     @property
     def inputs(self):
-        return [f.name for f in fields(self) if f.metadata["variable_type"] == "input"]
+        return [f.name for f in fields(self) if f.metadata.get("variable_type") == "input"]
 
     @property
     def state_variables(self):
-        return [f.name for f in fields(self) if f.metadata["variable_type"] == "state_variable"]
-    
+        return [f.name for f in fields(self) if f.metadata.get("variable_type") == "state_variable"]
+
     @property
     def extensive_variables(self):
-        return [f.name for f in fields(self) if (f.metadata["variable_type"] == "state_variable" and f.metadata["state_variable_type"] == "extensive")]
-    
+        return [f.name for f in fields(self) if (f.metadata.get("variable_type") == "state_variable" and f.metadata.get("state_variable_type") == "extensive")]
+
     @property
     def massic_concentration(self):
-        return [f.name for f in fields(self) if (f.metadata["variable_type"] == "state_variable" and f.metadata["state_variable_type"] == "massic_concentration")]
-    
+        return [f.name for f in fields(self) if (f.metadata.get("variable_type") == "state_variable" and f.metadata.get("state_variable_type") == "massic_concentration")]
+
     @property
     def intensive_variables(self):
-        return [f.name for f in fields(self) if (f.metadata["variable_type"] == "state_variable" and f.metadata["state_variable_type"] == "intensive")]
-    
+        return [f.name for f in fields(self) if (f.metadata.get("variable_type") == "state_variable" and f.metadata.get("state_variable_type") == "intensive")]
+
     @property
     def non_inertial_extensive(self):
-        return [f.name for f in fields(self) if (f.metadata["variable_type"] == "state_variable" and f.metadata["state_variable_type"] == "NonInertialExtensive")]
+        return [f.name for f in fields(self) if (f.metadata.get("variable_type") == "state_variable" and f.metadata.get("state_variable_type") == "NonInertialExtensive")]
 
     @property
     def non_inertial_intensive(self):
-        return [f.name for f in fields(self) if (f.metadata["variable_type"] == "state_variable" and f.metadata["state_variable_type"] == "NonInertialIntensive")]
-    
+        return [f.name for f in fields(self) if (f.metadata.get("variable_type") == "state_variable" and f.metadata.get("state_variable_type") == "NonInertialIntensive")]
+
     @property
     def non_inertial_variables(self):
-        return [f.name for f in fields(self) if (f.metadata["variable_type"] == "state_variable" and f.metadata["state_variable_type"] in ("NonInertialIntensive", "NonInertialExtensive"))]
+        return [f.name for f in fields(self) if (f.metadata.get("variable_type") == "state_variable" and f.metadata.get("state_variable_type") in ("NonInertialIntensive", "NonInertialExtensive"))]
 
     @property
     def descriptor(self):
-        return [f.name for f in fields(self) if (f.metadata["variable_type"] == "state_variable" and f.metadata["state_variable_type"] == "descriptor")]
+        return [f.name for f in fields(self) if (f.metadata.get("variable_type") == "state_variable" and f.metadata.get("state_variable_type") == "descriptor")]
 
     @property
     def plant_scale_state(self):
-        return [f.name for f in fields(self) if f.metadata["variable_type"] == "plant_scale_state"]
+        return [f.name for f in fields(self) if f.metadata.get("variable_type") == "plant_scale_state"]
 
     @property
     def parameter(self):
-        return [f.name for f in fields(self) if f.metadata["variable_type"] == "parameter"]
+        return [f.name for f in fields(self) if f.metadata.get("variable_type") == "parameter"]
 
     def apply_scenario(self, **kwargs):
         """
@@ -174,6 +175,37 @@ class StructuralComponent(Component):
 
 @dataclass
 class FunctionalComponent(Component):
-    pass
+    """
+    Base for all functional (transport / balance) model components.
+
+    Every subclass must be initialized with a DataStructure instance that
+    provides the graph topology and initial field values.  The DataStructure
+    is the single source of truth for node/edge data; __post_init__ derives
+    self._graph_view and self.props from it so the solver decorator machinery
+    has the legacy dict-of-dicts format it expects.
+
+    Usage::
+
+        ds = MPGDataStructure(mpg, scale=mpg.scales.SubOrgan)
+        ds.set_node_property("concentration", c_init)
+        model = MyTransportModel(data_structure=ds)
+    """
+
+    data_structure: Optional[DataStructure] = None
+
+    def __post_init__(self):
+        if self.data_structure is None:
+            raise TypeError(
+                f"{type(self).__name__}() requires a DataStructure as its first argument. "
+                f"Pass an MPGDataStructure (or other DataStructure subclass) instance."
+            )
+        if not isinstance(self.data_structure, DataStructure):
+            raise TypeError(
+                f"{type(self).__name__}() data_structure must be a DataStructure instance, "
+                f"got {type(self.data_structure).__name__}."
+            )
+        ds = self.data_structure
+        self._graph_view = ds.to_graph_view()
+        self.props       = ds.to_props_dict()
 
                           

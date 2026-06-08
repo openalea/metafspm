@@ -56,7 +56,15 @@ from openalea.metafspm.solve.system_specs   import (
     weighted_laplacian,
     SolverResult,
 )
-from openalea.metafspm.solve.solver         import SolverConfig, SolverSpec, make_solver
+from openalea.metafspm.solve.solver         import (
+    SolverConfig, SolverSpec, make_solver, SOLVER_REGISTRY, ImplicitEulerSolver,
+)
+
+# Canonical method string for each concrete solver class (first key in SOLVER_REGISTRY wins).
+_CLASS_TO_METHOD: dict = {}
+for _k, _v in SOLVER_REGISTRY.items():
+    if _v not in _CLASS_TO_METHOD:
+        _CLASS_TO_METHOD[_v] = _k
 
 # ── Choregrapher (unchanged) ──────────────────────────────────────────────────
 from openalea.metafspm.coupling.choregrapher import Choregrapher
@@ -566,8 +574,11 @@ class GraphSystemBuilder:
         Called once per Choregrapher tick from _invoke_graph_system.
         """
         spec, _, _, integrate_edge_fields = self.build()
-        solver  = make_solver(self._spec_def["method"],
-                              self._spec_cfg())
+        solver_cls = self._spec_def.get("solver_cls")
+        if solver_cls is not None:
+            solver = solver_cls(self._spec_cfg())
+        else:
+            solver = make_solver(self._spec_def["method"], self._spec_cfg())
         packed  = solver.step_once(spec, previous_node_fields, dt)
         outputs = solver.derive_outputs(spec, packed, previous_node_fields, dt)
         return packed, outputs, integrate_edge_fields
@@ -637,7 +648,12 @@ def _invoke_graph_system(self, method_name: str) -> None:
     dt = getattr(self, "time_step", None)
 
     # First implicit_euler call: use current field values as u_prev
-    if previous_fields is None and spec_def["method"] == "implicit_euler":
+    _solver_cls = spec_def.get("solver_cls")
+    _is_implicit = (
+        spec_def.get("method") == "implicit_euler" or
+        (_solver_cls is not None and issubclass(_solver_cls, ImplicitEulerSolver))
+    )
+    if previous_fields is None and _is_implicit:
         gv   = self._graph_view
         vids = [int(v) for v in gv.node_ids]
         previous_fields = {
@@ -762,7 +778,8 @@ class _GraphSystemDescriptor:
 def graph_system(
     node_unknowns,
     edge_unknowns  = (),
-    method         = "newton",
+    solver         = "newton",
+    method         = None,
     max_iter       = 15,
     tol            = 1e-10,
     fd_eps         = 1e-8,
@@ -775,10 +792,12 @@ def graph_system(
 
     Usage::
 
-        @dataclass
-        class MyModel(Model):
+        from openalea.metafspm.solve.solver import NewtonSolver
 
-            @graph_system(node_unknowns=["pressure"], method="newton",
+        @dataclass
+        class MyModel(FunctionalComponent):
+
+            @graph_system(node_unknowns=["pressure"], solver=NewtonSolver,
                           schedule_as="axial")
             class _pressure_solve:
 
@@ -790,20 +809,59 @@ def graph_system(
 
     Parameters
     ----------
-    node_unknowns  : list[str]   ordered node-unknown field names.
-    edge_unknowns  : list[str]   ordered edge-unknown field names.
-    method         : str         solver method; see solver.SOLVER_REGISTRY.
-    max_iter       : int         Newton / nonlinear iteration cap.
-    tol            : float       convergence criterion (||R||_inf).
-    fd_eps         : float       finite-difference step for FD Jacobian.
-    prefer_sparse  : bool        use sparse linear solves when available.
-    linesearch     : bool        Armijo backtracking in Newton loop.
-    schedule_as    : str         Choregrapher step name.
+    node_unknowns  : list[str]
+        Ordered node-unknown field names.
+    edge_unknowns  : list[str]
+        Ordered edge-unknown field names.
+    solver         : str | type
+        Either a solver-registry key (e.g. ``"newton"``, ``"newton_fd"``,
+        ``"implicit_euler"``) for backward compatibility, or an uninstantiated
+        ``DAESolver`` subclass (e.g. ``NewtonSolver``, ``ImplicitEulerSolver``).
+        Passing the class directly is preferred: it is transparent and
+        inspectable without registry look-up.
+    method         : str | None
+        Deprecated alias for *solver*.  If supplied alongside *solver*, raises
+        ``TypeError``.
+    max_iter       : int     Newton / nonlinear iteration cap.
+    tol            : float   convergence criterion (||R||_inf).
+    fd_eps         : float   finite-difference step for FD Jacobian.
+    prefer_sparse  : bool    use sparse linear solves when available.
+    linesearch     : bool    Armijo backtracking in Newton loop.
+    schedule_as    : str     Choregrapher step name.
     """
+    # Backward-compat: honour deprecated method= kwarg.
+    if method is not None:
+        if solver != "newton":
+            raise TypeError(
+                "graph_system() received both 'solver' and 'method'.  "
+                "Use 'solver' only; 'method' is a deprecated alias."
+            )
+        solver = method
+
+    # Resolve to (solver_cls, method_str) pair.
+    if isinstance(solver, str):
+        solver_cls = SOLVER_REGISTRY.get(solver)
+        if solver_cls is None:
+            raise ValueError(
+                f"Unknown solver {solver!r}.  "
+                f"Valid keys: {sorted(SOLVER_REGISTRY)}.  "
+                "Alternatively, pass an uninstantiated DAESolver subclass."
+            )
+        method_str = solver
+    elif isinstance(solver, type):
+        solver_cls = solver
+        method_str = _CLASS_TO_METHOD.get(solver_cls, solver_cls.__name__.lower())
+    else:
+        raise TypeError(
+            f"graph_system() solver must be a str or an uninstantiated "
+            f"DAESolver subclass, got {type(solver).__name__!r}."
+        )
+
     spec = {
         "node_unknowns" : list(node_unknowns),
         "edge_unknowns" : list(edge_unknowns),
-        "method"        : method,
+        "solver_cls"    : solver_cls,
+        "method"        : method_str,
         "max_iter"      : max_iter,
         "tol"           : tol,
         "fd_eps"        : fd_eps,
