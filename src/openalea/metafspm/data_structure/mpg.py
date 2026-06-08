@@ -219,6 +219,57 @@ class MPG(MTG):
                 self.property("n_id_b")[ev] = group[i]
 
 
+    def repopulate_graph(self, from_scale, filter_in=None, filter_out=None):
+        """Clear all Compartment/Connection nodes and rebuild from *from_scale*.
+
+        This is the idempotent counterpart of populate_graph(): safe to call
+        multiple times across growth steps.  Every non-anchor Compartment node
+        and Connection edge is removed from the MTG and from every property
+        ArrayDict, then populate_graph() is called afresh so newly grown
+        from_scale vertices receive their own fresh Compartment/Connection
+        entries.
+
+        Why remove property entries explicitly?
+        ----------------------------------------
+        MTG.remove_vertex() cleans up internal topology bookkeeping
+        (_complex, _components, _scale) but does NOT purge entries from the
+        public property ArrayDicts (vertex_id, n_id_a, n_id_b, …).  Leaving
+        stale entries would corrupt array_filtering() results after repopulation.
+        We therefore iterate over all properties() and delete each removed
+        vertex's entry before removing the vertex itself.
+
+        Order: Connection edges first, then Compartment nodes.  Connection
+        edges have no MTG-level components so they can always be removed.
+        Compartment nodes are removed after their associated Connection edges
+        are gone, avoiding any potential nb_components > 0 conflict.
+
+        Parameters
+        ----------
+        from_scale : int
+            Source scale for repopulation (e.g. g.scales.SubOrgan).
+        filter_in, filter_out : dict, optional
+            Passed verbatim to populate_graph().
+        """
+        isanchor_p = self.property('isanchor')
+        props      = self.properties()
+
+        for scale in (self.scales.Connection, self.scales.Compartment):
+            verts = [
+                v for v in self.components_at_scale(self.root, scale=scale)
+                if not isanchor_p.get(v, False)
+            ]
+            for v in verts:
+                for prop in props.values():
+                    if v in prop:
+                        try:
+                            del prop[v]
+                        except (KeyError, TypeError):
+                            pass
+                self.remove_vertex(v)
+
+        self.populate_graph(from_scale, filter_in=filter_in, filter_out=filter_out)
+        self.convert_properties_to_arraydict()
+
     def populate_graph_custom_connections(self, from_scale, custom_connections,
                                           filter_in=None, filter_out=None):
         """Wire Connection edges between existing Compartment nodes at *from_scale*.

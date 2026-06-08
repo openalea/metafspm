@@ -216,6 +216,35 @@ class DataStructure(ABC):
         """Optional structural consistency check. Called by SpecBuilder.build()."""
         pass
 
+    @abstractmethod
+    def update_topology(self) -> None:
+        """
+        Rebuild internal topology state after the underlying geometry has changed.
+
+        This is the lifecycle hook that the simulation loop calls after any
+        StructuralComponent (growth, pruning, grafting) has modified the
+        geometry.  Each concrete subclass encapsulates its own rebuild logic:
+
+          - MPGDataStructure        clear Compartment/Connection nodes, re-run
+                                    populate_graph(from_scale) +
+                                    convert_properties_to_arraydict(),
+                                    then rebuild index map and incidence cache.
+          - LegacyMPGDataStructure  rebuild the vertex index map only.
+          - ArrayDataStructure      clear the cached Laplacian matrix.
+          - MultiGridDataStructure  propagate to every grid level.
+
+        Contract
+        --------
+        * After this call, n_nodes(), n_edges(), and to_graph_view() reflect
+          the NEW topology.
+        * Property arrays (_node_data, _edge_data for MPGDataStructure) that
+          tracked the old topology are cleared; the caller must re-register
+          arrays for the new node/edge count before solving.
+        * The call is idempotent: calling it twice with no intervening
+          structural change must leave the topology unchanged.
+        """
+        ...
+
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # Graph branch
@@ -354,6 +383,15 @@ class MTGDataStructure(GraphDataStructure):
         if self.n_nodes() == 0:
             raise ValueError(f"No vertices at scale {self._scale}.")
 
+    def update_topology(self) -> None:
+        """Rebuild the vertex index map after structural changes to the MTG.
+
+        For MTGDataStructure subclasses that do not use a separate Compartment/
+        Connection layer (e.g. LegacyMPGDataStructure), this is a lightweight
+        rebuild of _idx_to_vid / _vid_to_idx from the current MTG state.
+        """
+        self._build_index_map()
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -395,31 +433,121 @@ class LegacyMPGDataStructure(MTGDataStructure):
 
 class MPGDataStructure(MTGDataStructure):
     """
-    Level 4b — MTG with properties as numpy arrays + index map.
+    Level 4b — MPG wrapper operating at Compartment/Connection scales.
+
+    Requires g.populate_graph(from_scale) and g.convert_properties_to_arraydict()
+    to have been called before construction.  populate_graph() creates one
+    Compartment node per biological segment and one Connection edge per
+    adjacency; this class wraps those into numpy arrays for the solver.
 
         _node_data[name]  →  np.ndarray of shape (n_nodes,)
         _edge_data[name]  →  np.ndarray of shape (n_edges,)
 
-    The incidence matrix is scipy.sparse CSR — efficient for B @ q operations.
+    Node IDs (used as props keys and in GraphView.node_ids) are the SubOrgan
+    VIDs stored in the vertex_id property of Compartment nodes — the same IDs
+    that mpg.graph() uses, so the two APIs are consistent.
 
-    invalidate_topology()  must be called after any structural change
+    Edge identity: edges are 0-based indices in the order returned by
+    array_filtering("n_id_a", filter_in={"scale": Connection}), i.e. ascending
+    Connection vertex ID order.
+
+    Proposed adjustment to MPG: a future mpg.incidence(filter_in=None) method
+    returning (n_id_a_arr, n_id_b_arr, node_vids) would let to_graph_view()
+    delegate topology assembly entirely to the MPG, mirroring mpg.graph().
+
+    invalidate_topology() must be called after any structural change
     (organ emergence, pruning, grafting) to rebuild B and index maps.
     """
 
-    def __init__(self, mtg, scale: int = 1):
-        super().__init__(mtg, scale)
+    def __init__(self, mtg, from_scale: int = None):
+        """
+        Parameters
+        ----------
+        mtg : MPG
+            The plant graph.  populate_graph(from_scale) and
+            convert_properties_to_arraydict() should have been called before
+            wrapping if you want n_nodes() > 0 immediately.  If not yet
+            populated, n_nodes() / n_edges() return 0 until the first
+            update_topology() call.
+        from_scale : int, optional
+            Biological scale whose vertices drive the Compartment/Connection
+            topology (e.g. g.scales.SubOrgan).  Required only for
+            update_topology(); normal solver usage does not need it.
+        """
+        # MTGDataStructure.__init__(mtg, scale) not called: MPGDataStructure
+        # always operates at Compartment/Connection — no single fixed scale.
+        self._mtg        = mtg
+        self._scale      = None        # unused; kept so inherited validate() can see it
+        self._from_scale = from_scale  # source scale for update_topology()
         self._node_data : dict[str, np.ndarray] = {}
         self._edge_data : dict[str, np.ndarray] = {}
         self._B_cached  = None
+        self._build_index_map()
+
+    # ── Index map ─────────────────────────────────────────────────────────────
+
+    def _build_index_map(self) -> None:
+        """
+        Build node index from Compartment scale, using SubOrgan VIDs (stored in
+        the vertex_id property) as the canonical node identifiers.  The
+        Compartment anchor is excluded because it has no vertex_id entry.
+        Uses array_filtering — the same MPG method that mpg.graph() relies on.
+        """
+        if self._mtg is None:
+            self._idx_to_vid, self._vid_to_idx = [], {}
+            return
+        raw = self._mtg.array_filtering(
+            "vertex_id", filter_in={"scale": self._mtg.scales.Compartment}
+        )
+        svids = [int(v) for v in raw]
+        self._idx_to_vid = svids
+        self._vid_to_idx = {v: i for i, v in enumerate(svids)}
+
+    # ── Topology ──────────────────────────────────────────────────────────────
+
+    def edges(self) -> list[tuple]:
+        """Return (SubOrgan VID src, SubOrgan VID tgt) pairs from Connection nodes.
+
+        Uses array_filtering — same MPG method as graph() — so ordering is
+        consistent: ascending Connection vertex ID.  Connection anchor is
+        excluded because it has no n_id_a entry.
+        """
+        if self._mtg is None:
+            return []
+        n_id_a = self._mtg.array_filtering(
+            "n_id_a", filter_in={"scale": self._mtg.scales.Connection}
+        )
+        n_id_b = self._mtg.array_filtering(
+            "n_id_b", filter_in={"scale": self._mtg.scales.Connection}
+        )
+        return [(int(a), int(b)) for a, b in zip(n_id_a, n_id_b)]
+
+    def validate(self) -> None:
+        if self._mtg is None:
+            raise ValueError("MPGDataStructure has no MTG instance.")
+        if self.n_nodes() == 0:
+            raise ValueError(
+                "No Compartment nodes found. "
+                "Call g.populate_graph(from_scale) and "
+                "g.convert_properties_to_arraydict() before wrapping."
+            )
+
+    # ── Migration ─────────────────────────────────────────────────────────────
 
     @classmethod
     def from_legacy(cls, legacy: LegacyMPGDataStructure,
                     property_names: list[str]) -> "MPGDataStructure":
-        """Migrate dict-based properties to numpy arrays."""
-        sparse = cls(legacy.mtg, legacy.scale)
+        """Migrate dict-based node properties to numpy arrays.
+
+        The MTG wrapped by *legacy* must have been populated (populate_graph +
+        convert_properties_to_arraydict) so Compartment nodes exist.
+        """
+        sparse = cls(legacy.mtg)
         for name in property_names:
             sparse._node_data[name] = legacy.node_property(name).copy()
         return sparse
+
+    # ── Property storage ──────────────────────────────────────────────────────
 
     def available_vars(self) -> list[str]:
         return list(self._node_data) + list(self._edge_data)
@@ -442,8 +570,10 @@ class MPGDataStructure(MTGDataStructure):
     def set_edge_property(self, name: str, values: np.ndarray) -> None:
         self._edge_data[name] = np.asarray(values, dtype=float)
 
+    # ── Incidence matrix ──────────────────────────────────────────────────────
+
     def incidence_matrix(self):
-        """Sparse CSR incidence matrix, built once and cached."""
+        """Sparse CSR incidence matrix (B[src,e]=-1, B[tgt,e]=+1), cached."""
         if self._B_cached is not None:
             return self._B_cached
         n, m = self.n_nodes(), self.n_edges()
@@ -464,24 +594,136 @@ class MPGDataStructure(MTGDataStructure):
         self._build_index_map()
         self._B_cached = None
 
+    def update_topology(self) -> None:
+        """
+        Clear Compartment/Connection nodes, repopulate from *from_scale*
+        topology, then rebuild the index map, incidence cache, and clear
+        stale property arrays.
+
+        Delegates the clear-and-repopulate step to
+        mpg.repopulate_graph(self._from_scale), which:
+          1. Removes every non-anchor Compartment/Connection vertex from the
+             MTG and its entry from every property ArrayDict.
+          2. Re-runs populate_graph(from_scale) — discovers all current
+             from_scale vertices (including newly grown ones).
+          3. Calls convert_properties_to_arraydict().
+
+        Then rebuilds self._idx_to_vid / _vid_to_idx / _B_cached from the
+        fresh Compartment/Connection state, and clears _node_data / _edge_data
+        because they tracked the old node/edge count.
+
+        Parameters
+        ----------
+        (none — from_scale is set at construction time)
+
+        Raises
+        ------
+        AttributeError
+            If from_scale was not provided at construction.
+
+        Notes
+        -----
+        After this call the caller must re-register property arrays via
+        set_node_property / set_edge_property before calling to_graph_view()
+        or to_props_dict().  The simulation loop is responsible for
+        re-initialising field values for newly grown vertices.
+        """
+        if self._from_scale is None:
+            raise AttributeError(
+                f"{type(self).__name__}.update_topology() requires from_scale "
+                "to be set at construction.  "
+                "Pass MPGDataStructure(g, from_scale=g.scales.SubOrgan)."
+            )
+        self._mtg.repopulate_graph(self._from_scale)
+        self.invalidate_topology()
+        self._node_data.clear()
+        self._edge_data.clear()
+
+    # ── Solver interface ──────────────────────────────────────────────────────
+
     def to_graph_view(self,
                       boundary_ports: tuple = (),
                       node_properties: tuple = (),
-                      edge_properties: tuple = ()) -> GraphView:
+                      edge_properties: tuple = ()) -> "GraphView":
         """
-        Produce a GraphView from the current data structure.
-        Called by GraphSystemBuilder.build() before each solve.
+        Build a GraphView using MPG's array_filtering for edge topology.
+
+        Node IDs = SubOrgan VIDs (from vertex_id on Compartment nodes).
+        Edge IDs = 0-based integers; endpoints from n_id_a/n_id_b.
+        Sign convention: B[tail/parent, e] = +1, B[head/child, e] = -1
+        (consistent with GraphView.from_mtg_subset; opposite of incidence_matrix()).
         """
-        return GraphView.from_mtg_subset(
-            g                = self._mtg,
-            node_scale       = self._scale,
-            node_ids         = np.array(self.node_ids(), dtype=np.int64),
-            edge_scale       = self._scale + 1,
-            edge_ids         = np.array([e for e in range(self.n_edges())], dtype=np.int64),
-            boundary_ports   = boundary_ports,
-            node_properties  = node_properties,
-            edge_properties  = edge_properties,
+        node_ids = np.array(self._idx_to_vid, dtype=np.int64)
+        n        = len(node_ids)
+
+        n_id_a_arr = np.asarray(
+            self._mtg.array_filtering(
+                "n_id_a", filter_in={"scale": self._mtg.scales.Connection}
+            ), dtype=np.int64
         )
+        n_id_b_arr = np.asarray(
+            self._mtg.array_filtering(
+                "n_id_b", filter_in={"scale": self._mtg.scales.Connection}
+            ), dtype=np.int64
+        )
+        m = len(n_id_a_arr)
+
+        if m > 0:
+            tails = np.array([self._vid_to_idx[int(v)] for v in n_id_a_arr], dtype=np.int64)
+            heads = np.array([self._vid_to_idx[int(v)] for v in n_id_b_arr], dtype=np.int64)
+            ec    = np.arange(m, dtype=np.int64)
+            inc   = coo_matrix(
+                (np.r_[np.ones(m), -np.ones(m)],
+                 (np.r_[tails, heads], np.r_[ec, ec])),
+                shape=(n, m),
+            ).tocsc()
+        else:
+            tails = np.empty(0, dtype=np.int64)
+            heads = np.empty(0, dtype=np.int64)
+            inc   = csc_matrix((n, 0), dtype=np.float64)
+
+        if boundary_ports:
+            brows = np.array([self._vid_to_idx[p.node_id] for p in boundary_ports], dtype=np.int64)
+            bcols = np.arange(len(boundary_ports), dtype=np.int64)
+            bdata = np.array([p.orientation for p in boundary_ports], dtype=np.float64)
+            boundary_inc   = coo_matrix((bdata, (brows, bcols)),
+                                        shape=(n, len(boundary_ports))).tocsc()
+            boundary_names = tuple(p.name for p in boundary_ports)
+        else:
+            boundary_inc   = csc_matrix((n, 0), dtype=np.float64)
+            boundary_names = ()
+
+        node_data = {name: self.node_property(name).copy()
+                     for name in node_properties if name in self._node_data}
+        edge_data = {name: self.edge_property(name).copy()
+                     for name in edge_properties if name in self._edge_data}
+
+        return GraphView(
+            node_ids           = node_ids,
+            edge_ids           = np.arange(m, dtype=np.int64),
+            tail               = tails,
+            head               = heads,
+            incidence          = inc,
+            boundary_incidence = boundary_inc,
+            boundary_names     = boundary_names,
+            node_data          = node_data,
+            edge_data          = edge_data,
+        )
+
+    def to_props_dict(self) -> dict:
+        """
+        Convert arrays to {name: {id: value}} for the decorator machinery.
+
+        Node props are keyed by SubOrgan VID (matching to_graph_view node_ids).
+        Edge props are keyed by 0-based edge index (matching edge_ids = arange).
+        """
+        props: dict = {}
+        for name, arr in self._node_data.items():
+            props[name] = {int(vid): float(arr[i])
+                           for i, vid in enumerate(self._idx_to_vid)}
+        for name, arr in self._edge_data.items():
+            props[name] = {j: float(arr[j]) for j in range(len(arr))}
+        return props
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -518,6 +760,10 @@ class FieldDataStructure(DataStructure):
 
     @abstractmethod
     def _set_field(self, name: str, values: np.ndarray) -> None: ...
+
+    def update_topology(self) -> None:
+        """No-op for static grids.  Override for adaptive/growing meshes."""
+        pass
 
     def extract_state(self, var_names: list[str]) -> np.ndarray:
         return np.concatenate([self._get_field(n).ravel() for n in var_names])
@@ -597,6 +843,14 @@ class ArrayDataStructure(FieldDataStructure):
               + _sp.kron(_sp.kron(I[0], ops[1]), I[2])
               + _sp.kron(Ixy, ops[2])).tocsr()
 
+    def update_topology(self) -> None:
+        """Clear the cached Laplacian — it is rebuilt on the next laplacian() call.
+
+        Call this after any change to grid shape or spacing that would
+        invalidate the stencil (e.g. adaptive mesh refinement).
+        """
+        self._L = None
+
     def _get_field(self, name: str) -> np.ndarray:
         if name not in self._fields:
             raise KeyError(f"Field '{name}' not registered. Call add_field() first.")
@@ -674,6 +928,16 @@ class MultiGridDataStructure(FieldDataStructure):
 
     def _set_field(self, name: str, values: np.ndarray) -> None:
         self.fine._set_field(name, values)
+
+    def update_topology(self) -> None:
+        """Propagate topology update to every grid level.
+
+        Clears Laplacian caches on all levels so they are rebuilt lazily on
+        the next laplacian() call.  Also rebuilds restriction/prolongation
+        operators if subclasses override _build_restriction / _build_prolongation.
+        """
+        for lvl in self._levels:
+            lvl.grid.update_topology()
 
     def restrict(self, x: np.ndarray, from_level: int = 0) -> np.ndarray:
         return self._levels[from_level + 1].restriction @ x

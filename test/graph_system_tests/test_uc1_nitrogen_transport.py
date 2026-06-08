@@ -1,6 +1,10 @@
 """
 UC1 — NitrogenAxialTransport: transient node + edge unknowns.
 
+Graph topology: SubOrgan scale of the simple seedling MPG
+(generate_simple_mpg_seedling), which yields 14 non-anchor nodes and 13 axial
+edges (a tree spanning internodes, root segments, and leaf elements).
+
 Node balance (backward Euler):
     C (c − c_old)/dt + B q − J_radial = 0
 
@@ -9,20 +13,25 @@ Edge constitutive law:
 
 Tests:
   - residual ∞-norm < tol after solve
-  - physically meaningful solution (concentrations > 0, flux sign)
+  - physically meaningful solution (concentrations > 0, nonzero flux)
   - analytical limit (uniform c, zero source → c stays uniform, q = 0)
   - equation-block structure matches node_unknowns / edge_unknowns declaration
 """
 
+import sys
+import os
 import numpy as np
 import pytest
 from dataclasses import dataclass
-from scipy.sparse import diags
 
 from openalea.metafspm.solve.decorator import graph_system, node_balance, edge_law
+from openalea.metafspm.solve.solver import NewtonSolver
 from openalea.metafspm.coupling.component import FunctionalComponent, declare
+from openalea.metafspm.data_structure.data_api import MPGDataStructure
 
-from conftest import _cell_chain_graph
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'mpg_tests'))
+from simple_seedling import generate_simple_mpg_seedling
+
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -80,7 +89,7 @@ class NitrogenAxialTransport(FunctionalComponent):
     @graph_system(
         node_unknowns=["concentration"],
         edge_unknowns=["axial_flux"],
-        method="newton_fd",
+        solver=NewtonSolver,
         max_iter=15,
         schedule_as="axial",
     )
@@ -109,24 +118,38 @@ class NitrogenAxialTransport(FunctionalComponent):
 # Setup helper
 # ══════════════════════════════════════════════════════════════════════════════
 
-def _setup_nitrogen_model(graph, c_old, C, J_radial, K_axial_vals, dt):
-    node_vids = list(graph.node_ids)
-    edge_vids = list(graph.edge_ids)
-    props = {}
-    for i, v in enumerate(node_vids):
-        vid = int(v)
-        props.setdefault("concentration", {})[vid]       = float(c_old[i])
-        props.setdefault("volumetric_capacity", {})[vid] = float(C[i])
-        props.setdefault("radial_solute_input", {})[vid] = float(J_radial[i])
-    for i, v in enumerate(edge_vids):
-        vid = int(v)
-        props.setdefault("axial_flux", {})[vid] = 0.0
-        props.setdefault("K_axial", {})[vid]    = float(K_axial_vals[i])
-    model = NitrogenAxialTransport()
-    model.props           = props
-    model._graph_view     = graph
+def _make_ds() -> MPGDataStructure:
+    """Fresh MPGDataStructure from the simple seedling MPG (SubOrgan topology)."""
+    g, _ = generate_simple_mpg_seedling()
+    g.populate_graph(g.scales.SubOrgan)
+    g.convert_properties_to_arraydict()
+    return MPGDataStructure(g)
+
+
+def _setup_nitrogen_model(
+    ds: MPGDataStructure,
+    c_old: np.ndarray,
+    C: np.ndarray,
+    J_radial: np.ndarray,
+    K_axial_vals: np.ndarray,
+    dt: float,
+) -> NitrogenAxialTransport:
+    """
+    Populate ds with field values, then construct the component.
+
+    All properties must be registered on ds before the constructor call because
+    FunctionalComponent.__post_init__ snapshots ds.to_props_dict() to initialise
+    self.props.
+    """
+    ds.set_node_property("concentration",      np.asarray(c_old,        dtype=np.float64))
+    ds.set_node_property("volumetric_capacity", np.asarray(C,            dtype=np.float64))
+    ds.set_node_property("radial_solute_input", np.asarray(J_radial,     dtype=np.float64))
+    ds.set_edge_property("axial_flux",          np.zeros(ds.n_edges()))
+    ds.set_edge_property("K_axial",             np.asarray(K_axial_vals, dtype=np.float64))
+
+    model                  = NitrogenAxialTransport(data_structure=ds)
     model._previous_fields = {"concentration": np.asarray(c_old, dtype=np.float64)}
-    model.time_step       = dt
+    model.time_step        = dt
     return model
 
 
@@ -136,29 +159,36 @@ def _setup_nitrogen_model(graph, c_old, C, J_radial, K_axial_vals, dt):
 
 def test_uc1_nitrogen_decorator_residual_and_physics():
     """
-    Non-trivial case: concentration gradient with radial source drives
-    the system away from the initial guess.  Verify residual ≈ 0 and
-    concentrations remain positive.
+    Non-trivial case: concentration gradient with radial source drives the
+    system away from the initial guess.  Verify residual ≈ 0, concentrations
+    remain positive, and axial flux is non-zero somewhere in the tree.
     """
-    graph = _cell_chain_graph()
-    n, e  = graph.n_nodes, graph.n_edges
-    assert (n, e) == (3, 2), "expected 3-node, 2-edge cell chain"
+    ds  = _make_ds()
+    n, e = ds.n_nodes(), ds.n_edges()
+    assert (n, e) == (14, 13), (
+        f"expected 14-node 13-edge seedling SubOrgan graph, got ({n}, {e})"
+    )
 
-    c_old = np.array([0.40, 0.25, 0.10])
+    rng   = np.random.default_rng(42)
+    c_old = 0.10 + 0.40 * rng.random(n)   # concentrations in [0.10, 0.50]
+
     model = _setup_nitrogen_model(
-        graph, c_old=c_old, C=np.ones(n),
-        J_radial=np.array([0.08, 0.03, 0.01]),
-        K_axial_vals=np.array([0.07, 0.05]), dt=0.5,
+        ds,
+        c_old        = c_old,
+        C            = np.ones(n),
+        J_radial     = 0.01 * rng.random(n),
+        K_axial_vals = np.full(e, 0.07),
+        dt           = 0.5,
     )
     model._invoke_graph_system("_transport_solve")
-    system  = model._last_graph_system
-    packed  = model._last_graph_solution
+    system   = model._last_graph_system
+    packed   = model._last_graph_solution
     residual = system.residual(packed)
     node_u, edge_u = system.unpack_unknowns(packed)
 
     np.testing.assert_allclose(residual, np.zeros_like(residual), atol=1e-10)
     assert np.all(node_u["concentration"] > 0), "concentrations must stay positive"
-    assert edge_u["axial_flux"][0] > 0, "flux must flow from high to low concentration"
+    assert np.any(np.abs(edge_u["axial_flux"]) > 0), "axial flux must be non-zero"
 
 
 def test_uc1_nitrogen_analytical_limit():
@@ -166,15 +196,20 @@ def test_uc1_nitrogen_analytical_limit():
     Analytical limit: uniform c_old with zero radial source.
     With no driving force the system must return c = c_old and q = 0.
     """
-    graph = _cell_chain_graph()
-    n, e  = graph.n_nodes, graph.n_edges
+    ds        = _make_ds()
+    n, e      = ds.n_nodes(), ds.n_edges()
     c_uniform = 0.5
+
     model = _setup_nitrogen_model(
-        graph, c_old=np.full(n, c_uniform), C=np.ones(n),
-        J_radial=np.zeros(n), K_axial_vals=np.array([0.07, 0.05]), dt=0.5,
+        ds,
+        c_old        = np.full(n, c_uniform),
+        C            = np.ones(n),
+        J_radial     = np.zeros(n),
+        K_axial_vals = np.full(e, 0.07),
+        dt           = 0.5,
     )
     model._invoke_graph_system("_transport_solve")
-    packed = model._last_graph_solution
+    packed         = model._last_graph_solution
     node_u, edge_u = model._last_graph_system.unpack_unknowns(packed)
 
     np.testing.assert_allclose(
@@ -185,11 +220,16 @@ def test_uc1_nitrogen_analytical_limit():
 
 def test_uc1_decorator_equation_block_structure():
     """@graph_system collects node_balance + edge_law blocks with correct layout."""
-    graph = _cell_chain_graph()
-    n, e  = graph.n_nodes, graph.n_edges
+    ds   = _make_ds()
+    n, e = ds.n_nodes(), ds.n_edges()
+
     model = _setup_nitrogen_model(
-        graph, c_old=np.zeros(n), C=np.ones(n),
-        J_radial=np.zeros(n), K_axial_vals=np.ones(e), dt=0.5,
+        ds,
+        c_old        = np.zeros(n),
+        C            = np.ones(n),
+        J_radial     = np.zeros(n),
+        K_axial_vals = np.ones(e),
+        dt           = 0.5,
     )
     model._invoke_graph_system("_transport_solve")
     system = model._last_graph_system

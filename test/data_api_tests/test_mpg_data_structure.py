@@ -32,7 +32,7 @@ from openalea.metafspm.data_structure.data_api import (
 # ── Fixture ───────────────────────────────────────────────────────────────────
 
 def _make_linear_mpg():
-    """Return (g, sc, v1, v2, v3) — 3-vertex SubOrgan chain + 1 anchor."""
+    """Return (g, sc, v1, v2, v3) — 3-vertex SubOrgan chain, populated."""
     g   = MPG()
     sc  = g.scales.SubOrgan
     anc = g.scales.anchors[sc]
@@ -44,6 +44,8 @@ def _make_linear_mpg():
     v3 = g.add_component_with_topo(
         anc, v2, **PropsConfig(scale=sc, edge_type='<',
                                label=g.labels.SubOrgan.StemElement))
+    g.populate_graph(g.scales.SubOrgan)
+    g.convert_properties_to_arraydict()
     return g, sc, v1, v2, v3
 
 
@@ -51,7 +53,7 @@ def _make_linear_mpg():
 
 def test_set_get_node_property_roundtrip():
     g, sc, v1, v2, v3 = _make_linear_mpg()
-    ds = MPGDataStructure(g, sc)   # 4 nodes (3 real + anchor)
+    ds = MPGDataStructure(g)   # 4 nodes (3 real + anchor)
     vals = np.array([1.0, 2.0, 3.0, 0.0])
     ds.set_node_property('potential', vals)
     np.testing.assert_array_equal(ds.node_property('potential'), vals)
@@ -59,7 +61,7 @@ def test_set_get_node_property_roundtrip():
 
 def test_set_get_edge_property_roundtrip():
     g, sc, v1, v2, v3 = _make_linear_mpg()
-    ds = MPGDataStructure(g, sc)   # 2 edges
+    ds = MPGDataStructure(g)   # 2 edges
     vals = np.array([5.0, 8.0])
     ds.set_edge_property('conductance', vals)
     np.testing.assert_array_equal(ds.edge_property('conductance'), vals)
@@ -67,22 +69,22 @@ def test_set_get_edge_property_roundtrip():
 
 def test_node_property_missing_raises_key_error():
     g, sc, v1, v2, v3 = _make_linear_mpg()
-    ds = MPGDataStructure(g, sc)
+    ds = MPGDataStructure(g)
     with pytest.raises(KeyError, match="potential"):
         ds.node_property('potential')
 
 
 def test_edge_property_missing_raises_key_error():
     g, sc, v1, v2, v3 = _make_linear_mpg()
-    ds = MPGDataStructure(g, sc)
+    ds = MPGDataStructure(g)
     with pytest.raises(KeyError, match="conductance"):
         ds.edge_property('conductance')
 
 
 def test_available_vars_covers_node_and_edge():
     g, sc, v1, v2, v3 = _make_linear_mpg()
-    ds = MPGDataStructure(g, sc)
-    ds.set_node_property('potential',  np.zeros(4))
+    ds = MPGDataStructure(g)
+    ds.set_node_property('potential',  np.zeros(3))
     ds.set_edge_property('conductance', np.zeros(2))
     avail = ds.available_vars()
     assert 'potential'   in avail
@@ -93,22 +95,22 @@ def test_available_vars_covers_node_and_edge():
 
 def test_incidence_matrix_is_sparse():
     g, sc, v1, v2, v3 = _make_linear_mpg()
-    ds = MPGDataStructure(g, sc)
+    ds = MPGDataStructure(g)
     B  = ds.incidence_matrix()
     assert issparse(B)
 
 
 def test_incidence_matrix_shape():
     g, sc, v1, v2, v3 = _make_linear_mpg()
-    ds = MPGDataStructure(g, sc)
+    ds = MPGDataStructure(g)
     B  = ds.incidence_matrix()
-    assert B.shape == (4, 2)   # 4 nodes, 2 edges
+    assert B.shape == (3, 2)   # 3 nodes, 2 edges
 
 
 def test_incidence_matrix_column_sums_zero():
     """Columns of B must sum to zero (flow conservation)."""
     g, sc, v1, v2, v3 = _make_linear_mpg()
-    ds = MPGDataStructure(g, sc)
+    ds = MPGDataStructure(g)
     B  = ds.incidence_matrix()
     col_sums = np.asarray(B.sum(axis=0)).ravel()
     np.testing.assert_array_equal(col_sums, [0.0, 0.0])
@@ -117,7 +119,7 @@ def test_incidence_matrix_column_sums_zero():
 def test_incidence_matrix_is_cached():
     """Second call returns the same object — no recomputation."""
     g, sc, v1, v2, v3 = _make_linear_mpg()
-    ds = MPGDataStructure(g, sc)
+    ds = MPGDataStructure(g)
     B1 = ds.incidence_matrix()
     B2 = ds.incidence_matrix()
     assert B1 is B2
@@ -126,7 +128,7 @@ def test_incidence_matrix_is_cached():
 def test_invalidate_topology_clears_cache():
     """invalidate_topology() forces a fresh incidence matrix on next call."""
     g, sc, v1, v2, v3 = _make_linear_mpg()
-    ds = MPGDataStructure(g, sc)
+    ds = MPGDataStructure(g)
     B1 = ds.incidence_matrix()
     ds.invalidate_topology()
     B2 = ds.incidence_matrix()
@@ -136,10 +138,10 @@ def test_invalidate_topology_clears_cache():
 def test_invalidate_topology_rebuilds_index_map():
     """After invalidate, n_nodes / n_edges stay consistent with the MTG."""
     g, sc, v1, v2, v3 = _make_linear_mpg()
-    ds = MPGDataStructure(g, sc)
-    assert ds.n_nodes() == 4
+    ds = MPGDataStructure(g)
+    assert ds.n_nodes() == 3
     ds.invalidate_topology()
-    assert ds.n_nodes() == 4   # same — no structural change
+    assert ds.n_nodes() == 3 # same — no structural change
 
 
 # ── 3. from_legacy migration ──────────────────────────────────────────────────
@@ -152,7 +154,7 @@ def test_from_legacy_copies_node_properties():
     wp[v2] = -1.0
     wp[v3] = -1.5
 
-    legacy = LegacyMPGDataStructure(g, sc)
+    legacy = LegacyMPGDataStructure(g)
     sparse = MPGDataStructure.from_legacy(legacy, ['water_potential'])
 
     # Values must be identical
@@ -166,7 +168,7 @@ def test_from_legacy_does_not_share_array():
     g, sc, v1, v2, v3 = _make_linear_mpg()
     g.property('water_potential')[v1] = -1.0
 
-    legacy = LegacyMPGDataStructure(g, sc)
+    legacy = LegacyMPGDataStructure(g)
     sparse = MPGDataStructure.from_legacy(legacy, ['water_potential'])
 
     sparse._node_data['water_potential'][0] = 999.0
@@ -176,39 +178,37 @@ def test_from_legacy_does_not_share_array():
 # ── 4. Integration: wrap a populate_graph result ──────────────────────────────
 
 def test_mpg_data_structure_wraps_suborgan_scale():
-    """MPGDataStructure at SubOrgan scale (before populate_graph).
+    """MPGDataStructure wraps a populated MPG at Compartment/Connection scales.
 
-    populate_graph creates Compartment nodes and Connection edges.
-    MPGDataStructure at SubOrgan scale models the plant topology where:
-      - nodes = SubOrgan vertices (segments, leaf elements, root segments)
-      - edges = topological adjacency (parent-child at SubOrgan scale)
-
-    This is the natural target for a transport solver operating at segment
-    granularity without explicit compartment anatomy.
+    populate_graph(SubOrgan) creates 14 Compartment nodes and 13 Connection
+    edges (one per SubOrgan segment / axial adjacency).  MPGDataStructure uses
+    SubOrgan VIDs (from the vertex_id property of Compartment nodes) as the
+    canonical node identifiers, consistent with mpg.graph().
     """
     from simple_seedling import generate_simple_mpg_seedling
     g, seedling = generate_simple_mpg_seedling()
+    g.populate_graph(g.scales.SubOrgan)
+    g.convert_properties_to_arraydict()
 
-    ds = MPGDataStructure(g, g.scales.SubOrgan)
-    # 14 SubOrgan real vertices + 1 anchor
-    assert ds.n_nodes() == 15
-    # 13 topological edges (same topology as populate_graph result)
+    ds = MPGDataStructure(g)
+    assert ds.n_nodes() == 14
     assert ds.n_edges() == 13
 
-    # Incidence matrix is sparse, correct shape, conservative
     B = ds.incidence_matrix()
     assert issparse(B)
-    assert B.shape == (15, 13)
+    assert B.shape == (14, 13)
     col_sums = np.asarray(B.sum(axis=0)).ravel()
     np.testing.assert_array_equal(col_sums, np.zeros(13))
 
 
 def test_extract_inject_state_with_suborgan_data():
-    """extract_state / inject_state round-trip at SubOrgan scale."""
+    """extract_state / inject_state round-trip on a populated MPG."""
     from simple_seedling import generate_simple_mpg_seedling
     g, seedling = generate_simple_mpg_seedling()
+    g.populate_graph(g.scales.SubOrgan)
+    g.convert_properties_to_arraydict()
 
-    ds   = MPGDataStructure(g, g.scales.SubOrgan)
+    ds   = MPGDataStructure(g)
     n    = ds.n_nodes()
     vals = np.arange(n, dtype=float)
     ds.set_node_property('potential', vals)

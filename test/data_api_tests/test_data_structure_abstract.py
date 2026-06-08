@@ -40,6 +40,9 @@ class _ScalarDS(DataStructure):
     def n_dof(self):
         return len(self._vals)
 
+    def update_topology(self):
+        pass
+
 
 class _LinearGraph(GraphDataStructure):
     """3 nodes, 2 directed edges: n0 → n1 → n2.
@@ -78,6 +81,9 @@ class _LinearGraph(GraphDataStructure):
 
     def available_vars(self):
         return ['p', 'k']
+
+    def update_topology(self):
+        pass
 
 
 # ── DataStructure tests ───────────────────────────────────────────────────────

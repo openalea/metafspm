@@ -1,5 +1,4 @@
 from openalea.mtg import MTG
-from utils import mtg_to_arraydict
 import numpy as np
 
 
@@ -381,7 +380,6 @@ def build_three_cell_mtg():
     for vid in g.vertices():
         g.node(vid).vertex_id = vid
 
-    mtg_to_arraydict(g)
     return g
 
 
@@ -571,7 +569,6 @@ def build_seedling_mtg(
     for vid in g.vertices():
         g.node(vid).vertex_id = vid
 
-    mtg_to_arraydict(g)
     return g
 
 
