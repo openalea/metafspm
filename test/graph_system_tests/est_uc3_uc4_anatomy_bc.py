@@ -334,7 +334,7 @@ class LaplacianWithBC(Component):
             B = self._graph_view.incidence
             return np.asarray((B @ diags(K) @ B.T) @ pressure).reshape(-1)
 
-        @boundary_condition("node", "dirichlet", field="pressure", types={"is_collar": [1.0]})
+        @boundary_condition("node", "dirichlet", field="pressure", filters={"is_collar": [1.0]})
         def _collar_dirichlet(self, pressure):
             return pressure - 2.0   # prescribe P = 2.0 at collar
 
@@ -357,7 +357,7 @@ class LaplacianWithBC(Component):
                 + 0.5 * pressure
             )
 
-        @boundary_condition("node", "neumann", field="pressure", types={"is_collar": [1.0]})
+        @boundary_condition("node", "neumann", field="pressure", filters={"is_collar": [1.0]})
         def _collar_neumann(self):
             return np.array([-1.0])   # add 1.0 source at collar
 

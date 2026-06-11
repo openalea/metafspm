@@ -27,9 +27,12 @@ deep_reload_package(["openalea"])
 import numpy as np
 import pytest
 from dataclasses import dataclass
+from typing import Type
 
-from openalea.metafspm.solve.decorator import graph_system, node_balance, edge_law, rate
-from openalea.metafspm.solve.solver import NewtonSolver
+from openalea.metafspm.solve.decorator import graph_system, node_balance, edge_law, rate, boundary_condition, graph_output, GraphSystemBuilder
+from openalea.metafspm.solve.solver import (
+    NewtonSolver, ImplicitEulerSolver, ScipyRootSolver, SolverConfig,
+)
 from openalea.metafspm.coupling.component import (
     FunctionalComponent,
     state_variable,
@@ -90,12 +93,26 @@ class NitrogenAxialTransport(FunctionalComponent):
         description="First-order rate constant for solute exchange with external solution.",
         min_value=0.0, max_value=1e3, value_comment="", references="", DOI=[],
         by="NitrogenAxialTransport",
-        default=0.0, scale=None,
+        default=0.0, scale=scales.Connection,
     )
     c_ext: float = parameter(
         unit="mol m-3", unit_comment="",
         description="Solute concentration in external solution (soil or apoplast).",
         min_value=0.0, max_value=1e4, value_comment="", references="", DOI=[],
+        by="NitrogenAxialTransport",
+        default=0.0, scale=None,
+    )
+    c_dirichlet: float = parameter(
+        unit="mol m-3", unit_comment="",
+        description="Fixed concentration imposed by a Dirichlet BC at boundary nodes.",
+        min_value=0.0, max_value=1e4, value_comment="", references="", DOI=[],
+        by="NitrogenAxialTransport",
+        default=0.0, scale=None,
+    )
+    q_boundary: float = parameter(
+        unit="mol s-1", unit_comment="",
+        description="Fixed source term imposed by a Neumann BC at boundary nodes.",
+        min_value=-1e3, max_value=1e3, value_comment="", references="", DOI=[],
         by="NitrogenAxialTransport",
         default=0.0, scale=None,
     )
@@ -212,6 +229,46 @@ class NitrogenAxialTransport(FunctionalComponent):
         edge_unknowns=["axial_flux"],
         solver=NewtonSolver,
         max_iter=15,
+        schedule_as="state",
+    )
+    class _transport_solve_with_output:
+        """Same physics as _transport_solve, plus a @graph_output hook.
+
+        @graph_output("axial_divergence") is evaluated at the converged
+        solution and written to props["axial_divergence"].  The output
+        computes B @ axial_flux per node; the node-balance identity gives:
+            axial_divergence[i] = J_radial[i] - (c[i] - c_old[i]) / dt
+        """
+
+        @node_balance(field="concentration")
+        def _concentration_balance(
+            self, concentration, axial_flux, radial_solute_input
+        ) -> np.ndarray:
+            c_old = self._previous_fields["concentration"]
+            B     = self._graph_view.incidence
+            return (
+                (concentration - c_old) / self.time_step
+                + np.asarray(B @ axial_flux).reshape(-1)
+                - radial_solute_input
+            )
+
+        @edge_law(field="axial_flux", explicit=False, integrate=False)
+        def _axial_transport_law(
+            self, concentration, axial_flux, K_axial
+        ) -> np.ndarray:
+            B = self._graph_view.incidence
+            return axial_flux - K_axial * np.asarray(B.T @ concentration).reshape(-1)
+
+        @graph_output("axial_divergence")
+        def _compute_axial_divergence(self, axial_flux) -> np.ndarray:
+            B = self._graph_view.incidence
+            return np.asarray(B @ axial_flux).reshape(-1)
+
+    @graph_system(
+        node_unknowns=["concentration"],
+        edge_unknowns=["axial_flux"],
+        solver=NewtonSolver,
+        max_iter=15,
         schedule_as="axial",
     )
     class _transport_solve_node_explicit:
@@ -233,6 +290,115 @@ class NitrogenAxialTransport(FunctionalComponent):
             return c_old - self.time_step * (
                 np.asarray(B @ axial_flux).reshape(-1) - radial_solute_input
             )
+
+        @edge_law(field="axial_flux", explicit=False, integrate=False)
+        def _axial_transport_law(
+            self, concentration, axial_flux, K_axial
+        ) -> np.ndarray:
+            B = self._graph_view.incidence
+            return axial_flux - K_axial * np.asarray(B.T @ concentration).reshape(-1)
+
+    @graph_system(
+        node_unknowns=["concentration"],
+        edge_unknowns=["axial_flux"],
+        solver=NewtonSolver,
+        max_iter=15,
+        schedule_as="axial",
+    )
+    class _transport_solve_dirichlet:
+        """_transport_solve_node_explicit + Dirichlet BC at nodes where is_root=1.
+
+        The Dirichlet BC pins concentration to self.c_dirichlet at those nodes,
+        replacing their node-balance residual with R = c - c_dirichlet = 0.
+        Uses explicit=True on both the node balance and the BC so the intent
+        is readable: the balance returns the free-interior target value; the BC
+        returns the pinned boundary target value.
+        """
+
+        @node_balance(field="concentration", explicit=True)
+        def _concentration_balance(
+            self, axial_flux, radial_solute_input
+        ) -> np.ndarray:
+            c_old = self._previous_fields["concentration"]
+            B     = self._graph_view.incidence
+            return c_old - self.time_step * (
+                np.asarray(B @ axial_flux).reshape(-1) - radial_solute_input
+            )
+
+        @boundary_condition(location="node", kind="dirichlet",
+                            field="concentration", filters={"is_root": [1]},
+                            explicit=True)
+        def _root_dirichlet(self) -> np.ndarray:
+            return np.array([self.c_dirichlet])
+
+        @edge_law(field="axial_flux", explicit=False, integrate=False)
+        def _axial_transport_law(
+            self, concentration, axial_flux, K_axial
+        ) -> np.ndarray:
+            B = self._graph_view.incidence
+            return axial_flux - K_axial * np.asarray(B.T @ concentration).reshape(-1)
+
+    @graph_system(
+        node_unknowns=["concentration"],
+        edge_unknowns=["axial_flux"],
+        solver=NewtonSolver,
+        max_iter=15,
+        schedule_as="axial",
+    )
+    class _transport_solve_neumann:
+        """_transport_solve_node_explicit + Neumann BC at nodes where is_root=1.
+
+        The Neumann BC adds self.q_boundary to the node-balance residual at
+        those nodes: R_root += q_boundary.  This is equivalent to subtracting
+        q_boundary from the effective radial source at the boundary:
+            J_eff_root = radial_solute_input_root - q_boundary
+        Verified by comparing against a run with modified J_radial, no BC.
+        """
+
+        @node_balance(field="concentration", explicit=True)
+        def _concentration_balance(
+            self, axial_flux, radial_solute_input
+        ) -> np.ndarray:
+            c_old = self._previous_fields["concentration"]
+            B     = self._graph_view.incidence
+            return c_old - self.time_step * (
+                np.asarray(B @ axial_flux).reshape(-1) - radial_solute_input
+            )
+
+        @boundary_condition(location="node", kind="neumann",
+                            field="concentration", filters={"is_root": [1]})
+        def _root_neumann(self) -> np.ndarray:
+            return np.array([self.q_boundary])
+
+        @edge_law(field="axial_flux", explicit=False, integrate=False)
+        def _axial_transport_law(
+            self, concentration, axial_flux, K_axial
+        ) -> np.ndarray:
+            B = self._graph_view.incidence
+            return axial_flux - K_axial * np.asarray(B.T @ concentration).reshape(-1)
+
+    @graph_system(
+        node_unknowns=["concentration"],
+        edge_unknowns=["axial_flux"],
+        solver=ImplicitEulerSolver,
+        max_iter=20,
+        schedule_as="state",
+    )
+    class _transport_solve_implicit_euler:
+        """Spatial-only balance for use with ImplicitEulerSolver.
+
+        Node balance: R = B*q − J  (no time derivative).
+        ImplicitEulerSolver augments ALL unknowns with (u − u_prev)/h:
+          Node:  (c − c_old)/dt + B*q − J = 0            ← correct backward Euler
+          Edge:  q*(1 + 1/dt) − K_axial * B^T c = 0     ← augmented (q_prev = 0)
+        """
+
+        @node_balance(field="concentration")
+        def _concentration_balance(
+            self, axial_flux, radial_solute_input
+        ) -> np.ndarray:
+            B = self._graph_view.incidence
+            return np.asarray(B @ axial_flux).reshape(-1) - radial_solute_input
 
         @edge_law(field="axial_flux", explicit=False, integrate=False)
         def _axial_transport_law(
@@ -625,4 +791,263 @@ def test_uc1_explicit_node_balance_matches_implicit():
     np.testing.assert_allclose(
         edge_expl["axial_flux"], edge_impl["axial_flux"], atol=1e-10,
         err_msg="explicit and implicit node balances must give identical axial flux",
+    )
+
+
+def _make_ds_with_root_flag() -> tuple:
+    """Return (ds, root_local_idx) with is_root=1 at the first sorted node."""
+    ds = _make_ds()
+    n  = ds.n_nodes()
+    is_root = np.zeros(n)
+    is_root[0] = 1          # first node in ascending VID order
+    ds.set_node_property("is_root", is_root)
+    return ds, 0
+
+
+def test_uc1_dirichlet_bc_pins_concentration():
+    """Dirichlet BC pins concentration at the root node to c_dirichlet.
+
+    After solving, concentration at the root node must equal c_dirichlet
+    exactly (the BC replaces the node-balance residual there with
+    R = c_root - c_dirichlet = 0).
+    """
+    rng = np.random.default_rng(21)
+    ds, root_idx = _make_ds_with_root_flag()
+    n, e = ds.n_nodes(), ds.n_edges()
+    c0   = 0.1 + 0.4 * rng.random(n)
+    J_r  = 0.01 * rng.random(n)
+
+    model = _setup_nitrogen_model(
+        ds, c_old=c0, J_radial=J_r, K_axial_vals=np.full(e, 0.07), dt=0.5,
+    )
+    model.c_dirichlet = 2.0
+
+    model._invoke_graph_system("_transport_solve_dirichlet")
+    node_u, _ = model._last_graph_system.unpack_unknowns(model._last_graph_solution)
+
+    np.testing.assert_allclose(
+        node_u["concentration"][root_idx], model.c_dirichlet, atol=1e-10,
+        err_msg="Dirichlet BC must pin root concentration to c_dirichlet",
+    )
+
+
+def test_uc1_neumann_bc_equivalent_to_modified_source():
+    """Neumann BC at root is equivalent to subtracting q_boundary from J_radial there.
+
+    R_root += q_boundary  ↔  effective J_root = J_radial_root − q_boundary.
+    This equivalence holds regardless of whether explicit=True or explicit=False
+    is used on the node balance: the framework scales the Neumann value by dt
+    when the node balance is explicit so that q_boundary always carries flux units.
+    Both formulations must produce identical concentration and flux arrays.
+    """
+    rng = np.random.default_rng(37)
+
+    q_bc = 0.05
+    c0   = 0.1 + 0.4 * rng.random(14)
+    J_r  = 0.01 * rng.random(14)
+
+    # Run with Neumann BC
+    ds_bc, root_idx = _make_ds_with_root_flag()
+    n, e = ds_bc.n_nodes(), ds_bc.n_edges()
+    m_bc = _setup_nitrogen_model(
+        ds_bc, c_old=c0, J_radial=J_r, K_axial_vals=np.full(e, 0.07), dt=0.5,
+    )
+    m_bc.q_boundary = q_bc
+    m_bc._invoke_graph_system("_transport_solve_neumann")
+    node_bc, edge_bc = m_bc._last_graph_system.unpack_unknowns(m_bc._last_graph_solution)
+
+    # Run without BC but with J_radial reduced at root by q_boundary (flux units).
+    # The framework multiplies q_boundary by dt before adding to the
+    # concentration-unit residual, so the net effect is J_eff = J − q_boundary.
+    J_r_mod = J_r.copy()
+    J_r_mod[root_idx] -= q_bc
+    ds_ref = _make_ds()
+    m_ref = _setup_nitrogen_model(
+        ds_ref, c_old=c0, J_radial=J_r_mod, K_axial_vals=np.full(e, 0.07), dt=0.5,
+    )
+    m_ref._invoke_graph_system("_transport_solve_node_explicit")
+    node_ref, edge_ref = m_ref._last_graph_system.unpack_unknowns(m_ref._last_graph_solution)
+
+    np.testing.assert_allclose(
+        node_bc["concentration"], node_ref["concentration"], atol=1e-10,
+        err_msg="Neumann BC must be equivalent to modifying J_radial at the boundary",
+    )
+    np.testing.assert_allclose(
+        edge_bc["axial_flux"], edge_ref["axial_flux"], atol=1e-10,
+        err_msg="Neumann BC must produce identical axial flux to modified-source run",
+    )
+
+
+def test_uc1_graph_output_written_to_props():
+    """@graph_output result is evaluated at the converged solution and written to props.
+
+    axial_divergence[i] = (B @ axial_flux)[i] is the net outgoing axial flux
+    at node i.  At convergence the node balance gives:
+        axial_divergence[i] = J_radial[i] − (c[i] − c_old[i]) / dt
+
+    The test verifies two things:
+      1. props["axial_divergence"] is populated for every node after the solve.
+      2. Its values satisfy the identity above (within Newton tolerance).
+    """
+    rng   = np.random.default_rng(55)
+    ds    = _make_ds()
+    n, e  = ds.n_nodes(), ds.n_edges()
+    dt    = 0.5
+    c_old = 0.1 + 0.4 * rng.random(n)
+    J_r   = 0.01 * rng.random(n)
+
+    model = _setup_nitrogen_model(
+        ds,
+        c_old        = c_old,
+        J_radial     = J_r,
+        K_axial_vals = np.full(e, 0.07),
+        dt           = dt,
+    )
+    model._invoke_graph_system("_transport_solve_with_output")
+
+    # Check that the output was written to props for all nodes.
+    assert "axial_divergence" in model.props, (
+        "props must contain 'axial_divergence' after @graph_output"
+    )
+    assert len(model.props["axial_divergence"]) == n, (
+        f"axial_divergence must have one entry per node ({n}), "
+        f"got {len(model.props['axial_divergence'])}"
+    )
+
+    # Retrieve both divergence and concentration in gv.node_ids order so they
+    # align with the arrays passed to _setup_nitrogen_model.
+    node_vids = [int(v) for v in model._graph_view.node_ids]
+    div_vals  = np.array(
+        [model.props["axial_divergence"][vid] for vid in node_vids],
+        dtype=np.float64,
+    )
+
+    # Retrieve the converged concentration so we can apply the node-balance identity.
+    packed         = model._last_graph_solution
+    node_u, _      = model._last_graph_system.unpack_unknowns(packed)
+    c_new          = node_u["concentration"]
+
+    # Identity: axial_divergence = J_radial - (c_new - c_old) / dt
+    expected = J_r - (c_new - c_old) / dt
+
+    np.testing.assert_allclose(
+        div_vals, expected, atol=1e-10,
+        err_msg=(
+            "@graph_output axial_divergence must equal J_radial - (c-c_old)/dt "
+            "at the converged solution"
+        ),
+    )
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Solver-class tests
+# ══════════════════════════════════════════════════════════════════════════════
+
+@pytest.mark.parametrize("solver_cls,method,linesearch,max_iter,atol", [
+    (NewtonSolver,    "newton_fd",    False, 15, 1e-10),
+    (NewtonSolver,    "newton_fd",    True,  15, 1e-10),
+    (ScipyRootSolver, "scipy_krylov",False, 50, 1e-6),
+    (ScipyRootSolver, "scipy_hybr",  False, 50, 1e-7),
+], ids=["newton_fd", "newton_fd_linesearch", "scipy_krylov", "scipy_hybr"])
+def test_uc1_quasi_static_solver_matches_newton(
+    solver_cls: Type, method: str, linesearch: bool, max_iter: int, atol: float
+):
+    """Alternative quasi-static solver classes converge to the same solution as NewtonSolver.
+
+    All these solvers find the root of R(packed) = 0 for the same
+    GraphDAESpec.  The spec is assembled once from _transport_solve; each
+    solver is called directly via step_once so only the solver code path
+    differs — the equations are identical.
+
+    newton_fd            — finite-difference Jacobian Newton.
+    newton_fd_linesearch — FD-Jacobian Newton + Armijo linesearch.
+    scipy_krylov         — Newton-GMRES, matrix-free.
+    scipy_hybr           — MINPACK trust-region Newton.
+    """
+    rng  = np.random.default_rng(42)
+    ds   = _make_ds()
+    n, e = ds.n_nodes(), ds.n_edges()
+    dt   = 0.5
+    c_old = 0.10 + 0.40 * rng.random(n)
+    J_r   = 0.01 * rng.random(n)
+
+    model = _setup_nitrogen_model(
+        ds, c_old=c_old, J_radial=J_r, K_axial_vals=np.full(e, 0.07), dt=dt,
+    )
+
+    spec_def     = type(model)._graph_system_specs["_transport_solve"]
+    spec, _, _   = GraphSystemBuilder(model, spec_def).build()
+    prev_fields  = model._previous_fields
+
+    newton_packed = NewtonSolver(
+        SolverConfig(method="newton", max_iter=15, tol=1e-10)
+    ).step_once(spec, prev_fields, dt)
+
+    test_packed = solver_cls(
+        SolverConfig(method=method, max_iter=max_iter, tol=1e-10,
+                     linesearch=linesearch)
+    ).step_once(spec, prev_fields, dt)
+
+    newton_node_u, newton_edge_u = spec.unpack_unknowns(newton_packed)
+    test_node_u,   test_edge_u   = spec.unpack_unknowns(test_packed)
+
+    np.testing.assert_allclose(
+        test_node_u["concentration"], newton_node_u["concentration"], atol=atol,
+        err_msg=f"{method!r} concentration must match NewtonSolver on the 14-node seedling",
+    )
+    np.testing.assert_allclose(
+        test_edge_u["axial_flux"], newton_edge_u["axial_flux"], atol=atol,
+        err_msg=f"{method!r} axial_flux must match NewtonSolver on the 14-node seedling",
+    )
+
+
+def test_uc1_implicit_euler_backward_euler_node_equation():
+    """ImplicitEulerSolver with spatial balance satisfies the backward Euler node equation.
+
+    With a spatial-only node balance (R = B*q − J) and ImplicitEulerSolver,
+    the augmented system at convergence is:
+      Node: (c_new − c_old)/dt + B*q − J = 0            ← backward Euler ✓
+      Edge: q*(1 + 1/dt) − K_axial * B^T c_new = 0     ← augmented edge law
+
+    The node equation is verified directly.  The augmented edge law arises
+    because ImplicitEulerSolver adds (u − u_prev)/h to ALL unknowns uniformly
+    (q_prev = 0 at the first step since axial_flux is initialised to zero).
+    The edge law is therefore NOT the standard q = K*B^T*c; its effective
+    conductance is K*dt/(dt+1).
+    """
+    rng  = np.random.default_rng(71)
+    ds   = _make_ds()
+    n, e = ds.n_nodes(), ds.n_edges()
+    dt   = 0.5
+    c_old = 0.1 + 0.4 * rng.random(n)
+    J_r   = 0.01 * rng.random(n)
+
+    model = _setup_nitrogen_model(
+        ds, c_old=c_old, J_radial=J_r, K_axial_vals=np.full(e, 0.07), dt=dt,
+    )
+    model._invoke_graph_system("_transport_solve_implicit_euler")
+
+    packed         = model._last_graph_solution
+    node_u, edge_u = model._last_graph_system.unpack_unknowns(packed)
+    c_new = node_u["concentration"]
+    q     = edge_u["axial_flux"]
+    B     = model._graph_view.incidence
+
+    # ── Backward Euler node equation ──────────────────────────────────────────
+    # c_old and J_r are in gv.node_ids order (set by _setup_nitrogen_model)
+    node_res = (c_new - c_old) / dt + np.asarray(B @ q).reshape(-1) - J_r
+    np.testing.assert_allclose(
+        node_res, np.zeros(n), atol=1e-10,
+        err_msg="ImplicitEulerSolver must satisfy backward Euler node equation "
+                "(c_new-c_old)/dt + B*q - J = 0",
+    )
+
+    # ── Augmented edge law: q*(1+1/dt) = K_axial * B^T c_new ─────────────────
+    # Edges are keyed by 0-based index in props (from MPGDataStructure.to_props_dict)
+    K_arr  = np.array([model.props["K_axial"][j] for j in range(e)], dtype=np.float64)
+    edge_res = q - K_arr * np.asarray(B.T @ c_new).reshape(-1) + q / dt
+    np.testing.assert_allclose(
+        edge_res, np.zeros(e), atol=1e-10,
+        err_msg="ImplicitEulerSolver must satisfy augmented edge law "
+                "q*(1+1/dt) - K*B^T*c_new = 0",
     )

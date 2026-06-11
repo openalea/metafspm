@@ -13,13 +13,13 @@ Decorators (unchanged API)
   @graph_system(node_unknowns, edge_unknowns, method, …)
       Inner-class descriptor that wires a Choregrapher Functor.
 
-  @node_balance(field, types=None, explicit=False)
+  @node_balance(field, filters=None, explicit=False)
       Tag a method as a node residual block.
 
-  @edge_law(field="flux", types=None, explicit=False, integrate=False)
+  @edge_law(field="flux", filters=None, explicit=False, integrate=False)
       Tag a method as an edge residual block.
 
-  @boundary_condition(location, kind, field=None, types=None, explicit=False)
+  @boundary_condition(location, kind, field=None, filters=None, explicit=False)
       Tag a method as a Dirichlet or Neumann boundary condition.
 
   @graph_jacobian
@@ -110,27 +110,27 @@ postsegmentation = _step("postsegmentation")
 # Method-level decorators for graph systems  (public API)
 # ═══════════════════════════════════════════════════════════════════════════════
 
-def node_balance(field=None, types=None, explicit=False):
+def node_balance(field=None, filters=None, explicit=False):
     """
     Tag a method as a node residual block for *field*.
 
     Parameters
     ----------
     field    : str   node-unknown field this block contributes to.
-    types    : dict  node-property filter, e.g. {"tissue_type": ["cortex"]}.
+    filters  : dict  node-property filter, e.g. {"tissue_type": ["cortex"]}.
     explicit : bool  when True the method returns the target value;
                      the framework generates R = unknown − value automatically.
     """
     def decorator(func):
         func.__graph_tag__ = {
             "kind": "node_balance", "field": field,
-            "types": types, "explicit": explicit,
+            "filters": filters, "explicit": explicit,
         }
         return func
     return decorator
 
 
-def edge_law(func=None, *, field=None, types=None,
+def edge_law(func=None, *, field=None, filters=None,
              explicit=False, integrate=False):
     """
     Tag a method as an edge residual block.
@@ -138,14 +138,14 @@ def edge_law(func=None, *, field=None, types=None,
     Parameters
     ----------
     field    : str   edge-unknown field this block contributes to.
-    types    : dict  edge-property filter.
+    filters  : dict  edge-property filter.
     explicit : bool  method returns the value; R = unknown − value generated.
     integrate: bool  write converged flux as props["{field}_mean"] after solve.
     """
     def _decorate(f):
         f.__graph_tag__ = {
             "kind": "edge_law", "field": field,
-            "types": types, "explicit": explicit, "integrate": integrate,
+            "filters": filters, "explicit": explicit, "integrate": integrate,
         }
         return f
     if func is not None:
@@ -153,7 +153,7 @@ def edge_law(func=None, *, field=None, types=None,
     return _decorate
 
 
-def boundary_condition(location, kind, field=None, types=None, explicit=False):
+def boundary_condition(location, kind, field=None, filters=None, explicit=False):
     """
     Tag a method as a boundary condition that superimposes on the field's
     node_balance.
@@ -163,14 +163,14 @@ def boundary_condition(location, kind, field=None, types=None, explicit=False):
     location : "node" | "edge"
     kind     : "dirichlet" | "neumann"
     field    : str   unknown field this BC applies to.
-    types    : dict  entity-property filter selecting BC-active entities.
+    filters  : dict  entity-property filter selecting BC-active entities.
     explicit : bool  accepted for API symmetry; BCs always return values.
     """
     def decorator(func):
         func.__graph_tag__ = {
             "kind": "boundary_condition",
             "location": location, "bc_kind": kind,
-            "field": field, "types": types, "explicit": explicit,
+            "field": field, "filters": filters, "explicit": explicit,
         }
         return func
     return decorator
@@ -330,17 +330,17 @@ class GraphSystemBuilder:
                 kind  = tag["kind"]
                 if kind == "node_balance":
                     node_balance_items.append((
-                        tag["field"], tag.get("types"), attr_name, bound, obj,
+                        tag["field"], tag.get("filters"), attr_name, bound, obj,
                         tag.get("explicit", False)
                     ))
                 elif kind == "edge_law":
                     edge_law_items.append((
-                        tag.get("field"), tag.get("types"), attr_name, bound, obj,
+                        tag.get("field"), tag.get("filters"), attr_name, bound, obj,
                         tag.get("explicit", False), tag.get("integrate", False)
                     ))
                 elif kind == "boundary_condition":
                     bc_items.append((
-                        tag.get("field"), tag.get("types"), tag.get("bc_kind"),
+                        tag.get("field"), tag.get("filters"), tag.get("bc_kind"),
                         attr_name, bound, obj, tag.get("explicit", False)
                     ))
                 elif kind == "graph_jacobian":
@@ -499,7 +499,7 @@ class GraphSystemBuilder:
 
         # ── Assemble equation blocks ──────────────────────────────────────────
 
-        def make_combined_node_ev(bulk_evals, bc_specs):
+        def make_combined_node_ev(bulk_evals, bc_specs, neumann_scale=1.0):
             def evaluator(ctx):
                 result = np.zeros(n, dtype=np.float64)
                 for w in bulk_evals:
@@ -509,7 +509,7 @@ class GraphSystemBuilder:
                     if bkind == "dirichlet":
                         result[idx] = vals
                     else:
-                        result[idx] += vals
+                        result[idx] += vals * neumann_scale
                 return result
             return evaluator
 
@@ -528,6 +528,7 @@ class GraphSystemBuilder:
             if not grp and not bc_grp:
                 continue
             bulk_wrapped = []
+            any_explicit = any(ex for _, _, _, ex in grp)
             for tf, b, r, ex in grp:
                 inner = make_evaluator(r, b, tf, "node")
                 if ex:
@@ -541,9 +542,10 @@ class GraphSystemBuilder:
                 (bk, make_bc_eval(r, b, tf, bc_kind=bk, field=field_name, explicit=ex))
                 for tf, bk, b, r, ex in bc_grp
             ]
+            neumann_scale = dt_inst if any_explicit else 1.0
             equation_blocks.append(EquationBlock(
                 name      = f"node_balance_{field_name}",
-                evaluator = make_combined_node_ev(bulk_wrapped, bc_wrapped),
+                evaluator = make_combined_node_ev(bulk_wrapped, bc_wrapped, neumann_scale),
             ))
 
         edge_groups: dict[str, list] = defaultdict(list)
