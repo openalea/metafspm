@@ -59,9 +59,15 @@ class Choregrapher(Singleton):
         # module_family = instance.family
         module_family = instance.__class__.__name__
         self.sub_time_step[module_family] = sub_time_step
-        if self.data_structure[compartment] == None:
-            self.data_structure[compartment] = data
-        data_structure_type = str(type(self.data_structure[compartment]["length"])) # TODO : length is common property of all used modules, but might not be generic enough
+        self.data_structure[compartment] = data
+        self.build_schedule(module_family)
+        # Determine data structure type from any available property value.
+        # "length" is a reliable probe for legacy MTG models; FunctionalComponent
+        # props use plain dicts keyed by VID, so we fall back to dict if absent.
+        try:
+            data_structure_type = str(type(self.data_structure[compartment]["length"]))
+        except (KeyError, TypeError):
+            data_structure_type = "<class 'dict'>"
         for k in self.scheduled_groups[module_family].keys():
             for f in range(len(self.scheduled_groups[module_family][k])):
                 functor = self.scheduled_groups[module_family][k][f]

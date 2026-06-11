@@ -23,6 +23,8 @@ from abc         import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing      import Optional, Union
 
+from openalea.metafspm.data_structure.arraydict import ArrayDict
+
 import numpy as np
 from scipy.sparse import coo_matrix, csc_matrix, csr_matrix, diags, eye, kron, issparse
 
@@ -488,13 +490,22 @@ class MPGDataStructure(MTGDataStructure):
 
     def _build_index_map(self) -> None:
         """
-        Build node index from Compartment scale, using SubOrgan VIDs (stored in
-        the vertex_id property) as the canonical node identifiers.  The
-        Compartment anchor is excluded because it has no vertex_id entry.
-        Uses array_filtering — the same MPG method that mpg.graph() relies on.
+        Build node index from Compartment scale, using biological VIDs (stored
+        in vertex_id) as the canonical node identifiers.  Anchors are excluded
+        because they have no vertex_id entry.  Uses array_filtering — the same
+        MPG method that mpg.graph() relies on.
+
+        Also calls _build_bio_index_map() to precompute the integer index arrays
+        that map Compartment/Connection entities to positions in biological-scale
+        property value arrays, so all property lookups can use numpy fancy
+        indexing instead of Python-level VID iteration.
         """
         if self._mtg is None:
             self._idx_to_vid, self._vid_to_idx = [], {}
+            self._bio_vids_sorted  = np.empty(0, dtype=np.int64)
+            self._bio_node_idx     = np.empty(0, dtype=np.int64)
+            self._bio_edge_a_idx   = np.empty(0, dtype=np.int64)
+            self._bio_edge_b_idx   = np.empty(0, dtype=np.int64)
             return
         raw = self._mtg.array_filtering(
             "vertex_id", filter_in={"scale": self._mtg.scales.Compartment}
@@ -502,6 +513,56 @@ class MPGDataStructure(MTGDataStructure):
         svids = [int(v) for v in raw]
         self._idx_to_vid = svids
         self._vid_to_idx = {v: i for i, v in enumerate(svids)}
+        self._build_bio_index_map()
+
+    def _build_bio_index_map(self) -> None:
+        """Precompute per-topology index arrays for fast biological-scale lookups.
+
+        For any MTG property at a biological scale (SubOrgan, Organ, Layer, …)
+        whose ArrayDict has all biological VIDs as keys in sorted order, a
+        single numpy fancy-index operation replaces per-VID Python iteration:
+
+            property.values_array()[_bio_node_idx]      →  per-node array
+            property.values_array()[_bio_edge_a_idx/b]  →  per-edge endpoint
+
+        _bio_vids_sorted  : canonical sorted array of biological VIDs
+                            (= np.sort(_idx_to_vid); the expected key order of
+                            any fully-defined biological-scale ArrayDict)
+        _bio_node_idx     : int64 array of length n_nodes.
+                            _bio_node_idx[i] is the position of _idx_to_vid[i]
+                            in _bio_vids_sorted.
+        _bio_edge_a_idx   : int64 array of length n_edges.
+                            _bio_edge_a_idx[j] is the position of n_id_a[j]
+                            in _bio_vids_sorted.
+        _bio_edge_b_idx   : same for n_id_b.
+
+        Called once per topology from _build_index_map (and thus from both
+        __init__ and invalidate_topology).
+        """
+        if not self._idx_to_vid:
+            self._bio_vids_sorted = np.empty(0, dtype=np.int64)
+            self._bio_node_idx    = np.empty(0, dtype=np.int64)
+            self._bio_edge_a_idx  = np.empty(0, dtype=np.int64)
+            self._bio_edge_b_idx  = np.empty(0, dtype=np.int64)
+            return
+
+        vids             = np.array(self._idx_to_vid, dtype=np.int64)
+        sorted_vids      = np.sort(vids)
+        self._bio_vids_sorted = sorted_vids
+        self._bio_node_idx    = np.searchsorted(sorted_vids, vids)
+
+        n_id_a = np.asarray(
+            self._mtg.array_filtering(
+                "n_id_a", filter_in={"scale": self._mtg.scales.Connection}
+            ), dtype=np.int64,
+        )
+        n_id_b = np.asarray(
+            self._mtg.array_filtering(
+                "n_id_b", filter_in={"scale": self._mtg.scales.Connection}
+            ), dtype=np.int64,
+        )
+        self._bio_edge_a_idx = np.searchsorted(sorted_vids, n_id_a)
+        self._bio_edge_b_idx = np.searchsorted(sorted_vids, n_id_b)
 
     # ── Topology ──────────────────────────────────────────────────────────────
 
@@ -569,6 +630,102 @@ class MPGDataStructure(MTGDataStructure):
 
     def set_edge_property(self, name: str, values: np.ndarray) -> None:
         self._edge_data[name] = np.asarray(values, dtype=float)
+
+    # ── Biological scale → Compartment/Connection auto-mapping ───────────────
+
+    def _mtg_to_node_array(self, name: str) -> np.ndarray | None:
+        """Build a per-node array from an MTG property at any biological scale.
+
+        Fast path  (ArrayDict with full biological-VID coverage):
+            property.values_array()[_bio_node_idx]
+        This is a single numpy fancy-index — O(n) with numpy speed.
+        _bio_node_idx[i] is the position of _idx_to_vid[i] in the sorted
+        key array, precomputed once per topology in _build_bio_index_map().
+
+        Slow path  (plain dict or partial ArrayDict):
+            per-VID Python dict lookup — correct but slower.
+
+        Returns None if the property is absent or any biological VID is
+        missing; the caller falls back to a uniform default array.
+        """
+        if not self._idx_to_vid:
+            return None
+        try:
+            prop = self._mtg.property(name)
+        except Exception:
+            return None
+        try:
+            if isinstance(prop, ArrayDict) and prop.size == len(self._bio_vids_sorted):
+                return prop.values_array()[self._bio_node_idx].copy()
+            pdict = prop.to_dict() if hasattr(prop, "to_dict") else dict(prop)
+            return np.array(
+                [float(pdict[int(vid)]) for vid in self._idx_to_vid],
+                dtype=np.float64,
+            )
+        except (KeyError, TypeError, ValueError):
+            return None
+
+    def _mtg_to_edge_array(self, name: str) -> np.ndarray | None:
+        """Build a per-edge array from an MTG property at any biological scale.
+
+        Fast path  (ArrayDict with full biological-VID coverage):
+            vals = property.values_array()
+            (vals[_bio_edge_a_idx] + vals[_bio_edge_b_idx]) / 2
+        Both index arrays are precomputed once per topology.
+
+        Edge value = arithmetic mean of the two endpoint biological values.
+        n_id_a / n_id_b always hold biological VIDs regardless of from_scale.
+
+        Returns None if the property is absent or any endpoint VID is missing.
+        """
+        if self._mtg is None or self._bio_edge_a_idx.size == 0:
+            return np.empty(0, dtype=np.float64) if self._mtg is not None else None
+        try:
+            prop = self._mtg.property(name)
+        except Exception:
+            return None
+        try:
+            if isinstance(prop, ArrayDict) and prop.size == len(self._bio_vids_sorted):
+                vals = prop.values_array()
+                return (vals[self._bio_edge_a_idx] + vals[self._bio_edge_b_idx]) / 2.0
+            pdict    = prop.to_dict() if hasattr(prop, "to_dict") else dict(prop)
+            n_id_a   = self._mtg.array_filtering(
+                "n_id_a", filter_in={"scale": self._mtg.scales.Connection}
+            )
+            n_id_b   = self._mtg.array_filtering(
+                "n_id_b", filter_in={"scale": self._mtg.scales.Connection}
+            )
+            return np.array(
+                [(float(pdict[int(a)]) + float(pdict[int(b)])) / 2.0
+                 for a, b in zip(n_id_a, n_id_b)],
+                dtype=np.float64,
+            )
+        except (KeyError, TypeError, ValueError):
+            return None
+
+    def write_node_to_mtg(self, name: str, arr: np.ndarray) -> None:
+        """Write a solver node-result array back to the MTG property *name*.
+
+        Fast path  (ArrayDict with full biological-VID coverage):
+            property.assign_at(_bio_node_idx, arr)
+        This is a direct numpy slice assignment — O(n) with numpy speed.
+
+        Slow path  (plain dict or partial ArrayDict):
+            per-VID Python assignment.
+
+        Used for write-back of biological-scale state variables after solving.
+        """
+        if not self._idx_to_vid:
+            return
+        try:
+            prop = self._mtg.property(name)
+            if isinstance(prop, ArrayDict) and prop.size == len(self._bio_vids_sorted):
+                prop.assign_at(self._bio_node_idx, np.asarray(arr, dtype=np.float64))
+            else:
+                for i, vid in enumerate(self._idx_to_vid):
+                    prop[int(vid)] = float(arr[i])
+        except Exception:
+            pass
 
     # ── Incidence matrix ──────────────────────────────────────────────────────
 
