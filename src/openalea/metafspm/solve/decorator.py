@@ -16,7 +16,7 @@ Decorators (unchanged API)
   @node_balance(field, types=None, explicit=False)
       Tag a method as a node residual block.
 
-  @edge_law(field=None, types=None, explicit=False, integrate=False)
+  @edge_law(field="flux", types=None, explicit=False, integrate=False)
       Tag a method as an edge residual block.
 
   @boundary_condition(location, kind, field=None, types=None, explicit=False)
@@ -66,6 +66,13 @@ for _k, _v in SOLVER_REGISTRY.items():
     if _v not in _CLASS_TO_METHOD:
         _CLASS_TO_METHOD[_v] = _k
 
+# Map MPG integer scale constants → generic "node"/"edge" for snapshot routing.
+from openalea.metafspm.data_structure.configs import ScalesConfig as _ScalesConfig
+_SCALE_INT_TO_LOC: dict = {
+    _ScalesConfig.Compartment: "node",
+    _ScalesConfig.Connection: "edge",
+}
+
 # ── Choregrapher (unchanged) ──────────────────────────────────────────────────
 from openalea.metafspm.coupling.choregrapher import Choregrapher
 from openalea.metafspm.solve.legacy_functor import Functor
@@ -78,6 +85,7 @@ from openalea.metafspm.solve.legacy_functor import Functor
 def _step(name: str, *, total: bool = False, iterating: bool = False):
     """Return a decorator that registers func as a Choregrapher step."""
     def decorator(func):
+        func.__step_tag__ = {"name": name, "total": total, "iterating": iterating}
         Choregrapher().add_process(Functor(func, total=total, iteraring=iterating), name=name)
         return func
     return decorator
@@ -187,11 +195,21 @@ def graph_output(name):
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def _declared_locations(instance):
-    """Return {field_name: "node"|"edge"} from dataclass metadata."""
+    """Return {field_name: "node"|"edge"} from dataclass metadata.
+
+    Reads the ``scale`` metadata key (set by declare/state_variable/
+    input_variable/parameter).  Integer MPG scale constants (Compartment=9,
+    Connection=10) are mapped to "node"/"edge".  Falls back to the legacy
+    ``location`` key for backward compatibility.
+    """
     locs = {}
     try:
         for f in dc_fields(type(instance)):
-            loc = f.metadata.get("location")
+            loc = f.metadata.get("scale") or f.metadata.get("location")
+            if loc is None:
+                continue
+            if isinstance(loc, int):
+                loc = _SCALE_INT_TO_LOC.get(loc)
             if loc is not None:
                 locs[f.name] = loc
     except TypeError:
@@ -334,11 +352,29 @@ class GraphSystemBuilder:
         field_order = {f: i for i, f in enumerate(node_unknowns)}
         node_balance_items.sort(key=lambda x: field_order.get(x[0], len(node_unknowns)))
 
-        default_edge_field = edge_unknowns[0] if edge_unknowns else None
-        edge_law_items = [
-            (f if f is not None else default_edge_field, tf, an, b, r, ex, intg)
-            for f, tf, an, b, r, ex, intg in edge_law_items
-        ]
+        for f, _, an, _, _, _, _ in edge_law_items:
+            if f is None:
+                raise ValueError(
+                    f"@edge_law '{an}': field= must be set explicitly. "
+                    f"Declared edge_unknowns: {list(edge_unknowns)}."
+                )
+
+        # ── integrate=True: extend edge unknowns with {field}_amount ──────────
+        # For each edge law with integrate=True, a new DAE unknown Q_e is added:
+        #   (Q_new − Q_old) / dt − q_e = 0  →  Q_new = Q_old + q_e · dt
+        # Q_old is snapshotted from props before the Newton loop; Q_new is
+        # solved together with concentration and flux in the same Newton step.
+        integrate_fields = sorted({fn for fn, _, _, _, _, _, intg in edge_law_items if intg})
+        dt_inst = float(getattr(instance, "time_step", None) or 1.0)
+
+        amount_olds: dict[str, np.ndarray] = {}
+        for fn in integrate_fields:
+            pdict = instance.props.get(f"{fn}_amount", {})
+            amount_olds[fn] = np.array(
+                [float(pdict.get(v, 0.0)) for v in edge_vids_int], dtype=np.float64
+            )
+
+        all_edge_unknowns = list(edge_unknowns) + [f"{fn}_amount" for fn in integrate_fields]
 
         # ── Collect required prop names by signature inspection ───────────────
         all_raws = (
@@ -351,7 +387,7 @@ class GraphSystemBuilder:
         required: set[str] = set()
         for raw in all_raws:
             for aname in inspect.getfullargspec(raw)[0][1:]:
-                if aname not in node_unknowns and aname not in edge_unknowns:
+                if aname not in node_unknowns and aname not in all_edge_unknowns:
                     required.add(aname)
         for _, tf, _, _, _, _ in node_balance_items:
             if tf:
@@ -382,6 +418,10 @@ class GraphSystemBuilder:
             ))
             for fn in edge_unknowns
         }
+        for fn in integrate_fields:
+            edge_fields_gs[f"{fn}_amount"] = FieldState(
+                f"{fn}_amount", "edge", amount_olds[fn].copy()
+            )
 
         # ── Evaluator factory ─────────────────────────────────────────────────
 
@@ -506,7 +546,6 @@ class GraphSystemBuilder:
                 evaluator = make_combined_node_ev(bulk_wrapped, bc_wrapped),
             ))
 
-        integrate_edge_fields: set[str] = set()
         edge_groups: dict[str, list] = defaultdict(list)
         for field_name, tf, _, bound, raw, ex, intg in edge_law_items:
             edge_groups[field_name].append((tf, bound, raw, ex, intg))
@@ -517,8 +556,6 @@ class GraphSystemBuilder:
                 continue
             wrapped = []
             for tf, b, r, ex, intg in grp:
-                if intg:
-                    integrate_edge_fields.add(field_name)
                 inner = make_evaluator(r, b, tf, "edge")
                 if ex:
                     wrapped.append(
@@ -532,6 +569,20 @@ class GraphSystemBuilder:
             )
             equation_blocks.append(EquationBlock(
                 name=f"edge_law_{field_name}", evaluator=ev
+            ))
+
+        # ── Amount integration equations: (Q_new − Q_old)/dt − q = 0 ─────────
+        def _make_amount_ev(flux_field, q_old, dt):
+            def evaluator(ctx):
+                Q_new = ctx.edge_unknowns[f"{flux_field}_amount"]
+                q     = ctx.edge_unknowns[flux_field]
+                return (Q_new - q_old) / dt - q
+            return evaluator
+
+        for fn in integrate_fields:
+            equation_blocks.append(EquationBlock(
+                name      = f"edge_amount_{fn}",
+                evaluator = _make_amount_ev(fn, amount_olds[fn], dt_inst),
             ))
 
         output_blocks = tuple(
@@ -556,14 +607,14 @@ class GraphSystemBuilder:
             boundary_ports    = boundary_ports,
             unknowns          = UnknownLayout(
                 node_fields   = tuple(node_unknowns),
-                edge_fields   = tuple(edge_unknowns),
+                edge_fields   = tuple(all_edge_unknowns),
             ),
             equation_blocks   = tuple(equation_blocks),
             output_blocks     = output_blocks,
             jacobian_evaluator= jac_evaluator,
             parameters        = {},
         )
-        return spec, node_snap, edge_snap, integrate_edge_fields
+        return spec, node_snap, edge_snap
 
     # ── Solve + inject ────────────────────────────────────────────────────────
 
@@ -573,7 +624,7 @@ class GraphSystemBuilder:
         Build the spec, run one solve step, return (packed, outputs).
         Called once per Choregrapher tick from _invoke_graph_system.
         """
-        spec, _, _, integrate_edge_fields = self.build()
+        spec, _, _ = self.build()
         solver_cls = self._spec_def.get("solver_cls")
         if solver_cls is not None:
             solver = solver_cls(self._spec_cfg())
@@ -581,7 +632,7 @@ class GraphSystemBuilder:
             solver = make_solver(self._spec_def["method"], self._spec_cfg())
         packed  = solver.step_once(spec, previous_node_fields, dt)
         outputs = solver.derive_outputs(spec, packed, previous_node_fields, dt)
-        return packed, outputs, integrate_edge_fields
+        return packed, outputs
 
     def _spec_cfg(self) -> SolverConfig:
         sd = self._spec_def
@@ -594,15 +645,17 @@ class GraphSystemBuilder:
             linesearch   = sd["linesearch"],
         )
 
-    def inject_result(self, packed: np.ndarray, spec: GraphDAESpec,
-                      integrate_edge_fields: set) -> None:
-        """Write converged solution back to self._instance.props."""
-        instance       = self._instance
-        node_unknowns  = self._spec_def["node_unknowns"]
-        edge_unknowns  = self._spec_def["edge_unknowns"]
-        gv             = instance._graph_view
-        node_vids_int  = [int(v) for v in gv.node_ids]
-        edge_vids_int  = [int(v) for v in gv.edge_ids]
+    def inject_result(self, packed: np.ndarray, spec: GraphDAESpec) -> None:
+        """Write converged solution back to self._instance.props.
+
+        Writes all node unknowns and all edge unknowns (including any
+        {field}_amount integration unknowns added by integrate=True).
+        """
+        instance      = self._instance
+        node_unknowns = self._spec_def["node_unknowns"]
+        gv            = instance._graph_view
+        node_vids_int = [int(v) for v in gv.node_ids]
+        edge_vids_int = [int(v) for v in gv.edge_ids]
 
         node_u, edge_u = spec.unpack_unknowns(packed)
 
@@ -611,13 +664,8 @@ class GraphSystemBuilder:
             for i, vid in enumerate(node_vids_int):
                 target[vid] = float(node_u[fn][i])
 
-        for fn in edge_unknowns:
+        for fn in spec.unknowns.edge_fields:
             target = instance.props.setdefault(fn, {})
-            for i, vid in enumerate(edge_vids_int):
-                target[vid] = float(edge_u[fn][i])
-
-        for fn in integrate_edge_fields:
-            target = instance.props.setdefault(f"{fn}_mean", {})
             for i, vid in enumerate(edge_vids_int):
                 target[vid] = float(edge_u[fn][i])
 
@@ -666,14 +714,14 @@ def _invoke_graph_system(self, method_name: str) -> None:
 
     # ── Build + solve ─────────────────────────────────────────────────────────
     builder = GraphSystemBuilder(self, spec_def)
-    packed, outputs, integrate_edge_fields = builder.build_and_step(
+    packed, outputs = builder.build_and_step(
         previous_node_fields=previous_fields,
         dt=dt,
     )
 
     # ── Store for next tick's previous-field and test introspection ───────────
-    spec, _, _, _ = builder.build()    # re-build for unpack (cheap)
-    node_u, _     = spec.unpack_unknowns(packed)
+    spec, _, _ = builder.build()    # re-build for unpack (cheap)
+    node_u, _  = spec.unpack_unknowns(packed)
 
     setattr(self, _saved_key, {fn: node_u[fn].copy()
                                 for fn in spec_def["node_unknowns"]})
@@ -682,7 +730,11 @@ def _invoke_graph_system(self, method_name: str) -> None:
                                     for fn in spec_def["node_unknowns"]}
 
     # ── Inject results ────────────────────────────────────────────────────────
-    builder.inject_result(packed, spec, integrate_edge_fields)
+    builder.inject_result(packed, spec)
+
+    # ── Write biological-scale fields back to the MTG ─────────────────────────
+    if hasattr(self, "write_back_to_mtg"):
+        self.write_back_to_mtg()
 
     # ── Write output-block results ─────────────────────────────────────────────
     gv            = self._graph_view
@@ -756,7 +808,7 @@ class _GraphSystemDescriptor:
         Choregrapher().add_process(Functor(_trampoline),
                                    name=self._spec["schedule_as"])
 
-        spec_with_cls = {**self._spec, "inner_class": self._inner_cls}
+        spec_with_cls = {**self._spec, "inner_class": self._inner_cls, "trampoline": _trampoline}
         owner._graph_system_specs = {
             **getattr(owner, "_graph_system_specs", {}),
             name: spec_with_cls,
