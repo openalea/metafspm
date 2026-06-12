@@ -103,6 +103,5 @@ doc/_dvlpt/
 *.code-workspace
 
 */CLAUDE.md
-*/metafspm_solver_plan.md
 
 test/*.png
