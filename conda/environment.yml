@@ -8,6 +8,7 @@ dependencies:
   - numpy
   - numba
   - openalea.mtg
+  - scipy
   - pandas
   - pip
   - pytest
