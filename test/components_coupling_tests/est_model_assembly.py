@@ -18,7 +18,7 @@ from openalea.mtg import MTG
 
 class Model(CompositeModel):
     """
-    Root-BRIDGES model
+    test composite model
 
     Use guideline :
     1. store in a variable Model(g, time_step) to initialize the model, g being an openalea.MTG() object and time_step an time interval in seconds.
