@@ -67,54 +67,56 @@ class NitrogenAxialTransport(FunctionalComponent):
         unit="mol m-3", unit_comment="",
         description="Xylem solute concentration per segment node. Node unknown.",
         min_value=0.0, max_value=1e4, value_comment="", references="", DOI=[],
-        state_variable_type="intensive", initialize=0.5, scale=scales.Compartment,
+        state_variable_type="intensive", initialize=0.5, scale=scales.SubOrgan,
     )
     axial_flux: float = state_variable(
         unit="mol s-1", unit_comment="",
-        description="Net axial solute flux per inter-segment edge. Edge unknown.",
+        description="Net axial solute flux on the proximal edge of each segment.",
         min_value=-1.0, max_value=1.0, value_comment="", references="", DOI=[],
-        state_variable_type="extensive", initialize=0.0, scale=scales.Connection,
+        state_variable_type="extensive", initialize=0.0, scale=scales.SubOrgan,
+        edge_mapping="proximal",
     )
     K_axial: float = parameter(
         unit="m3 s-1", unit_comment="",
-        description="Axial conductance per inter-segment edge.",
+        description="Axial conductance, averaged across the two endpoint segments.",
         min_value=0.0, max_value=1.0, value_comment="", references="", DOI=[],
         by="NitrogenAxialTransport",
-        default=0.05, scale=scales.Connection, state_variable_type="intensive",
+        default=0.05, scale=scales.SubOrgan, state_variable_type="intensive",
+        edge_mapping="mean",
     )
     radial_solute_input: float = state_variable(
         unit="mol s-1", unit_comment="net radial influx per segment",
         description="J_radial: net solute source into the xylem lumen.",
         min_value=-1.0, max_value=1.0, value_comment="", references="", DOI=[],
-        initialize=0.0, scale=scales.Compartment,
+        initialize=0.0, scale=scales.SubOrgan,
     )
     k_radial: float = parameter(
         unit="s-1", unit_comment="passive radial exchange coefficient",
         description="First-order rate constant for solute exchange with external solution.",
         min_value=0.0, max_value=1e3, value_comment="", references="", DOI=[],
         by="NitrogenAxialTransport",
-        default=0.0, scale=scales.Connection,
+        default=0.0, scale=scales.SubOrgan,
     )
     c_ext: float = parameter(
         unit="mol m-3", unit_comment="",
         description="Solute concentration in external solution (soil or apoplast).",
         min_value=0.0, max_value=1e4, value_comment="", references="", DOI=[],
         by="NitrogenAxialTransport",
-        default=0.0, scale=None,
+        default=0.0, scale=scales.SubOrgan,
     )
     c_dirichlet: float = parameter(
         unit="mol m-3", unit_comment="",
         description="Fixed concentration imposed by a Dirichlet BC at boundary nodes.",
         min_value=0.0, max_value=1e4, value_comment="", references="", DOI=[],
         by="NitrogenAxialTransport",
-        default=0.0, scale=None,
+        default=0.0, scale=scales.SubOrgan,
     )
     q_boundary: float = parameter(
         unit="mol s-1", unit_comment="",
         description="Fixed source term imposed by a Neumann BC at boundary nodes.",
         min_value=-1e3, max_value=1e3, value_comment="", references="", DOI=[],
         by="NitrogenAxialTransport",
-        default=0.0, scale=None,
+        default=0.0, scale=scales.SubOrgan,
     )
 
     @rate
