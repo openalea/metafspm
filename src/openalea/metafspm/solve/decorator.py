@@ -198,18 +198,36 @@ def _declared_locations(instance):
     """Return {field_name: "node"|"edge"} from dataclass metadata.
 
     Reads the ``scale`` metadata key (set by declare/state_variable/
-    input_variable/parameter).  Integer MPG scale constants (Compartment=9,
-    Connection=10) are mapped to "node"/"edge".  Falls back to the legacy
-    ``location`` key for backward compatibility.
+    input_variable/parameter).
+
+    Resolution order:
+      scale=Compartment (9)  → "node"
+      scale=Connection  (10) → "edge"
+      scale=bio-int + edge_mapping set → "edge"  (biological edge property)
+      scale=bio-int, no edge_mapping   → "node"  (biological node property)
+      scale="node"|"edge"              → direct
+      Falls back to legacy ``location`` key for backward compatibility.
     """
     locs = {}
     try:
         for f in dc_fields(type(instance)):
-            loc = f.metadata.get("scale") or f.metadata.get("location")
-            if loc is None:
-                continue
-            if isinstance(loc, int):
-                loc = _SCALE_INT_TO_LOC.get(loc)
+            scale_raw    = f.metadata.get("scale")
+            edge_mapping = f.metadata.get("edge_mapping")
+            if scale_raw is None:
+                loc = f.metadata.get("location")
+            elif isinstance(scale_raw, int):
+                if scale_raw == _ScalesConfig.Compartment:
+                    loc = "node"
+                elif scale_raw == _ScalesConfig.Connection:
+                    loc = "edge"
+                elif edge_mapping is not None:
+                    loc = "edge"   # biological scale + edge_mapping → edge slot
+                else:
+                    loc = "node"   # biological scale without edge_mapping → node slot
+            elif scale_raw in ("node", "edge"):
+                loc = scale_raw
+            else:
+                loc = None
             if loc is not None:
                 locs[f.name] = loc
     except TypeError:
@@ -686,6 +704,9 @@ def _invoke_graph_system(self, method_name: str) -> None:
       build_and_step()   → spec + solver.step_once() + derive_outputs()
       inject_result()    → write-back to self.props
     """
+    # Refresh biological-scale fields from MTG before snapshotting.
+    if hasattr(self, "_refresh_from_bio_scale"):
+        self._refresh_from_bio_scale()
     spec_def = type(self)._graph_system_specs[method_name]
 
     # ── Advance previous-field bookkeeping ────────────────────────────────────

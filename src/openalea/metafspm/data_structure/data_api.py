@@ -665,18 +665,24 @@ class MPGDataStructure(MTGDataStructure):
         except (KeyError, TypeError, ValueError):
             return None
 
-    def _mtg_to_edge_array(self, name: str) -> np.ndarray | None:
+    def _mtg_to_edge_array(self, name: str,
+                            convention: str = "mean") -> np.ndarray | None:
         """Build a per-edge array from an MTG property at any biological scale.
 
+        Parameters
+        ----------
+        name       : MTG property name (stored at biological VIDs).
+        convention : How the two endpoint values are combined into one edge value.
+                     "mean"     — arithmetic mean (a+b)/2  [symmetric properties]
+                     "proximal" — take from child  (n_id_b) [directed properties]
+                     "distal"   — take from parent (n_id_a) [directed properties]
+
         Fast path  (ArrayDict with full biological-VID coverage):
-            vals = property.values_array()
-            (vals[_bio_edge_a_idx] + vals[_bio_edge_b_idx]) / 2
-        Both index arrays are precomputed once per topology.
+            index arrays _bio_edge_a_idx / _bio_edge_b_idx are precomputed.
+        Slow path  (plain dict or partial ArrayDict):
+            per-VID Python dict lookup.
 
-        Edge value = arithmetic mean of the two endpoint biological values.
-        n_id_a / n_id_b always hold biological VIDs regardless of from_scale.
-
-        Returns None if the property is absent or any endpoint VID is missing.
+        Returns None if the property is absent or any required VID is missing.
         """
         if self._mtg is None or self._bio_edge_a_idx.size == 0:
             return np.empty(0, dtype=np.float64) if self._mtg is not None else None
@@ -687,14 +693,22 @@ class MPGDataStructure(MTGDataStructure):
         try:
             if isinstance(prop, ArrayDict) and prop.size == len(self._bio_vids_sorted):
                 vals = prop.values_array()
+                if convention == "proximal":
+                    return vals[self._bio_edge_b_idx].copy()
+                if convention == "distal":
+                    return vals[self._bio_edge_a_idx].copy()
                 return (vals[self._bio_edge_a_idx] + vals[self._bio_edge_b_idx]) / 2.0
-            pdict    = prop.to_dict() if hasattr(prop, "to_dict") else dict(prop)
-            n_id_a   = self._mtg.array_filtering(
+            pdict  = prop.to_dict() if hasattr(prop, "to_dict") else dict(prop)
+            n_id_a = self._mtg.array_filtering(
                 "n_id_a", filter_in={"scale": self._mtg.scales.Connection}
             )
-            n_id_b   = self._mtg.array_filtering(
+            n_id_b = self._mtg.array_filtering(
                 "n_id_b", filter_in={"scale": self._mtg.scales.Connection}
             )
+            if convention == "proximal":
+                return np.array([float(pdict[int(b)]) for b in n_id_b], dtype=np.float64)
+            if convention == "distal":
+                return np.array([float(pdict[int(a)]) for a in n_id_a], dtype=np.float64)
             return np.array(
                 [(float(pdict[int(a)]) + float(pdict[int(b)])) / 2.0
                  for a, b in zip(n_id_a, n_id_b)],
@@ -724,6 +738,38 @@ class MPGDataStructure(MTGDataStructure):
             else:
                 for i, vid in enumerate(self._idx_to_vid):
                     prop[int(vid)] = float(arr[i])
+        except Exception:
+            pass
+
+    def write_edge_to_mtg(self, name: str, arr: np.ndarray,
+                           convention: str = "proximal") -> None:
+        """Write a solver edge-result array back to the MTG property *name*.
+
+        Each edge value is written to the biological VID of the endpoint
+        determined by *convention*:
+          "proximal" — write to child  (n_id_b); natural for xylem flow
+          "distal"   — write to parent (n_id_a)
+          "mean"     — no write-back (symmetric property; no unique endpoint)
+
+        Fast path  (ArrayDict with full biological-VID coverage):
+            property.assign_at(idx_array, arr)  — O(m) numpy slice assignment.
+        Slow path  (plain dict or partial ArrayDict):
+            per-edge Python assignment.
+        """
+        if convention == "mean" or self._mtg is None:
+            return
+        if self._bio_edge_b_idx.size == 0:
+            return
+        idx = self._bio_edge_b_idx if convention == "proximal" else self._bio_edge_a_idx
+        try:
+            prop = self._mtg.property(name)
+            arr  = np.asarray(arr, dtype=np.float64)
+            if isinstance(prop, ArrayDict) and prop.size == len(self._bio_vids_sorted):
+                prop.assign_at(idx, arr)
+            else:
+                vids = self._bio_vids_sorted[idx]
+                for e, vid in enumerate(vids):
+                    prop[int(vid)] = float(arr[e])
         except Exception:
             pass
 
