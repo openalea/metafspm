@@ -102,6 +102,7 @@ doc/_dvlpt/
 .vscode
 *.code-workspace
 
+CLAUDE.md
 */CLAUDE.md
 
 test/*.png
