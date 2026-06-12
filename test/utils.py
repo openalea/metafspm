@@ -1,4 +1,4 @@
-import sys, importlib, pkgutil
+import sys
 
 def deep_reload_package(pkg_names: list):
     """
@@ -11,3 +11,4 @@ def deep_reload_package(pkg_names: list):
                 if m == pkg_name or m.startswith(pkg_name + ".")]
         for m in to_drop:
             del sys.modules[m]
+
