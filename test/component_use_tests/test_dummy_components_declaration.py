@@ -1,3 +1,5 @@
+import sys, os
+sys.path.append(os.path.abspath('..'))
 from utils import deep_reload_package
 deep_reload_package("openalea")
 from openalea.metafspm.coupling.component import FunctionalComponent, declare, input_variable, state_variable

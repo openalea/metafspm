@@ -68,7 +68,7 @@ class Functor:
                     data[self.name].update(
                         {vid: self.fun(instance, *(data[arg][vid] for arg in self.input_names)) for vid in data["focus_elements"]})
                 
-        elif data_type == "<class 'openalea.metafspm.utils.ArrayDict'>":
+        elif data_type == "<class 'openalea.metafspm.data_structure.arraydict.ArrayDict'>":
             if self.total:
                 data[self.name].update(
                     {1: self.fun(instance, *(data[arg] for arg in self.input_names))})

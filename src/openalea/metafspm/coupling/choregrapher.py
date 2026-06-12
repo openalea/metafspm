@@ -72,7 +72,7 @@ class Choregrapher(Singleton):
             for f in range(len(self.scheduled_groups[module_family][k])):
                 functor = self.scheduled_groups[module_family][k][f]
                 if use_njit:
-                    if (data_structure_type == "<class 'openalea.metafspm.utils.ArrayDict'>" and not functor.iterating and not functor.total 
+                    if (data_structure_type == "<class 'openalea.metafspm.data_structure.arraydict.ArrayDict'>" and not functor.iterating and not functor.total 
                         and module_family != "RootAnatomy" and module_family != "RootWaterModel" and module_family != "RootGrowthModelCoupled"): # TODO manual exclusions for now
                         try:
                             functor.reg = {}

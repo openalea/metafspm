@@ -1,4 +1,6 @@
 import pandas as pd
+import sys, os
+sys.path.append(os.path.abspath('..'))
 from utils import deep_reload_package
 deep_reload_package(["openalea", "dummy_components"])
 
