@@ -82,7 +82,7 @@ class NitrogenAxialTransport(FunctionalComponent):
         min_value=0.0, max_value=1.0, value_comment="", references="", DOI=[],
         by="NitrogenAxialTransport",
         default=0.05, scale=scales.SubOrgan, state_variable_type="intensive",
-        edge_mapping="mean",
+        edge_mapping="proximal",
     )
     radial_solute_input: float = state_variable(
         unit="mol s-1", unit_comment="net radial influx per segment",
