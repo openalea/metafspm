@@ -9,7 +9,7 @@ from .component_factory import *
 def declare(unit: str, unit_comment: str, description: str,  min_value: float, max_value: float, value_comment: str, references: str, DOI: list,
               variable_type: Literal["state_variable", "plant_scale_state", "input", "parameter"], by: str,
               state_variable_type: Literal["massic_concentration", "intensive", "extensive", "NonInertialExtensive", "NonInertialIntensive", "descriptor"],
-              edit_by: Literal["user", "dev"], default=None, default_factory=None, location=None):
+              edit_by: Literal["user", "dev"], default=None, default_factory=None):
     """
     Resulting from a consensus, this function is used to constrain component variables declaration in a dataclass in a commonly admitted way.
 
@@ -35,17 +35,13 @@ def declare(unit: str, unit_comment: str, description: str,  min_value: float, m
                         metadata=dict(unit=unit, unit_comment=unit_comment, description=description, min_value=min_value,
                                     max_value=max_value, value_comment=value_comment, references=references, DOI=DOI,
                                     variable_type=variable_type, by=by,
-                                    state_variable_type=state_variable_type, edit_by=edit_by,
-                                    location=location))
+                                    state_variable_type=state_variable_type, edit_by=edit_by))
     else:
         return field(default=default,
                         metadata=dict(unit=unit, unit_comment=unit_comment, description=description, min_value=min_value,
                                     max_value=max_value, value_comment=value_comment, references=references, DOI=DOI,
                                     variable_type=variable_type, by=by,
-                                    state_variable_type=state_variable_type, edit_by=edit_by,
-                                    location=location))
-
-
+                                    state_variable_type=state_variable_type, edit_by=edit_by))
 
 
 @dataclass
