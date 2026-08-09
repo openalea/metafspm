@@ -122,12 +122,12 @@ class CompositeModel:
             
     def open_or_create_translator(self, translator_path):
         try:
-            with open(translator_path + "/coupling_translator.yaml", "r") as f:
+            with open(translator_path, "r") as f:
                 translator = yaml.safe_load(f)
         except FileNotFoundError:
             print("NOTE : You will now have to provide information about shared variables between the modules composing this model :\n")
             translator = self.translator_matrix_builder()
-            with open(translator_path + "/coupling_translator.yaml", "w") as f:
+            with open(translator_path, "w") as f:
                 yaml.dump(translator, f)
         
         return translator

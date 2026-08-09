@@ -48,7 +48,7 @@ def play_Orchestra(scene_name, output_folder,
                                                                 sowing_depth=[0.025], row_spacing=row_spacing, plant_models=plant_models,
                                                                 plant_scenarios=plant_scenarios, plant_model_frequency=[1.])
     
-    debug_runs = True
+    debug_runs = False
     cpu_assignments = plan_affinity(len(planting_sequence), 1, debug_runs=debug_runs) # TODO : only 1 cpu per plant as for now, see if we need to adapt this if we start leveraging intense vectorization with numba
     
     # Queues to perform synchronization and data sharing of the processes
