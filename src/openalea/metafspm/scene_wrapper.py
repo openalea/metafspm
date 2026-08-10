@@ -167,7 +167,7 @@ def stand_initialization(scene_name, xrange, yrange, sowing_density, sowing_dept
     number_per_row = max(int(yrange * xrange * sowing_density / n_rows), 1)
     intra_row_distance = yrange / number_per_row
 
-    print(f"Launching scene with {n_rows} rows, {number_per_row} plant per rows, which represents {n_rows * number_per_row} plants")
+    print(f"\033[1m\033[32mLaunching scene '{scene_name}' with {n_rows} rows, {number_per_row} plant per rows, which represents {n_rows * number_per_row} plants\033[0m")
     
     current_model_index = -1
     planting_sequence = {}
