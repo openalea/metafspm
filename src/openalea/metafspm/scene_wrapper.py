@@ -15,7 +15,7 @@ def play_Orchestra(scene_name, output_folder,
                  light_model = None, light_scenario: dict = {},
                  translator_path: str = "",
                  logger_class = None, log_settings: dict = {}, heavy_log_period: int = 24,
-                 n_iterations = 2500, time_step=3600, scene_xrange=1, scene_yrange=1, sowing_density=250, row_spacing=0.15, max_depth=1.3,
+                 n_iterations = 2500, time_step=3600, scene_xrange=1, scene_yrange=1, sowing_density=250, row_spacing=0.15, sowing_depth=[0.025],
                  voxel_widht=0.01, voxel_height=0.01,
                  record_performance=False, log_only_one: bool = False):
     """
@@ -45,7 +45,7 @@ def play_Orchestra(scene_name, output_folder,
 
     # Compute the placement of individual plants in the scene and for each position get the information on how to initialize the plant model at that location
     scene_xrange, scene_yrange, planting_sequence = stand_initialization(scene_name=scene_name, xrange=scene_xrange, yrange=scene_yrange, sowing_density=sowing_density, 
-                                                                sowing_depth=[0.025], row_spacing=row_spacing, plant_models=plant_models,
+                                                                sowing_depth=sowing_depth, row_spacing=row_spacing, plant_models=plant_models,
                                                                 plant_scenarios=plant_scenarios, plant_model_frequency=[1.])
     
     debug_runs = False
