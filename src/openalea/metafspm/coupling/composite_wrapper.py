@@ -1,6 +1,7 @@
 import yaml
 from dataclasses import fields
 from openalea.metafspm.data_structure.arraydict import ArrayDict
+from openalea.metafspm.coupling.translator import Translator, parse_factor
 
 
 class CompositeModel:
@@ -105,6 +106,13 @@ class CompositeModel:
         return names
 
     def open_or_create_translator(self, translator_path):
+        """
+        Translator from a YAML file, or from a Python module defining ``translator = Translator(...)`` (.py),
+        in the nested {receiver: {provider: {variable: {source: factor}}}} format. A missing YAML file is built
+        interactively and written.
+        """
+        if str(translator_path).endswith(".py"):
+            return Translator.from_module(str(translator_path)).to_nested()
         try:
             with open(translator_path, "r") as f:
                 translator = yaml.safe_load(f)
@@ -138,7 +146,8 @@ class CompositeModel:
                                 # Handling exception where operations are put in the coupling translator for unit conversion
                                 for source_name, unit_conversion in source_variables.items():
                                     if isinstance(unit_conversion, str):
-                                        source_variables[source_name] = eval(unit_conversion)
+                                        # Restricted arithmetic, not eval (design note §4)
+                                        source_variables[source_name] = parse_factor(unit_conversion)
 
                                 if len(source_variables.keys()) == 1:
                                     for source_name, unit_conversion in source_variables.items():

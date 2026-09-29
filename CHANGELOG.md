@@ -79,4 +79,11 @@ The flat modules used before the 2026 restructure have been removed. No compatib
   - `self.props` is a **read-only** `DataStructurePropsView` for compatibility, kept for one release.
   - Choregrapher steps run on the DataStructure arrays and **receive whole arrays**. `@rate(vectorized=False)` (and the same option on every step decorator) opts in to one call per element for scalar logic.
   - New `self.previous(fn)`: an unknown's value at the start of the current solve, managed by the framework. The user-managed `_previous_fields` is deprecated.
+- **Translators as objects (WD.0):**
+  - New `openalea.metafspm.coupling.translator`, providing `Link`, `Translator` and `parse_factor`:
+    - Python-first translators with live `ScalesConfig` references, `formula=` callables, and optional `scale` / `aggregation` / `weight` on each link;
+    - `Translator.from_yaml`, `from_dict`, `from_module(path)`, `load`, `to_nested`, `inputs_outputs`.
+  - The YAML short form is unchanged. A long form is available: `variable: {sources: {...}, scale: Organ, aggregation: sum}`.
+  - String factors are parsed by a restricted arithmetic parser (numbers and `+ - * / **`). **`eval` is no longer used** in `CompositeModel`.
+  - `open_or_create_translator` also accepts a `.py` translator module.
 
