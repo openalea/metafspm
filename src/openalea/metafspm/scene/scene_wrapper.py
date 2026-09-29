@@ -15,7 +15,7 @@ def play_Orchestra(scene_name, output_folder,
                  light_model = None, light_scenario: dict = {},
                  translator_path: str = "",
                  logger_class = None, log_settings: dict = {}, heavy_log_period: int = 24,
-                 n_iterations = 2500, time_step=3600, scene_xrange=1, scene_yrange=1, sowing_density=250, row_spacing=0.15, max_depth=1.3,
+                 n_iterations = 2500, time_step=3600, scene_xrange=1, scene_yrange=1, sowing_density=250, row_spacing=0.15, sowing_depth=[0.025],
                  voxel_widht=0.01, voxel_height=0.01,
                  record_performance=False, log_only_one: bool = False):
     """
@@ -45,10 +45,10 @@ def play_Orchestra(scene_name, output_folder,
 
     # Compute the placement of individual plants in the scene and for each position get the information on how to initialize the plant model at that location
     scene_xrange, scene_yrange, planting_sequence = stand_initialization(scene_name=scene_name, xrange=scene_xrange, yrange=scene_yrange, sowing_density=sowing_density, 
-                                                                sowing_depth=[0.025], row_spacing=row_spacing, plant_models=plant_models,
+                                                                sowing_depth=sowing_depth, row_spacing=row_spacing, plant_models=plant_models,
                                                                 plant_scenarios=plant_scenarios, plant_model_frequency=[1.])
     
-    debug_runs = True
+    debug_runs = False
     cpu_assignments = plan_affinity(len(planting_sequence), 1, debug_runs=debug_runs) # TODO : only 1 cpu per plant as for now, see if we need to adapt this if we start leveraging intense vectorization with numba
     
     # Queues to perform synchronization and data sharing of the processes
@@ -167,7 +167,7 @@ def stand_initialization(scene_name, xrange, yrange, sowing_density, sowing_dept
     number_per_row = max(int(yrange * xrange * sowing_density / n_rows), 1)
     intra_row_distance = yrange / number_per_row
 
-    print(f"Launching scene with {n_rows} rows, {number_per_row} plant per rows, which represents {n_rows * number_per_row} plants")
+    print(f"\033[1m\033[32mLaunching scene '{scene_name}' with {n_rows} rows, {number_per_row} plant per rows, which represents {n_rows * number_per_row} plants\033[0m")
     
     current_model_index = -1
     planting_sequence = {}
