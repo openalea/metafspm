@@ -294,17 +294,19 @@ class FunctionalComponent(Component):
         self._graph_view = ds.to_graph_view() if hasattr(ds, "to_graph_view") else None
         if not hasattr(self, "pullable_inputs"):
             self.pullable_inputs = {}
+        if not hasattr(self.choregrapher, "simulation_time_step"):
+            self.choregrapher.add_simulation_time_step(1)
+        # One iteration per simulation step unless the component declares its own sub time step
+        sub_time_step = getattr(self, "sub_time_step", None) or self.choregrapher.simulation_time_step
         if hasattr(ds, "register"):
             # Live reading (design note §8): steps and solves read and write the DataStructure arrays;
             # props is a read-only compatibility view.
             self.props = DataStructurePropsView(ds)
-            self.choregrapher.add_time_and_data(self, 1, ds, compartment="graph")
+            self.choregrapher.add_time_and_data(self, sub_time_step, ds, compartment="graph")
         else:
             self.props = ds.to_props_dict()
             self.props["focus_elements"] = [int(v) for v in self._graph_view.node_ids]
-            self.choregrapher.add_time_and_data(self, 1, self.props)
-        if not hasattr(self.choregrapher, "simulation_time_step"):
-            self.choregrapher.add_simulation_time_step(1)
+            self.choregrapher.add_time_and_data(self, sub_time_step, self.props)
 
     def pull_available_inputs(self):
         """Refresh the derived inputs registered on the DataStructure by the coupling, before the step."""

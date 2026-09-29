@@ -157,3 +157,30 @@ def test_failing_plant_stops_the_scene(orchestra, tmp_path):
     assert summary["run_count"] == 1
     assert clean_exit is False  # Q18
     assert _no_segment_left(scene_folder)
+
+
+# ---------------------------------------------------------------- DataStructure-backed scene (WD.5b / WD.6)
+
+def test_data_structure_scene(orchestra, tmp_path):
+    """Plants on MPGDataStructures and an (x, y, z) soil grid, exchanging through a translator-sized Transport."""
+    import doubles_ds
+    from openalea.metafspm.coupling.coupler import Transport
+    from openalea.metafspm.coupling.translator import Translator
+
+    translator_path = doubles.write_translator(tmp_path / "ds_translator.yaml", doubles_ds.translator(soil=doubles_ds.SOIL))
+    shape = Transport.from_translator(Translator.load(translator_path), soil=doubles_ds.SOIL,
+                                      plant_components=doubles_ds.PLANT_COMPONENTS, capacity=64).shape
+    meteo = pd.DataFrame({"PARi": [100., 200., 300., 400., 500.]}, index=pd.Index(range(5), name="t"))
+    clean_exit, scene_folder = orchestra(n_workers=4, plant_models=[doubles_ds.DSFakePlant], plant_scenarios=[_scenario()],
+                                         soil_model=doubles_ds.DSFakeSoil, soil_scenario=_scenario(),
+                                         light_model=doubles.FakeLight, light_scenario=dict(_scenario(), meteo=meteo),
+                                         translator_path=translator_path, logger_class=doubles.FakeLogger, log_only_one=True,
+                                         n_iterations=3, scene_xrange=0.3, scene_yrange=0.15, row_spacing=0.15,
+                                         sowing_density=25, sowing_depth=[0.025], handshake_shape=shape)
+    assert clean_exit
+    plant = doubles.read_summary(str(scene_folder / f"DSFakePlant_0_{scene_folder.name}"))
+    soil = doubles.read_summary(str(scene_folder / "Soil"))
+    assert plant["run_count"] == 3 and soil["run_count"] == 3
+    assert plant["PARa"] == pytest.approx({"1": 0.06, "2": 0.24})
+    assert soil["DOC"] > 0 and min(plant["C_hexose_soil"]) > 0
+    assert _no_segment_left(scene_folder)
