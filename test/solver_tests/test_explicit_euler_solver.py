@@ -27,7 +27,7 @@ import pytest
 
 from openalea.metafspm.solve.solver import ExplicitEulerSolver, SolverConfig, make_solver
 from openalea.metafspm.solve.system_specs import GraphDAESpec, FieldState, UnknownLayout, EquationBlock
-from conftest import build_spec_decay_1node, _graph_view
+from solver_specs import build_spec_decay_1node, _graph_view
 
 
 # ── 1. Explicit Euler update formula ─────────────────────────────────────────

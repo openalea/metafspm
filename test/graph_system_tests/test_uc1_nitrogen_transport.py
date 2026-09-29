@@ -21,11 +21,10 @@ Tests:
 import sys
 import os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
-from utils import deep_reload_package
-deep_reload_package(["openalea"])
 
 import numpy as np
 import pytest
+from openalea.metafspm.coupling.choregrapher import Choregrapher
 from dataclasses import dataclass
 from typing import Type
 
@@ -45,6 +44,13 @@ from openalea.metafspm.data_structure.configs import ScalesConfig as scales
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'mpg_tests'))
 from simple_seedling import generate_simple_mpg_seedling
 
+
+@pytest.fixture(autouse=True)
+def _fresh_choregrapher_run_state():
+    """The Choregrapher singleton is shared by the whole session: start and leave each test with a clean run state."""
+    Choregrapher().reset()
+    yield
+    Choregrapher().reset()
 
 
 # ══════════════════════════════════════════════════════════════════════════════

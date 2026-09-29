@@ -22,7 +22,7 @@ from openalea.metafspm.solve.solver import LinearDirectSolver, SolverConfig, mak
 from openalea.metafspm.solve.system_specs import (
     GraphDAESpec, FieldState, UnknownLayout, EquationBlock,
 )
-from conftest import _graph_view, build_spec_linear_2node
+from solver_specs import _graph_view, build_spec_linear_2node
 
 
 # ── Helper: build a spec with both dense and sparse matrix paths ─────────────

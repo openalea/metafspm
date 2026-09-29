@@ -22,7 +22,7 @@ import numpy as np
 import pytest
 
 from openalea.metafspm.solve.solver import ScipyIVPSolver, SolverConfig, make_solver
-from conftest import build_spec_decay_1node
+from solver_specs import build_spec_decay_1node
 
 
 H_TEST   = 0.1

@@ -46,6 +46,21 @@ class Choregrapher(Singleton):
         self.data_structure = {"soil":None, "root":None}
 
 
+    def reset(self):
+        """
+        Clear run state (bound schedules, sub time steps, data structures, simulation time step) in place.
+
+        The processes registered by step decorators at class definition are kept, so that component classes
+        defined before the reset can still be instantiated and scheduled. The instance is kept as well, since
+        Component.choregrapher is bound at class creation and a new instance would never be called.
+        """
+        self.scheduled_groups = {}
+        self.sub_time_step = {}
+        self.data_structure = {"soil": None, "root": None}
+        if "simulation_time_step" in self.__dict__:
+            del self.simulation_time_step
+
+
     def add_time_and_data(self, instance, sub_time_step: int, data: dict, compartment: str = "root", use_njit=False):
         """
         Method used to prepare collected functors for repeated computations, should be used after model class have received their parameters.

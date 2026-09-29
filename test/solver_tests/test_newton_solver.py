@@ -18,7 +18,7 @@ import numpy as np
 import pytest
 
 from openalea.metafspm.solve.solver import NewtonSolver, SolverConfig, make_solver
-from conftest import build_spec_nonlinear_1node, build_spec_linear_2node
+from solver_specs import build_spec_nonlinear_1node, build_spec_linear_2node
 
 
 # ── 1. Scalar convergence ─────────────────────────────────────────────────────
