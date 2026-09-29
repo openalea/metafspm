@@ -65,7 +65,6 @@ dependencies = [
 [project.optional-dependencies]
 test = [
   "pytest",
-  "nbmake",
 ]
 dev = [
   "pytest >=6",
@@ -87,6 +86,14 @@ Repository = "https://github.com/openalea/metafpsm"
 Homepage = "https://metafspm.readthedocs.io/"
 "Bug Tracker" = "https://github.com/openalea/metafspm/issues"
 Discussions = "https://github.com/openalea/metafspm/discussions"
+
+[tool.coverage.run]
+source = ["openalea.metafspm"]
+branch = true
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = true
 
 [tool.pytest.ini_options]
 testpaths = ["test"]
