@@ -70,4 +70,13 @@ The flat modules used before the 2026 restructure have been removed. No compatib
   - Scale operators: node → coarse (`sum` / `mean` / `weighted_mean`), coarse → node (`broadcast`), node → edge (`proximal` / `distal` / `mean`), and to or from `"scalar"`. `entity_ids(location)` gives the entity order.
   - `ArrayDataStructure` gets a `"scalar"` location, with `cell` ↔ `scalar` aggregation and broadcast.
   - `update_topology` carries every location over growth.
+- **Live reading (WD.2):** `FunctionalComponent` no longer copies its DataStructure into a props snapshot.
+  - **Graph-system solves:**
+    - read the variables from the DataStructure at each solve (per-solve copies);
+    - write unknowns, integrated amounts and `@graph_output` results back in place, registering them on first write;
+    - take the implicit-Euler first-tick previous fields from it;
+    - write the MTG directly from the DataStructure arrays.
+  - `self.props` is a **read-only** `DataStructurePropsView` for compatibility, kept for one release.
+  - Choregrapher steps run on the DataStructure arrays and **receive whole arrays**. `@rate(vectorized=False)` (and the same option on every step decorator) opts in to one call per element for scalar logic.
+  - New `self.previous(fn)`: an unknown's value at the start of the current solve, managed by the framework. The user-managed `_previous_fields` is deprecated.
 

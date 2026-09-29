@@ -201,7 +201,7 @@ class Choregrapher(Singleton):
 
 
     def __call__(self, module_family):
-        if self.data_structure['root'] is not None:
+        if self.data_structure['root'] is not None and hasattr(self.data_structure['root'], "keys"):
             # This is requiered on static architectures if no growth model adds it
             if "focus_elements" not in self.data_structure["root"].keys():
                 self.data_structure["root"]["focus_elements"] = [vid for vid in self.data_structure["root"]["struct_mass"].keys() if (
