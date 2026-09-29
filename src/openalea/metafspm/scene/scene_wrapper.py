@@ -17,9 +17,14 @@ def play_Orchestra(scene_name, output_folder,
                  logger_class = None, log_settings: dict = {}, heavy_log_period: int = 24,
                  n_iterations = 2500, time_step=3600, scene_xrange=1, scene_yrange=1, sowing_density=250, row_spacing=0.15, sowing_depth=[0.025],
                  voxel_widht=0.01, voxel_height=0.01,
-                 record_performance=False, log_only_one: bool = False):
+                 record_performance=False, log_only_one: bool = False,
+                 debug_runs: bool = False, poll_interval: float = 10):
     """
     Orchestrator function launching in parallel plant models and then environment models
+
+    :param light_scenario: scenario passed to light_model. Its "meteo" entry (a csv path indexed by 't', or a DataFrame) is extracted and passed as the meteo argument.
+    :param debug_runs: ignore the persisted cpu availability file and start from a fresh attribution.
+    :param poll_interval: seconds between two checks of the stop conditions by the orchestrator.
     ---
     TODO : Scene orientation regarding an angle relative to North
     
@@ -48,8 +53,9 @@ def play_Orchestra(scene_name, output_folder,
                                                                 sowing_depth=sowing_depth, row_spacing=row_spacing, plant_models=plant_models,
                                                                 plant_scenarios=plant_scenarios, plant_model_frequency=[1.])
     
-    debug_runs = False
-    cpu_assignments = plan_affinity(len(planting_sequence), 1, debug_runs=debug_runs) # TODO : only 1 cpu per plant as for now, see if we need to adapt this if we start leveraging intense vectorization with numba
+    # One cpu per plant, then one for the soil and one for the light workers if any
+    n_environment_workers = int(soil_model is not None) + int(light_model is not None)
+    cpu_assignments = plan_affinity(len(planting_sequence) + n_environment_workers, 1, debug_runs=debug_runs) # TODO : only 1 cpu per plant as for now, see if we need to adapt this if we start leveraging intense vectorization with numba
     
     # Queues to perform synchronization and data sharing of the processes
     queues_soil_to_plants = {pid: mp.Queue() for pid in planting_sequence.keys()}
@@ -109,21 +115,22 @@ def play_Orchestra(scene_name, output_folder,
         if soil_model is not None:
             p = mp.Process(
                     target=soil_worker,
-                    kwargs=dict(queues_soil_to_plants=queues_soil_to_plants, queue_plants_to_soil=queue_plants_to_soil, stop_event=stop_event,
+                    kwargs=dict(queues_soil_to_plants=queues_soil_to_plants, queue_plants_to_soil=queue_plants_to_soil, cpu_ids=cpu_assignments[cpu_set], stop_event=stop_event,
                                 soil_model=soil_model, scene_xrange=scene_xrange, scene_yrange=scene_yrange, translator_path=translator_path,
                                 output_dirpath=os.path.join(output_folder, scene_name, 'Soil'), n_iterations=n_iterations,
                                 time_step=time_step, scenario=soil_scenario, logger_class=logger_class, log_settings=log_settings, heavy_log_period=heavy_log_period) )
             
             processes.append(p)
             p.start()
+            cpu_set += 1
 
         if light_model is not None:
             p = mp.Process(
                     target=light_worker,
-                    kwargs=dict(queues_light_to_plants=queues_light_to_plants, queue_plants_to_light=queue_plants_to_light, stop_event=stop_event,
+                    kwargs=dict(queues_light_to_plants=queues_light_to_plants, queue_plants_to_light=queue_plants_to_light, cpu_ids=cpu_assignments[cpu_set], stop_event=stop_event,
                                 light_model=light_model, scene_xrange=scene_xrange, scene_yrange=scene_yrange, 
                                 output_dirpath=os.path.join(output_folder, scene_name, 'Light'), n_iterations=n_iterations,
-                                time_step=time_step, scenario=plant_scenarios[0]))
+                                time_step=time_step, scenario=light_scenario))
             
             processes.append(p)
             p.start()
@@ -132,7 +139,7 @@ def play_Orchestra(scene_name, output_folder,
             if not os.path.exists(stop_file):
                 stop_event.set()
                 clean_exit = False
-            time.sleep(10)
+            time.sleep(poll_interval)
 
     except Exception as e:
         traceback.print_exc()
@@ -202,7 +209,7 @@ def plant_worker(queues_soil_to_plants, queue_plants_to_soil, queues_light_to_pl
                  time_step, coordinates, rotation, scenario, logger_class, log_settings, heavy_log_period, record_performance: bool = False, logging: bool = True):
     
     # Pin to a specific set of cpus to avoid concurrency
-    psutil.Process().cpu_affinity(cpu_ids)
+    pin_to_cpus(cpu_ids)
     
     # Each process creates its local instance (which includes the unique properties).
     instance = plant_model(queues_soil_to_plants=queues_soil_to_plants, queue_plants_to_soil=queue_plants_to_soil, 
@@ -242,10 +249,12 @@ def plant_worker(queues_soil_to_plants, queue_plants_to_soil, queues_light_to_pl
         os._exit(0)
 
 
-def soil_worker(queues_soil_to_plants, queue_plants_to_soil, stop_event,
+def soil_worker(queues_soil_to_plants, queue_plants_to_soil, cpu_ids, stop_event,
                  soil_model, scene_xrange, scene_yrange, translator_path, output_dirpath, n_iterations, 
                  time_step, scenario, logger_class, log_settings, heavy_log_period):
     
+    pin_to_cpus(cpu_ids)
+
     # Each process creates its local instance (which includes the unique properties).
     instance = soil_model(queues_soil_to_plants=queues_soil_to_plants, queue_plants_to_soil=queue_plants_to_soil, 
                            time_step=time_step, scene_xrange=scene_xrange, scene_yrange=scene_yrange, translator_path=translator_path, **scenario)
@@ -271,13 +280,15 @@ def soil_worker(queues_soil_to_plants, queue_plants_to_soil, stop_event,
     os._exit(0)
 
 
-def light_worker(queues_light_to_plants, queue_plants_to_light, stop_event,
+def light_worker(queues_light_to_plants, queue_plants_to_light, cpu_ids, stop_event,
                  light_model, scene_xrange, scene_yrange, output_dirpath, n_iterations, 
                  time_step, scenario):
     
+    pin_to_cpus(cpu_ids)
+
     # Maybe a little bit too specific here, since we used only Caribu we didn't use a metafspm utility to create the light model class
-    import pandas as pd
-    meteo = pd.read_csv(os.path.join("inputs", "meteo_Ljutovac2002.csv"), index_col='t')
+    scenario = dict(scenario)
+    meteo = load_meteo(scenario.pop("meteo", None))
 
     instance = light_model(scene_xrange=scene_xrange, scene_yrange=scene_yrange, meteo=meteo, **scenario)
 
@@ -294,8 +305,39 @@ def light_worker(queues_light_to_plants, queue_plants_to_light, stop_event,
     stop_event.set()
 
     
+def load_meteo(meteo):
+    """
+    Meteo table of the light model, from a DataFrame or a csv path indexed by 't'.
+    """
+    import pandas as pd
+    if meteo is None:
+        raise KeyError('light_scenario must provide a "meteo" entry (csv path indexed by "t" or DataFrame)')
+    if isinstance(meteo, pd.DataFrame):
+        return meteo
+    return pd.read_csv(meteo, index_col='t')
+
+
+def available_cpu_ids():
+    """
+    Ids of the cpus this process may run on. Falls back to every logical cpu on platforms without affinity support (macOS).
+    """
+    process = psutil.Process()
+    if hasattr(process, "cpu_affinity"):
+        return sorted(process.cpu_affinity())
+    return list(range(psutil.cpu_count()))
+
+
+def pin_to_cpus(cpu_ids):
+    """
+    Pin the current process to cpu_ids. No-op on platforms without affinity support (macOS).
+    """
+    process = psutil.Process()
+    if hasattr(process, "cpu_affinity"):
+        process.cpu_affinity(cpu_ids)
+
+
 def plan_affinity(n_workers: int, threads_per_worker: int = 1, ids=None, debug_runs=False):
-    ids = sorted(ids or psutil.Process().cpu_affinity())
+    ids = sorted(ids or available_cpu_ids())
     
     lock_file = "outputs/lock"
     sync_file = "outputs/cpu_availability"
@@ -346,7 +388,7 @@ def plan_affinity(n_workers: int, threads_per_worker: int = 1, ids=None, debug_r
 
 
 def free_cpu(cpu_list):
-    ids = sorted(psutil.Process().cpu_affinity())
+    ids = available_cpu_ids()
     ids_idxs = []
     for sublist in cpu_list:
         for i in sublist:
