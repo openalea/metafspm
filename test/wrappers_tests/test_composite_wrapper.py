@@ -290,3 +290,22 @@ def test_documentation_of_bare_model_is_empty():
 def test_recursive_reload_removed():
     from openalea.metafspm.coupling import composite_wrapper
     assert not hasattr(composite_wrapper, "recursive_reload")
+
+
+# ---------------------------------------------------------------- WD.0: factors without eval, Python translators
+
+def test_translator_expressions_are_not_evaluated_as_code(tmp_path):
+    translator = copy.deepcopy(doubles.TRANSLATOR)
+    translator["SoilModel"]["RootCarbon"]["hexose_exudation_massic"] = {"hexose_exudation": "__import__('os').getcwd()"}
+    with pytest.raises(ValueError, match="factor"):
+        _couple_soil(translator)
+
+
+def test_open_translator_from_python_module(tmp_path):
+    module = tmp_path / "coupling_translator.py"
+    module.write_text(
+        "from openalea.metafspm.coupling.translator import Translator\n"
+        f"translator = Translator.from_dict({doubles.TRANSLATOR!r})\n")
+    loaded = CompositeModel().open_or_create_translator(str(module))
+    assert loaded["SoilModel"]["RootCarbon"] == {"hexose_exudation_massic": {"hexose_exudation": 72.}}
+    assert loaded["RootNitrogen"]["RootCarbon"]["sugar"] == {"hexose": 1.}
