@@ -368,6 +368,116 @@ class VariableStoreMixin:
         self.__dict__.setdefault("_aliases", {})[name] = target
         self._bump_version()
 
+    # ── Derived variables (design note §5.3, §6.1) ────────────────────────────
+
+    def derived(self) -> dict:
+        return dict(self.__dict__.get("_derived", {}))
+
+    def derive(self, name: str, sources=None, formula=None, location: str = None, aggregation: str = None,
+               weight: str = None, default: float = 0., on_grow: str = "default") -> np.ndarray:
+        """
+        Declare *name* as derived from other variables and compute it.
+
+        sources:     {variable: factor} for a weighted sum Σ f_i * x_i, or a sequence of variable names passed
+                     to *formula* (which then returns the values).
+        location:    of *name* (default: the sources' location). A different location requires an
+                     *aggregation* understood by the data structure (e.g. "sum", "mean", "weighted_mean",
+                     "broadcast", "proximal", "distal"); *weight* names the weights of "weighted_mean".
+        The value is recomputed in place by refresh(); dependencies on other derived variables are refreshed first.
+        """
+        if not sources:
+            raise ValueError(f"derived variable '{name}' needs sources")
+        names = list(sources)
+        if formula is None and not isinstance(sources, dict):
+            raise ValueError(f"derived variable '{name}': give {{variable: factor}} sources or a formula")
+        source_locations = {self._find(source)[0] for source in names}
+        if weight is not None:
+            source_locations.add(self._find(weight)[0])
+        if len(source_locations) != 1:
+            raise ValueError(f"derived variable '{name}': sources span several locations {sorted(source_locations)}")
+        source_location = source_locations.pop()
+        if location is None:
+            location = self.location(name) if self.has(name) else source_location
+        if location != source_location and aggregation is None:
+            raise ValueError(f"derived variable '{name}' at {location} from {source_location} needs an aggregation")
+        derived = self.__dict__.setdefault("_derived", {})
+        spec = {"sources": dict(sources) if formula is None else tuple(names), "formula": formula,
+                "source_location": source_location, "location": location,
+                "aggregation": aggregation, "weight": weight}
+        previous = derived.get(name)
+        derived[name] = spec
+        try:
+            self._derivation_order()
+        except ValueError:
+            if previous is None:
+                del derived[name]
+            else:
+                derived[name] = previous
+            raise
+        if not self.has(name):
+            self.register(name, location=location, default=default, on_grow=on_grow)
+        elif self.location(name) != location:
+            del derived[name]
+            raise ValueError(f"'{name}' is registered at {self.location(name)}, not at {location}")
+        self.refresh(name)
+        return self.get(name)
+
+    def _derivation_order(self, targets=None) -> list:
+        derived = self.__dict__.get("_derived", {})
+        order, state = [], {}
+
+        def visit(name):
+            resolved = self._resolve(name)
+            if resolved not in derived:
+                return
+            if state.get(resolved) == "done":
+                return
+            if state.get(resolved) == "visiting":
+                raise ValueError(f"derivation cycle through '{resolved}'")
+            state[resolved] = "visiting"
+            spec = derived[resolved]
+            for source in list(spec["sources"]) + ([spec["weight"]] if spec["weight"] else []):
+                visit(source)
+            state[resolved] = "done"
+            order.append(resolved)
+
+        for name in (targets if targets is not None else list(derived)):
+            visit(name)
+        return order
+
+    def refresh(self, name: str = None) -> None:
+        """Recompute derived variable *name* (and the derived variables it depends on), or all of them."""
+        derived = self.__dict__.get("_derived", {})
+        targets = None if name is None else [name]
+        if name is not None and self._resolve(name) not in derived:
+            raise KeyError(f"'{name}' is not a derived variable")
+        for target in self._derivation_order(targets):
+            spec = derived[target]
+            if spec["formula"] is not None:
+                values = spec["formula"](*(self.get(source) for source in spec["sources"]))
+            else:
+                values = sum(float(factor) * self.get(source) for source, factor in spec["sources"].items())
+            values = np.asarray(values, dtype=float)
+            if spec["location"] != spec["source_location"]:
+                weights = self.get(spec["weight"]) if spec["weight"] else None
+                values = self._map(values, spec["source_location"], spec["location"], spec["aggregation"], weights)
+            self.set(target, values)
+
+    def _map(self, values, from_location: str, to_location: str, aggregation: str, weights=None) -> np.ndarray:
+        raise ValueError(f"{type(self).__name__} cannot map {from_location} to {to_location} ({aggregation})")
+
+    @staticmethod
+    def _reduce(values, aggregation: str, weights=None, axis=None):
+        if aggregation == "sum":
+            return np.sum(values, axis=axis)
+        if aggregation == "mean":
+            return np.mean(values, axis=axis)
+        if aggregation == "weighted_mean":
+            if weights is None:
+                raise ValueError("weighted_mean needs a weight variable")
+            return np.sum(values * weights, axis=axis) / np.sum(weights, axis=axis)
+        raise ValueError(f"unknown aggregation '{aggregation}'")
+
     def _set_or_register(self, name: str, values, location: str) -> None:
         """Legacy setters: in place when the variable exists at *location* with the same shape, else (re)register."""
         values = np.asarray(values, dtype=float)
@@ -616,6 +726,8 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
         self._from_scale = from_scale  # source scale for update_topology()
         self._node_data : dict[str, np.ndarray] = {}
         self._edge_data : dict[str, np.ndarray] = {}
+        self._scalar_data : dict[str, np.ndarray] = {}
+        self._scale_data  : dict[str, dict[str, np.ndarray]] = {}   # coarser biological scales, by scale name
         self._B_cached  = None
         self._build_index_map()
 
@@ -745,14 +857,87 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
 
     _default_location = "node"
 
+    def _coarse_scale_names(self) -> list:
+        """Names of the biological scales coarser than the nodes (possible locations of aggregated variables)."""
+        node_scale = self._node_scale()
+        if node_scale is None:
+            return []
+        scales = self._mtg.scales
+        return [name for name, value in vars(type(scales)).items()
+                if isinstance(value, int) and not name.startswith("_") and 0 < value < node_scale]
+
     def _var_stores(self) -> dict:
-        return {"node": self._node_data, "edge": self._edge_data}
+        stores = {"node": self._node_data, "edge": self._edge_data, "scalar": self._scalar_data}
+        for name in self._coarse_scale_names():
+            stores[name] = self._scale_data.setdefault(name, {})
+        return stores
 
     def _location_shape(self, location: str) -> tuple:
-        return (self.n_nodes(),) if location == "node" else (self.n_edges(),)
+        if location == "node":
+            return (self.n_nodes(),)
+        if location == "edge":
+            return (self.n_edges(),)
+        if location == "scalar":
+            return ()
+        return (len(self.entity_ids(location)),)
 
     def available_vars(self) -> list[str]:
-        return list(self._node_data) + list(self._edge_data)
+        names = list(self._node_data) + list(self._edge_data) + list(self._scalar_data)
+        for store in self._scale_data.values():
+            names += list(store)
+        return names
+
+    # ── Scale operators (design note §6.1) ─────────────────────────────────────
+
+    def _membership(self, scale_name: str):
+        """(sorted entity ids at *scale_name*, index of each node's entity) — the node → coarse map."""
+        cache = self.__dict__.setdefault("_membership_cache", {})
+        if scale_name not in cache:
+            scale = getattr(self._mtg.scales, scale_name)
+            owners = np.array([self._mtg.complex_at_scale(int(v), scale) for v in self._idx_to_vid], dtype=np.int64)
+            entities = np.unique(owners)
+            cache[scale_name] = (entities, np.searchsorted(entities, owners))
+        return cache[scale_name]
+
+    def entity_ids(self, location: str) -> np.ndarray:
+        """Ids of the entities of *location*: node vids, edge child vids, or vids at a coarser scale (sorted)."""
+        if location == "node":
+            return np.array(self._idx_to_vid, dtype=np.int64)
+        if location == "edge":
+            return np.array([b for _, b in self.edges()], dtype=np.int64)
+        if location in self._coarse_scale_names():
+            return self._membership(location)[0]
+        raise ValueError(f"'{location}' has no entity ids (locations: node, edge, scalar, {self._coarse_scale_names()})")
+
+    def _map(self, values, from_location: str, to_location: str, aggregation: str, weights=None) -> np.ndarray:
+        coarse = self._coarse_scale_names()
+        if from_location == "node" and to_location == "edge":
+            parents, children = self._connection_endpoints()
+            tail = np.array([self._vid_to_idx[int(v)] for v in parents], dtype=np.int64)
+            head = np.array([self._vid_to_idx[int(v)] for v in children], dtype=np.int64)
+            if aggregation == "proximal":
+                return values[head]
+            if aggregation == "distal":
+                return values[tail]
+            if aggregation == "mean":
+                return (values[tail] + values[head]) / 2.
+        elif from_location == "node" and to_location in coarse:
+            entities, owner = self._membership(to_location)
+            if aggregation == "weighted_mean":
+                return (np.bincount(owner, weights=values * weights, minlength=entities.size)
+                        / np.bincount(owner, weights=weights, minlength=entities.size))
+            total = np.bincount(owner, weights=values, minlength=entities.size)
+            if aggregation == "sum":
+                return total
+            if aggregation == "mean":
+                return total / np.bincount(owner, minlength=entities.size)
+        elif from_location in coarse and to_location == "node" and aggregation == "broadcast":
+            return values[self._membership(from_location)[1]]
+        elif to_location == "scalar" and from_location != "scalar":
+            return np.asarray(self._reduce(values, aggregation, weights))
+        elif from_location == "scalar" and aggregation == "broadcast":
+            return np.full(self._location_shape(to_location), float(values))
+        return super()._map(values, from_location, to_location, aggregation, weights)
 
     def node_property(self, name: str) -> np.ndarray:
         if self.has(name) and self.location(name) == "node":
@@ -913,6 +1098,7 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
         """Rebuild index map and incidence matrix after structural change."""
         self._build_index_map()
         self._B_cached = None
+        self._membership_cache = {}
 
     def update_topology(self) -> None:
         """
@@ -937,21 +1123,28 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
                 "to be set at construction.  "
                 "Pass MPGDataStructure(g, from_scale=g.scales.SubOrgan)."
             )
-        old_nodes = {name: dict(zip(self._idx_to_vid, arr)) for name, arr in self._node_data.items()}
-        old_edges = {name: dict(zip((b for _, b in self.edges()), arr)) for name, arr in self._edge_data.items()}
+        old = {}
+        for location, store in self._var_stores().items():
+            if location == "scalar" or not store:
+                continue
+            keys = self.entity_ids(location)
+            old[location] = {name: dict(zip(keys, arr)) for name, arr in store.items()}
 
         self._mtg.repopulate_graph(self._from_scale)
         self.invalidate_topology()
         self._node_data.clear()
         self._edge_data.clear()
+        for store in self._scale_data.values():
+            store.clear()
 
         meta = self._variable_meta()
-        new_children = [b for _, b in self.edges()]
-        for location, old, keys in (("node", old_nodes, self._idx_to_vid), ("edge", old_edges, new_children)):
-            for name, values_by_key in old.items():
+        for location, variables in old.items():
+            keys = self.entity_ids(location)
+            for name, values_by_key in variables.items():
                 policy = meta.get(name, {"default": 0., "on_grow": "default"})
                 values = self._carry_over(values_by_key, keys, policy)
                 self.register(name, values, location=location, default=policy["default"], on_grow=policy["on_grow"])
+        self._bump_version()
 
     def _carry_over(self, values_by_key: dict, keys, policy: dict) -> np.ndarray:
         """Values for *keys* (vids): kept when known, else inherited from the nearest known ancestor or default."""
@@ -1144,10 +1337,17 @@ class ArrayDataStructure(VariableStoreMixin, FieldDataStructure):
         return ("x", "y", "z")[:len(self._shape)] if len(self._shape) <= 3 else tuple(f"a{d}" for d in range(len(self._shape)))
 
     def _var_stores(self) -> dict:
-        return {"cell": self._fields}
+        return {"cell": self._fields, "scalar": self.__dict__.setdefault("_scalars", {})}
 
     def _location_shape(self, location: str) -> tuple:
-        return self._shape
+        return () if location == "scalar" else self._shape
+
+    def _map(self, values, from_location: str, to_location: str, aggregation: str, weights=None) -> np.ndarray:
+        if from_location == "cell" and to_location == "scalar":
+            return np.asarray(self._reduce(values, aggregation, weights))
+        if from_location == "scalar" and to_location == "cell" and aggregation == "broadcast":
+            return np.full(self._shape, float(values))
+        return super()._map(values, from_location, to_location, aggregation, weights)
 
     def add_field(self, name: str, values: np.ndarray = None) -> None:
         self.register(name, values)

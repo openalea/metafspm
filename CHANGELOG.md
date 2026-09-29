@@ -62,3 +62,12 @@ The flat modules used before the 2026 restructure have been removed. No compatib
 - **`LabelsConfig`:**
   - Integers now live on per-instance copies, so every MPG has a complete translator. The class attributes are no longer mutated.
   - `Connection.Apoplastic` is `"ApoplasticEdge"`; it used to collide with `Compartment.Apoplastic`.
+- **Links on DataStructures (WD.3):**
+  - `derive(name, {source: factor} | sources + formula, location=, aggregation=, weight=)` and `refresh(name=None)` recompute derived variables in place. Dependencies are refreshed first, and derivation cycles are rejected.
+  - `MPGDataStructure` gets new locations:
+    - the coarser biological scales, named after `ScalesConfig` (`"Organ"`, `"Plant"`, …);
+    - `"scalar"`, which holds plant-scale values.
+  - Scale operators: node → coarse (`sum` / `mean` / `weighted_mean`), coarse → node (`broadcast`), node → edge (`proximal` / `distal` / `mean`), and to or from `"scalar"`. `entity_ids(location)` gives the entity order.
+  - `ArrayDataStructure` gets a `"scalar"` location, with `cell` ↔ `scalar` aggregation and broadcast.
+  - `update_topology` carries every location over growth.
+
