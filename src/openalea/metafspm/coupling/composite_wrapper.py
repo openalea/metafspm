@@ -4,6 +4,12 @@ from openalea.metafspm.data_structure.arraydict import ArrayDict
 from openalea.metafspm.coupling.translator import Translator, parse_factor
 
 
+def _live_data_structure(component):
+    """The component's DataStructure when it supports live reading (get/set/register), else None."""
+    ds = getattr(component, "data_structure", None)
+    return ds if (ds is not None and hasattr(ds, "register") and hasattr(ds, "get")) else None
+
+
 class CompositeModel:
 
     # Plant-side variables always sent to the soil: vertex identifiers and segment coordinates
@@ -83,7 +89,11 @@ class CompositeModel:
         self.plant_side_soil_inputs = self.soil_handshake_inputs(translator, soil_name)
 
         self.soil_inputs, self.soil_outputs = self.get_component_inputs_outputs(translator=translator, components_names=[c.__class__.__name__ for c in self.components], target_name=soil_name, names_for_others=False)
-        
+
+        if self.components and all(_live_data_structure(c) is not None for c in self.components):
+            self._couple_on_data_structures(translator)
+            return
+
         props = self.data_structures["root"].properties()
 
         # Soil did not initialted its properties in the MTG itself since we stopped pickling it, so we do it here
@@ -104,6 +114,53 @@ class CompositeModel:
             for source_variables in links.values():
                 names.extend(source_variables.keys())
         return names
+
+    def _couple_on_data_structures(self, translator: dict) -> None:
+        """
+        Coupling of DataStructure-backed components (design note §5): links between components sharing a
+        DataStructure become name-level aliases or derived variables refreshed by the receiver before its step;
+        identities need nothing. Links with components outside this composite (e.g. the soil) are exchanged
+        by the scene, not here. Soil outputs are registered on the plant DataStructure, initialised to 0.
+        """
+        by_name = {component.__class__.__name__: component for component in self.components}
+        for component in self.components:
+            ds = component.data_structure
+            for name in self.soil_outputs:
+                if ds.has(name):
+                    ds.set(name, 0.)
+                else:
+                    ds.register(name, location="node")
+
+        for link in Translator.from_dict(translator).links:
+            if link.receiver not in by_name or link.provider not in by_name or link.receiver == link.provider:
+                continue
+            receiver, provider = by_name[link.receiver], by_name[link.provider]
+            ds = receiver.data_structure
+            if provider.data_structure is not ds:
+                raise NotImplementedError(f"{link.receiver}.{link.variable} <- {link.provider}: coupling across "
+                                          "DataStructures needs a Coupler (devplan WD.5)")
+            if link.kind == "identity":
+                continue
+            if link.kind == "alias":
+                (source,) = link.sources
+                if ds.has(link.variable) and link.variable not in ds.aliases():
+                    ds.unregister(link.variable)
+                ds.alias(link.variable, source)
+                continue
+            if link.detail == "same_name_factor":
+                raise ValueError(f"{link.receiver}.{link.variable} is linked to {link.provider}.{link.variable} with "
+                                 f"factor {link.sources[link.variable]}: a same-name link within one data structure "
+                                 "must have a factor of 1, rename the receiving variable")
+            location = ds.location(link.variable) if ds.has(link.variable) else None
+            if link.formula is not None:
+                ds.derive(link.variable, link.sources, formula=link.formula, location=location,
+                          aggregation=link.aggregation, weight=link.weight)
+            else:
+                ds.derive(link.variable, dict(link.sources), location=location,
+                          aggregation=link.aggregation, weight=link.weight)
+            derived_inputs = receiver.__dict__.setdefault("_derived_inputs", [])
+            if link.variable not in derived_inputs:
+                derived_inputs.append(link.variable)
 
     def open_or_create_translator(self, translator_path):
         """
@@ -242,6 +299,9 @@ class CompositeModel:
                     if hasattr(to[model], "voxels"):
                         # supposed True : if isinstance(getattr(to[model].voxels, var), np.ndarray):
                         to[model].voxels[var].fill(tables[var][when])
+                    elif _live_data_structure(to[model]) is not None:
+                        # DataStructure-backed component: the table value applies to the whole variable
+                        to[model].data_structure.set(var, tables[var][when])
                     elif hasattr(to[model], "props"):
                         to[model].props[var].update({1: tables[var][when]})
                     else:

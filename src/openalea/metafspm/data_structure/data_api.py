@@ -360,6 +360,16 @@ class VariableStoreMixin:
         self._bump_version()
         return array
 
+    def unregister(self, name: str) -> None:
+        """Remove variable *name* (its values, metadata and derivation), e.g. before it becomes an alias."""
+        location, store, target = self._find(name)
+        if target != name:
+            raise ValueError(f"'{name}' is an alias of '{target}', not a registered variable")
+        del store[name]
+        self._variable_meta().pop(name, None)
+        self.__dict__.get("_derived", {}).pop(name, None)
+        self._bump_version()
+
     def alias(self, name: str, target: str) -> None:
         """Make *name* resolve to *target*: get(name) is get(target), set(name) writes the target in place."""
         if self._resolve(target) == name:
