@@ -428,6 +428,10 @@ class GraphSystemBuilder:
         dt_inst = float(getattr(instance, "time_step", None) or 1.0)
 
         ds = _live_ds(instance)
+        # Framework-managed previous state (design note Q21): the unknowns at the start of this solve
+        if ds is not None:
+            instance._previous_state = {fn: np.array(ds.get(fn), dtype=np.float64)
+                                        for fn in list(node_unknowns) + list(edge_unknowns) if ds.has(fn)}
         amount_olds: dict[str, np.ndarray] = {}
         for fn in integrate_fields:
             if ds is not None:
@@ -800,13 +804,6 @@ def _invoke_graph_system(self, method_name: str) -> None:
             )
             for fn in spec_def["node_unknowns"]
         }
-
-    # ── Framework-managed previous state (design note Q21): unknowns at the start of this solve ─────
-    ds = _live_ds(self)
-    if ds is not None:
-        self._previous_state = {fn: np.array(ds.get(fn), dtype=np.float64)
-                                for fn in list(spec_def["node_unknowns"]) + list(spec_def["edge_unknowns"])
-                                if ds.has(fn)}
 
     # ── Build + solve ─────────────────────────────────────────────────────────
     builder = GraphSystemBuilder(self, spec_def)
