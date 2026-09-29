@@ -953,7 +953,13 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
         """
         sparse = cls(legacy.mtg)
         for name in property_names:
-            sparse._node_data[name] = legacy.node_property(name).copy()
+            # Carry values by vertex: the legacy order is sorted vids, the MPG order is Compartment post-order
+            by_vid = dict(zip(legacy._idx_to_vid, legacy.node_property(name)))
+            missing = [vid for vid in sparse._idx_to_vid if vid not in by_vid]
+            if missing:
+                raise ValueError(f"from_legacy('{name}'): the legacy structure (scale {legacy.scale}) has no value for "
+                                 f"the MPG nodes {missing[:10]}; build it at the MPG node scale")
+            sparse.register(name, [by_vid[vid] for vid in sparse._idx_to_vid], location="node")
         return sparse
 
     # ── Property storage ──────────────────────────────────────────────────────
