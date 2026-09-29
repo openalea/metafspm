@@ -13,7 +13,7 @@ Every step below has a **working, tested reference** in `test/wrappers_tests/dou
 | soil composite (RhizoSoil) | `DSFakeSoil` |
 | light model (LightModel) | `doubles.FakeLight` |
 
-The legacy props path keeps working, deprecated, until every package is migrated. It is then removed in one commit (Q28).
+**The legacy props path has been removed from metafspm (Q28).** Downstream packages keep working against their pinned metafspm, the `publish_WB` branch, until they are migrated to this API.
 
 ## 1. Imports
 
@@ -152,7 +152,4 @@ class GrassBRIDGES(CompositeModel):
 4. The composite uses `Transport` and passes `handshake_shape`; the soil and light models follow §4–§5.
 5. A short scene run gives the same outputs as before the migration, for a fixed seed and a few steps, the way `test_ds_scene_contract.py` does for the doubles.
 
-Once every package passes, the legacy props path is removed from metafspm (Q28):
-- the props branches of `CompositeModel`, the Functor and `FunctionalComponent`;
-- the `HANDSHAKE_SHAPE` default;
-- the legacy doubles and their tests.
+The legacy props path (the props branches of `CompositeModel`, the Functor and `FunctionalComponent`, and the `HANDSHAKE_SHAPE` default) is already removed from metafspm. Migrated packages must target the current API.

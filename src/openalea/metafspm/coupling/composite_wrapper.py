@@ -1,7 +1,6 @@
 import yaml
 from dataclasses import fields
-from openalea.metafspm.data_structure.arraydict import ArrayDict
-from openalea.metafspm.coupling.translator import Translator, parse_factor
+from openalea.metafspm.coupling.translator import Translator
 
 
 def _live_data_structure(component):
@@ -12,8 +11,6 @@ def _live_data_structure(component):
 
 class CompositeModel:
 
-    # Plant-side variables always sent to the soil: vertex identifiers and segment coordinates
-    soil_handshake_prefix = ["vertex_index", "x1", "x2", "y1", "y2", "z1", "z2"]
     # Name of the soil component in the translator; subclasses coupled with another soil model override it
     soil_name = "SoilModel"
 
@@ -72,50 +69,23 @@ class CompositeModel:
 
     def couple_components(self, *args, translator_path: str = ""):
         """
-        Description : linker function that will enable properties sharing through MTG.
-
-        Parameters :
-        :param translator: list matrix containing translator dictionnaries for each model pair
-        :param components: inistances of components that should be coupled as indicated by the coupling_translator.yaml
-
-        Note :  The whole property is transfered, so if only the collar value of a spatial property is needed,
-        it will be accessed through the first vertice with the [1] indice. Not spatialized properties like xylem pressure or
-        single point properties like collar flows are only stored in the indice [1] vertice.
+        Couple the DataStructure-backed components *args* through the translator at *translator_path*
+        (YAML or Python module): links between them become aliases and derived variables on their
+        DataStructure (see _couple_on_data_structures). Links with the soil component (``soil_name``) are
+        exchanged by the scene (coupler.Transport / Coupler); ``soil_outputs`` lists the soil variables read
+        by the plant components.
         """
-
         self.components = [component for component in args]
+        for component in self.components:
+            if _live_data_structure(component) is None:
+                raise TypeError(f"{type(component).__name__} is not DataStructure-backed: props-based components were "
+                                "removed, see docs/design/downstream_migration.md")
 
         translator = self.open_or_create_translator(translator_path)
-
-        soil_name = self.soil_name
-        self.plant_side_soil_inputs = self.soil_handshake_inputs(translator, soil_name)
-
-        self.soil_inputs, self.soil_outputs = self.get_component_inputs_outputs(translator=translator, components_names=[c.__class__.__name__ for c in self.components], target_name=soil_name, names_for_others=False)
-
-        if self.components and all(_live_data_structure(c) is not None for c in self.components):
-            self._couple_on_data_structures(translator)
-            return
-
-        props = self.data_structures["root"].properties()
-
-        # Soil did not initialted its properties in the MTG itself since we stopped pickling it, so we do it here
-        for name in self.soil_outputs:
-            props[name] = ArrayDict(dict(zip(props["struct_mass"].keys(), [0. for k in range(len(props["struct_mass"]))])), dtype=float)
-
-        for receiver in self.components:
-            self.couple_current_with_components_list(receiver=receiver, components=[c.__class__.__name__ for c in self.components] + [soil_name], translator=translator, common_props=props)
-            
-    @classmethod
-    def soil_handshake_inputs(cls, translator, soil_name="SoilModel"):
-        """
-        Plant-side variables written in the plant / soil shared buffer: the fixed prefix, then every
-        plant variable the soil pulls according to the translator.
-        """
-        names = list(cls.soil_handshake_prefix)
-        for links in translator[soil_name].values():
-            for source_variables in links.values():
-                names.extend(source_variables.keys())
-        return names
+        self.soil_inputs, self.soil_outputs = self.get_component_inputs_outputs(
+            translator=translator, components_names=[c.__class__.__name__ for c in self.components],
+            target_name=self.soil_name, names_for_others=False)
+        self._couple_on_data_structures(translator)
 
     def _couple_on_data_structures(self, translator: dict) -> None:
         """
@@ -183,63 +153,6 @@ class CompositeModel:
         
         return translator
 
-    def couple_current_with_components_list(self, receiver, components, translator, common_props=None, subcategory=None):
-
-        if not hasattr(receiver, "pullable_inputs"):
-            receiver.pullable_inputs = {}
-
-        if subcategory is not None and subcategory in receiver.pullable_inputs.keys():
-            pass
-        else:
-            if subcategory is not None:
-                receiver.pullable_inputs[subcategory] = {}
-
-            for applier in components:
-                if receiver.__class__.__name__ != applier:
-                    linker = translator[receiver.__class__.__name__][applier]
-                    # If a model has been targeted on this position
-                    if len(linker.keys()) > 0:
-                        # We set properties with getter method only to retrieve the values dynamically from inputs
-                        for name, source_variables in linker.items():
-                            if len(source_variables.keys()) > 0:
-                                # Handling exception where operations are put in the coupling translator for unit conversion
-                                for source_name, unit_conversion in source_variables.items():
-                                    if isinstance(unit_conversion, str):
-                                        # Restricted arithmetic, not eval (design note §4)
-                                        source_variables[source_name] = parse_factor(unit_conversion)
-
-                                if len(source_variables.keys()) == 1:
-                                    for source_name, unit_conversion in source_variables.items():
-                                        # If there is only one variable to associate
-                                        if source_name == name and unit_conversion == 1.:
-                                            # Do nothing the coupling should already be done during initialization
-                                            continue
-                                        elif source_name == name and subcategory is None:
-                                            # Within one data structure, the variable would be converted into itself at every pull
-                                            raise ValueError(f"{receiver.__class__.__name__}.{name} is linked to {applier}.{source_name} "
-                                                             f"with factor {unit_conversion}: a same-name link within one data structure "
-                                                             f"must have a factor of 1, rename the receiving variable")
-                                        elif unit_conversion == 1. and common_props is not None:
-                                            # If only the name is different, just create an alias in the dictionnary and then recreate the pointer of the receiver class to this alias.
-                                            # If not created yet, for example in case of secondary soil initialization, we set default and suppose it will be modified later
-                                            if source_name not in common_props.keys():
-                                                common_props[source_name] = {}
-
-                                            common_props[name]  = common_props[source_name]
-                                        else:
-                                            # NOTE TODO : We will probably need to switch only to the second option later
-                                            if subcategory is None:
-                                                receiver.pullable_inputs[name] = {source_name: unit_conversion}
-                                            else:
-                                                receiver.pullable_inputs[subcategory][name] = {source_name: unit_conversion}
-
-                                else:
-                                    if subcategory is None:
-                                        receiver.pullable_inputs[name] = source_variables
-                                    else:
-                                        receiver.pullable_inputs[subcategory][name] = source_variables
-
-
     def translator_matrix_builder(self):
         """
         Translator matrix builder utility, to be used if no translator dictionay is available on modules' directory
@@ -249,7 +162,8 @@ class CompositeModel:
         L = len(self.components)
         translator = {self.components[i].__class__.__name__:{self.components[k].__class__.__name__:{} for k in range(L)} for i in range(L)}
         for receiver_model in range(L):
-            inputs = [f for f in fields(self.components[receiver_model]) if f.metadata["variable_type"] == "input"]
+            # Fields without declare() metadata (e.g. FunctionalComponent.data_structure) are not variables
+            inputs = [f for f in fields(self.components[receiver_model]) if f.metadata.get("variable_type") == "input"]
             needed_models = list(set([f.metadata["by"] for f in inputs]))
             needed_models.sort()
             for name in needed_models:
@@ -298,16 +212,10 @@ class CompositeModel:
 
             for model in range(len(to)):
                 for var in self.models_data_required[model]:
-                    if hasattr(to[model], "voxels"):
-                        # supposed True : if isinstance(getattr(to[model].voxels, var), np.ndarray):
-                        to[model].voxels[var].fill(tables[var][when])
-                    elif _live_data_structure(to[model]) is not None:
-                        # DataStructure-backed component: the table value applies to the whole variable
-                        to[model].data_structure.set(var, tables[var][when])
-                    elif hasattr(to[model], "props"):
-                        to[model].props[var].update({1: tables[var][when]})
-                    else:
+                    if _live_data_structure(to[model]) is None:
                         raise TypeError("Unknown data structure to apply input data to")
+                    # The table value applies to the whole variable
+                    to[model].data_structure.set(var, tables[var][when])
 
 
     def get_component_inputs_outputs(self, translator, components_names, target_name, names_for_others=True):

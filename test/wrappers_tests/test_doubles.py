@@ -1,49 +1,48 @@
 """
-Sanity checks of the wrapper test infrastructure (devplan W1). Behavioural wrapper tests live in the W2-W5 files.
+Sanity checks of the wrapper test infrastructure. Behavioural wrapper tests live in the other files.
 """
 import numpy as np
 import pytest
 
 import doubles
+import doubles_ds
 from openalea.metafspm.coupling.choregrapher import Choregrapher
-from openalea.metafspm.data_structure.arraydict import ArrayDict
+from openalea.metafspm.data_structure.data_api import ArrayDataStructure
 
 
 def test_translator_covers_every_component_pair():
-    names = list(doubles.TRANSLATOR)
-    for receiver in names:
-        assert sorted(doubles.TRANSLATOR[receiver]) == sorted(names)
+    for translator in (doubles.TRANSLATOR, doubles_ds.translator(), doubles_ds.translator(soil=doubles_ds.SOIL)):
+        names = list(translator)
+        for receiver in names:
+            assert sorted(translator[receiver]) == sorted(names)
 
 
-def test_root_mtg_segments_fall_in_known_voxels():
-    props = doubles.make_root_mtg(coordinates=(0.025, 0.075, -0.01)).properties()
-    depths = [-(props["z1"][v] + props["z2"][v]) / 2 for v in (1, 2, 3)]
+def test_chain_plant_segments_fall_in_known_voxels():
+    ds = doubles_ds.make_chain_plant_ds(coordinates=(0.025, 0.075, -0.01))
+    depths = [-(z1 + z2) / 2 for _, z1, z2 in sorted(zip(ds._idx_to_vid, ds.get("z1"), ds.get("z2")))]
     assert np.allclose(depths, [0.02, 0.04, 0.06])
-    # voxel side 0.05: vertices 1-2 in the first layer, vertex 3 in the second
+    # voxel side 0.05: segments 1-2 in the first layer, segment 3 in the second
     assert [int(d // doubles.SOIL_VOXEL_SIDE) for d in depths] == [0, 0, 1]
 
 
 def test_plant_components_build_and_run_standalone():
     Choregrapher().add_simulation_time_step(doubles.TIME_STEP)
-    g = doubles.make_root_mtg()
-    carbon = doubles.RootCarbon(g)
-    nitrogen = doubles.RootNitrogen(g)
-    props = g.properties()
+    ds = doubles_ds.make_chain_plant_ds()
+    carbon = doubles_ds.PlantCarbon(data_structure=ds)
+    doubles_ds.PlantNitrogen(data_structure=ds)
 
     carbon()
-    nitrogen()
 
     # soil_temperature default 10: exudation = 0.1 * 1 + 0.01 * 10
-    assert props["hexose_exudation"][1] == pytest.approx(0.2)
-    assert props["hexose"][1] == pytest.approx(1. - 0.2)
-    assert set(nitrogen.inputs) == {"hexose", "sugar", "carbon_supply", "C_hexose_soil"}
+    np.testing.assert_allclose(ds.get("hexose_exudation"), 0.2)
+    np.testing.assert_allclose(ds.get("hexose"), 1. - 0.2)
 
 
-def test_soil_component_voxel_layout():
-    soil = doubles.SoilModel(scene_xrange=0.1, scene_yrange=0.1, soil_depth=0.1)
-    assert soil.voxels["DOC"].shape == (2, 2, 2)  # (y, z, x), rhizosoil convention
-    assert soil.voxels["soil_temperature"].max() == 10.
-    assert Choregrapher().data_structure["soil"] is soil.voxels
+def test_grid_soil_layout():
+    grid = ArrayDataStructure(shape=(2, 2, 2), dx=doubles.SOIL_VOXEL_SIDE)
+    doubles_ds.GridSoil(data_structure=grid)
+    assert grid.axes == ("x", "y", "z") and grid.get("DOC").shape == (2, 2, 2)
+    assert (grid.get("soil_temperature") == 10.).all()
 
 
 def test_logger_records_calls(tmp_path):
@@ -65,18 +64,14 @@ def test_logger_records_calls(tmp_path):
 
 
 @pytest.mark.parametrize("with_light", [True, False])
-def test_in_process_scene_runs(in_process_scene, with_light):
-    scene = in_process_scene(with_light=with_light)
+def test_in_process_scene_runs(ds_in_process_scene, with_light):
+    scene = ds_in_process_scene(with_light=with_light)
     scene.start()
     scene.step()
     scene.step()
 
     assert scene.plant.run_count == 2 and scene.soil.run_count == 2
-    root_props = scene.plant.root_props
-    for name in scene.plant.plant_side_soil_inputs + scene.plant.soil_outputs:
-        assert isinstance(root_props[name], ArrayDict)
-    assert scene.soil.soil.voxels["DOC"].sum() > 0
+    assert scene.soil.grid.get("DOC").sum() > 0
     if with_light:
-        # the initialization answer comes from the constructor (devplan Q17): one run per plant step
         assert scene.light.run_count == 2
         assert set(scene.plant.shoot_props["PARa"]) == {1, 2}

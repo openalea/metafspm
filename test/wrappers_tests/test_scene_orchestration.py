@@ -54,7 +54,7 @@ def orchestra(request, monkeypatch, tmp_path):
         monkeypatch.setenv(name, os.environ.get(name, ""))
     monkeypatch.setattr(scene_wrapper, "mp", mp.get_context(request.param))
 
-    def play(n_workers, **kwargs):
+    def play(n_workers, handshake_shape=(2, 4), **kwargs):
         # Small CI runners: share real cores when there are not enough of them, one core always kept free
         available = scene_wrapper.available_cpu_ids()
         if len(available) <= n_workers:
@@ -68,7 +68,8 @@ def orchestra(request, monkeypatch, tmp_path):
             signal.alarm(SCENE_TIMEOUT)
         try:
             clean_exit = scene_wrapper.play_Orchestra(scene_name=scene_name, output_folder=str(output_folder),
-                                                      debug_runs=True, poll_interval=0.1, **kwargs)
+                                                      debug_runs=True, poll_interval=0.1,
+                                                      handshake_shape=handshake_shape, **kwargs)
         finally:
             if hasattr(signal, "SIGALRM"):
                 signal.alarm(0)
@@ -87,50 +88,6 @@ def _no_segment_left(scene_folder):
     if not os.path.isdir("/dev/shm"):
         return True
     return not any(scene_folder.name in name for name in os.listdir("/dev/shm"))
-
-
-def _two_plant_scene(orchestra, tmp_path, n_iterations=3):
-    translator_path = doubles.write_translator(tmp_path / "translator.yaml")
-    meteo = pd.DataFrame({"PARi": [100., 200., 300., 400., 500.]}, index=pd.Index(range(5), name="t"))
-    # 2 rows of 1 plant: plants at x = 0.075 and 0.225 m of a 0.3 x 0.15 m scene
-    return orchestra(n_workers=4, plant_models=[doubles.FakePlant], plant_scenarios=[_scenario()],
-                     soil_model=doubles.FakeSoil, soil_scenario=_scenario(),
-                     light_model=doubles.FakeLight, light_scenario=dict(_scenario(affinity_file=str(tmp_path / "light_affinity.json")), meteo=meteo),
-                     translator_path=translator_path, logger_class=doubles.FakeLogger, log_only_one=True,
-                     n_iterations=n_iterations, scene_xrange=0.3, scene_yrange=0.15, row_spacing=0.15,
-                     sowing_density=25, sowing_depth=[0.025])
-
-
-# ---------------------------------------------------------------- W5.0 / W5.3 full scene
-
-def test_two_plants_soil_and_light(orchestra, tmp_path):
-    clean_exit, scene_folder = _two_plant_scene(orchestra, tmp_path)
-
-    assert clean_exit
-    plant_ids = [f"FakePlant_{i}_{scene_folder.name}" for i in range(2)]
-    # log_only_one: only the first plant gets a logger folder
-    assert sorted(p.name for p in scene_folder.iterdir()) == sorted(["Delete_to_Stop", "Soil", plant_ids[0]])
-
-    plant = doubles.read_summary(str(scene_folder / plant_ids[0]))
-    soil = doubles.read_summary(str(scene_folder / "Soil"))
-    # W5.0: every model runs all iterations (with a light model, all of them used to stop one step early)
-    assert plant["run_count"] == 3 and soil["run_count"] == 3
-    assert doubles.read_logger_calls(str(scene_folder / plant_ids[0])) == ["init", "call", "call", "call", "stop"]
-    # light boundary of the last plant step (t = 2): PARi 300 on leaves of 2e-4 and 8e-4 m2
-    assert plant["PARa"] == pytest.approx({"1": 0.06, "2": 0.24})
-    assert soil["DOC"] > 0 and min(plant["C_hexose_soil"]) > 0
-
-    # Every worker pinned to its own core (Linux only exposes affinities)
-    if plant["affinity"] is not None:
-        with open(tmp_path / "light_affinity.json") as f:
-            light_affinity = json.load(f)
-        affinities = [plant["affinity"], soil["affinity"], light_affinity]
-        assert all(len(a) == 1 for a in affinities)
-        if len(scene_wrapper.available_cpu_ids()) > 4:
-            assert len({a[0] for a in affinities}) == 3
-
-    assert _no_segment_left(scene_folder)
-    assert not (tmp_path / "outputs" / "cpu_availability").exists()
 
 
 # ---------------------------------------------------------------- W5.4 / W5.5 stops

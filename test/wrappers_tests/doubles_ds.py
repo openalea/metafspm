@@ -1,7 +1,8 @@
 """
-DataStructure-backed counterparts of the plant doubles in doubles.py (devplan WD.4 / WD.6): same equations, same
-translator links, as FunctionalComponents on one MPGDataStructure. Class names differ from doubles.py because the
-Choregrapher registers step functions by class name.
+DataStructure-backed doubles of the downstream models (devplan WD.4-WD.6): plant components (PlantCarbon,
+PlantNitrogen) on an MPGDataStructure, the GridSoil component on an (x, y, z) ArrayDataStructure, and the scene
+composites DSFakePlant / DSFakeSoil exchanging through coupler.Transport and Coupler. Their contract tests
+reproduce the numbers of the former props-based coupling.
 """
 import copy
 import os
@@ -124,7 +125,7 @@ def _var_cell(variable_type, default=0.):
 
 @dataclass
 class GridSoil(FunctionalComponent):
-    """Soil double on a 3-D ArrayDataStructure in (x, y, z): same equations as doubles.SoilModel."""
+    """Soil double on a 3-D ArrayDataStructure in (x, y, z), with the equations of the former props-based soil double."""
     hexose_exudation_massic: float = _var_cell("input")
     amino_acids_exudation: float = _var_cell("input")
     DOC: float = _var_cell("state_variable")

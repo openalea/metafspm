@@ -119,3 +119,23 @@ The flat modules used before the 2026 restructure have been removed. No compatib
 - `NewtonSolver`, `ImplicitEulerSolver` and `ScipyRootSolver` start from the state they are given instead of the spec's initial guess.
 - `make_solver(method, config)` accepts a dict of `SolverConfig` fields (it used to replace them silently with the defaults). Unknown keys and other types raise `TypeError`.
 
+### Breaking: legacy props path removed (devplan Q28)
+
+Components are coupled only through DataStructures; the props-based path of the former downstream models is gone. See `docs/design/downstream_migration.md`.
+
+- **Components:**
+  - `FunctionalComponent` requires a DataStructure with a variable store (`MPGDataStructure`, `ArrayDataStructure`).
+  - `Component.link_self_to_mtg` and the props-based `pull_available_inputs` are removed.
+  - `self.props` remains as a read-only view.
+- **Functor and Choregrapher:**
+  - Steps run only on DataStructures: the `dict`, `ArrayDict` and `ndarray` branches of the Functor are removed, and so are the Choregrapher's `"length"` type probe and `focus_elements` computation.
+  - The ArrayDict-only numba specialisation branch (`use_njit`) is removed.
+  - `add_time_and_data(instance, sub_time_step, data, compartment="graph")`.
+- **Graph systems:** they read and write only DataStructures; the props fallbacks and the `_prop_location` heuristic are removed.
+- **`CompositeModel`:**
+  - It couples only DataStructure-backed components.
+  - `couple_current_with_components_list` (soil-side props coupling) is removed; the scene uses `coupler.Transport` and `Coupler`. `soil_handshake_inputs`, `soil_handshake_prefix` and `plant_side_soil_inputs` are removed too.
+  - `apply_input_tables` writes DataStructures only.
+  - `translator_matrix_builder` skips fields without metadata; it used to crash on `FunctionalComponent`.
+- **`play_Orchestra`:** `handshake_shape` is required, and `scene_wrapper.HANDSHAKE_SHAPE` is removed.
+

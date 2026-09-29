@@ -106,7 +106,7 @@ def test_rows_round_trip_through_a_message():
 
 
 def test_play_orchestra_allocates_the_requested_buffer(monkeypatch, tmp_path):
-    """Q27: the buffer shape is a play_Orchestra argument, defaulting to the legacy (35, 20000)."""
+    """Q27: the buffer shape is a play_Orchestra argument, required since the removal of the legacy default."""
     import types
     sizes = []
     real_shared_memory = scene_wrapper.SharedMemory
@@ -134,13 +134,12 @@ def test_play_orchestra_allocates_the_requested_buffer(monkeypatch, tmp_path):
     monkeypatch.setattr(scene_wrapper, "mp", types.SimpleNamespace(
         Queue=lambda: None, Process=_Process, Event=lambda: types.SimpleNamespace(is_set=lambda: True, set=lambda: None)))
 
-    for shape, expected in ((None, 35 * 20000 * 8), ((12, 64), 12 * 64 * 8)):
-        sizes.clear()
-        kwargs = {} if shape is None else {"handshake_shape": shape}
-        scene_wrapper.play_Orchestra(scene_name=f"buffer_{tmp_path.name}_{bool(shape)}", output_folder=str(tmp_path / "o"),
-                                     plant_models=[object], plant_scenarios=[{}], scene_xrange=0.15, scene_yrange=0.15,
-                                     row_spacing=0.15, sowing_density=1, debug_runs=True, **kwargs)
-        assert sizes == [expected]
+    scene = dict(output_folder=str(tmp_path / "o"), plant_models=[object], plant_scenarios=[{}], scene_xrange=0.15,
+                 scene_yrange=0.15, row_spacing=0.15, sowing_density=1, debug_runs=True)
+    scene_wrapper.play_Orchestra(scene_name=f"buffer_{tmp_path.name}", handshake_shape=(12, 64), **scene)
+    assert sizes == [12 * 64 * 8]
+    with pytest.raises(ValueError, match="handshake_shape"):
+        scene_wrapper.play_Orchestra(scene_name=f"no_buffer_{tmp_path.name}", **scene)
 
 
 # ---------------------------------------------------------------- components on grids

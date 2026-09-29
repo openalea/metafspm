@@ -38,7 +38,7 @@ def plant_memory():
     """Factory creating zeroed plant SharedMemory blocks (as play_Orchestra does), unlinked at teardown."""
     created = []
 
-    def make(prefix="plant", shape=doubles.HANDSHAKE_SHAPE):
+    def make(shape, prefix="plant"):
         name = f"{prefix}_{os.getpid()}_{next(_counter)}"
         size = int(np.prod(shape)) * np.dtype(np.float64).itemsize
         shm = SharedMemory(create=True, name=name, size=size)
@@ -75,8 +75,7 @@ class InProcessScene:
     Queues follow the play_Orchestra layout. Only one plant: the Choregrapher binds schedules per class name.
     """
 
-    def __init__(self, plant_id, translator_path, meteo, with_light=True, scenario=None,
-                 plant_cls=doubles.FakePlant, soil_cls=doubles.FakeSoil):
+    def __init__(self, plant_id, translator_path, meteo, plant_cls, soil_cls, with_light=True, scenario=None):
         self.plant_cls, self.soil_cls = plant_cls, soil_cls
         self.plant_id = plant_id
         self.translator_path = translator_path
@@ -132,13 +131,6 @@ class InProcessScene:
         if self.errors:
             raise self.errors[0]
         assert not thread.is_alive(), "environment model thread blocked on its queue"
-
-
-@pytest.fixture
-def in_process_scene(plant_memory, translator_path, meteo):
-    def make(**kwargs):
-        return InProcessScene(plant_memory(), translator_path, meteo, **kwargs)
-    return make
 
 
 @pytest.fixture

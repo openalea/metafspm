@@ -36,8 +36,6 @@ def test_links_become_aliases_and_derived_variables(tmp_path):
 
 def test_soil_exchange_bookkeeping_is_kept(tmp_path):
     model, carbon, nitrogen, ds = _coupled(tmp_path)
-    assert model.plant_side_soil_inputs == ["vertex_index", "x1", "x2", "y1", "y2", "z1", "z2",
-                                            "hexose_exudation", "amino_acids_exudation"]
     assert sorted(model.soil_outputs) == ["C_hexose_soil", "soil_temperature"]
     for name in model.soil_outputs:
         assert (ds.get(name) == 0.).all()
@@ -115,4 +113,3 @@ def test_soil_component_name_is_configurable(tmp_path):
     model.declare_data_and_couple_components(root=ds, translator_path=path, components=(
         doubles_ds.PlantCarbon(data_structure=ds), doubles_ds.PlantNitrogen(data_structure=ds)))
     assert sorted(model.soil_outputs) == ["C_hexose_soil", "soil_temperature"]
-    assert model.plant_side_soil_inputs[-2:] == ["hexose_exudation", "amino_acids_exudation"]

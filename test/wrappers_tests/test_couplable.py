@@ -18,12 +18,6 @@ def test_data_structure_doubles_are_couplable():
         assert_component_couplable(component, translator)
 
 
-def test_legacy_doubles_are_couplable():
-    translator = Translator.from_dict(doubles.TRANSLATOR)
-    for component in (doubles.RootCarbon, doubles.RootNitrogen, doubles.SoilModel):
-        assert_component_couplable(component, translator)
-
-
 def test_undeclared_variables_are_reported():
     translator = Translator.from_dict(doubles_ds.translator())
     translator.link("PlantNitrogen", "unknown_input", "PlantCarbon", {"hexose": 1})

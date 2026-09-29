@@ -149,7 +149,7 @@ def edge_law(func=None, *, field=None, filters=None,
     field    : str   edge-unknown field this block contributes to.
     filters  : dict  edge-property filter.
     explicit : bool  method returns the value; R = unknown − value generated.
-    integrate: bool  write converged flux as props["{field}_mean"] after solve.
+    integrate: bool  add the integrated amount "{field}_amount" (Q_new = Q_old + q dt) as an edge unknown.
     """
     def _decorate(f):
         f.__graph_tag__ = {
@@ -244,21 +244,13 @@ def _declared_locations(instance):
     return locs
 
 
-def _prop_location(name, declared_locs, props, node_set, edge_set):
-    if name in declared_locs:
-        return declared_locs[name]
-    pdict = props.get(name, {})
-    if not pdict:
-        return "node"
-    n_node = sum(1 for k in pdict if k in node_set)
-    n_edge = sum(1 for k in pdict if k in edge_set)
-    return "node" if n_node >= n_edge else "edge"
-
-
 def _live_ds(instance):
-    """The instance's DataStructure when it supports live reading (get/set/register), else None."""
+    """The instance's DataStructure (graph systems read and write it live)."""
     ds = getattr(instance, "data_structure", None)
-    return ds if (ds is not None and hasattr(ds, "register") and hasattr(ds, "get")) else None
+    if ds is None or not (hasattr(ds, "register") and hasattr(ds, "get")):
+        raise TypeError(f"{type(instance).__name__}: graph systems need a DataStructure with a variable store "
+                        "(props-based components were removed, see docs/design/downstream_migration.md)")
+    return ds
 
 
 def _read_array(ds, name, location, size):
@@ -275,37 +267,16 @@ def _snapshot(instance, required_names, node_vids_int, edge_vids_int,
               node_unknowns, edge_unknowns, declared_locs):
     """Pull required variables into float64 arrays before the Newton loop (copies, read at each solve)."""
     ds = _live_ds(instance)
-    if ds is not None:
-        node_snap, edge_snap = {}, {}
-        for name in required_names:
-            if name in declared_locs:
-                loc = declared_locs[name]
-            elif ds.has(name) and ds.location(name) in ("node", "edge"):
-                loc = ds.location(name)
-            else:
-                loc = "node"
-            size = len(node_vids_int) if loc == "node" else len(edge_vids_int)
-            (node_snap if loc == "node" else edge_snap)[name] = _read_array(ds, name, loc, size)
-        return node_snap, edge_snap
-
-    props    = instance.props
-    node_set = set(node_vids_int)
-    edge_set = set(edge_vids_int)
-    node_snap: dict = {}
-    edge_snap: dict = {}
-
+    node_snap, edge_snap = {}, {}
     for name in required_names:
-        loc    = _prop_location(name, declared_locs, props, node_set, edge_set)
-        vids   = node_vids_int if loc == "node" else edge_vids_int
-        target = node_snap    if loc == "node" else edge_snap
-        pdict  = props.get(name, {})
-        try:
-            target[name] = np.asarray(
-                [float(pdict.get(v, 0.0)) for v in vids], dtype=np.float64
-            )
-        except (TypeError, ValueError):
-            target[name] = [pdict.get(v, None) for v in vids]
-
+        if name in declared_locs:
+            loc = declared_locs[name]
+        elif ds.has(name) and ds.location(name) in ("node", "edge"):
+            loc = ds.location(name)
+        else:
+            loc = "node"
+        size = len(node_vids_int) if loc == "node" else len(edge_vids_int)
+        (node_snap if loc == "node" else edge_snap)[name] = _read_array(ds, name, loc, size)
     return node_snap, edge_snap
 
 
@@ -316,11 +287,7 @@ def _type_mask(type_filter, snap, size):
         vals = snap.get(prop_name)
         if vals is None:
             continue
-        allowed_set = set(allowed)
-        try:
-            mask &= np.isin(np.asarray(vals, dtype=float), np.asarray(list(allowed_set), dtype=float))
-        except (TypeError, ValueError):
-            mask &= np.asarray([v in allowed_set for v in vals])
+        mask &= np.isin(np.asarray(vals, dtype=float), np.asarray(list(allowed), dtype=float))
     return mask
 
 
@@ -353,8 +320,8 @@ class GraphSystemBuilder:
         -------
         (GraphDAESpec, node_snap, edge_snap)
             spec       — ready to pass to a solver.
-            node_snap  — snapshotted float64 arrays for node props.
-            edge_snap  — snapshotted float64 arrays for edge props.
+            node_snap  — snapshotted float64 arrays for node variables.
+            edge_snap  — snapshotted float64 arrays for edge variables.
         """
         instance        = self._instance
         spec_def        = self._spec_def
@@ -422,25 +389,16 @@ class GraphSystemBuilder:
         # ── integrate=True: extend edge unknowns with {field}_amount ──────────
         # For each edge law with integrate=True, a new DAE unknown Q_e is added:
         #   (Q_new − Q_old) / dt − q_e = 0  →  Q_new = Q_old + q_e · dt
-        # Q_old is snapshotted from props before the Newton loop; Q_new is
+        # Q_old is read from the DataStructure before the Newton loop; Q_new is
         # solved together with concentration and flux in the same Newton step.
         integrate_fields = sorted({fn for fn, _, _, _, _, _, intg in edge_law_items if intg})
         dt_inst = float(getattr(instance, "time_step", None) or 1.0)
 
         ds = _live_ds(instance)
         # Framework-managed previous state (design note Q21): the unknowns at the start of this solve
-        if ds is not None:
-            instance._previous_state = {fn: np.array(ds.get(fn), dtype=np.float64)
-                                        for fn in list(node_unknowns) + list(edge_unknowns) if ds.has(fn)}
-        amount_olds: dict[str, np.ndarray] = {}
-        for fn in integrate_fields:
-            if ds is not None:
-                amount_olds[fn] = _read_array(ds, f"{fn}_amount", "edge", m)
-                continue
-            pdict = instance.props.get(f"{fn}_amount", {})
-            amount_olds[fn] = np.array(
-                [float(pdict.get(v, 0.0)) for v in edge_vids_int], dtype=np.float64
-            )
+        instance._previous_state = {fn: np.array(ds.get(fn), dtype=np.float64)
+                                    for fn in list(node_unknowns) + list(edge_unknowns) if ds.has(fn)}
+        amount_olds = {fn: _read_array(ds, f"{fn}_amount", "edge", m) for fn in integrate_fields}
 
         all_edge_unknowns = list(edge_unknowns) + [f"{fn}_amount" for fn in integrate_fields]
 
@@ -473,24 +431,9 @@ class GraphSystemBuilder:
         )
 
         # ── Initial-guess FieldStates ─────────────────────────────────────────
-        props = instance.props
-        if ds is not None:
-            # Copies: the implicit solvers also use them as u_prev, they must not follow later writes
-            node_fields_gs = {fn: FieldState(fn, "node", _read_array(ds, fn, "node", n)) for fn in node_unknowns}
-            edge_fields_gs = {fn: FieldState(fn, "edge", _read_array(ds, fn, "edge", m)) for fn in edge_unknowns}
-        else:
-            node_fields_gs = {
-                fn: FieldState(fn, "node", np.asarray(
-                    [float(props[fn].get(v, 0.0)) for v in node_vids_int], dtype=np.float64
-                ))
-                for fn in node_unknowns
-            }
-            edge_fields_gs = {
-                fn: FieldState(fn, "edge", np.asarray(
-                    [float(props[fn].get(v, 0.0)) for v in edge_vids_int], dtype=np.float64
-                ))
-                for fn in edge_unknowns
-            }
+        # Copies: the implicit solvers also use them as u_prev, they must not follow later writes
+        node_fields_gs = {fn: FieldState(fn, "node", _read_array(ds, fn, "node", n)) for fn in node_unknowns}
+        edge_fields_gs = {fn: FieldState(fn, "edge", _read_array(ds, fn, "edge", m)) for fn in edge_unknowns}
         for fn in integrate_fields:
             edge_fields_gs[f"{fn}_amount"] = FieldState(
                 f"{fn}_amount", "edge", amount_olds[fn].copy()
@@ -517,7 +460,7 @@ class GraphSystemBuilder:
                     else:
                         raise KeyError(
                             f"Method '{raw_func.__name__}': arg '{aname}' not "
-                            f"found in props.  Node: {list(node_snap)}  "
+                            f"found in the DataStructure.  Node: {list(node_snap)}  "
                             f"Edge: {list(edge_snap)}"
                         )
                 if type_filter:
@@ -722,39 +665,16 @@ class GraphSystemBuilder:
         )
 
     def inject_result(self, packed: np.ndarray, spec: GraphDAESpec) -> None:
-        """Write converged solution back to self._instance.props.
-
-        Writes all node unknowns and all edge unknowns (including any
-        {field}_amount integration unknowns added by integrate=True).
-        """
-        instance      = self._instance
-        node_unknowns = self._spec_def["node_unknowns"]
-        gv            = instance._graph_view
-        node_vids_int = [int(v) for v in gv.node_ids]
-        edge_vids_int = [int(v) for v in gv.edge_ids]
-
+        """Write the converged unknowns (including {field}_amount) to the DataStructure, in place."""
         node_u, edge_u = spec.unpack_unknowns(packed)
-
-        ds = _live_ds(instance)
-        if ds is not None:
-            for location, values_by_name in (("node", {fn: node_u[fn] for fn in node_unknowns}),
-                                             ("edge", {fn: edge_u[fn] for fn in spec.unknowns.edge_fields})):
-                for fn, values in values_by_name.items():
-                    if ds.has(fn):
-                        ds.set(fn, values)
-                    else:
-                        ds.register(fn, values, location=location)
-            return
-
-        for fn in node_unknowns:
-            target = instance.props.setdefault(fn, {})
-            for i, vid in enumerate(node_vids_int):
-                target[vid] = float(node_u[fn][i])
-
-        for fn in spec.unknowns.edge_fields:
-            target = instance.props.setdefault(fn, {})
-            for i, vid in enumerate(edge_vids_int):
-                target[vid] = float(edge_u[fn][i])
+        ds = _live_ds(self._instance)
+        for location, values_by_name in (("node", {fn: node_u[fn] for fn in self._spec_def["node_unknowns"]}),
+                                         ("edge", {fn: edge_u[fn] for fn in spec.unknowns.edge_fields})):
+            for fn, values in values_by_name.items():
+                if ds.has(fn):
+                    ds.set(fn, values)
+                else:
+                    ds.register(fn, values, location=location)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -769,7 +689,7 @@ def _invoke_graph_system(self, method_name: str) -> None:
     It now delegates each concern to GraphSystemBuilder:
       build()            → GraphDAESpec construction
       build_and_step()   → spec + solver.step_once() + derive_outputs()
-      inject_result()    → write-back to self.props
+      inject_result()    → write-back to the DataStructure
     """
     # Refresh biological-scale fields from MTG before snapshotting.
     if hasattr(self, "_refresh_from_bio_scale"):
@@ -791,19 +711,9 @@ def _invoke_graph_system(self, method_name: str) -> None:
         spec_def.get("method") == "implicit_euler" or
         (_solver_cls is not None and issubclass(_solver_cls, ImplicitEulerSolver))
     )
-    if previous_fields is None and _is_implicit and _live_ds(self) is not None:
+    if previous_fields is None and _is_implicit:
         previous_fields = {fn: _read_array(_live_ds(self), fn, "node", self._graph_view.n_nodes)
                            for fn in spec_def["node_unknowns"]}
-    if previous_fields is None and _is_implicit:
-        gv   = self._graph_view
-        vids = [int(v) for v in gv.node_ids]
-        previous_fields = {
-            fn: np.asarray(
-                [float(self.props[fn].get(v, 0.0)) for v in vids],
-                dtype=np.float64,
-            )
-            for fn in spec_def["node_unknowns"]
-        }
 
     # ── Build + solve ─────────────────────────────────────────────────────────
     builder = GraphSystemBuilder(self, spec_def)
@@ -830,27 +740,14 @@ def _invoke_graph_system(self, method_name: str) -> None:
         self.write_back_to_mtg()
 
     # ── Write output-block results ─────────────────────────────────────────────
-    gv            = self._graph_view
-    node_vids_int = [int(v) for v in gv.node_ids]
-    edge_vids_int = [int(v) for v in gv.edge_ids]
-    n, m = gv.n_nodes, gv.n_edges
-
+    n  = self._graph_view.n_nodes
     ds = _live_ds(self)
-    if ds is not None:
-        for oname, arr in outputs.items():
-            arr = np.asarray(arr, dtype=np.float64).reshape(-1)
-            if ds.has(oname):
-                ds.set(oname, arr)
-            else:
-                ds.register(oname, arr, location="node" if arr.size == n else "edge")
-        outputs = {}
-
     for oname, arr in outputs.items():
-        target = self.props.setdefault(oname, {})
-        arr    = np.asarray(arr, dtype=np.float64).reshape(-1)
-        write_vids = node_vids_int if arr.size == n else edge_vids_int
-        for i, vid in enumerate(write_vids):
-            target[vid] = float(arr[i])
+        arr = np.asarray(arr, dtype=np.float64).reshape(-1)
+        if ds.has(oname):
+            ds.set(oname, arr)
+        else:
+            ds.register(oname, arr, location="node" if arr.size == n else "edge")
 
     # Attach GraphSystem for test introspection (backward compat hook)
     self._last_graph_system = _make_compat_graph_system(self, spec_def, spec)

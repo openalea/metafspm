@@ -1,5 +1,4 @@
 from functools import partial
-from openalea.metafspm.solve.specializer import specialize_method_recursive
 
 
 # Executor singleton
@@ -28,9 +27,6 @@ class Choregrapher(Singleton):
     It also provides a __call__ method to schedule model execution.
     """
 
-    filter =  {"label": [1, 2], "type":[1, 7, 8, 9, 10, 11, 12]} # see bellow
-    # filter =  {"label": ["Segment", "Apex"], "type":["Base_of_the_root_system", "Normal_root_after_emergence", "Stopped", "Just_stopped", "Dead", "Just_dead", "Root_nodule"]}
-
     consensus_scheduling = [
             ["priorbalance", "selfbalance"],
             ["stepinit", "rate", "totalrate", "state", "totalstate"],  # metabolic models
@@ -43,7 +39,7 @@ class Choregrapher(Singleton):
         super()._init_state()
         self.scheduled_groups = {}
         self.sub_time_step = {}
-        self.data_structure = {"soil":None, "root":None}
+        self.data_structure = {}
 
 
     def reset(self):
@@ -56,49 +52,29 @@ class Choregrapher(Singleton):
         """
         self.scheduled_groups = {}
         self.sub_time_step = {}
-        self.data_structure = {"soil": None, "root": None}
+        self.data_structure = {}
         if "simulation_time_step" in self.__dict__:
             del self.simulation_time_step
 
 
-    def add_time_and_data(self, instance, sub_time_step: int, data: dict, compartment: str = "root", use_njit=False):
+    def add_time_and_data(self, instance, sub_time_step: int, data, compartment: str = "graph"):
         """
-        Method used to prepare collected functors for repeated computations, should be used after model class have received their parameters.
+        Bind the steps collected for the instance's class to the instance and its DataStructure.
 
         Args:
-            instance (_type_): instance of the class the functors have been sourced from
-            sub_time_step (int): sub time-stepping
-            data (dict): dictionnary whose items represent unique property sets for each elements
-            compartment (str, optional): data compartment. Defaults to "root".
+            instance: component instance whose class the steps were collected from
+            sub_time_step (int): sub time step of the component (the simulation step is divided accordingly)
+            data: the component's DataStructure
+            compartment (str, optional): name under which the DataStructure is recorded
         """
-        # module_family = instance.family
         module_family = instance.__class__.__name__
         self.sub_time_step[module_family] = sub_time_step
         self.data_structure[compartment] = data
         self.build_schedule(module_family)
-        # Determine data structure type from any available property value.
-        # "length" is a reliable probe for legacy MTG models; FunctionalComponent
-        # props use plain dicts keyed by VID, so we fall back to dict if absent.
-        try:
-            data_structure_type = str(type(self.data_structure[compartment]["length"]))
-        except (KeyError, TypeError):
-            data_structure_type = "<class 'dict'>"
         for k in self.scheduled_groups[module_family].keys():
             for f in range(len(self.scheduled_groups[module_family][k])):
                 functor = self.scheduled_groups[module_family][k][f]
-                if use_njit:
-                    if (data_structure_type == "<class 'openalea.metafspm.data_structure.arraydict.ArrayDict'>" and not functor.iterating and not functor.total 
-                        and module_family != "RootAnatomy" and module_family != "RootWaterModel" and module_family != "RootGrowthModelCoupled"): # TODO manual exclusions for now
-                        try:
-                            functor.reg = {}
-                            fun, _ = specialize_method_recursive(functor.fun, instance, registry=functor.reg, max_depth=2, print_src=False)
-                            if fun is not None:
-                                functor.fun = fun
-                                functor.numba_speedup = True
-                        except:
-                            pass
-                # It is fine in any situation because this is the functor call, not the function that is passed to partial
-                self.scheduled_groups[module_family][k][f] = partial(functor, *(instance, self.data_structure[compartment], data_structure_type))
+                self.scheduled_groups[module_family][k][f] = partial(functor, instance, data)
 
 
     def add_simulation_time_step(self, simulation_time_step: int):
@@ -201,22 +177,7 @@ class Choregrapher(Singleton):
 
 
     def __call__(self, module_family):
-        if self.data_structure['root'] is not None and hasattr(self.data_structure['root'], "keys"):
-            # This is requiered on static architectures if no growth model adds it
-            if "focus_elements" not in self.data_structure["root"].keys():
-                self.data_structure["root"]["focus_elements"] = [vid for vid in self.data_structure["root"]["struct_mass"].keys() if (
-                    self.data_structure["root"]["struct_mass"][vid] > 0 # NOTE : Check if robust, don't we need any calculation for non emerged elements?
-                    and self.data_structure["root"]["label"][vid] in self.filter["label"] 
-                    and self.data_structure["root"]["type"][vid] in self.filter["type"])]
-        
         for increment in range(int(self.simulation_time_step/self.sub_time_step[module_family])):
             for step in self.scheduled_groups[module_family].keys():
                 for functor in self.scheduled_groups[module_family][step]:
                     functor()
-
-        # if module_family.lower().startswith("rootgrowth"):
-        #     self.data_structure["root"]["focus_elements"] = [vid for vid in self.data_structure["root"]["struct_mass"].keys() if (
-        #         self.data_structure["root"]["struct_mass"][vid] > 0
-        #         and self.data_structure["root"]["label"][vid] in self.filter["label"] 
-        #         and self.data_structure["root"]["type"][vid] in self.filter["type"])]
-
