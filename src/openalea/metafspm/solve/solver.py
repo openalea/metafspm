@@ -78,6 +78,25 @@ SolverSpec = SolverConfig
 # Level 1 — AbstractSolver
 # ═══════════════════════════════════════════════════════════════════════════════
 
+def _recover_edges(spec, x: np.ndarray, tol: float = 1e-10, max_iter: int = 50) -> np.ndarray:
+    """
+    Solve the edge (algebraic) rows of the residual for the edge unknowns, the node unknowns of *x* held fixed.
+    Returns the packed vector with converged edge unknowns. Residual rows are the node blocks, then the edge blocks.
+    """
+    n_node_dof = spec.graph.n_nodes * len(spec.unknowns.node_fields)
+    packed = np.array(x, dtype=np.float64, copy=True)
+    for _ in range(max_iter):
+        residual = np.asarray(spec.residual(packed, None, None), dtype=np.float64)[n_node_dof:]
+        if residual.size == 0 or np.linalg.norm(residual, ord=np.inf) < tol:
+            return packed
+        jac = spec.jacobian(packed, None, None)
+        jac_ee = jac[n_node_dof:, n_node_dof:]
+        if hasattr(jac_ee, "toarray"):
+            jac_ee = jac_ee.toarray()
+        packed[n_node_dof:] -= np.linalg.solve(np.asarray(jac_ee, dtype=np.float64), residual)
+    raise AssertionError(f"Edge recovery did not converge in {max_iter} iterations")
+
+
 class AbstractSolver(ABC):
     """
     Minimal solver interface + shared low-level numerics.
@@ -460,6 +479,10 @@ class DAESolver(ODESolver):
                 # Accept — recover algebraic at new time
                 p_new = self._update_p(spec, t + h)
                 y_new = self._recover_algebraic(spec, x_new, y_prev, p_new)
+                if y_new.size:
+                    # Explicit path: the recovered algebraic unknowns complete the accepted state
+                    x_new = x_new.copy()
+                    x_new[x_new.size - y_new.size:] = y_new
 
                 # Advance prev_fields
                 node_u_new, _ = spec.unpack_unknowns(x_new)
@@ -516,7 +539,7 @@ class NewtonSolver(DAESolver):
         return 1
 
     def _integrate_step(self, spec, t, x, h, p, prev_fields=None):
-        packed   = spec.pack_unknowns()
+        packed   = np.array(x, dtype=np.float64, copy=True)
         force_fd = (self.config.method == "newton_fd")
 
         for _ in range(self.config.max_iter):
@@ -581,7 +604,7 @@ class ImplicitEulerSolver(DAESolver):
             )
 
         u_prev = spec.pack_unknowns(node_overrides=prev_fields)
-        packed = spec.pack_unknowns()
+        packed = np.array(x, dtype=np.float64, copy=True)
         N      = len(packed)
 
         for step_i in range(self.config.max_iter):
@@ -675,19 +698,8 @@ class ExplicitEulerSolver(DAESolver):
         from .system_specs import ODESystemSpec
         if isinstance(spec, ODESystemSpec) or not spec.unknowns.edge_fields:
             return np.zeros(0)
-        node_u, _ = spec.unpack_unknowns(x)
-        inner      = NewtonSolver(SolverConfig(
-            method   = "newton",
-            tol      = self.config.tol * 0.1,
-            max_iter = self.config.max_iter,
-        ))
-        packed_conv, _ = inner._integrate_step(
-            spec, 0.0,
-            spec.pack_unknowns(node_overrides=node_u),
-            1.0, p, None,
-        )
-        _, edge_u = spec.unpack_unknowns(packed_conv)
-        return np.concatenate([edge_u[fn] for fn in spec.unknowns.edge_fields])
+        n_node_dof = spec.graph.n_nodes * len(spec.unknowns.node_fields)
+        return _recover_edges(spec, x, tol=self.config.tol * 0.1, max_iter=self.config.max_iter)[n_node_dof:]
 
 
 class LinearDirectSolver(DAESolver):
@@ -739,7 +751,7 @@ class ScipyRootSolver(DAESolver):
     def _integrate_step(self, spec, t, x, h, p, prev_fields=None):
         from scipy.optimize import root as scipy_root
         scipy_method = self.config.method[len("scipy_"):]
-        packed0      = spec.pack_unknowns()
+        packed0      = np.array(x, dtype=np.float64, copy=True)
 
         jac_fn = None
         if scipy_method == "hybr" and (
@@ -826,38 +838,23 @@ class ScipyIVPSolver(DAESolver):
                 atol   = self.config.atol,
                 dense_output = True,
             )
-            x_new   = result.y[:, -1]
-            x_half  = result.sol(t + h / 2)
-            err_est = np.abs(x_new - x_half) * 0.1
-            return x_new, err_est
+            # solve_ivp controls the error within [t, t + h] (rtol / atol): the outer loop accepts the step
+            return result.y[:, -1], np.zeros_like(x)
 
-        # GraphDAESpec: node-only ODE form with inner algebraic recovery
-        n_node_dof   = spec.graph.n_nodes * len(spec.unknowns.node_fields)
-        inner_newton = NewtonSolver(
-            SolverConfig(method="newton",
-                         tol=self.config.tol * 0.1,
-                         max_iter=self.config.max_iter)
-        )
+        # GraphDAESpec: node ODE with the edge unknowns recovered at each evaluation (nodes fixed)
+        n_node_dof = spec.graph.n_nodes * len(spec.unknowns.node_fields)
+        has_edges  = bool(spec.unknowns.edge_fields)
+        state      = np.array(x, dtype=np.float64, copy=True)
+        tol, max_iter = self.config.tol * 0.1, self.config.max_iter
+
+        def full_state(y_node):
+            state[:n_node_dof] = y_node
+            if has_edges:
+                state[:] = _recover_edges(spec, state, tol=tol, max_iter=max_iter)
+            return state
 
         def rhs(_t, y_node):
-            node_overrides, cursor = {}, 0
-            for fn in spec.unknowns.node_fields:
-                w = spec.graph.n_nodes
-                node_overrides[fn] = y_node[cursor : cursor + w]
-                cursor += w
-            if spec.unknowns.edge_fields:
-                try:
-                    packed_conv = inner_newton._integrate_step(
-                        spec, _t, spec.pack_unknowns(), 1.0, p, None
-                    )[0]
-                    _, edge_u = spec.unpack_unknowns(packed_conv)
-                    packed = spec.pack_unknowns(node_overrides=node_overrides,
-                                                edge_overrides=edge_u)
-                except AssertionError:
-                    packed = spec.pack_unknowns(node_overrides=node_overrides)
-            else:
-                packed = spec.pack_unknowns(node_overrides=node_overrides)
-            R = spec.residual(packed, prev_fields, None)
+            R = spec.residual(full_state(y_node), prev_fields, None)
             return -R[:n_node_dof]
 
         sparsity = spec.jac_sparsity_matrix()
@@ -870,13 +867,12 @@ class ScipyIVPSolver(DAESolver):
             method       = ivp_method,
             rtol         = self.config.rtol,
             atol         = self.config.atol,
-            jac_sparsity = sp_slice if sp_slice.nnz > 0 else None,
+            jac_sparsity = sp_slice if (sp_slice.nnz > 0 and not has_edges) else None,
             dense_output = True,
         )
-        x_new   = result.y[:, -1]
-        x_half  = result.sol(t + h / 2)
-        err_est = np.abs(x_new - x_half) * 0.1
-        return x_new, err_est
+        # solve_ivp controls the error within [t, t + h] (rtol / atol): the outer loop accepts the step
+        x_new = full_state(result.y[:, -1]).copy()
+        return x_new, np.zeros_like(x_new)
 
     def _recover_algebraic(self, spec, x, y_prev, p):
         """
@@ -890,20 +886,8 @@ class ScipyIVPSolver(DAESolver):
         if isinstance(spec, ODESystemSpec) or not spec.unknowns.edge_fields:
             return np.zeros(0)
 
-        # Recover edge unknowns by Newton on the algebraic residual
         n_node_dof = spec.graph.n_nodes * len(spec.unknowns.node_fields)
-        node_u, _ = spec.unpack_unknowns(x)
-
-        inner = NewtonSolver(
-            SolverConfig(method="newton",
-                         tol=self.config.tol * 0.1,
-                         max_iter=self.config.max_iter)
-        )
-        packed_conv = inner._integrate_step(
-            spec, 0.0, spec.pack_unknowns(node_overrides=node_u), 1.0, p, None
-        )[0]
-        _, edge_u = spec.unpack_unknowns(packed_conv)
-        return np.concatenate([edge_u[fn] for fn in spec.unknowns.edge_fields])
+        return _recover_edges(spec, x, tol=self.config.tol * 0.1, max_iter=self.config.max_iter)[n_node_dof:]
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -940,7 +924,13 @@ def make_solver(method: str, config=None) -> AbstractSolver:
             f"Unknown solver method {method!r}. "
             f"Valid: {sorted(SOLVER_REGISTRY)}."
         )
-    cfg = (SolverConfig(method=method)      if config is None else
-           _dc_replace(config, method=method) if isinstance(config, SolverConfig) else
-           SolverConfig(method=method))
+    if config is None:
+        cfg = SolverConfig(method=method)
+    elif isinstance(config, SolverConfig):
+        cfg = _dc_replace(config, method=method)
+    elif isinstance(config, dict):
+        # Options as a dict (was silently replaced by the defaults); unknown keys raise TypeError
+        cfg = SolverConfig(**{**config, "method": method})
+    else:
+        raise TypeError(f"config must be a SolverConfig or a dict of its fields, got {type(config).__name__}")
     return cls(cfg)
