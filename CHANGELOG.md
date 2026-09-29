@@ -27,6 +27,8 @@ The flat modules used before the 2026 restructure have been removed. No compatib
   - The light model now receives `light_scenario` instead of `plant_scenarios[0]`. The meteo table is read from `light_scenario["meteo"]`, given as a csv path indexed by `t` or as a DataFrame. It replaces the hard-coded `inputs/meteo_Ljutovac2002.csv`.
   - The soil and light workers are now pinned to dedicated cores, like the plant workers, and one core is still left free.
   - On platforms without `cpu_affinity` support (macOS), pinning is skipped.
+  - New `plant_model_frequency` argument: the probability of each plant model at each sowing position. It defaults to uniform, so it is implicit for a single model. Before, only `plant_models[0]` was ever used. A single `sowing_depth` value is shared by all plant models.
+  - `clean_exit` is now False when a worker failed. Plant and soil workers exit with code 1 when their model raised.
 - **Breaking, light model contract:** `light_model` is now built as `light_model(queues_light_to_plants=, queue_plants_to_light=, scene_xrange=, scene_yrange=, meteo=, **scenario)`. Its constructor must answer the plants' initialization messages, as the soil model does. Before this change, the light worker ran one step short of the plants: the first worker to finish stopped the scene, and every model ran `n_iterations - 1` steps.
 - Soil and light workers no longer stop the scene when they finish normally. Only plants end a scene, and an environment worker sets `stop_event` only on failure. Before, the first environment worker to finish could make the other one skip its last step, so plants waited forever.
 - The soil worker flushes its reply queues before `os._exit`. Its last replies could be lost, which made the scene hang under load.

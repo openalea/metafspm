@@ -155,4 +155,5 @@ def test_failing_plant_stops_the_scene(orchestra, tmp_path):
 
     summary = doubles.read_summary(str(scene_folder / f"MinimalPlant_0_{scene_folder.name}"))
     assert summary["run_count"] == 1
+    assert clean_exit is False  # Q18
     assert _no_segment_left(scene_folder)
