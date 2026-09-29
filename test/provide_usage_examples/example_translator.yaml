@@ -1,0 +1,291 @@
+# Coupling configuaration file for the Wheat BRIDGES model assembly
+
+
+RootAnatomy:
+
+  RootAnatomy: {}
+
+  RootCNUnified: {}
+
+  RootGrowthModelCoupled:
+    distance_from_tip:
+      distance_from_tip: 1.0
+    length:
+      length: 1.0
+    initial_length:
+      initial_length: 1.0
+    radius:
+      radius: 1.0
+    root_hair_length:
+      root_hair_length: 1.0
+    total_root_hairs_number:
+      total_root_hairs_number: 1.0
+
+  RootWaterModel: {}
+
+  SoilModel: {}
+
+  CNW_Grass: {}
+
+
+
+RootCNUnified:
+
+  RootAnatomy:
+    xylem_exchange_surface:
+      xylem_exchange_surface: 1.0
+    endodermis_conductance_factor:
+      endodermis_conductance_factor: 1.0
+    phloem_exchange_surface:
+      phloem_exchange_surface: 1.0
+    root_exchange_surface:
+      root_exchange_surface: 1.0
+    xylem_differentiation_factor:
+      xylem_differentiation_factor: 1.0
+    symplasmic_volume:
+      symplasmic_volume: 1.0
+    xylem_volume:
+      xylem_volume: 1.0
+    phloem_volume:
+      phloem_volume: 1.0
+    total_phloem_volume:
+      total_phloem_volume: 1.0
+
+  RootCNUnified: {}
+
+  RootGrowthModelCoupled:
+    distance_from_tip:
+      distance_from_tip: 1.0
+    hexose_consumption_by_growth:
+      hexose_consumption_by_growth: 1.0
+    hexose_consumption_by_fungus:
+      hexose_consumption_by_fungus: 1.0
+    length:
+      length: 1.0
+    living_struct_mass:
+      living_struct_mass: 1.0
+    radius:
+      radius: 1.0
+    type:
+      type: 1.0
+    thermal_time_since_emergence:
+      thermal_time_since_emergence: 1.0
+    amino_acids_consumption_by_growth:
+      amino_acids_consumption_by_growth: 1.0
+    vertex_index:
+      vertex_index: 1.0
+    total_living_struct_mass:
+      total_living_struct_mass: 1.0
+    
+  RootWaterModel:
+    radial_import_water_xylem:
+      radial_import_water_xylem: 1.0
+    radial_import_water_xylem_apoplastic:
+      radial_import_water_xylem_apoplastic: 1.0
+    axial_export_water_up_xylem:
+      axial_export_water_up_xylem: 1.0
+    axial_import_water_down_xylem:
+      axial_import_water_down_xylem: 1.0
+    radial_import_water_phloem:
+      radial_import_water_phloem: 1.0
+    axial_export_water_up_phloem:
+      axial_export_water_up_phloem: 1.0
+    axial_import_water_down_phloem:
+      axial_import_water_down_phloem: 1.0
+    xylem_water:
+      xylem_water: 1.0
+    phloem_water:
+      phloem_water: 1.0
+
+  SoilModel:
+    C_hexose_soil:
+      C_hexose_soil: 1.0
+    Cs_cells_soil:
+      Cs_cells_soil: 1.0
+    Cs_mucilage_soil:
+      Cs_mucilage_soil: 1.0
+    soil_temperature:
+      soil_temperature: 1.0
+    soil_AA:
+      C_amino_acids_soil: 1.0
+    soil_Nm:
+      C_mineralN_soil: 1.0
+    struct_mass_fungus:
+      microbial_C: 1.0
+    Nm_fungus:
+      microbial_N: 1.0
+
+  CNW_Grass:
+    mstruct_axis_shoot:
+      mstruct_axis: 1.0
+    sucrose_phloem_shoot:
+      sucrose_phloem: 0.000001 / 12
+    sucrose_phloem_contributors_flow:
+      Unloading_Sucrose_shoot_organs: 0.000001 / 3600 / 12 # inflow convention
+    AA_phloem_shoot:
+      amino_acids_phloem: 0.000001 / 1.4
+    AA_phloem_contributors_flow:
+      Unloading_Amino_Acids_shoot_organs: 0.000001 / 3600 / 1.4 # inflow convention
+    cytokinins_root_shoot_xylem:
+      Export_cytokinins: 1.0
+
+
+
+RootGrowthModelCoupled:
+
+  RootAnatomy:
+    root_tissue_density:
+      root_tissue_density: 1.0
+
+  RootCNUnified:
+    nitrate_transporters_affinity_factor:
+      nitrate_transporters_affinity_factor: 1.0
+
+  RootGrowthModelCoupled: {}
+
+  RootWaterModel: {}
+
+  SoilModel:
+    soil_temperature:
+      soil_temperature: 1.0
+
+  CNW_Grass:
+    adventitious_to_emerge:
+      adventitious_to_emerge: 1.0
+
+
+
+RootWaterModel:
+
+  RootAnatomy:
+    xylem_vessel_radii:
+      xylem_vessel_radii: 1.0
+    phloem_vessel_radii:
+      phloem_vessel_radii: 1.0
+    xylem_volume:
+      xylem_volume: 1.0
+    phloem_volume:
+      phloem_volume: 1.0
+    growth_volume:
+      growth_volume: 1.0
+    kr_symplasmic_water_xylem:
+      kr_symplasmic_water_xylem: 1.0
+    kr_apoplastic_water_xylem:
+      kr_apoplastic_water_xylem: 1.0
+    kr_symplasmic_water_phloem:
+      kr_symplasmic_water_phloem: 1.0
+    xylem_differentiation_factor:
+      xylem_differentiation_factor: 1.0
+
+  RootCNUnified:
+    C_solutes_xylem:
+      C_solutes_xylem: 1.0
+    C_solutes_phloem:
+      C_solutes_phloem: 1.0
+    sucrose_root_to_shoot_phloem:
+      sucrose_root_to_shoot_phloem: 1.0
+
+  RootGrowthModelCoupled:
+    length:
+      length: 1.0
+    radius:
+      radius: 1.0
+    living_struct_mass:
+      living_struct_mass: 1.0
+    type:
+      type: 1.0
+
+  RootWaterModel: {}
+
+  SoilModel:
+    soil_water_pressure:
+      water_potential_soil: 1.0
+    soil_temperature:
+      soil_temperature: 1.0
+    Cv_solutes_soil:
+      Cv_solutes_soil: 1.0
+
+  CNW_Grass:
+    water_root_shoot_xylem:
+      root_to_shoot_xylem_water_flow: 0.000001 / 3600 # gH2O per time-step to m3.s-1
+
+
+SoilModel:
+
+  RootAnatomy:
+    root_exchange_surface:
+      root_exchange_surface: 1.0
+
+  RootCNUnified:
+    cells_release_massic:
+      cells_release: 12 * 6
+    hexose_exudation_massic:
+      hexose_exudation: 12 * 6 # C molar mass * number of atoms 
+    hexose_uptake_from_soil_massic:
+      hexose_uptake_from_soil: 12 * 6 # C molar mass * number of atoms 
+    mucilage_secretion_massic:
+      mucilage_secretion: 12 * 6
+    phloem_hexose_exudation_massic:
+      phloem_hexose_exudation: 12 * 6 # C molar mass * number of atoms 
+    phloem_hexose_uptake_from_soil_massic:
+      phloem_hexose_uptake_from_soil: 12 * 6 # C molar mass * number of atoms 
+    mineralN_uptake:
+      import_Nm: 14 # N molar mass
+    amino_acids_uptake:
+      import_AA: 12 * 5 # C molar mass * number of atoms 
+    mineralN_diffusion_from_roots:
+      diffusion_Nm_soil: 14 # N molar mass
+    amino_acids_diffusion_from_roots:
+      diffusion_AA_soil: 12 * 5 # C molar mass * number of atoms 
+    mineralN_diffusion_from_xylem:
+      apoplastic_Nm_soil_xylem: 14 # N molar mass
+    amino_acids_diffusion_from_xylem:
+      apoplastic_AA_soil_xylem: 12 * 5 # C molar mass * number of atoms 
+
+  RootGrowthModelCoupled:
+    length:
+      length: 1.0
+    initial_length:
+      initial_length: 1.0
+    struct_mass:
+      struct_mass: 1.0
+    living_struct_mass:
+      living_struct_mass: 1.0
+
+  RootWaterModel:
+    water_uptake:
+      radial_import_water_xylem: 1.0
+
+  SoilModel: {}
+
+  CNW_Grass: {}
+
+
+
+CNW_Grass:
+  RootAnatomy: {}
+
+  RootCNUnified:
+    mstruct:
+      total_living_struct_mass: 1.0
+    Export_Amino_Acids:
+      AA_root_to_shoot_xylem: 1.4 * 1000000 * 3600
+    Export_Nitrates:
+      Nm_root_to_shoot_xylem: 1000000 * 3600
+    Unloading_Amino_Acids_phloem:
+      AA_root_to_shoot_phloem: -1.4 * 1000000 * 3600 # minus respect to flow direction convention
+    Unloading_Sucrose_phloem:
+      sucrose_root_to_shoot_phloem: -12 * 1000000 * 3600 # minus respect to flow direction convention
+    cytokinins:
+      total_cytokinins: 1.0
+    xylem_water_potential:
+      xylem_water_potential_out: 0.000001 # Pa to MPa NOTE: Given by RootCN because we need up-to-date time step's osmotic potentials too
+
+  RootGrowthModelCoupled: {}
+
+  RootWaterModel: {}
+
+  SoilModel: {}
+
+  CNW_Grass: {}
+
