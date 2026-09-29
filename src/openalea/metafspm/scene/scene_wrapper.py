@@ -88,7 +88,7 @@ def play_Orchestra(scene_name, output_folder,
 
     try:
         for plant_id, init_info in planting_sequence.items():
-            a = np.empty(HANDSHAKE_SHAPE, dtype=np.float64)
+            a = np.zeros(HANDSHAKE_SHAPE, dtype=np.float64)
             try:
                 shm = SharedMemory(create=True, name=plant_id, size=a.nbytes)
             except FileExistsError:
@@ -101,6 +101,7 @@ def play_Orchestra(scene_name, output_folder,
 
             b = np.ndarray(a.shape, dtype=a.dtype, buffer=shm.buf)
             b[:] = a[:]
+            del b # Release the numpy handle on the buffer before closing it
             shm.close()
             sharememories.append(shm)
 
@@ -158,8 +159,6 @@ def play_Orchestra(scene_name, output_folder,
         for p in processes:
             p.join()
 
-        if clean_exit:
-            del b # Delete any remaining numpy handle used at creation
         for shm in sharememories:
             shm.close()
             shm.unlink()
@@ -278,22 +277,32 @@ def soil_worker(queues_soil_to_plants, queue_plants_to_soil, cpu_ids, stop_event
                         time_step_in_hours=1, logging_period_in_hours=heavy_log_period,
                         echo=True, **log_settings)
 
+    # Environment workers only stop the scene on failure: on normal completion, setting stop_event could make the
+    # other environment worker skip its last step while plants still wait for it. Plants end the scene.
     iteration = 0
-    while not stop_event.is_set() and iteration < n_iterations: 
-        # Run time step
+    try:
+        while not stop_event.is_set() and iteration < n_iterations: 
+            # Run time step
+            if logger is not None:
+                logger()
+            instance.run()
+
+            iteration += 1
+
+    except Exception as e:
+        traceback.print_exc()
+        print("Soil interrupted by : ", e)
+        stop_event.set()
+
+    finally:
+        print("Soil stopped")
+
         if logger is not None:
-            logger()
-        instance.run()
+            logger.stop()
 
-        iteration += 1
-
-    print("Soil stopped")
-    stop_event.set()
-
-    if logger is not None:
-        logger.stop()
-
-    os._exit(0)
+        # os._exit skips the flush of multiprocessing queues: make sure the last replies reach the plants
+        flush_queues(queues_soil_to_plants.values())
+        os._exit(0)
 
 
 def light_worker(queues_light_to_plants, queue_plants_to_light, cpu_ids, stop_event,
@@ -306,21 +315,38 @@ def light_worker(queues_light_to_plants, queue_plants_to_light, cpu_ids, stop_ev
     scenario = dict(scenario)
     meteo = load_meteo(scenario.pop("meteo", None))
 
-    instance = light_model(scene_xrange=scene_xrange, scene_yrange=scene_yrange, meteo=meteo, **scenario)
+    # As the soil model, the light model answers the plants' initialization messages in its constructor
+    instance = light_model(queues_light_to_plants=queues_light_to_plants, queue_plants_to_light=queue_plants_to_light,
+                           scene_xrange=scene_xrange, scene_yrange=scene_yrange, meteo=meteo, **scenario)
 
     # Here no logging of the interception is performed as shoot models already log the energy they captured
 
+    # See soil_worker: only a failure stops the scene
     iteration = 0
-    while not stop_event.is_set() and iteration < n_iterations: 
-        # Run time step
-        instance.run(queues_light_to_plants=queues_light_to_plants, queue_plants_to_light=queue_plants_to_light)
+    try:
+        while not stop_event.is_set() and iteration < n_iterations: 
+            # Run time step
+            instance.run(queues_light_to_plants=queues_light_to_plants, queue_plants_to_light=queue_plants_to_light)
 
-        iteration += 1
+            iteration += 1
+
+    except Exception:
+        stop_event.set()
+        raise
 
     print("Light stopped")
-    stop_event.set()
 
     
+def flush_queues(queues):
+    """
+    Close multiprocessing queues and wait until their buffered messages are written to the pipe.
+    Required before os._exit, which kills the queue feeder threads.
+    """
+    for queue in queues:
+        queue.close()
+        queue.join_thread()
+
+
 def load_meteo(meteo):
     """
     Meteo table of the light model, from a DataFrame or a csv path indexed by 't'.

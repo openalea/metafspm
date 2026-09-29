@@ -27,3 +27,16 @@ The flat modules used before the 2026 restructure have been removed. No compatib
   - The light model now receives `light_scenario` instead of `plant_scenarios[0]`. The meteo table is read from `light_scenario["meteo"]`, given as a csv path indexed by `t` or as a DataFrame. It replaces the hard-coded `inputs/meteo_Ljutovac2002.csv`.
   - The soil and light workers are now pinned to dedicated cores, like the plant workers, and one core is still left free.
   - On platforms without `cpu_affinity` support (macOS), pinning is skipped.
+- **Breaking, light model contract:** `light_model` is now built as `light_model(queues_light_to_plants=, queue_plants_to_light=, scene_xrange=, scene_yrange=, meteo=, **scenario)`. Its constructor must answer the plants' initialization messages, as the soil model does. Before this change, the light worker ran one step short of the plants: the first worker to finish stopped the scene, and every model ran `n_iterations - 1` steps.
+- Soil and light workers no longer stop the scene when they finish normally. Only plants end a scene, and an environment worker sets `stop_event` only on failure. Before, the first environment worker to finish could make the other one skip its last step, so plants waited forever.
+- The soil worker flushes its reply queues before `os._exit`. Its last replies could be lost, which made the scene hang under load.
+- The plant shared buffers are zero-initialised (they used `np.empty`).
+- New constants `scene_wrapper.HANDSHAKE_SHAPE` (the plant/soil buffer, still `(35, 20000)`) and `CPU_REGISTRY_FOLDER` (the `outputs/` folder is created when missing).
+- `stand_initialization` picks plant models from cumulative frequencies (the pick was wrong with more than 2 models).
+- The soil and plant workers run without a `logger_class`.
+- `CompositeModel`:
+  - A same-name link with a factor ≠ 1 is now applied across data structures (it was silently dropped) and rejected within one data structure.
+  - Multi-source links of the soil keep all their sources.
+  - `apply_input_tables` recomputes its variable selection when its targets change.
+  - `documentation` / `inputs` work on any component.
+  - `recursive_reload` is removed.

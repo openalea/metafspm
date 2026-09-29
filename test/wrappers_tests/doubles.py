@@ -10,7 +10,9 @@ In-repo doubles reproducing the interfaces of the downstream models shown in tes
 Classes live at module level so that they can be pickled by multiprocessing (spawn).
 TODO(WD.6): retarget plant components to MPGDataStructure and the soil to a 3-D ArrayDataStructure.
 """
+import json
 import os
+import time
 from dataclasses import dataclass
 from multiprocessing.shared_memory import SharedMemory
 
@@ -347,6 +349,12 @@ class FakePlant(CompositeModel):
         self.time += 1
         self.run_count += 1
 
+    def summary(self):
+        return {"run_count": self.run_count,
+                "PARa": {str(k): v for k, v in self.shoot_props.get("PARa", {}).items()},
+                "C_hexose_soil": _values(self.root_props["C_hexose_soil"]),
+                "affinity": _affinity()}
+
     def get_environment_boundaries(self):
         self.queues_soil_to_plants[self.name].get()
         light_boundary_props = {} if self.queues_light_to_plants is None else self.queues_light_to_plants[self.name].get()
@@ -424,6 +432,9 @@ class FakeSoil(CompositeModel):
             self.soil.send_to_plant(plant_data, self.soil_outputs)
             self.queues_soil_to_plants[plant_data["plant_id"]].put("finished")
 
+    def summary(self):
+        return {"run_count": self.run_count, "DOC": float(self.soil.voxels["DOC"].sum()), "affinity": _affinity()}
+
     def run(self):
         self.apply_input_tables(tables=self.input_tables, to=self.components, when=self.time)
         self.soil(queue_plants_to_soil=self.queue_plants_to_soil, queues_soil_to_plants=self.queues_soil_to_plants,
@@ -433,9 +444,13 @@ class FakeSoil(CompositeModel):
 
 
 class FakeLight:
-    """LightModel queue protocol (light_component_example.py): PARa = PARi * leaf area, computed at every step."""
+    """
+    LightModel queue protocol (light_component_example.py): PARa = PARi * leaf area, computed at every step.
+    As the soil model, it answers the plants' initialization messages in its constructor (devplan Q17), with the
+    meteo of the first step; run() then answers the status sent after each plant step.
+    """
 
-    def __init__(self, scene_xrange: float, scene_yrange: float, meteo, **scenario):
+    def __init__(self, queues_light_to_plants, queue_plants_to_light, scene_xrange: float, scene_yrange: float, meteo, **scenario):
         self.scene_xrange = scene_xrange
         self.scene_yrange = scene_yrange
         self.meteo = meteo
@@ -443,14 +458,21 @@ class FakeLight:
         self.parameters = scenario["parameters"]
         self.input_tables = scenario["input_tables"]
         self.run_count = 0
+        if "affinity_file" in self.parameters:
+            with open(self.parameters["affinity_file"], "w") as f:
+                json.dump(_affinity(), f)
+        self._answer(queues_light_to_plants, queue_plants_to_light)
 
-    def run(self, queues_light_to_plants, queue_plants_to_light):
+    def _answer(self, queues_light_to_plants, queue_plants_to_light):
         PARi = float(self.meteo.loc[self.time, "PARi"])
         batch = [queue_plants_to_light.get() for _ in range(len(queues_light_to_plants))]
         for plant_data in batch:
             scene = plant_data["data"]["scene"]
             PARa = {vid: PARi * sum(triangle_area(t) for t in triangles) for vid, triangles in scene.items()}
             queues_light_to_plants[plant_data["plant_id"]].put({"PARa": PARa})
+
+    def run(self, queues_light_to_plants, queue_plants_to_light):
+        self._answer(queues_light_to_plants, queue_plants_to_light)
         self.time += 1
         self.run_count += 1
 
@@ -482,6 +504,49 @@ class FakeLogger:
 
     def stop(self):
         self._record("stop")
+        if hasattr(self.model_instance, "summary"):
+            with open(os.path.join(self.outputs_dirpath, "summary.json"), "w") as f:
+                json.dump(self.model_instance.summary(), f)
+
+
+def read_summary(outputs_dirpath):
+    with open(os.path.join(outputs_dirpath, "summary.json")) as f:
+        return json.load(f)
+
+
+def _values(container):
+    return [float(v) for v in container.values()]
+
+
+def _affinity():
+    return sorted(os.sched_getaffinity(0)) if hasattr(os, "sched_getaffinity") else None
+
+
+class MinimalPlant:
+    """
+    Plant model without environment exchange, for orchestration tests.
+    scenario["parameters"]: fail_at (raise at that run), delete_after (remove the scene stop file after that many runs),
+    stop_file, run_duration (seconds per run).
+    """
+
+    def __init__(self, queues_soil_to_plants, queue_plants_to_soil, queues_light_to_plants, queue_plants_to_light,
+                 name="Plant", time_step=TIME_STEP, coordinates=None, rotation=0, translator_path="", **scenario):
+        self.name = name
+        self.parameters = scenario["parameters"]
+        self.data_structures = {}
+        self.components = []
+        self.run_count = 0
+
+    def run(self):
+        if self.run_count == self.parameters.get("fail_at"):
+            raise RuntimeError(f"{self.name} failed at run {self.run_count}")
+        time.sleep(self.parameters.get("run_duration", 0.))
+        self.run_count += 1
+        if self.run_count == self.parameters.get("delete_after"):
+            os.remove(self.parameters["stop_file"])
+
+    def summary(self):
+        return {"run_count": self.run_count, "affinity": _affinity()}
 
 
 def read_logger_calls(outputs_dirpath):
