@@ -635,16 +635,14 @@ def test_uc1_mtg_props_auto_mapped():
 
 
 def test_uc1_stepinit_and_graph_system_via_choregrapher():
-    """@stepinit and @graph_system both run through Component.__call__.
+    """@rate and @graph_system steps all run through Component.__call__.
 
-    model() triggers Component.__call__ → Choregrapher.__call__, which runs
-    all registered steps in consensus_scheduling order.  @stepinit computes
-    radial_solute_input once per call; @axial runs the graph-system solve.
-    Both are registered via their decorators and bound to this instance by
-    add_time_and_data() in __post_init__ — the standard Choregrapher flow.
+    model() triggers Component.__call__ → Choregrapher.__call__, which runs every registered step of the class
+    in priority order: the three schedule_as="axial" graph systems first, then the @rate, then the five
+    schedule_as="state" graph systems (asserted below, so that the test documents the actual order).
 
-    After model(), radial_solute_input[i] = k_radial * (c_ext - c_init[i])
-    and concentrations are physically meaningful (> 0).
+    With a uniform concentration and no is_root flag, the axial systems leave the concentration uniform (the
+    Dirichlet condition is inactive without is_root), so radial_solute_input = k_radial * (c_ext - c0).
     """
     ds   = _make_ds()
     n, e = ds.n_nodes(), ds.n_edges()
@@ -656,10 +654,18 @@ def test_uc1_stepinit_and_graph_system_via_choregrapher():
     model.c_ext    = 1.0
     model.time_step        = 0.5
 
-    # model() = Component.__call__ → Choregrapher: @rate then @axial.
+    order = [[f.func.name for f in group]
+             for group in Choregrapher().scheduled_groups["NitrogenAxialTransport"].values()]
+    assert order == [
+        ["transport_solve_node_explicit", "transport_solve_dirichlet", "transport_solve_neumann"],   # axial
+        ["radial_solute_input"],                                                                     # rate
+        ["transport_solve", "transport_solve_explicit", "transport_solve_with_amount",
+         "transport_solve_with_output", "transport_solve_implicit_euler"],                           # state
+    ]
+
     model()
 
-    # @rate ran on c0 = 0.3 before the graph-system modified concentration.
+    # @rate ran on the (still uniform) concentration left by the axial systems.
     expected_J = model.k_radial * (model.c_ext - c0)
     J_vals = np.array(
         [model.props["radial_solute_input"][vid]
@@ -799,14 +805,23 @@ def test_uc1_explicit_node_balance_matches_implicit():
     )
 
 
+def _find_root_local_idx(ds: MPGDataStructure) -> int:
+    """Local index of the graph root: the node that has no incoming edge."""
+    child_vids = {int(b) for (a, b) in ds.edges()}
+    return next(i for i, vid in enumerate(ds._idx_to_vid) if vid not in child_vids)
+
+
 def _make_ds_with_root_flag() -> tuple:
-    """Return (ds, root_local_idx) with is_root=1 at the first sorted node."""
+    """Return (ds, root_local_idx) with is_root=1 at the graph root.
+
+    (Local index 0 used to be flagged: MPG local order is Compartment post-order, so it is a tip, not the root.)
+    """
     ds = _make_ds()
-    n  = ds.n_nodes()
-    is_root = np.zeros(n)
-    is_root[0] = 1          # first node in ascending VID order
+    root = _find_root_local_idx(ds)
+    is_root = np.zeros(ds.n_nodes())
+    is_root[root] = 1
     ds.set_node_property("is_root", is_root)
-    return ds, 0
+    return ds, root
 
 
 def test_uc1_dirichlet_bc_pins_concentration():
