@@ -28,9 +28,9 @@ from openalea.metafspm.solve.system_specs import (
     FieldState,
     GraphSystem,
     GraphView,
-    SolverSpec,
     UnknownLayout,
 )
+from openalea.metafspm.solve.solver import SolverSpec
 from openalea.metafspm.solve.decorator import edge_law, node_balance
 
 
