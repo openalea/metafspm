@@ -77,30 +77,16 @@ edge indices.
 
 ---
 
-## UC2–UC4 — pending updates
+## UC2–UC4 — applied (2026-09-29)
 
-The following changes are required for UC2, UC3, UC4:
+UC2, UC3 and UC4 follow the same component API as UC1:
 
-1. **Component base class**: Change `Component` → `FunctionalComponent` as the
-   base class in all UC component declarations (or keep `Component` if that's
-   still appropriate — check whether `Component` also needs the DataStructure).
-
-2. **Constructor call**: Replace `MyModel()` with `MyModel(data_structure=ds)`.
-
-3. **Setup function**: Replace manual `props`/`_graph_view` assignment with
-   `ds.set_node_property(...)` / `ds.set_edge_property(...)` calls before
-   constructing the model.
-
-4. **Graph source**: Replace `_cell_chain_graph()` / `_anatomy_graph()` with
-   an `MPGDataStructure` derived from `generate_simple_mpg_seedling()` at the
-   appropriate scale, OR keep using `GraphView.from_mtg_subset` if the anatomy
-   graph (UC3) is specifically needed.
-
-5. **`_boundary_ports`** (UC3): `FunctionalComponent.__post_init__` does not yet
-   handle boundary ports.  UC3 will need either:
-   a. `ds.to_graph_view(boundary_ports=ports)` called explicitly, or
-   b. `_boundary_ports` set after construction (as before).
-
-6. **Edge ID keys** (UC2 `WaterMunchTransport`): UC2 has no edge unknowns but
-   does use edge-located parameters (`K_xylem`, `K_phloem`).  These must be
-   registered via `ds.set_edge_property(...)` before construction.
+1. **Base class and construction.** The components subclass `FunctionalComponent` and are built with `MyModel(data_structure=ds)`.
+2. **Field locations.** Fields declare `scale="node"` / `"edge"` (the former `location=` keyword is gone).
+3. **Setup.** Values are registered on the DataStructure before construction: `ds.register(name, values, location=...)`.
+4. **Graph sources:**
+   - UC2 and UC4 run on a 3-segment `MPGDataStructure` chain, the former 3-cell chain topology. UC4's collar is the graph root.
+   - UC3 runs on the seedling root-system graph (`generate_simple_mpg_seedling()`), with edge conductances typed by the child segment label.
+   - The cross-sectional anatomy graph of `generate_anatomy_in_mtg.py` no longer builds with the current MPG API. It remains to be ported; the MPG's custom anatomy connections are also not supported by `MPGDataStructure`.
+5. **Boundary ports (UC3).** Set `model._boundary_ports` after construction. `FunctionalComponent._graph_view` includes them when it is first built, and rebuilds when the topology changes.
+6. **Previous state.** Graph-system equations read `self.previous(field)` instead of a user-managed `_previous_fields`.

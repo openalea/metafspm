@@ -19,19 +19,38 @@ Tests:
   - node_balance block ordering matches node_unknowns declaration
 """
 
-import pytest
-
-pytest.skip("UC2/UC3/UC4 await migration to FunctionalComponent on DataStructures (devplan B9): their graph fixtures (deleted graph_system_tests/conftest.py), declare(location=) and generate_anatomy_in_mtg are outdated", allow_module_level=True)
-
 import numpy as np
 import pytest
 from dataclasses import dataclass
 from scipy.sparse import diags, issparse
 
+from openalea.metafspm.coupling.choregrapher import Choregrapher
+from openalea.metafspm.coupling.component import FunctionalComponent, declare
+from openalea.metafspm.data_structure.configs import PropsConfig
+from openalea.metafspm.data_structure.data_api import MPGDataStructure
+from openalea.metafspm.data_structure.mpg import MPG
 from openalea.metafspm.solve.decorator import graph_system, node_balance, graph_jacobian
-from openalea.metafspm.coupling.component import Component, declare
 
-from conftest import _cell_chain_graph
+
+@pytest.fixture(autouse=True)
+def _fresh_choregrapher_run_state():
+    Choregrapher().reset()
+    yield
+    Choregrapher().reset()
+
+
+def _segment_chain(n_segments=3) -> MPGDataStructure:
+    """MPGDataStructure of a chain of root segments (n nodes, n-1 edges), as the former 3-cell chain."""
+    g = MPG()
+    scale = g.scales.SubOrgan
+    anchor = g.scales.anchors[scale]
+    vid = g.add_system_root_at_scale(scale, label=g.labels.SubOrgan.RootSegment)
+    for _ in range(n_segments - 1):
+        vid = g.add_component_with_topo(anchor, vid, **PropsConfig(scale=scale, edge_type="<",
+                                                                 label=g.labels.SubOrgan.RootSegment))
+    g.populate_graph(scale)
+    g.convert_properties_to_arraydict()
+    return MPGDataStructure(g, from_scale=scale)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -39,7 +58,7 @@ from conftest import _cell_chain_graph
 # ══════════════════════════════════════════════════════════════════════════════
 
 @dataclass
-class WaterMunchTransport(Component):
+class WaterMunchTransport(FunctionalComponent):
     """
     Steady-state xylem / phloem coupled pressure-flow.
 
@@ -55,56 +74,56 @@ class WaterMunchTransport(Component):
         description="Xylem water potential per segment node. Node unknown.",
         min_value=-5.0, max_value=0.5, value_comment="", references="", DOI=[],
         variable_type="state_variable", by="WaterMunchTransport",
-        state_variable_type="intensive", edit_by="dev", default=-0.1, location="node",
+        state_variable_type="intensive", edit_by="dev", default=-0.1, scale="node",
     )
     phloem_pressure: float = declare(
         unit="MPa", unit_comment="",
         description="Phloem turgor pressure per segment node. Node unknown.",
         min_value=-1.0, max_value=2.0, value_comment="", references="", DOI=[],
         variable_type="state_variable", by="WaterMunchTransport",
-        state_variable_type="intensive", edit_by="dev", default=0.8, location="node",
+        state_variable_type="intensive", edit_by="dev", default=0.8, scale="node",
     )
     K_xylem: float = declare(
         unit="m4 s-1 MPa-1", unit_comment="",
         description="Axial hydraulic conductance of xylem vessels per edge.",
         min_value=0.0, max_value=1.0, value_comment="", references="", DOI=[],
         variable_type="parameter", by="WaterMunchTransport",
-        state_variable_type="intensive", edit_by="dev", default=1e-10, location="edge",
+        state_variable_type="intensive", edit_by="dev", default=1e-10, scale="edge",
     )
     K_phloem: float = declare(
         unit="m4 s-1 MPa-1", unit_comment="",
         description="Axial hydraulic conductance of phloem sieve tubes per edge.",
         min_value=0.0, max_value=1.0, value_comment="", references="", DOI=[],
         variable_type="parameter", by="WaterMunchTransport",
-        state_variable_type="intensive", edit_by="dev", default=1e-11, location="edge",
+        state_variable_type="intensive", edit_by="dev", default=1e-11, scale="edge",
     )
     sigma_xph: float = declare(
         unit="m3 s-1 MPa-1", unit_comment="radial, per segment",
         description="Radial membrane conductance between xylem and phloem per node.",
         min_value=0.0, max_value=1.0, value_comment="", references="", DOI=[],
         variable_type="parameter", by="WaterMunchTransport",
-        state_variable_type="intensive", edit_by="dev", default=1e-13, location="node",
+        state_variable_type="intensive", edit_by="dev", default=1e-13, scale="node",
     )
     sigma_soil: float = declare(
         unit="m3 s-1 MPa-1", unit_comment="radial, per segment",
         description="Radial soil-root conductance per node.",
         min_value=0.0, max_value=1.0, value_comment="", references="", DOI=[],
         variable_type="parameter", by="WaterMunchTransport",
-        state_variable_type="intensive", edit_by="dev", default=1e-12, location="node",
+        state_variable_type="intensive", edit_by="dev", default=1e-12, scale="node",
     )
     soil_water_potential: float = declare(
         unit="MPa", unit_comment="",
         description="p_soil: prescribed soil water potential per node.",
         min_value=-5.0, max_value=0.5, value_comment="", references="", DOI=[],
         variable_type="input", by="SoilWaterModel",
-        state_variable_type="intensive", edit_by="dev", default=-0.05, location="node",
+        state_variable_type="intensive", edit_by="dev", default=-0.05, scale="node",
     )
     phloem_assimilate_loading: float = declare(
         unit="MPa s-1", unit_comment="",
         description="s_ph: osmotic source from assimilate loading per node.",
         min_value=-1.0, max_value=1.0, value_comment="", references="", DOI=[],
         variable_type="input", by="CarbonModel",
-        state_variable_type="intensive", edit_by="dev", default=0.0, location="node",
+        state_variable_type="intensive", edit_by="dev", default=0.0, scale="node",
     )
 
     @graph_system(
@@ -162,34 +181,24 @@ class WaterMunchTransport(Component):
 # ══════════════════════════════════════════════════════════════════════════════
 
 def _setup_water_model(
-    graph, xylem_pressure, phloem_pressure,
+    ds, xylem_pressure, phloem_pressure,
     sigma_xph, sigma_soil, soil_water_potential,
     phloem_assimilate_loading, K_xylem, K_phloem,
 ):
-    node_vids = list(graph.node_ids)
-    edge_vids = list(graph.edge_ids)
-    props = {}
-    for i, v in enumerate(node_vids):
-        vid = int(v)
-        props.setdefault("xylem_pressure", {})[vid]          = float(xylem_pressure[i])
-        props.setdefault("phloem_pressure", {})[vid]         = float(phloem_pressure[i])
-        props.setdefault("sigma_xph", {})[vid]               = float(sigma_xph[i])
-        props.setdefault("sigma_soil", {})[vid]              = float(sigma_soil[i])
-        props.setdefault("soil_water_potential", {})[vid]    = float(soil_water_potential[i])
-        props.setdefault("phloem_assimilate_loading", {})[vid] = float(phloem_assimilate_loading[i])
-    for i, v in enumerate(edge_vids):
-        vid = int(v)
-        props.setdefault("K_xylem", {})[vid]  = float(K_xylem[i])
-        props.setdefault("K_phloem", {})[vid] = float(K_phloem[i])
-    model             = WaterMunchTransport()
-    model.props       = props
-    model._graph_view = graph
-    return model
+    """Register the values on the DataStructure (node values in local order), then build the component."""
+    for name, values in (("xylem_pressure", xylem_pressure), ("phloem_pressure", phloem_pressure),
+                         ("sigma_xph", sigma_xph), ("sigma_soil", sigma_soil),
+                         ("soil_water_potential", soil_water_potential),
+                         ("phloem_assimilate_loading", phloem_assimilate_loading)):
+        ds.register(name, values, location="node")
+    ds.register("K_xylem", K_xylem, location="edge")
+    ds.register("K_phloem", K_phloem, location="edge")
+    return WaterMunchTransport(data_structure=ds)
 
 
-def _default_water_model(graph):
+def _default_water_model(ds):
     return _setup_water_model(
-        graph,
+        ds,
         xylem_pressure=np.array([-0.45, -0.32, -0.24]),
         phloem_pressure=np.array([0.04, 0.07, 0.10]),
         sigma_xph=np.array([0.12, 0.09, 0.07]),
@@ -207,10 +216,10 @@ def _default_water_model(graph):
 
 def test_uc2_residual_and_munch_pressure_sign():
     """Solve and verify residual ≈ 0; xylem pressure < phloem pressure."""
-    graph = _cell_chain_graph()
-    assert (graph.n_nodes, graph.n_edges) == (3, 2)
+    ds = _segment_chain()
+    assert (ds.n_nodes(), ds.n_edges()) == (3, 2)
 
-    model = _default_water_model(graph)
+    model = _default_water_model(ds)
     model._invoke_graph_system("_transport_solve")
     system  = model._last_graph_system
     packed  = model._last_graph_solution
@@ -228,8 +237,7 @@ def test_uc2_analytic_jacobian_matches_fd():
     Key validation: analytic Jacobian must agree with FD Jacobian to rtol=1e-5.
     This catches wrong signs or missing terms in the block structure.
     """
-    graph = _cell_chain_graph()
-    model = _default_water_model(graph)
+    model = _default_water_model(_segment_chain())
     model._invoke_graph_system("_transport_solve")
     system = model._last_graph_system
     packed = model._last_graph_solution
@@ -249,14 +257,14 @@ def test_uc2_analytical_limit_zero_coupling():
     Xylem decouples to (L_x + σ_s I) p_x = σ_s p0 · 1 whose unique solution
     is p_x = p0 (uniform, equal to soil potential).
     """
-    graph   = _cell_chain_graph()
-    n, e    = graph.n_nodes, graph.n_edges
+    ds      = _segment_chain()
+    n, e    = ds.n_nodes(), ds.n_edges()
     p0      = -0.05
     sig_s   = 0.50
     sig_xph = 1e-6   # near-zero coupling
 
     model = _setup_water_model(
-        graph,
+        ds,
         xylem_pressure=np.full(n, p0 * 0.9),
         phloem_pressure=np.full(n, p0 * 0.9),
         sigma_xph=np.full(n, sig_xph),
@@ -278,8 +286,7 @@ def test_uc2_node_balance_block_ordering():
     @node_balance blocks must be sorted to match node_unknowns order.
     The first n equations must correspond to xylem, the next n to phloem.
     """
-    graph = _cell_chain_graph()
-    model = _default_water_model(graph)
+    model = _default_water_model(_segment_chain())
     model._invoke_graph_system("_transport_solve")
     system = model._last_graph_system
     names  = [b.name for b in system.equation_blocks]
