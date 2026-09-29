@@ -495,6 +495,60 @@ class VariableStoreMixin:
             return np.sum(values * weights, axis=axis) / np.sum(weights, axis=axis)
         raise ValueError(f"unknown aggregation '{aggregation}'")
 
+    # ── Export for loggers (design note §9) ────────────────────────────────────
+
+    _INDEX_NAMES = {"node": "vid", "edge": "edge", "cell": "voxel"}
+
+    def export(self, names=None) -> dict:
+        """Copies of the values of *names* (default: every registered variable)."""
+        names = self.available_vars() if names is None else names
+        return {name: np.array(self.get(name), dtype=float, copy=True) for name in names}
+
+    def to_dataframe(self, names=None, location: str = None, time=None):
+        """
+        pandas DataFrame of the variables of one *location*, indexed by entity id ("vid" for nodes, "edge" by child
+        vid, "voxel" for cells, with the cell centres as x/y/z columns) and by "t" when *time* is given.
+        ``.to_xarray()`` gives the spatialised dataset.
+        """
+        import pandas as pd
+        location = location or self._default_location
+        if names is None:
+            names = [name for name in self.available_vars() if self.location(name) == location]
+        for name in names:
+            if self.location(name) != location:
+                raise ValueError(f"'{name}' is at {self.location(name)}, not at {location}")
+        table = pd.DataFrame({name: np.ravel(self.get(name)) for name in names},
+                             index=pd.Index(self.entity_ids(location), name=self._INDEX_NAMES.get(location, location)))
+        if location == "cell" and hasattr(self, "cell_centers"):
+            centers = self.cell_centers()
+            for d, axis in enumerate(self.axes):
+                table[axis] = centers[:, d]
+        if time is not None:
+            table["t"] = time
+            table = table.set_index("t", append=True)
+        return table
+
+    def summarize(self, sums=(), means=(), scalars=(), where=None) -> dict:
+        """
+        Plant- or scene-scale summary row: sums and means over the entities selected by *where* (a variable name,
+        selecting entities where it is > 0, or a callable returning a mask), and scalar values as is.
+        A mean over no entity is None.
+        """
+        def mask_for(name):
+            if where is None:
+                return np.ones(np.shape(self.get(name)), dtype=bool)
+            return (np.asarray(self.get(where)) > 0) if isinstance(where, str) else np.asarray(where(self), dtype=bool)
+
+        summary = {"sum": {}, "mean": {}, "scalar": {}}
+        for name in sums:
+            summary["sum"][name] = float(np.asarray(self.get(name))[mask_for(name)].sum())
+        for name in means:
+            selected = np.asarray(self.get(name))[mask_for(name)]
+            summary["mean"][name] = float(selected.mean()) if selected.size else None
+        for name in scalars:
+            summary["scalar"][name] = float(self.get(name))
+        return summary
+
     def _set_or_register(self, name: str, values, location: str) -> None:
         """Legacy setters: in place when the variable exists at *location* with the same shape, else (re)register."""
         values = np.asarray(values, dtype=float)

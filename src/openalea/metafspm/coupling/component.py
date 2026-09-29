@@ -291,7 +291,6 @@ class FunctionalComponent(Component):
             )
         ds = self.data_structure
         self._auto_declare_on_ds(ds)
-        self._graph_view = ds.to_graph_view() if hasattr(ds, "to_graph_view") else None
         if not hasattr(self, "pullable_inputs"):
             self.pullable_inputs = {}
         if not hasattr(self.choregrapher, "simulation_time_step"):
@@ -307,6 +306,24 @@ class FunctionalComponent(Component):
             self.props = ds.to_props_dict()
             self.props["focus_elements"] = [int(v) for v in self._graph_view.node_ids]
             self.choregrapher.add_time_and_data(self, sub_time_step, self.props)
+
+    @property
+    def _graph_view(self):
+        """GraphView of the DataStructure, rebuilt when its topology changed (growth), None for grids."""
+        ds = self.data_structure
+        if not hasattr(ds, "to_graph_view"):
+            return None
+        version = getattr(ds, "topology_version", None)
+        if "_graph_view_cache" not in self.__dict__ or self.__dict__.get("_graph_view_version") != version:
+            self.__dict__["_graph_view_cache"] = ds.to_graph_view(boundary_ports=getattr(self, "_boundary_ports", ()))
+            self.__dict__["_graph_view_version"] = version
+        return self.__dict__["_graph_view_cache"]
+
+    @_graph_view.setter
+    def _graph_view(self, view):
+        # Explicit views (e.g. with boundary ports built by hand) are kept until the topology changes
+        self.__dict__["_graph_view_cache"] = view
+        self.__dict__["_graph_view_version"] = getattr(self.data_structure, "topology_version", None)
 
     def pull_available_inputs(self):
         """Refresh the derived inputs registered on the DataStructure by the coupling, before the step."""

@@ -171,3 +171,27 @@ def test_previous_state_is_managed_by_the_framework():
 
     np.testing.assert_allclose(ds_self.get("concentration"), ds.get("concentration"), atol=1e-12)
     assert not np.allclose(ds.get("concentration"), c_old)
+
+
+def test_component_follows_topology_growth():
+    """After ds.update_topology(), the component's graph view, the carried-over variables and the solve use the new topology."""
+    from openalea.metafspm.data_structure.configs import PropsConfig
+    g, seedling = __import__("simple_seedling").generate_simple_mpg_seedling()
+    g.populate_graph(g.scales.SubOrgan)
+    g.convert_properties_to_arraydict()
+    from openalea.metafspm.data_structure.data_api import MPGDataStructure
+    ds = MPGDataStructure(g, from_scale=g.scales.SubOrgan)
+    model = SelfSteppingTransport(data_structure=ds)
+    model.time_step = 0.5
+    ds.set("radial_solute_input", 0.01)
+    model._invoke_graph_system("_self_stepping_solve")
+    n_before = model._graph_view.n_nodes
+
+    g.add_child(seedling.root_segment6, **PropsConfig(scale=g.scales.SubOrgan, edge_type='<', label=g.labels.SubOrgan.RootSegment))
+    ds.update_topology()
+    model._invoke_graph_system("_self_stepping_solve")
+
+    assert model._graph_view.n_nodes == n_before + 1 == ds.n_nodes()
+    residual = model._last_graph_system.residual(model._last_graph_solution)
+    np.testing.assert_allclose(residual, 0., atol=1e-10)
+    assert ds.get("concentration").shape == (ds.n_nodes(),)
