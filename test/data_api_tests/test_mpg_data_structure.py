@@ -155,31 +155,36 @@ def test_invalidate_topology_rebuilds_index_map():
 # ── 3. from_legacy migration ──────────────────────────────────────────────────
 
 def test_from_legacy_copies_node_properties():
+    """Values are carried by vertex: MPG local order (post-order) differs from the legacy sorted order."""
     g, sc, v1, v2, v3 = _make_linear_mpg()
-    # Set a property in the MTG dict
     wp = g.property('water_potential')
-    wp[v1] = -0.5
-    wp[v2] = -1.0
-    wp[v3] = -1.5
+    wp.update({v1: -0.5, v2: -1.0, v3: -1.5})
 
-    legacy = LegacyMPGDataStructure(g)
+    legacy = LegacyMPGDataStructure(g, sc)
     sparse = MPGDataStructure.from_legacy(legacy, ['water_potential'])
 
-    # Values must be identical
-    leg_vals = legacy.node_property('water_potential')
-    spr_vals = sparse.node_property('water_potential')
-    np.testing.assert_array_equal(spr_vals, leg_vals)
+    by_vid = dict(zip(sparse._idx_to_vid, sparse.node_property('water_potential')))
+    assert by_vid == {v1: -0.5, v2: -1.0, v3: -1.5}
+    assert sparse.node_property('water_potential').shape == (sparse.n_nodes(),)
+
+
+def test_from_legacy_at_another_scale_raises():
+    """A legacy structure at another scale has no value for the MPG nodes (it used to copy a length-1 array)."""
+    g, sc, v1, v2, v3 = _make_linear_mpg()
+    g.property('water_potential').update({v1: -0.5, v2: -1.0, v3: -1.5})
+    with pytest.raises(ValueError, match="water_potential"):
+        MPGDataStructure.from_legacy(LegacyMPGDataStructure(g), ['water_potential'])
 
 
 def test_from_legacy_does_not_share_array():
     """Mutation of the sparse copy must not affect the original dict."""
     g, sc, v1, v2, v3 = _make_linear_mpg()
-    g.property('water_potential')[v1] = -1.0
+    g.property('water_potential').update({v1: -1.0, v2: -2.0, v3: -3.0})
 
-    legacy = LegacyMPGDataStructure(g)
+    legacy = LegacyMPGDataStructure(g, sc)
     sparse = MPGDataStructure.from_legacy(legacy, ['water_potential'])
 
-    sparse._node_data['water_potential'][0] = 999.0
+    sparse.set('water_potential', 999.0)
     assert g.property('water_potential').get(v1) == pytest.approx(-1.0)
 
 

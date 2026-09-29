@@ -138,4 +138,5 @@ Components are coupled only through DataStructures; the props-based path of the 
   - `apply_input_tables` writes DataStructures only.
   - `translator_matrix_builder` skips fields without metadata; it used to crash on `FunctionalComponent`.
 - **`play_Orchestra`:** `handshake_shape` is required, and `scene_wrapper.HANDSHAKE_SHAPE` is removed.
+- `MPGDataStructure.from_legacy` copies the values by vertex. It used to copy them in the legacy sorted order into the MPG's post-order, which misaligned them, or a length-1 array from a legacy structure at another scale; that case now raises.
 
