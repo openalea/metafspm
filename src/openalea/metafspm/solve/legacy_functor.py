@@ -1,3 +1,4 @@
+import numpy as np
 import inspect as ins
 from typing import get_type_hints, get_origin, get_args
 
@@ -40,9 +41,42 @@ class Functor:
             return 1
         
 
+    def _call_on_data_structure(self, instance, ds):
+        """
+        Evaluate the step on DataStructure arrays and write the outputs in place (design note §8).
+        Vectorised by default: one call with whole arrays; functions marked vectorized=False are called per element.
+        """
+        args = [ds.get(name) for name in self.input_names]
+        if getattr(self.fun, "__vectorized__", True):
+            out = self.fun(instance, *args)
+        else:
+            shapes = [a.shape for a in args if a.ndim > 0]
+            size = shapes[0][0] if shapes else 1
+            per_element = [self.fun(instance, *(a if a.ndim == 0 else a[i] for a in args)) for i in range(size)]
+            if self.supplementary_outputs:
+                out = tuple(zip(*per_element))
+                out = (np.asarray(out[0]),) + tuple(
+                    x[0] if k % 2 == 0 else np.asarray(x) for k, x in enumerate(out[1:]))
+            else:
+                out = np.asarray(per_element)
+
+        outputs = [(self.name, out[0] if self.supplementary_outputs else out)]
+        for s in range(self.supplementary_outputs):
+            outputs.append((out[2 * s + 1], out[2 * s + 2]))
+        reference = next((a for a in args if a.ndim > 0), None)
+        for name, values in outputs:
+            values = np.asarray(values, dtype=float)
+            if not ds.has(name):
+                location = "scalar" if (self.total or values.ndim == 0) else (
+                    ds.location(self.input_names[0]) if self.input_names else ds._default_location)
+                ds.register(name, location=location)
+            ds.set(name, values)
+
     def __call__(self, instance, data, data_type="<class 'dict'>", *args):
         if self.iterating:
             self.fun(instance)
+        elif hasattr(data, "get") and hasattr(data, "register") and hasattr(data, "location"):
+            self._call_on_data_structure(instance, data)
         elif data_type == "<class 'dict'>":
             if self.total:
                 data[self.name].update(

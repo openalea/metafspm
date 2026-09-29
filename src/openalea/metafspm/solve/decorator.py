@@ -83,9 +83,18 @@ from openalea.metafspm.solve.legacy_functor import Functor
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def _step(name: str, *, total: bool = False, iterating: bool = False):
-    """Return a decorator that registers func as a Choregrapher step."""
-    def decorator(func):
-        func.__step_tag__ = {"name": name, "total": total, "iterating": iterating}
+    """
+    Return a decorator that registers func as a Choregrapher step.
+
+    Usable bare (``@rate``) or with options (``@rate(vectorized=False)``). On DataStructure-backed components,
+    step functions receive whole arrays (design note Q20); ``vectorized=False`` opts in to one call per element
+    for functions written with scalar logic.
+    """
+    def decorator(func=None, *, vectorized: bool = True):
+        if func is None:
+            return lambda f: decorator(f, vectorized=vectorized)
+        func.__step_tag__ = {"name": name, "total": total, "iterating": iterating, "vectorized": vectorized}
+        func.__vectorized__ = vectorized
         Choregrapher().add_process(Functor(func, total=total, iteraring=iterating), name=name)
         return func
     return decorator
@@ -246,9 +255,39 @@ def _prop_location(name, declared_locs, props, node_set, edge_set):
     return "node" if n_node >= n_edge else "edge"
 
 
+def _live_ds(instance):
+    """The instance's DataStructure when it supports live reading (get/set/register), else None."""
+    ds = getattr(instance, "data_structure", None)
+    return ds if (ds is not None and hasattr(ds, "register") and hasattr(ds, "get")) else None
+
+
+def _read_array(ds, name, location, size):
+    """Copy of variable *name* as a per-*location* array: scalars are broadcast; missing names give zeros."""
+    if not ds.has(name):
+        return np.zeros(size, dtype=np.float64)
+    values = ds.get(name)
+    if values.ndim == 0:
+        return np.full(size, float(values))
+    return np.array(values, dtype=np.float64)
+
+
 def _snapshot(instance, required_names, node_vids_int, edge_vids_int,
               node_unknowns, edge_unknowns, declared_locs):
-    """Pull required props into float64 arrays before the Newton loop."""
+    """Pull required variables into float64 arrays before the Newton loop (copies, read at each solve)."""
+    ds = _live_ds(instance)
+    if ds is not None:
+        node_snap, edge_snap = {}, {}
+        for name in required_names:
+            if name in declared_locs:
+                loc = declared_locs[name]
+            elif ds.has(name) and ds.location(name) in ("node", "edge"):
+                loc = ds.location(name)
+            else:
+                loc = "node"
+            size = len(node_vids_int) if loc == "node" else len(edge_vids_int)
+            (node_snap if loc == "node" else edge_snap)[name] = _read_array(ds, name, loc, size)
+        return node_snap, edge_snap
+
     props    = instance.props
     node_set = set(node_vids_int)
     edge_set = set(edge_vids_int)
@@ -278,7 +317,10 @@ def _type_mask(type_filter, snap, size):
         if vals is None:
             continue
         allowed_set = set(allowed)
-        mask &= np.asarray([v in allowed_set for v in vals])
+        try:
+            mask &= np.isin(np.asarray(vals, dtype=float), np.asarray(list(allowed_set), dtype=float))
+        except (TypeError, ValueError):
+            mask &= np.asarray([v in allowed_set for v in vals])
     return mask
 
 
@@ -385,8 +427,12 @@ class GraphSystemBuilder:
         integrate_fields = sorted({fn for fn, _, _, _, _, _, intg in edge_law_items if intg})
         dt_inst = float(getattr(instance, "time_step", None) or 1.0)
 
+        ds = _live_ds(instance)
         amount_olds: dict[str, np.ndarray] = {}
         for fn in integrate_fields:
+            if ds is not None:
+                amount_olds[fn] = _read_array(ds, f"{fn}_amount", "edge", m)
+                continue
             pdict = instance.props.get(f"{fn}_amount", {})
             amount_olds[fn] = np.array(
                 [float(pdict.get(v, 0.0)) for v in edge_vids_int], dtype=np.float64
@@ -424,18 +470,23 @@ class GraphSystemBuilder:
 
         # ── Initial-guess FieldStates ─────────────────────────────────────────
         props = instance.props
-        node_fields_gs = {
-            fn: FieldState(fn, "node", np.asarray(
-                [float(props[fn].get(v, 0.0)) for v in node_vids_int], dtype=np.float64
-            ))
-            for fn in node_unknowns
-        }
-        edge_fields_gs = {
-            fn: FieldState(fn, "edge", np.asarray(
-                [float(props[fn].get(v, 0.0)) for v in edge_vids_int], dtype=np.float64
-            ))
-            for fn in edge_unknowns
-        }
+        if ds is not None:
+            # Copies: the implicit solvers also use them as u_prev, they must not follow later writes
+            node_fields_gs = {fn: FieldState(fn, "node", _read_array(ds, fn, "node", n)) for fn in node_unknowns}
+            edge_fields_gs = {fn: FieldState(fn, "edge", _read_array(ds, fn, "edge", m)) for fn in edge_unknowns}
+        else:
+            node_fields_gs = {
+                fn: FieldState(fn, "node", np.asarray(
+                    [float(props[fn].get(v, 0.0)) for v in node_vids_int], dtype=np.float64
+                ))
+                for fn in node_unknowns
+            }
+            edge_fields_gs = {
+                fn: FieldState(fn, "edge", np.asarray(
+                    [float(props[fn].get(v, 0.0)) for v in edge_vids_int], dtype=np.float64
+                ))
+                for fn in edge_unknowns
+            }
         for fn in integrate_fields:
             edge_fields_gs[f"{fn}_amount"] = FieldState(
                 f"{fn}_amount", "edge", amount_olds[fn].copy()
@@ -645,6 +696,7 @@ class GraphSystemBuilder:
         Called once per Choregrapher tick from _invoke_graph_system.
         """
         spec, _, _ = self.build()
+        self.last_spec = spec
         solver_cls = self._spec_def.get("solver_cls")
         if solver_cls is not None:
             solver = solver_cls(self._spec_cfg())
@@ -678,6 +730,17 @@ class GraphSystemBuilder:
         edge_vids_int = [int(v) for v in gv.edge_ids]
 
         node_u, edge_u = spec.unpack_unknowns(packed)
+
+        ds = _live_ds(instance)
+        if ds is not None:
+            for location, values_by_name in (("node", {fn: node_u[fn] for fn in node_unknowns}),
+                                             ("edge", {fn: edge_u[fn] for fn in spec.unknowns.edge_fields})):
+                for fn, values in values_by_name.items():
+                    if ds.has(fn):
+                        ds.set(fn, values)
+                    else:
+                        ds.register(fn, values, location=location)
+            return
 
         for fn in node_unknowns:
             target = instance.props.setdefault(fn, {})
@@ -724,6 +787,9 @@ def _invoke_graph_system(self, method_name: str) -> None:
         spec_def.get("method") == "implicit_euler" or
         (_solver_cls is not None and issubclass(_solver_cls, ImplicitEulerSolver))
     )
+    if previous_fields is None and _is_implicit and _live_ds(self) is not None:
+        previous_fields = {fn: _read_array(_live_ds(self), fn, "node", self._graph_view.n_nodes)
+                           for fn in spec_def["node_unknowns"]}
     if previous_fields is None and _is_implicit:
         gv   = self._graph_view
         vids = [int(v) for v in gv.node_ids]
@@ -735,6 +801,13 @@ def _invoke_graph_system(self, method_name: str) -> None:
             for fn in spec_def["node_unknowns"]
         }
 
+    # ── Framework-managed previous state (design note Q21): unknowns at the start of this solve ─────
+    ds = _live_ds(self)
+    if ds is not None:
+        self._previous_state = {fn: np.array(ds.get(fn), dtype=np.float64)
+                                for fn in list(spec_def["node_unknowns"]) + list(spec_def["edge_unknowns"])
+                                if ds.has(fn)}
+
     # ── Build + solve ─────────────────────────────────────────────────────────
     builder = GraphSystemBuilder(self, spec_def)
     packed, outputs = builder.build_and_step(
@@ -743,7 +816,7 @@ def _invoke_graph_system(self, method_name: str) -> None:
     )
 
     # ── Store for next tick's previous-field and test introspection ───────────
-    spec, _, _ = builder.build()    # re-build for unpack (cheap)
+    spec       = builder.last_spec  # the spec that was solved
     node_u, _  = spec.unpack_unknowns(packed)
 
     setattr(self, _saved_key, {fn: node_u[fn].copy()
@@ -764,6 +837,16 @@ def _invoke_graph_system(self, method_name: str) -> None:
     node_vids_int = [int(v) for v in gv.node_ids]
     edge_vids_int = [int(v) for v in gv.edge_ids]
     n, m = gv.n_nodes, gv.n_edges
+
+    ds = _live_ds(self)
+    if ds is not None:
+        for oname, arr in outputs.items():
+            arr = np.asarray(arr, dtype=np.float64).reshape(-1)
+            if ds.has(oname):
+                ds.set(oname, arr)
+            else:
+                ds.register(oname, arr, location="node" if arr.size == n else "edge")
+        outputs = {}
 
     for oname, arr in outputs.items():
         target = self.props.setdefault(oname, {})

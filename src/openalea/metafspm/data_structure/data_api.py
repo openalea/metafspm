@@ -25,6 +25,8 @@ from typing      import Optional, Union
 
 from openalea.metafspm.data_structure.arraydict import ArrayDict
 
+from collections.abc import Mapping
+from types import MappingProxyType
 import numpy as np
 from scipy.sparse import coo_matrix, csc_matrix, csr_matrix, diags, eye, kron, issparse
 
@@ -489,6 +491,38 @@ class VariableStoreMixin:
         meta = self._variable_meta().get(name, {})
         self.register(name, values, location=location, default=meta.get("default", 0.),
                       on_grow=meta.get("on_grow", "default"))
+
+
+class DataStructurePropsView(Mapping):
+    """
+    Read-only {name: {id: value}} view of a DataStructure, for code written against the former props snapshot
+    (compatibility for one release, design note §8.7). Node values are keyed by node id, edge values by edge index,
+    coarse-scale values by entity id and scalars by 1. Values are read at access time; mappings are read-only.
+    """
+
+    def __init__(self, ds):
+        self._ds = ds
+
+    def __getitem__(self, name):
+        ds = self._ds
+        if name == "focus_elements":
+            return [int(v) for v in ds.entity_ids("node")]
+        if not ds.has(name):
+            raise KeyError(name)
+        location, values = ds.location(name), ds.get(name)
+        if location == "scalar":
+            return MappingProxyType({1: float(values)})
+        keys = range(values.size) if location == "edge" else ds.entity_ids(location)
+        return MappingProxyType({int(k): float(v) for k, v in zip(keys, np.ravel(values))})
+
+    def __iter__(self):
+        return iter(list(self._ds.available_vars()) + list(self._ds.aliases()))
+
+    def __len__(self):
+        return len(self._ds.available_vars()) + len(self._ds.aliases())
+
+    def __contains__(self, name):
+        return self._ds.has(name)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

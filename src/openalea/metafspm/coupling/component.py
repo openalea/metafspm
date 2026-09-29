@@ -4,7 +4,7 @@ import numpy as np
 
 from openalea.metafspm.solve.decorator import *
 from openalea.metafspm.data_structure.mpg import MPG
-from openalea.metafspm.data_structure.data_api import DataStructure, MPGDataStructure, GraphDataStructure
+from openalea.metafspm.data_structure.data_api import DataStructure, MPGDataStructure, GraphDataStructure, DataStructurePropsView
 from openalea.metafspm.data_structure.configs import ScalesConfig as _ScalesConfig
 
 # Map integer MPG scale constants to the generic "node"/"edge" vocabulary used
@@ -292,13 +292,30 @@ class FunctionalComponent(Component):
         ds = self.data_structure
         self._auto_declare_on_ds(ds)
         self._graph_view = ds.to_graph_view()
-        self.props       = ds.to_props_dict()
-        self.props["focus_elements"] = [int(v) for v in self._graph_view.node_ids]
         if not hasattr(self, "pullable_inputs"):
             self.pullable_inputs = {}
-        self.choregrapher.add_time_and_data(self, 1, self.props)
+        if hasattr(ds, "register"):
+            # Live reading (design note §8): steps and solves read and write the DataStructure arrays;
+            # props is a read-only compatibility view.
+            self.props = DataStructurePropsView(ds)
+            self.choregrapher.add_time_and_data(self, 1, ds, compartment="graph")
+        else:
+            self.props = ds.to_props_dict()
+            self.props["focus_elements"] = [int(v) for v in self._graph_view.node_ids]
+            self.choregrapher.add_time_and_data(self, 1, self.props)
         if not hasattr(self.choregrapher, "simulation_time_step"):
             self.choregrapher.add_simulation_time_step(1)
+
+    def previous(self, name: str) -> np.ndarray:
+        """
+        Value of unknown *name* at the start of the current graph-system solve, managed by the framework
+        (replaces the user-managed ``_previous_fields``, deprecated; design note Q21).
+        """
+        state = getattr(self, "_previous_state", None)
+        if state is None or name not in state:
+            raise KeyError(f"No previous state for '{name}': previous() is available inside a graph-system solve "
+                           "of one of its unknowns.")
+        return state[name]
 
     def _auto_declare_on_ds(self, ds: DataStructure) -> None:
         """Register default arrays for scale-annotated fields not yet in ds.
@@ -406,6 +423,15 @@ class FunctionalComponent(Component):
             if f.metadata.get("variable_type") == "state_variable"
         }
 
+        if hasattr(ds, "register"):
+            for name in getattr(self, "_bio_scale_node_fields", {}):
+                if name in sv_names and ds.has(name):
+                    ds.write_node_to_mtg(name, ds.get(name))
+            for name, convention in getattr(self, "_bio_scale_edge_fields", {}).items():
+                if name in sv_names and ds.has(name):
+                    ds.write_edge_to_mtg(name, ds.get(name), convention=convention)
+            return
+
         # ── Bio-scale node fields ─────────────────────────────────────────────
         bio_node = getattr(self, "_bio_scale_node_fields", {})
         if bio_node and hasattr(ds, "write_node_to_mtg") and hasattr(ds, "_idx_to_vid"):
@@ -465,14 +491,15 @@ class FunctionalComponent(Component):
         for name in getattr(self, "_bio_scale_node_fields", {}):
             if name not in param_names:
                 continue
-            arr = ds._mtg_to_node_array(name)
+            arr = ds._mtg_to_node_array(name, scale=self._bio_scale_node_fields[name])
             if arr is None:
                 continue
             ds.set_node_property(name, arr)
-            prop_dict = self.props.get(name, {})
-            for i, vid in enumerate(ds._idx_to_vid):
-                if vid in prop_dict:
-                    prop_dict[vid] = float(arr[i])
+            if not hasattr(ds, "register"):
+                prop_dict = self.props.get(name, {})
+                for i, vid in enumerate(ds._idx_to_vid):
+                    if vid in prop_dict:
+                        prop_dict[vid] = float(arr[i])
 
         if not hasattr(ds, "_mtg_to_edge_array"):
             return
@@ -483,7 +510,8 @@ class FunctionalComponent(Component):
             if arr is None:
                 continue
             ds.set_edge_property(name, arr)
-            prop_dict = self.props.get(name, {})
-            for j in range(len(arr)):
-                if j in prop_dict:
-                    prop_dict[j] = float(arr[j])
+            if not hasattr(ds, "register"):
+                prop_dict = self.props.get(name, {})
+                for j in range(len(arr)):
+                    if j in prop_dict:
+                        prop_dict[j] = float(arr[j])
