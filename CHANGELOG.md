@@ -92,4 +92,9 @@ The flat modules used before the 2026 restructure have been removed. No compatib
   - factor, sum, formula or scale change: `ds.derive`, refreshed by the receiver's `pull_available_inputs` before its step. A same-name factor is rejected.
 
   Soil outputs are registered on the plant DataStructure and initialised to 0. `apply_input_tables` writes DataStructure variables. The props path is kept for legacy components until the doubles are retargeted (WD.6). `DataStructure.unregister(name)` is new.
+- **Plant ↔ soil `Coupler` (WD.5a):** new `openalea.metafspm.coupling.coupler`.
+  - `VoxelLocator` finds each segment's cell from its barycentre (x1..z2 plant variables, names configurable), with `flip_z` and periodic x and y.
+  - `Coupler.update_map` / `zero_soil_inputs` / `push` / `pull` do an extensive scatter-add to the soil, with factors, and an intensive in-place gather to the plant. It gives the same sums as the reference soil model's `apply_to_voxel_fast`, with the `(y, z, x)` → `(x, y, z)` permutation.
+  - `Coupler.from_translator` builds a Coupler from a Translator.
+  - `DataStructure.topology_version` makes a stale map raise.
 
