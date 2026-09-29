@@ -1,10 +1,15 @@
 """
-UC3 — MechaAnatomyHydraulics: full anatomy graph, heterogeneous typed edge
-      conductances, Robin-penalty BCs, analytic Jacobian, @graph_output.
+UC3 — MechaAnatomyHydraulics: heterogeneous typed edge conductances, Robin-penalty BCs, analytic Jacobian,
+      @graph_output.
 UC4 — LaplacianWithBC: @boundary_condition Dirichlet and Neumann semantics.
 
+Migrated to FunctionalComponent on MPGDataStructure (devplan B9). UC3 used a cross-sectional anatomy graph built
+by generate_anatomy_in_mtg.py, which no longer works with the current MPG API: it now runs on the seedling
+root-system graph, with edge conductances typed by the child segment label and Robin ports at the root tips
+(soil) and at the collar (xylem). UC4 runs on a 3-segment chain with the collar at the graph root.
+
 UC3 tests:
-  - residual ≈ 0, pressures in [-1, 0], xylem mean pressure < soil mean pressure
+  - residual ≈ 0, pressures in [-1, 0], xylem-side mean pressure < soil-side mean pressure
   - edge flux output has correct shape and is non-zero
   - Newton converges in exactly one step (linear system → analytic J = coeff matrix)
   - analytic Jacobian matches FD to rtol=1e-5
@@ -14,29 +19,38 @@ UC4 tests:
   - Neumann BC: flux source at collar drives highest pressure at collar node
 """
 
-import pytest
-
-pytest.skip("UC2/UC3/UC4 await migration to FunctionalComponent on DataStructures (devplan B9): their graph fixtures (deleted graph_system_tests/conftest.py), declare(location=) and generate_anatomy_in_mtg are outdated", allow_module_level=True)
-
-import sys
-import os
 import numpy as np
 import pytest
 from dataclasses import dataclass
 from scipy.sparse import diags, issparse
 
+from openalea.metafspm.coupling.choregrapher import Choregrapher
+from openalea.metafspm.coupling.component import FunctionalComponent, declare
+from openalea.metafspm.data_structure.configs import PropsConfig
+from openalea.metafspm.data_structure.data_api import BoundaryPort, MPGDataStructure
+from openalea.metafspm.data_structure.mpg import MPG
 from openalea.metafspm.solve.decorator import (
     boundary_condition, graph_jacobian, graph_output, graph_system, node_balance,
 )
-from openalea.metafspm.solve.system_specs import BoundaryPort, GraphView
-from openalea.metafspm.coupling.component import Component, declare
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'mpg_tests'))
-from generate_anatomy_in_mtg import (
-    build_seedling_mtg, c_type, e_type, get_representative_segment_id, n_type, scales,
-)
+from simple_seedling import generate_simple_mpg_seedling
 
-from conftest import _anatomy_graph, _cell_chain_graph
+
+@pytest.fixture(autouse=True)
+def _fresh_choregrapher_run_state():
+    Choregrapher().reset()
+    yield
+    Choregrapher().reset()
+
+
+def _root_local_idx(ds) -> int:
+    children = {b for _, b in ds.edges()}
+    return next(i for i, vid in enumerate(ds._idx_to_vid) if vid not in children)
+
+
+def _tip_local_idx(ds) -> list:
+    parents = {a for a, _ in ds.edges()}
+    return [i for i, vid in enumerate(ds._idx_to_vid) if vid not in parents]
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -44,9 +58,9 @@ from conftest import _anatomy_graph, _cell_chain_graph
 # ══════════════════════════════════════════════════════════════════════════════
 
 @dataclass
-class MechaAnatomyHydraulics(Component):
+class MechaAnatomyHydraulics(FunctionalComponent):
     """
-    Steady-state hydraulic network on the cross-sectional anatomy graph.
+    Steady-state hydraulic network with typed edge conductances (formerly on the cross-sectional anatomy graph).
 
     Node balance with Robin-penalty boundary conditions:
         R = (L_het + B_b diag(w) B_b^T) p - B_b (w ⊙ v) = 0
@@ -65,42 +79,42 @@ class MechaAnatomyHydraulics(Component):
         description="Water potential at each anatomy node. Node unknown.",
         min_value=-10.0, max_value=0.5, value_comment="", references="", DOI=[],
         variable_type="state_variable", by="MechaAnatomyHydraulics",
-        state_variable_type="intensive", edit_by="dev", default=-0.2, location="node",
+        state_variable_type="intensive", edit_by="dev", default=-0.2, scale="node",
     )
     K_membrane: float = declare(
         unit="m3 s-1 MPa-1", unit_comment="per anatomy edge",
         description="Transmembrane hydraulic conductance.",
         min_value=0.0, max_value=1.0, value_comment="", references="", DOI=[],
         variable_type="parameter", by="MechaAnatomyHydraulics",
-        state_variable_type="intensive", edit_by="dev", default=0.0, location="edge",
+        state_variable_type="intensive", edit_by="dev", default=0.0, scale="edge",
     )
     K_symplastic: float = declare(
         unit="m3 s-1 MPa-1", unit_comment="per anatomy edge",
         description="Symplastic (plasmodesmata) hydraulic conductance.",
         min_value=0.0, max_value=1.0, value_comment="", references="", DOI=[],
         variable_type="parameter", by="MechaAnatomyHydraulics",
-        state_variable_type="intensive", edit_by="dev", default=0.0, location="edge",
+        state_variable_type="intensive", edit_by="dev", default=0.0, scale="edge",
     )
     K_apoplastic: float = declare(
         unit="m3 s-1 MPa-1", unit_comment="per anatomy edge",
         description="Apoplastic (cell-wall) hydraulic conductance.",
         min_value=0.0, max_value=1.0, value_comment="", references="", DOI=[],
         variable_type="parameter", by="MechaAnatomyHydraulics",
-        state_variable_type="intensive", edit_by="dev", default=0.0, location="edge",
+        state_variable_type="intensive", edit_by="dev", default=0.0, scale="edge",
     )
     soil_water_potential: float = declare(
         unit="MPa", unit_comment="",
         description="Prescribed water potential at outer cortex boundary nodes.",
         min_value=-10.0, max_value=0.5, value_comment="", references="", DOI=[],
         variable_type="input", by="SoilWaterModel",
-        state_variable_type="intensive", edit_by="dev", default=-0.05, location="node",
+        state_variable_type="intensive", edit_by="dev", default=-0.05, scale="node",
     )
     xylem_water_potential: float = declare(
         unit="MPa", unit_comment="",
         description="Prescribed water potential at inner stele boundary nodes.",
         min_value=-5.0, max_value=0.5, value_comment="", references="", DOI=[],
         variable_type="input", by="WaterMunchTransport",
-        state_variable_type="intensive", edit_by="dev", default=-0.1, location="node",
+        state_variable_type="intensive", edit_by="dev", default=-0.1, scale="node",
     )
 
     @graph_system(
@@ -159,73 +173,41 @@ class MechaAnatomyHydraulics(Component):
 
 def _build_anatomy_system():
     """
-    Set up and solve the MechaAnatomyHydraulics system on the full anatomy graph.
-    Initial guess is zero everywhere so pack_unknowns() returns a zero vector
-    for the Newton-step test.
+    MechaAnatomyHydraulics on the seedling root-system graph: edge conductances typed by the child segment label
+    (stem: symplastic, root: transmembrane, leaf: apoplastic), Robin ports at the root tips (soil, value 0) and at
+    the collar (xylem, value -1). Zero initial guess, so pack_unknowns() is a zero vector for the Newton-step test.
 
-    Returns (model, graph).
+    Returns (model, ds, soil_idx, xylem_idx).
     """
-    g = build_seedling_mtg()
-    node_ids = np.asarray(
-        g.array_at_scale("vertex_id", scale=scales["node"]), dtype=np.int64
-    )
-    node_types = np.asarray(
-        g.array_at_scale("n_type", scale=scales["node"]), dtype=np.int64
-    )
-    c_type_a_vals = np.asarray(
-        g.array_at_scale("c_type_a", scale=scales["node"]), dtype=np.int64
-    )
-    c_type_b_vals = np.asarray(
-        g.array_at_scale("c_type_b", scale=scales["node"]), dtype=np.int64
-    )
+    g, _ = generate_simple_mpg_seedling()
+    g.populate_graph(g.scales.SubOrgan)
+    g.convert_properties_to_arraydict()
+    ds = MPGDataStructure(g, from_scale=g.scales.SubOrgan)
 
-    soil_nodes  = node_ids[(node_types != n_type["cell"]) & (c_type_b_vals == -1)]
-    xylem_nodes = node_ids[
-        (node_types == n_type["cell"]) & (c_type_a_vals == c_type["stele"])
-    ]
-
+    labels = g.property("label")
+    root_label = g.labels.SubOrgan.RootSegment
+    xylem_idx = [_root_local_idx(ds)]
+    soil_idx = [i for i in _tip_local_idx(ds) if labels[ds._idx_to_vid[i]] == root_label]
     boundary_ports = tuple(
-        [
-            BoundaryPort(name=f"soil_{v}",  node_id=int(v), kind="dirichlet",
-                         value=0.0,  weight=0.6)
-            for v in soil_nodes
-        ]
-        + [
-            BoundaryPort(name=f"xylem_{v}", node_id=int(v), kind="dirichlet",
-                         value=-1.0, weight=1.0)
-            for v in xylem_nodes
-        ]
-    )
+        [BoundaryPort(name=f"soil_{i}", node_id=int(ds._idx_to_vid[i]), kind="dirichlet", value=0.0, weight=0.6)
+         for i in soil_idx]
+        + [BoundaryPort(name=f"xylem_{i}", node_id=int(ds._idx_to_vid[i]), kind="dirichlet", value=-1.0, weight=1.0)
+           for i in xylem_idx])
 
-    graph = _anatomy_graph(boundary_ports=boundary_ports)
-    n, e  = graph.n_nodes, graph.n_edges
+    child_labels = np.array([labels[b] for _, b in ds.edges()])
+    K_sym = np.where(child_labels == g.labels.SubOrgan.StemElement, 0.80, 0.0)
+    K_mem = np.where(child_labels == root_label, 0.35, 0.0)
+    K_apo = np.where((K_sym == 0.0) & (K_mem == 0.0), 1.10, 0.0)
 
-    edge_types = graph.edge_data["e_type"]
-    K_sym = np.where(edge_types == e_type["symplastic"],    0.80, 0.0).astype(np.float64)
-    K_mem = np.where(edge_types == e_type["transmembrane"], 0.35, 0.0).astype(np.float64)
-    K_apo = np.where(
-        (edge_types != e_type["symplastic"]) & (edge_types != e_type["transmembrane"]),
-        1.10, 0.0,
-    ).astype(np.float64)
+    ds.register("water_potential", 0.0, location="node")      # zero initial guess
+    ds.register("K_membrane", K_mem, location="edge")
+    ds.register("K_symplastic", K_sym, location="edge")
+    ds.register("K_apoplastic", K_apo, location="edge")
 
-    props = {}
-    for v in list(graph.node_ids):
-        vid = int(v)
-        props.setdefault("water_potential",     {})[vid] = 0.0   # zero initial guess
-        props.setdefault("soil_water_potential", {})[vid] = 0.0
-        props.setdefault("xylem_water_potential",{})[vid] = -1.0
-    for i, v in enumerate(list(graph.edge_ids)):
-        vid = int(v)
-        props.setdefault("K_membrane",   {})[vid] = float(K_mem[i])
-        props.setdefault("K_symplastic", {})[vid] = float(K_sym[i])
-        props.setdefault("K_apoplastic", {})[vid] = float(K_apo[i])
-
-    model               = MechaAnatomyHydraulics()
-    model.props         = props
-    model._graph_view   = graph
+    model = MechaAnatomyHydraulics(data_structure=ds)
     model._boundary_ports = boundary_ports
     model._invoke_graph_system("_pressure_solve")
-    return model, graph
+    return model, ds, soil_idx, xylem_idx
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -240,25 +222,23 @@ def test_uc3_residual_pressure_range_and_flux_output():
       - mean stele pressure < mean soil-node pressure (water flows toward xylem)
       - edge_water_flux output has correct shape and is non-zero
     """
-    model, graph = _build_anatomy_system()
+    model, ds, soil_idx, xylem_idx = _build_anatomy_system()
     system  = model._last_graph_system
     packed  = model._last_graph_solution
     node_u, _ = system.unpack_unknowns(packed)
     outputs   = system.derive_outputs(packed)
 
-    np.testing.assert_allclose(system.residual(packed), np.zeros(graph.n_nodes), atol=1e-10)
+    np.testing.assert_allclose(system.residual(packed), np.zeros(ds.n_nodes()), atol=1e-10)
 
     pressure = node_u["water_potential"]
     assert pressure.min() >= -1.0 - 1e-10, f"pressure below -1: {pressure.min()}"
     assert pressure.max() <=  0.0 + 1e-10, f"pressure above  0: {pressure.max()}"
 
-    soil_mask  = (graph.node_data["n_type"] != n_type["cell"]) & (graph.node_data["c_type_b"] == -1)
-    xylem_mask = (graph.node_data["n_type"] == n_type["cell"]) & (graph.node_data["c_type_a"] == c_type["stele"])
-    assert pressure[xylem_mask].mean() < pressure[soil_mask].mean()
+    assert pressure[xylem_idx].mean() < pressure[soil_idx].mean()
 
     assert "edge_water_flux" in outputs
     flux = np.asarray(outputs["edge_water_flux"]).reshape(-1)
-    assert flux.shape == (graph.n_edges,)
+    assert flux.shape == (ds.n_edges(),)
     assert np.any(np.abs(flux) > 0.0)
 
 
@@ -268,7 +248,7 @@ def test_uc3_newton_converges_in_one_step():
     initial guess.  Verify that the residual is ≤ tol after one Newton
     iteration, which implies J is the exact coefficient matrix.
     """
-    model, _ = _build_anatomy_system()
+    model = _build_anatomy_system()[0]
     system   = model._last_graph_system
     x0       = system.pack_unknowns()          # zero initial guess
     residual_0 = system.residual(x0)
@@ -280,7 +260,7 @@ def test_uc3_newton_converges_in_one_step():
 
 def test_uc3_analytic_jacobian_matches_fd():
     """Analytic Jacobian must match finite-difference to rtol=1e-5."""
-    model, _ = _build_anatomy_system()
+    model = _build_anatomy_system()[0]
     system   = model._last_graph_system
     x0       = system.pack_unknowns()
     J_analytic = system.jacobian(x0)
@@ -295,7 +275,7 @@ def test_uc3_analytic_jacobian_matches_fd():
 # ══════════════════════════════════════════════════════════════════════════════
 
 @dataclass
-class LaplacianWithBC(Component):
+class LaplacianWithBC(FunctionalComponent):
     """
     Cell chain (from representative segment): n nodes, n-1 edges, K=1 everywhere.
     Pure Laplacian + boundary condition at the collar node (node_ids[0]).
@@ -307,21 +287,21 @@ class LaplacianWithBC(Component):
         description="Node pressure unknown.",
         min_value="", max_value="", value_comment="", references="", DOI="",
         variable_type="state_variable", by="LaplacianWithBC",
-        state_variable_type="intensive", edit_by="dev", location="node",
+        state_variable_type="intensive", edit_by="dev", scale="node",
     )
     is_collar: float = declare(
         default=0.0, unit="adim", unit_comment="",
         description="1.0 at collar node, 0.0 elsewhere.",
         min_value="", max_value="", value_comment="", references="", DOI="",
         variable_type="state_variable", by="LaplacianWithBC",
-        state_variable_type="intensive", edit_by="dev", location="node",
+        state_variable_type="intensive", edit_by="dev", scale="node",
     )
     K: float = declare(
         default=1.0, unit="m3 s-1 Pa-1", unit_comment="",
         description="Axial conductance per edge.",
         min_value="", max_value="", value_comment="", references="", DOI="",
         variable_type="parameter", by="LaplacianWithBC",
-        state_variable_type="intensive", edit_by="dev", location="edge",
+        state_variable_type="intensive", edit_by="dev", scale="edge",
     )
 
     @graph_system(
@@ -371,24 +351,26 @@ class LaplacianWithBC(Component):
 # ══════════════════════════════════════════════════════════════════════════════
 
 def _setup_laplacian_model(bc_kind: str) -> LaplacianWithBC:
-    """Cell-chain graph (3 cell nodes, 2 symplastic edges) with uniform K=1."""
-    graph      = _cell_chain_graph()
-    node_vids  = list(graph.node_ids)
-    collar_vid = int(node_vids[0])
+    """3-segment chain (3 nodes, 2 edges) with uniform K=1; the collar is the graph root."""
+    g = MPG()
+    scale = g.scales.SubOrgan
+    anchor = g.scales.anchors[scale]
+    vid = g.add_system_root_at_scale(scale, label=g.labels.SubOrgan.RootSegment)
+    for _ in range(2):
+        vid = g.add_component_with_topo(anchor, vid, **PropsConfig(scale=scale, edge_type="<",
+                                                                 label=g.labels.SubOrgan.RootSegment))
+    g.populate_graph(scale)
+    g.convert_properties_to_arraydict()
+    ds = MPGDataStructure(g, from_scale=scale)
 
-    props: dict = {}
-    for v in node_vids:
-        vid = int(v)
-        props.setdefault("pressure",   {})[vid] = 0.0
-        props.setdefault("is_collar",  {})[vid] = 1.0 if vid == collar_vid else 0.0
-    for v in list(graph.edge_ids):
-        vid = int(v)
-        props.setdefault("K", {})[vid] = 1.0
+    is_collar = np.zeros(ds.n_nodes())
+    is_collar[_root_local_idx(ds)] = 1.0
+    ds.register("pressure", 0.0, location="node")
+    ds.register("is_collar", is_collar, location="node")
+    ds.register("K", 1.0, location="edge")
 
     method = "_solve_dirichlet" if bc_kind == "dirichlet" else "_solve_neumann"
-    model              = LaplacianWithBC()
-    model.props        = props
-    model._graph_view  = graph
+    model = LaplacianWithBC(data_structure=ds)
     model._invoke_graph_system(method)
     return model
 
@@ -434,6 +416,8 @@ def test_uc4_neumann_bc_flux_drives_gradient():
 
     node_u, _ = system.unpack_unknowns(packed)
     P = node_u["pressure"]
-    assert P[0] >= P[1:].max() - 1e-10, (
-        f"Collar pressure {P[0]:.4f} should be >= all interior pressures {P[1:]}"
+    collar = _root_local_idx(model.data_structure)
+    others = np.delete(P, collar)
+    assert P[collar] >= others.max() - 1e-10, (
+        f"Collar pressure {P[collar]:.4f} should be >= all interior pressures {others}"
     )
