@@ -1,77 +1,53 @@
 import yaml
 from dataclasses import fields
-from importlib import import_module, reload
 from openalea.metafspm.data_structure.arraydict import ArrayDict
-
-
-def recursive_reload(module):
-    blacklist = ["openalea.mtg.mtg", "openalea.mtg.tree", "collections", "functools"]
-    reload(module)
-    for child_module in vars(module).values():
-        if isinstance(child_module, type) and module.__name__ != child_module.__module__ and child_module.__module__ not in blacklist:
-            module_to_reload = import_module(name=child_module.__module__)
-            recursive_reload(module_to_reload)
 
 
 class CompositeModel:
 
+    # Plant-side variables always sent to the soil: vertex identifiers and segment coordinates
+    soil_handshake_prefix = ["vertex_index", "x1", "x2", "y1", "y2", "z1", "z2"]
+
     def get_documentation(self, filters: dict, models: list):
         """
-        Documentation of the RootCyNAPS parameters
+        Documentation of the declared variables of each model, one column per metadata key.
+        Fields without declare() metadata (e.g. FunctionalComponent.data_structure) are skipped.
+
+        :param filters: {metadata key: accepted values}, a field is listed only if it matches every filter.
         :return: documentation text
         """
+        def cell(value, width=30):
+            text = "" if value is None else str(value)
+            if len(text) > width:
+                text = text[:width - 3] + "..."
+            return f"{text:<{width + 1}} | "
+
         to_print = ""
         for model in models:
             to_print += "MODEL DOCUMENTATION : \n"
-            if model.__doc__ == None:
-                to_print += "   no documentation"+ "\n\n"
-            else:
-                to_print += model.__doc__ + "\n\n"
+            to_print += ("   no documentation" if model.__doc__ is None else model.__doc__) + "\n\n"
             to_print += "MODEL OUTPUT VARIABLES : \n"
 
-            docu = fields(model)
-            first = True
-            for f in docu:
-                if first:
-                    headers = f.metadata.keys()
-                    max_format = "{:.30} "
-                    width_format = "{:<31}"
-                    to_print += width_format.format(max_format.format("name")) + " | "
-                    for header in headers:
-                        if header == "description":
-                            max_format = "{:.90} "
-                            width_format = "{:<91}"
-                        else:
-                            max_format = "{:.30} "
-                            width_format = "{:<31}"
-                        to_print += width_format.format(max_format.format(header)) + " | "
-                    to_print += "\n\n"
-                    first = False
-                filtering = [f.metadata[k] in v for k, v in filters.items()]
-                if False not in filtering or len(filtering) == 0:
-                    to_print += width_format.format(max_format.format(f.name)) +  " | "
-                    values = list(f.metadata.values())
-                    for value in values:
-                        if values.index(value) == 2:
-                            max_format = "{:.90} "
-                            width_format = "{:<91}"
-                            if len(value) > 90:
-                                value = value.replace(value[87:], "...")
-                        else:
-                            max_format = "{:.30} "
-                            width_format = "{:<31}"
-                        to_print += width_format.format(max_format.format(value)) + " | "
-                    to_print += "\n"
+            declared = [f for f in fields(model) if "variable_type" in f.metadata]
+            if len(declared) == 0:
+                continue
+            headers = list(declared[0].metadata.keys())
+            widths = {header: 90 if header == "description" else 30 for header in headers}
+            to_print += cell("name") + "".join(cell(header, widths[header]) for header in headers) + "\n\n"
+
+            for f in declared:
+                if all(f.metadata.get(k) in v for k, v in filters.items()):
+                    to_print += cell(f.name) + "".join(cell(f.metadata.get(header), widths[header]) for header in headers) + "\n"
 
         return to_print
 
     @property
     def documentation(self):
-        return self.get_documentation(filters={}, models=self.components)
+        return self.get_documentation(filters={}, models=getattr(self, "components", []))
 
     @property
     def inputs(self):
-        return self.get_documentation(filters=dict(variable_type=["input"]), models=self.components)
+        return self.get_documentation(filters=dict(variable_type=["input"]), models=getattr(self, "components", []))
 
 
     def declare_data(self, shoot=None, root=None, atmosphere=None, soil=None):
@@ -103,11 +79,7 @@ class CompositeModel:
         translator = self.open_or_create_translator(translator_path)
 
         soil_name = "SoilModel" # TODO : find a way to generalize this
-        self.plant_side_soil_inputs = ["vertex_index", "x1", "x2", "y1", "y2", "z1", "z2"]
-        for v in translator[soil_name].values():
-            for t in v.values():
-                for name in t.keys():
-                    self.plant_side_soil_inputs.append(name)
+        self.plant_side_soil_inputs = self.soil_handshake_inputs(translator, soil_name)
 
         self.soil_inputs, self.soil_outputs = self.get_component_inputs_outputs(translator=translator, components_names=[c.__class__.__name__ for c in self.components], target_name=soil_name, names_for_others=False)
         
@@ -120,6 +92,18 @@ class CompositeModel:
         for receiver in self.components:
             self.couple_current_with_components_list(receiver=receiver, components=[c.__class__.__name__ for c in self.components] + [soil_name], translator=translator, common_props=props)
             
+    @classmethod
+    def soil_handshake_inputs(cls, translator, soil_name="SoilModel"):
+        """
+        Plant-side variables written in the plant / soil shared buffer: the fixed prefix, then every
+        plant variable the soil pulls according to the translator.
+        """
+        names = list(cls.soil_handshake_prefix)
+        for links in translator[soil_name].values():
+            for source_variables in links.values():
+                names.extend(source_variables.keys())
+        return names
+
     def open_or_create_translator(self, translator_path):
         try:
             with open(translator_path, "r") as f:
@@ -159,29 +143,33 @@ class CompositeModel:
                                 if len(source_variables.keys()) == 1:
                                     for source_name, unit_conversion in source_variables.items():
                                         # If there is only one variable to associate
-                                        if source_name == name:
+                                        if source_name == name and unit_conversion == 1.:
                                             # Do nothing the coupling should already be done during initialization
                                             continue
-                                        else:
+                                        elif source_name == name and subcategory is None:
+                                            # Within one data structure, the variable would be converted into itself at every pull
+                                            raise ValueError(f"{receiver.__class__.__name__}.{name} is linked to {applier}.{source_name} "
+                                                             f"with factor {unit_conversion}: a same-name link within one data structure "
+                                                             f"must have a factor of 1, rename the receiving variable")
+                                        elif unit_conversion == 1. and common_props is not None:
                                             # If only the name is different, just create an alias in the dictionnary and then recreate the pointer of the receiver class to this alias.
-                                            if unit_conversion == 1. and common_props is not None:
-                                                # If not created yet, for example in case of secondary soil initialization, we set default and suppose it will be modified later
-                                                if source_name not in common_props.keys():
-                                                    common_props[source_name] = {}
+                                            # If not created yet, for example in case of secondary soil initialization, we set default and suppose it will be modified later
+                                            if source_name not in common_props.keys():
+                                                common_props[source_name] = {}
 
-                                                common_props[name]  = common_props[source_name]
+                                            common_props[name]  = common_props[source_name]
+                                        else:
+                                            # NOTE TODO : We will probably need to switch only to the second option later
+                                            if subcategory is None:
+                                                receiver.pullable_inputs[name] = {source_name: unit_conversion}
                                             else:
-                                                # NOTE TODO : We will probably need to switch only to the second option later
-                                                if subcategory is None:
-                                                    receiver.pullable_inputs[name] = {source_name: unit_conversion}
-                                                else:
-                                                    receiver.pullable_inputs[subcategory][name] = {source_name: unit_conversion}
+                                                receiver.pullable_inputs[subcategory][name] = {source_name: unit_conversion}
 
                                 else:
                                     if subcategory is None:
                                         receiver.pullable_inputs[name] = source_variables
                                     else:
-                                        receiver.pullable_inputs[subcategory][name] = {source_name: unit_conversion}
+                                        receiver.pullable_inputs[subcategory][name] = source_variables
 
 
     def translator_matrix_builder(self):
@@ -226,7 +214,10 @@ class CompositeModel:
 
     def apply_input_tables(self, tables: dict, to: tuple, when: float):
         if tables is not None:
-            if not hasattr(self, "models_data_required"):
+            # Selection depends on the targeted models and the provided tables, recompute it when they change
+            selection_key = (tuple(id(model) for model in to), tuple(tables.keys()))
+            if getattr(self, "_models_data_required_key", None) != selection_key:
+                self._models_data_required_key = selection_key
                 all_available_state_variables = []
                 for model in to:
                     all_available_state_variables += model.state_variables

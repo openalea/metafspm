@@ -23,11 +23,10 @@ from openalea.metafspm.coupling.component import Component, declare
 from openalea.metafspm.coupling.composite_wrapper import CompositeModel
 from openalea.metafspm.data_structure.arraydict import ArrayDict
 from openalea.metafspm.data_structure.mpg import MPG
+from openalea.metafspm.scene.scene_wrapper import HANDSHAKE_SHAPE  # plant / soil shared buffer (devplan W2.12)
 from openalea.metafspm.solve.decorator import rate, state
 
 TIME_STEP = 3600
-# Hard-coded on both sides of the plant/soil wire in the reference models (see devplan W2.12)
-HANDSHAKE_SHAPE = (35, 20000)
 
 SEGMENT_LENGTH = 0.02
 SOIL_VOXEL_SIDE = 0.05

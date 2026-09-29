@@ -57,6 +57,18 @@ def meteo():
     return pd.DataFrame({"PARi": [100., 200., 300., 400., 500., 600.]}, index=pd.Index(range(6), name="t"))
 
 
+class RecordingQueue(queue.Queue):
+    """Queue keeping a copy of every message put, to assert on the wire protocol."""
+
+    def __init__(self):
+        super().__init__()
+        self.recorded = []
+
+    def put(self, item, *args, **kwargs):
+        self.recorded.append(item)
+        super().put(item, *args, **kwargs)
+
+
 class InProcessScene:
     """
     One plant, the soil and the light models in a single process, the environment models in threads.
@@ -68,10 +80,10 @@ class InProcessScene:
         self.translator_path = translator_path
         self.meteo = meteo
         self.scenario = scenario or {"parameters": {}, "input_tables": {}}
-        self.queues_soil_to_plants = {plant_id: queue.Queue()}
-        self.queue_plants_to_soil = queue.Queue()
-        self.queues_light_to_plants = {plant_id: queue.Queue()} if with_light else None
-        self.queue_plants_to_light = queue.Queue() if with_light else None
+        self.queues_soil_to_plants = {plant_id: RecordingQueue()}
+        self.queue_plants_to_soil = RecordingQueue()
+        self.queues_light_to_plants = {plant_id: RecordingQueue()} if with_light else None
+        self.queue_plants_to_light = RecordingQueue() if with_light else None
         self.soil = self.light = self.plant = None
         self.errors = []
 
