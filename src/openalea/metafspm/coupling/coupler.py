@@ -112,3 +112,107 @@ class Coupler:
         self._check_map()
         for plant_name, soil_name in self.to_plant.items():
             self.plant_ds.set(plant_name, self.soil_ds.get(soil_name).reshape(-1)[self.cells])
+
+
+class Transport:
+    """
+    Layout of the plant <-> soil shared buffer (one per plant, design note §7): one row per exchanged variable,
+    one column per plant node. Two header rows replace the former ``vertex_index >= 1`` convention: the node
+    count (``_n_nodes``, column 0) and the node ids (``_node_id``).
+
+    Plant side: write_plant() before each exchange, read_soil() after it.
+    Soil side:  plant_view() gives a DataStructure-like view of the buffer on which a Coupler can run.
+    """
+
+    COUNT_ROW = "_n_nodes"
+    ID_ROW = "_node_id"
+
+    def __init__(self, plant_variables, soil_variables, capacity: int = 20000, to_soil: Mapping = None,
+                 to_plant: Mapping = None):
+        names = [self.COUNT_ROW, self.ID_ROW] + list(plant_variables)
+        names += [name for name in soil_variables if name not in names]
+        self.rows = {name: row for row, name in enumerate(names)}
+        self.plant_variables = list(plant_variables)
+        self.soil_variables = list(soil_variables)
+        self.capacity = int(capacity)
+        self.to_soil = {name: dict(sources) for name, sources in (to_soil or {}).items()}
+        self.to_plant = dict(to_plant or {})
+
+    @property
+    def shape(self) -> tuple:
+        return (len(self.rows), self.capacity)
+
+    @classmethod
+    def from_translator(cls, translator, soil: str, plant_components=None, coordinates=SEGMENT_COORDINATES,
+                        capacity: int = 20000) -> "Transport":
+        """Rows for the links between *soil* and the plant components (default: every other component)."""
+        if plant_components is None:
+            plant_components = [name for name in translator.components if name != soil]
+        spec = Coupler.from_translator(translator, plant_components, soil, plant_ds=None, soil_ds=None,
+                                       locator=VoxelLocator(None, coordinates=coordinates))
+        return cls(spec.plant_variables(), spec.soil_variables(), capacity=capacity,
+                   to_soil=spec.to_soil, to_plant=spec.to_plant)
+
+    @classmethod
+    def from_rows(cls, rows: Mapping, capacity: int, to_soil: Mapping = None, to_plant: Mapping = None) -> "Transport":
+        """Transport received from the plant side (rows as sent in the plant message)."""
+        names = [name for name, _ in sorted(rows.items(), key=lambda item: item[1])]
+        body = [name for name in names if name not in (cls.COUNT_ROW, cls.ID_ROW)]
+        soil_variables = [name for name in body if name in set((to_plant or {}).values())]
+        plant_variables = [name for name in body if name not in soil_variables]
+        transport = cls(plant_variables, soil_variables, capacity=capacity, to_soil=to_soil, to_plant=to_plant)
+        if transport.rows != dict(rows):
+            raise ValueError("Inconsistent transport rows")
+        return transport
+
+    def _count(self, buffer) -> int:
+        return int(buffer[self.rows[self.COUNT_ROW], 0])
+
+    def write_plant(self, buffer, plant_ds) -> None:
+        n = plant_ds.n_nodes()
+        if n > self.capacity:
+            raise OverflowError(f"{n} plant nodes exceed the transport capacity of {self.capacity} columns")
+        buffer[self.rows[self.COUNT_ROW], 0] = n
+        buffer[self.rows[self.ID_ROW], :n] = plant_ds.entity_ids("node")
+        for name in self.plant_variables:
+            buffer[self.rows[name], :n] = plant_ds.get(name)
+
+    def read_soil(self, buffer, plant_ds, to_plant: Mapping = None) -> None:
+        n = self._count(buffer)
+        if n != plant_ds.n_nodes():
+            raise ValueError(f"The buffer holds {n} nodes, the plant has {plant_ds.n_nodes()}")
+        for plant_name, soil_name in (to_plant or self.to_plant).items():
+            plant_ds.set(plant_name, buffer[self.rows[soil_name], :n])
+
+    def plant_view(self, buffer) -> "BufferPlantView":
+        return BufferPlantView(buffer, self)
+
+
+class BufferPlantView:
+    """Soil-side view of one plant's buffer, with the DataStructure calls a Coupler uses."""
+
+    def __init__(self, buffer, transport: Transport):
+        self.buffer = buffer
+        self.transport = transport
+
+    def n_nodes(self) -> int:
+        return self.transport._count(self.buffer)
+
+    def entity_ids(self, location: str = "node") -> np.ndarray:
+        return self.buffer[self.transport.rows[Transport.ID_ROW], :self.n_nodes()].astype(np.int64)
+
+    @property
+    def topology_version(self):
+        return hash((self.n_nodes(), self.entity_ids().tobytes()))
+
+    def has(self, name: str) -> bool:
+        return name in self.transport.rows
+
+    def location(self, name: str) -> str:
+        return "node"
+
+    def get(self, name: str) -> np.ndarray:
+        return self.buffer[self.transport.rows[name], :self.n_nodes()]
+
+    def set(self, name: str, values) -> None:
+        self.buffer[self.transport.rows[name], :self.n_nodes()] = values

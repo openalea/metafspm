@@ -26,7 +26,7 @@ def play_Orchestra(scene_name, output_folder,
                  n_iterations = 2500, time_step=3600, scene_xrange=1, scene_yrange=1, sowing_density=250, row_spacing=0.15, sowing_depth=[0.025],
                  voxel_widht=0.01, voxel_height=0.01,
                  record_performance=False, log_only_one: bool = False,
-                 debug_runs: bool = False, poll_interval: float = 10):
+                 debug_runs: bool = False, poll_interval: float = 10, handshake_shape: tuple = None):
     """
     Orchestrator function launching in parallel plant models and then environment models
 
@@ -35,6 +35,8 @@ def play_Orchestra(scene_name, output_folder,
     :param light_scenario: scenario passed to light_model. Its "meteo" entry (a csv path indexed by 't', or a DataFrame) is extracted and passed as the meteo argument.
     :param debug_runs: ignore the persisted cpu availability file and start from a fresh attribution.
     :param poll_interval: seconds between two checks of the stop conditions by the orchestrator.
+    :param handshake_shape: shape of each plant / soil shared buffer; defaults to the legacy HANDSHAKE_SHAPE.
+        Models using coupler.Transport pass Transport.from_translator(...).shape.
     ---
     TODO : Scene orientation regarding an angle relative to North
     
@@ -99,7 +101,7 @@ def play_Orchestra(scene_name, output_folder,
 
     try:
         for plant_id, init_info in planting_sequence.items():
-            a = np.zeros(HANDSHAKE_SHAPE, dtype=np.float64)
+            a = np.zeros(handshake_shape or HANDSHAKE_SHAPE, dtype=np.float64)
             try:
                 shm = SharedMemory(create=True, name=plant_id, size=a.nbytes)
             except FileExistsError:
