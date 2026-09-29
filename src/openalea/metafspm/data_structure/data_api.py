@@ -174,7 +174,13 @@ class GraphView:
         return int(self.edge_ids.size)
 
     def node_local_index(self, node_id: int) -> int:
-        return int(np.searchsorted(self.node_ids, int(node_id)))
+        """Local index of *node_id*. node_ids are not assumed sorted (MPG local order is Compartment order)."""
+        order      = np.argsort(self.node_ids, kind="stable")
+        sorted_ids = self.node_ids[order]
+        pos        = int(np.searchsorted(sorted_ids, int(node_id)))
+        if pos >= sorted_ids.size or sorted_ids[pos] != int(node_id):
+            raise KeyError(f"Node id {node_id} is not in this GraphView.")
+        return int(order[pos])
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -248,6 +254,133 @@ class DataStructure(ABC):
         ...
 
 
+class VariableStoreMixin:
+    """
+    Named variables with a location, live views, in-place writes, name-level aliases and a version counter
+    (design note docs/design/coupling_through_datastructures.md §5.1-5.2).
+
+    Subclasses provide _var_stores() -> {location: {name: ndarray}}, _location_shape(location) and
+    _default_location. A registered array is only rebound by register() and update_topology(), which bump
+    `version`; set() always writes in place so that views taken earlier stay valid.
+    """
+
+    _ON_GROW_POLICIES = ("default", "inherit")
+
+    def _var_stores(self) -> dict:
+        raise NotImplementedError
+
+    def _location_shape(self, location: str) -> tuple:
+        raise NotImplementedError
+
+    _default_location = None
+
+    @property
+    def version(self) -> int:
+        return self.__dict__.get("_version", 0)
+
+    def _bump_version(self) -> None:
+        self._version = self.version + 1
+
+    def _variable_meta(self) -> dict:
+        return self.__dict__.setdefault("_var_meta", {})
+
+    def aliases(self) -> dict:
+        return dict(self.__dict__.get("_aliases", {}))
+
+    def _resolve(self, name: str) -> str:
+        aliases, seen = self.__dict__.get("_aliases", {}), set()
+        while name in aliases:
+            if name in seen:
+                raise ValueError(f"alias cycle through '{name}'")
+            seen.add(name)
+            name = aliases[name]
+        return name
+
+    def _find(self, name: str):
+        target = self._resolve(name)
+        for location, store in self._var_stores().items():
+            if target in store:
+                return location, store, target
+        raise KeyError(f"Variable '{name}' is not registered. Available: {self.available_vars()}.")
+
+    def has(self, name: str) -> bool:
+        try:
+            self._find(name)
+            return True
+        except KeyError:
+            return False
+
+    def location(self, name: str) -> str:
+        return self._find(name)[0]
+
+    def get(self, name: str) -> np.ndarray:
+        """Live view of a registered variable (aliases resolved)."""
+        location, store, target = self._find(name)
+        return store[target]
+
+    def set(self, name: str, values) -> None:
+        """Write *values* in place into the registered variable *name* (broadcast allowed, shape checked)."""
+        location, store, target = self._find(name)
+        array = store[target]
+        values = np.asarray(values, dtype=float)
+        try:
+            array[...] = np.broadcast_to(values, array.shape)
+        except ValueError:
+            raise ValueError(f"Cannot write values of shape {values.shape} into '{name}' of shape {array.shape}.") from None
+
+    def register(self, name: str, values=None, location: str = None, default: float = 0.,
+                 on_grow: str = "default") -> np.ndarray:
+        """
+        (Re)create the variable *name* at *location* from *values* (copied) or *default*.
+        on_grow: value given to entities created by topology growth, "default" or "inherit" (parent's value).
+        """
+        location = location or self._default_location
+        stores = self._var_stores()
+        if location not in stores:
+            raise ValueError(f"Unknown location '{location}' for '{name}', expected one of {list(stores)}.")
+        if on_grow not in self._ON_GROW_POLICIES:
+            raise ValueError(f"on_grow must be one of {self._ON_GROW_POLICIES}, got '{on_grow}'.")
+        if name in self.__dict__.get("_aliases", {}):
+            raise ValueError(f"'{name}' is an alias of '{self._resolve(name)}', register the source instead.")
+        shape = self._location_shape(location)
+        array = np.full(shape, float(default))
+        if values is not None:
+            values = np.asarray(values, dtype=float)
+            try:
+                array[...] = np.broadcast_to(values, shape)
+            except ValueError:
+                raise ValueError(f"Cannot register '{name}' of shape {values.shape} at {location} of shape {shape}.") from None
+        for other_location, store in stores.items():
+            if other_location != location:
+                store.pop(name, None)
+        stores[location][name] = array
+        self._variable_meta()[name] = {"default": float(default), "on_grow": on_grow}
+        self._bump_version()
+        return array
+
+    def alias(self, name: str, target: str) -> None:
+        """Make *name* resolve to *target*: get(name) is get(target), set(name) writes the target in place."""
+        if self._resolve(target) == name:
+            raise ValueError(f"alias '{name}' -> '{target}' would create a cycle")
+        if any(name in store for store in self._var_stores().values()):
+            raise ValueError(f"'{name}' already holds its own values and cannot become an alias of '{target}'.")
+        self._find(target)
+        self.__dict__.setdefault("_aliases", {})[name] = target
+        self._bump_version()
+
+    def _set_or_register(self, name: str, values, location: str) -> None:
+        """Legacy setters: in place when the variable exists at *location* with the same shape, else (re)register."""
+        values = np.asarray(values, dtype=float)
+        if self.has(name):
+            existing_location, store, target = self._find(name)
+            if existing_location == location and store[target].shape == values.shape:
+                store[target][...] = values
+                return
+        meta = self._variable_meta().get(name, {})
+        self.register(name, values, location=location, default=meta.get("default", 0.),
+                      on_grow=meta.get("on_grow", "default"))
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # Graph branch
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -256,13 +389,13 @@ class GraphDataStructure(DataStructure):
     """
     Level 2a — Abstract graph data structure.
 
-    Adds plant topology: ordered nodes, directed edges, incidence matrix B.
+    Adds plant topology: ordered nodes, directed edges (parent → child), incidence matrix B.
 
-        B[i, e] = -1   edge e leaves node i  (outflow)
-        B[i, e] = +1   edge e enters node i  (inflow)
+        B[i, e] = +1   node i is the tail (parent) of edge e
+        B[i, e] = -1   node i is the head (child) of edge e
 
-    Mass balance at node i:
-        C_i · dΨ_i/dt  =  (B @ q)[i]  +  source_i(x, p)
+    This is the GraphView convention used by the solver: a positive edge flux q_e is
+    counted positively at its tail and negatively at its head in (B @ q).
 
     Node-level variables  →  state vars x  (potentials, concentrations)
     Edge-level variables  →  algebraic vars y  (fluxes)
@@ -375,8 +508,8 @@ class MTGDataStructure(GraphDataStructure):
         """Dense B matrix.  Overridden by MPGDataStructure."""
         B = np.zeros((self.n_nodes(), self.n_edges()))
         for e_idx, (src, tgt) in enumerate(self.edges()):
-            B[self._vid_to_idx[src], e_idx] = -1.0
-            B[self._vid_to_idx[tgt], e_idx] = +1.0
+            B[self._vid_to_idx[src], e_idx] = +1.0
+            B[self._vid_to_idx[tgt], e_idx] = -1.0
         return B
 
     def validate(self) -> None:
@@ -433,7 +566,7 @@ class LegacyMPGDataStructure(MTGDataStructure):
 
 # ─────────────────────────────────────────────────────────────────────────────
 
-class MPGDataStructure(MTGDataStructure):
+class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
     """
     Level 4b — MPG wrapper operating at Compartment/Connection scales.
 
@@ -610,173 +743,157 @@ class MPGDataStructure(MTGDataStructure):
 
     # ── Property storage ──────────────────────────────────────────────────────
 
+    _default_location = "node"
+
+    def _var_stores(self) -> dict:
+        return {"node": self._node_data, "edge": self._edge_data}
+
+    def _location_shape(self, location: str) -> tuple:
+        return (self.n_nodes(),) if location == "node" else (self.n_edges(),)
+
     def available_vars(self) -> list[str]:
         return list(self._node_data) + list(self._edge_data)
 
     def node_property(self, name: str) -> np.ndarray:
-        if name not in self._node_data:
-            raise KeyError(f"Node property '{name}' not registered. "
-                           f"Available: {list(self._node_data)}.")
-        return self._node_data[name]
+        if self.has(name) and self.location(name) == "node":
+            return self.get(name)
+        raise KeyError(f"Node property '{name}' not registered. "
+                       f"Available: {list(self._node_data)}.")
 
     def set_node_property(self, name: str, values: np.ndarray) -> None:
-        self._node_data[name] = np.asarray(values, dtype=float)
+        self._set_or_register(name, values, "node")
 
     def edge_property(self, name: str) -> np.ndarray:
-        if name not in self._edge_data:
-            raise KeyError(f"Edge property '{name}' not registered. "
-                           f"Available: {list(self._edge_data)}.")
-        return self._edge_data[name]
+        if self.has(name) and self.location(name) == "edge":
+            return self.get(name)
+        raise KeyError(f"Edge property '{name}' not registered. "
+                       f"Available: {list(self._edge_data)}.")
 
     def set_edge_property(self, name: str, values: np.ndarray) -> None:
-        self._edge_data[name] = np.asarray(values, dtype=float)
+        self._set_or_register(name, values, "edge")
 
     # ── Biological scale → Compartment/Connection auto-mapping ───────────────
 
-    def _mtg_to_node_array(self, name: str) -> np.ndarray | None:
-        """Build a per-node array from an MTG property at any biological scale.
+    def _connection_endpoints(self) -> tuple:
+        n_id_a = np.asarray(self._mtg.array_filtering("n_id_a", filter_in={"scale": self._mtg.scales.Connection}), dtype=np.int64)
+        n_id_b = np.asarray(self._mtg.array_filtering("n_id_b", filter_in={"scale": self._mtg.scales.Connection}), dtype=np.int64)
+        return n_id_a, n_id_b
 
-        Fast path  (ArrayDict with full biological-VID coverage):
-            property.values_array()[_bio_node_idx]
-        This is a single numpy fancy-index — O(n) with numpy speed.
-        _bio_node_idx[i] is the position of _idx_to_vid[i] in the sorted
-        key array, precomputed once per topology in _build_bio_index_map().
+    def _node_scale(self):
+        return self._mtg.scale(self._idx_to_vid[0]) if self._idx_to_vid else None
 
-        Slow path  (plain dict or partial ArrayDict):
-            per-VID Python dict lookup — correct but slower.
+    def _keys_at_scale(self, vids, scale) -> list:
+        """MTG vertices holding the values of *vids* for a property defined at *scale* (their complex at that scale)."""
+        if scale is None or scale == self._node_scale():
+            return [int(v) for v in vids]
+        if scale > self._node_scale():
+            raise ValueError(f"A property at scale {scale} is finer than the nodes (scale {self._node_scale()}): "
+                             "downscaling needs an explicit scale operator.")
+        return [int(self._mtg.complex_at_scale(int(v), scale)) for v in vids]
 
-        Returns None if the property is absent or any biological VID is
-        missing; the caller falls back to a uniform default array.
+    def _mtg_values(self, name: str, vids, scale=None, fast_idx=None):
+        """
+        Values of MTG property *name* for *vids* (mapped to *scale*), or None if the property is absent.
+        Fast path when the property is an ArrayDict keyed exactly by the node vids.
+        Raises ValueError when some vertices have no value (partial coverage used to fall back silently).
+        """
+        prop = self._mtg.properties().get(name)
+        if prop is None or len(prop) == 0:
+            return None
+        if ((scale is None or scale == self._node_scale()) and fast_idx is not None and isinstance(prop, ArrayDict)
+                and prop.size == len(self._bio_vids_sorted) and np.array_equal(prop.keys_array(), self._bio_vids_sorted)):
+            return prop.values_array()[fast_idx].astype(np.float64, copy=True)
+        keys = self._keys_at_scale(vids, scale)
+        missing = [k for k in keys if k not in prop]
+        if missing:
+            raise ValueError(f"MTG property '{name}' has no value for vertices {sorted(set(missing))[:10]} "
+                             f"({len(set(missing))} missing).")
+        try:
+            return np.array([float(prop[k]) for k in keys], dtype=np.float64)
+        except (TypeError, ValueError) as e:
+            raise ValueError(f"MTG property '{name}' has non-numeric values: {e}") from None
+
+    def _mtg_to_node_array(self, name: str, scale=None) -> np.ndarray | None:
+        """Per-node array from MTG property *name* defined at *scale* (default: the nodes' scale).
+
+        Coarser scales are mapped through each node's complex at that scale. Returns None if the property
+        is absent; raises ValueError if some nodes have no value.
         """
         if not self._idx_to_vid:
             return None
-        try:
-            prop = self._mtg.property(name)
-        except Exception:
-            return None
-        try:
-            if isinstance(prop, ArrayDict) and prop.size == len(self._bio_vids_sorted):
-                return prop.values_array()[self._bio_node_idx].copy()
-            pdict = prop.to_dict() if hasattr(prop, "to_dict") else dict(prop)
-            return np.array(
-                [float(pdict[int(vid)]) for vid in self._idx_to_vid],
-                dtype=np.float64,
-            )
-        except (KeyError, TypeError, ValueError):
-            return None
+        return self._mtg_values(name, self._idx_to_vid, scale=scale, fast_idx=self._bio_node_idx)
 
-    def _mtg_to_edge_array(self, name: str,
-                            convention: str = "mean") -> np.ndarray | None:
-        """Build a per-edge array from an MTG property at any biological scale.
+    def _mtg_to_edge_array(self, name: str, convention: str = "mean", scale=None) -> np.ndarray | None:
+        """Per-edge array from MTG property *name* at *scale*, combining the endpoint values.
 
-        Parameters
-        ----------
-        name       : MTG property name (stored at biological VIDs).
-        convention : How the two endpoint values are combined into one edge value.
-                     "mean"     — arithmetic mean (a+b)/2  [symmetric properties]
-                     "proximal" — take from child  (n_id_b) [directed properties]
-                     "distal"   — take from parent (n_id_a) [directed properties]
-
-        Fast path  (ArrayDict with full biological-VID coverage):
-            index arrays _bio_edge_a_idx / _bio_edge_b_idx are precomputed.
-        Slow path  (plain dict or partial ArrayDict):
-            per-VID Python dict lookup.
-
-        Returns None if the property is absent or any required VID is missing.
+        convention: "mean" — (a+b)/2 [symmetric]; "proximal" — child n_id_b; "distal" — parent n_id_a.
+        Returns None if the property is absent; raises ValueError if an endpoint has no value.
         """
-        if self._mtg is None or self._bio_edge_a_idx.size == 0:
-            return np.empty(0, dtype=np.float64) if self._mtg is not None else None
-        try:
-            prop = self._mtg.property(name)
-        except Exception:
+        if self._mtg is None:
             return None
-        try:
-            if isinstance(prop, ArrayDict) and prop.size == len(self._bio_vids_sorted):
-                vals = prop.values_array()
-                if convention == "proximal":
-                    return vals[self._bio_edge_b_idx].copy()
-                if convention == "distal":
-                    return vals[self._bio_edge_a_idx].copy()
-                return (vals[self._bio_edge_a_idx] + vals[self._bio_edge_b_idx]) / 2.0
-            pdict  = prop.to_dict() if hasattr(prop, "to_dict") else dict(prop)
-            n_id_a = self._mtg.array_filtering(
-                "n_id_a", filter_in={"scale": self._mtg.scales.Connection}
-            )
-            n_id_b = self._mtg.array_filtering(
-                "n_id_b", filter_in={"scale": self._mtg.scales.Connection}
-            )
-            if convention == "proximal":
-                return np.array([float(pdict[int(b)]) for b in n_id_b], dtype=np.float64)
-            if convention == "distal":
-                return np.array([float(pdict[int(a)]) for a in n_id_a], dtype=np.float64)
-            return np.array(
-                [(float(pdict[int(a)]) + float(pdict[int(b)])) / 2.0
-                 for a, b in zip(n_id_a, n_id_b)],
-                dtype=np.float64,
-            )
-        except (KeyError, TypeError, ValueError):
-            return None
+        if self._bio_edge_a_idx.size == 0:
+            return np.empty(0, dtype=np.float64)
+        n_id_a, n_id_b = self._connection_endpoints()
+        if convention in ("proximal", "mean"):
+            b = self._mtg_values(name, n_id_b, scale=scale, fast_idx=self._bio_edge_b_idx)
+            if b is None or convention == "proximal":
+                return b
+        a = self._mtg_values(name, n_id_a, scale=scale, fast_idx=self._bio_edge_a_idx)
+        if a is None or convention == "distal":
+            return a
+        return (a + b) / 2.0
+
+    def _mtg_property_for_write(self, name: str):
+        props = self._mtg.properties()
+        if name not in props:
+            props[name] = {}
+        return props[name]
 
     def write_node_to_mtg(self, name: str, arr: np.ndarray) -> None:
-        """Write a solver node-result array back to the MTG property *name*.
+        """Write a node array to MTG property *name* at the node vids (created if absent).
 
-        Fast path  (ArrayDict with full biological-VID coverage):
-            property.assign_at(_bio_node_idx, arr)
-        This is a direct numpy slice assignment — O(n) with numpy speed.
-
-        Slow path  (plain dict or partial ArrayDict):
-            per-VID Python assignment.
-
-        Used for write-back of biological-scale state variables after solving.
+        Fast path: ArrayDict keyed exactly by the node vids → assign_at. Errors are raised.
         """
         if not self._idx_to_vid:
             return
-        try:
-            prop = self._mtg.property(name)
-            if isinstance(prop, ArrayDict) and prop.size == len(self._bio_vids_sorted):
-                prop.assign_at(self._bio_node_idx, np.asarray(arr, dtype=np.float64))
-            else:
-                for i, vid in enumerate(self._idx_to_vid):
-                    prop[int(vid)] = float(arr[i])
-        except Exception:
-            pass
+        arr = np.asarray(arr, dtype=np.float64)
+        if arr.shape != (self.n_nodes(),):
+            raise ValueError(f"write_node_to_mtg('{name}'): expected shape ({self.n_nodes()},), got {arr.shape}.")
+        prop = self._mtg_property_for_write(name)
+        if (isinstance(prop, ArrayDict) and prop.size == len(self._bio_vids_sorted)
+                and np.array_equal(prop.keys_array(), self._bio_vids_sorted)):
+            prop.assign_at(self._bio_node_idx, arr)
+        else:
+            for i, vid in enumerate(self._idx_to_vid):
+                prop[int(vid)] = float(arr[i])
 
     def write_edge_to_mtg(self, name: str, arr: np.ndarray,
                            convention: str = "proximal") -> None:
-        """Write a solver edge-result array back to the MTG property *name*.
+        """Write an edge array to MTG property *name* at the endpoint chosen by *convention*.
 
-        Each edge value is written to the biological VID of the endpoint
-        determined by *convention*:
           "proximal" — write to child  (n_id_b); natural for xylem flow
           "distal"   — write to parent (n_id_a)
           "mean"     — no write-back (symmetric property; no unique endpoint)
-
-        Fast path  (ArrayDict with full biological-VID coverage):
-            property.assign_at(idx_array, arr)  — O(m) numpy slice assignment.
-        Slow path  (plain dict or partial ArrayDict):
-            per-edge Python assignment.
+        Errors are raised.
         """
-        if convention == "mean" or self._mtg is None:
+        if convention == "mean" or self._mtg is None or self._bio_edge_b_idx.size == 0:
             return
-        if self._bio_edge_b_idx.size == 0:
-            return
-        idx = self._bio_edge_b_idx if convention == "proximal" else self._bio_edge_a_idx
-        try:
-            prop = self._mtg.property(name)
-            arr  = np.asarray(arr, dtype=np.float64)
-            if isinstance(prop, ArrayDict) and prop.size == len(self._bio_vids_sorted):
-                prop.assign_at(idx, arr)
-            else:
-                vids = self._bio_vids_sorted[idx]
-                for e, vid in enumerate(vids):
-                    prop[int(vid)] = float(arr[e])
-        except Exception:
-            pass
+        arr = np.asarray(arr, dtype=np.float64)
+        if arr.shape != (self.n_edges(),):
+            raise ValueError(f"write_edge_to_mtg('{name}'): expected shape ({self.n_edges()},), got {arr.shape}.")
+        idx  = self._bio_edge_b_idx if convention == "proximal" else self._bio_edge_a_idx
+        prop = self._mtg_property_for_write(name)
+        if (isinstance(prop, ArrayDict) and prop.size == len(self._bio_vids_sorted)
+                and np.array_equal(prop.keys_array(), self._bio_vids_sorted)):
+            prop.assign_at(idx, arr)
+        else:
+            for e, vid in enumerate(self._bio_vids_sorted[idx]):
+                prop[int(vid)] = float(arr[e])
 
     # ── Incidence matrix ──────────────────────────────────────────────────────
 
     def incidence_matrix(self):
-        """Sparse CSR incidence matrix (B[src,e]=-1, B[tgt,e]=+1), cached."""
+        """Sparse CSR incidence matrix (B[parent,e]=+1, B[child,e]=-1, GraphView convention), cached."""
         if self._B_cached is not None:
             return self._B_cached
         n, m = self.n_nodes(), self.n_edges()
@@ -786,7 +903,7 @@ class MPGDataStructure(MTGDataStructure):
             for e, (src, tgt) in enumerate(self.edges()):
                 rows += [self._vid_to_idx[src], self._vid_to_idx[tgt]]
                 cols += [e, e]
-                data += [-1.0, +1.0]
+                data += [+1.0, -1.0]
             self._B_cached = _coo((data, (rows, cols)), shape=(n, m)).tocsr()
         else:
             self._B_cached = super().incidence_matrix()
@@ -799,37 +916,20 @@ class MPGDataStructure(MTGDataStructure):
 
     def update_topology(self) -> None:
         """
-        Clear Compartment/Connection nodes, repopulate from *from_scale*
-        topology, then rebuild the index map, incidence cache, and clear
-        stale property arrays.
+        Repopulate Compartment/Connection nodes from *from_scale* after growth and carry the registered
+        variables over to the new topology.
 
-        Delegates the clear-and-repopulate step to
-        mpg.repopulate_graph(self._from_scale), which:
-          1. Removes every non-anchor Compartment/Connection vertex from the
-             MTG and its entry from every property ArrayDict.
-          2. Re-runs populate_graph(from_scale) — discovers all current
-             from_scale vertices (including newly grown ones).
-          3. Calls convert_properties_to_arraydict().
-
-        Then rebuilds self._idx_to_vid / _vid_to_idx / _B_cached from the
-        fresh Compartment/Connection state, and clears _node_data / _edge_data
-        because they tracked the old node/edge count.
-
-        Parameters
-        ----------
-        (none — from_scale is set at construction time)
+        Delegates the clear-and-repopulate step to mpg.repopulate_graph(self._from_scale), then rebuilds
+        the index maps and incidence cache. Registered variables are re-registered at the new size:
+          * nodes are matched by their from_scale vid, edges by their child vid (n_id_b);
+          * new entities take the declared default, or their parent's value when registered with
+            on_grow="inherit" (the growth model may overwrite them afterwards);
+          * aliases are kept (they are name-level); `version` is bumped.
 
         Raises
         ------
         AttributeError
             If from_scale was not provided at construction.
-
-        Notes
-        -----
-        After this call the caller must re-register property arrays via
-        set_node_property / set_edge_property before calling to_graph_view()
-        or to_props_dict().  The simulation loop is responsible for
-        re-initialising field values for newly grown vertices.
         """
         if self._from_scale is None:
             raise AttributeError(
@@ -837,10 +937,39 @@ class MPGDataStructure(MTGDataStructure):
                 "to be set at construction.  "
                 "Pass MPGDataStructure(g, from_scale=g.scales.SubOrgan)."
             )
+        old_nodes = {name: dict(zip(self._idx_to_vid, arr)) for name, arr in self._node_data.items()}
+        old_edges = {name: dict(zip((b for _, b in self.edges()), arr)) for name, arr in self._edge_data.items()}
+
         self._mtg.repopulate_graph(self._from_scale)
         self.invalidate_topology()
         self._node_data.clear()
         self._edge_data.clear()
+
+        meta = self._variable_meta()
+        new_children = [b for _, b in self.edges()]
+        for location, old, keys in (("node", old_nodes, self._idx_to_vid), ("edge", old_edges, new_children)):
+            for name, values_by_key in old.items():
+                policy = meta.get(name, {"default": 0., "on_grow": "default"})
+                values = self._carry_over(values_by_key, keys, policy)
+                self.register(name, values, location=location, default=policy["default"], on_grow=policy["on_grow"])
+
+    def _carry_over(self, values_by_key: dict, keys, policy: dict) -> np.ndarray:
+        """Values for *keys* (vids): kept when known, else inherited from the nearest known ancestor or default."""
+        out = np.empty(len(keys), dtype=np.float64)
+        for i, key in enumerate(keys):
+            key = int(key)
+            if key in values_by_key:
+                out[i] = values_by_key[key]
+                continue
+            value = policy["default"]
+            if policy["on_grow"] == "inherit":
+                ancestor = self._mtg.parent(key)
+                while ancestor is not None and int(ancestor) not in values_by_key:
+                    ancestor = self._mtg.parent(ancestor)
+                if ancestor is not None:
+                    value = values_by_key[int(ancestor)]
+            out[i] = value
+        return out
 
     # ── Solver interface ──────────────────────────────────────────────────────
 
@@ -854,7 +983,7 @@ class MPGDataStructure(MTGDataStructure):
         Node IDs = SubOrgan VIDs (from vertex_id on Compartment nodes).
         Edge IDs = 0-based integers; endpoints from n_id_a/n_id_b.
         Sign convention: B[tail/parent, e] = +1, B[head/child, e] = -1
-        (consistent with GraphView.from_mtg_subset; opposite of incidence_matrix()).
+        (consistent with GraphView.from_mtg_subset and incidence_matrix()).
         """
         node_ids = np.array(self._idx_to_vid, dtype=np.int64)
         n        = len(node_ids)
@@ -979,7 +1108,7 @@ class FieldDataStructure(DataStructure):
 
 # ─────────────────────────────────────────────────────────────────────────────
 
-class ArrayDataStructure(FieldDataStructure):
+class ArrayDataStructure(VariableStoreMixin, FieldDataStructure):
     """
     Level 3b — 1-D or 3-D numpy array field.
 
@@ -987,16 +1116,22 @@ class ArrayDataStructure(FieldDataStructure):
       1D: soil water content as function of depth   shape = (n_z,)
       3D: voxel grid (light, temperature, moisture) shape = (nx, ny, nz)
 
+    Axes are named ("x", "y", "z") in that order (canonical order of the soil grid, devplan Q16b);
+    flat cell indices follow the C-order ravel of `shape` (the last axis varies fastest).
+
     Second-order finite-difference Laplacian with Neumann BC.
     """
+
+    _default_location = "cell"
 
     def __init__(self, shape: tuple,
                  dx: Union[float, np.ndarray] = 1.0,
                  origin: Optional[np.ndarray] = None):
-        self._shape  = shape
+        self._shape  = tuple(shape)
         n_dims       = len(shape)
         self._dx     = np.broadcast_to(dx, (n_dims,)).copy().astype(float)
-        self._origin = origin if origin is not None else np.zeros(n_dims)
+        self._origin = (np.zeros(n_dims) if origin is None
+                        else np.broadcast_to(np.asarray(origin, dtype=float), (n_dims,)).copy())
         self._fields : dict[str, np.ndarray] = {}
         self._L      = None
 
@@ -1004,19 +1139,60 @@ class ArrayDataStructure(FieldDataStructure):
     def shape(self) -> tuple:
         return self._shape
 
+    @property
+    def axes(self) -> tuple:
+        return ("x", "y", "z")[:len(self._shape)] if len(self._shape) <= 3 else tuple(f"a{d}" for d in range(len(self._shape)))
+
+    def _var_stores(self) -> dict:
+        return {"cell": self._fields}
+
+    def _location_shape(self, location: str) -> tuple:
+        return self._shape
+
     def add_field(self, name: str, values: np.ndarray = None) -> None:
-        if values is None:
-            values = np.zeros(self._shape)
-        self._fields[name] = np.asarray(values, dtype=float)
+        self.register(name, values)
 
     def available_vars(self) -> list[str]:
         return list(self._fields.keys())
 
     def coordinates(self) -> np.ndarray:
+        """Grid vertex positions (origin + i * dx), one row per cell in flat order. See cell_centers()."""
         grids = [self._origin[d] + np.arange(self._shape[d]) * self._dx[d]
                  for d in range(len(self._shape))]
         mesh = np.meshgrid(*grids, indexing='ij')
         return np.stack([m.ravel() for m in mesh], axis=1)
+
+    def cell_centers(self) -> np.ndarray:
+        """Cell centre positions (origin + (i + 0.5) * dx), one row per cell in flat order."""
+        grids = [self._origin[d] + (np.arange(self._shape[d]) + 0.5) * self._dx[d]
+                 for d in range(len(self._shape))]
+        mesh = np.meshgrid(*grids, indexing='ij')
+        return np.stack([m.ravel() for m in mesh], axis=1)
+
+    def cell_volume(self) -> float:
+        return float(np.prod(self._dx))
+
+    def locate(self, points, periodic=False, clip: bool = True) -> np.ndarray:
+        """
+        Flat indices of the cells containing *points* (shape (n_points, n_dims), grid frame).
+
+        periodic: bool or one bool per axis, wraps the point into the grid along that axis.
+        clip:     clamp the other axes into the grid (as the reference soil model does); if False,
+                  points outside the grid raise ValueError.
+        """
+        points = np.atleast_2d(np.asarray(points, dtype=float))
+        n_dims = len(self._shape)
+        periodic = np.broadcast_to(np.asarray(periodic, dtype=bool), (n_dims,))
+        idx = np.floor((points - self._origin) / self._dx).astype(np.int64)
+        for d in range(n_dims):
+            n = self._shape[d]
+            if periodic[d]:
+                idx[:, d] %= n
+            elif clip:
+                np.clip(idx[:, d], 0, n - 1, out=idx[:, d])
+            elif ((idx[:, d] < 0) | (idx[:, d] >= n)).any():
+                raise ValueError(f"points outside the grid along axis {self.axes[d]}")
+        return np.ravel_multi_index(tuple(idx.T), self._shape)
 
     def laplacian(self):
         if self._L is None:
@@ -1055,12 +1231,12 @@ class ArrayDataStructure(FieldDataStructure):
         self._L = None
 
     def _get_field(self, name: str) -> np.ndarray:
-        if name not in self._fields:
+        if not self.has(name):
             raise KeyError(f"Field '{name}' not registered. Call add_field() first.")
-        return self._fields[name]
+        return self.get(name)
 
     def _set_field(self, name: str, values: np.ndarray) -> None:
-        self._fields[name] = np.asarray(values, dtype=float)
+        self._set_or_register(name, values, "cell")
 
 
 # ─────────────────────────────────────────────────────────────────────────────

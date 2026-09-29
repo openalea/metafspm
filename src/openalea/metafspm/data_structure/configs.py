@@ -122,7 +122,7 @@ class LabelsConfig:
         Root: int = "RootAxis"
 
     class GrowthUnit:
-        scalle = ScalesConfig.GrowthUnit
+        scale = ScalesConfig.GrowthUnit
         Shoot: int = "ShootGrowthUnit"
         Root: int = "RootGrowthUnit"
 
@@ -187,18 +187,28 @@ class LabelsConfig:
         scale = ScalesConfig.Connection
         Transmembrane: int = "TransmembraneEdge"
         Symplastic: int = 'SymplasticEdge'
-        Apoplastic: int = "ApoplasticNode"
+        Apoplastic: int = "ApoplasticEdge"
     
     def __init__(self):
+        """
+        Give every label a unique integer, on per-instance copies of the label groups: the class attributes keep
+        their string values, so every MPG gets the same integers and a complete translator.
+        """
         self.filters = {}
         self.translator = {}
         for name, value in inspect.getmembers(self.__class__):
             if inspect.isclass(value) and not name.startswith('_'):
+                group = {}
                 for attr, val in vars(value).items():
-                    if not attr.startswith('_') and isinstance(val, str):
+                    if attr.startswith('_'):
+                        continue
+                    if isinstance(val, str):
                         unique_integer = self.filter_as_unique_int(val)
-                        setattr(value, attr, unique_integer)
+                        group[attr] = unique_integer
                         self.translator[unique_integer] = attr
+                    else:
+                        group[attr] = val
+                setattr(self, name, type(name, (), group))
 
     def filter_as_unique_int(self, filter: str):
         if filter in self.filters.keys():

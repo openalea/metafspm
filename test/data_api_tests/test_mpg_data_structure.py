@@ -53,10 +53,18 @@ def _make_linear_mpg():
 
 def test_set_get_node_property_roundtrip():
     g, sc, v1, v2, v3 = _make_linear_mpg()
-    ds = MPGDataStructure(g)   # 4 nodes (3 real + anchor)
-    vals = np.array([1.0, 2.0, 3.0, 0.0])
+    ds = MPGDataStructure(g)   # 3 nodes (anchors are excluded)
+    vals = np.array([1.0, 2.0, 3.0])
     ds.set_node_property('potential', vals)
     np.testing.assert_array_equal(ds.node_property('potential'), vals)
+
+
+def test_set_node_property_checks_length():
+    """A node array must have one value per node (a 4-value array used to be accepted on 3 nodes)."""
+    g, sc, v1, v2, v3 = _make_linear_mpg()
+    ds = MPGDataStructure(g)
+    with pytest.raises(ValueError, match="potential"):
+        ds.set_node_property('potential', np.array([1.0, 2.0, 3.0, 0.0]))
 
 
 def test_set_get_edge_property_roundtrip():

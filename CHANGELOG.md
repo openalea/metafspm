@@ -42,3 +42,23 @@ The flat modules used before the 2026 restructure have been removed. No compatib
   - `apply_input_tables` recomputes its variable selection when its targets change.
   - `documentation` / `inputs` work on any component.
   - `recursive_reload` is removed.
+
+### DataStructures (coupling refactor prerequisites, devplan WD.P)
+
+- **New variable API on `MPGDataStructure` and `ArrayDataStructure`:**
+  - `get`, `set`, `register`, `location`, `has`, `alias`, `aliases`, `version`.
+  - `set` and the legacy `set_node_property` / `set_edge_property` / `_set_field` now **write in place** and check the shape. They used to rebind the array and accepted any length.
+  - Aliases are name-level: `get(alias) is get(source)`. Cycles and shadowing are rejected.
+- **Breaking, incidence sign convention:** `incidence_matrix()` now uses the solver's `GraphView` convention, `B[parent, e] = +1`, `B[child, e] = -1`. It used to be the opposite of `to_graph_view().incidence`.
+- **`GraphView.node_local_index`** no longer assumes sorted ids (every lookup was wrong on MPG views) and raises `KeyError` for unknown ids.
+- **`update_topology` carries registered variables over to the new topology.** Nodes are matched by vid, edges by child vid. New entities take the declared default, or the parent's value with `on_grow="inherit"`. The variables used to be cleared.
+- `declare`, `input_variable`, `state_variable` and `parameter` take `on_grow="default" | "inherit"`, and `FunctionalComponent` registers its fields with it.
+- **Scale-aware MTG mapping:**
+  - `_mtg_to_node_array` / `_mtg_to_edge_array` take `scale=`, which maps a coarser-scale property through each node's complex.
+  - The fast path checks the keys, not only the size.
+  - Partial coverage raises `ValueError`; it used to fall back silently to the default.
+- `write_node_to_mtg` / `write_edge_to_mtg` create a missing property and raise on shape errors. Every exception used to be swallowed.
+- **`ArrayDataStructure`:** named axes `("x", "y", "z")`, plus `cell_centers()`, `cell_volume()` and `locate(points, periodic=, clip=)`, which returns flat C-order cell indices.
+- **`LabelsConfig`:**
+  - Integers now live on per-instance copies, so every MPG has a complete translator. The class attributes are no longer mutated.
+  - `Connection.Apoplastic` is `"ApoplasticEdge"`; it used to collide with `Compartment.Apoplastic`.

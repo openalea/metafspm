@@ -59,7 +59,8 @@ class _LinearGraph(GraphDataStructure):
     def edges(self): return [(0, 1), (1, 2)]
 
     def incidence_matrix(self):
-        return np.array([[-1., 0.], [1., -1.], [0., 1.]])
+        # GraphDataStructure convention: +1 at the tail (parent), -1 at the head (child)
+        return np.array([[1., 0.], [-1., 1.], [0., -1.]])
 
     def node_property(self, name):
         if name == 'p':
@@ -187,12 +188,12 @@ def test_incidence_matrix_column_sums_zero():
 
 
 def test_incidence_matrix_values():
-    """Tail (source) node = -1, head (target) node = +1."""
+    """Tail (parent) node = +1, head (child) node = -1 (the solver's GraphView convention)."""
     g = _LinearGraph()
     B = g.incidence_matrix()
     # Edge 0: n0 → n1
-    assert B[0, 0] == -1.0
-    assert B[1, 0] == +1.0
+    assert B[0, 0] == +1.0
+    assert B[1, 0] == -1.0
     # Edge 1: n1 → n2
-    assert B[1, 1] == -1.0
-    assert B[2, 1] == +1.0
+    assert B[1, 1] == +1.0
+    assert B[2, 1] == -1.0
