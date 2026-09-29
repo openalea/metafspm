@@ -102,4 +102,7 @@ The flat modules used before the 2026 restructure have been removed. No compatib
   - It provides `write_plant` / `read_soil` for the plant side, and `plant_view` for the soil side: a `BufferPlantView` on which the same `Coupler` runs. Capacity overflow raises `OverflowError`.
   - `play_Orchestra(handshake_shape=...)` defaults to the legacy `(35, 20000)` (Q27).
   - `FunctionalComponent` also runs on `ArrayDataStructure`: fields declared with `scale="cell"` or `"scalar"` are registered automatically.
+- **Soil component name and sub time step:**
+  - `CompositeModel.soil_name` sets the soil component name, which is no longer hard-coded to `"SoilModel"`.
+  - `FunctionalComponent` runs once per simulation step, or per its own `sub_time_step`. It used to register a sub time step of 1, so a 3600 s simulation step ran it 3600 times per call.
 

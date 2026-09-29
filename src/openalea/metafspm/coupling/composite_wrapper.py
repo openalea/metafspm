@@ -14,6 +14,8 @@ class CompositeModel:
 
     # Plant-side variables always sent to the soil: vertex identifiers and segment coordinates
     soil_handshake_prefix = ["vertex_index", "x1", "x2", "y1", "y2", "z1", "z2"]
+    # Name of the soil component in the translator; subclasses coupled with another soil model override it
+    soil_name = "SoilModel"
 
     def get_documentation(self, filters: dict, models: list):
         """
@@ -85,7 +87,7 @@ class CompositeModel:
 
         translator = self.open_or_create_translator(translator_path)
 
-        soil_name = "SoilModel" # TODO : find a way to generalize this
+        soil_name = self.soil_name
         self.plant_side_soil_inputs = self.soil_handshake_inputs(translator, soil_name)
 
         self.soil_inputs, self.soil_outputs = self.get_component_inputs_outputs(translator=translator, components_names=[c.__class__.__name__ for c in self.components], target_name=soil_name, names_for_others=False)

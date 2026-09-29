@@ -38,11 +38,11 @@ def plant_memory():
     """Factory creating zeroed plant SharedMemory blocks (as play_Orchestra does), unlinked at teardown."""
     created = []
 
-    def make(prefix="plant"):
+    def make(prefix="plant", shape=doubles.HANDSHAKE_SHAPE):
         name = f"{prefix}_{os.getpid()}_{next(_counter)}"
-        size = int(np.prod(doubles.HANDSHAKE_SHAPE)) * np.dtype(np.float64).itemsize
+        size = int(np.prod(shape)) * np.dtype(np.float64).itemsize
         shm = SharedMemory(create=True, name=name, size=size)
-        np.ndarray(doubles.HANDSHAKE_SHAPE, dtype=np.float64, buffer=shm.buf)[:] = 0.
+        np.ndarray(shape, dtype=np.float64, buffer=shm.buf)[:] = 0.
         created.append(shm)
         return name
 
@@ -75,7 +75,9 @@ class InProcessScene:
     Queues follow the play_Orchestra layout. Only one plant: the Choregrapher binds schedules per class name.
     """
 
-    def __init__(self, plant_id, translator_path, meteo, with_light=True, scenario=None):
+    def __init__(self, plant_id, translator_path, meteo, with_light=True, scenario=None,
+                 plant_cls=doubles.FakePlant, soil_cls=doubles.FakeSoil):
+        self.plant_cls, self.soil_cls = plant_cls, soil_cls
         self.plant_id = plant_id
         self.translator_path = translator_path
         self.meteo = meteo
@@ -100,7 +102,7 @@ class InProcessScene:
     def start(self):
         """Build the environment models in threads, the plant in the calling thread."""
         def build_soil():
-            self.soil = doubles.FakeSoil(queues_soil_to_plants=self.queues_soil_to_plants, queue_plants_to_soil=self.queue_plants_to_soil,
+            self.soil = self.soil_cls(queues_soil_to_plants=self.queues_soil_to_plants, queue_plants_to_soil=self.queue_plants_to_soil,
                                          time_step=doubles.TIME_STEP, scene_xrange=0.1, scene_yrange=0.1,
                                          translator_path=self.translator_path, **self.scenario)
         soil_thread = self._thread(build_soil)
@@ -109,7 +111,7 @@ class InProcessScene:
                 self.light = doubles.FakeLight(queues_light_to_plants=self.queues_light_to_plants, queue_plants_to_light=self.queue_plants_to_light,
                                                scene_xrange=0.1, scene_yrange=0.1, meteo=self.meteo, **self.scenario)
             light_thread = self._thread(build_light)
-        self.plant = doubles.FakePlant(queues_soil_to_plants=self.queues_soil_to_plants, queue_plants_to_soil=self.queue_plants_to_soil,
+        self.plant = self.plant_cls(queues_soil_to_plants=self.queues_soil_to_plants, queue_plants_to_soil=self.queue_plants_to_soil,
                                        queues_light_to_plants=self.queues_light_to_plants, queue_plants_to_light=self.queue_plants_to_light,
                                        name=self.plant_id, translator_path=self.translator_path, **self.scenario)
         self.join(soil_thread)
@@ -136,4 +138,25 @@ class InProcessScene:
 def in_process_scene(plant_memory, translator_path, meteo):
     def make(**kwargs):
         return InProcessScene(plant_memory(), translator_path, meteo, **kwargs)
+    return make
+
+
+@pytest.fixture
+def ds_translator_path(tmp_path):
+    import doubles_ds
+    return doubles.write_translator(tmp_path / "ds_coupling_translator.yaml", doubles_ds.translator(soil=doubles_ds.SOIL))
+
+
+@pytest.fixture
+def ds_in_process_scene(plant_memory, ds_translator_path, meteo):
+    """In-process scene of the DataStructure-backed doubles, with a translator-sized plant buffer."""
+    import doubles_ds
+    from openalea.metafspm.coupling.coupler import Transport
+    from openalea.metafspm.coupling.translator import Translator
+
+    def make(capacity=16, **kwargs):
+        shape = Transport.from_translator(Translator.load(ds_translator_path), soil=doubles_ds.SOIL,
+                                          plant_components=doubles_ds.PLANT_COMPONENTS, capacity=capacity).shape
+        return InProcessScene(plant_memory(shape=shape), ds_translator_path, meteo,
+                              plant_cls=doubles_ds.DSFakePlant, soil_cls=doubles_ds.DSFakeSoil, **kwargs)
     return make

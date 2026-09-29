@@ -87,3 +87,32 @@ def test_documentation_of_data_structure_components(tmp_path):
     model, carbon, nitrogen, ds = _coupled(tmp_path)
     assert "soil_temperature" in model.inputs
     assert not any(line.startswith("data_structure") for line in model.documentation.splitlines())
+
+
+def test_functional_components_run_once_per_simulation_step(tmp_path):
+    """A FunctionalComponent used to register a sub time step of 1: with a 3600 s step it ran 3600 times per call."""
+    Choregrapher().add_simulation_time_step(3600)
+    ds = doubles_ds.make_plant_ds()
+    carbon = doubles_ds.PlantCarbon(data_structure=ds)
+    ds.set("soil_temperature", 0.)
+    carbon()
+    np.testing.assert_allclose(ds.get("hexose"), 1. - 0.1)        # one step, not 3600
+
+
+def test_soil_component_name_is_configurable(tmp_path):
+    class GridPlant(CompositeModel):
+        soil_name = "GridSoil"
+
+    translator = doubles_ds.translator()
+    translator = {("GridSoil" if r == "SoilModel" else r): {("GridSoil" if p == "SoilModel" else p): links
+                                                               for p, links in providers.items()}
+                  for r, providers in translator.items()}
+    path = str(tmp_path / "grid_translator.yaml")
+    import doubles
+    doubles.write_translator(path, translator)
+    ds = doubles_ds.make_plant_ds()
+    model = GridPlant()
+    model.declare_data_and_couple_components(root=ds, translator_path=path, components=(
+        doubles_ds.PlantCarbon(data_structure=ds), doubles_ds.PlantNitrogen(data_structure=ds)))
+    assert sorted(model.soil_outputs) == ["C_hexose_soil", "soil_temperature"]
+    assert model.plant_side_soil_inputs[-2:] == ["hexose_exudation", "amino_acids_exudation"]
