@@ -306,6 +306,15 @@ class FunctionalComponent(Component):
         if not hasattr(self.choregrapher, "simulation_time_step"):
             self.choregrapher.add_simulation_time_step(1)
 
+    def pull_available_inputs(self):
+        """Refresh the derived inputs registered on the DataStructure by the coupling, before the step."""
+        ds = self.data_structure
+        if hasattr(ds, "refresh"):
+            for name in getattr(self, "_derived_inputs", []):
+                ds.refresh(name)
+            return
+        super().pull_available_inputs()
+
     def previous(self, name: str) -> np.ndarray:
         """
         Value of unknown *name* at the start of the current graph-system solve, managed by the framework

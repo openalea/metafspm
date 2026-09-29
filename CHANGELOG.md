@@ -86,4 +86,10 @@ The flat modules used before the 2026 restructure have been removed. No compatib
   - The YAML short form is unchanged. A long form is available: `variable: {sources: {...}, scale: Organ, aggregation: sum}`.
   - String factors are parsed by a restricted arithmetic parser (numbers and `+ - * / **`). **`eval` is no longer used** in `CompositeModel`.
   - `open_or_create_translator` also accepts a `.py` translator module.
+- **`CompositeModel` on DataStructures (WD.4):** when every component is DataStructure-backed, `couple_components` registers the translator links on the shared DataStructure:
+  - identity: nothing;
+  - alias: `ds.alias`, which replaces the receiver's own default;
+  - factor, sum, formula or scale change: `ds.derive`, refreshed by the receiver's `pull_available_inputs` before its step. A same-name factor is rejected.
+
+  Soil outputs are registered on the plant DataStructure and initialised to 0. `apply_input_tables` writes DataStructure variables. The props path is kept for legacy components until the doubles are retargeted (WD.6). `DataStructure.unregister(name)` is new.
 
