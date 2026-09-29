@@ -8,6 +8,14 @@ import time
 import traceback
 
 
+# Plant / soil shared buffer: one row per handshake variable, one column per plant vertex.
+# Also hard-coded by the downstream plant and soil models; to be sized from the translator (devplan WD.5).
+HANDSHAKE_SHAPE = (35, 20000)
+
+# Machine-wide cpu attribution registry, shared by the scenes launched from the same working directory
+CPU_REGISTRY_FOLDER = "outputs"
+
+
 ### metafspm zone
 def play_Orchestra(scene_name, output_folder,
                  plant_models: list, plant_scenarios: list,
@@ -72,7 +80,6 @@ def play_Orchestra(scene_name, output_folder,
     stop_file = os.path.join(output_folder, scene_name, "Delete_to_Stop")
     open(stop_file, "w").close()
 
-    handshake_size = 35
     # Then we start workers which namely take the barriers as input so that even when execution is parallel, the resolution loop is synchronized
     processes = []
     sharememories = []
@@ -81,7 +88,7 @@ def play_Orchestra(scene_name, output_folder,
 
     try:
         for plant_id, init_info in planting_sequence.items():
-            a = np.empty((handshake_size, 20000), dtype=np.float64)
+            a = np.empty(HANDSHAKE_SHAPE, dtype=np.float64)
             try:
                 shm = SharedMemory(create=True, name=plant_id, size=a.nbytes)
             except FileExistsError:
@@ -186,10 +193,12 @@ def stand_initialization(scene_name, xrange, yrange, sowing_density, sowing_dept
         for y in range(number_per_row):
             model_picker = random.random()
 
+            # Pick the model whose cumulative frequency interval [low_bound, low_bound + frequency) contains the draw
             low_bound = 0
             for i, frequency in enumerate(plant_model_frequency):
-                if low_bound < model_picker and model_picker <= frequency:
+                if model_picker < low_bound + frequency:
                     current_model_index = i
+                    break
                 low_bound += frequency
             
             plant_ID=f"{plant_models[current_model_index].__name__}_{unique_plant_ID}_{scene_name}"
@@ -211,6 +220,9 @@ def plant_worker(queues_soil_to_plants, queue_plants_to_soil, queues_light_to_pl
     # Pin to a specific set of cpus to avoid concurrency
     pin_to_cpus(cpu_ids)
     
+    # Logging requires a logger class
+    logging = logging and logger_class is not None
+
     # Each process creates its local instance (which includes the unique properties).
     instance = plant_model(queues_soil_to_plants=queues_soil_to_plants, queue_plants_to_soil=queue_plants_to_soil, 
                             queues_light_to_plants=queues_light_to_plants, queue_plants_to_light=queue_plants_to_light,
@@ -259,15 +271,18 @@ def soil_worker(queues_soil_to_plants, queue_plants_to_soil, cpu_ids, stop_event
     instance = soil_model(queues_soil_to_plants=queues_soil_to_plants, queue_plants_to_soil=queue_plants_to_soil, 
                            time_step=time_step, scene_xrange=scene_xrange, scene_yrange=scene_yrange, translator_path=translator_path, **scenario)
     
-    logger = logger_class(model_instance=instance, components=instance.components,
-                    outputs_dirpath=output_dirpath, 
-                    time_step_in_hours=1, logging_period_in_hours=heavy_log_period,
-                    echo=True, **log_settings)
+    logger = None
+    if logger_class is not None:
+        logger = logger_class(model_instance=instance, components=instance.components,
+                        outputs_dirpath=output_dirpath, 
+                        time_step_in_hours=1, logging_period_in_hours=heavy_log_period,
+                        echo=True, **log_settings)
 
     iteration = 0
     while not stop_event.is_set() and iteration < n_iterations: 
         # Run time step
-        logger()
+        if logger is not None:
+            logger()
         instance.run()
 
         iteration += 1
@@ -275,7 +290,8 @@ def soil_worker(queues_soil_to_plants, queue_plants_to_soil, cpu_ids, stop_event
     print("Soil stopped")
     stop_event.set()
 
-    logger.stop()
+    if logger is not None:
+        logger.stop()
 
     os._exit(0)
 
@@ -338,9 +354,10 @@ def pin_to_cpus(cpu_ids):
 
 def plan_affinity(n_workers: int, threads_per_worker: int = 1, ids=None, debug_runs=False):
     ids = sorted(ids or available_cpu_ids())
+    os.makedirs(CPU_REGISTRY_FOLDER, exist_ok=True)
     
-    lock_file = "outputs/lock"
-    sync_file = "outputs/cpu_availability"
+    lock_file = os.path.join(CPU_REGISTRY_FOLDER, "lock")
+    sync_file = os.path.join(CPU_REGISTRY_FOLDER, "cpu_availability")
     while os.path.exists(lock_file):
         print("Waiting for cpu attribution to be unlocked")
         time.sleep(1)
@@ -394,8 +411,8 @@ def free_cpu(cpu_list):
         for i in sublist:
             ids_idxs.append(ids.index(i))
     try:
-        lock_file = "outputs/lock"
-        sync_file = "outputs/cpu_availability"
+        lock_file = os.path.join(CPU_REGISTRY_FOLDER, "lock")
+        sync_file = os.path.join(CPU_REGISTRY_FOLDER, "cpu_availability")
         while os.path.exists(lock_file):
             print("Waiting for cpu attribution to be unlocked")
             time.sleep(1)
