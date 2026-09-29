@@ -149,7 +149,7 @@ class NitrogenAxialTransport(FunctionalComponent):
         def _concentration_balance(
             self, concentration, axial_flux, radial_solute_input
         ) -> np.ndarray:
-            c_old = self._previous_fields["concentration"]
+            c_old = self.previous("concentration")
             B     = self._graph_view.incidence
             return (
                 (concentration - c_old) / self.time_step
@@ -183,7 +183,7 @@ class NitrogenAxialTransport(FunctionalComponent):
         def _concentration_balance(
             self, concentration, axial_flux, radial_solute_input
         ) -> np.ndarray:
-            c_old = self._previous_fields["concentration"]
+            c_old = self.previous("concentration")
             B     = self._graph_view.incidence
             return (
                 (concentration - c_old) / self.time_step
@@ -217,7 +217,7 @@ class NitrogenAxialTransport(FunctionalComponent):
         def _concentration_balance(
             self, concentration, axial_flux, radial_solute_input
         ) -> np.ndarray:
-            c_old = self._previous_fields["concentration"]
+            c_old = self.previous("concentration")
             B     = self._graph_view.incidence
             return (
                 (concentration - c_old) / self.time_step
@@ -252,7 +252,7 @@ class NitrogenAxialTransport(FunctionalComponent):
         def _concentration_balance(
             self, concentration, axial_flux, radial_solute_input
         ) -> np.ndarray:
-            c_old = self._previous_fields["concentration"]
+            c_old = self.previous("concentration")
             B     = self._graph_view.incidence
             return (
                 (concentration - c_old) / self.time_step
@@ -293,7 +293,7 @@ class NitrogenAxialTransport(FunctionalComponent):
         def _concentration_balance(
             self, axial_flux, radial_solute_input
         ) -> np.ndarray:
-            c_old = self._previous_fields["concentration"]
+            c_old = self.previous("concentration")
             B     = self._graph_view.incidence
             return c_old - self.time_step * (
                 np.asarray(B @ axial_flux).reshape(-1) - radial_solute_input
@@ -327,7 +327,7 @@ class NitrogenAxialTransport(FunctionalComponent):
         def _concentration_balance(
             self, axial_flux, radial_solute_input
         ) -> np.ndarray:
-            c_old = self._previous_fields["concentration"]
+            c_old = self.previous("concentration")
             B     = self._graph_view.incidence
             return c_old - self.time_step * (
                 np.asarray(B @ axial_flux).reshape(-1) - radial_solute_input
@@ -367,7 +367,7 @@ class NitrogenAxialTransport(FunctionalComponent):
         def _concentration_balance(
             self, axial_flux, radial_solute_input
         ) -> np.ndarray:
-            c_old = self._previous_fields["concentration"]
+            c_old = self.previous("concentration")
             B     = self._graph_view.incidence
             return c_old - self.time_step * (
                 np.asarray(B @ axial_flux).reshape(-1) - radial_solute_input
@@ -448,7 +448,6 @@ def _setup_nitrogen_model(
     ds.set_edge_property("K_axial",             np.asarray(K_axial_vals, dtype=np.float64))
 
     model                  = NitrogenAxialTransport(data_structure=ds)
-    model._previous_fields = {"concentration": np.asarray(c_old, dtype=np.float64)}
     model.time_step        = dt
     return model
 
@@ -655,7 +654,6 @@ def test_uc1_stepinit_and_graph_system_via_choregrapher():
     model          = NitrogenAxialTransport(data_structure=ds)
     model.k_radial = 0.2
     model.c_ext    = 1.0
-    model._previous_fields = {"concentration": np.full(n, c0)}
     model.time_step        = 0.5
 
     # model() = Component.__call__ → Choregrapher: @rate then @axial.
@@ -742,7 +740,6 @@ def test_uc1_integrate_true_accumulates_amount():
     c_prev      = c0.copy()
 
     for _ in range(3):
-        model._previous_fields = {"concentration": c_prev.copy()}
         model._invoke_graph_system("_transport_solve_with_amount")
         node_u, edge_u = model._last_graph_system.unpack_unknowns(
             model._last_graph_solution
@@ -985,7 +982,7 @@ def test_uc1_quasi_static_solver_matches_newton(
 
     spec_def     = type(model)._graph_system_specs["_transport_solve"]
     spec, _, _   = GraphSystemBuilder(model, spec_def).build()
-    prev_fields  = model._previous_fields
+    prev_fields  = {"concentration": ds.get("concentration").copy()}
 
     newton_packed = NewtonSolver(
         SolverConfig(method="newton", max_iter=15, tol=1e-10)

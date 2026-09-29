@@ -132,45 +132,26 @@ def test_steps_are_vectorised_with_a_per_element_opt_in():
 
 # ---------------------------------------------------------------- previous state (Q21)
 
-from openalea.metafspm.solve.decorator import edge_law, graph_system, node_balance
-from openalea.metafspm.solve.solver import NewtonSolver
-
-
-@dataclass
-class SelfSteppingTransport(NitrogenAxialTransport):
-    """UC1 transport whose equations read the framework-managed previous state instead of _previous_fields."""
-
-    @graph_system(node_unknowns=["concentration"], edge_unknowns=["axial_flux"], solver=NewtonSolver,
-                  max_iter=15, schedule_as="state")
-    class _self_stepping_solve:
-        @node_balance(field="concentration")
-        def _concentration_balance(self, concentration, axial_flux, radial_solute_input):
-            B = self._graph_view.incidence
-            return ((concentration - self.previous("concentration")) / self.time_step
-                    + np.asarray(B @ axial_flux).reshape(-1) - radial_solute_input)
-
-        @edge_law(field="axial_flux", explicit=False, integrate=False)
-        def _axial_flux_law(self, concentration, axial_flux, K_axial):
-            B = self._graph_view.incidence
-            return axial_flux - K_axial * np.asarray(B.T @ concentration).reshape(-1)
-
-
 def test_previous_state_is_managed_by_the_framework():
-    """Two solves in a row advance c_old automatically, as the manual _previous_fields bookkeeping does."""
-    ds, reference, c_old = _model(rng_seed=7)
-    ds_self, _, _ = _model(rng_seed=7)
-    model = SelfSteppingTransport(data_structure=ds_self)
-    model.time_step = reference.time_step
+    """previous(fn) is the state at the start of the current solve: consecutive solves advance c_old by themselves."""
+    ds, model, c_old = _model(rng_seed=7)
+    model._invoke_graph_system("_transport_solve")
+    np.testing.assert_array_equal(model.previous("concentration"), c_old)
+    first = ds.get("concentration").copy()
 
-    c_prev = c_old.copy()
-    for _ in range(2):
-        reference._previous_fields = {"concentration": c_prev.copy()}
-        reference._invoke_graph_system("_transport_solve")
-        c_prev = ds.get("concentration").copy()
-        model._invoke_graph_system("_self_stepping_solve")
+    model._invoke_graph_system("_transport_solve")
 
-    np.testing.assert_allclose(ds_self.get("concentration"), ds.get("concentration"), atol=1e-12)
-    assert not np.allclose(ds.get("concentration"), c_old)
+    np.testing.assert_array_equal(model.previous("concentration"), first)
+    residual = model._last_graph_system.residual(model._last_graph_solution)
+    np.testing.assert_allclose(residual, 0., atol=1e-10)
+    assert not np.allclose(ds.get("concentration"), first)
+
+
+def test_previous_state_outside_a_solve_raises():
+    ds = _make_ds()
+    model = NitrogenAxialTransport(data_structure=ds)
+    with pytest.raises(KeyError, match="previous"):
+        model.previous("concentration")
 
 
 def test_component_follows_topology_growth():
@@ -181,15 +162,15 @@ def test_component_follows_topology_growth():
     g.convert_properties_to_arraydict()
     from openalea.metafspm.data_structure.data_api import MPGDataStructure
     ds = MPGDataStructure(g, from_scale=g.scales.SubOrgan)
-    model = SelfSteppingTransport(data_structure=ds)
+    model = NitrogenAxialTransport(data_structure=ds)
     model.time_step = 0.5
     ds.set("radial_solute_input", 0.01)
-    model._invoke_graph_system("_self_stepping_solve")
+    model._invoke_graph_system("_transport_solve")
     n_before = model._graph_view.n_nodes
 
     g.add_child(seedling.root_segment6, **PropsConfig(scale=g.scales.SubOrgan, edge_type='<', label=g.labels.SubOrgan.RootSegment))
     ds.update_topology()
-    model._invoke_graph_system("_self_stepping_solve")
+    model._invoke_graph_system("_transport_solve")
 
     assert model._graph_view.n_nodes == n_before + 1 == ds.n_nodes()
     residual = model._last_graph_system.residual(model._last_graph_solution)
