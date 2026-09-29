@@ -59,7 +59,7 @@ class PlantCarbon(FunctionalComponent):
     hexose: float = _var("state_variable", default=1., state_variable_type="massic_concentration")
     hexose_exudation: float = _var("state_variable", state_variable_type="NonInertialExtensive")
 
-    exudation_rate: float = 0.1
+    exudation_rate: float = _var("parameter", default=0.1)
 
     @rate
     def _hexose_exudation(self, hexose, soil_temperature):

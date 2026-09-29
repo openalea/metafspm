@@ -105,4 +105,9 @@ The flat modules used before the 2026 restructure have been removed. No compatib
 - **Soil component name and sub time step:**
   - `CompositeModel.soil_name` sets the soil component name, which is no longer hard-coded to `"SoilModel"`.
   - `FunctionalComponent` runs once per simulation step, or per its own `sub_time_step`. It used to register a sub time step of 1, so a 3600 s simulation step ran it 3600 times per call.
+- **Export for loggers (WD.9):** `ds.export(names)`, `ds.to_dataframe(names, location, time)` and `ds.summarize(sums, means, scalars, where)` are available on `MPGDataStructure` and `ArrayDataStructure`.
+  - `to_dataframe` is indexed by vid, edge child vid or voxel, plus `t`; cells also get x/y/z centre columns. `.to_xarray()` turns the result into a dataset.
+  - `summarize` builds the plant-scale csv row.
+- **`openalea.metafspm.testing` (WD.8):** `couplability_problems` / `assert_component_couplable(component_cls, translator, name=)`, for downstream test suites.
+- `FunctionalComponent._graph_view` is rebuilt when the DataStructure topology changes, so components keep solving after growth.
 
