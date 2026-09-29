@@ -105,8 +105,10 @@ class InProcessScene:
                                          translator_path=self.translator_path, **self.scenario)
         soil_thread = self._thread(build_soil)
         if self.queues_light_to_plants is not None:
-            self.light = doubles.FakeLight(scene_xrange=0.1, scene_yrange=0.1, meteo=self.meteo, **self.scenario)
-            light_thread = self._thread(lambda: self.light.run(self.queues_light_to_plants, self.queue_plants_to_light))
+            def build_light():
+                self.light = doubles.FakeLight(queues_light_to_plants=self.queues_light_to_plants, queue_plants_to_light=self.queue_plants_to_light,
+                                               scene_xrange=0.1, scene_yrange=0.1, meteo=self.meteo, **self.scenario)
+            light_thread = self._thread(build_light)
         self.plant = doubles.FakePlant(queues_soil_to_plants=self.queues_soil_to_plants, queue_plants_to_soil=self.queue_plants_to_soil,
                                        queues_light_to_plants=self.queues_light_to_plants, queue_plants_to_light=self.queue_plants_to_light,
                                        name=self.plant_id, translator_path=self.translator_path, **self.scenario)

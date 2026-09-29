@@ -58,13 +58,16 @@ def test_plan_affinity_without_cpu_affinity(monkeypatch, tmp_path):
 class _RecordingLight:
     instances = []
 
-    def __init__(self, scene_xrange, scene_yrange, meteo, **scenario):
+    def __init__(self, queues_light_to_plants, queue_plants_to_light, scene_xrange, scene_yrange, meteo, **scenario):
+        self.queues = (queues_light_to_plants, queue_plants_to_light)
         self.meteo = meteo
         self.scenario = scenario
         self.runs = 0
         _RecordingLight.instances.append(self)
 
     def run(self, queues_light_to_plants, queue_plants_to_light):
+        if self.runs == self.scenario.get("fail_at"):
+            raise RuntimeError("light failure")
         self.runs += 1
 
 
@@ -79,13 +82,33 @@ class _Event:
         self._set = True
 
 
-def _run_light_worker(monkeypatch, scenario):
+def _run_light_worker(monkeypatch, scenario, stop_event=None):
     monkeypatch.setattr(scene_wrapper, "pin_to_cpus", lambda cpu_ids: None)
     _RecordingLight.instances = []
-    scene_wrapper.light_worker(queues_light_to_plants={}, queue_plants_to_light=None, cpu_ids=[0], stop_event=_Event(),
+    scene_wrapper.light_worker(queues_light_to_plants={}, queue_plants_to_light=None, cpu_ids=[0], stop_event=stop_event or _Event(),
                                light_model=_RecordingLight, scene_xrange=1., scene_yrange=1., output_dirpath="",
                                n_iterations=2, time_step=3600, scenario=scenario)
     return _RecordingLight.instances[0]
+
+
+def test_light_model_receives_queues_at_construction(monkeypatch):
+    """Q17: as the soil model, the light model answers the plants' initialization messages in its constructor."""
+    instance = _run_light_worker(monkeypatch, {"parameters": {}, "input_tables": {}, "meteo": pd.DataFrame({"PARi": [0.]})})
+    assert instance.queues == ({}, None)
+
+
+def test_light_worker_completion_leaves_the_scene_running(monkeypatch):
+    """W5.0b: see test_soil_worker_completion_leaves_the_scene_running."""
+    stop = _Event()
+    _run_light_worker(monkeypatch, {"parameters": {}, "input_tables": {}, "meteo": pd.DataFrame({"PARi": [0.]})}, stop)
+    assert not stop.is_set()
+
+
+def test_light_worker_failure_stops_the_scene(monkeypatch):
+    stop = _Event()
+    with pytest.raises(RuntimeError, match="light failure"):
+        _run_light_worker(monkeypatch, {"parameters": {}, "input_tables": {}, "meteo": pd.DataFrame({"PARi": [0.]}), "fail_at": 1}, stop)
+    assert stop.is_set()
 
 
 def test_light_worker_meteo_from_dataframe(monkeypatch):
@@ -95,7 +118,7 @@ def test_light_worker_meteo_from_dataframe(monkeypatch):
     instance = _run_light_worker(monkeypatch, scenario)
 
     assert instance.meteo is meteo
-    assert instance.scenario == {"parameters": {}, "input_tables": {}}
+    assert instance.scenario == {"parameters": {}, "input_tables": {}}  # queues and meteo are passed as arguments
     assert instance.runs == 2
     assert "meteo" in scenario  # caller's scenario is left untouched
 

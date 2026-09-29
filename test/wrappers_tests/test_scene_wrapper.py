@@ -244,23 +244,63 @@ def test_plant_worker_without_logger_class(in_process_workers, tmp_path):
     assert model.runs == 3
 
 
-def _soil_worker(tmp_path, logger_class=doubles.FakeLogger):
+def _soil_worker(tmp_path, logger_class=doubles.FakeLogger, scenario=None):
     stop = _Event()
     with pytest.raises(_Exit):
         scene_wrapper.soil_worker(queues_soil_to_plants={}, queue_plants_to_soil=None, cpu_ids=[0], stop_event=stop,
                                   soil_model=_CountingModel, scene_xrange=1., scene_yrange=1., translator_path="",
-                                  output_dirpath=str(tmp_path / "Soil"), n_iterations=2, time_step=3600, scenario={},
+                                  output_dirpath=str(tmp_path / "Soil"), n_iterations=2, time_step=3600, scenario=scenario or {},
                                   logger_class=logger_class, log_settings={}, heavy_log_period=24)
     return _CountingModel.instances[0], stop
 
 
 def test_soil_worker_runs_and_logs(in_process_workers, tmp_path):
     model, stop = _soil_worker(tmp_path)
-    assert model.runs == 2 and stop.was_set
+    assert model.runs == 2
     assert doubles.read_logger_calls(str(tmp_path / "Soil")) == ["init", "call", "call", "stop"]
+
+
+def test_soil_worker_completion_leaves_the_scene_running(in_process_workers, tmp_path):
+    """
+    W5.0b: an environment worker finishing its iterations set stop_event, so that the other environment worker could
+    skip its last step while plants still waited for it (hang of play_Orchestra at the end of the scene).
+    Only plants end a scene normally.
+    """
+    model, stop = _soil_worker(tmp_path)
+    assert not stop.was_set
+
+
+def test_soil_worker_failure_stops_the_scene(in_process_workers, tmp_path):
+    model, stop = _soil_worker(tmp_path, scenario={"fail_at": 1})
+    assert model.runs == 1 and stop.was_set
+
+
+class _ReplyQueue:
+    def __init__(self):
+        self.calls = []
+
+    def close(self):
+        self.calls.append("close")
+
+    def join_thread(self):
+        self.calls.append("join_thread")
+
+
+def test_soil_worker_flushes_replies_before_exiting(in_process_workers, tmp_path):
+    """
+    W5.0c: os._exit skips the flush of multiprocessing queues, so the soil's last "finished" replies could be lost
+    and plants waited forever (hang under load). Reply queues are closed and flushed before exiting.
+    """
+    queues = {"p0": _ReplyQueue(), "p1": _ReplyQueue()}
+    with pytest.raises(_Exit):
+        scene_wrapper.soil_worker(queues_soil_to_plants=queues, queue_plants_to_soil=None, cpu_ids=[0], stop_event=_Event(),
+                                  soil_model=_CountingModel, scene_xrange=1., scene_yrange=1., translator_path="",
+                                  output_dirpath=str(tmp_path / "Soil"), n_iterations=1, time_step=3600, scenario={},
+                                  logger_class=None, log_settings={}, heavy_log_period=24)
+    assert all(q.calls == ["close", "join_thread"] for q in queues.values())
 
 
 def test_soil_worker_without_logger_class(in_process_workers, tmp_path):
     """W4.5: the soil worker required a logger_class."""
     model, stop = _soil_worker(tmp_path, logger_class=None)
-    assert model.runs == 2 and stop.was_set
+    assert model.runs == 2

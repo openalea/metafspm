@@ -118,10 +118,13 @@ def test_light_round_trip(in_process_scene, meteo):
     # PARa = PARi(t) * leaf area, leaf areas 2e-4 and 8e-4 m2, PARi = 100 at t=0
     assert scene.plant.shoot_props["PARa"] == pytest.approx({1: 0.02, 2: 0.08})
 
+    # Plant step k receives the light computed at t = k - 1: the initialization answer and step 1 both use PARi(0)
+    scene.step()
+    assert scene.plant.shoot_props["PARa"] == pytest.approx({1: 0.02, 2: 0.08})
     scene.step()
     assert scene.plant.shoot_props["PARa"] == pytest.approx({1: 0.04, 2: 0.16})
     to_light = scene.queue_plants_to_light.recorded
-    assert len(to_light) == 3 and all(m["plant_id"] == scene.plant_id for m in to_light)
+    assert len(to_light) == 4 and all(m["plant_id"] == scene.plant_id for m in to_light)
     assert set(to_light[0]["data"]) == {"coordinates", "rotation", "scene", "class_name"}
 
 

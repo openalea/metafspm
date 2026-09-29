@@ -77,5 +77,6 @@ def test_in_process_scene_runs(in_process_scene, with_light):
         assert isinstance(root_props[name], ArrayDict)
     assert scene.soil.soil.voxels["DOC"].sum() > 0
     if with_light:
-        assert scene.light.run_count == 3
+        # the initialization answer comes from the constructor (devplan Q17): one run per plant step
+        assert scene.light.run_count == 2
         assert set(scene.plant.shoot_props["PARa"]) == {1, 2}
