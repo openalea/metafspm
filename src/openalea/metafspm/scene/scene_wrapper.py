@@ -18,7 +18,7 @@ CPU_REGISTRY_FOLDER = "outputs"
 
 ### metafspm zone
 def play_Orchestra(scene_name, output_folder,
-                 plant_models: list, plant_scenarios: list,
+                 plant_models: list, plant_scenarios: list, plant_model_frequency: list = None,
                  soil_model=None, soil_scenario: dict = {"parameters": {}, "input_tables": {}},
                  light_model = None, light_scenario: dict = {},
                  translator_path: str = "",
@@ -30,6 +30,8 @@ def play_Orchestra(scene_name, output_folder,
     """
     Orchestrator function launching in parallel plant models and then environment models
 
+    :param plant_model_frequency: probability of each plant model at each sowing position, uniform by default (implicit for a single model).
+    :param sowing_depth: sowing depth of each plant model, or a single depth shared by all of them.
     :param light_scenario: scenario passed to light_model. Its "meteo" entry (a csv path indexed by 't', or a DataFrame) is extracted and passed as the meteo argument.
     :param debug_runs: ignore the persisted cpu availability file and start from a fresh attribution.
     :param poll_interval: seconds between two checks of the stop conditions by the orchestrator.
@@ -48,6 +50,15 @@ def play_Orchestra(scene_name, output_folder,
 
     clean_exit = True
 
+    if plant_model_frequency is None:
+        plant_model_frequency = [1. / len(plant_models)] * len(plant_models)
+    if len(plant_model_frequency) != len(plant_models) or abs(sum(plant_model_frequency) - 1.) > 1e-9:
+        raise ValueError(f"plant_model_frequency {plant_model_frequency} must give one frequency per plant model, summing to 1")
+    if len(plant_scenarios) != len(plant_models):
+        raise ValueError("plant_scenarios must give one scenario per plant model")
+    if len(sowing_depth) == 1:
+        sowing_depth = list(sowing_depth) * len(plant_models)
+
     # Specific output structure for scenes not managed by per process loggers
     if not os.path.exists(output_folder):
         os.mkdir(output_folder)
@@ -59,7 +70,7 @@ def play_Orchestra(scene_name, output_folder,
     # Compute the placement of individual plants in the scene and for each position get the information on how to initialize the plant model at that location
     scene_xrange, scene_yrange, planting_sequence = stand_initialization(scene_name=scene_name, xrange=scene_xrange, yrange=scene_yrange, sowing_density=sowing_density, 
                                                                 sowing_depth=sowing_depth, row_spacing=row_spacing, plant_models=plant_models,
-                                                                plant_scenarios=plant_scenarios, plant_model_frequency=[1.])
+                                                                plant_scenarios=plant_scenarios, plant_model_frequency=plant_model_frequency)
     
     # One cpu per plant, then one for the soil and one for the light workers if any
     n_environment_workers = int(soil_model is not None) + int(light_model is not None)
@@ -155,9 +166,11 @@ def play_Orchestra(scene_name, output_folder,
         clean_exit = False
 
     finally:
-        # Wait for all processes to exit.
+        # Wait for all processes to exit. A worker exiting with a non-zero code failed
         for p in processes:
             p.join()
+        if any(p.exitcode != 0 for p in processes):
+            clean_exit = False
 
         for shm in sharememories:
             shm.close()
@@ -233,6 +246,7 @@ def plant_worker(queues_soil_to_plants, queue_plants_to_soil, queues_light_to_pl
                         time_step_in_hours=1, logging_period_in_hours=heavy_log_period,
                         echo=False, **log_settings)
     
+    failed = False
     iteration = 0
     try:
         while not stop_event.is_set() and iteration < n_iterations: 
@@ -249,6 +263,7 @@ def plant_worker(queues_soil_to_plants, queue_plants_to_soil, queues_light_to_pl
     except Exception as e:
         traceback.print_exc()
         print("Plant interrupted by : ", e)
+        failed = True
 
     finally:
         print("Plant stopped")
@@ -257,7 +272,7 @@ def plant_worker(queues_soil_to_plants, queue_plants_to_soil, queues_light_to_pl
         if logging:
             logger.stop()
 
-        os._exit(0)
+        os._exit(1 if failed else 0)
 
 
 def soil_worker(queues_soil_to_plants, queue_plants_to_soil, cpu_ids, stop_event,
@@ -279,6 +294,7 @@ def soil_worker(queues_soil_to_plants, queue_plants_to_soil, cpu_ids, stop_event
 
     # Environment workers only stop the scene on failure: on normal completion, setting stop_event could make the
     # other environment worker skip its last step while plants still wait for it. Plants end the scene.
+    failed = False
     iteration = 0
     try:
         while not stop_event.is_set() and iteration < n_iterations: 
@@ -293,6 +309,7 @@ def soil_worker(queues_soil_to_plants, queue_plants_to_soil, cpu_ids, stop_event
         traceback.print_exc()
         print("Soil interrupted by : ", e)
         stop_event.set()
+        failed = True
 
     finally:
         print("Soil stopped")
@@ -302,7 +319,7 @@ def soil_worker(queues_soil_to_plants, queue_plants_to_soil, cpu_ids, stop_event
 
         # os._exit skips the flush of multiprocessing queues: make sure the last replies reach the plants
         flush_queues(queues_soil_to_plants.values())
-        os._exit(0)
+        os._exit(1 if failed else 0)
 
 
 def light_worker(queues_light_to_plants, queue_plants_to_light, cpu_ids, stop_event,

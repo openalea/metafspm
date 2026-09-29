@@ -150,6 +150,8 @@ class _FakeProcess:
     def start(self):
         pass
 
+    exitcode = 0
+
     def join(self):
         pass
 
@@ -171,10 +173,10 @@ def _play(monkeypatch, tmp_path, **kwargs):
     monkeypatch.setattr(scene_wrapper.time, "sleep", sleeps.append)
     _FakeProcess.launched = []
 
+    kwargs = {"plant_models": [_PlantModel], "plant_scenarios": [{"plant": 1}], "sowing_depth": [0.04], **kwargs}
     clean_exit = scene_wrapper.play_Orchestra(scene_name=f"step1_{tmp_path.name}", output_folder=str(tmp_path / "scene_outputs"),
-                                              plant_models=[_PlantModel], plant_scenarios=[{"plant": 1}],
                                               scene_xrange=0.3, scene_yrange=0.15, row_spacing=0.15, sowing_density=25,
-                                              sowing_depth=[0.04], debug_runs=True, poll_interval=0.5, **kwargs)
+                                              debug_runs=True, poll_interval=0.5, **kwargs)
     return clean_exit, {p.target.__name__: p.kwargs for p in _FakeProcess.launched}, [p.target.__name__ for p in _FakeProcess.launched]
 
 
@@ -191,6 +193,31 @@ def test_play_orchestra_pins_environment_workers(monkeypatch, tmp_path):
     assert kwargs["light_worker"]["scenario"] is light_scenario
     assert all(p.kwargs["coordinates"][2] == -0.04 for p in _FakeProcess.launched if p.target.__name__ == "plant_worker")
     assert not (tmp_path / "outputs" / "cpu_availability").exists()
+
+
+def test_play_orchestra_uses_every_plant_model(monkeypatch, tmp_path):
+    """Q19: plant_model_frequency is an argument; uniform frequencies by default."""
+    class _OtherPlantModel:
+        pass
+
+    monkeypatch.setattr(scene_wrapper.random, "random", iter([0.2, 0.7, 0.9, 0.1]).__next__)
+    clean_exit, kwargs, order = _play(monkeypatch, tmp_path, plant_models=[_PlantModel, _OtherPlantModel],
+                                      plant_scenarios=[{"plant": 1}, {"plant": 2}], sowing_depth=[0.04, 0.02])
+    models = [p.kwargs["plant_model"] for p in _FakeProcess.launched if p.target.__name__ == "plant_worker"]
+    assert models == [_PlantModel, _OtherPlantModel]
+    assert [p.kwargs["coordinates"][2] for p in _FakeProcess.launched if p.target.__name__ == "plant_worker"] == [-0.04, -0.02]
+
+
+def test_play_orchestra_checks_plant_model_frequency(monkeypatch, tmp_path):
+    with pytest.raises(ValueError, match="plant_model_frequency"):
+        _play(monkeypatch, tmp_path, plant_model_frequency=[0.5, 0.5])
+
+
+def test_play_orchestra_reports_failed_workers(monkeypatch, tmp_path):
+    """Q18: a worker exiting with a non-zero code makes the scene exit unclean."""
+    monkeypatch.setattr(_FakeProcess, "exitcode", 1, raising=False)
+    clean_exit, kwargs, order = _play(monkeypatch, tmp_path)
+    assert clean_exit is False
 
 
 def test_play_orchestra_without_environment_models(monkeypatch, tmp_path):

@@ -198,13 +198,15 @@ def in_process_workers(monkeypatch):
     _CountingModel.instances = []
 
 
-def _plant_worker(tmp_path, stop_event, logger_class=doubles.FakeLogger, scenario=None, **kwargs):
-    with pytest.raises(_Exit):
+def _plant_worker(tmp_path, stop_event, logger_class=doubles.FakeLogger, scenario=None, exit_code=0, **kwargs):
+    with pytest.raises(_Exit) as exit_info:
         scene_wrapper.plant_worker(queues_soil_to_plants={}, queue_plants_to_soil=None, queues_light_to_plants=None,
                                    queue_plants_to_light=None, cpu_ids=[0], stop_event=stop_event, plant_model=_CountingModel,
                                    plant_id="p0", translator_path="", output_dirpath=str(tmp_path / "p0"), n_iterations=3,
                                    time_step=3600, coordinates=[0, 0, 0], rotation=0, scenario=scenario or {},
                                    logger_class=logger_class, log_settings={}, heavy_log_period=24, **kwargs)
+    # Q18: the exit code tells the orchestrator whether the plant failed
+    assert exit_info.value.args == (exit_code,)
     return _CountingModel.instances[0]
 
 
@@ -234,7 +236,7 @@ def test_plant_worker_stops_on_event(in_process_workers, tmp_path):
 
 def test_plant_worker_failure_sets_stop_event(in_process_workers, tmp_path):
     stop = _Event()
-    model = _plant_worker(tmp_path, stop, scenario={"fail_at": 1})
+    model = _plant_worker(tmp_path, stop, scenario={"fail_at": 1}, exit_code=1)
     assert model.runs == 1 and stop.was_set
 
 
@@ -246,11 +248,12 @@ def test_plant_worker_without_logger_class(in_process_workers, tmp_path):
 
 def _soil_worker(tmp_path, logger_class=doubles.FakeLogger, scenario=None):
     stop = _Event()
-    with pytest.raises(_Exit):
+    with pytest.raises(_Exit) as exit_info:
         scene_wrapper.soil_worker(queues_soil_to_plants={}, queue_plants_to_soil=None, cpu_ids=[0], stop_event=stop,
                                   soil_model=_CountingModel, scene_xrange=1., scene_yrange=1., translator_path="",
                                   output_dirpath=str(tmp_path / "Soil"), n_iterations=2, time_step=3600, scenario=scenario or {},
                                   logger_class=logger_class, log_settings={}, heavy_log_period=24)
+    assert exit_info.value.args == ((1,) if (scenario or {}).get("fail_at") is not None else (0,))
     return _CountingModel.instances[0], stop
 
 
