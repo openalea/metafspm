@@ -111,3 +111,11 @@ The flat modules used before the 2026 restructure have been removed. No compatib
 - **`openalea.metafspm.testing` (WD.8):** `couplability_problems` / `assert_component_couplable(component_cls, translator, name=)`, for downstream test suites.
 - `FunctionalComponent._graph_view` is rebuilt when the DataStructure topology changes, so components keep solving after growth.
 
+### Solvers (backlog B5, B6)
+
+- Edge (algebraic) unknowns are recovered by solving the edge rows with the node unknowns held fixed. `ExplicitEulerSolver` and `ScipyIVPSolver` used to run a Newton solve on the whole quasi-static system, which gave the wrong fluxes, or a singular matrix for transient problems. `DAESolver.solve` stores the recovered values in the accepted state.
+- `ScipyIVPSolver` returns the full packed state (nodes and edges) for specs with edge unknowns. It used to return the node unknowns only.
+- `ScipyIVPSolver` no longer fakes an error estimate from the midpoint state. `solve_ivp` controls the error within each step, and the outer loop accepts the step. The old estimate made the step size collapse.
+- `NewtonSolver`, `ImplicitEulerSolver` and `ScipyRootSolver` start from the state they are given instead of the spec's initial guess.
+- `make_solver(method, config)` accepts a dict of `SolverConfig` fields (it used to replace them silently with the defaults). Unknown keys and other types raise `TypeError`.
+
