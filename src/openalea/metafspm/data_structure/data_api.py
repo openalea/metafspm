@@ -280,6 +280,11 @@ class VariableStoreMixin:
     def version(self) -> int:
         return self.__dict__.get("_version", 0)
 
+    @property
+    def topology_version(self) -> int:
+        """Incremented when the entities change (growth); maps built on the topology must then be rebuilt."""
+        return self.__dict__.get("_topology_version", 0)
+
     def _bump_version(self) -> None:
         self._version = self.version + 1
 
@@ -1143,6 +1148,7 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
         self._build_index_map()
         self._B_cached = None
         self._membership_cache = {}
+        self._topology_version = self.topology_version + 1
 
     def update_topology(self) -> None:
         """
