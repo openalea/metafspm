@@ -101,3 +101,8 @@ doc/_dvlpt/
 # VS Code
 .vscode
 *.code-workspace
+
+CLAUDE.md
+*/CLAUDE.md
+
+test/*.png

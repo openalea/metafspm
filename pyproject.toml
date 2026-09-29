@@ -55,16 +55,16 @@ dependencies = []
 
 dependencies = [
     "pyyaml",
+    "openalea.mtg",
     "numpy",
-    "numba"
+    "numba",
+    "pandas",
+    "scipy"
 ]
 
 [project.optional-dependencies]
 test = [
   "pytest",
-  "nbmake",
-  "pandas",
-  "openalea.mtg",
 ]
 dev = [
   "pytest >=6",
@@ -77,7 +77,8 @@ doc = [
   "ipykernel",
   "sphinx-copybutton",
   "ipython_genutils",
-  "nbsphinx"
+  "nbsphinx",
+  "pyan3"
 ]
 
 [project.urls]
@@ -85,6 +86,21 @@ Repository = "https://github.com/openalea/metafpsm"
 Homepage = "https://metafspm.readthedocs.io/"
 "Bug Tracker" = "https://github.com/openalea/metafspm/issues"
 Discussions = "https://github.com/openalea/metafspm/discussions"
+
+[tool.coverage.run]
+source = ["openalea.metafspm"]
+branch = true
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = true
+
+[tool.pytest.ini_options]
+testpaths = ["test"]
+pythonpath = ["test"]
+markers = [
+  "slow: multiprocessing end-to-end tests (deselect with -m 'not slow')",
+]
 
 [project.entry-points."wralea"]
 "metafspm" = "openalea.metafspm_wralea"
