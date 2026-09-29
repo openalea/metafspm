@@ -126,12 +126,11 @@ def test_mpg_update_topology_second_growth_step():
     assert ds.n_edges() == 15
 
 
-def test_mpg_update_topology_clears_node_properties():
-    """Property arrays registered before update_topology() are cleared.
+def test_mpg_update_topology_keeps_node_properties():
+    """Property arrays registered before update_topology() are carried over to the new topology.
 
-    After topology changes the old arrays no longer match the new node count,
-    so MPGDataStructure wipes _node_data and _edge_data.  The caller is
-    responsible for re-registering arrays after update_topology().
+    (They used to be cleared, so growth wiped the state; see devplan WD.P / B-e. Growth itself is covered in
+    test_datastructure_prerequisites.py.)
     """
     g, _, ds = _fresh_populated_ds()
     ds.set_node_property("concentration", np.ones(ds.n_nodes()))
@@ -139,20 +138,18 @@ def test_mpg_update_topology_clears_node_properties():
 
     ds.update_topology()
 
-    with pytest.raises(KeyError, match="concentration"):
-        ds.node_property("concentration")
+    np.testing.assert_array_equal(ds.node_property("concentration"), np.ones(ds.n_nodes()))
 
 
-def test_mpg_update_topology_clears_edge_properties():
-    """Edge property arrays are also cleared."""
+def test_mpg_update_topology_keeps_edge_properties():
+    """Edge property arrays are also carried over."""
     g, _, ds = _fresh_populated_ds()
     ds.set_edge_property("K_axial", np.ones(ds.n_edges()))
     assert "K_axial" in ds.available_vars()
 
     ds.update_topology()
 
-    with pytest.raises(KeyError, match="K_axial"):
-        ds.edge_property("K_axial")
+    np.testing.assert_array_equal(ds.edge_property("K_axial"), np.ones(ds.n_edges()))
 
 
 def test_mpg_update_topology_requires_from_scale():

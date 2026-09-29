@@ -20,7 +20,7 @@ def declare(unit: str, unit_comment: str, description: str, min_value: float, ma
             value_comment: str, references: str, DOI: list,
             variable_type: Literal["state_variable", "plant_scale_state", "input", "parameter"],
             by: str, state_variable_type: str, edit_by: Literal["user", "dev"],
-            default=None, default_factory=None, scale=None, edge_mapping=None):
+            default=None, default_factory=None, scale=None, edge_mapping=None, on_grow="default"):
     """
     Constrain component variable declarations in a commonly agreed-upon way.
 
@@ -43,13 +43,16 @@ def declare(unit: str, unit_comment: str, description: str, min_value: float, ma
                                auto-register defaults on the bound DataStructure,
                                and by the solver decorator to classify fields
                                during the Newton snapshot.
+    :param on_grow:            Value of entities created by topology growth: "default" (the declared
+                               default) or "inherit" (the parent's value). The growth model may still
+                               overwrite them, e.g. from parent states for concentrations.
     """
     metadata = dict(
         unit=unit, unit_comment=unit_comment, description=description,
         min_value=min_value, max_value=max_value, value_comment=value_comment,
         references=references, DOI=DOI, variable_type=variable_type, by=by,
         state_variable_type=state_variable_type, edit_by=edit_by,
-        scale=scale, edge_mapping=edge_mapping,
+        scale=scale, edge_mapping=edge_mapping, on_grow=on_grow,
     )
     if default_factory:
         return field(default_factory=default_factory, metadata=metadata)
@@ -58,7 +61,7 @@ def declare(unit: str, unit_comment: str, description: str, min_value: float, ma
 
 def input_variable(unit: str, unit_comment: str, description: str, min_value: float,
                    max_value: float, value_comment: str, references: str, DOI: list,
-                   by: str, initialize=None, scale=None, edge_mapping=None):
+                   by: str, initialize=None, scale=None, edge_mapping=None, on_grow="default"):
     """Declare an input field — a variable driven by another model component.
 
     When the component is run in isolation (not coupled), the field keeps
@@ -71,7 +74,7 @@ def input_variable(unit: str, unit_comment: str, description: str, min_value: fl
         description=description, min_value=min_value, max_value=max_value,
         value_comment=value_comment, references=references, DOI=DOI,
         variable_type="input", by=by, state_variable_type=None,
-        edit_by="user", scale=scale, edge_mapping=edge_mapping,
+        edit_by="user", scale=scale, edge_mapping=edge_mapping, on_grow=on_grow,
     )
 
 
@@ -82,7 +85,7 @@ def state_variable(unit: str, unit_comment: str, description: str, min_value: fl
                        "NonInertialExtensive", "NonInertialIntensive", "descriptor"
                    ] = None,
                    initialize=None, scale=None, by: str = None,
-                   edge_mapping=None):
+                   edge_mapping=None, on_grow="default"):
     """Declare a prognostic state variable solved or integrated by this component.
 
     :param state_variable_type: Thermodynamic / extensive classification.
@@ -99,14 +102,14 @@ def state_variable(unit: str, unit_comment: str, description: str, min_value: fl
         value_comment=value_comment, references=references, DOI=DOI,
         variable_type="state_variable", by=by,
         state_variable_type=state_variable_type, edit_by="user",
-        scale=scale, edge_mapping=edge_mapping,
+        scale=scale, edge_mapping=edge_mapping, on_grow=on_grow,
     )
 
 
 def parameter(unit: str, unit_comment: str, description: str, min_value: float,
               max_value: float, value_comment: str, references: str, DOI: list,
               by: str, default=None, scale=None, state_variable_type=None,
-              edge_mapping=None):
+              edge_mapping=None, on_grow="default"):
     """Declare a model parameter — a constant whose value is set at construction.
 
     Parameters are not prognostic; they are read by model equations but never
@@ -128,7 +131,7 @@ def parameter(unit: str, unit_comment: str, description: str, min_value: float,
         value_comment=value_comment, references=references, DOI=DOI,
         variable_type="parameter", by=by,
         state_variable_type=state_variable_type, edit_by="dev",
-        scale=scale, edge_mapping=edge_mapping,
+        scale=scale, edge_mapping=edge_mapping, on_grow=on_grow,
     )
 
 
@@ -348,28 +351,37 @@ class FunctionalComponent(Component):
                 continue
 
             default = f.default if f.default is not MISSING else 0.0
+            on_grow = f.metadata.get("on_grow") or "default"
+
+            def _register(location, values, name=f.name, default=default, on_grow=on_grow):
+                if hasattr(ds, "register"):
+                    ds.register(name, values, location=location, default=float(default), on_grow=on_grow)
+                elif location == "node":
+                    ds.set_node_property(name, values)
+                else:
+                    ds.set_edge_property(name, values)
 
             if solver_scale == "node":
                 if hasattr(ds, "_mtg_to_node_array"):
-                    arr = ds._mtg_to_node_array(f.name)
+                    arr = ds._mtg_to_node_array(f.name, scale=scale_raw if is_bio_node else None)
                     if arr is not None:
-                        ds.set_node_property(f.name, arr)
+                        _register("node", arr)
                         if is_bio_node:
                             self._bio_scale_node_fields[f.name] = scale_raw
                         continue
-                ds.set_node_property(f.name, np.full(ds.n_nodes(), float(default)))
+                _register("node", np.full(ds.n_nodes(), float(default)))
                 if is_bio_node:
                     self._bio_scale_node_fields[f.name] = scale_raw
             else:
                 conv = edge_mapping if is_bio_edge else "mean"
                 if hasattr(ds, "_mtg_to_edge_array"):
-                    arr = ds._mtg_to_edge_array(f.name, convention=conv)
+                    arr = ds._mtg_to_edge_array(f.name, convention=conv, scale=scale_raw if is_bio_edge else None)
                     if arr is not None:
-                        ds.set_edge_property(f.name, arr)
+                        _register("edge", arr)
                         if is_bio_edge:
                             self._bio_scale_edge_fields[f.name] = edge_mapping
                         continue
-                ds.set_edge_property(f.name, np.full(ds.n_edges(), float(default)))
+                _register("edge", np.full(ds.n_edges(), float(default)))
                 if is_bio_edge:
                     self._bio_scale_edge_fields[f.name] = edge_mapping
 
