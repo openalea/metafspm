@@ -25,6 +25,7 @@ def _plant_with_geometry(x=0.025, y=0.075):
     ds.register("hexose_exudation", np.arange(n, dtype=float) + 1., location="node")
     ds.register("amino_acids_exudation", 0.5, location="node")
     ds.register("C_hexose_soil", location="node")
+    ds.register("soil_temperature", location="node")
     return ds
 
 
@@ -33,6 +34,7 @@ def _soil(nx=2, ny=2, nz=4):
     for name in ("hexose_exudation_massic", "amino_acids_exudation"):
         soil.register(name)
     soil.register("C_hexose_soil", np.arange(nx * ny * nz, dtype=float).reshape(nx, ny, nz))
+    soil.register("soil_temperature", 10.)
     return soil
 
 
@@ -166,8 +168,6 @@ def test_matches_the_reference_soil_model():
 def test_coupler_from_translator():
     translator = Translator.from_dict(doubles_ds.translator())
     plant, soil = _plant_with_geometry(), _soil()
-    soil.register("soil_temperature", 10.)
-    plant.register("soil_temperature", location="node")
     coupler = Coupler.from_translator(translator, plant_components=["PlantCarbon", "PlantNitrogen"], soil="SoilModel",
                                       plant_ds=plant, soil_ds=soil, locator=VoxelLocator(soil, flip_z=True))
     assert coupler.to_soil == {"hexose_exudation_massic": {"hexose_exudation": 72.},

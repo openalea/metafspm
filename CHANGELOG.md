@@ -97,4 +97,9 @@ The flat modules used before the 2026 restructure have been removed. No compatib
   - `Coupler.update_map` / `zero_soil_inputs` / `push` / `pull` do an extensive scatter-add to the soil, with factors, and an intensive in-place gather to the plant. It gives the same sums as the reference soil model's `apply_to_voxel_fast`, with the `(y, z, x)` → `(x, y, z)` permutation.
   - `Coupler.from_translator` builds a Coupler from a Translator.
   - `DataStructure.topology_version` makes a stale map raise.
+- **Plant ↔ soil transport (WD.5b):**
+  - `coupler.Transport` sets the buffer layout from the translator: rows `_n_nodes`, `_node_id`, the segment coordinates, the plant variables read by the soil, and the soil states. This replaces the `vertex_index >= 1` convention.
+  - It provides `write_plant` / `read_soil` for the plant side, and `plant_view` for the soil side: a `BufferPlantView` on which the same `Coupler` runs. Capacity overflow raises `OverflowError`.
+  - `play_Orchestra(handshake_shape=...)` defaults to the legacy `(35, 20000)` (Q27).
+  - `FunctionalComponent` also runs on `ArrayDataStructure`: fields declared with `scale="cell"` or `"scalar"` are registered automatically.
 

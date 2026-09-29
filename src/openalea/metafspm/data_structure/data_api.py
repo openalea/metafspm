@@ -1419,6 +1419,12 @@ class ArrayDataStructure(VariableStoreMixin, FieldDataStructure):
         mesh = np.meshgrid(*grids, indexing='ij')
         return np.stack([m.ravel() for m in mesh], axis=1)
 
+    def entity_ids(self, location: str) -> np.ndarray:
+        """Flat C-order cell indices."""
+        if location != "cell":
+            raise ValueError(f"'{location}' has no entity ids")
+        return np.arange(self.n_dof, dtype=np.int64)
+
     def cell_volume(self) -> float:
         return float(np.prod(self._dx))
 

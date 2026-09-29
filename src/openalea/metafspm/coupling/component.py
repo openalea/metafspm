@@ -291,7 +291,7 @@ class FunctionalComponent(Component):
             )
         ds = self.data_structure
         self._auto_declare_on_ds(ds)
-        self._graph_view = ds.to_graph_view()
+        self._graph_view = ds.to_graph_view() if hasattr(ds, "to_graph_view") else None
         if not hasattr(self, "pullable_inputs"):
             self.pullable_inputs = {}
         if hasattr(ds, "register"):
@@ -343,6 +343,15 @@ class FunctionalComponent(Component):
         Pre-registered fields are never overwritten.
         """
         if not isinstance(ds, GraphDataStructure):
+            # Grids: fields declared with scale="cell" (or "scalar") are registered with their default
+            if hasattr(ds, "register"):
+                for f in fields(type(self)):
+                    location = f.metadata.get("scale")
+                    if f.metadata.get("variable_type") is None or location not in ("cell", "scalar") or ds.has(f.name):
+                        continue
+                    default = f.default if f.default is not MISSING else 0.0
+                    ds.register(f.name, location=location, default=float(default),
+                                on_grow=f.metadata.get("on_grow") or "default")
             return
         if not hasattr(self, "_bio_scale_node_fields"):
             self._bio_scale_node_fields: dict[str, int] = {}
