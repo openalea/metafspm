@@ -1,14 +1,10 @@
-import sys, os
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
-from utils import deep_reload_package
-deep_reload_package("openalea")
 from openalea.metafspm.coupling.component import FunctionalComponent, declare, input_variable, state_variable
 from openalea.metafspm.solve.decorator import *
 from dataclasses import dataclass
 
 
 @dataclass
-class Carbon(FunctionalComponent):
+class DeclaredCarbon(FunctionalComponent):
 
     # constrained field initialization
     amino_acids: float = input_variable(initialize=0., unit="mol.s-1", unit_comment="", description="", 
@@ -70,7 +66,7 @@ class Carbon(FunctionalComponent):
     
 
 @dataclass
-class Nitrogen(FunctionalComponent):
+class DeclaredNitrogen(FunctionalComponent):
 
     # constrained field initialization
     hexose: float = declare(default=0., unit="mol.s-1", unit_comment="", description="", 
@@ -123,7 +119,7 @@ class Nitrogen(FunctionalComponent):
     
 
 @dataclass
-class SoilModel(FunctionalComponent):
+class DeclaredSoilModel(FunctionalComponent):
 
     # constrained field initialization
     amino_acids_exudation: float = declare(default=0., unit="mol.s-1", unit_comment="", description="", 
@@ -163,6 +159,6 @@ class SoilModel(FunctionalComponent):
 
 def test_dummy_components_declaration():
     g_properties = {"struct_mass":{1: 1e-6}}
-    c = Carbon(g_properties, 3600)
-    n = Nitrogen(g_properties, 3600)
-    s = SoilModel(g_properties, 3600)
+    c = DeclaredCarbon(g_properties, 3600)
+    n = DeclaredNitrogen(g_properties, 3600)
+    s = DeclaredSoilModel(g_properties, 3600)
