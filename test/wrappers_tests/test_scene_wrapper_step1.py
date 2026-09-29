@@ -176,7 +176,7 @@ def _play(monkeypatch, tmp_path, **kwargs):
     kwargs = {"plant_models": [_PlantModel], "plant_scenarios": [{"plant": 1}], "sowing_depth": [0.04], **kwargs}
     clean_exit = scene_wrapper.play_Orchestra(scene_name=f"step1_{tmp_path.name}", output_folder=str(tmp_path / "scene_outputs"),
                                               scene_xrange=0.3, scene_yrange=0.15, row_spacing=0.15, sowing_density=25,
-                                              debug_runs=True, poll_interval=0.5, **kwargs)
+                                              debug_runs=True, poll_interval=0.5, handshake_shape=(2, 4), **kwargs)
     return clean_exit, {p.target.__name__: p.kwargs for p in _FakeProcess.launched}, [p.target.__name__ for p in _FakeProcess.launched]
 
 

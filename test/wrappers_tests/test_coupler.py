@@ -135,14 +135,24 @@ def test_push_before_map_update_after_growth_raises():
         coupler.push()
 
 
+def _reference_voxel_neighbors(data, hs, mask, n, d):
+    """rhizosoil SoilModel.compute_mtg_voxel_neighbors_fast (test/provide_usage_examples): (y, z, x) indices."""
+    ny, nz, nx = n
+    bx = 0.5 * (data[hs["x1"]] + data[hs["x2"]])[mask]
+    by = 0.5 * (data[hs["y1"]] + data[hs["y2"]])[mask]
+    bz = -0.5 * (data[hs["z1"]] + data[hs["z2"]])[mask]            # flip_z
+    bx, by = bx % (nx * d), by % (ny * d)                           # periodic x, y
+    ix = np.clip(np.floor(bx / d).astype(np.int32), 0, nx - 1)
+    iy = np.clip(np.floor(by / d).astype(np.int32), 0, ny - 1)
+    iz = np.clip(np.floor(bz / d).astype(np.int32), 0, nz - 1)
+    return iy, iz, ix
+
+
 def test_matches_the_reference_soil_model():
-    """Same sums as rhizosoil's apply_to_voxel_fast / get_from_voxel_fast (legacy (y, z, x) voxel arrays)."""
+    """Same sums as rhizosoil's apply_to_voxel_fast on (y, z, x) voxel arrays, after the permutation to (x, y, z)."""
     plant = _plant_with_geometry()
     n = plant.n_nodes()
-    soil = _soil(nx=2, ny=2, nz=2)                  # the reference double is 0.1 x 0.1 x 0.1 m
-    legacy = doubles.SoilModel()
-    legacy.pullable_inputs = {"P": {"hexose_exudation_massic": {"hexose_exudation": 72.},
-                                    "amino_acids_exudation": {"amino_acids_exudation": 5.}}}
+    soil = _soil(nx=2, ny=2, nz=2)
     hs = {name: row for row, name in enumerate(["vertex_index", "x1", "x2", "y1", "y2", "z1", "z2",
                                                   "hexose_exudation", "amino_acids_exudation"])}
     buf = np.zeros((len(hs), n))
@@ -151,18 +161,31 @@ def test_matches_the_reference_soil_model():
         if name != "vertex_index":
             buf[hs[name]] = plant.get(name)
     mask = buf[hs["vertex_index"]] >= 1
-    for name in legacy.inputs:
-        legacy.voxels[name].fill(0.)
-    iy, iz, ix = legacy.compute_mtg_voxel_neighbors_fast(buf, hs, mask=mask, flip_z=True)
-    legacy.apply_to_voxel_fast(iy, iz, ix, buf, hs, "P", mask)
+    iy, iz, ix = _reference_voxel_neighbors(buf, hs, mask, n=(2, 2, 2), d=SIDE)
+    reference = {}
+    for name, (source, factor) in (("hexose_exudation_massic", ("hexose_exudation", 72.)),
+                                   ("amino_acids_exudation", ("amino_acids_exudation", 5.))):
+        voxels = np.zeros((2, 2, 2))                                 # (y, z, x)
+        np.add.at(voxels, (iy, iz, ix), factor * buf[hs[source]][mask])
+        reference[name] = voxels
 
     coupler = _coupler(plant, soil)
     coupler.update_map()
     coupler.zero_soil_inputs()
     coupler.push()
 
-    for name in ("hexose_exudation_massic", "amino_acids_exudation"):
-        np.testing.assert_allclose(soil.get(name), legacy.voxels[name].transpose(2, 0, 1))   # (y, z, x) -> (x, y, z)
+    for name, voxels in reference.items():
+        np.testing.assert_allclose(soil.get(name), voxels.transpose(2, 0, 1))   # (y, z, x) -> (x, y, z)
+
+
+def test_same_name_factor_and_multi_source_soil_links():
+    """Former soil-side link semantics (W2.5, W2.6): same-name factors are applied, multi-source links summed."""
+    translator = Translator.from_dict(doubles_ds.translator())
+    translator.link("SoilModel", "total_exudation", "PlantNitrogen", {"amino_acids_exudation": 1., "nitrate": 0.5})
+    coupler = Coupler.from_translator(translator, plant_components=["PlantCarbon", "PlantNitrogen"], soil="SoilModel",
+                                      plant_ds=None, soil_ds=None, locator=VoxelLocator(None))
+    assert coupler.to_soil["amino_acids_exudation"] == {"amino_acids_exudation": 5.}
+    assert coupler.to_soil["total_exudation"] == {"amino_acids_exudation": 1., "nitrate": 0.5}
 
 
 def test_coupler_from_translator():

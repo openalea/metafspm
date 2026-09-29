@@ -8,10 +8,6 @@ import time
 import traceback
 
 
-# Plant / soil shared buffer: one row per handshake variable, one column per plant vertex.
-# Also hard-coded by the downstream plant and soil models; to be sized from the translator (devplan WD.5).
-HANDSHAKE_SHAPE = (35, 20000)
-
 # Machine-wide cpu attribution registry, shared by the scenes launched from the same working directory
 CPU_REGISTRY_FOLDER = "outputs"
 
@@ -35,8 +31,8 @@ def play_Orchestra(scene_name, output_folder,
     :param light_scenario: scenario passed to light_model. Its "meteo" entry (a csv path indexed by 't', or a DataFrame) is extracted and passed as the meteo argument.
     :param debug_runs: ignore the persisted cpu availability file and start from a fresh attribution.
     :param poll_interval: seconds between two checks of the stop conditions by the orchestrator.
-    :param handshake_shape: shape of each plant / soil shared buffer; defaults to the legacy HANDSHAKE_SHAPE.
-        Models using coupler.Transport pass Transport.from_translator(...).shape.
+    :param handshake_shape: shape of each plant / soil shared buffer, Transport.from_translator(...).shape
+        (coupler.Transport: one row per exchanged variable, one column per plant node).
     ---
     TODO : Scene orientation regarding an angle relative to North
     
@@ -52,6 +48,9 @@ def play_Orchestra(scene_name, output_folder,
 
     clean_exit = True
 
+    if handshake_shape is None:
+        raise ValueError("play_Orchestra needs handshake_shape, the plant / soil buffer shape given by "
+                         "coupler.Transport.from_translator(...).shape")
     if plant_model_frequency is None:
         plant_model_frequency = [1. / len(plant_models)] * len(plant_models)
     if len(plant_model_frequency) != len(plant_models) or abs(sum(plant_model_frequency) - 1.) > 1e-9:
@@ -101,7 +100,7 @@ def play_Orchestra(scene_name, output_folder,
 
     try:
         for plant_id, init_info in planting_sequence.items():
-            a = np.zeros(handshake_shape or HANDSHAKE_SHAPE, dtype=np.float64)
+            a = np.zeros(handshake_shape, dtype=np.float64)
             try:
                 shm = SharedMemory(create=True, name=plant_id, size=a.nbytes)
             except FileExistsError:

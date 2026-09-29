@@ -140,8 +140,8 @@ class Component:
     """
     Base component for structuring base FSPM modules
 
-    HYPOTHESES:
-        self.g.properties() must have been stored self.props during child class __init__
+    Variables are declared with declare() / state_variable() / input_variable() / parameter(); the data lives in a
+    DataStructure (see FunctionalComponent).
     """
 
     choregrapher = Choregrapher()
@@ -204,38 +204,9 @@ class Component:
             if changed_parameter in dir(self):
                 setattr(self, changed_parameter, value)
 
-    def link_self_to_mtg(self, ignore=[]):
-        # for input variables, initialize homogeneous values on each vertices.
-        # This behavior will be overwritten in case of module providing the input variable
-        for name in self.inputs:
-            if not (name in self.props.keys() and len(self.props[name]) == len(self.vertices)):
-                # if it is not provided by mtg file, Use by default value everywhere
-                self.props.setdefault(name, {})
-                self.props[name].update({key: getattr(self, name) for key in self.vertices})
-
-        # for segment scale state variables
-        for name in self.state_variables:
-            if name not in ignore:
-                self.props.setdefault(name, {})
-                # set default in mtg, state_variable prevail on inputs
-                self.props[name].update({key: getattr(self, name) for key in self.vertices})
-
-        # for plant scale state variables
-        for name in self.plant_scale_state:
-            self.props.setdefault(name, {})
-            # set default in mtg, state_variable prevail on inputs
-            self.props[name].update({1: getattr(self, name)})
-
-
     def pull_available_inputs(self):
-        props = self.props
-        for input, source_variables in self.pullable_inputs.items():
-            vertices = props[list(source_variables.keys())[0]].keys()
-            props[input].update({vid: sum([props[variable][vid]*unit_conversion
-                                           for variable, unit_conversion in source_variables.items()])
-                                 for vid in vertices})
-
-
+        """Refresh the inputs derived by the coupling; FunctionalComponent implements it on its DataStructure."""
+        pass
 
 
 @dataclass
@@ -250,15 +221,14 @@ class FunctionalComponent(Component):
     Base for all functional (transport / balance) model components.
 
     Every subclass must be initialized with a DataStructure instance that
-    provides the graph topology and initial field values.  The DataStructure
-    is the single source of truth for node/edge data; __post_init__ derives
-    self._graph_view and self.props from it so the solver decorator machinery
-    has the legacy dict-of-dicts format it expects.
+    provides the topology and initial field values.  The DataStructure is the
+    single source of truth: steps and graph-system solves read and write its
+    arrays live; self.props is a read-only compatibility view of it.
 
     Auto-registration
     -----------------
-    __post_init__ calls _auto_declare_on_ds() before snapshotting props.
-    Every field annotated with scale="node" or scale="edge" whose name is not
+    __post_init__ calls _auto_declare_on_ds().
+    Every field annotated with a scale ("node", "edge", a biological scale, or "cell" / "scalar" on grids) whose name is not
     yet registered on the DataStructure is initialized with the field default
     value (uniform array).  This means:
 
@@ -284,10 +254,10 @@ class FunctionalComponent(Component):
                 f"{type(self).__name__}() requires a DataStructure as its first argument. "
                 f"Pass an MPGDataStructure (or other DataStructure subclass) instance."
             )
-        if not isinstance(self.data_structure, DataStructure):
+        if not isinstance(self.data_structure, DataStructure) or not hasattr(self.data_structure, "register"):
             raise TypeError(
-                f"{type(self).__name__}() data_structure must be a DataStructure instance, "
-                f"got {type(self.data_structure).__name__}."
+                f"{type(self).__name__}() data_structure must be a DataStructure with a variable store "
+                f"(MPGDataStructure, ArrayDataStructure), got {type(self.data_structure).__name__}."
             )
         ds = self.data_structure
         self._auto_declare_on_ds(ds)
@@ -297,15 +267,10 @@ class FunctionalComponent(Component):
             self.choregrapher.add_simulation_time_step(1)
         # One iteration per simulation step unless the component declares its own sub time step
         sub_time_step = getattr(self, "sub_time_step", None) or self.choregrapher.simulation_time_step
-        if hasattr(ds, "register"):
-            # Live reading (design note §8): steps and solves read and write the DataStructure arrays;
-            # props is a read-only compatibility view.
-            self.props = DataStructurePropsView(ds)
-            self.choregrapher.add_time_and_data(self, sub_time_step, ds, compartment="graph")
-        else:
-            self.props = ds.to_props_dict()
-            self.props["focus_elements"] = [int(v) for v in self._graph_view.node_ids]
-            self.choregrapher.add_time_and_data(self, sub_time_step, self.props)
+        # Live reading (design note §8): steps and solves read and write the DataStructure arrays;
+        # props is a read-only compatibility view.
+        self.props = DataStructurePropsView(ds)
+        self.choregrapher.add_time_and_data(self, sub_time_step, ds, compartment="graph")
 
     @property
     def _graph_view(self):
@@ -328,11 +293,8 @@ class FunctionalComponent(Component):
     def pull_available_inputs(self):
         """Refresh the derived inputs registered on the DataStructure by the coupling, before the step."""
         ds = self.data_structure
-        if hasattr(ds, "refresh"):
-            for name in getattr(self, "_derived_inputs", []):
-                ds.refresh(name)
-            return
-        super().pull_available_inputs()
+        for name in getattr(self, "_derived_inputs", []):
+            ds.refresh(name)
 
     def previous(self, name: str) -> np.ndarray:
         """
@@ -460,42 +422,12 @@ class FunctionalComponent(Component):
             if f.metadata.get("variable_type") == "state_variable"
         }
 
-        if hasattr(ds, "register"):
-            for name in getattr(self, "_bio_scale_node_fields", {}):
-                if name in sv_names and ds.has(name):
-                    ds.write_node_to_mtg(name, ds.get(name))
-            for name, convention in getattr(self, "_bio_scale_edge_fields", {}).items():
-                if name in sv_names and ds.has(name):
-                    ds.write_edge_to_mtg(name, ds.get(name), convention=convention)
-            return
-
-        # ── Bio-scale node fields ─────────────────────────────────────────────
-        bio_node = getattr(self, "_bio_scale_node_fields", {})
-        if bio_node and hasattr(ds, "write_node_to_mtg") and hasattr(ds, "_idx_to_vid"):
-            for name in bio_node:
-                if name not in sv_names or name not in self.props:
-                    continue
-                prop_dict = self.props[name]
-                arr = np.array(
-                    [float(prop_dict.get(vid, 0.0)) for vid in ds._idx_to_vid],
-                    dtype=np.float64,
-                )
-                ds.write_node_to_mtg(name, arr)
-
-        # ── Bio-scale edge fields ─────────────────────────────────────────────
-        bio_edge = getattr(self, "_bio_scale_edge_fields", {})
-        if bio_edge and hasattr(ds, "write_edge_to_mtg"):
-            gv        = self._graph_view
-            edge_vids = [int(v) for v in gv.edge_ids]
-            for name, convention in bio_edge.items():
-                if name not in sv_names or name not in self.props:
-                    continue
-                prop_dict = self.props[name]
-                arr = np.array(
-                    [float(prop_dict.get(j, 0.0)) for j in edge_vids],
-                    dtype=np.float64,
-                )
-                ds.write_edge_to_mtg(name, arr, convention=convention)
+        for name in getattr(self, "_bio_scale_node_fields", {}):
+            if name in sv_names and ds.has(name):
+                ds.write_node_to_mtg(name, ds.get(name))
+        for name, convention in getattr(self, "_bio_scale_edge_fields", {}).items():
+            if name in sv_names and ds.has(name):
+                ds.write_edge_to_mtg(name, ds.get(name), convention=convention)
 
     def _refresh_from_bio_scale(self) -> None:
         """Re-map biological-scale MTG properties to solver node/edge arrays.
@@ -532,11 +464,6 @@ class FunctionalComponent(Component):
             if arr is None:
                 continue
             ds.set_node_property(name, arr)
-            if not hasattr(ds, "register"):
-                prop_dict = self.props.get(name, {})
-                for i, vid in enumerate(ds._idx_to_vid):
-                    if vid in prop_dict:
-                        prop_dict[vid] = float(arr[i])
 
         if not hasattr(ds, "_mtg_to_edge_array"):
             return
@@ -547,8 +474,3 @@ class FunctionalComponent(Component):
             if arr is None:
                 continue
             ds.set_edge_property(name, arr)
-            if not hasattr(ds, "register"):
-                prop_dict = self.props.get(name, {})
-                for j in range(len(arr)):
-                    if j in prop_dict:
-                        prop_dict[j] = float(arr[j])

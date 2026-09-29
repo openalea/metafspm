@@ -1,24 +1,19 @@
 from dataclasses import dataclass
 
+import numpy as np
 import pytest
 
 from openalea.metafspm.coupling.choregrapher import Choregrapher
-from openalea.metafspm.coupling.component import Component, declare
+from openalea.metafspm.coupling.component import FunctionalComponent, declare
+from openalea.metafspm.data_structure.data_api import ArrayDataStructure
 from openalea.metafspm.solve.decorator import rate
 
 
 @dataclass
-class ReinitProbe(Component):
+class ReinitProbe(FunctionalComponent):
     x: float = declare(default=0., unit="", unit_comment="", description="", min_value="", max_value="",
                        value_comment="", references="", DOI="", variable_type="state_variable", by="",
-                       state_variable_type="", edit_by="dev")
-
-    def __init__(self, props, time_step):
-        self.props = props
-        self.vertices = list(props["struct_mass"].keys())
-        self.pullable_inputs = {}
-        self.link_self_to_mtg()
-        self.choregrapher.add_time_and_data(instance=self, sub_time_step=time_step, data=self.props)
+                       state_variable_type="", edit_by="dev", scale="cell")
 
     @rate
     def _x(self, x):
@@ -32,14 +27,10 @@ def _fresh_choregrapher_run_state():
     Choregrapher().reset()
 
 
-def _probe_props():
-    return {"struct_mass": {1: 1.}, "label": {1: 1}, "type": {1: 1}}
-
-
 def test_reset_keeps_instance_and_registered_processes():
     c1 = Choregrapher()
     c1.add_simulation_time_step(3600)
-    ReinitProbe(_probe_props(), 3600)
+    ReinitProbe(data_structure=ArrayDataStructure(shape=(1,)))
     assert "ReinitProbe" in c1.scheduled_groups
 
     c1.reset()
@@ -48,16 +39,16 @@ def test_reset_keeps_instance_and_registered_processes():
     assert c2 is c1
     assert "ReinitProbe" in c2.rate
     assert c2.scheduled_groups == {} and c2.sub_time_step == {}
-    assert c2.data_structure == {"soil": None, "root": None}
+    assert c2.data_structure == {}
     assert not hasattr(c2, "simulation_time_step")
 
 
 def test_component_defined_before_reset_still_runs():
     Choregrapher().reset()
     Choregrapher().add_simulation_time_step(3600)
-    props = _probe_props()
-    probe = ReinitProbe(props, 3600)
+    grid = ArrayDataStructure(shape=(1,))
+    probe = ReinitProbe(data_structure=grid)
 
     probe()
 
-    assert props["x"] == {1: 1.}
+    np.testing.assert_array_equal(grid.get("x"), [1.])
