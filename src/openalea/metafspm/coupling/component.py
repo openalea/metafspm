@@ -497,6 +497,9 @@ class StructuralComponent(DataStructureComponent):
         are processed parents first, so a chain created by one segmentation splits like pairwise steps.
         """
         ds = self.data_structure
+        if getattr(ds, "_anatomy", False):
+            raise NotImplementedError("the repartition after structural steps is not available in anatomy mode yet: "
+                                      "its lineage needs the owner vertices, not the Compartment graph")
         weights = self._weights()
         active = self._active_now(weights)
         ids = ds.entity_ids("node").tolist()

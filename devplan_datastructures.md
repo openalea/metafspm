@@ -158,7 +158,7 @@ These are done: in-place writes, aliases, derived variables, scale operators (su
   - The plant's components share **one** DataStructure, as they shared the central MTG, and as the WD.4 coupling already does. Each graph system solves on that DataStructure's topology, and the other equations of the component are operations at specific scales (DS3 locations, DS18 mappings).
   - A multiscale graph (anatomy within segments, plus segment connectivity) is **one** topology built at the Compartment/Connection scales (DS8), not several topologies.
   - The MPG ↔ MPG Coupler (two DataStructures of one plant) is needed only when a plant really uses two DataStructures. It is deferred until a use case asks for it.
-- [ ] **DS8 Multiscale graph assembly: anatomies below, connectivity above (answers D4.2, Q6, Q9–Q11; priority raised).**
+- [x] **DS8 Multiscale graph assembly (step 2f; the repartition in anatomy mode waits for GRANAP as a StructuralComponent, A1): anatomies below, connectivity above (answers D4.2, Q6, Q9–Q11; priority raised).**
   - **The model (Q6).**
     - **Compartment / Connection** (below SubOrgan) hold each segment's anatomy graph. Within a cross-section, exchanges are Connection vertices whose `n_id_a` / `n_id_b` are Compartment vids (Q10).
     - **SubOrgan and coarser scales** hold the connectivity between segments.
@@ -379,7 +379,7 @@ These are done: in-place writes, aliases, derived variables, scale operators (su
 ## 7. Suggested order
 
 1. **Contract:** DS3 (Location, with scale locations for coarse fields) + DS17 (derived at read) + DS5 (output locations) + DS11 (validation) + DS16 (conventions). Design note: `docs/design/datastructure_contract.md` (N1–N5 agreed). Progress: **1a done** (`4d1353d`), **1b done** (`15f8976`), **1c done** (`cc3e588`), **1d done** (`bf008e3`), **1e done** (`bc37e79`), **1f done** (2026-10-02): step 1 complete.
-2. **Multiscale topology and boundaries:** DS19 (StructuralComponent contract) + DS20 (repartition, active mask) + DS21 (active subgraph) + DS8 (assembled graph: anatomies + wiring rules, real anatomy UC3) + DS2 (traversal) + DS6 (boundary sets, validated on UC5 below). Design note: `docs/design/structure_and_boundaries.md` (agreed, P1–P7). Progress: **2a done** (`4fbe3dc`), **2b done** (`e659bd0`), **2c done** (`6430b08`), **2d done** (`9e0b00b`), **2e done** (2026-10-02).
+2. **Multiscale topology and boundaries:** DS19 (StructuralComponent contract) + DS20 (repartition, active mask) + DS21 (active subgraph) + DS8 (assembled graph: anatomies + wiring rules, real anatomy UC3) + DS2 (traversal) + DS6 (boundary sets, validated on UC5 below). Design note: `docs/design/structure_and_boundaries.md` (agreed, P1–P7). Progress: **2a done** (`4fbe3dc`), **2b done** (`e659bd0`), **2c done** (`6430b08`), **2d done** (`9e0b00b`), **2e done** (`3ffb485`), **2f done** (2026-10-02): step 2 complete, except the repartition in anatomy mode (open question A1).
 3. **Cross-scale coupling and grids:** DS18 (mappings, filtered broadcast, defaults) + DS1 (grid topology).
 4. **Time and data:** DS10 (sub-stepping, adaptive loop, `previous(at="step")`) + DS4 (sync) + DS9 (solve-time views) + DS12 (typed variables).
 5. **Runtime:** DS13 (per-instance scheduling) + DS14 (performance) + DS15 (persistence). DS7's MPG ↔ MPG Coupler only if a use case requires it.
@@ -581,3 +581,16 @@ Answer inline, as in `devplan.md`.
 
   Recommendation: **A**. B remains available, since an explicit mapping always overrides the default.
   → answer: A
+
+### Step 2f follow-ups (2026-10-02)
+
+- **A1: the repartition in anatomy mode waits** until GRANAP becomes a StructuralComponent. GRANAP's anticipated use, in your words:
+  - "a segment belongs to a diameter X differentiation class";
+  - "we generate a dynamic library of anatomies, with one anatomy being able to populate several segments of the same class";
+  - "only their between-SubOrgan links being added to connect adjacent anatomies".
+
+  This will shape how anatomies are attached to segments (see Q-A4 below), and the repartition depends on it.
+- **A3: agreed.** Junctions are marked with the integer `is_junction`, consistent with integer types and labels (see the configs), so that array operations stay possible.
+- **A2:** re-explained in the devlog, awaiting an answer.
+- **Q-A4 (for GRANAP, no change now).** When one library anatomy "populates" several segments of a class, does each segment get its **own Compartment vertices**, a copy of the template, which the anatomy mode supports today? Or should the segments **share** the template's description, and be instantiated as per-segment Compartments only in the DataStructure's graph?
+  → answer:

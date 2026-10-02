@@ -1145,3 +1145,42 @@ Per-file counts:
   2. A parameter read from the MTG gets its values for new entities only at the parameter refresh before the next solve, so a mask on it lags until then. This is documented in the conventions.
   3. The suite time grew from about 5 s to about 11 s. It is machine load on the multiprocessing scene tests, not 2e: those tests take 6.7 s before and 6.5 s after the 2e source changes, measured with the changes stashed.
 - **Suite:** 625 passed, same 10 warnings. CHANGELOG, conventions, migration guide, plan (DS6 ticked) and note updated. Not committed yet.
+
+---
+
+## 2026-10-02 (later): 2e committed (`3ffb485`); step 2f implemented (anatomy mode), so step 2 is complete
+
+- **Rule saved:** when a step's conclusion raises no decision or question, commit and go on unasked. 2f raises three questions (below), so I stopped after it.
+- **MPG:**
+  - `wire_junctions(from_scale, rules, children=None)`: label rules with `match` all / nearest / equal on an ordering property, or a callable rule; it marks junctions `is_junction = 1`;
+  - `populate_graph_custom_connections` delegates to it, with the existing MPG tests unchanged;
+  - new helpers `linked_parent` (the `populate_graph` link logic), `compartments_by_owner`, `_valid_vids_at`, `junction_vids`, `remove_connections`.
+- **`MPGDataStructure(..., nodes="Compartment", wiring=)`:**
+  - nodes are the Compartments (MTG parent = owning SubOrgan), and edges are every Connection, keyed by Connection vid (`_connection_vids`, ascending like `edges()`);
+  - `_owner_at` routes owners through the parent;
+  - coarse locations go up to `from_scale` included, so `"SubOrgan"` is one;
+  - `update_topology` calls `_rewire_junctions` instead of `repopulate_graph`. Per-SubOrgan signatures (linked parent, Compartments with label and ordering values) select the vertices to rewire: new, re-linked, or own/parent anatomy changed. Stale junctions are removed, the others kept; the rebuilt vertices are recorded in `ds.rewired`;
+  - `on_grow="inherit"` takes the same-label upstream Compartment.
+- **Declarations:** `scale=Compartment` is MTG-backed in anatomy mode. This was found by the UC3-like solve: labels were silently never read before the fix.
+- **Derived variables:** `target=mask`, with the mask version in the derivation stamps.
+- **StructuralComponent:** `_repartition` raises `NotImplementedError` in anatomy mode.
+- **Test helper `test/structure_tests/anatomy.py`:** four Compartments per segment (epidermis, cortex, two xylem vessels with `vessel_index`), three anatomy Connections, and rules (xylem equal on `vessel_index`, cortex all).
+- **New `test/structure_tests/test_anatomy_mode.py`**, 8 tests:
+  - node and edge identities;
+  - junction pairs equal to `populate_graph_custom_connections`;
+  - owners, and a sum to SubOrgan;
+  - a target-filtered broadcast to symplastic Compartments;
+  - growth keeping every old Connection vid and value, wiring only the new segment, with same-label inheritance;
+  - differentiation rewiring only the touched links;
+  - traversal, missing `from_scale` and repartition raising;
+  - a steady hydraulic solve on the assembled (cyclic) graph with a soil Robin set and a collar Dirichlet set, matching the direct linear solve.
+- **Suite:** 633 passed, same 10 warnings. CHANGELOG, conventions, note (deviations recorded) and plan (DS8 ticked) updated. Not committed yet.
+- **Questions:**
+  - A1, repartition in anatomy mode: the lineage would follow the owner SubOrgans (a new segment's Compartments split from the same-label Compartments of its parent segment). Implement it now, or when GRANAP becomes a StructuralComponent?
+  - A2, `derive(target=)`: entities outside the target get the default. OK, or should a targeted mapping write into an existing variable instead (keeping the others' values)?
+  - A3, `is_junction = 1` instead of `edge_kind = "junction"`: OK?
+- **Answers on 2f:**
+  - **A1:** wait for GRANAP as a StructuralComponent. GRANAP will assign anatomies from a dynamic library per diameter differentiation class: one anatomy can populate several segments of a class, with only the inter-SubOrgan links added. Recorded in the plan, with question Q-A4 (per-segment copies or a shared template).
+  - **A3:** agreed (integer markers, consistent with integer types and labels).
+  - **A2:** re-explained (options: a default outside the target, or a targeted write into an existing variable).
+  - **A2: option 1** (a separate derived variable with a default outside the target; other cell types in their own variables, combined with `np.where` by the model). No code change.

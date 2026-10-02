@@ -18,6 +18,22 @@ The flat modules used before the 2026 restructure have been removed. No compatib
 | `openalea.metafspm.component.Model`, `declare` | `openalea.metafspm.coupling.component.Component` / `FunctionalComponent`, `declare` |
 | `openalea.metafspm.specializer` | `openalea.metafspm.solve.specializer` |
 
+### Anatomy mode: multiscale graphs assembled in the MPG (step 2f)
+
+- **`MPGDataStructure(g, from_scale=SubOrgan, nodes="Compartment", wiring=[...])`**:
+  - nodes are the Compartments of the anatomies held below the SubOrgans, keyed by their own vid;
+  - edges are every Connection (anatomy edges and junctions), keyed by their own vid;
+  - `"SubOrgan"` is a coarse location (owner = the Compartment's MTG parent), so step 1's mappings and `owner()` work across scales;
+  - `scale=Compartment` declarations read the Compartments' MTG properties.
+- **`MPG.wire_junctions(from_scale, rules, children=None)`** creates junctions between the Compartments of linked vertices:
+  - `match="all" | "nearest" | "equal"` on an ordering property, or a callable rule;
+  - junctions get `is_junction = 1`.
+
+  `populate_graph_custom_connections` delegates to it, with unchanged results. New helpers: `linked_parent`, `compartments_by_owner`, `junction_vids`, `remove_connections`.
+- **Growth and differentiation** (`update_topology()` in anatomy mode): only the junctions of vertices that are new, re-linked, or whose anatomy (or their parent's) changed are rebuilt. Every other Connection keeps its vid and values. `on_grow="inherit"` takes the same-label Compartment upstream.
+- **Derived variables with a target.** `derive(..., target=mask)` gives values on the mask's entities only, the others getting the default (e.g. a SubOrgan concentration broadcast to symplastic Compartments).
+- **Not in anatomy mode yet:** traversal (the assembled graph has cycles) and the repartition after structural steps (`NotImplementedError`).
+
 ### Boundary sets (step 2e)
 
 - **`boundary_set(select=, kind="robin" | "dirichlet" | "neumann", value=, weight=, field=)`**, declared in a graph-system class, is assembled by the framework:
