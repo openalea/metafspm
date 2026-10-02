@@ -1210,3 +1210,26 @@ Per-file counts:
   - R5: the order, with multigrid later.
 - No code changes; note and plan pointer not committed yet.
 - **R1–R5 agreed as recommended**; the note is committed and 3a starts.
+
+---
+
+## 2026-10-02 (later): step 3 note committed (`650eb14`); step 3a implemented (default link mappings, kinds)
+
+- **Composite, `_couple_on_data_structures`:**
+  - `_check_link_kinds`, for every link: the receiver's declared kind against the provider's;
+  - `_default_link_mapping`, for links between two locations without an aggregation: `link_direction` (ranks: scalar < coarse scales < nodes; edges have no default) and `default_mapping` on the sources' recorded kind; mixed kinds raise; errors name the link and both locations.
+- **Found while testing:** a single-source factor-1 link was always an alias, so across scales the receiver silently aliased a node-sized array. Such links now become mapped derived variables.
+- **`declaration.py`:** `KIND_FAMILIES`, `kinds_agree`, `link_direction`.
+- **`input_variable(state_variable_type=)`** is optional.
+- **`MPGDataStructure._map`:** coarse → coarser aggregation (via `complex_at_scale` of the finer entities) and coarser → coarse broadcast.
+- **`couplability_problems(..., data_structure=)`** also reports kind conflicts and missing default mappings for links whose providers are already registered on the DataStructure.
+- **New `test/wrappers_tests/test_cross_scale_links.py`**, 8 tests on the seedling:
+  - extensive sum up;
+  - intensive mean up;
+  - massic weight required (and given);
+  - broadcast down, with extensive down raising;
+  - untyped provider raising, or given an aggregation;
+  - kind conflict;
+  - Organ ↔ Axis;
+  - couplability reports.
+- **Suite:** 641 passed, same 10 warnings. No open question, so 3a is committed and 3b starts (your rule).

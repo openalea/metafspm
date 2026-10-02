@@ -30,11 +30,29 @@ def couplability_problems(component_cls, translator, name: str = None, data_stru
                 if source not in declared:
                     problems.append(f"{link.receiver}.{link.variable} reads {name}.{source}, which {name} does not declare")
     if data_structure is not None:
-        from openalea.metafspm.coupling.declaration import DeclarationError, declared_specs
+        from openalea.metafspm.coupling.composite_wrapper import CompositeModel
+        from openalea.metafspm.coupling.declaration import DeclarationError, declared_specs, kinds_agree
         try:
-            declared_specs(component_cls, data_structure)
+            specs = declared_specs(component_cls, data_structure)
         except DeclarationError as error:
             problems.append(str(error))
+            specs = {}
+        # Links into this component whose providers are already on the DataStructure: kinds and scale mappings
+        ds = data_structure
+        for link in translator.links:
+            spec = specs.get(link.variable)
+            if link.receiver != name or spec is None or not all(ds.has(source) for source in link.sources):
+                continue
+            for source in link.sources:
+                provided = ds._variable_meta().get(ds._resolve(source), {}).get("kind")
+                if not kinds_agree(spec.kind, provided):
+                    problems.append(f"{name}.{link.variable} ({spec.kind}) <- {link.provider}.{source} ({provided}): "
+                                    "the kinds do not agree")
+            if link.aggregation is None:
+                try:
+                    CompositeModel._default_link_mapping(ds, link, spec.location)
+                except DeclarationError as error:
+                    problems.append(str(error))
         if hasattr(data_structure, "validate"):
             try:
                 data_structure.validate()

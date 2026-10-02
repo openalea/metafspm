@@ -1386,6 +1386,28 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
                 return total / np.bincount(owner, minlength=entities.size)
         elif from_location in coarse and to_location == "node" and aggregation == "broadcast":
             return values[self._membership(from_location)[1]]
+        elif from_location in coarse and to_location in coarse:
+            # Between two coarse scales, through the owner of each finer entity at the coarser scale
+            from_scale, to_scale = (getattr(self._mtg.scales, name) for name in (from_location, to_location))
+            if to_scale < from_scale:
+                fine, coarser, fine_values = from_location, to_location, values
+            else:
+                fine, coarser, fine_values = to_location, from_location, None
+            coarse_ids = self.entity_ids(coarser)
+            owner = self.index_of([int(self._mtg.complex_at_scale(int(v), getattr(self._mtg.scales, coarser)))
+                                   for v in self.entity_ids(fine)], coarser)
+            if fine_values is None:
+                if aggregation == "broadcast":
+                    return values[owner]
+            else:
+                if aggregation == "weighted_mean":
+                    return (np.bincount(owner, weights=values * weights, minlength=coarse_ids.size)
+                            / np.bincount(owner, weights=weights, minlength=coarse_ids.size))
+                total = np.bincount(owner, weights=values, minlength=coarse_ids.size)
+                if aggregation == "sum":
+                    return total
+                if aggregation == "mean":
+                    return total / np.bincount(owner, minlength=coarse_ids.size)
         elif to_location == "scalar" and from_location != "scalar":
             return np.asarray(self._reduce(values, aggregation, weights))
         elif from_location == "scalar" and aggregation == "broadcast":

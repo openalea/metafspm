@@ -1,6 +1,6 @@
 # Design note: cross-scale links and grid topology (step 3)
 
-Status: **agreed** (2026-10-02, R1–R5 as recommended). Implementation in progress (3a). It covers step 3 of `devplan_datastructures.md` §7:
+Status: **agreed** (2026-10-02, R1–R5 as recommended). 3a done. It covers step 3 of `devplan_datastructures.md` §7:
 - DS18: cross-scale links in the translator (mappings, defaults, filtered broadcast);
 - DS1: graph systems on any DataStructure, with grid topology.
 
