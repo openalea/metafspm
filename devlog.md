@@ -1247,3 +1247,25 @@ Per-file counts:
   - Python translator `target`, and an unknown mask raising.
 - **Plan:** DS18 ticked (3a–3b).
 - **Suite:** 644 passed, same 10 warnings. No open question: 3b committed, 3c starts.
+
+---
+
+## 2026-10-02 (later): 3b committed (`1f6c926`); step 3c implemented (grid topology)
+
+- **`ArrayDataStructure`:**
+  - `_build_faces` (axis by axis, internal then wrap faces for `periodic` axes with more than 2 cells); `face_axis`, `n_nodes`, `n_edges`, `edges`, `incidence_matrix`, `to_graph_view` / `topology` (hand ports rejected), `layer_mask`, `periodic`;
+  - an `"edge"` store, with `face_area` and `face_distance` registered at construction;
+  - `entity_ids("edge")`;
+  - `locate(periodic=None)` defaults to the grid's axes. The Coupler passes its own, so it is unchanged.
+- **`MPGDataStructure.topology()`** is an alias of `to_graph_view()`.
+- **Declarations:** grids accept `location="edge"`.
+- **Bug found and fixed:** `_is_graph` used `hasattr(ds, "to_graph_view")`, true for grids now, so cell declarations were rejected. It now tests for an MTG.
+- **Test-harness robustness:** with that bug, `test_ds_scene_contract.py` and `test_doubles.py` **hung** instead of failing. The soil, built in a thread, failed, and the plant waited on its queue forever (the first full run timed out after 600 s and was stopped). `RecordingQueue.get` in `test/wrappers_tests/conftest.py` now waits at most 20 s and raises `TimeoutError("did a model fail in another thread?")`. Checked by reintroducing the bug: the tests fail in 20 s.
+- **New `test/data_api_tests/test_grid_topology.py`**, 8 tests:
+  - the face graph reproduces `−laplacian()` exactly on 1-D, 2-D and 3-D grids with anisotropic dx;
+  - orientation;
+  - periodic wrap counts and orientation, with no wrap for 2 cells;
+  - face geometry and layer masks;
+  - `locate` defaults;
+  - edge declarations on grids.
+- **Suite:** 652 passed, same 10 warnings. No open question: 3c committed, 3d starts.

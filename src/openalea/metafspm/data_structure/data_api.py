@@ -1843,6 +1843,10 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
             edge_data          = edge_data,
         )
 
+    def topology(self, boundary_ports: tuple = ()) -> "GraphView":
+        """The graph view: one name for every DataStructure (design note cross_scale_and_grids §3)."""
+        return self.to_graph_view(boundary_ports=boundary_ports)
+
     def to_props_dict(self) -> dict:
         """
         Convert arrays to {name: {id: value}} for the decorator machinery.
@@ -1921,20 +1925,31 @@ class ArrayDataStructure(VariableStoreMixin, FieldDataStructure):
     flat cell indices follow the C-order ravel of `shape` (the last axis varies fastest).
 
     Second-order finite-difference Laplacian with Neumann BC.
+
+    Graph topology (design note cross_scale_and_grids §3, DS1, D1): the cells are the nodes and the faces between
+    adjacent cells the edges, axis by axis, oriented towards increasing coordinates (B[lower, e] = +1). Periodic
+    axes add the wrap faces (last cell -> first cell). The edge variables face_area and face_distance give the
+    geometric factor of fluxes, K * face_area / face_distance * (B^T c).
     """
 
     _default_location = "cell"
 
     def __init__(self, shape: tuple,
                  dx: Union[float, np.ndarray] = 1.0,
-                 origin: Optional[np.ndarray] = None):
+                 origin: Optional[np.ndarray] = None,
+                 periodic=False):
         self._shape  = tuple(shape)
         n_dims       = len(shape)
         self._dx     = np.broadcast_to(dx, (n_dims,)).copy().astype(float)
         self._origin = (np.zeros(n_dims) if origin is None
                         else np.broadcast_to(np.asarray(origin, dtype=float), (n_dims,)).copy())
+        self._periodic = np.broadcast_to(np.asarray(periodic, dtype=bool), (n_dims,)).copy()
         self._fields : dict[str, np.ndarray] = {}
         self._L      = None
+        self._build_faces()
+        axis = self._face_axis
+        self.register("face_area", np.prod(self._dx) / self._dx[axis], location="edge")
+        self.register("face_distance", self._dx[axis], location="edge")
 
     @property
     def shape(self) -> tuple:
@@ -1945,10 +1960,88 @@ class ArrayDataStructure(VariableStoreMixin, FieldDataStructure):
         return ("x", "y", "z")[:len(self._shape)] if len(self._shape) <= 3 else tuple(f"a{d}" for d in range(len(self._shape)))
 
     def _var_stores(self) -> dict:
-        return {"cell": self._fields, "scalar": self.__dict__.setdefault("_scalars", {})}
+        return {"cell": self._fields, "edge": self.__dict__.setdefault("_edge_fields", {}),
+                "scalar": self.__dict__.setdefault("_scalars", {})}
 
     def _location_shape(self, location: str) -> tuple:
+        if location == "edge":
+            return (self._face_tail.size,)
         return () if location == "scalar" else self._shape
+
+    # ── Graph topology: cells and faces (DS1) ─────────────────────────────────────────
+
+    def _build_faces(self) -> None:
+        cells = np.arange(int(np.prod(self._shape)), dtype=np.int64).reshape(self._shape)
+        tails, heads, axes = [], [], []
+        for d, n in enumerate(self._shape):
+            if n > 1:
+                tails.append(np.take(cells, np.arange(n - 1), axis=d).ravel())
+                heads.append(np.take(cells, np.arange(1, n), axis=d).ravel())
+                axes.append(np.full(tails[-1].size, d, dtype=np.int64))
+            if self._periodic[d] and n > 2:     # with 2 cells the wrap face would duplicate the internal one
+                tails.append(np.take(cells, [n - 1], axis=d).ravel())
+                heads.append(np.take(cells, [0], axis=d).ravel())
+                axes.append(np.full(tails[-1].size, d, dtype=np.int64))
+        empty = np.empty(0, dtype=np.int64)
+        self._face_tail = np.concatenate(tails) if tails else empty
+        self._face_head = np.concatenate(heads) if heads else empty
+        self._face_axis = np.concatenate(axes) if axes else empty
+
+    @property
+    def periodic(self) -> tuple:
+        return tuple(bool(p) for p in self._periodic)
+
+    def face_axis(self) -> np.ndarray:
+        """Axis (0 for x, 1 for y, 2 for z) of each face, i.e. each edge."""
+        return self._face_axis
+
+    def n_nodes(self) -> int:
+        return int(np.prod(self._shape))
+
+    def n_edges(self) -> int:
+        return int(self._face_tail.size)
+
+    def edges(self) -> list:
+        """(lower cell, upper cell) of each face, as flat cell indices."""
+        return list(zip(self._face_tail.tolist(), self._face_head.tolist()))
+
+    def incidence_matrix(self):
+        """Sparse incidence (n_cells, n_faces): +1 at the lower cell, -1 at the upper one."""
+        n, m = self.n_nodes(), self.n_edges()
+        e = np.arange(m)
+        return coo_matrix((np.r_[np.ones(m), -np.ones(m)], (np.r_[self._face_tail, self._face_head], np.r_[e, e])),
+                          shape=(n, m)).tocsc()
+
+    def to_graph_view(self, boundary_ports: tuple = (), node_properties: tuple = (),
+                      edge_properties: tuple = ()) -> "GraphView":
+        """GraphView of the cells (nodes, flat C order) and faces (edges)."""
+        if boundary_ports:
+            raise NotImplementedError("boundary ports on grids: use boundary sets on the boundary cells")
+        n = self.n_nodes()
+        return GraphView(node_ids=np.arange(n, dtype=np.int64), edge_ids=np.arange(self.n_edges(), dtype=np.int64),
+                         tail=self._face_tail, head=self._face_head, incidence=self.incidence_matrix(),
+                         boundary_incidence=csc_matrix((n, 0), dtype=np.float64), boundary_names=())
+
+    def topology(self, boundary_ports: tuple = ()) -> "GraphView":
+        """The graph view: one name for every DataStructure (design note cross_scale_and_grids §3)."""
+        return self.to_graph_view(boundary_ports=boundary_ports)
+
+    def layer_mask(self, **layers) -> np.ndarray:
+        """
+        Boolean cell mask of given layers, e.g. layer_mask(z=-1) for the bottom layer or layer_mask(x=[0, -1]) for
+        both x ends; several axes are ANDed.
+        """
+        mask = np.ones(self._shape, dtype=bool)
+        for axis_name, indices in layers.items():
+            if axis_name not in self.axes:
+                raise ValueError(f"unknown axis '{axis_name}' (axes: {self.axes})")
+            d = self.axes.index(axis_name)
+            selected = np.zeros(self._shape[d], dtype=bool)
+            selected[np.atleast_1d(indices)] = True
+            shape = [1] * len(self._shape)
+            shape[d] = self._shape[d]
+            mask &= selected.reshape(shape)
+        return mask
 
     def validate(self, strict: bool = False) -> None:
         """Variable store consistency (VariableStoreMixin.validate_variables)."""
@@ -1982,7 +2075,9 @@ class ArrayDataStructure(VariableStoreMixin, FieldDataStructure):
         return np.stack([m.ravel() for m in mesh], axis=1)
 
     def entity_ids(self, location: str) -> np.ndarray:
-        """Flat C-order cell indices."""
+        """Flat C-order cell indices, or face indices for "edge"."""
+        if location == "edge":
+            return np.arange(self.n_edges(), dtype=np.int64)
         if location != "cell":
             raise ValueError(f"'{location}' has no entity ids")
         return np.arange(self.n_dof, dtype=np.int64)
@@ -1990,16 +2085,18 @@ class ArrayDataStructure(VariableStoreMixin, FieldDataStructure):
     def cell_volume(self) -> float:
         return float(np.prod(self._dx))
 
-    def locate(self, points, periodic=False, clip: bool = True) -> np.ndarray:
+    def locate(self, points, periodic=None, clip: bool = True) -> np.ndarray:
         """
         Flat indices of the cells containing *points* (shape (n_points, n_dims), grid frame).
 
-        periodic: bool or one bool per axis, wraps the point into the grid along that axis.
+        periodic: bool or one bool per axis, wraps the point into the grid along that axis (default: the grid's
+                  periodic axes).
         clip:     clamp the other axes into the grid (as the reference soil model does); if False,
                   points outside the grid raise ValueError.
         """
         points = np.atleast_2d(np.asarray(points, dtype=float))
         n_dims = len(self._shape)
+        periodic = self._periodic if periodic is None else periodic
         periodic = np.broadcast_to(np.asarray(periodic, dtype=bool), (n_dims,))
         idx = np.floor((points - self._origin) / self._dx).astype(np.int64)
         for d in range(n_dims):

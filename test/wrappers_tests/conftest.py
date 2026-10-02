@@ -58,7 +58,12 @@ def meteo():
 
 
 class RecordingQueue(queue.Queue):
-    """Queue keeping a copy of every message put, to assert on the wire protocol."""
+    """
+    Queue keeping a copy of every message put, to assert on the wire protocol. A blocking get waits at most
+    GET_TIMEOUT seconds, so that a model failing in another thread fails the test instead of hanging it.
+    """
+
+    GET_TIMEOUT = 20.
 
     def __init__(self):
         super().__init__()
@@ -67,6 +72,15 @@ class RecordingQueue(queue.Queue):
     def put(self, item, *args, **kwargs):
         self.recorded.append(item)
         super().put(item, *args, **kwargs)
+
+    def get(self, block=True, timeout=None):
+        try:
+            return super().get(block, self.GET_TIMEOUT if block and timeout is None else timeout)
+        except queue.Empty:
+            if block and timeout is None:
+                raise TimeoutError(f"no message within {self.GET_TIMEOUT} s: did a model fail in another thread?") \
+                    from None
+            raise
 
 
 class InProcessScene:
