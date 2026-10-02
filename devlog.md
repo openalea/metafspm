@@ -1001,3 +1001,27 @@ Per-file counts:
   - **P2 is answered "no".** There is no cross-component interleaving, neither now nor deferred. The potential / allocation / actual rows order processes within one component, and components are called whole, in the composite's order. The note §1 and the plan's DS19 are corrected.
   - **P4 is re-explained** in the note: disconnected pieces of an active subgraph; why a steady balance needs an anchor (Dirichlet or positive-weight Robin) and a transient one does not; why the framework needs a `transient=` flag; its default by method; the risks of a wrong value; the scope (active subgraphs only). It is awaiting your answer.
   - **P4 is agreed** ("most of the time models won't have graph discontinuity", but the check is accepted). The note's status is now agreed; next is 2a.
+
+---
+
+## 2026-10-02 (later): step 2 note committed (`7796833`); step 2a implemented (traversal, index_of)
+
+- **`MPGDataStructure`:**
+  - `parents()`, `children()` (CSR), `roots()`, `tips()`, `order("pre" | "post")` (iterative DFS) and `owner(location)`;
+  - all derived from the Connections, cached by `(topology_version, n_nodes, n_edges)`;
+  - several parents per node, or a cycle, raise.
+- **`VariableStoreMixin.index_of(ids, location)`:** vectorised (sorted entity ids plus `searchsorted`), cached per location and topology, raising `KeyError` on unknown ids. Traversal stubs raise `NotImplementedError` on grids.
+- **On the seedling:** 14 nodes, 13 edges, one root, 4 tips. The multiscale branch (`root_segment4` under `root_segment2`) has its within-scale parent.
+- **Tests:** every `_idx_to_vid` / `_vid_to_idx` use outside `test_legacy_mpg.py` is replaced by `entity_ids("node")` / `index_of`. The root and tip helpers of UC1, UC3/UC4 and the coupler tests use `roots()` / `tips()`.
+- **New `test/data_api_tests/test_traversal.py`**, 10 tests:
+  - parents against the edges;
+  - the multiscale branch;
+  - CSR, tips and parents agreeing;
+  - pre/post orders respecting the tree;
+  - the order kind checked;
+  - `index_of` on node, edge and Organ, with unknown ids raising;
+  - `owner`;
+  - traversal after growth;
+  - grids.
+- **Docs:** conventions page (traversal and `index_of`), CHANGELOG, plan (DS2 ticked) and note status updated.
+- **Suite:** 595 passed, same 10 warnings. Not committed yet.

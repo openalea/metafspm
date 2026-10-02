@@ -216,7 +216,7 @@ class OrganProbe(FunctionalComponent):
 
 
 def _organ_of(g, ds):
-    return {v: g.complex_at_scale(v, g.scales.Organ) for v in ds._idx_to_vid}
+    return {v: g.complex_at_scale(v, g.scales.Organ) for v in ds.entity_ids("node")}
 
 
 def test_variables_are_registered_at_their_location_with_their_mtg_values(seedling):
@@ -224,14 +224,14 @@ def test_variables_are_registered_at_their_location_with_their_mtg_values(seedli
     organs = sorted(set(_organ_of(g, ds).values()))
     g.properties()["organ_pool"] = {o: 10. * o for o in organs}
     g.properties()["organ_temperature"] = {o: float(o) for o in organs}
-    g.properties()["organ_length"] = {v: 0.5 for v in ds._idx_to_vid}   # at SubOrgan, summed per Organ
+    g.properties()["organ_length"] = {v: 0.5 for v in ds.entity_ids("node")}   # at SubOrgan, summed per Organ
 
     OrganProbe(data_structure=ds)
 
     assert ds.location("organ_pool") == "Organ"
     assert dict(zip(ds.entity_ids("Organ"), ds.get("organ_pool"))) == {o: 10. * o for o in organs}
     owner = _organ_of(g, ds)
-    assert dict(zip(ds._idx_to_vid, ds.get("organ_temperature"))) == {v: float(owner[v]) for v in ds._idx_to_vid}
+    assert dict(zip(ds.entity_ids("node"), ds.get("organ_temperature"))) == {v: float(owner[v]) for v in ds.entity_ids("node")}
     counts = {o: sum(1 for v in owner if owner[v] == o) for o in organs}
     assert dict(zip(ds.entity_ids("Organ"), ds.get("organ_length"))) == {o: 0.5 * counts[o] for o in organs}
     assert ds.location("total") == "scalar" and float(ds.get("total")) == 3.
@@ -281,7 +281,7 @@ def test_graph_equations_reject_coarse_located_variables_with_a_hint(seedling):
     _, _, ds = seedling
     probe = OrganProbe(data_structure=ds)
     with pytest.raises(ValueError, match="location='node' and mapping='broadcast'"):
-        _snapshot(probe, {"organ_pool"}, ds._idx_to_vid, [], [], [], _declared_locations(probe))
-    node_snap, _ = _snapshot(probe, {"organ_temperature", "total"}, ds._idx_to_vid, [], [], [],
+        _snapshot(probe, {"organ_pool"}, ds.entity_ids("node"), [], [], [], _declared_locations(probe))
+    node_snap, _ = _snapshot(probe, {"organ_temperature", "total"}, ds.entity_ids("node"), [], [], [],
                              _declared_locations(probe))
     assert node_snap["total"].shape == (ds.n_nodes(),)   # scalars are broadcast, as before

@@ -808,8 +808,7 @@ def test_uc1_explicit_node_balance_matches_implicit():
 
 def _find_root_local_idx(ds: MPGDataStructure) -> int:
     """Local index of the graph root: the node that has no incoming edge."""
-    child_vids = {int(b) for (a, b) in ds.edges()}
-    return next(i for i, vid in enumerate(ds._idx_to_vid) if vid not in child_vids)
+    return int(ds.roots()[0])
 
 
 def _make_ds_with_root_flag() -> tuple:

@@ -373,7 +373,7 @@ def _make_ds() -> MPGDataStructure:
 def _find_root_local_idx(ds: MPGDataStructure) -> int:
     """Local index of the graph root: the node that has no incoming edge."""
     child_vids = {int(b) for (a, b) in ds.edges()}
-    for i, vid in enumerate(ds._idx_to_vid):
+    for i, vid in enumerate(ds.entity_ids("node")):
         if vid not in child_vids:
             return i
     return 0

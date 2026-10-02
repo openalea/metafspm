@@ -6,7 +6,13 @@ These are the conventions that every component, translator and DataStructure fol
 
 - **Nodes and edges are the entities of the graph built by the MPG traversal** (`MPG.populate_graph(from_scale)`): one node per vertex of `from_scale` (e.g. SubOrgan), one edge per parent–child link. Model declarations anchored on biological scales are resolved against that graph, never the reverse.
 - **Incidence sign.** `B[parent, e] = +1` and `B[child, e] = -1`, so `(Bᵀ c)_e = c_parent − c_child`.
-- **Local order.** Arrays follow the Compartment post-order produced by population. It is **not** sorted by vertex id. Use `ds.entity_ids(location)` to know which entity a position holds, never a position computed by hand.
+- **Local order.** Arrays follow the Compartment post-order produced by population. It is **not** sorted by vertex id. Use `ds.entity_ids(location)` to know which entity a position holds, and `ds.index_of(ids, location)` for the reverse. Never compute a position by hand.
+- **Traversal, in local indices** (derived from the Connections, cached per topology):
+  - `ds.parents()`: −1 at a root;
+  - `ds.children()`: CSR `(indptr, indices)`;
+  - `ds.roots()`, `ds.tips()`;
+  - `ds.order("pre")`: parents first; `ds.order("post")`: children first;
+  - `ds.owner("Organ")`: each node's entity at a coarse location.
 - **Edge identity.** Edge `e` is identified by its child vertex (`entity_ids("edge")`).
 
 ## Grids

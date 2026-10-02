@@ -18,6 +18,17 @@ The flat modules used before the 2026 restructure have been removed. No compatib
 | `openalea.metafspm.component.Model`, `declare` | `openalea.metafspm.coupling.component.Component` / `FunctionalComponent`, `declare` |
 | `openalea.metafspm.specializer` | `openalea.metafspm.solve.specializer` |
 
+### Traversal and entity identity on the DataStructure (step 2a)
+
+- `MPGDataStructure` gains, in local indices derived from the Connections and cached per topology version:
+  - `parents()`, `children()` (CSR), `roots()`, `tips()`;
+  - `order("pre" | "post")`;
+  - `owner(location)`.
+
+  A graph with several parents per node, or with a cycle, raises.
+- `index_of(ids, location="node")` (every DataStructure) inverts `entity_ids`, and unknown ids raise `KeyError`. Grids have `index_of` but no traversal (`NotImplementedError`).
+- Tests no longer use the private `_idx_to_vid` / `_vid_to_idx`, except the tests of the legacy DataStructure.
+
 ### Variable declarations: `scale` / `location` / `mapping` (design note `datastructure_contract.md`, step 1a)
 
 - `declare` and its wrappers (`state_variable`, `input_variable`, `parameter`) take three new keys:

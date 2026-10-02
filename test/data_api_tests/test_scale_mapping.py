@@ -44,7 +44,7 @@ def seedling():
     g.populate_graph(g.scales.SubOrgan)
     g.convert_properties_to_arraydict()
     ds = MPGDataStructure(g, from_scale=g.scales.SubOrgan)
-    owner = {v: g.complex_at_scale(v, g.scales.Organ) for v in ds._idx_to_vid}
+    owner = {v: g.complex_at_scale(v, g.scales.Organ) for v in ds.entity_ids("node")}
     return g, ds, owner
 
 
@@ -90,7 +90,7 @@ def test_a_rate_only_component_reaches_the_mtg(seedling):
 
     model()
 
-    assert _prop(g, "level") == {v: 2. for v in ds._idx_to_vid}
+    assert _prop(g, "level") == {v: 2. for v in ds.entity_ids("node")}
 
 
 # ---------------------------------------------------------------- mapped between the nodes and a coarse scale
@@ -116,7 +116,7 @@ def test_a_broadcast_state_is_written_back_as_the_mean_of_its_nodes(seedling):
 
     model()
 
-    rank = dict(zip(ds._idx_to_vid, np.arange(ds.n_nodes(), dtype=float)))
+    rank = dict(zip(ds.entity_ids("node"), np.arange(ds.n_nodes(), dtype=float)))
     expected = {o: 20. + np.mean([rank[v] for v in owner if owner[v] == o]) for o in organs}
     written = _prop(g, "organ_temperature")
     assert written.keys() == expected.keys()
@@ -134,14 +134,14 @@ class OrganMean(FunctionalComponent):
 
 def test_a_state_averaged_to_a_coarse_scale_is_written_back_by_broadcast(seedling):
     g, ds, owner = seedling
-    g.properties()["concentration"] = {v: float(v) for v in ds._idx_to_vid}
+    g.properties()["concentration"] = {v: float(v) for v in ds.entity_ids("node")}
     model = OrganMean(data_structure=ds)
 
     model()
 
     means = {o: np.mean([float(v) for v in owner if owner[v] == o]) for o in set(owner.values())}
     written = _prop(g, "concentration")
-    np.testing.assert_allclose([written[v] for v in ds._idx_to_vid], [means[owner[v]] + 1. for v in ds._idx_to_vid])
+    np.testing.assert_allclose([written[v] for v in ds.entity_ids("node")], [means[owner[v]] + 1. for v in ds.entity_ids("node")])
 
 
 # ---------------------------------------------------------------- edges
@@ -202,7 +202,7 @@ def test_parameters_are_refreshed_from_the_mtg_and_never_written_back(seedling):
     ds.set("organ_k", 0.)
     model.write_back_to_mtg()
     assert _prop(g, "organ_k") == {o: float(o) for o in organs}
-    assert _prop(g, "level") == {v: 1. for v in ds._idx_to_vid}
+    assert _prop(g, "level") == {v: 1. for v in ds.entity_ids("node")}
 
 
 def test_child_and_parent_are_accepted_by_the_scale_operators(seedling):

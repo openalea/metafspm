@@ -43,7 +43,7 @@ def test_node_table_indexed_by_vid_and_time():
     table = ds.to_dataframe(["length", "struct_mass"], location="node", time=3)
     assert list(table.index.names) == ["vid", "t"]
     assert list(table.columns) == ["length", "struct_mass"]
-    assert table.loc[(ds._idx_to_vid[2], 3), "length"] == 2.
+    assert table.loc[(ds.entity_ids("node")[2], 3), "length"] == 2.
     assert len(table) == ds.n_nodes()
 
 

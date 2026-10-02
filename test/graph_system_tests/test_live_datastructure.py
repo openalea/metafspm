@@ -70,7 +70,7 @@ def test_integrated_amount_and_outputs_are_registered():
 def test_props_is_a_read_only_view_of_the_data_structure():
     ds, model, _ = _model()
     model._invoke_graph_system("_transport_solve")
-    vid = ds._idx_to_vid[0]
+    vid = ds.entity_ids("node")[0]
     assert model.props["concentration"][vid] == ds.get("concentration")[0]
     assert "axial_flux" in model.props and len(model.props["axial_flux"]) == ds.n_edges()
     with pytest.raises(TypeError):

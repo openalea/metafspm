@@ -111,7 +111,7 @@ def make_chain_plant_ds(coordinates=(0.025, 0.025, -0.01), n_segments=3):
     ds = MPGDataStructure(g, from_scale=scale)
     rank = {v: i for i, v in enumerate(vids)}
     x, y, z = coordinates
-    top = np.array([z - doubles.SEGMENT_LENGTH * rank[v] for v in ds._idx_to_vid])
+    top = np.array([z - doubles.SEGMENT_LENGTH * rank[v] for v in ds.entity_ids("node")])
     for name, values in (("x1", x), ("x2", x), ("y1", y), ("y2", y), ("z1", top), ("z2", top - doubles.SEGMENT_LENGTH)):
         ds.register(name, values, location="node", on_grow="inherit")
     return ds

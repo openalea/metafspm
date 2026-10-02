@@ -523,6 +523,37 @@ class VariableStoreMixin:
             values = self._map(values, spec["source_location"], spec["location"], spec["aggregation"], weights)
         return values
 
+    # ── Entity identity and traversal (design note structure_and_boundaries §2) ────────
+
+    def index_of(self, ids, location: str = "node"):
+        """
+        Local indices of entity *ids* at *location* (an id or an array of ids), the inverse of entity_ids().
+        Unknown ids raise KeyError.
+        """
+        cache = self.__dict__.setdefault("_index_cache", {})
+        key = (location, self.topology_version)
+        if key not in cache:
+            for stale in [k for k in cache if k[1] != self.topology_version]:
+                del cache[stale]
+            entity = np.asarray(self.entity_ids(location), dtype=np.int64)
+            order = np.argsort(entity, kind="stable")
+            cache[key] = (entity[order], order)
+        sorted_ids, order = cache[key]
+        scalar = np.ndim(ids) == 0
+        query = np.atleast_1d(np.asarray(ids, dtype=np.int64))
+        position = np.searchsorted(sorted_ids, query)
+        known = position < sorted_ids.size
+        known[known] = sorted_ids[position[known]] == query[known]
+        if not known.all():
+            raise KeyError(f"ids {query[~known][:10].tolist()} are not entities of location '{location}'")
+        result = order[position]
+        return int(result[0]) if scalar else result
+
+    def parents(self) -> np.ndarray:
+        raise NotImplementedError(f"{type(self).__name__} has no graph traversal")
+
+    children = roots = tips = order = parents
+
     # ── Validation (design note datastructure_contract §6) ────────────────────
 
     def validate_variables(self, strict: bool = False) -> None:
@@ -1053,6 +1084,79 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
             "n_id_b", filter_in={"scale": self._mtg.scales.Connection}
         )
         return [(int(a), int(b)) for a, b in zip(n_id_a, n_id_b)]
+
+    # ── Traversal in local indices (design note structure_and_boundaries §2, DS2) ──────
+
+    def _traversal(self) -> dict:
+        """Parents, children (CSR), roots, tips and orders of the graph's nodes, from the Connections; cached."""
+        cache = self.__dict__.get("_traversal_cache")
+        if cache is not None and cache[0] == (self.topology_version, self.n_nodes(), self.n_edges()):
+            return cache[1]
+        n = self.n_nodes()
+        pairs = self.edges()
+        parent = np.full(n, -1, dtype=np.int64)
+        if pairs:
+            a = self.index_of(np.array([p for p, _ in pairs], dtype=np.int64))
+            b = self.index_of(np.array([c for _, c in pairs], dtype=np.int64))
+            if np.unique(b).size < b.size:
+                raise ValueError("the graph is not a tree: a node has several parents (traversal orders need one)")
+            parent[b] = a
+        else:
+            a = b = np.empty(0, dtype=np.int64)
+        by_parent = np.argsort(a, kind="stable")
+        indices = b[by_parent]
+        indptr = np.zeros(n + 1, dtype=np.int64)
+        np.add.at(indptr, a + 1, 1)
+        indptr = np.cumsum(indptr)
+        roots = np.flatnonzero(parent < 0)
+        tips = np.flatnonzero(np.diff(indptr) == 0)
+        pre, post = [], []
+        for root in roots:
+            stack = [(int(root), False)]
+            while stack:
+                node, done = stack.pop()
+                if done:
+                    post.append(node)
+                    continue
+                pre.append(node)
+                stack.append((node, True))
+                for child in indices[indptr[node]:indptr[node + 1]][::-1]:
+                    stack.append((int(child), False))
+        if len(pre) != n:
+            raise ValueError("the graph has a cycle: traversal orders need a tree")
+        result = {"parents": parent, "children": (indptr, indices), "roots": roots, "tips": tips,
+                  "pre": np.array(pre, dtype=np.int64), "post": np.array(post, dtype=np.int64)}
+        self.__dict__["_traversal_cache"] = ((self.topology_version, n, self.n_edges()), result)
+        return result
+
+    def parents(self) -> np.ndarray:
+        """Local index of each node's parent, -1 at a root."""
+        return self._traversal()["parents"]
+
+    def children(self) -> tuple:
+        """Children in CSR form, (indptr, indices): the children of node i are indices[indptr[i]:indptr[i + 1]]."""
+        return self._traversal()["children"]
+
+    def roots(self) -> np.ndarray:
+        return self._traversal()["roots"]
+
+    def tips(self) -> np.ndarray:
+        """Nodes without children."""
+        return self._traversal()["tips"]
+
+    def order(self, kind: str = "pre") -> np.ndarray:
+        """Node permutation: "pre" lists every parent before its children, "post" every child before its parent."""
+        if kind not in ("pre", "post"):
+            raise ValueError(f"order must be 'pre' or 'post', got '{kind}'")
+        return self._traversal()[kind]
+
+    def owner(self, location: str) -> np.ndarray:
+        """Index, in entity_ids(location), of the entity owning each node at a coarse location."""
+        if location == "node":
+            return np.arange(self.n_nodes(), dtype=np.int64)
+        if location not in self._coarse_scale_names():
+            raise ValueError(f"'{location}' is not a coarse location ({self._coarse_scale_names()})")
+        return self._membership(location)[1]
 
     def validate(self, strict: bool = False) -> None:
         """Topology and variable store consistency (VariableStoreMixin.validate_variables)."""
