@@ -1058,3 +1058,34 @@ Per-file counts:
   - metadata precedence.
 - **Docs:** CHANGELOG, conventions (structural components), migration guide (growth models), plan (DS19 ticked, repartition in 2c), note status.
 - **Suite:** 604 passed, same 10 warnings. Not committed yet.
+
+---
+
+## 2026-10-02 (later): 2b committed (`e659bd0`); step 2c implemented (repartition, active mask)
+
+- **Named masks on `VariableStoreMixin`:**
+  - `define_mask(name, rule, location)`, with a `{variable: ">0" | value | values}` rule or a callable;
+  - `mask(name)`, recomputed on write counters and topology version;
+  - `mask_version(name)`, bumped when the values change;
+  - `has_mask`, `masks`.
+- **Masked steps:**
+  - step decorators accept `where=` ("active" by default, applied only if the DataStructure defines it; `None` opts out);
+  - the Functor restricts arguments at the mask's location and scatters outputs at that location onto the selected entities;
+  - an undeclared output under a mask is inferred at the mask location, with a warning;
+  - a named mask that is not defined raises.
+- **`StructuralComponent`:**
+  - `partition_weight` and `active` as class attributes (instances may override them);
+  - `active` defines the `"active"` mask at construction;
+  - `_run_mpg_step` records the weight and activity by vid before the step, then after the re-read calls `_repartition`.
+- **`_repartition`** runs in pre-order. New active entities, and existing ones becoming active, are split pairwise with their parent. New inactive ones copy intensive values and hold zero amounts. Then the remaining active entities are diluted by `w_before / w_after`. The structural component's own variables and derived variables are skipped.
+- **Deviation from the note, recorded there:** no `previous_weight` attribute. The framework records the weight before each MPG-style step; dilutions compose to rhizodep's `initial_struct_mass` result.
+- **New `test/structure_tests/test_repartition.py`**, 7 tests:
+  - elongation dilution;
+  - segmentation split, with c·w conserved and every kind checked by hand;
+  - no weight means only `on_grow`;
+  - an inactive primordium copying concentrations, with zero amounts and the carrier not reduced;
+  - emergence splitting it from its carrier;
+  - masked `@rate` and `where=None`;
+  - mask recomputation and version.
+- **Docs:** CHANGELOG, conventions (repartition, masks), note §4 and status, plan (DS20 ticked).
+- **Suite:** 611 passed, same 10 warnings. Not committed yet.

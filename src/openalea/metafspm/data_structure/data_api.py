@@ -549,6 +549,68 @@ class VariableStoreMixin:
         result = order[position]
         return int(result[0]) if scalar else result
 
+    # ── Named masks (design note structure_and_boundaries §4, D15) ─────────────────────
+
+    def define_mask(self, name: str, rule, location: str = "node") -> None:
+        """
+        Define mask *name* at *location* from *rule*:
+          {variable: condition}, every condition holding: ">0" (or "<0", ">=0", "<=0"), a value, or a list of values;
+          a callable ds -> boolean array (recomputed at every mask() call, its sources being unknown).
+        """
+        if not (callable(rule) or (isinstance(rule, dict) and rule)):
+            raise TypeError(f"mask '{name}': rule must be a non-empty {{variable: condition}} dict or a callable")
+        masks = self.__dict__.setdefault("_masks", {})
+        masks[name] = {"rule": rule, "location": location, "stamps": None, "values": None, "version": 0}
+
+    def has_mask(self, name: str) -> bool:
+        return name in self.__dict__.get("_masks", {})
+
+    def masks(self) -> list:
+        return list(self.__dict__.get("_masks", {}))
+
+    def mask(self, name: str) -> np.ndarray:
+        """Boolean array of mask *name*, recomputed when one of its variables was written or the topology changed."""
+        masks = self.__dict__.get("_masks", {})
+        if name not in masks:
+            raise KeyError(f"mask '{name}' is not defined (defined: {list(masks)})")
+        spec = masks[name]
+        rule = spec["rule"]
+        stamps = None if callable(rule) else (self.topology_version,
+                                              tuple(self.write_count(variable) for variable in rule))
+        if spec["values"] is None or stamps is None or stamps != spec["stamps"]:
+            values = np.asarray(rule(self), dtype=bool) if callable(rule) else self._evaluate_mask(name, rule)
+            shape = tuple(self._location_shape(spec["location"]))
+            if values.shape != shape:
+                raise ValueError(f"mask '{name}' has shape {values.shape}, its location '{spec['location']}' has {shape}")
+            if spec["values"] is None or not np.array_equal(values, spec["values"]):
+                spec["version"] += 1
+            spec["values"], spec["stamps"] = values, stamps
+        return spec["values"]
+
+    def mask_version(self, name: str) -> int:
+        """Incremented whenever the values of mask *name* change (views built on it must then be rebuilt)."""
+        self.mask(name)
+        return self.__dict__["_masks"][name]["version"]
+
+    def _evaluate_mask(self, name: str, rule: dict) -> np.ndarray:
+        result = None
+        for variable, condition in rule.items():
+            if not self.has(variable):
+                raise KeyError(f"mask '{name}': variable '{variable}' is not registered")
+            values = np.asarray(self.get(variable))
+            if isinstance(condition, str):
+                comparisons = {">0": values > 0, "<0": values < 0, ">=0": values >= 0, "<=0": values <= 0}
+                if condition not in comparisons:
+                    raise ValueError(f"mask '{name}': condition '{condition}' on '{variable}' is not one of "
+                                     f"{list(comparisons)}")
+                selected = comparisons[condition]
+            elif isinstance(condition, (list, tuple, set, np.ndarray)):
+                selected = np.isin(values, np.asarray(list(condition), dtype=float))
+            else:
+                selected = values == condition
+            result = selected if result is None else result & selected
+        return result
+
     def parents(self) -> np.ndarray:
         raise NotImplementedError(f"{type(self).__name__} has no graph traversal")
 

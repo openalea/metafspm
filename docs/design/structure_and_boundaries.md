@@ -1,6 +1,6 @@
 # Design note: structure, growth, active sets and boundaries (step 2)
 
-Status: **agreed** (2026-10-02, P1–P7 answered in §8). 2a done (`4fbe3dc`), 2b done. It covers step 2 of `devplan_datastructures.md` §7:
+Status: **agreed** (2026-10-02, P1–P7 answered in §8). 2a done (`4fbe3dc`), 2b done (`e659bd0`), 2c done. It covers step 2 of `devplan_datastructures.md` §7:
 - DS2: traversal orders;
 - DS19: the StructuralComponent contract;
 - DS20: repartition and the active mask;
@@ -117,6 +117,11 @@ class RootGrowth(StructuralComponent):
   ```
 
   Without `partition_weight`, there is no repartition: `on_grow` only, as today.
+- **As implemented (2c): no `previous_weight` to declare.** The framework records the partition weight just before each MPG-style step and uses it as the concentrations' reference weight:
+  - dilution after a step is `c · w_before / w_after`, and successive steps compose: `w0/w1 · w1/w2 = w0/w2`;
+  - a split uses the parent's amount `c_p · w_before`.
+
+  This gives the same result as rhizodep's `initial_struct_mass` bookkeeping, without the component maintaining it.
 - **The active mask is a DataStructure object.**
   - `ds.define_mask("active", rule, location="node")` stores the rule. `ds.mask("active")` returns a boolean array, recomputed when one of the rule's variables was written (the DS17 stamps), and `ds.mask_version("active")` changes when its values change.
   - The structural component's `active` defines it.

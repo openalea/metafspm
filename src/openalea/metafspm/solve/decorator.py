@@ -91,13 +91,17 @@ def _step(name: str, *, total: bool = False, iterating: bool = False):
     step functions receive whole arrays (design note Q20); ``vectorized=False`` opts in to one call per element
     for functions written with scalar logic.
     """
-    def decorator(func=None, *, vectorized: bool = True, location: str = None, locations: dict = None):
+    def decorator(func=None, *, vectorized: bool = True, location: str = None, locations: dict = None,
+                  where="active"):
         """
         location:  of the step's output when it is not a declared field ("node", "edge", "scalar", "cell", or a
                    coarse scale name); locations: {output name: location} for the supplementary outputs.
+        where:     mask of the DataStructure restricting the step to its selected entities ("active" by default,
+                   applied only when the DataStructure defines it); None computes on every entity.
         """
         if func is None:
-            return lambda f: decorator(f, vectorized=vectorized, location=location, locations=locations)
+            return lambda f: decorator(f, vectorized=vectorized, location=location, locations=locations, where=where)
+        func.__where__ = where
         func.__step_tag__ = {"name": name, "total": total, "iterating": iterating, "vectorized": vectorized}
         func.__vectorized__ = vectorized
         func.__output_locations__ = dict(locations or {})

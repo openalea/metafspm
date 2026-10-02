@@ -421,12 +421,40 @@ class StructuralComponent(DataStructureComponent):
         g = self.mtg
         return g.nb_vertices(), getattr(g, "_id", None)
 
+    # Repartition of the other components' variables when the structure changes (design note
+    # structure_and_boundaries §4, DS20). partition_weight: a node variable name, or a callable ds -> array;
+    # active: the rule of the DataStructure's "active" mask ({variable: condition} or a callable). Without a
+    # partition weight, entities created by growth only get their on_grow values.
+    partition_weight = None
+    active = None
+
+    def __post_init__(self):
+        super().__post_init__()
+        if self.active is not None and not self.data_structure.has_mask("active"):
+            self.data_structure.define_mask("active", self.active)
+
+    def _weights(self):
+        ds = self.data_structure
+        if self.partition_weight is None:
+            return None
+        values = self.partition_weight(ds) if callable(self.partition_weight) else ds.get(self.partition_weight)
+        return np.array(values, dtype=float)
+
+    def _active_now(self, weights):
+        ds = self.data_structure
+        return np.array(ds.mask("active"), dtype=bool) if ds.has_mask("active") else weights > 0
+
     def _run_mpg_step(self, run) -> None:
-        """Run an MPG-style step with the synchronisation of the DataStructure around it."""
+        """Run an MPG-style step with the synchronisation of the DataStructure around it, then the repartition."""
         ds = self.data_structure
         specs = [spec for spec in getattr(self, "_variable_specs", {}).values() if spec.mtg_backed and ds.has(spec.name)]
         for spec in specs:
             ds.write_mtg(spec)
+        weights = self._weights()
+        if weights is not None:
+            ids = ds.entity_ids("node").tolist()
+            weight_before = dict(zip(ids, weights.tolist()))
+            active_before = dict(zip(ids, self._active_now(weights).tolist()))
         before = self._mpg_signature()
         run()
         if self._mpg_signature() != before:
@@ -437,3 +465,73 @@ class StructuralComponent(DataStructureComponent):
                 values = ds.read_mtg(spec)
                 if values is not None:
                     ds.set(spec.name, values)
+        if weights is not None:
+            self._repartition(weight_before, active_before)
+
+    def _repartition(self, weight_before: dict, active_before: dict) -> None:
+        """
+        Share the node variables of the other components between the entities of the new structure, by their
+        state_variable_type (the rules of rhizodep's post_growth_updating, D14):
+
+          kind                      new active entity v, or one becoming active,    new inactive     existing, weight
+                                    with its parent p and f = w_v / (w_v + w_p)     entity           changed
+          massic_concentration      the amount c_p * b_p is split by f, 1 - f       parent's value   c * b / w
+          extensive                 x_v = f x_p, x_p = (1 - f) x_p                   0                unchanged
+          (NonInertial)Intensive    parent's value                                   parent's value   unchanged
+          NonInertialExtensive      x_v = f x_p, the parent unchanged                0                unchanged
+          descriptor or none        its on_grow value                                on_grow          unchanged
+
+        w is the partition weight after the step and b the weight the concentration refers to: the weight before
+        the step for pre-existing entities (so successive steps compose), the current weight once split. Entities
+        are processed parents first, so a chain created by one segmentation splits like pairwise steps.
+        """
+        ds = self.data_structure
+        weights = self._weights()
+        active = self._active_now(weights)
+        ids = ds.entity_ids("node").tolist()
+        known = np.array([v in weight_before for v in ids])
+        basis = np.array([weight_before.get(v, 0.) for v in ids])
+        was_active = np.array([bool(active_before.get(v, False)) for v in ids])
+        parents = ds.parents()
+        meta, derived, own = ds._variable_meta(), ds.derived(), set(getattr(self, "_variable_specs", {}))
+        groups = {"massic": [], "extensive": [], "intensive": [], "non_inertial_extensive": []}
+        for name in ds._node_data:
+            if name in own or name in derived or name == self.partition_weight:
+                continue
+            kind = meta.get(name, {}).get("kind")
+            group = {"massic_concentration": "massic", "extensive": "extensive", "intensive": "intensive",
+                     "NonInertialIntensive": "intensive", "NonInertialExtensive": "non_inertial_extensive"}.get(kind)
+            if group is not None:
+                groups[group].append(name)
+        values = {name: np.array(ds.get(name), dtype=float) for group in groups.values() for name in group}
+
+        for v in ds.order("pre"):
+            p = parents[v]
+            if p < 0 or (known[v] and (was_active[v] or not active[v])):
+                continue                                     # a root, or an existing entity not becoming active
+            if active[v]:
+                f = weights[v] / (weights[v] + weights[p])
+                for name in groups["massic"]:
+                    amount = values[name][p] * (basis[p] if known[p] else weights[p])
+                    values[name][v] = amount * f / weights[v]
+                    values[name][p] = amount * (1. - f) / weights[p] if weights[p] > 0 else values[name][p]
+                for name in groups["extensive"]:
+                    values[name][v], values[name][p] = f * values[name][p], (1. - f) * values[name][p]
+                for name in groups["non_inertial_extensive"]:
+                    values[name][v] = f * values[name][p]
+                basis[p], basis[v] = weights[p], weights[v]
+                known[p] = True
+            else:
+                for name in groups["massic"] + groups["intensive"]:
+                    values[name][v] = values[name][p]
+                for name in groups["extensive"] + groups["non_inertial_extensive"]:
+                    values[name][v] = 0.
+                basis[v] = weights[v]
+            known[v] = True
+
+        # Dilution of the concentrations of existing active entities whose weight changed
+        dilute = was_active & active & (basis > 0) & (weights > 0)
+        for name in groups["massic"]:
+            values[name][dilute] *= basis[dilute] / weights[dilute]
+        for name, array in values.items():
+            ds.set(name, array)
