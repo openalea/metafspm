@@ -70,6 +70,21 @@ The flat modules used before the 2026 restructure have been removed. No compatib
 - **Writes through views.** `ds.get(x)[...] = v` is not seen by the variables derived from `x`. Call `ds.mark_written(x)` after such a write. The Coupler's `push` now writes through `set`.
 - **Observable change.** Reading a derived input after other components ran now gives its current value, not the value its receiver last used. The scene contract anchor (`test_ds_scene_contract.py`) is updated accordingly, and every computed value is unchanged.
 
+### Output locations (step 1d)
+
+- **Declared outputs** take their declared location.
+- **Undeclared outputs give theirs:**
+  - `@graph_output(name, location="node" | "edge")`;
+  - `@rate(location=...)` and the other step decorators, with `locations={name: location}` for supplementary outputs. A scale name is resolved against the graph.
+- **Total steps and 0-d values** stay scalar.
+- **Without a location,** it is inferred from the shape only when exactly one of node / edge / cell matches, with a `DeprecationWarning`. When the shape is ambiguous (n == m) or unmatched, it raises.
+
+  This replaces two rules:
+  - the `size == n` guess for graph outputs;
+  - "the location of the first input" for step outputs, which was wrong when that input was a scalar.
+- **Filtered equations and boundary conditions** slice an argument by its location (node or edge), no longer by its length.
+- A `@graph_output` whose location differs from that of the registered variable raises.
+
 ### Scene and coupling wrappers
 
 - `CompositeModel.open_or_create_translator(translator_path)` now takes the **full path of the translator YAML file**. It no longer takes a directory to which `/coupling_translator.yaml` was appended.
