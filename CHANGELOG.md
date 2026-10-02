@@ -18,6 +18,17 @@ The flat modules used before the 2026 restructure have been removed. No compatib
 | `openalea.metafspm.component.Model`, `declare` | `openalea.metafspm.coupling.component.Component` / `FunctionalComponent`, `declare` |
 | `openalea.metafspm.specializer` | `openalea.metafspm.solve.specializer` |
 
+### StructuralComponent (step 2b)
+
+- **New shared base.** `StructuralComponent` and `FunctionalComponent` now share `DataStructureComponent`: the DataStructure binding, declaration resolution, registration and MTG sync.
+- **`StructuralComponent`** edits the plant's structure through `self.mtg`, the DataStructure's MPG, with the MPG's own methods.
+  - **MPG-style steps** (decorated steps without arguments, e.g. `@potential`, `@segmentation`) run with synchronisation around them:
+    - before: the component's declared variables are written to the MPG;
+    - after: `ds.update_topology()` runs if the MPG's vertex count or last vertex id changed, then the declared state variables are re-read from the MPG.
+  - **Array-style steps** (with arguments) are vectorised on the DataStructure, like functional steps.
+  - The growth rows (`potential`, `actual`, `segmentation`, `postsegmentation`) order the steps within the component.
+- **Metadata precedence.** When several components declare a variable, the one that does not declare it as an input sets its default, `on_grow` and `state_variable_type`. A component reading it as an input only fills what is still unknown. Before, the first component to register it won.
+
 ### Traversal and entity identity on the DataStructure (step 2a)
 
 - `MPGDataStructure` gains, in local indices derived from the Connections and cached per topology version:

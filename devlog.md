@@ -1025,3 +1025,36 @@ Per-file counts:
   - grids.
 - **Docs:** conventions page (traversal and `index_of`), CHANGELOG, plan (DS2 ticked) and note status updated.
 - **Suite:** 595 passed, same 10 warnings. Not committed yet.
+
+---
+
+## 2026-10-02 (later): 2a committed (`4fbe3dc`); step 2b implemented (StructuralComponent)
+
+- **Component classes:** new `DataStructureComponent` base, holding the DataStructure binding, declaration resolution and registration, `pull_available_inputs`, MTG write-back and the parameter refresh. `FunctionalComponent` keeps `_graph_view` and `previous()`.
+- **`StructuralComponent`** (formerly an empty stub) adds `mtg` and `_run_mpg_step`.
+  - The Functor calls MPG-style (argument-less) steps of a StructuralComponent through it:
+    - flush its MTG-backed declared variables (`write_mtg`);
+    - take the MPG signature `(nb_vertices(), _id)`, run the step, compare (P3);
+    - call `ds.update_topology()` if changed;
+    - re-read the declared state variables (`read_mtg`).
+  - Array-style steps are unchanged, vectorised on the DataStructure.
+- **Bug found and fixed: metadata precedence.** A variable read as an input by one component and owned (state variable) by another took its default, `on_grow` and kind from whichever registered first. In the test, the growth model registered `C_hexose_root` as an input before the carbon model declared it with `on_grow="inherit"`, so new segments got the default instead of their parent's concentration. The owner's metadata now wins, and inputs only fill unknown keys.
+- **Test helper `test/structure_tests/growth.py`:** a rhizodep-like model on a root chain:
+  - potential, actual and segmentation steps, MPG-style;
+  - radius thickening, array-style;
+  - distance from tip as post-segmentation;
+  - plus a `CarbonProbe` FunctionalComponent.
+
+  `structure_tests` is added to the root conftest's import paths.
+- **New `test/structure_tests/test_structural_component.py`**, 9 tests:
+  - the rows;
+  - `mtg`;
+  - inputs flushed before an MPG-style step;
+  - outputs re-read;
+  - array-style outputs reaching the MTG at the end of the call;
+  - `update_topology` only on segmentation;
+  - FunctionalComponents following the new topology, with inherited concentration;
+  - post-segmentation on the new structure;
+  - metadata precedence.
+- **Docs:** CHANGELOG, conventions (structural components), migration guide (growth models), plan (DS19 ticked, repartition in 2c), note status.
+- **Suite:** 604 passed, same 10 warnings. Not committed yet.

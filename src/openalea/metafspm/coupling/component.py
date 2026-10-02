@@ -229,40 +229,13 @@ class Component:
 
 
 @dataclass
-class StructuralComponent(Component):
-    def non_empty(self):
-        pass
-
-
-@dataclass
-class FunctionalComponent(Component):
+class DataStructureComponent(Component):
     """
-    Base for all functional (transport / balance) model components.
+    Component bound to a DataStructure (base of FunctionalComponent and StructuralComponent).
 
-    Every subclass must be initialized with a DataStructure instance that
-    provides the topology and initial field values.  The DataStructure is the
-    single source of truth: steps and graph-system solves read and write its
-    arrays live; self.props is a read-only compatibility view of it.
-
-    Auto-registration
-    -----------------
-    __post_init__ calls _auto_declare_on_ds().
-    Every field annotated with a scale ("node", "edge", a biological scale, or "cell" / "scalar" on grids) whose name is not
-    yet registered on the DataStructure is initialized with the field default
-    value (uniform array).  This means:
-
-    * In production, simply construct the model — all fields with declared
-      scale appear in ds with their default values automatically.
-    * When non-default values are needed (tests, scenario setup), call
-      ds.set_node_property / ds.set_edge_property BEFORE constructing the
-      model.  Pre-registered values are never overwritten.
-
-    Usage::
-
-        ds = MPGDataStructure(g, from_scale=g.scales.SubOrgan)
-        ds.set_node_property("concentration", c_init)   # non-default — must pre-set
-        model = MyTransportModel(data_structure=ds)
-        # ds now also contains default arrays for K_axial, volumetric_capacity, etc.
+    Its declared fields are resolved once (resolve_declaration) and registered on the DataStructure when missing,
+    from their MTG property or their default; its state variables are written to the MTG after every call, and its
+    MTG-backed parameters are re-read before each graph solve.
     """
 
     data_structure: Optional[DataStructure] = None
@@ -291,24 +264,6 @@ class FunctionalComponent(Component):
         self.props = DataStructurePropsView(ds)
         self.choregrapher.add_time_and_data(self, sub_time_step, ds, compartment="graph")
 
-    @property
-    def _graph_view(self):
-        """GraphView of the DataStructure, rebuilt when its topology changed (growth), None for grids."""
-        ds = self.data_structure
-        if not hasattr(ds, "to_graph_view"):
-            return None
-        version = getattr(ds, "topology_version", None)
-        if "_graph_view_cache" not in self.__dict__ or self.__dict__.get("_graph_view_version") != version:
-            self.__dict__["_graph_view_cache"] = ds.to_graph_view(boundary_ports=getattr(self, "_boundary_ports", ()))
-            self.__dict__["_graph_view_version"] = version
-        return self.__dict__["_graph_view_cache"]
-
-    @_graph_view.setter
-    def _graph_view(self, view):
-        # Explicit views (e.g. with boundary ports built by hand) are kept until the topology changes
-        self.__dict__["_graph_view_cache"] = view
-        self.__dict__["_graph_view_version"] = getattr(self.data_structure, "topology_version", None)
-
     def pull_available_inputs(self):
         """
         Bring the inputs derived by the coupling up to date before the step. Derived variables are recomputed when
@@ -317,17 +272,6 @@ class FunctionalComponent(Component):
         ds = self.data_structure
         for name in getattr(self, "_derived_inputs", []):
             ds.get(name)
-
-    def previous(self, name: str) -> np.ndarray:
-        """
-        Value of unknown *name* at the start of the current graph-system solve, managed by the framework
-        (replaces the user-managed ``_previous_fields``, deprecated; design note Q21).
-        """
-        state = getattr(self, "_previous_state", None)
-        if state is None or name not in state:
-            raise KeyError(f"No previous state for '{name}': previous() is available inside a graph-system solve "
-                           "of one of its unknowns.")
-        return state[name]
 
     def _auto_declare_on_ds(self, ds: DataStructure) -> None:
         """
@@ -348,8 +292,15 @@ class FunctionalComponent(Component):
             else:
                 values = ds.read_mtg(spec) if hasattr(ds, "read_mtg") else None
                 ds.register(name, values, location=spec.location, default=spec.default, on_grow=spec.on_grow)
+            # Metadata precedence: the component that owns the variable (not an input) sets its default, growth
+            # policy and kind; a component reading it as an input only fills what is still unknown.
             meta = ds._variable_meta().setdefault(name, {})
-            meta.update({key: value for key, value in spec.meta().items() if value is not None})
+            declared = {key: value for key, value in spec.meta().items() if value is not None}
+            if spec.variable_type == "input":
+                for key, value in declared.items():
+                    meta.setdefault(key, value)
+            else:
+                meta.update(declared, default=spec.default, on_grow=spec.on_grow)
 
     def write_back_to_mtg(self) -> None:
         """
@@ -383,3 +334,106 @@ class FunctionalComponent(Component):
             values = ds.read_mtg(spec)
             if values is not None:
                 ds.set(spec.name, values)
+
+
+@dataclass
+class FunctionalComponent(DataStructureComponent):
+    """
+    Base for all functional (transport / balance) model components.
+
+    Every subclass must be initialized with a DataStructure instance that
+    provides the topology and initial field values.  The DataStructure is the
+    single source of truth: steps and graph-system solves read and write its
+    arrays live; self.props is a read-only compatibility view of it.
+
+    Auto-registration
+    -----------------
+    __post_init__ calls _auto_declare_on_ds().
+    Every field annotated with a scale ("node", "edge", a biological scale, or "cell" / "scalar" on grids) whose name is not
+    yet registered on the DataStructure is initialized with the field default
+    value (uniform array).  This means:
+
+    * In production, simply construct the model — all fields with declared
+      scale appear in ds with their default values automatically.
+    * When non-default values are needed (tests, scenario setup), call
+      ds.set_node_property / ds.set_edge_property BEFORE constructing the
+      model.  Pre-registered values are never overwritten.
+
+    Usage::
+
+        ds = MPGDataStructure(g, from_scale=g.scales.SubOrgan)
+        ds.set_node_property("concentration", c_init)   # non-default — must pre-set
+        model = MyTransportModel(data_structure=ds)
+        # ds now also contains default arrays for K_axial, volumetric_capacity, etc.
+    """
+
+    @property
+    def _graph_view(self):
+        """GraphView of the DataStructure, rebuilt when its topology changed (growth), None for grids."""
+        ds = self.data_structure
+        if not hasattr(ds, "to_graph_view"):
+            return None
+        version = getattr(ds, "topology_version", None)
+        if "_graph_view_cache" not in self.__dict__ or self.__dict__.get("_graph_view_version") != version:
+            self.__dict__["_graph_view_cache"] = ds.to_graph_view(boundary_ports=getattr(self, "_boundary_ports", ()))
+            self.__dict__["_graph_view_version"] = version
+        return self.__dict__["_graph_view_cache"]
+
+    @_graph_view.setter
+    def _graph_view(self, view):
+        # Explicit views (e.g. with boundary ports built by hand) are kept until the topology changes
+        self.__dict__["_graph_view_cache"] = view
+        self.__dict__["_graph_view_version"] = getattr(self.data_structure, "topology_version", None)
+
+    def previous(self, name: str) -> np.ndarray:
+        """
+        Value of unknown *name* at the start of the current graph-system solve, managed by the framework
+        (replaces the user-managed ``_previous_fields``, deprecated; design note Q21).
+        """
+        state = getattr(self, "_previous_state", None)
+        if state is None or name not in state:
+            raise KeyError(f"No previous state for '{name}': previous() is available inside a graph-system solve "
+                           "of one of its unknowns.")
+        return state[name]
+
+
+@dataclass
+class StructuralComponent(DataStructureComponent):
+    """
+    Component that edits the plant's structure (growth, segmentation, anatomy; design note structure_and_boundaries
+    §3, DS19). It shares the plant's DataStructure, and edits the MPG through ``self.mtg`` with the MPG's own
+    methods: the DataStructure does not re-expose them, the MPG is the source of truth for structure (D11).
+
+    Two step styles coexist (Q17):
+      * a step without arguments ("MPG-style") reads and edits the MPG. Around it, the framework writes the
+        component's declared variables to the MPG before, and after it updates the DataStructure's topology if the
+        MPG's changed, then re-reads the declared state variables (the structural outputs) from the MPG (P1);
+      * a step with arguments ("array-style") is vectorised on DataStructure arrays, like a functional step; its
+        outputs reach the MPG at the next MPG-style step or at the end of the call.
+    """
+
+    @property
+    def mtg(self):
+        return self.data_structure.mtg
+
+    def _mpg_signature(self) -> tuple:
+        """Cheap topology signature of the MPG: vertex count and last allocated vertex id (P3)."""
+        g = self.mtg
+        return g.nb_vertices(), getattr(g, "_id", None)
+
+    def _run_mpg_step(self, run) -> None:
+        """Run an MPG-style step with the synchronisation of the DataStructure around it."""
+        ds = self.data_structure
+        specs = [spec for spec in getattr(self, "_variable_specs", {}).values() if spec.mtg_backed and ds.has(spec.name)]
+        for spec in specs:
+            ds.write_mtg(spec)
+        before = self._mpg_signature()
+        run()
+        if self._mpg_signature() != before:
+            ds.update_topology()
+            self.topology_updates = getattr(self, "topology_updates", 0) + 1
+        for spec in specs:
+            if spec.variable_type == "state_variable":
+                values = ds.read_mtg(spec)
+                if values is not None:
+                    ds.set(spec.name, values)
