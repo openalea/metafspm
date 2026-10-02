@@ -332,7 +332,7 @@ These are done: in-place writes, aliases, derived variables, scale operators (su
   - To keep "linked by name, read dynamically" for every link kind, a derived variable is recomputed **on `get()`** when one of its sources was written since its last computation. This needs per-variable write counters, maintained by `set()` and in-place step outputs.
   - Explicit `refresh()` stays available, and the receiver's pre-step refresh becomes a no-op when nothing changed.
   - **Rule to document:** writing through `ds.set` (or the framework) keeps links consistent; mutating `ds.get(x)[...]` by hand does not mark `x` as changed (D10).
-- [ ] **DS18 Cross-scale links in the translator (answers D4.3 and Q7).**
+- [x] **DS18 Cross-scale links in the translator (steps 3a–3b) (answers D4.3 and Q7).**
   - When a link joins two locations (e.g. SubOrgan → Organ, anatomy Compartments → SubOrgan, SubOrgan → Compartments), the coupling builds the derived variable with an explicit mapping:
     - **up (aggregation):** `sum` (extensive), `mean` / `weighted_mean` (intensive). This is the main direction: e.g. the anatomy water balance populates the SubOrgan radial water uptake.
     - **down:** `broadcast` (intensive), with an optional **target filter**, e.g. a SubOrgan concentration sent to the symplastic Compartments only (Q7). Compartments outside the filter keep their own value.
@@ -380,7 +380,7 @@ These are done: in-place writes, aliases, derived variables, scale operators (su
 
 1. **Contract:** DS3 (Location, with scale locations for coarse fields) + DS17 (derived at read) + DS5 (output locations) + DS11 (validation) + DS16 (conventions). Design note: `docs/design/datastructure_contract.md` (N1–N5 agreed). Progress: **1a done** (`4d1353d`), **1b done** (`15f8976`), **1c done** (`cc3e588`), **1d done** (`bf008e3`), **1e done** (`bc37e79`), **1f done** (2026-10-02): step 1 complete.
 2. **Multiscale topology and boundaries:** DS19 (StructuralComponent contract) + DS20 (repartition, active mask) + DS21 (active subgraph) + DS8 (assembled graph: anatomies + wiring rules, real anatomy UC3) + DS2 (traversal) + DS6 (boundary sets, validated on UC5 below). Design note: `docs/design/structure_and_boundaries.md` (agreed, P1–P7). Progress: **2a done** (`4fbe3dc`), **2b done** (`e659bd0`), **2c done** (`6430b08`), **2d done** (`9e0b00b`), **2e done** (`3ffb485`), **2f done** (2026-10-02): step 2 complete, except the repartition in anatomy mode (open question A1).
-3. **Cross-scale coupling and grids:** DS18 (mappings, filtered broadcast, defaults) + DS1 (grid topology). Design note: `docs/design/cross_scale_and_grids.md` (agreed, R1–R5).
+3. **Cross-scale coupling and grids:** DS18 (mappings, filtered broadcast, defaults) + DS1 (grid topology). Design note: `docs/design/cross_scale_and_grids.md` (agreed, R1–R5). Progress: **3a done** (`40657a2`), **3b done** (2026-10-02).
 4. **Time and data:** DS10 (sub-stepping, adaptive loop, `previous(at="step")`) + DS4 (sync) + DS9 (solve-time views) + DS12 (typed variables).
 5. **Runtime:** DS13 (per-instance scheduling) + DS14 (performance) + DS15 (persistence). DS7's MPG ↔ MPG Coupler only if a use case requires it.
 

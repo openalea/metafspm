@@ -18,6 +18,11 @@ The flat modules used before the 2026 restructure have been removed. No compatib
 | `openalea.metafspm.component.Model`, `declare` | `openalea.metafspm.coupling.component.Component` / `FunctionalComponent`, `declare` |
 | `openalea.metafspm.specializer` | `openalea.metafspm.solve.specializer` |
 
+### Translator link scales and targets (step 3b)
+
+- **`scale` / `source_scale` are checks.** When a link states them, the receiver's and the sources' declared locations must be those scales', otherwise the coupling raises. Declarations stay the reference (R1).
+- **`target=` on links.** A link (Python `Translator().link(..., target=)`, or a nested spec with `"target"`) names a DataStructure mask. The mapped values go to its entities only, the others getting the receiver's default (R2). The mask must be defined before coupling.
+
 ### Cross-scale links: default mappings and kinds (step 3a)
 
 - **Default mapping.** A translator link between two locations that gives no `aggregation` is mapped from its provider's `state_variable_type`:
