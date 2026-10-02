@@ -22,6 +22,8 @@ Each phase ends green and gets its own commit.
 7. **WD.2–WD.6 implementation** (WD.3 done `b671415`, WD.2 done `d7546f3`, WD.0 implemented). WD.4 done (`ee7bbc4`), WD.5a done (`26433fc`). Epic WD complete: the legacy path is removed (`b3c11c8`), the UC tests are migrated (`8f6f055`), and the backlog is closed except B11 (downstream, out of scope). live DataStructure reading, links on the DataStructure, a Coupler across DataStructures, and a scene transport sized from the handshake. Retarget the W doubles to MPG and 3-D grid and re-run the `[contract]` suite unchanged.
 8. **WD.7–WD.9 downstream migration**: guide, Logger adapter, `assert_component_couplable` (W6.2).
 
+**See also `devplan_datastructures.md`:** the DataStructure API stabilisation plan (DS1–DS21, decisions D1–D16), with its step 1 design note `docs/design/datastructure_contract.md`.
+
 ## Decisions log
 
 | Date | Q | Decision |

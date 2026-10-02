@@ -18,6 +18,33 @@ The flat modules used before the 2026 restructure have been removed. No compatib
 | `openalea.metafspm.component.Model`, `declare` | `openalea.metafspm.coupling.component.Component` / `FunctionalComponent`, `declare` |
 | `openalea.metafspm.specializer` | `openalea.metafspm.solve.specializer` |
 
+### Variable declarations: `scale` / `location` / `mapping` (design note `datastructure_contract.md`, step 1a)
+
+- `declare` and its wrappers (`state_variable`, `input_variable`, `parameter`) take three new keys:
+  - `location`: where the DataStructure stores the variable;
+  - `mapping` (with `weight`): how values go between the MTG `scale` and the `location` when they differ;
+  - `weight`: the weight variable of `weighted_mean`.
+
+  One interpreter, `coupling.declaration.resolve_declaration`, now serves registration and the solver snapshot.
+- **Behaviour change (N1).** `scale=<a scale coarser than the graph's nodes>` without `location` is now **stored at that scale** (location `"Organ"`, …). Before, it was broadcast to the nodes. For the former behaviour, write `location="node", mapping="broadcast"`.
+- Scale names are accepted as locations, and resolved against the graph built by the MPG traversal (N5): `"SubOrgan"` is `"node"` when the graph is built from SubOrgan.
+- Without `mapping`, the mapping follows `state_variable_type` (D9):
+  - `sum` up for extensive variables;
+  - `mean` up and `broadcast` down for intensive variables;
+  - `weighted_mean` up (a `weight` is required) and `broadcast` down for massic concentrations.
+
+  Ambiguous cases raise `DeclarationError`.
+- Edge mappings are renamed: `proximal` → `child`, `distal` → `parent` (N2). `edge_mapping=` and the old names stay accepted for one release, with a `DeprecationWarning`.
+- Declarations that cannot be resolved raise `DeclarationError` when the component is constructed, naming the field. This covers:
+  - an unknown location;
+  - a mapping on a variable stored at its own scale;
+  - an edge variable without a mapping;
+  - an edge `mean` mapping on a state variable;
+  - a scale finer than the nodes;
+  - a non-numeric default.
+- `location="scalar"` fields are now registered on graph DataStructures too.
+- A graph equation receiving a variable stored at a coarse scale raises, and points to `location="node", mapping="broadcast"`.
+
 ### Scene and coupling wrappers
 
 - `CompositeModel.open_or_create_translator(translator_path)` now takes the **full path of the translator YAML file**. It no longer takes a directory to which `/coupling_translator.yaml` was appended.

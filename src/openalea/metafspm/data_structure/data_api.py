@@ -361,7 +361,8 @@ class VariableStoreMixin:
             if other_location != location:
                 store.pop(name, None)
         stores[location][name] = array
-        self._variable_meta()[name] = {"default": float(default), "on_grow": on_grow}
+        # Declaration metadata (scale, mapping, kind, ...) is kept across re-registrations (growth)
+        self._variable_meta().setdefault(name, {}).update(default=float(default), on_grow=on_grow)
         self._bump_version()
         return array
 
