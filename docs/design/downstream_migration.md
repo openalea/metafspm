@@ -69,7 +69,13 @@ The rules:
 - **Step functions receive arrays** (Q20). Make the bodies numpy-compatible, e.g. with `np.where` instead of `if`, or mark the step `vectorized=False`.
 - **Previous state:** inside graph-system equations, use `self.previous("concentration")` instead of a user-managed `_previous_fields` (Q21).
 - **Growth:** declare `on_grow="inherit"` for variables that new segments should take from their parent. The default is the declared value. The growth model may still overwrite new entities, e.g. from parent concentrations or split extensive quantities (Q24).
-- **Growth models** call `ds.update_topology()` after changing the MTG. Registered variables are carried over, and components rebuild their graph views.
+- **Growth models** become `StructuralComponent`s on the plant DataStructure (the reference is `test/structure_tests/growth.py`):
+  - their steps without arguments edit `self.mtg` as before (`add_child`, property writes);
+  - the framework writes the declared variables to the MPG before each such step, and calls `ds.update_topology()` after it when vertices were added or removed;
+  - declared state variables (length, radius, `struct_mass`, …) are re-read from the MPG after each such step;
+  - a `post_growth_updating` pass becomes a `@postsegmentation` step. The repartition of other components' variables at segmentation comes with step 2c.
+
+  Registered variables are carried over, and FunctionalComponents rebuild their graph views.
 - **Segment geometry:** the growth model registers `x1, x2, y1, y2, z1, z2` as node variables. The soil coupling needs them (Q25).
 - **`self.props`** is a read-only view kept for one release. Replace reads with `self.data_structure.get(name)`, and writes with `ds.set(name, values)`. Translator-derived inputs are read-only.
 - **Undeclared outputs** give their location: `@graph_output(name, location=...)`, `@rate(location=...)`.

@@ -100,6 +100,13 @@ Declarations that cannot be written back raise when the component is created: a 
 - **`previous(name)`:** inside a graph-system solve, the value of the unknown at the start of that solve.
 - **`on_grow`:** the value of entities created by growth. `"default"` gives the declared default; `"inherit"` gives the nearest pre-existing ancestor's value. The repartition of amounts at segmentation comes with DS20.
 
+## Structural components
+
+- A `StructuralComponent` edits the MPG through `self.mtg`. The MPG is the source of truth for structure.
+- **MPG-style steps** (no arguments) are synchronised: declared variables are written to the MPG before them; after them, the topology is updated if vertices were added or removed, and the declared state variables are re-read.
+- **Array-style steps** (with arguments) work on the DataStructure.
+- The component that owns a variable (declares it other than as an input) sets its default, `on_grow` and `state_variable_type`.
+
 ## Failure modes
 
 These raise; none of them is silently ignored:

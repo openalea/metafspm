@@ -89,7 +89,12 @@ class Functor:
     def __call__(self, instance, data, *args):
         """Run the step on *data*, the component's DataStructure (iterating steps only receive the instance)."""
         if self.iterating:
-            self.fun(instance)
+            # Steps without arguments of a StructuralComponent edit the MPG: the component synchronises around them
+            run_mpg_step = getattr(instance, "_run_mpg_step", None)
+            if run_mpg_step is not None:
+                run_mpg_step(lambda: self.fun(instance))
+            else:
+                self.fun(instance)
         elif hasattr(data, "get") and hasattr(data, "register") and hasattr(data, "location"):
             self._call_on_data_structure(instance, data)
         else:
