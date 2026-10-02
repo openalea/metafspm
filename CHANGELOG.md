@@ -18,6 +18,12 @@ The flat modules used before the 2026 restructure have been removed. No compatib
 | `openalea.metafspm.component.Model`, `declare` | `openalea.metafspm.coupling.component.Component` / `FunctionalComponent`, `declare` |
 | `openalea.metafspm.specializer` | `openalea.metafspm.solve.specializer` |
 
+### MPG traversals without recursion, and topology arrays (step 5a)
+
+- **`MPG.components_iter`** keeps openalea.mtg's order (component roots, then '+' children before '<' successors) without its recursive `pre_order`. `populate_graph` and the multiscale traversals work on long axes: a 20 000-segment chain raised `RecursionError` before.
+- **`MPG.topology_arrays()`**: vid-indexed `parent`, `complex`, `scale`, `edge_type` and `is_anchor` arrays, cached until the MPG changes. `complex` is resolved for all vertices at once; openalea's `complex()` walks the parent chain of each vertex.
+- **`MPG.complex_at_scale_array(vids, scale)`**, used by `MPGDataStructure`'s coarse-scale owner maps: 131 → 53 ms on 20 000 segments.
+
 ### Typed variables (step 4c)
 
 - **`dtype=`** on `register` and declarations (`declare`, `state_variable`, `input_variable`, `parameter`):

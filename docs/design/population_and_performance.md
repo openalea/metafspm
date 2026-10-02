@@ -1,6 +1,6 @@
 # Design note: a plant population in one MPG, vectorised traversals, scheduling and persistence (step 5)
 
-Status: **agreed** (2026-10-02: S1–S11 answered in §8 and §11, with refinements in §9–§12). Implementation in progress (5a). It covers step 5 of `devplan_datastructures.md` §7, reordered by your answers to PA1–PA2 in `devplan_scene_paralellization.md`:
+Status: **agreed** (2026-10-02: S1–S11 answered in §8 and §11, with refinements in §9–§12). 5a done; questions F1–F2 raised by it (§13). It covers step 5 of `devplan_datastructures.md` §7, reordered by your answers to PA1–PA2 in `devplan_scene_paralellization.md`:
 - the population prototype first: DS14b (MPG array mirrors), DS14a (tree kernels on the DataStructure), and N plants in one MPG;
 - then DS13 (scheduling, reconsidered) and DS15 (persistence).
 
@@ -232,3 +232,25 @@ def _growing_zone_C_hexose_root(self, C_hexose_root, struct_mass, volume, radius
   - **Added, because they decide the API's generality:** values may be **vector-valued** (shape `(n, k)`, e.g. 3-D coordinates propagated from the base: `x1 = parent's x2`, `x2 = x1 + length · direction`).
   - `path_compose` keeps its signature (one 4×4 transform per node), with a minimal implementation, so that matrix-valued scans are part of the API from the start.
   - The rest of the §9 table follows when each model is reimplemented.
+
+## 13. Findings of 5a, and questions
+
+- **Recursion.** The recursion came from openalea.mtg's `components_iter` (recursive `pre_order`), which every MPG traversal calls. An iterative override in `MPG`, with the same order (tested against openalea's on every complex, and through identical `populate_graph` results), removes it.
+- **`complex()` is O(depth) per vertex** in openalea.mtg: only the roots of component trees store their complex, and the others walk up their parent chain. The topology arrays resolve every vertex in O(n log depth). The owner maps went from 131 to 53 ms on 20 000 segments.
+- **`populate_graph`'s cost is vertex creation, not traversal.** On 20 000 segments it takes 2.26 s:
+  - creating the 40 001 Compartment and Connection vertices through `add_component` takes 1.30 s, mostly 160 000 single-item `ArrayDict` inserts (1.09 s, each a `searchsorted`);
+  - the traversal takes 0.36 s.
+
+  Vectorising the link search would therefore gain little. At the 5c target (1000 plants of 2 000 segments, 2·10⁶ segments), a full repopulation would take minutes. In segment mode, `update_topology()` repopulates everything at every growth step (`repopulate_graph`).
+- **F1, a scene robustness gap (not caused by 5a).** During 5a, a bug made the plant workers fail when constructing their DataStructure. `test_data_structure_scene[fork]` then hung until its 60 s watchdog killed pytest, instead of failing.
+  - The cause is in `scene_wrapper`: an environment worker constructs its model outside its `try`, and that constructor waits on a queue for the plants' first messages.
+  - The main loop watches only `stop_event`, not the workers' exit codes.
+
+  Proposed fix: the main loop also sets `stop_event` when any worker has exited with a non-zero code. After a grace period, `finally` terminates the workers still blocked on queues (`p.join(timeout)`, then `p.terminate()`), and the scene returns `clean_exit = False`. Tested with a plant whose constructor raises.
+  → answer:
+- **F2, populating at population scale.** Two complementary options:
+  - **incremental population in segment mode:** `update_topology()` creates Compartments and Connections only for new segments, and keeps the others with their vids (as anatomy mode already does for junctions, D12). This also keeps edge identities stable, and so edge values (P6 kept child-vid edge ids precisely because repopulation recreated them);
+  - **bulk vertex creation:** an `MPG` method creating many vertices and their properties in one go, with one batched `ArrayDict` assignment per property instead of one insert per vertex per property.
+
+  **Recommendation:** both, as the first part of 5c, measured before and after on the population, with `repopulate_graph` kept for explicit full rebuilds.
+  → answer:

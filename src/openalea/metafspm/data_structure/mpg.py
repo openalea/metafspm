@@ -567,6 +567,88 @@ class MPG(MTG):
 
 
     # MULTISCALE TRAVERSALS (combining ordered scale and element iteration)
+    # ── Topology without recursion, and as arrays (design note population_and_performance §2, DS14b) ──
+
+    def components_iter(self, vid):
+        """
+        The components of *vid* in MTG.components_iter's order (each component root, then a pre-order visiting
+        '+' children before '<' successors), without recursion: openalea.mtg's recursive pre_order fails on long
+        chains (RecursionError on a 20 000-segment axis). A child belongs to *vid* when it has no complex of its own
+        (it inherits its parent's) or when its own complex is *vid*.
+        """
+        if vid not in self._components:
+            return
+        edge_type = self.property('edge_type')
+        own_complex = self._complex
+        children = self._children
+        for root in self.component_roots_iter(vid):
+            stack = [root]
+            while stack:
+                v = stack.pop()
+                yield v
+                inside = [c for c in children.get(v, ()) if own_complex.get(c, vid) == vid]
+                stack.extend(reversed([c for c in inside if edge_type.get(c) == '<']))
+                stack.extend(reversed([c for c in inside if edge_type.get(c) != '<']))
+
+    _EDGE_TYPE_CODES = {'/': 1, '<': 2, '+': 3}
+
+    def topology_arrays(self) -> dict:
+        """
+        Integer arrays indexed by vid, cached until the MPG changes (vertex count or last vertex id):
+          parent (-1 for none), complex (-1 for none), scale, edge_type (0 none, 1 '/', 2 '<', 3 '+'), is_anchor.
+        complex is resolved for every vertex at once (pointer doubling up the parent chains), whereas MTG.complex
+        walks the chain of each vertex.
+        """
+        signature = (self.nb_vertices(), getattr(self, "_id", None))
+        cache = self.__dict__.get("_topology_arrays")
+        if cache is not None and cache[0] == signature:
+            return cache[1]
+        size = max(getattr(self, "_id", 0), max(self._scale.keys(), default=0), max(self._parent.keys(), default=0)) + 1
+        parent = np.full(size, -1, dtype=np.int64)
+        for v, p in self._parent.items():
+            if p is not None:
+                parent[v] = p
+        scale = np.full(size, -1, dtype=np.int64)
+        for v, sc in self._scale.items():
+            scale[v] = sc
+        complex_ = np.full(size, -1, dtype=np.int64)
+        for v, c in self._complex.items():
+            if c is not None:
+                complex_[v] = c
+        alive = scale >= 0
+        missing = np.flatnonzero(alive & (complex_ < 0) & (parent >= 0))
+        jump = parent.copy()
+        while missing.size:
+            above = jump[missing]
+            known = complex_[above] >= 0
+            complex_[missing[known]] = complex_[above[known]]
+            missing = missing[~known]
+            jump[missing] = np.where(jump[jump[missing]] >= 0, jump[jump[missing]], -1)
+            missing = missing[jump[missing] >= 0]
+        edge_type = np.zeros(size, dtype=np.int64)
+        for v, t in self.property('edge_type').items():
+            if v < size:
+                edge_type[v] = self._EDGE_TYPE_CODES.get(t, 0)
+        is_anchor = np.zeros(size, dtype=bool)
+        for v, flag in self.property('isanchor').items():
+            if v < size and flag:
+                is_anchor[v] = True
+        arrays = {"parent": parent, "complex": complex_, "scale": scale, "edge_type": edge_type,
+                  "is_anchor": is_anchor}
+        self.__dict__["_topology_arrays"] = (signature, arrays)
+        return arrays
+
+    def complex_at_scale_array(self, vids, scale: int) -> np.ndarray:
+        """complex_at_scale for many vertices at once (from topology_arrays)."""
+        arrays = self.topology_arrays()
+        current = np.asarray(vids, dtype=np.int64).copy()
+        for _ in range(int(arrays["scale"].max()) + 1):
+            above = arrays["scale"][current] > scale
+            if not above.any():
+                break
+            current[above] = arrays["complex"][current[above]]
+        return current
+
     def _component_topo_preorder(self, comps):
         """Yield the vertices in `comps` in topological pre-order.
 

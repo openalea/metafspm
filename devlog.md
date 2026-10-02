@@ -1435,3 +1435,28 @@ Per-file counts:
   - S11: only the prototype's kernels, plus what decides the API's generality, namely vector-valued values and a minimal `path_compose`.
 
   The note is agreed and committed; 5a starts.
+
+---
+
+## 2026-10-02 (later): step 5 note committed (`207272d`); step 5a implemented (traversals without recursion, topology arrays)
+
+- **`MPG.components_iter`** is overridden with an iterative version in openalea's exact order (component roots; then '+' children before '<' successors; children inside the complex when they have no own complex, or theirs is it). This removes the `RecursionError` from every traversal that uses it.
+- **`MPG.topology_arrays()`** (cached by vertex count and last id): `parent`, `complex` (resolved by pointer doubling), `scale`, `edge_type`, `is_anchor`. **`complex_at_scale_array`** goes with it. `MPGDataStructure._membership` uses them, in segment and anatomy modes.
+- **New `test/mpg_tests/test_topology_arrays.py`**, 7 tests:
+  - `components_iter` equals openalea's on every complex of the seedling and of a branched root system;
+  - a 20 000-segment chain: openalea raises `RecursionError`, and ours populates and wraps;
+  - arrays equal `parent`, `complex` and `scale` of the MTG;
+  - `complex_at_scale_array` equals the scalar one;
+  - arrays follow edits;
+  - `populate_graph` gives the same Compartment order and edges as with openalea's traversal.
+- **Benchmark (20 001 segments, 200 axes):** `populate_graph` 2.13 → 1.93 s; Organ owners 131 → 53 ms.
+  - Profile: 1.30 s of 2.26 s is creating 40 001 vertices, through 160 000 single-item `ArrayDict` inserts. The traversal is 0.36 s. Vectorising the link search would gain little.
+  - At population scale (2·10⁶ segments), full repopulation at each growth step would take minutes.
+- **Scene robustness gap found (F1, not caused by 5a):** with an intermediate 5a bug, plant workers failed in their constructor, and `test_data_structure_scene[fork]` hung for 60 s until the watchdog killed pytest. The cause: environment model construction is outside the worker's `try` and blocks on the plants' queues, and the main loop does not watch worker exit codes. A fix is proposed. The stray `hung_scene_traceback.txt` written by the watchdog was removed.
+- **Timing noise:** the suite takes 9 s instead of 3–5 s, the same with and without 5a's source changes (checked twice, with stash). It is machine load (load average about 2.5).
+- **Suite:** 682 passed.
+- **Questions:**
+  - F1: the scene fix;
+  - F2: incremental segment-mode population and bulk vertex creation as the first part of 5c.
+
+  5a is committed; stopped for F1/F2.

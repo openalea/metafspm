@@ -1376,10 +1376,19 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
         cache = self.__dict__.setdefault("_membership_cache", {})
         if scale_name not in cache:
             scale = getattr(self._mtg.scales, scale_name)
-            owners = np.array([self._owner_at(int(v), scale) for v in self._idx_to_vid], dtype=np.int64)
+            vids = np.array(self._idx_to_vid, dtype=np.int64)
+            if hasattr(self._mtg, "complex_at_scale_array"):
+                if getattr(self, "_anatomy", False):
+                    vids = self._mtg.topology_arrays()["parent"][vids]       # the owning from_scale vertex
+                owners = self._mtg.complex_at_scale_array(vids, scale) if scale != self._node_scale_of(vids) else vids
+            else:
+                owners = np.array([self._owner_at(int(v), scale) for v in self._idx_to_vid], dtype=np.int64)
             entities = np.unique(owners)
             cache[scale_name] = (entities, np.searchsorted(entities, owners))
         return cache[scale_name]
+
+    def _node_scale_of(self, vids) -> int:
+        return int(self._mtg.scale(int(vids[0]))) if len(vids) else -1
 
     def _owner_at(self, vid: int, scale: int) -> int:
         """Vertex at *scale* owning node *vid*: its complex, or in anatomy mode its MTG parent and then its complex."""
