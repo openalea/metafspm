@@ -1291,3 +1291,21 @@ Per-file counts:
 - **Plan:** DS1 ticked (MultiGrid later).
 - **Suite:** 657 passed, same 10 warnings.
 - **Next:** §7 step 4 (DS10 sub-stepping and the adaptive loop, DS4 sync policy, DS9 solve-time views, DS12 typed variables) needs its design note first.
+- **Step 4 design note drafted:** `docs/design/time_and_data.md`, covering DS10, DS4, DS9 and DS12.
+  - **Facts:**
+    - graph systems do one `step_once` per call;
+    - Newton and implicit Euler return zero error estimates, so the existing adaptive loop is not adaptive for them;
+    - equations read `self.time_step` and a `previous()` fixed per solve, while the solver's sub-step `ctx.dt` and `ctx.previous_node_fields` never reach them, so sub-stepping would be silently wrong;
+    - parameters are re-read only before solves;
+    - snapshots copy everything;
+    - labels are floats, and lists cannot be registered.
+  - **Points to agree:**
+    - T1: `self.dt`;
+    - T2: `previous()` levels (sub-step, solve, step);
+    - T3: adaptive by step doubling;
+    - T4: `mtg_sync` and parameter re-read per call;
+    - T5: read-only snapshot views;
+    - T6: integer, label-name and object variables;
+    - T7: the order 4a → 4b → 4c.
+  - Stopped for agreement (design note before a complex step).
+- **Step 4:** "Go on with step 4", with empty answer lines, is taken as agreement with the recommendations T1–T7 (recorded in the note). Note committed; 4a starts.
