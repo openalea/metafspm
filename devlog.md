@@ -974,3 +974,30 @@ Per-file counts:
 - **Gap noted:** D8 mentions `index_of`, which does not exist yet. The conventions page documents `entity_ids` only.
 - **Suite:** 585 passed, same 10 warnings. Not committed yet.
 - **Next in the plan (§7 step 2):** DS19 (StructuralComponent contract), DS20 (repartition and active mask), DS21 (active subgraph), DS8 (multiscale assembly), DS2 (traversal), DS6 (boundary sets with UC5). Each needs its design note first.
+
+---
+
+## 2026-10-02 (later): 1f committed (`a987cba`); step 2 design note drafted
+
+- **New `docs/design/structure_and_boundaries.md`** for §7 step 2 (DS2, DS19, DS20, DS21, DS6 with UC5, DS8), written against `a987cba`.
+- **Code facts that change the plan:**
+  - Scheduling is per component. A component's call runs all its rows, and components interleave only in the composite's call order.
+  - The reference composite calls `root_growth()` first, so its potential, actual and segmentation steps read the previous step's carbon state. The "potential → allocation → actual across components" interleaving assumed in DS19 does not exist today. Proposed: defer it to DS13 (P2).
+  - The MPG has no modification counter. Proposed: detect topology changes by a cheap signature (P3).
+  - The residual convention `storage + B·outflux − sources = 0` fixes the Robin sign.
+  - `index_of` (D8) is still missing; it is added in 2a.
+- **Proposed sub-steps:** 2a traversal → 2b StructuralComponent → 2c repartition and active mask → 2d active subgraph → 2e boundary sets and UC5 → 2f anatomy mode. Each has its validation.
+- **Points to agree:**
+  - P1: sync per MPG-style step;
+  - P2: defer cross-component interleaving to DS13;
+  - P3: signature-based change detection;
+  - P4: a `transient=` flag for the well-posedness check;
+  - P5: boundary-set membership on write counters;
+  - P6: edge ids by Connection vid in anatomy mode, by child vid in segment mode;
+  - P7: the sub-step order.
+- No code changes; the note and plan pointer are not committed yet.
+- **Review of the step 2 note:**
+  - P1, P3, P5, P6 and P7 are agreed.
+  - **P2 is answered "no".** There is no cross-component interleaving, neither now nor deferred. The potential / allocation / actual rows order processes within one component, and components are called whole, in the composite's order. The note §1 and the plan's DS19 are corrected.
+  - **P4 is re-explained** in the note: disconnected pieces of an active subgraph; why a steady balance needs an anchor (Dirichlet or positive-weight Robin) and a transient one does not; why the framework needs a `transient=` flag; its default by method; the risks of a wrong value; the scope (active subgraphs only). It is awaiting your answer.
+  - **P4 is agreed** ("most of the time models won't have graph discontinuity", but the check is accepted). The note's status is now agreed; next is 2a.
