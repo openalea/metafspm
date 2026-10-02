@@ -106,6 +106,20 @@ Declarations that cannot be written back raise when the component is created: a 
 - **MPG-style steps** (no arguments) are synchronised: declared variables are written to the MPG before them; after them, the topology is updated if vertices were added or removed, and the declared state variables are re-read.
 - **Array-style steps** (with arguments) work on the DataStructure.
 - The component that owns a variable (declares it other than as an input) sets its default, `on_grow` and `state_variable_type`.
+- **Repartition.** A structural component with `partition_weight = "<node variable>"` shares the other components' node variables after each MPG-style step, by `state_variable_type`:
+  - **massic concentrations:** an amount split by weight, or diluted when the weight grew;
+  - **extensive:** split;
+  - **intensive:** copied;
+  - **NonInertialExtensive:** a weighted copy, the parent unchanged;
+  - **descriptors:** `on_grow`.
+
+  A new entity that is inactive (e.g. a zero-mass primordium) copies concentrations and holds no amount. It is split from its parent when it becomes active.
+
+## Masks
+
+- **Defining.** `ds.define_mask(name, rule)` takes a `{variable: condition}` rule (`">0"`, a value, a list of values) or a callable. `ds.mask(name)` is recomputed when its variables were written; `ds.mask_version(name)` changes with its values.
+- **The active mask.** A structural component's `active = {...}` defines the mask `"active"`.
+- **Vectorised steps** compute on the entities of the `"active"` mask when the DataStructure defines it: arguments at its location are restricted, and outputs are written on them only. `@rate(where=None)` computes everywhere; `where="name"` chooses another mask. MPG-style steps always see every entity.
 
 ## Failure modes
 

@@ -18,6 +18,19 @@ The flat modules used before the 2026 restructure have been removed. No compatib
 | `openalea.metafspm.component.Model`, `declare` | `openalea.metafspm.coupling.component.Component` / `FunctionalComponent`, `declare` |
 | `openalea.metafspm.specializer` | `openalea.metafspm.solve.specializer` |
 
+### Repartition and the active mask (step 2c)
+
+- **Repartition.** `StructuralComponent.partition_weight` (a node variable or a callable) enables the repartition, after each MPG-style step, of the other components' node variables by `state_variable_type`:
+  - massic concentrations: amount split by weight, or dilution when the weight changed;
+  - extensive: split;
+  - intensive: copied;
+  - NonInertialExtensive: weighted copy;
+  - descriptors: `on_grow`.
+
+  The rules are those of rhizodep's `post_growth_updating`. New inactive entities copy concentrations and hold no amount, and they are split when they become active. The weight before each step is recorded by the framework, so no `previous_weight` bookkeeping is needed.
+- **Named masks.** `DataStructure.define_mask(name, rule)`, `mask(name)`, `mask_version(name)`, `has_mask(name)`.
+- **Masked steps.** `StructuralComponent.active` defines the `"active"` mask. Vectorised steps compute on its entities when it is defined; `@rate(where=None)` opts out, and `where="name"` chooses a mask.
+
 ### StructuralComponent (step 2b)
 
 - **New shared base.** `StructuralComponent` and `FunctionalComponent` now share `DataStructureComponent`: the DataStructure binding, declaration resolution, registration and MTG sync.

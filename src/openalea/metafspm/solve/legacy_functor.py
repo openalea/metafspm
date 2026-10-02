@@ -43,8 +43,14 @@ class Functor:
         """
         Evaluate the step on DataStructure arrays and write the outputs in place (design note §8).
         Vectorised by default: one call with whole arrays; functions marked vectorized=False are called per element.
+        When the DataStructure defines the step's mask (default "active", design note structure_and_boundaries §4,
+        D15), arguments at the mask's location are restricted to the selected entities and outputs at that location
+        are written back on them only: the other entities keep their values.
         """
         args = [ds.get(name) for name in self.input_names]
+        mask, mask_location = self._mask(instance, ds)
+        if mask is not None:
+            args = [a[mask] if ds.location(name) == mask_location else a for name, a in zip(self.input_names, args)]
         if getattr(self.fun, "__vectorized__", True):
             out = self.fun(instance, *args)
         else:
@@ -64,9 +70,32 @@ class Functor:
         declared = getattr(self.fun, "__output_locations__", {})
         for name, values in outputs:
             values = np.asarray(values, dtype=float)
+            masked = mask is not None and values.shape == (int(mask.sum()),)
             if not ds.has(name):
-                ds.register(name, location=self._output_location(instance, ds, name, values, declared))
+                if masked and name not in declared:
+                    from openalea.metafspm.solve.decorator import infer_output_location
+                    location = infer_output_location(f"{type(instance).__name__}.{self.name}", name, values.shape,
+                                                     {mask_location: values.shape})
+                else:
+                    location = self._output_location(instance, ds, name, values, declared)
+                ds.register(name, location=location)
+            if masked and ds.location(name) == mask_location:
+                full = np.array(ds.get(name), dtype=float)
+                full[mask] = values
+                values = full
             ds.set(name, values)
+
+    def _mask(self, instance, ds):
+        """(mask, location) restricting this step, or (None, None): "active" by default, where=None opts out."""
+        where = getattr(self.fun, "__where__", "active")
+        if where is None or not hasattr(ds, "has_mask"):
+            return None, None
+        if not ds.has_mask(where):
+            if where != "active":
+                raise KeyError(f"{type(instance).__name__}.{self.name}: mask '{where}' is not defined on the "
+                               "DataStructure")
+            return None, None
+        return ds.mask(where), ds.__dict__["_masks"][where]["location"]
 
     def _output_location(self, instance, ds, name, values, declared):
         """
