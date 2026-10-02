@@ -406,16 +406,47 @@ class FunctionalComponent(DataStructureComponent):
         self.__dict__["_graph_view_cache"] = view
         self.__dict__["_graph_view_version"] = getattr(self.data_structure, "topology_version", None)
 
-    def previous(self, name: str) -> np.ndarray:
+    @property
+    def dt(self) -> float:
+        """Length of the current (sub-)step of a graph-system solve; the time step outside sub-stepping (T1)."""
+        return self.__dict__.get("_current_dt", getattr(self, "time_step", None))
+
+    def previous(self, name: str, at: str = "substep") -> np.ndarray:
         """
-        Value of unknown *name* at the start of the current graph-system solve, managed by the framework
-        (replaces the user-managed ``_previous_fields``, deprecated; design note Q21).
+        Value of unknown *name*, managed by the framework (design note time_and_data §2, T2):
+          at="substep" (default): at the start of the current (sub-)step of the solve;
+          at="solve":             at the start of this call's solve (the same with integrate="step");
+          at="step":              at the start of the component's call, e.g. for operator splitting between
+                                  several graph systems of one component.
         """
-        state = getattr(self, "_previous_state", None)
+        if at == "substep":
+            state = getattr(self, "_previous_state", None)
+        elif at == "solve":
+            state = self.__dict__.get("_solve_start_state")
+        elif at == "step":
+            state = self.__dict__.get("_step_start_state")
+            if state is not None and name in state:
+                location, values = state[name]
+                restriction = self.__dict__.get("_restriction")
+                if restriction is not None:
+                    values = values[restriction.node_idx if location == "node" else restriction.edge_idx]
+                return values
+        else:
+            raise ValueError(f"previous(at=) must be 'substep', 'solve' or 'step', got '{at}'")
         if state is None or name not in state:
             raise KeyError(f"No previous state for '{name}': previous() is available inside a graph-system solve "
                            "of one of its unknowns.")
         return state[name]
+
+    def pull_available_inputs(self):
+        super().pull_available_inputs()
+        # previous(fn, at="step"): the unknowns of the component's graph systems at the start of the call
+        ds = self.data_structure
+        unknowns = {fn: location for spec in getattr(type(self), "_graph_system_specs", {}).values()
+                    for location, names in (("node", spec["node_unknowns"]), ("edge", spec["edge_unknowns"]))
+                    for fn in names}
+        self.__dict__["_step_start_state"] = {fn: (location, np.array(ds.get(fn), dtype=np.float64).reshape(-1))
+                                              for fn, location in unknowns.items() if ds.has(fn)}
 
 
 @dataclass

@@ -571,7 +571,7 @@ class GraphSystemBuilder:
         # Q_old is read from the DataStructure before the Newton loop; Q_new is
         # solved together with concentration and flux in the same Newton step.
         integrate_fields = sorted({fn for fn, _, _, _, _, _, intg in edge_law_items if intg})
-        dt_inst = float(getattr(instance, "time_step", None) or 1.0)
+        dt_inst = float(instance.__dict__.get("_current_dt", getattr(instance, "time_step", None)) or 1.0)
 
         ds = _live_ds(instance)
         # Framework-managed previous state (design note Q21): the unknowns at the start of this solve
@@ -976,7 +976,96 @@ def _invoke_graph_system(self, method_name: str) -> None:
         self.__dict__.pop("_solve_view", None)
 
 
+def _unknown_names(ds, spec_def) -> list:
+    names = list(spec_def["node_unknowns"]) + list(spec_def["edge_unknowns"])
+    return names + [f"{fn}_amount" for fn in spec_def["edge_unknowns"] if ds.has(f"{fn}_amount")]
+
+
+def _capture(ds, names) -> dict:
+    return {name: np.array(ds.get(name), dtype=np.float64) for name in names if ds.has(name)}
+
+
+def _restore(ds, state) -> None:
+    for name, values in state.items():
+        ds.set(name, values)
+
+
 def _solve_graph_system(self, method_name: str, spec_def: dict) -> None:
+    """
+    Integrate one graph system over the component's time step (design note time_and_data §2, DS10):
+    "step" one solve of time_step; "substeps" n solves of time_step / n; "adaptive" step doubling. During each
+    (sub-)step, self.dt is its length and self.previous(fn) the state at its start.
+    """
+    ds = _live_ds(self)
+    time_step = float(getattr(self, "time_step", None) or 1.0)
+    integrate = spec_def.get("integrate", "step")
+    names = _unknown_names(ds, spec_def)
+    take = {"node": _take(self, "node"), "edge": _take(self, "edge")}
+    # previous(fn, at="solve"): the unknowns at the start of this call's solve
+    self.__dict__["_solve_start_state"] = {
+        fn: _read_array(ds, fn, location, 0, take=take[location])
+        for location, unknowns in (("node", spec_def["node_unknowns"]), ("edge", spec_def["edge_unknowns"]))
+        for fn in unknowns if ds.has(fn)}
+    try:
+        if integrate == "step":
+            self.__dict__["_current_dt"] = time_step
+            _solve_once(self, method_name, spec_def)
+        elif integrate == "substeps":
+            n = int(spec_def["n_substeps"])
+            for _ in range(n):
+                _solve_substep(self, method_name, spec_def, time_step / n)
+            self._last_integration = {"steps": n, "rejected": 0}
+        else:
+            _integrate_adaptive(self, method_name, spec_def, time_step, names)
+    finally:
+        self.__dict__.pop("_current_dt", None)
+
+
+def _solve_substep(self, method_name, spec_def, h) -> None:
+    """One sub-step of length h starting from the current DataStructure state."""
+    ds = _live_ds(self)
+    # The solver's previous fields are the state at the start of the sub-step
+    setattr(self, f"_gsol_{method_name}", {fn: np.array(ds.get(fn), dtype=np.float64).reshape(-1)
+                                            for fn in spec_def["node_unknowns"]})
+    self.__dict__["_current_dt"] = h
+    _solve_once(self, method_name, spec_def)
+
+
+def _integrate_adaptive(self, method_name, spec_def, time_step, names) -> None:
+    """
+    Step doubling (T3): a step of h is compared with two steps of h/2; accepted when the difference is within
+    rtol * |x| + atol on the node unknowns, h being adapted after each trial. Raises when h falls below min_step.
+    """
+    ds = _live_ds(self)
+    rtol, atol = spec_def["rtol"], spec_def["atol"]
+    max_step = min(spec_def.get("max_step") or time_step, time_step)
+    min_step = spec_def.get("min_step") or time_step * 1e-6
+    t, h, steps, rejected = 0., max_step, 0, 0
+    while t < time_step * (1. - 1e-12):
+        h = min(h, time_step - t)
+        start = _capture(ds, names)
+        _solve_substep(self, method_name, spec_def, h)
+        coarse = _capture(ds, spec_def["node_unknowns"])
+        _restore(ds, start)
+        _solve_substep(self, method_name, spec_def, h / 2.)
+        _solve_substep(self, method_name, spec_def, h / 2.)
+        fine = _capture(ds, spec_def["node_unknowns"])
+        error = max((np.max(np.abs(fine[fn] - coarse[fn]) / (atol + rtol * np.abs(fine[fn])))
+                     for fn in fine), default=0.)
+        if error <= 1.:
+            t, steps = t + h, steps + 1
+            h *= min(2., max(0.2, 0.9 / np.sqrt(max(error, 1e-12))))
+        else:
+            _restore(ds, start)
+            rejected += 1
+            h *= max(0.2, 0.9 / np.sqrt(error))
+            if h < min_step:
+                raise RuntimeError(f"{type(self).__name__}.{method_name}: adaptive step below min_step={min_step:g} "
+                                   f"at t={t:g} of {time_step:g}")
+    self._last_integration = {"steps": steps, "rejected": rejected}
+
+
+def _solve_once(self, method_name: str, spec_def: dict) -> None:
     """Build, solve and write back one graph system, on the whole graph or on the current active subgraph."""
 
     # ── Advance previous-field bookkeeping ────────────────────────────────────
@@ -986,7 +1075,7 @@ def _solve_graph_system(self, method_name: str, spec_def: dict) -> None:
     if _saved is not None:
         setattr(self, _prev_key, _saved)
     previous_fields = getattr(self, _prev_key, None)
-    dt = getattr(self, "time_step", None)
+    dt = self.__dict__.get("_current_dt", getattr(self, "time_step", None))
 
     # First implicit_euler call: use current field values as u_prev
     _solver_cls = spec_def.get("solver_cls")
@@ -1135,6 +1224,12 @@ def graph_system(
     schedule_as    = "axial",
     where          = None,
     transient      = None,
+    integrate      = "step",
+    n_substeps     = 1,
+    rtol           = 1e-4,
+    atol           = 1e-8,
+    min_step       = None,
+    max_step       = None,
 ):
     """
     Inner-class decorator that wires a GraphSystem solve into the Choregrapher.
@@ -1184,6 +1279,10 @@ def graph_system(
         Whether the balance has a time derivative. Steady systems on an active subgraph need a Dirichlet anchor in
         every connected piece, which is checked. Default: True for the time-stepping solvers (explicit and implicit
         Euler, IVP), False otherwise.
+    integrate      : "step" | "substeps" | "adaptive"
+        "step": one solve of the component's time_step (default); "substeps": n_substeps solves of
+        time_step / n_substeps; "adaptive": step doubling with rtol / atol, min_step / max_step. Equations must
+        write their time terms with self.dt and self.previous() (design note time_and_data §2).
     """
     # Backward-compat: honour deprecated method= kwarg.
     if method is not None:
@@ -1193,6 +1292,11 @@ def graph_system(
                 "Use 'solver' only; 'method' is a deprecated alias."
             )
         solver = method
+
+    if integrate not in ("step", "substeps", "adaptive"):
+        raise ValueError(f"graph_system: integrate must be 'step', 'substeps' or 'adaptive', got '{integrate}'")
+    if integrate == "substeps" and int(n_substeps) < 1:
+        raise ValueError("graph_system: n_substeps must be at least 1")
 
     # Resolve to (solver_cls, method_str) pair.
     if isinstance(solver, str):
@@ -1225,6 +1329,12 @@ def graph_system(
         "linesearch"    : linesearch,
         "schedule_as"   : schedule_as,
         "where"         : where,
+        "integrate"     : integrate,
+        "n_substeps"    : n_substeps,
+        "rtol"          : rtol,
+        "atol"          : atol,
+        "min_step"      : min_step,
+        "max_step"      : max_step,
         "transient"     : (issubclass(solver_cls, (ExplicitEulerSolver, ImplicitEulerSolver, ScipyIVPSolver))
                            if transient is None else bool(transient)),
     }

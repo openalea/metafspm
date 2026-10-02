@@ -2117,6 +2117,9 @@ class ArrayDataStructure(VariableStoreMixin, FieldDataStructure):
         return self._L
 
     def _build_1d_laplacian(self, n: int, h: float):
+        if n == 1:
+            # A single cell has no neighbour along this axis: no flux, no term (was -1/h^2, a spurious sink)
+            return _sp.csr_matrix((1, 1)) if _HAS_SCIPY else np.zeros((1, 1))
         d = np.full(n, -2.0) / h**2
         d[0] = d[-1] = -1.0 / h**2
         off = np.ones(n - 1) / h**2

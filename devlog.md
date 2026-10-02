@@ -1326,3 +1326,32 @@ Per-file counts:
   - an equation writing into a parameter raises `read-only`, with the DataStructure intact.
 - **Plan:** DS4 and DS9 ticked.
 - **Suite:** 661 passed, same 10 warnings. No open question: 4a committed, 4b starts.
+
+---
+
+## 2026-10-02 (later): 4a committed (`6bfcaf7`); step 4b implemented (DS10 time integration)
+
+- **`@graph_system`** gains `integrate="step" | "substeps" | "adaptive"`, `n_substeps`, `rtol`, `atol`, `min_step` and `max_step`, all validated.
+- **`_solve_graph_system`** dispatches:
+  - `_solve_once` (the former body; dt from `_current_dt`);
+  - `_solve_substep` (sets the solver's previous fields to the state at the sub-step start, and `_current_dt`);
+  - `_integrate_adaptive`: step doubling, comparing one step of h with two of h/2 on the node unknowns (`rtol·|x| + atol`), with h adapted by `0.9/√err` within [0.2, 2], and `_last_integration = {steps, rejected}`.
+
+  The unknowns at the start of the solve are kept for `previous(at="solve")`.
+- **FunctionalComponent:**
+  - `dt` property;
+  - `previous(name, at="substep" | "solve" | "step")`;
+  - `pull_available_inputs` records the unknowns of all its graph systems, with their location, for `at="step"` (sliced on active subgraphs).
+- **`BoundaryConditions`** is not attached to decorator specs, so time-varying boundaries are boundary sets, re-read at every sub-step. Recorded in the note.
+- **Bug found and fixed (pre-existing):** `ArrayDataStructure.laplacian()` put `−1/h²` on the diagonal for axes with a single cell, a spurious sink: a `(6, 1, 1)` column lost mass. Found because the implicit-Euler reference disagreed with the face-graph solve. The 3c Laplacian test now also covers `(6, 1, 1)` and `(1, 4, 3)`.
+- **New `test/graph_system_tests/test_time_integration.py`**, 7 tests, with diffusion along a `(6, 1, 1)` column written with `self.dt` and `previous()`:
+  - one step is unchanged, and `dt == time_step`;
+  - 4 sub-steps equal 4 hand implicit-Euler solves of dt/4;
+  - adaptive is 5 times closer than a single step to the exact `expm(dt·D·L)·c0`, conserving mass;
+  - slow dynamics take fewer adaptive steps;
+  - a step below `min_step` raises;
+  - operator splitting with `previous(at="step")`;
+  - the options are checked.
+- **DS13 seen again:** two instances of one class cannot both be called, because the Choregrapher binds a class's steps to its last instance. The adaptive comparison builds and runs them one after the other.
+- **Plan:** DS10 ticked.
+- **Suite:** 670 passed, same 10 warnings. No open question: 4b committed, 4c starts.

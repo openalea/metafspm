@@ -15,7 +15,8 @@ DOC = dict(unit="", unit_comment="", description="", min_value=0., max_value=1.,
            DOI=[])
 
 
-@pytest.mark.parametrize("shape, dx", [((5,), 0.1), ((4, 3), (0.1, 0.2)), ((4, 3, 2), (0.1, 0.2, 0.3))])
+@pytest.mark.parametrize("shape, dx", [((5,), 0.1), ((4, 3), (0.1, 0.2)), ((4, 3, 2), (0.1, 0.2, 0.3)),
+                                       ((6, 1, 1), 0.1), ((1, 4, 3), (0.1, 0.2, 0.3))])
 def test_the_face_graph_reproduces_the_finite_difference_laplacian(shape, dx):
     grid = ArrayDataStructure(shape=shape, dx=dx)
     B = grid.incidence_matrix().toarray()

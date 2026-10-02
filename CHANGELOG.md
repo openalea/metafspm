@@ -18,6 +18,16 @@ The flat modules used before the 2026 restructure have been removed. No compatib
 | `openalea.metafspm.component.Model`, `declare` | `openalea.metafspm.coupling.component.Component` / `FunctionalComponent`, `declare` |
 | `openalea.metafspm.specializer` | `openalea.metafspm.solve.specializer` |
 
+### Sub-stepping and adaptive integration of graph systems (step 4b)
+
+- **`@graph_system(integrate=...)`**:
+  - `"step"` (default, unchanged): one solve of `time_step`;
+  - `"substeps"`: `n_substeps` solves of `time_step / n_substeps`, re-reading boundary sets between them;
+  - `"adaptive"`: step doubling with `rtol` / `atol`, bounded by `min_step` / `max_step`. A step below `min_step` raises.
+- **Time terms in equations.** Equations use `self.dt` (the current sub-step's length, equal to `time_step` with `"step"`) and `self.previous(fn)` (the state at the start of the current sub-step).
+- **`previous(fn, at=...)`**: `at="solve"` gives the state at the start of the call's solve, and `at="step"` the state at the start of the component's call, for operator splitting between graph systems.
+- **Fix: `ArrayDataStructure.laplacian()` on axes with a single cell.** It added a spurious `−1/h²` sink on such axes, e.g. a `(nx, 1, 1)` column lost mass. Such an axis now contributes nothing, like the face graph.
+
 ### MTG sync policy and read-only snapshots (step 4a)
 
 - **`mtg_sync`.** The class attribute `DataStructureComponent.mtg_sync = "after_call"` (default) writes the state variables to the MTG after every call; `"never"` leaves the MTG untouched.
