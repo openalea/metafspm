@@ -112,6 +112,7 @@ class CompositeModel:
                 raise NotImplementedError(f"{link.receiver}.{link.variable} <- {link.provider}: coupling across "
                                           "DataStructures needs a Coupler (devplan WD.5)")
             self._check_link_kinds(link, receiver, provider)
+            self._check_link_scales(link, ds)
             if link.kind == "identity":
                 continue
             crosses_locations = (link.kind == "alias" and ds.has(link.variable)
@@ -130,12 +131,13 @@ class CompositeModel:
             aggregation = link.aggregation
             if aggregation is None and location is not None:
                 aggregation = self._default_link_mapping(ds, link, location)
+            options = dict(location=location, aggregation=aggregation, weight=link.weight, target=link.target)
+            if link.target is not None and ds.has(link.variable):
+                options["default"] = ds._variable_meta().get(link.variable, {}).get("default", 0.)
             if link.formula is not None:
-                ds.derive(link.variable, link.sources, formula=link.formula, location=location,
-                          aggregation=aggregation, weight=link.weight)
+                ds.derive(link.variable, link.sources, formula=link.formula, **options)
             else:
-                ds.derive(link.variable, dict(link.sources), location=location,
-                          aggregation=aggregation, weight=link.weight)
+                ds.derive(link.variable, dict(link.sources), **options)
             derived_inputs = receiver.__dict__.setdefault("_derived_inputs", [])
             if link.variable not in derived_inputs:
                 derived_inputs.append(link.variable)
@@ -159,6 +161,19 @@ class CompositeModel:
                 raise ValueError(f"{link.receiver}.{link.variable} ({received}) <- {link.provider}.{source} "
                                  f"({provided}): the kinds do not agree (extensive with extensive, intensive or "
                                  "massic with intensive or massic)")
+
+    @staticmethod
+    def _check_link_scales(link, ds) -> None:
+        """A link stating its scales must agree with the declared locations (R1: checks, declarations rule)."""
+        from openalea.metafspm.coupling.declaration import location_of_scale
+        checks = [(link.variable, link.scale)] + [(source, link.source_scale) for source in link.sources]
+        for name, scale in checks:
+            if scale is None or not ds.has(name):
+                continue
+            expected, actual = location_of_scale(ds, scale), ds.location(name)
+            if expected != actual:
+                raise ValueError(f"{link.receiver}.{link.variable} <- {link.provider}: the link states that '{name}' "
+                                 f"is at scale {scale} ({expected}), but it is declared at {actual}")
 
     @staticmethod
     def _default_link_mapping(ds, link, location):

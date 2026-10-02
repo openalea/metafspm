@@ -66,7 +66,12 @@ class Link:
                  variable names passed to *formula*.
     scale:       receiver-side scale when the link changes scale (live ScalesConfig reference or name).
     aggregation: how values are mapped across locations ("sum", "mean", "weighted_mean", "broadcast",
-                 "proximal", "distal", ...), with *weight* for "weighted_mean".
+                 "child", "parent", ...), with *weight* for "weighted_mean". Without it, a link between two
+                 locations is mapped from its provider's state_variable_type (design note cross_scale_and_grids §2).
+    scale, source_scale:
+                 when given, checks that the receiver's (and the sources') declared location is that scale's.
+    target:      a mask of the DataStructure: the mapped values go to its entities only, the others getting the
+                 receiver's default (e.g. a segment concentration broadcast to its symplastic Compartments).
     """
     receiver: str
     variable: str
@@ -76,6 +81,7 @@ class Link:
     source_scale: Optional[int] = None
     aggregation: Optional[Union[str, Callable]] = None
     weight: Optional[str] = None
+    target: Optional[str] = None
     formula: Optional[Callable] = None
     raw_factors: Mapping = field(default_factory=dict, compare=False, repr=False)
 
@@ -96,7 +102,8 @@ class Link:
         """identity | alias | factor | expression | multi_source | same_name_factor | formula | scale_change."""
         if self.formula is not None:
             return "formula"
-        if self.scale is not None or self.source_scale is not None or self.aggregation is not None:
+        if (self.scale is not None or self.source_scale is not None or self.aggregation is not None
+                or self.target is not None):
             return "scale_change"
         if len(self.sources) > 1:
             return "multi_source"
@@ -175,7 +182,8 @@ class Translator:
             for provider, links in (providers or {}).items():
                 for variable, spec in (links or {}).items():
                     if isinstance(spec, Mapping) and "sources" in spec:
-                        options = {key: spec[key] for key in ("scale", "source_scale", "aggregation", "weight") if key in spec}
+                        options = {key: spec[key] for key in ("scale", "source_scale", "aggregation", "weight", "target")
+                                   if key in spec}
                         translator.link(receiver, variable, provider, dict(spec["sources"]), **options)
                     else:
                         translator.link(receiver, variable, provider, dict(spec))

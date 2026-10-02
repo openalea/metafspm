@@ -61,12 +61,14 @@ class SegmentInputs(FunctionalComponent):
                                        state_variable_type="intensive")
 
 
-def _couple(links):
+def _couple(links, before=None):
     g, _ = generate_simple_mpg_seedling()
     g.populate_graph(g.scales.SubOrgan)
     g.convert_properties_to_arraydict()
     ds = MPGDataStructure(g, from_scale=g.scales.SubOrgan)
     components = (Segments(data_structure=ds), Organs(data_structure=ds), SegmentInputs(data_structure=ds))
+    if before is not None:
+        before(g, ds)
     model = CompositeModel()
     model.components, model.soil_outputs = list(components), []
     model._couple_on_data_structures(links)
@@ -140,3 +142,35 @@ def test_couplability_reports_kind_conflicts_and_missing_mappings():
     assert any("the kinds do not agree" in p for p in problems)
     problems = couplability_problems(Organs, translator, data_structure=ds)
     assert any("organ_tag <- Segments" in p and "does not imply one" in p for p in problems)
+
+
+# ---------------------------------------------------------------- link scales and targets (step 3b)
+
+def test_link_scales_are_checked_against_the_declarations():
+    _couple(_link("Organs", "Segments", "organ_uptake", "uptake", scale="Organ", source_scale="SubOrgan"))
+    with pytest.raises(ValueError, match="states that 'organ_uptake' is at scale 6 .* declared at Organ"):
+        _couple(_link("Organs", "Segments", "organ_uptake", "uptake", scale=scales.SubOrgan))
+    with pytest.raises(ValueError, match="states that 'uptake' is at scale 5 .* declared at node"):
+        _couple(_link("Organs", "Segments", "organ_uptake", "uptake", source_scale=scales.Organ))
+
+
+def _root_mask(g, ds):
+    ds.register("label", ds._mtg_to_node_array("label"), location="node")
+    ds.define_mask("roots", {"label": g.labels.SubOrgan.RootSegment})
+
+
+def test_a_targeted_link_maps_to_the_mask_entities_only():
+    g, ds = _couple(_link("SegmentInputs", "Organs", "segment_temperature", "organ_temperature", target="roots"),
+                    before=_root_mask)
+    roots = ds.mask("roots")
+    np.testing.assert_allclose(ds.get("segment_temperature")[roots], 20.)
+    np.testing.assert_allclose(ds.get("segment_temperature")[~roots], 0.)   # the receiver's default
+
+
+def test_targets_in_python_translators_and_unknown_masks():
+    from openalea.metafspm.coupling.translator import Translator
+    translator = Translator().link("SegmentInputs", "segment_temperature", "Organs", {"organ_temperature": 1.},
+                                   target="roots")
+    assert translator.links[0].target == "roots" and translator.links[0].kind == "derived"
+    with pytest.raises(KeyError, match="target mask 'roots' is not defined"):
+        _couple(_link("SegmentInputs", "Organs", "segment_temperature", "organ_temperature", target="roots"))

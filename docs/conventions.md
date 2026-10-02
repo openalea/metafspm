@@ -79,6 +79,10 @@ Declarations that cannot be written back raise when the component is created: a 
 
 **Links between scales.** A translator link between two locations without `aggregation` uses the same table, applied to the provider's `state_variable_type`. A receiving input may declare its `state_variable_type`, which must be in the provider's family: extensive with extensive, intensive or massic with intensive or massic. Mappings between two coarse scales (e.g. Organ ↔ Axis) go through each finer entity's owner.
 
+**Translator links:**
+- `scale=` / `source_scale=` on a link only check the declared locations;
+- `target="mask"` restricts a mapped link to the mask's entities, the others getting the receiver's default.
+
 ## Outputs
 
 - A step or graph output that is a declared field takes its declared location.

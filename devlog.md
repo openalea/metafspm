@@ -1233,3 +1233,17 @@ Per-file counts:
   - Organ ↔ Axis;
   - couplability reports.
 - **Suite:** 641 passed, same 10 warnings. No open question, so 3a is committed and 3b starts (your rule).
+
+---
+
+## 2026-10-02 (later): 3a committed (`40657a2`); step 3b implemented (link scale checks, targets)
+
+- **`Link.target`:** new field, part of the `scale_change` detail, so the link is always derived. It is read from nested specs (`"target"`), and Python translators pass it to `link()`.
+- **`CompositeModel._check_link_scales`:** a link's `scale` / `source_scale` must match `location_of_scale` of the declared receiver and sources (R1).
+- **Targeted links** call `derive(target=, default=<receiver's default>)`. An unknown mask raises at coupling.
+- **Tests:** 3 more in `test_cross_scale_links.py`:
+  - matching scales pass, and a wrong `scale` or `source_scale` raises;
+  - a targeted broadcast reaches only the root segments, the others keeping the receiver's default;
+  - Python translator `target`, and an unknown mask raising.
+- **Plan:** DS18 ticked (3a–3b).
+- **Suite:** 644 passed, same 10 warnings. No open question: 3b committed, 3c starts.
