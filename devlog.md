@@ -1089,3 +1089,32 @@ Per-file counts:
   - mask recomputation and version.
 - **Docs:** CHANGELOG, conventions (repartition, masks), note §4 and status, plan (DS20 ticked).
 - **Suite:** 611 passed, same 10 warnings. Not committed yet.
+
+---
+
+## 2026-10-02 (later): 2c committed (`6430b08`); step 2d implemented (graph systems on the active subgraph)
+
+- **`@graph_system(where=, transient=)`.** `transient` defaults to `True` for `ExplicitEulerSolver`, `ImplicitEulerSolver` and `ScipyIVPSolver`.
+- **`_invoke_graph_system`** builds a `_Restriction` for `where=`:
+  - active node indices, kept edges (both ends active), and the sub-GraphView (sliced incidence, local tail/head);
+  - cached by `(topology_version, mask_version)`;
+  - during the solve, `self._graph_view` returns the sub-view (`_solve_view`), so user equations are unchanged;
+  - the body moved into `_solve_graph_system`.
+- **Builder:**
+  - `_read_array(take=)` slices snapshots, initial guesses, `_previous_state` and integrated amounts;
+  - `inject_result` and graph outputs scatter back: inactive nodes frozen; dropped edges at 0, except `{field}_amount`, which is kept;
+  - the solution saved for the next solve's previous values is now full-size (`ds.get` after inject), so it survives mask changes; it is sliced when used.
+- **Well-posedness check (P4):** for a steady system on a restriction, `scipy.sparse.csgraph.connected_components` on the sub-view. Every piece needs a Dirichlet node (the union of the Dirichlet BC filters); otherwise a `ValueError` names the system and up to 10 vids.
+- **Empty mask:** the solve is skipped, and edge unknowns are set to 0.
+- **Hand-set `_boundary_ports` with `where=`** raise `NotImplementedError` (boundary sets in 2e).
+- **New `test/graph_system_tests/test_active_subgraph.py`**, 8 tests, with a transient diffusion and a steady Darcy potential on the seedling:
+  - all active is bit-for-bit equal to the whole-graph solve over two steps;
+  - a dead interior node is frozen, its edges carry zero flux, and mass is conserved over the active set;
+  - activation between steps, with mass conserved;
+  - an empty mask;
+  - a steady anchored solve;
+  - an unanchored piece raising;
+  - `transient` defaults;
+  - hand ports rejected.
+- **Docs:** CHANGELOG, conventions, plan (DS21 ticked), note status.
+- **Suite:** 619 passed, same 10 warnings. Not committed yet.

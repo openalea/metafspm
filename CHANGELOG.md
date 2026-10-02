@@ -18,6 +18,15 @@ The flat modules used before the 2026 restructure have been removed. No compatib
 | `openalea.metafspm.component.Model`, `declare` | `openalea.metafspm.coupling.component.Component` / `FunctionalComponent`, `declare` |
 | `openalea.metafspm.specializer` | `openalea.metafspm.solve.specializer` |
 
+### Graph systems on the active subgraph (step 2d)
+
+- **`@graph_system(where="active")`** solves on the nodes of a mask and the edges between them. The equations see the subgraph's view through `self._graph_view`; inactive nodes keep their values, and dropped edges carry no flux (their integrated amounts are kept).
+  - The subgraph is rebuilt only when the topology or the mask's values changed.
+  - An empty mask skips the solve.
+- **`transient=`** tells whether the balance has a time derivative. It defaults to `True` for explicit and implicit Euler and IVP, and `False` otherwise. On an active subgraph, a steady system raises when a connected piece has no Dirichlet anchor, naming its nodes.
+- **Boundary ports set by hand** cannot be combined with `where=` (`NotImplementedError`); boundary sets come in step 2e.
+- **Previous values across solves** are now kept on every node, so that they survive a change of active subgraph.
+
 ### Repartition and the active mask (step 2c)
 
 - **Repartition.** `StructuralComponent.partition_weight` (a node variable or a callable) enables the repartition, after each MPG-style step, of the other components' node variables by `state_variable_type`:
