@@ -18,6 +18,17 @@ The flat modules used before the 2026 restructure have been removed. No compatib
 | `openalea.metafspm.component.Model`, `declare` | `openalea.metafspm.coupling.component.Component` / `FunctionalComponent`, `declare` |
 | `openalea.metafspm.specializer` | `openalea.metafspm.solve.specializer` |
 
+### Cross-scale links: default mappings and kinds (step 3a)
+
+- **Default mapping.** A translator link between two locations that gives no `aggregation` is mapped from its provider's `state_variable_type`:
+  - extensive: `sum` up, and an error down;
+  - intensive: `mean` up, `broadcast` down;
+  - massic concentration: `weighted_mean` up (the link's `weight` is required), `broadcast` down;
+  - missing or mixed kinds: an error naming the link.
+- **Aliases across scales.** A single-source factor-1 link whose ends are at different locations becomes a mapped derived variable instead of an alias.
+- **Kinds on inputs.** `input_variable(..., state_variable_type=)` is optional. When given, it must belong to the provider's family (extensive or intensive), otherwise the coupling raises. `couplability_problems(..., data_structure=)` reports kind conflicts and missing mappings.
+- **Coarse ↔ coarse mappings** (e.g. Organ → Axis, Axis → Organ) in `MPGDataStructure._map`.
+
 ### Anatomy mode: multiscale graphs assembled in the MPG (step 2f)
 
 - **`MPGDataStructure(g, from_scale=SubOrgan, nodes="Compartment", wiring=[...])`**:

@@ -77,6 +77,8 @@ Node → edge mappings have no default.
 
 Declarations that cannot be written back raise when the component is created: a state variable summed to a coarser scale, an edge state at a scale coarser than the nodes, or an edge state with mapping `mean`.
 
+**Links between scales.** A translator link between two locations without `aggregation` uses the same table, applied to the provider's `state_variable_type`. A receiving input may declare its `state_variable_type`, which must be in the provider's family: extensive with extensive, intensive or massic with intensive or massic. Mappings between two coarse scales (e.g. Organ ↔ Axis) go through each finer entity's owner.
+
 ## Outputs
 
 - A step or graph output that is a declared field takes its declared location.

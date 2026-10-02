@@ -71,19 +71,21 @@ def declare(unit: str, unit_comment: str, description: str, min_value: float, ma
 def input_variable(unit: str, unit_comment: str, description: str, min_value: float,
                    max_value: float, value_comment: str, references: str, DOI: list,
                    by: str, initialize=None, scale=None, edge_mapping=None, on_grow="default",
-                   location=None, mapping=None, weight=None):
+                   location=None, mapping=None, weight=None, state_variable_type=None):
     """Declare an input field — a variable driven by another model component.
 
     When the component is run in isolation (not coupled), the field keeps
     *initialize* as its uniform default everywhere.
 
     :param scale:  "node" | "edge" (graph) or grid-level descriptor (multigrid).
+    :param state_variable_type: optional kind of the input ("extensive", "intensive", ...): when given, it must
+                   agree with the kind of the variable that provides it through the translator.
     """
     return declare(
         default=initialize, unit=unit, unit_comment=unit_comment,
         description=description, min_value=min_value, max_value=max_value,
         value_comment=value_comment, references=references, DOI=DOI,
-        variable_type="input", by=by, state_variable_type=None,
+        variable_type="input", by=by, state_variable_type=state_variable_type,
         edit_by="user", scale=scale, edge_mapping=edge_mapping, on_grow=on_grow,
         location=location, mapping=mapping, weight=weight,
     )

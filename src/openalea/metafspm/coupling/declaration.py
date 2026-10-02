@@ -95,6 +95,39 @@ def default_mapping(kind: Optional[str], direction: str, name: str, weight: Opti
                            "does not imply one: give mapping=...")
 
 
+KIND_FAMILIES = {"extensive": "extensive", "NonInertialExtensive": "extensive",
+                 "intensive": "intensive", "NonInertialIntensive": "intensive", "massic_concentration": "intensive",
+                 "descriptor": "descriptor"}
+
+
+def kinds_agree(a: Optional[str], b: Optional[str]) -> bool:
+    """Whether two state_variable_types can be linked (same family); unknown kinds agree with anything."""
+    if a is None or b is None or a not in KIND_FAMILIES or b not in KIND_FAMILIES:
+        return True
+    return KIND_FAMILIES[a] == KIND_FAMILIES[b]
+
+
+def link_direction(ds, from_location: str, to_location: str) -> Optional[str]:
+    """
+    "up" from finer to coarser locations (nodes, then coarse scales, then the scalar plant scale), "down" the
+    other way, None when edges are involved (node <-> edge mappings have no default).
+    """
+    def rank(location):
+        if location == "scalar":
+            return 0
+        if location == "edge":
+            return None
+        if location in ("node", "cell"):
+            return node_scale(ds) or 99
+        names = {name: value for value, name in scale_names(ds).items()}
+        return names.get(location)
+
+    a, b = rank(from_location), rank(to_location)
+    if a is None or b is None or a == b:
+        return None
+    return "up" if b < a else "down"
+
+
 # ── Scales of a DataStructure ──────────────────────────────────────────────────
 
 def _scales_of(ds):

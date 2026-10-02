@@ -111,9 +111,12 @@ class CompositeModel:
             if provider.data_structure is not ds:
                 raise NotImplementedError(f"{link.receiver}.{link.variable} <- {link.provider}: coupling across "
                                           "DataStructures needs a Coupler (devplan WD.5)")
+            self._check_link_kinds(link, receiver, provider)
             if link.kind == "identity":
                 continue
-            if link.kind == "alias":
+            crosses_locations = (link.kind == "alias" and ds.has(link.variable)
+                                 and ds.location(link.variable) != ds.location(next(iter(link.sources))))
+            if link.kind == "alias" and not crosses_locations:
                 (source,) = link.sources
                 if ds.has(link.variable) and link.variable not in ds.aliases():
                     ds.unregister(link.variable)
@@ -124,15 +127,64 @@ class CompositeModel:
                                  f"factor {link.sources[link.variable]}: a same-name link within one data structure "
                                  "must have a factor of 1, rename the receiving variable")
             location = ds.location(link.variable) if ds.has(link.variable) else None
+            aggregation = link.aggregation
+            if aggregation is None and location is not None:
+                aggregation = self._default_link_mapping(ds, link, location)
             if link.formula is not None:
                 ds.derive(link.variable, link.sources, formula=link.formula, location=location,
-                          aggregation=link.aggregation, weight=link.weight)
+                          aggregation=aggregation, weight=link.weight)
             else:
                 ds.derive(link.variable, dict(link.sources), location=location,
-                          aggregation=link.aggregation, weight=link.weight)
+                          aggregation=aggregation, weight=link.weight)
             derived_inputs = receiver.__dict__.setdefault("_derived_inputs", [])
             if link.variable not in derived_inputs:
                 derived_inputs.append(link.variable)
+
+    @staticmethod
+    def _declared_kind(component, ds, name):
+        spec = getattr(component, "_variable_specs", {}).get(name)
+        if spec is not None and spec.kind is not None:
+            return spec.kind
+        return ds._variable_meta().get(name, {}).get("kind") if hasattr(ds, "_variable_meta") else None
+
+    def _check_link_kinds(self, link, receiver, provider) -> None:
+        """A receiver declaring a state_variable_type must agree with its provider's (design note §2, step 3a)."""
+        from openalea.metafspm.coupling.declaration import kinds_agree
+        ds = receiver.data_structure
+        received = getattr(receiver, "_variable_specs", {}).get(link.variable)
+        received = received.kind if received is not None else None
+        for source in link.sources:
+            provided = self._declared_kind(provider, ds, source)
+            if not kinds_agree(received, provided):
+                raise ValueError(f"{link.receiver}.{link.variable} ({received}) <- {link.provider}.{source} "
+                                 f"({provided}): the kinds do not agree (extensive with extensive, intensive or "
+                                 "massic with intensive or massic)")
+
+    @staticmethod
+    def _default_link_mapping(ds, link, location):
+        """
+        Mapping of a link between two locations that gives no aggregation, from its sources' state_variable_type
+        (D9, option A; design note cross_scale_and_grids §2). None when the locations are the same.
+        """
+        from openalea.metafspm.coupling.declaration import DeclarationError, default_mapping, link_direction
+        source_locations = {ds.location(source) for source in link.sources}
+        if len(source_locations) != 1 or location in source_locations:
+            return None
+        (source_location,) = source_locations
+        name = f"{link.receiver}.{link.variable} <- {link.provider}"
+        direction = link_direction(ds, source_location, location)
+        if direction is None:
+            raise DeclarationError(f"{name}: from {source_location} to {location} has no default mapping, give "
+                                   "aggregation=")
+        kinds = {ds._variable_meta().get(ds._resolve(source), {}).get("kind") for source in link.sources}
+        if len(kinds) != 1:
+            raise DeclarationError(f"{name}: its sources have different kinds {sorted(map(str, kinds))}, give "
+                                   "aggregation=")
+        (kind,) = kinds
+        try:
+            return default_mapping(kind, direction, name, weight=link.weight)
+        except DeclarationError as error:
+            raise DeclarationError(f"{error} (link from {source_location} to {location})") from None
 
     def open_or_create_translator(self, translator_path):
         """
