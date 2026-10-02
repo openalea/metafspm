@@ -780,6 +780,10 @@ class LegacyMPGDataStructure(MTGDataStructure):
 
 # ─────────────────────────────────────────────────────────────────────────────
 
+# Edge mapping names of declarations (child / parent) and of the MTG edge readers and writers
+_EDGE_CONVENTIONS = {"child": "proximal", "parent": "distal"}
+
+
 class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
     """
     Level 4b — MPG wrapper operating at Compartment/Connection scales.
@@ -1025,9 +1029,9 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
             parents, children = self._connection_endpoints()
             tail = np.array([self._vid_to_idx[int(v)] for v in parents], dtype=np.int64)
             head = np.array([self._vid_to_idx[int(v)] for v in children], dtype=np.int64)
-            if aggregation == "proximal":
+            if aggregation in ("proximal", "child"):
                 return values[head]
-            if aggregation == "distal":
+            if aggregation in ("distal", "parent"):
                 return values[tail]
             if aggregation == "mean":
                 return (values[tail] + values[head]) / 2.
@@ -1129,6 +1133,7 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
         if self._bio_edge_a_idx.size == 0:
             return np.empty(0, dtype=np.float64)
         n_id_a, n_id_b = self._connection_endpoints()
+        convention = _EDGE_CONVENTIONS.get(convention, convention)
         if convention in ("proximal", "mean"):
             b = self._mtg_values(name, n_id_b, scale=scale, fast_idx=self._bio_edge_b_idx)
             if b is None or convention == "proximal":
@@ -1171,12 +1176,16 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
           "mean"     — no write-back (symmetric property; no unique endpoint)
         Errors are raised.
         """
+        convention = _EDGE_CONVENTIONS.get(convention, convention)
         if convention == "mean" or self._mtg is None or self._bio_edge_b_idx.size == 0:
             return
         arr = np.asarray(arr, dtype=np.float64)
         if arr.shape != (self.n_edges(),):
             raise ValueError(f"write_edge_to_mtg('{name}'): expected shape ({self.n_edges()},), got {arr.shape}.")
         idx  = self._bio_edge_b_idx if convention == "proximal" else self._bio_edge_a_idx
+        if convention == "distal" and np.unique(idx).size < idx.size:
+            raise ValueError(f"write_edge_to_mtg('{name}'): several edges share a parent, their values cannot all "
+                             "be written to it (use the child mapping)")
         prop = self._mtg_property_for_write(name)
         if (isinstance(prop, ArrayDict) and prop.size == len(self._bio_vids_sorted)
                 and np.array_equal(prop.keys_array(), self._bio_vids_sorted)):
@@ -1184,6 +1193,68 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
         else:
             for e, vid in enumerate(self._bio_vids_sorted[idx]):
                 prop[int(vid)] = float(arr[e])
+
+    # ── Declared variables: MTG reading and write-back (datastructure_contract §3) ──────
+
+    def _scale_name(self, scale: int) -> str:
+        return next(name for name, value in vars(type(self._mtg.scales)).items()
+                    if isinstance(value, int) and not name.startswith("_") and value == scale)
+
+    def _write_at(self, name: str, vids, values) -> None:
+        prop = self._mtg_property_for_write(name)
+        for vid, value in zip(vids, np.asarray(values, dtype=np.float64)):
+            prop[int(vid)] = float(value)
+
+    def read_mtg(self, spec):
+        """
+        Values of the MTG property of declared variable *spec* (a VariableSpec) at its location, mapped from its
+        scale; None when the variable has no MTG scale or the property is absent.
+        """
+        if not spec.mtg_backed or self._mtg is None:
+            return None
+        if spec.location == "node":
+            return self._mtg_to_node_array(spec.name, scale=spec.scale)
+        if spec.location == "edge":
+            return self._mtg_to_edge_array(spec.name, convention=spec.mapping, scale=spec.scale)
+        if spec.mapping is None:
+            # Stored at its own coarse scale: the values of the vertices of that scale
+            return self._mtg_values(spec.name, self.entity_ids(spec.location))
+        values = self._mtg_to_node_array(spec.name)
+        if values is None:
+            return None
+        weights = None
+        if spec.weight is not None:
+            if not self.has(spec.weight):
+                raise ValueError(f"'{spec.name}' is aggregated with weight '{spec.weight}', which is not registered")
+            weights = self.get(spec.weight)
+        return self._map(values, "node", spec.location, spec.mapping, weights)
+
+    def write_mtg(self, spec) -> None:
+        """
+        Write declared variable *spec* to its MTG property at the vertices of its scale, through the inverse of
+        its mapping:
+          stored at its scale             -> as is;
+          broadcast from a coarse scale   -> the (weighted) mean of the nodes of each coarse entity;
+          (weighted) mean to a coarse one -> broadcast to the nodes;
+          on edges                        -> at the child (or parent) endpoint.
+        """
+        if not spec.mtg_backed or self._mtg is None:
+            return
+        values = self.get(spec.name)
+        if spec.location == "node":
+            if spec.mapping is None:
+                self.write_node_to_mtg(spec.name, values)
+                return
+            coarse = self._scale_name(spec.scale)
+            weights = self.get(spec.weight) if spec.weight else None
+            means = self._map(values, "node", coarse, "weighted_mean" if weights is not None else "mean", weights)
+            self._write_at(spec.name, self.entity_ids(coarse), means)
+        elif spec.location == "edge":
+            self.write_edge_to_mtg(spec.name, values, convention=spec.mapping)
+        elif spec.mapping is None:
+            self._write_at(spec.name, self.entity_ids(spec.location), values)
+        else:
+            self.write_node_to_mtg(spec.name, self._map(values, spec.location, "node", "broadcast"))
 
     # ── Incidence matrix ──────────────────────────────────────────────────────
 

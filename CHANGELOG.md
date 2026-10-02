@@ -45,6 +45,23 @@ The flat modules used before the 2026 restructure have been removed. No compatib
 - `location="scalar"` fields are now registered on graph DataStructures too.
 - A graph equation receiving a variable stored at a coarse scale raises, and points to `location="node", mapping="broadcast"`.
 
+### MTG write-back through the scale mapping (step 1b)
+
+- **State variables are written to the MTG after every component call** (`Component.__call__`, N4). Before, they were written only at the end of a graph solve, so `@rate`-only components never reached the MTG.
+- **Values are written at the vertices of the declared scale, through the inverse mapping** (`MPGDataStructure.write_mtg`):
+  - stored at its scale → as is (an Organ-scale pool is written at Organ vertices, no longer at the node vids);
+  - broadcast from a coarse scale → the (weighted) mean of its nodes;
+  - averaged to a coarse scale → broadcast back to the nodes;
+  - on edges → at the child or parent endpoint.
+
+  `MPGDataStructure.read_mtg` is the matching reader, used at registration and for the parameter refresh before each graph solve. That refresh now covers parameters at coarse locations too.
+- **New declaration errors**, for state variables that could not be written back:
+  - summed to a coarser scale;
+  - an edge state at a scale coarser than the nodes.
+
+  Writing a `parent`-mapped edge state where several edges share a parent raises.
+- The DataStructure scale operators accept `child` / `parent` next to `proximal` / `distal`.
+
 ### Scene and coupling wrappers
 
 - `CompositeModel.open_or_create_translator(translator_path)` now takes the **full path of the translator YAML file**. It no longer takes a directory to which `/coupling_translator.yaml` was appended.
