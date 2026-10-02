@@ -594,3 +594,241 @@ Per-file counts:
   - The 9 slow real-process tests pass repeatedly, with no leftover shared memory.
   - **Line coverage 84.1 %** (67.4 % at the first audit). `composite_wrapper` 94.7 %, `scene_wrapper` 94.5 %, `coupler` 95.2 %, `translator` 95.8 %, `decorator` 90.0 %.
 - **Open:** Q29, what to do with the now-unused `solve/specializer.py` (0 % coverage).
+
+---
+
+## 2026-09-29 (later): DataStructure API audit (`devplan_datastructures.md`)
+
+- **Your questions Q1a, Q1b, Q2, Q3 are answered from the code in `devplan_datastructures.md`.**
+  - **Q1a:** graph systems effectively work only on `MPGDataStructure`, the only DS with both a graph view and a variable store. On `ArrayDataStructure` the graph view is `None`.
+  - **Q1b:** `MPGDataStructure` uses no traversal order. Its local order is the Compartment post-order produced by population, and the MPG traversals act on MTG properties only.
+  - **Q2:** there is one node scale per DS (the `from_scale`), so graph views are not built per variable scale.
+    - The cycle is: declare/refresh (MTG → DS), then snapshot copies at each solve, then solve, then in-place write, then write-back of bio-scale state variables.
+    - Found: **write-back ignores the declared scale.** Coarser-scale state variables are written at the node vids, without aggregation.
+    - `@rate` results reach the MTG only when the component also ran a graph system.
+    - Output locations are inferred by size.
+  - **Q3:** no extra environment nodes are needed. Dirichlet/Neumann BCs via filters exist; Robin boundary ports act as virtual environment nodes. Their values are frozen per port, they are keyed by vid, they do not follow growth, and the models have to assemble them by hand.
+- **Plan:** 16 DS-items (DS1–DS16), decisions D1–D8 with recommendations, questions Q4–Q5, and a suggested order: the Location contract first, then traversal and boundary sets.
+
+---
+
+## 2026-10-01: DataStructure plan refined from your answers
+
+- **Decisions recorded** in `devplan_datastructures.md` §6:
+  - D1, D2 and D5–D8 are agreed.
+  - D3 is agreed, on condition that links stay resolved dynamically by name.
+  - D4 is agreed, with your precisions.
+  - Two new decisions are proposed, D9 and D10.
+- **Your D3/D4 questions are answered with code evidence** (§8, "Replies"):
+  - **D3:** name-linking holds on the DataStructure.
+    - Identity links: components share variables by name.
+    - Aliases: resolved at every `get`.
+    - Factor, sum and scale links: recomputed before the receiver's step, the same timing as the former props coupling.
+    - The new **DS17** makes derived variables exact at read too: lazy, tracked by write counters (D10).
+  - **D4.1:** "one topology per component" ≠ one DataStructure per component. Components still share the plant's DataStructure.
+  - **D4.2:** a cross-scale graph (per-segment anatomy plus links between neighbouring segments, matched by e.g. vessel index) can already be built in the MPG with `populate_graph_custom_connections`. `MPGDataStructure` cannot wrap it, because it is keyed on SubOrgan `vertex_id`.
+    - **DS8 is rewritten** as a Compartment/Connection mode of `MPGDataStructure`: Compartment nodes, each mapped to its owner at every scale, and connection rules re-run on growth. Its priority is raised.
+  - **D4.3:** no, cross-scale inputs are not populated at their own scale today.
+    - Coarse-scale fields are stored at node location, as broadcast copies.
+    - Nothing infers the mapping, and there is no extensive `split`.
+    - Added **DS18**: cross-scale links with sum/mean up and broadcast/`split` down. The default mapping comes from `state_variable_type` (D9) and raises when the type is missing.
+- **Other plan items updated:**
+  - **DS3** now places coarse fields at their scale's location.
+  - **DS7** is reduced: the MPG ↔ MPG Coupler is deferred.
+  - **DS10** gains per-component or per-group sub-stepping and `previous(fn, at="step")`.
+- **UC5 leaf transpiration is specified from Q4** as a tool use case:
+  - a Robin boundary on the leaves, driven by per-leaf microclimate inputs;
+  - conductance = stomatal conductance (a model variable) × exchange surface.
+- **New questions:**
+  - Q6: the intra-segment anatomy edges, and the anatomy/link order at growth;
+  - Q7: whether a split targets labelled Compartments or all of them;
+  - Q8: whether sub-stepping is per component or per group.
+- **Order (§7):**
+  1. the contract (DS3, DS17, DS5, DS11, DS16);
+  2. the multiscale topology and boundaries (DS8, DS2, DS6 with UC5);
+  3. cross-scale coupling and grids (DS18, DS1);
+  4. time and data;
+  5. runtime.
+- **Rule saved for commits:** no Claude signature or mention in commit messages. Earlier commits up to `b7f95ad` still carry `Co-Authored-By` trailers; they are rewritten only if you ask.
+- No code changes, nothing committed.
+
+---
+
+## 2026-10-01 (later): DS8 / DS18 / DS10 refined from Q6–Q8
+
+- **Q6, your multiscale model:**
+  - anatomies are held at Compartment/Connection, below SubOrgan;
+  - connectivity between segments is held at SubOrgan and coarser scales;
+  - the solved graph is assembled by the traversal, with modeller-declared wiring rules (vessel index, angular coordinates).
+- **DS8 is rewritten as an assembled graph view on `MPGDataStructure`:**
+  - Compartment nodes, the anatomy Connections, and junction edges between adjacent SubOrgans, generated by declarative or callable rules;
+  - junctions are not written to the MTG: proposed **D11**, asked as Q9;
+  - owners at every scale, so that aggregation and broadcast work;
+  - rules re-applied on growth;
+  - `populate_graph_custom_connections` stays for existing code, as one declarative rule.
+- **Q7, DS18:** the down mapping is a filtered `broadcast` of intensive quantities (e.g. to symplastic Compartments). `split` is dropped from the defaults: extensive going down raises (D9 revised).
+- **Q8, DS10 / D5:** sub-stepping is per component only.
+- **New questions:**
+  - Q9: whether junctions should stay out of the MTG;
+  - Q10: how the anatomy generators store the intra-section edges;
+  - Q11: whether junctions only join parent/child SubOrgans.
+- No code changes, nothing committed.
+
+---
+
+## 2026-10-01 (later): DS8 aligned on "the MPG is the source of truth" (Q9–Q11)
+
+- **Q9:** the DataStructure is a dynamic interface to the MPG, and its graph view is extracted from the populated MPG. **D11 is reversed** and now agreed:
+  - every edge, junctions between anatomies included, is an MPG Connection vertex, populated by MPG methods;
+  - this matches what `MPGDataStructure` already does for one Compartment per segment.
+- **Q10:** GRANAP is out of scope until it becomes a StructuralComponent. DS8 is validated on a synthetic anatomy in the test helpers.
+- **Q11:** junctions only join direct MPG links (within-scale parent, or the complex parent's tip).
+- **DS8 is rewritten:**
+  - node keys are Compartment vids in anatomy mode, with the SubOrgan as owner;
+  - wiring rules are MPG methods (`all` / `nearest` / `equal`, or a callable), and their Connections are marked `edge_kind`;
+  - growth keeps the anatomies and adds junctions incrementally (proposed **D12**). `repopulate_graph` would otherwise delete them;
+  - edge values carry over by endpoint pair.
+- **New questions:**
+  - Q12: copies with explicit sync versus zero-copy views for values. Zero-copy is impossible with the current mixed-scale ArrayDicts;
+  - Q13: the anatomy-before-junctions order at growth, and whether existing anatomies can change.
+- No code changes, nothing committed.
+
+---
+
+## 2026-10-01 (later): Q12–Q13 → D12/D13 agreed, new DS19 (StructuralComponent contract)
+
+- **Q12:** option a is kept. Values are copied with explicit sync, and the MPG storage is unchanged.
+  - Your follow-up showed that the contract is missing for structural components: `StructuralComponent` is an empty class today.
+  - Added **DS19**: it receives the shared DataStructure and edits the MPG through `ds.mtg` with the MPG's own methods (they are not re-exposed on the DS).
+  - The framework flushes the component's inputs to the MPG before its step, and calls `update_topology()` after it. The MPG is therefore exact whenever it is edited.
+- **Q13:** D12 is agreed with **conditional rewiring**. A SubOrgan's junctions are rebuilt only when its neighbourhood or its anatomy (Compartments, rule labels) changed. `update_topology` detects both automatically.
+- **Order:** DS19 is placed before DS8 in step 2.
+- **New questions:**
+  - Q14: whether structural outputs are written as MPG properties or as DS variables;
+  - Q15: whether structural processes are scheduled as decorated steps or as one call per component.
+- No code changes, nothing committed.
+
+---
+
+## 2026-10-01 (later): Q14–Q15 → DS19 rewritten from rhizodep's RootGrowthModel
+
+- **Q14:** structural outputs are MPG properties. **Q15:** structural steps are scheduled like functional ones.
+- **Read (not edited):** `Wheat-BRIDGES_framework/rhizodep/src/openalea/rhizodep/root_growth.py`.
+  - Its steps are `@potential` / `@actual` / `@segmentation` `@state` whole-MTG methods with no array arguments, using node-level MTG edits.
+  - A `post_growth_updating` pass runs in `__call__`.
+- **DS19 now specifies:**
+  - decorated structural steps, interleaved with functional ones in the Choregrapher rows;
+  - called without arrays, and editing `ds.mtg`;
+  - declared inputs flushed to the MPG before each step;
+  - declared outputs re-read after it, with `update_topology()` only when the topology changed (cheap detection);
+  - the post-processing pass becomes a scheduled step;
+  - validation on an in-repo rhizodep-like growth helper.
+- **D13 is agreed.** D14 is proposed: at segmentation, the framework splits extensive functional variables between the origin and its new descendants by a weight, and copies intensive ones. The structural component can override for the variables it writes.
+  - This is where `split` is needed after all: in carry-over at topology changes, not in coupling (Q7).
+- **New questions:**
+  - Q16: D14, the default weight, and primordia;
+  - Q17: whether structural steps also get array arguments.
+- No code changes, nothing committed.
+
+---
+
+## 2026-10-01 (later): Q16–Q17 → new DS20 (repartition when structure changes)
+
+- **Read (not edited):** rhizodep `post_growth_updating`, `segmentation_and_primordium_formation`, `primordium_formation`, `ADDING_A_CHILD`.
+- **Q16:** **DS20** generalises `post_growth_updating`'s rules by `state_variable_type`:
+  - massic concentrations: the amount is split, or diluted on growth;
+  - extensive: split;
+  - non-inertial intensive: copied;
+  - non-inertial extensive: scaled copy;
+  - descriptors: none.
+
+  The framework applies them after each structural step, to every registered variable of the shared DataStructure, which replaces `modules_to_update`. The weight, previous weight and active set are declared by the structural component; no structural mass is built in.
+  - **On laterals:** a primordium is not split at formation (zero mass: it copies concentrations, with zero amounts). It is split from its parent at its first elongation.
+- **Q17:** MPG-style steps for traversal and edits, and array-argument steps for vectorisable parts (outputs flushed to the MPG). Both are in DS19.
+- **D14:** agreed in principle.
+- **New question:** Q18, the declaration form, and whether the active set becomes a DataStructure-level mask shared with FunctionalComponents.
+- No code changes, nothing committed.
+
+---
+
+## 2026-10-01 (later): Q18 → D14 agreed, D15 (active-set mask)
+
+- **Q18:** the repartition is declared by class attributes (`partition_weight`, `previous_weight`, `active`), each accepting a callable.
+- **The active set is a named DataStructure mask** (`define_mask` / `mask`), re-evaluated at refresh and after each structural step:
+  - vectorised steps compute on active entities by default, with values outside left unchanged; `where=None` opts out;
+  - MPG-style structural steps always see every vertex;
+  - it replaces rhizodep's `focus_elements` and the Choregrapher `filter`.
+- **D14** is agreed; **D15** is added.
+- **New question:** Q19, whether graph systems solve on the active subgraph (opt-in) or on the whole graph with filters (the default).
+- No code changes, nothing committed.
+
+---
+
+## 2026-10-01 (later): Q19 → D16 and DS21 (graph systems on the active subgraph)
+
+- **Q19:** `@graph_system(where="active")` is opt-in, and the whole graph stays the default. **DS21** specifies the robust handling:
+  - views cached by `(topology_version, mask_version)`, with the mask recomputed when its sources change;
+  - the subgraph holds active nodes and the edges with both ends active, with boundary conditions restricted to it;
+  - inactive nodes are frozen, and dropped edges have zero flux;
+  - activation semantics, including `previous()`;
+  - a well-posedness check per connected component (capacity or Dirichlet), raising with ids;
+  - empty-mask skip;
+  - anatomy-mode broadcast;
+  - six validation tests.
+- **The plan has no open question left.** Only D9 and D10 are still *proposed*. The next step is the §7 step 1 design note (DS3, DS17, DS5, DS11, DS16) once they are confirmed.
+- No code changes, nothing committed.
+- **Follow-up:** D10 is agreed. D9 is detailed in the plan (§8 "D9 in detail"): defaults table by source type and direction, worked examples, a type-agreement check, and a choice between A (defaults) and B (always explicit).
+
+---
+
+## 2026-10-01 (later): D9 = A; step 1 design note drafted
+
+- **D9:** option A, defaults from `state_variable_type`. **D10:** agreed.
+- **New design note `docs/design/datastructure_contract.md`** for §7 step 1 (DS3, DS17, DS5, DS11, DS16), written against `1bf8356` after a code survey:
+  - **Declarations:** one interpreter, `resolve_declaration` → `VariableSpec`, with `scale` / `location` / `mapping` keys, the D9 defaults, and the legacy forms mapped. It replaces the duplicated logic of `_auto_declare_on_ds` and `_declared_locations`.
+  - **Scales:** coarse-scale fields are stored at their own scale.
+  - **Write-back:** the inverse mapping at the vids of the declared scale, after every component call (today it happens only after a graph solve, at the node vids).
+  - **Derived variables:** lazy, through per-variable write counters checked at `get`, and read-only.
+  - **Outputs:** locations from declarations, or explicit; size guessing only when unambiguous, with a warning. Filtered slicing by location.
+  - **Validation:** `validate()`; missing variables and filters raise instead of giving zeros; edge BCs rejected until DS6; `from_scale` inferred rather than required.
+  - **Conventions:** a page at `docs/conventions.md`.
+- **Points to agree (N1–N5):**
+  - N1: the coarse-scale default changes without deprecation;
+  - N2: `proximal`/`distal` → `child`/`parent`;
+  - N3: derived variables read-only;
+  - N4: write-back after every call, now;
+  - N5: scale names as location synonyms.
+- **Implementation plan:** sub-steps 1a–1f, each with its test file.
+- No code changes, nothing committed.
+- **2026-10-02, review of the step 1 note:**
+  - N1, N2 and N4 are agreed.
+  - N3 is agreed. The note now defines derived variables: inputs filled by translator links with a factor, sum, formula or scale change. Identities and aliases are not derived variables.
+  - N5 is re-explained in the note: the node scale is called `"node"`, which changes meaning when anatomies make Compartments the nodes, so scale names are proposed as stable location names. It is still open.
+
+---
+
+## 2026-10-02: N5 agreed; step 1a implemented (declaration resolver)
+
+- **N5** is agreed, with your condition: `node` / `edge` are the entities of the graph built by the MPG traversal, and biological-scale declarations are resolved against them. It is recorded in the design note.
+- **New `coupling/declaration.py`:**
+  - `VariableSpec` (location, MTG scale, mapping, weight, kind, variable_type, default, on_grow);
+  - `resolve_declaration` / `declared_specs`, one interpreter for all forms:
+    - the legacy `scale="node"`… forms, `edge_mapping`, and Compartment/Connection;
+    - N1: coarse scales stored at their own location;
+    - N5: scale names as locations;
+    - N2: `child` / `parent`, with deprecation warnings for the old names;
+    - D9: default mappings by `state_variable_type`;
+  - `DeclarationError` with the class and field named.
+- `declare` and its wrappers gain `location=`, `mapping=` and `weight=`.
+- **`FunctionalComponent._auto_declare_on_ds` is rewritten on the specs:**
+  - it registers at the resolved location, from the MTG property mapped from its scale (coarse own-scale values, broadcast down, aggregated up), or from the default;
+  - it records the spec in the DS metadata, which `register` now preserves across growth;
+  - it rejects a pre-registered variable at another location;
+  - scalar fields are now registered on graph DataStructures too.
+- The solver's `_declared_locations` uses the same specs. `_snapshot` broadcasts scalars as before, and raises with a hint for coarse-located variables.
+- **Tests:**
+  - in-repo UC1 declarations are migrated to `location="edge", mapping="child"`;
+  - new `test/data_api_tests/test_declarations.py`: 29 tests on the legacy forms, N1, N2, N5, the D9 defaults, 14 declaration errors, registration from the MTG, metadata surviving growth, the grid case and the snapshot hint.
+- **Suite:** 545 passed (516 before, plus 29), same 10 warnings.
+- **Not yet:** write-back of coarse-located state variables (1b), until then they are not written to the MTG. CHANGELOG is updated.
+- Nothing committed.

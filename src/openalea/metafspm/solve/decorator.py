@@ -204,44 +204,15 @@ def graph_output(name):
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def _declared_locations(instance):
-    """Return {field_name: "node"|"edge"} from dataclass metadata.
-
-    Reads the ``scale`` metadata key (set by declare/state_variable/
-    input_variable/parameter).
-
-    Resolution order:
-      scale=Compartment (9)  → "node"
-      scale=Connection  (10) → "edge"
-      scale=bio-int + edge_mapping set → "edge"  (biological edge property)
-      scale=bio-int, no edge_mapping   → "node"  (biological node property)
-      scale="node"|"edge"              → direct
-      Falls back to legacy ``location`` key for backward compatibility.
-    """
-    locs = {}
-    try:
-        for f in dc_fields(type(instance)):
-            scale_raw    = f.metadata.get("scale")
-            edge_mapping = f.metadata.get("edge_mapping")
-            if scale_raw is None:
-                loc = f.metadata.get("location")
-            elif isinstance(scale_raw, int):
-                if scale_raw == _ScalesConfig.Compartment:
-                    loc = "node"
-                elif scale_raw == _ScalesConfig.Connection:
-                    loc = "edge"
-                elif edge_mapping is not None:
-                    loc = "edge"   # biological scale + edge_mapping → edge slot
-                else:
-                    loc = "node"   # biological scale without edge_mapping → node slot
-            elif scale_raw in ("node", "edge"):
-                loc = scale_raw
-            else:
-                loc = None
-            if loc is not None:
-                locs[f.name] = loc
-    except TypeError:
-        pass
-    return locs
+    """{field name: location} of the instance's declared DataStructure variables (resolve_declaration)."""
+    specs = getattr(instance, "_variable_specs", None)
+    if specs is None:
+        ds = getattr(instance, "data_structure", None)
+        if ds is None:
+            return {}
+        from openalea.metafspm.coupling.declaration import declared_specs
+        specs = declared_specs(instance, ds)
+    return {name: spec.location for name, spec in specs.items()}
 
 
 def _live_ds(instance):
@@ -271,10 +242,15 @@ def _snapshot(instance, required_names, node_vids_int, edge_vids_int,
     for name in required_names:
         if name in declared_locs:
             loc = declared_locs[name]
-        elif ds.has(name) and ds.location(name) in ("node", "edge"):
+        elif ds.has(name):
             loc = ds.location(name)
         else:
             loc = "node"
+        if loc == "scalar":
+            loc = "node"   # scalars are broadcast over the entities
+        elif loc not in ("node", "edge"):
+            raise ValueError(f"{type(instance).__name__}: '{name}' is stored at {loc}, graph equations take node "
+                             f"or edge arrays: declare it with location='node' and mapping='broadcast'")
         size = len(node_vids_int) if loc == "node" else len(edge_vids_int)
         (node_snap if loc == "node" else edge_snap)[name] = _read_array(ds, name, loc, size)
     return node_snap, edge_snap

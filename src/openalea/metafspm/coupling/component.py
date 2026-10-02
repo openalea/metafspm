@@ -6,6 +6,7 @@ from openalea.metafspm.solve.decorator import *
 from openalea.metafspm.data_structure.mpg import MPG
 from openalea.metafspm.data_structure.data_api import DataStructure, MPGDataStructure, GraphDataStructure, DataStructurePropsView
 from openalea.metafspm.data_structure.configs import ScalesConfig as _ScalesConfig
+from openalea.metafspm.coupling.declaration import declared_specs, legacy_edge_convention, DeclarationError
 
 # Map integer MPG scale constants to the generic "node"/"edge" vocabulary used
 # by GraphDataStructure.  Compartment nodes are graph nodes; Connection edges
@@ -20,7 +21,8 @@ def declare(unit: str, unit_comment: str, description: str, min_value: float, ma
             value_comment: str, references: str, DOI: list,
             variable_type: Literal["state_variable", "plant_scale_state", "input", "parameter"],
             by: str, state_variable_type: str, edit_by: Literal["user", "dev"],
-            default=None, default_factory=None, scale=None, edge_mapping=None, on_grow="default"):
+            default=None, default_factory=None, scale=None, edge_mapping=None, on_grow="default",
+            location=None, mapping=None, weight=None):
     """
     Constrain component variable declarations in a commonly agreed-upon way.
 
@@ -43,6 +45,12 @@ def declare(unit: str, unit_comment: str, description: str, min_value: float, ma
                                auto-register defaults on the bound DataStructure,
                                and by the solver decorator to classify fields
                                during the Newton snapshot.
+    :param location:           Where the DataStructure stores the variable: "node", "edge", "scalar", "cell", or a
+                               scale name (resolved against the graph). Default: the location of *scale*.
+    :param mapping:            How values go between *scale* and *location* when they differ: "broadcast" (down),
+                               "sum" / "mean" / "weighted_mean" (up, with *weight*), "child" / "parent" / "mean"
+                               (to edges). Default: implied by state_variable_type (design note D9).
+    :param weight:             Weight variable of "weighted_mean".
     :param on_grow:            Value of entities created by topology growth: "default" (the declared
                                default) or "inherit" (the parent's value). The growth model may still
                                overwrite them, e.g. from parent states for concentrations.
@@ -53,6 +61,7 @@ def declare(unit: str, unit_comment: str, description: str, min_value: float, ma
         references=references, DOI=DOI, variable_type=variable_type, by=by,
         state_variable_type=state_variable_type, edit_by=edit_by,
         scale=scale, edge_mapping=edge_mapping, on_grow=on_grow,
+        location=location, mapping=mapping, weight=weight,
     )
     if default_factory:
         return field(default_factory=default_factory, metadata=metadata)
@@ -61,7 +70,8 @@ def declare(unit: str, unit_comment: str, description: str, min_value: float, ma
 
 def input_variable(unit: str, unit_comment: str, description: str, min_value: float,
                    max_value: float, value_comment: str, references: str, DOI: list,
-                   by: str, initialize=None, scale=None, edge_mapping=None, on_grow="default"):
+                   by: str, initialize=None, scale=None, edge_mapping=None, on_grow="default",
+                   location=None, mapping=None, weight=None):
     """Declare an input field — a variable driven by another model component.
 
     When the component is run in isolation (not coupled), the field keeps
@@ -75,6 +85,7 @@ def input_variable(unit: str, unit_comment: str, description: str, min_value: fl
         value_comment=value_comment, references=references, DOI=DOI,
         variable_type="input", by=by, state_variable_type=None,
         edit_by="user", scale=scale, edge_mapping=edge_mapping, on_grow=on_grow,
+        location=location, mapping=mapping, weight=weight,
     )
 
 
@@ -85,7 +96,7 @@ def state_variable(unit: str, unit_comment: str, description: str, min_value: fl
                        "NonInertialExtensive", "NonInertialIntensive", "descriptor"
                    ] = None,
                    initialize=None, scale=None, by: str = None,
-                   edge_mapping=None, on_grow="default"):
+                   edge_mapping=None, on_grow="default", location=None, mapping=None, weight=None):
     """Declare a prognostic state variable solved or integrated by this component.
 
     :param state_variable_type: Thermodynamic / extensive classification.
@@ -103,13 +114,14 @@ def state_variable(unit: str, unit_comment: str, description: str, min_value: fl
         variable_type="state_variable", by=by,
         state_variable_type=state_variable_type, edit_by="user",
         scale=scale, edge_mapping=edge_mapping, on_grow=on_grow,
+        location=location, mapping=mapping, weight=weight,
     )
 
 
 def parameter(unit: str, unit_comment: str, description: str, min_value: float,
               max_value: float, value_comment: str, references: str, DOI: list,
               by: str, default=None, scale=None, state_variable_type=None,
-              edge_mapping=None, on_grow="default"):
+              edge_mapping=None, on_grow="default", location=None, mapping=None, weight=None):
     """Declare a model parameter — a constant whose value is set at construction.
 
     Parameters are not prognostic; they are read by model equations but never
@@ -132,6 +144,7 @@ def parameter(unit: str, unit_comment: str, description: str, min_value: float,
         variable_type="parameter", by=by,
         state_variable_type=state_variable_type, edit_by="dev",
         scale=scale, edge_mapping=edge_mapping, on_grow=on_grow,
+        location=location, mapping=mapping, weight=weight,
     )
 
 
@@ -308,98 +321,58 @@ class FunctionalComponent(Component):
         return state[name]
 
     def _auto_declare_on_ds(self, ds: DataStructure) -> None:
-        """Register default arrays for scale-annotated fields not yet in ds.
-
-        Scale resolution
-        ----------------
-        * scale=Compartment (9)      → solver node  (no write-back)
-        * scale=Connection  (10)     → solver edge  (no write-back)
-        * scale=bio-int, no edge_mapping   → biological node; write-back via write_node_to_mtg
-        * scale=bio-int, edge_mapping set  → biological edge; write-back via write_edge_to_mtg
-                                             edge_mapping controls the bio-VID→edge mapping:
-                                               "proximal" = take from child n_id_b (default)
-                                               "distal"   = take from parent n_id_a
-                                               "mean"     = arithmetic mean (symmetric params)
-
-        Pre-registered fields are never overwritten.
         """
-        if not isinstance(ds, GraphDataStructure):
-            # Grids: fields declared with scale="cell" (or "scalar") are registered with their default
-            if hasattr(ds, "register"):
-                for f in fields(type(self)):
-                    location = f.metadata.get("scale")
-                    if f.metadata.get("variable_type") is None or location not in ("cell", "scalar") or ds.has(f.name):
-                        continue
-                    default = f.default if f.default is not MISSING else 0.0
-                    ds.register(f.name, location=location, default=float(default),
-                                on_grow=f.metadata.get("on_grow") or "default")
-            return
-        if not hasattr(self, "_bio_scale_node_fields"):
-            self._bio_scale_node_fields: dict[str, int] = {}
-        if not hasattr(self, "_bio_scale_edge_fields"):
-            self._bio_scale_edge_fields: dict[str, str] = {}
+        Register the declared variables that are not yet on *ds* (design note datastructure_contract §2).
 
-        registered = set(ds.available_vars())
-        for f in fields(type(self)):
-            if f.metadata.get("variable_type") is None:
-                continue
-            if f.name in registered:
-                continue
-            scale_raw    = f.metadata.get("scale")
-            edge_mapping = f.metadata.get("edge_mapping")
+        Each field is resolved once by resolve_declaration into a VariableSpec (location, MTG scale, mapping),
+        kept in self._variable_specs. A variable is registered at its location with the values of its MTG
+        property when the property exists (mapped from its scale), else with its declared default.
+        Pre-registered variables are never overwritten; their location must match the declaration.
+        """
+        self._variable_specs = declared_specs(self, ds)
+        # MTG refresh and write-back bookkeeping (node and edge variables with an MTG scale)
+        self._bio_scale_node_fields: dict[str, int] = {}
+        self._bio_scale_edge_fields: dict[str, str] = {}
+        for name, spec in self._variable_specs.items():
+            if spec.mtg_backed and spec.location == "node":
+                self._bio_scale_node_fields[name] = spec.scale
+            elif spec.mtg_backed and spec.location == "edge":
+                self._bio_scale_edge_fields[name] = legacy_edge_convention(spec.mapping)
 
-            is_bio_node = False
-            is_bio_edge = False
-            if isinstance(scale_raw, int):
-                if scale_raw == _ScalesConfig.Connection:
-                    solver_scale = "edge"
-                elif scale_raw == _ScalesConfig.Compartment:
-                    solver_scale = "node"
-                elif edge_mapping is not None:
-                    solver_scale = "edge"
-                    is_bio_edge  = True
-                else:
-                    solver_scale = "node"
-                    is_bio_node  = True
-            elif scale_raw in ("node", "edge"):
-                solver_scale = scale_raw
+            if ds.has(name):
+                registered = ds.location(name)
+                if registered != spec.location and name not in ds.aliases():
+                    raise DeclarationError(f"{type(self).__name__}.{name} is declared at {spec.location} but is "
+                                           f"already registered at {registered}")
             else:
-                continue
+                ds.register(name, self._initial_values(ds, spec), location=spec.location, default=spec.default,
+                            on_grow=spec.on_grow)
+            meta = ds._variable_meta().setdefault(name, {})
+            meta.update({key: value for key, value in spec.meta().items() if value is not None})
 
-            default = f.default if f.default is not MISSING else 0.0
-            on_grow = f.metadata.get("on_grow") or "default"
-
-            def _register(location, values, name=f.name, default=default, on_grow=on_grow):
-                if hasattr(ds, "register"):
-                    ds.register(name, values, location=location, default=float(default), on_grow=on_grow)
-                elif location == "node":
-                    ds.set_node_property(name, values)
-                else:
-                    ds.set_edge_property(name, values)
-
-            if solver_scale == "node":
-                if hasattr(ds, "_mtg_to_node_array"):
-                    arr = ds._mtg_to_node_array(f.name, scale=scale_raw if is_bio_node else None)
-                    if arr is not None:
-                        _register("node", arr)
-                        if is_bio_node:
-                            self._bio_scale_node_fields[f.name] = scale_raw
-                        continue
-                _register("node", np.full(ds.n_nodes(), float(default)))
-                if is_bio_node:
-                    self._bio_scale_node_fields[f.name] = scale_raw
-            else:
-                conv = edge_mapping if is_bio_edge else "mean"
-                if hasattr(ds, "_mtg_to_edge_array"):
-                    arr = ds._mtg_to_edge_array(f.name, convention=conv, scale=scale_raw if is_bio_edge else None)
-                    if arr is not None:
-                        _register("edge", arr)
-                        if is_bio_edge:
-                            self._bio_scale_edge_fields[f.name] = edge_mapping
-                        continue
-                _register("edge", np.full(ds.n_edges(), float(default)))
-                if is_bio_edge:
-                    self._bio_scale_edge_fields[f.name] = edge_mapping
+    @staticmethod
+    def _initial_values(ds, spec):
+        """Values of the MTG property of *spec* at its location, or None (no MTG, or no such property)."""
+        if not spec.mtg_backed or not hasattr(ds, "_mtg_to_node_array"):
+            return None
+        if spec.location == "node":
+            return ds._mtg_to_node_array(spec.name, scale=spec.scale)
+        if spec.location == "edge":
+            return ds._mtg_to_edge_array(spec.name, convention=legacy_edge_convention(spec.mapping),
+                                         scale=spec.scale)
+        if spec.mapping is None:
+            # Stored at its own coarse scale: the values of the vertices of that scale
+            return ds._mtg_values(spec.name, ds.entity_ids(spec.location))
+        values = ds._mtg_to_node_array(spec.name)
+        if values is None:
+            return None
+        weights = None
+        if spec.weight is not None:
+            if not ds.has(spec.weight):
+                raise DeclarationError(f"'{spec.name}' is aggregated with weight '{spec.weight}', which is not "
+                                       "registered yet: declare the weight first")
+            weights = ds.get(spec.weight)
+        return ds._map(values, "node", spec.location, spec.mapping, weights)
 
     def write_back_to_mtg(self) -> None:
         """Write solver results for biological-scale state_variable fields back to the MTG.
