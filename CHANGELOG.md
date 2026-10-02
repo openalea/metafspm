@@ -103,6 +103,12 @@ The flat modules used before the 2026 restructure have been removed. No compatib
 - `@boundary_condition(location="edge")` raises `NotImplementedError`, since conditions were always applied on nodes; any other location raises `ValueError`.
 - `MPGDataStructure(g)` infers `from_scale` from the populated graph.
 
+### Conventions page (step 1f)
+
+- **New `docs/conventions.md`:** graph incidence and order, grid axes, locations, `scale` / `location` / `mapping` with the default-mapping table, write-back, outputs, derived variables, `previous()`, `on_grow`, and failure modes.
+- **Documentation test:** `test/data_api_tests/test_conventions_doc.py` checks its tables against the declaration resolver.
+- **Updated for the new keys:** `downstream_migration.md` §2 and the checklist. The README points to both.
+
 ### Scene and coupling wrappers
 
 - `CompositeModel.open_or_create_translator(translator_path)` now takes the **full path of the translator YAML file**. It no longer takes a directory to which `/coupling_translator.yaml` was appended.

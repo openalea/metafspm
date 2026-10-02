@@ -46,6 +46,8 @@ mamba install -c conda-forge -c openalea3 metafspm
 
 ### For model design
 
+> **Note.** The steps below describe the former `Model` / props API. Components now derive from `FunctionalComponent` on a DataStructure: see `docs/design/downstream_migration.md`, and `docs/conventions.md` for the scale, location and mapping conventions.
+
 - First, in a single python .py file the model has to be packaged as a class and decorated by @dataclass from the dataclasses module.
 
 - Then, you must import utilities :  
