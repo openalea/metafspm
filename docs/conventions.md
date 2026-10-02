@@ -114,7 +114,8 @@ Declarations that cannot be written back raise when the component is created: a 
 
 ## Time and growth
 
-- **`previous(name)`:** inside a graph-system solve, the value of the unknown at the start of that solve.
+- **`previous(name)`:** inside a graph-system solve, the value of the unknown at the start of the current (sub-)step. `previous(name, at="solve")` gives the start of the call's solve, and `previous(name, at="step")` the start of the component's call.
+- **`self.dt`:** the length of the current (sub-)step. Time terms use `self.dt`, which equals `time_step` unless the graph system sub-steps (`integrate="substeps"` or `"adaptive"`).
 - **`on_grow`:** the value of entities created by growth. `"default"` gives the declared default; `"inherit"` gives the nearest pre-existing ancestor's value. The repartition of amounts at segmentation comes with DS20.
 
 ## Anatomy mode
