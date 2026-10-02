@@ -156,7 +156,7 @@ class MechaAnatomyHydraulics(FunctionalComponent):
             Robin = B_b @ diags(w) @ B_b.T
             return (L_het + Robin).toarray()
 
-        @graph_output(name="edge_water_flux")
+        @graph_output(name="edge_water_flux", location="edge")
         def _edge_flux(
             self, water_potential, K_membrane, K_symplastic, K_apoplastic
         ) -> np.ndarray:

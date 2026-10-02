@@ -41,6 +41,7 @@ import sys
 import types
 import inspect
 from collections import defaultdict
+import warnings
 from dataclasses import fields as dc_fields
 from typing      import Optional
 
@@ -90,11 +91,18 @@ def _step(name: str, *, total: bool = False, iterating: bool = False):
     step functions receive whole arrays (design note Q20); ``vectorized=False`` opts in to one call per element
     for functions written with scalar logic.
     """
-    def decorator(func=None, *, vectorized: bool = True):
+    def decorator(func=None, *, vectorized: bool = True, location: str = None, locations: dict = None):
+        """
+        location:  of the step's output when it is not a declared field ("node", "edge", "scalar", "cell", or a
+                   coarse scale name); locations: {output name: location} for the supplementary outputs.
+        """
         if func is None:
-            return lambda f: decorator(f, vectorized=vectorized)
+            return lambda f: decorator(f, vectorized=vectorized, location=location, locations=locations)
         func.__step_tag__ = {"name": name, "total": total, "iterating": iterating, "vectorized": vectorized}
         func.__vectorized__ = vectorized
+        func.__output_locations__ = dict(locations or {})
+        if location is not None:
+            func.__output_locations__[func.__name__[1:]] = location
         Choregrapher().add_process(Functor(func, total=total, iteraring=iterating), name=name)
         return func
     return decorator
@@ -191,12 +199,34 @@ def graph_jacobian(func):
     return func
 
 
-def graph_output(name):
-    """Tag a method as a named post-solve output hook."""
+def graph_output(name, location: str = None):
+    """
+    Tag a method as a named post-solve output hook. *location* ("node" or "edge") is required when *name* is not a
+    declared field and its size does not identify a single location (design note datastructure_contract §5).
+    """
+    if location not in (None, "node", "edge"):
+        raise ValueError(f"@graph_output('{name}'): location must be 'node' or 'edge', got '{location}'")
+
     def decorator(func):
-        func.__graph_tag__ = {"kind": "graph_output", "name": name}
+        func.__graph_tag__ = {"kind": "graph_output", "name": name, "location": location}
         return func
     return decorator
+
+
+def infer_output_location(owner: str, name: str, shape: tuple, shapes: dict) -> str:
+    """
+    Location of an undeclared output that gives none, from its shape: accepted, with a DeprecationWarning, only
+    when exactly one of *shapes* ({location: shape}) matches; ambiguous or unmatched shapes raise.
+    """
+    matches = [location for location, location_shape in shapes.items() if tuple(location_shape) == tuple(shape)]
+    if len(matches) == 1:
+        warnings.warn(f"{owner}: output '{name}' has no declared location, '{matches[0]}' was inferred from its "
+                      "shape; declare the field or give location=", DeprecationWarning, stacklevel=3)
+        return matches[0]
+    if not matches:
+        raise ValueError(f"{owner}: output '{name}' of shape {tuple(shape)} matches no location {shapes}")
+    raise ValueError(f"{owner}: output '{name}' of shape {tuple(shape)} matches several locations {matches}: "
+                     "declare the field or give location=")
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -320,6 +350,7 @@ class GraphSystemBuilder:
         bc_items           = []   # (field, types, bc_kind, attr_name, bound, raw, explicit)
         jacobian_raw       = None
         output_items       = []   # (out_name, bound, raw)
+        self.output_locations = {}   # out_name -> location given by @graph_output (or None)
 
         for cls_ in inner_cls.__mro__:
             for attr_name, obj in cls_.__dict__.items():
@@ -350,6 +381,7 @@ class GraphSystemBuilder:
                     jacobian_raw = (bound, obj)
                 elif kind == "graph_output":
                     output_items.append((tag["name"], bound, obj))
+                    self.output_locations[tag["name"]] = tag.get("location")
 
         # Sort node blocks to match node_unknowns order
         field_order = {f: i for i, f in enumerate(node_unknowns)}
@@ -417,10 +449,19 @@ class GraphSystemBuilder:
 
         # ── Evaluator factory ─────────────────────────────────────────────────
 
+        def arg_location(aname):
+            """Entity ("node" or "edge") of an equation argument: filters slice only those of the filtered entity."""
+            if aname in node_unknowns or aname in node_snap:
+                return "node"
+            if aname in all_edge_unknowns or aname in edge_snap:
+                return "edge"
+            return None
+
         def make_evaluator(raw_func, bound_method, type_filter, entity):
             arg_names   = inspect.getfullargspec(raw_func)[0][1:]
             entity_size = n if entity == "node" else m
             mask_snap   = node_snap if entity == "node" else edge_snap
+            sliced      = [arg_location(aname) == entity for aname in arg_names]
 
             def evaluator(ctx):
                 args = []
@@ -441,9 +482,7 @@ class GraphSystemBuilder:
                         )
                 if type_filter:
                     mask = _type_mask(type_filter, mask_snap, entity_size)
-                    sub  = [a[mask] if isinstance(a, np.ndarray)
-                            and a.shape[0] == entity_size else a
-                            for a in args]
+                    sub  = [a[mask] if cut else a for a, cut in zip(args, sliced)]
                     result = np.asarray(bound_method(*sub), dtype=np.float64)
                     full   = np.zeros(entity_size, dtype=np.float64)
                     np.add.at(full, np.where(mask)[0], result)
@@ -457,6 +496,7 @@ class GraphSystemBuilder:
         def make_bc_eval(raw_func, bound_method, type_filter,
                           bc_kind="dirichlet", field=None, explicit=False):
             arg_names = inspect.getfullargspec(raw_func)[0][1:]
+            sliced    = [arg_location(aname) == "node" for aname in arg_names]
 
             def bc_eval(ctx):
                 args = []
@@ -476,8 +516,7 @@ class GraphSystemBuilder:
                 if type_filter:
                     mask = _type_mask(type_filter, node_snap, n)
                     idx  = np.where(mask)[0]
-                    sub  = [a[mask] if isinstance(a, np.ndarray)
-                            and a.shape[0] == n else a for a in args]
+                    sub  = [a[mask] if cut else a for a, cut in zip(args, sliced)]
                     vals = np.asarray(bound_method(*sub), dtype=np.float64)
                 else:
                     idx  = np.arange(n)
@@ -716,10 +755,17 @@ def _invoke_graph_system(self, method_name: str) -> None:
     ds = _live_ds(self)
     for oname, arr in outputs.items():
         arr = np.asarray(arr, dtype=np.float64).reshape(-1)
+        location = builder.output_locations.get(oname)
         if ds.has(oname):
+            if location is not None and ds.location(oname) != location:
+                raise ValueError(f"{type(self).__name__}: @graph_output('{oname}', location='{location}') but "
+                                 f"'{oname}' is registered at {ds.location(oname)}")
             ds.set(oname, arr)
         else:
-            ds.register(oname, arr, location="node" if arr.size == n else "edge")
+            if location is None:
+                location = infer_output_location(type(self).__name__, oname, arr.shape,
+                                                  {"node": (n,), "edge": (self._graph_view.n_edges,)})
+            ds.register(oname, arr, location=location)
 
     # Attach GraphSystem for test introspection (backward compat hook)
     self._last_graph_system = _make_compat_graph_system(self, spec_def, spec)

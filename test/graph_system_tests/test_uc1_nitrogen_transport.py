@@ -267,7 +267,7 @@ class NitrogenAxialTransport(FunctionalComponent):
             B = self._graph_view.incidence
             return axial_flux - K_axial * np.asarray(B.T @ concentration).reshape(-1)
 
-        @graph_output("axial_divergence")
+        @graph_output("axial_divergence", location="node")
         def _compute_axial_divergence(self, axial_flux) -> np.ndarray:
             B = self._graph_view.incidence
             return np.asarray(B @ axial_flux).reshape(-1)

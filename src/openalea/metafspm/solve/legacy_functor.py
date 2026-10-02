@@ -61,14 +61,30 @@ class Functor:
         outputs = [(self.name, out[0] if self.supplementary_outputs else out)]
         for s in range(self.supplementary_outputs):
             outputs.append((out[2 * s + 1], out[2 * s + 2]))
-        reference = next((a for a in args if a.ndim > 0), None)
+        declared = getattr(self.fun, "__output_locations__", {})
         for name, values in outputs:
             values = np.asarray(values, dtype=float)
             if not ds.has(name):
-                location = "scalar" if (self.total or values.ndim == 0) else (
-                    ds.location(self.input_names[0]) if self.input_names else ds._default_location)
-                ds.register(name, location=location)
+                ds.register(name, location=self._output_location(instance, ds, name, values, declared))
             ds.set(name, values)
+
+    def _output_location(self, instance, ds, name, values, declared):
+        """
+        Location of an output that is not a registered variable (design note datastructure_contract §5): given by
+        the step decorator, "scalar" for total steps and 0-d values, else inferred from its shape when unambiguous.
+        """
+        if name in declared:
+            location = declared[name]
+            if hasattr(ds, "_mtg"):
+                from openalea.metafspm.coupling.declaration import resolve_location
+                location = resolve_location(ds, location)
+            return location
+        if self.total or values.ndim == 0:
+            return "scalar"
+        from openalea.metafspm.solve.decorator import infer_output_location
+        stores = ds._var_stores()
+        shapes = {location: ds._location_shape(location) for location in ("node", "edge", "cell") if location in stores}
+        return infer_output_location(f"{type(instance).__name__}.{self.name}", name, values.shape, shapes)
 
     def __call__(self, instance, data, *args):
         """Run the step on *data*, the component's DataStructure (iterating steps only receive the instance)."""

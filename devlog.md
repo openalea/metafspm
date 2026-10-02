@@ -893,3 +893,25 @@ Per-file counts:
 - **Benchmark (20 000 entries):** `get` of a plain variable 0.3 µs, of a fresh derived variable 2.2 µs, of a 10-deep fresh chain 8.8 µs; stale two-source recomputation 23 µs. Recorded in the design note.
 - **Docs:** CHANGELOG, design note §4, and `downstream_migration.md` (derived variables now "recomputed when read, read-only").
 - **Suite:** 565 passed, same 10 warnings. Not committed yet.
+
+---
+
+## 2026-10-02 (later): 1c committed (`cc3e588`); step 1d implemented (output locations)
+
+- **Graph outputs:**
+  - `@graph_output(name, location=)`;
+  - the builder records the given locations;
+  - an undeclared output uses that location, or else `infer_output_location`: a warning when exactly one location matches, an error when the shape is ambiguous (n == m) or unmatched;
+  - a mismatch with an already registered variable raises.
+- **Step decorators** accept `location=` and `locations={...}`. The Functor registers undeclared outputs at that location, resolving scale names (e.g. `"Organ"`), or as scalars for total steps and 0-d values, or else by unambiguous inference among node / edge / cell. Coarse locations are never inferred.
+- **Filtered evaluators and BCs** slice an argument according to its entity: node or edge unknown, or node or edge snapshot, instead of `shape[0] == size`.
+  - On trees (m = n − 1) this does not change any result: the old guess only went wrong for n == m.
+  - It cannot be exercised by a solve before graphs with cycles exist (DS8). The ambiguity itself is tested on `infer_output_location`.
+- **In-repo hooks** now give their location: the UC1 `axial_divergence` at node, the UC3 `edge_water_flux` at edge.
+- **Tests:** new `test/graph_system_tests/test_output_locations.py`, 5 tests:
+  - inference (unique, n == m ambiguous, unmatched);
+  - the `graph_output` location check;
+  - step outputs at edge, Organ (by scale name), inferred node and total scalar;
+  - declared outputs without warnings;
+  - grid inference and an unmatched shape raising.
+- **Suite:** 570 passed, same 10 warnings. CHANGELOG, plan and note updated. Not committed yet.
