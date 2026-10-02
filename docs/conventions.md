@@ -120,6 +120,9 @@ Declarations that cannot be written back raise when the component is created: a 
 - **Defining.** `ds.define_mask(name, rule)` takes a `{variable: condition}` rule (`">0"`, a value, a list of values) or a callable. `ds.mask(name)` is recomputed when its variables were written; `ds.mask_version(name)` changes with its values.
 - **The active mask.** A structural component's `active = {...}` defines the mask `"active"`.
 - **Vectorised steps** compute on the entities of the `"active"` mask when the DataStructure defines it: arguments at its location are restricted, and outputs are written on them only. `@rate(where=None)` computes everywhere; `where="name"` chooses another mask. MPG-style steps always see every entity.
+- **Graph systems** solve on the whole graph unless `@graph_system(where="active")`. With it, they solve on the active nodes and the edges between them:
+  - inactive nodes are frozen, and dropped edges carry no flux;
+  - a steady system (`transient=False`, the default for Newton and root solvers) needs a Dirichlet anchor in every connected piece.
 
 ## Failure modes
 

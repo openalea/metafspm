@@ -46,6 +46,7 @@ from dataclasses import fields as dc_fields
 from typing      import Optional
 
 import numpy as np
+from scipy.sparse import coo_matrix, csc_matrix
 
 # ── New module hierarchy ──────────────────────────────────────────────────────
 from openalea.metafspm.data_structure.data_api import GraphView, BoundaryPort
@@ -58,7 +59,7 @@ from openalea.metafspm.solve.system_specs   import (
     SolverResult,
 )
 from openalea.metafspm.solve.solver         import (
-    SolverConfig, SolverSpec, make_solver, SOLVER_REGISTRY, ImplicitEulerSolver,
+    SolverConfig, SolverSpec, make_solver, SOLVER_REGISTRY, ImplicitEulerSolver, ExplicitEulerSolver, ScipyIVPSolver,
 )
 
 # Canonical method string for each concrete solver class (first key in SOLVER_REGISTRY wins).
@@ -264,8 +265,11 @@ def _live_ds(instance):
     return ds
 
 
-def _read_array(ds, name, location, size, owner=None):
-    """Copy of variable *name* as a per-*location* array: scalars are broadcast; a missing name raises (DS11)."""
+def _read_array(ds, name, location, size, owner=None, take=None):
+    """
+    Copy of variable *name* as a per-*location* array: scalars are broadcast; a missing name raises (DS11).
+    *take*: indices of the entities of an active subgraph (where=), the others being left out.
+    """
     if not ds.has(name):
         raise KeyError(f"{owner + ': ' if owner else ''}'{name}' is used by a graph system but is not registered on "
                        f"the DataStructure (declare it on the component, or register it). Registered: "
@@ -273,7 +277,89 @@ def _read_array(ds, name, location, size, owner=None):
     values = ds.get(name)
     if values.ndim == 0:
         return np.full(size, float(values))
+    if take is not None:
+        values = values[take]
     return np.array(values, dtype=np.float64)
+
+
+def _take(instance, location):
+    """Indices of the active subgraph's entities at *location* during a where= solve, else None."""
+    restriction = instance.__dict__.get("_restriction")
+    if restriction is None:
+        return None
+    return restriction.node_idx if location == "node" else restriction.edge_idx
+
+
+class _Restriction:
+    """
+    Active subgraph of a graph system solved with where= (design note structure_and_boundaries §5, DS21): the
+    selected nodes, the edges with both ends selected, and the corresponding GraphView.
+    """
+
+    def __init__(self, view, node_idx, edge_idx, n, m):
+        self.view, self.node_idx, self.edge_idx = view, node_idx, edge_idx
+        self.dropped_edges = np.setdiff1d(np.arange(m), edge_idx)
+        self.n, self.m = n, m
+
+    def scatter(self, ds, name, values, location, dropped=None):
+        """Write *values* of the subgraph's entities into the full variable; dropped edges get *dropped* if given."""
+        full = np.array(ds.get(name), dtype=np.float64)
+        if location == "node":
+            full[self.node_idx] = values
+        else:
+            full[self.edge_idx] = values
+            if dropped is not None:
+                full[self.dropped_edges] = dropped
+        ds.set(name, full)
+
+
+def _restriction_for(instance, where):
+    """The _Restriction of mask *where*, rebuilt when the topology or the mask's values changed."""
+    ds = _live_ds(instance)
+    if not hasattr(ds, "has_mask") or not ds.has_mask(where):
+        raise KeyError(f"{type(instance).__name__}: graph system with where='{where}' but the DataStructure "
+                       "defines no such mask")
+    if ds.__dict__["_masks"][where]["location"] != "node":
+        raise ValueError(f"{type(instance).__name__}: where='{where}' needs a node mask")
+    if getattr(instance, "_boundary_ports", None):
+        raise NotImplementedError(f"{type(instance).__name__}: boundary ports set by hand cannot follow an active "
+                                  "subgraph; use boundary sets (devplan_datastructures DS6)")
+    key = (ds.topology_version, ds.mask_version(where))
+    cache = instance.__dict__.setdefault("_restriction_cache", {})
+    if where in cache and cache[where][0] == key:
+        return cache[where][1]
+    full = instance._graph_view
+    mask = np.asarray(ds.mask(where), dtype=bool)
+    node_idx = np.flatnonzero(mask)
+    edge_idx = np.flatnonzero(mask[full.tail] & mask[full.head])
+    local = np.full(full.n_nodes, -1, dtype=np.int64)
+    local[node_idx] = np.arange(node_idx.size)
+    view = GraphView(
+        node_ids=full.node_ids[node_idx], edge_ids=full.edge_ids[edge_idx],
+        tail=local[full.tail[edge_idx]], head=local[full.head[edge_idx]],
+        incidence=full.incidence[node_idx][:, edge_idx].tocsc(),
+        boundary_incidence=csc_matrix((node_idx.size, 0), dtype=np.float64), boundary_names=(),
+    )
+    restriction = _Restriction(view, node_idx, edge_idx, full.n_nodes, full.n_edges)
+    cache[where] = (key, restriction)
+    return restriction
+
+
+def _check_well_posed(instance, method_name, view, anchored):
+    """
+    Every connected piece of a steady subgraph needs an anchor (a Dirichlet node; Robin boundaries come with
+    boundary sets), otherwise its solution is defined up to a constant (design note §8, P4).
+    """
+    from scipy.sparse.csgraph import connected_components
+    n = view.n_nodes
+    adjacency = coo_matrix((np.ones(view.n_edges), (view.tail, view.head)), shape=(n, n))
+    count, labels = connected_components(adjacency, directed=False)
+    for piece in range(count):
+        members = np.flatnonzero(labels == piece)
+        if not anchored[members].any():
+            raise ValueError(f"{type(instance).__name__}.{method_name}: piece of {members.size} nodes "
+                             f"{view.node_ids[members][:10].tolist()} has no Dirichlet anchor in a steady system "
+                             "(declare transient=True if its balance has a time derivative)")
 
 
 def _snapshot(instance, required_names, node_vids_int, edge_vids_int,
@@ -294,7 +380,8 @@ def _snapshot(instance, required_names, node_vids_int, edge_vids_int,
             raise ValueError(f"{type(instance).__name__}: '{name}' is stored at {loc}, graph equations take node "
                              f"or edge arrays: declare it with location='node' and mapping='broadcast'")
         size = len(node_vids_int) if loc == "node" else len(edge_vids_int)
-        (node_snap if loc == "node" else edge_snap)[name] = _read_array(ds, name, loc, size, type(instance).__name__)
+        (node_snap if loc == "node" else edge_snap)[name] = _read_array(ds, name, loc, size, type(instance).__name__,
+                                                                        take=_take(instance, loc))
     return node_snap, edge_snap
 
 
@@ -417,13 +504,16 @@ class GraphSystemBuilder:
 
         ds = _live_ds(instance)
         # Framework-managed previous state (design note Q21): the unknowns at the start of this solve
-        instance._previous_state = {fn: np.array(ds.get(fn), dtype=np.float64)
-                                    for fn in list(node_unknowns) + list(edge_unknowns) if ds.has(fn)}
+        instance._previous_state = {fn: _read_array(ds, fn, location, n if location == "node" else m,
+                                                    take=_take(instance, location))
+                                    for location, names in (("node", node_unknowns), ("edge", edge_unknowns))
+                                    for fn in names if ds.has(fn)}
         for fn in integrate_fields:
             # The integrated amount starts at zero, registered explicitly rather than read as a missing variable
             if not ds.has(f"{fn}_amount"):
                 ds.register(f"{fn}_amount", location="edge", default=0.)
-        amount_olds = {fn: _read_array(ds, f"{fn}_amount", "edge", m) for fn in integrate_fields}
+        amount_olds = {fn: _read_array(ds, f"{fn}_amount", "edge", m, take=_take(instance, "edge"))
+                       for fn in integrate_fields}
 
         all_edge_unknowns = list(edge_unknowns) + [f"{fn}_amount" for fn in integrate_fields]
 
@@ -455,10 +545,19 @@ class GraphSystemBuilder:
             node_unknowns, edge_unknowns, declared_locs,
         )
 
+        if instance.__dict__.get("_restriction") is not None and not spec_def.get("transient", False):
+            anchored = np.zeros(n, dtype=bool)
+            for _, tf, bc_kind, _, _, _, _ in bc_items:
+                if bc_kind == "dirichlet":
+                    anchored |= _type_mask(tf, node_snap, n) if tf else True
+            _check_well_posed(instance, spec_def["inner_class"].__name__, gv, anchored)
+
         # ── Initial-guess FieldStates ─────────────────────────────────────────
         # Copies: the implicit solvers also use them as u_prev, they must not follow later writes
-        node_fields_gs = {fn: FieldState(fn, "node", _read_array(ds, fn, "node", n)) for fn in node_unknowns}
-        edge_fields_gs = {fn: FieldState(fn, "edge", _read_array(ds, fn, "edge", m)) for fn in edge_unknowns}
+        node_fields_gs = {fn: FieldState(fn, "node", _read_array(ds, fn, "node", n, take=_take(instance, "node")))
+                          for fn in node_unknowns}
+        edge_fields_gs = {fn: FieldState(fn, "edge", _read_array(ds, fn, "edge", m, take=_take(instance, "edge")))
+                          for fn in edge_unknowns}
         for fn in integrate_fields:
             edge_fields_gs[f"{fn}_amount"] = FieldState(
                 f"{fn}_amount", "edge", amount_olds[fn].copy()
@@ -702,11 +801,16 @@ class GraphSystemBuilder:
         ds = _live_ds(self._instance)
         for location, values_by_name in (("node", {fn: node_u[fn] for fn in self._spec_def["node_unknowns"]}),
                                          ("edge", {fn: edge_u[fn] for fn in spec.unknowns.edge_fields})):
+            restriction = self._instance.__dict__.get("_restriction")
             for fn, values in values_by_name.items():
-                if ds.has(fn):
+                if not ds.has(fn):
+                    ds.register(fn, location=location)
+                if restriction is None:
                     ds.set(fn, values)
                 else:
-                    ds.register(fn, values, location=location)
+                    # Inactive nodes stay frozen; dropped edges carry no flux, their integrated amounts are kept
+                    dropped = None if location == "node" or fn.endswith("_amount") else 0.
+                    restriction.scatter(ds, fn, values, location, dropped=dropped)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -727,6 +831,28 @@ def _invoke_graph_system(self, method_name: str) -> None:
     if hasattr(self, "_refresh_from_bio_scale"):
         self._refresh_from_bio_scale()
     spec_def = type(self)._graph_system_specs[method_name]
+    where = spec_def.get("where")
+    if where is None:
+        _solve_graph_system(self, method_name, spec_def)
+        return
+    # Active subgraph (DS21): the equations see its GraphView through self._graph_view
+    restriction = _restriction_for(self, where)
+    if restriction.node_idx.size == 0:
+        ds = _live_ds(self)
+        for fn in spec_def["edge_unknowns"]:
+            if ds.has(fn):
+                ds.set(fn, 0.)            # no active edge: no flux
+        return
+    self.__dict__["_restriction"], self.__dict__["_solve_view"] = restriction, restriction.view
+    try:
+        _solve_graph_system(self, method_name, spec_def)
+    finally:
+        self.__dict__.pop("_restriction", None)
+        self.__dict__.pop("_solve_view", None)
+
+
+def _solve_graph_system(self, method_name: str, spec_def: dict) -> None:
+    """Build, solve and write back one graph system, on the whole graph or on the current active subgraph."""
 
     # ── Advance previous-field bookkeeping ────────────────────────────────────
     _saved_key = f"_gsol_{method_name}"
@@ -744,8 +870,10 @@ def _invoke_graph_system(self, method_name: str) -> None:
         (_solver_cls is not None and issubclass(_solver_cls, ImplicitEulerSolver))
     )
     if previous_fields is None and _is_implicit:
-        previous_fields = {fn: _read_array(_live_ds(self), fn, "node", self._graph_view.n_nodes)
-                           for fn in spec_def["node_unknowns"]}
+        previous_fields = {fn: np.array(_live_ds(self).get(fn), dtype=np.float64) for fn in spec_def["node_unknowns"]}
+    take = _take(self, "node")
+    if previous_fields is not None and take is not None:
+        previous_fields = {fn: np.asarray(values)[take] for fn, values in previous_fields.items()}
 
     # ── Build + solve ─────────────────────────────────────────────────────────
     builder = GraphSystemBuilder(self, spec_def)
@@ -758,18 +886,20 @@ def _invoke_graph_system(self, method_name: str) -> None:
     spec       = builder.last_spec  # the spec that was solved
     node_u, _  = spec.unpack_unknowns(packed)
 
-    setattr(self, _saved_key, {fn: node_u[fn].copy()
-                                for fn in spec_def["node_unknowns"]})
     self._last_graph_solution = packed
     self._graph_solution_fields = {fn: node_u[fn].copy()
                                     for fn in spec_def["node_unknowns"]}
 
     # ── Inject results ────────────────────────────────────────────────────────
     builder.inject_result(packed, spec)
+    # Kept on every node, so that a later solve on another active subgraph finds its previous values
+    setattr(self, _saved_key, {fn: np.array(_live_ds(self).get(fn), dtype=np.float64)
+                                for fn in spec_def["node_unknowns"]})
 
     # ── Write output-block results ─────────────────────────────────────────────
     n  = self._graph_view.n_nodes
     ds = _live_ds(self)
+    restriction = self.__dict__.get("_restriction")
     for oname, arr in outputs.items():
         arr = np.asarray(arr, dtype=np.float64).reshape(-1)
         location = builder.output_locations.get(oname)
@@ -777,12 +907,16 @@ def _invoke_graph_system(self, method_name: str) -> None:
             if location is not None and ds.location(oname) != location:
                 raise ValueError(f"{type(self).__name__}: @graph_output('{oname}', location='{location}') but "
                                  f"'{oname}' is registered at {ds.location(oname)}")
-            ds.set(oname, arr)
         else:
             if location is None:
                 location = infer_output_location(type(self).__name__, oname, arr.shape,
                                                   {"node": (n,), "edge": (self._graph_view.n_edges,)})
-            ds.register(oname, arr, location=location)
+            ds.register(oname, location=location)
+        if restriction is None:
+            ds.set(oname, arr)
+        else:
+            location = ds.location(oname)
+            restriction.scatter(ds, oname, arr, location, dropped=None if location == "node" else 0.)
 
     # Attach GraphSystem for test introspection (backward compat hook)
     self._last_graph_system = _make_compat_graph_system(self, spec_def, spec)
@@ -873,6 +1007,8 @@ def graph_system(
     prefer_sparse  = True,
     linesearch     = False,
     schedule_as    = "axial",
+    where          = None,
+    transient      = None,
 ):
     """
     Inner-class decorator that wires a GraphSystem solve into the Choregrapher.
@@ -915,6 +1051,13 @@ def graph_system(
     prefer_sparse  : bool    use sparse linear solves when available.
     linesearch     : bool    Armijo backtracking in Newton loop.
     schedule_as    : str     Choregrapher step name.
+    where          : str | None
+        Mask of the DataStructure restricting the solve to its active subgraph (nodes selected by the mask and the
+        edges between them; inactive nodes are frozen, dropped edges carry no flux). None: the whole graph.
+    transient      : bool | None
+        Whether the balance has a time derivative. Steady systems on an active subgraph need a Dirichlet anchor in
+        every connected piece, which is checked. Default: True for the time-stepping solvers (explicit and implicit
+        Euler, IVP), False otherwise.
     """
     # Backward-compat: honour deprecated method= kwarg.
     if method is not None:
@@ -955,6 +1098,9 @@ def graph_system(
         "prefer_sparse" : prefer_sparse,
         "linesearch"    : linesearch,
         "schedule_as"   : schedule_as,
+        "where"         : where,
+        "transient"     : (issubclass(solver_cls, (ExplicitEulerSolver, ImplicitEulerSolver, ScipyIVPSolver))
+                           if transient is None else bool(transient)),
     }
 
     def decorator(cls):

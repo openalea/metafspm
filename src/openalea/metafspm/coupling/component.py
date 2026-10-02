@@ -369,7 +369,13 @@ class FunctionalComponent(DataStructureComponent):
 
     @property
     def _graph_view(self):
-        """GraphView of the DataStructure, rebuilt when its topology changed (growth), None for grids."""
+        """
+        GraphView of the DataStructure, rebuilt when its topology changed (growth), None for grids. During a solve on
+        an active subgraph (where=), the subgraph's view.
+        """
+        solve_view = self.__dict__.get("_solve_view")
+        if solve_view is not None:
+            return solve_view
         ds = self.data_structure
         if not hasattr(ds, "to_graph_view"):
             return None
