@@ -41,6 +41,7 @@ class VariableSpec:
     variable_type: Optional[str] = None  # "state_variable" | "input" | "parameter" | "plant_scale_state"
     default: float = 0.
     on_grow: str = "default"
+    dtype: type = float                  # float, int or object (design note time_and_data §5)
 
     @property
     def mtg_backed(self) -> bool:
@@ -49,7 +50,7 @@ class VariableSpec:
     def meta(self) -> dict:
         """Metadata recorded on the DataStructure next to the values."""
         return {"scale": self.scale, "mapping": self.mapping, "weight": self.weight, "kind": self.kind,
-                "variable_type": self.variable_type}
+                "variable_type": self.variable_type, "dtype": self.dtype}
 
 
 class DeclarationError(ValueError):
@@ -210,13 +211,19 @@ def resolve_declaration(f, ds) -> Optional[VariableSpec]:
     mapping, weight = meta.get("mapping"), meta.get("weight")
     legacy_edge = meta.get("edge_mapping")
     kind = meta.get("state_variable_type")
-    default = f.default if f.default is not None and not _is_missing(f.default) else 0.
-    try:
-        default = float(default)
-    except (TypeError, ValueError):
-        raise DeclarationError(f"'{f.name}': a DataStructure variable needs a numeric default, got {default!r}") from None
+    from openalea.metafspm.data_structure.data_api import _canonical_dtype
+    dtype = _canonical_dtype(meta.get("dtype"))
+    if dtype is object:
+        default = None if _is_missing(f.default) else f.default
+    else:
+        default = f.default if f.default is not None and not _is_missing(f.default) else 0.
+        try:
+            default = dtype(default)
+        except (TypeError, ValueError):
+            raise DeclarationError(f"'{f.name}': a DataStructure variable needs a numeric default (or dtype='object'), "
+                                   f"got {default!r}") from None
     common = dict(name=f.name, kind=kind, variable_type=meta.get("variable_type"),
-                  default=float(default), on_grow=meta.get("on_grow") or "default")
+                  default=default, on_grow=meta.get("on_grow") or "default", dtype=dtype)
 
     if isinstance(raw_scale, str) and raw_scale in SOLVER_LOCATIONS:
         if location is not None:

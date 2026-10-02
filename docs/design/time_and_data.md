@@ -1,6 +1,6 @@
 # Design note: time loops, MTG sync, solve-time data and typed variables (step 4)
 
-Status: **agreed** (2026-10-02: "Go on with step 4", taken as agreement with the recommendations T1–T7; the answer lines were left empty). 4a done (`6bfcaf7`), 4b done. It covers step 4 of `devplan_datastructures.md` §7:
+Status: **agreed** (2026-10-02: "Go on with step 4", taken as agreement with the recommendations T1–T7; the answer lines were left empty). 4a done (`6bfcaf7`), 4b done (`c254840`), 4c done: **step 4 complete**. It covers step 4 of `devplan_datastructures.md` §7:
 - DS10: graph systems with their own time loop and sub-stepping;
 - DS4: MTG synchronisation policy;
 - DS9: solve-time data policy;

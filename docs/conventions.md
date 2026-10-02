@@ -89,6 +89,12 @@ Declarations that cannot be written back raise when the component is created: a 
 - `scale=` / `source_scale=` on a link only check the declared locations;
 - `target="mask"` restricts a mapped link to the mask's entities, the others getting the receiver's default.
 
+**Types.**
+- Variables are floats by default.
+- `dtype="int"` keeps labels, types and indices as integers.
+- `dtype="object"` stores a list or record per entity, kept out of graph systems, derivations and transport.
+- **Label names** in masks, filters and boundary-set selects are resolved through `LabelsConfig`: `"RootSegment"` or `"SymplasticNode"` (label values, unique), or `"Symplastic"` within the variable's own scale group.
+
 ## Outputs
 
 - A step or graph output that is a declared field takes its declared location.

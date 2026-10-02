@@ -256,6 +256,45 @@ class DataStructure(ABC):
         ...
 
 
+def _canonical_dtype(dtype):
+    """float, int or object (the dtypes of DataStructure variables)."""
+    if dtype in (float, np.float64, "float", None):
+        return float
+    if dtype in (int, np.int64, "int"):
+        return int
+    if dtype in (object, "object"):
+        return object
+    raise ValueError(f"dtype must be float, int or object, got {dtype!r}")
+
+
+def _converted(values, array: np.ndarray, name: str):
+    """*values* ready to be written into *array* (broadcast, flat grid arrays reshaped, integers checked)."""
+    if array.dtype == object:
+        # One value per entity from a sequence of the right length; anything else (None, a record, a list of
+        # another length) is given to every entity
+        if not isinstance(values, (list, tuple, np.ndarray)) or len(values) != array.size:
+            out = np.empty(array.size, dtype=object)
+            for i in range(array.size):
+                out[i] = values
+            return out.reshape(array.shape)
+        out = np.empty(array.size, dtype=object)
+        for i, value in enumerate(values):
+            out[i] = value
+        return out.reshape(array.shape)
+    values = np.asarray(values, dtype=float)
+    if values.ndim == 1 and array.ndim > 1 and values.size == array.size:
+        values = values.reshape(array.shape)      # a grid variable written from a flat graph solve (C order)
+    try:
+        values = np.broadcast_to(values, array.shape)
+    except ValueError:
+        raise ValueError(f"Cannot write values of shape {values.shape} into '{name}' of shape {array.shape}.") from None
+    if np.issubdtype(array.dtype, np.integer):
+        if not np.all(np.isfinite(values)) or not np.array_equal(values, np.round(values)):
+            raise ValueError(f"'{name}' holds integers, cannot write non-integral values")
+        return values.astype(array.dtype)
+    return values
+
+
 class VariableStoreMixin:
     """
     Named variables with a location, live views, in-place writes, name-level aliases and a version counter
@@ -340,14 +379,7 @@ class VariableStoreMixin:
 
     def _write(self, store, target: str, values, name: str = None) -> None:
         array = store[target]
-        values = np.asarray(values, dtype=float)
-        if values.ndim == 1 and array.ndim > 1 and values.size == array.size:
-            values = values.reshape(array.shape)      # a grid variable written from a flat graph solve (C order)
-        try:
-            array[...] = np.broadcast_to(values, array.shape)
-        except ValueError:
-            raise ValueError(f"Cannot write values of shape {values.shape} into '{name or target}' of shape "
-                             f"{array.shape}.") from None
+        array[...] = _converted(values, array, name or target)
         self.mark_written(target)
 
     # ── Write counters (design note datastructure_contract §4) ────────────────
@@ -366,10 +398,13 @@ class VariableStoreMixin:
         writes[target] = writes.get(target, 0) + 1
 
     def register(self, name: str, values=None, location: str = None, default: float = 0.,
-                 on_grow: str = "default") -> np.ndarray:
+                 on_grow: str = "default", dtype=float) -> np.ndarray:
         """
         (Re)create the variable *name* at *location* from *values* (copied) or *default*.
         on_grow: value given to entities created by topology growth, "default" or "inherit" (parent's value).
+        dtype:   float (default); int for labels, types and indices (kept as integers); object for lists and
+                 records, one per entity (not usable by graph systems, derivations or transport; design note
+                 time_and_data §5).
         """
         location = location or self._default_location
         stores = self._var_stores()
@@ -379,21 +414,26 @@ class VariableStoreMixin:
             raise ValueError(f"on_grow must be one of {self._ON_GROW_POLICIES}, got '{on_grow}'.")
         if name in self.__dict__.get("_aliases", {}):
             raise ValueError(f"'{name}' is an alias of '{self._resolve(name)}', register the source instead.")
+        dtype = _canonical_dtype(dtype)
         shape = self._location_shape(location)
-        array = np.full(shape, float(default))
+        if dtype is object:
+            array = np.empty(shape, dtype=object)
+            array[...] = _converted(default, array, name)
+        else:
+            array = np.full(shape, dtype(default), dtype=dtype)
         if values is not None:
-            values = np.asarray(values, dtype=float)
             try:
-                array[...] = np.broadcast_to(values, shape)
-            except ValueError:
-                raise ValueError(f"Cannot register '{name}' of shape {values.shape} at {location} of shape {shape}.") from None
+                array[...] = _converted(values, array, name)
+            except ValueError as error:
+                raise ValueError(f"Cannot register '{name}' at {location} of shape {shape}: {error}") from None
         for other_location, store in stores.items():
             if other_location != location:
                 store.pop(name, None)
         stores[location][name] = array
         self.mark_written(name)
         # Declaration metadata (scale, mapping, kind, ...) is kept across re-registrations (growth)
-        self._variable_meta().setdefault(name, {}).update(default=float(default), on_grow=on_grow)
+        self._variable_meta().setdefault(name, {}).update(
+            default=default if dtype is object else dtype(default), on_grow=on_grow, dtype=dtype)
         self._bump_version()
         return array
 
@@ -441,6 +481,9 @@ class VariableStoreMixin:
         names = list(sources)
         if formula is None and not isinstance(sources, dict):
             raise ValueError(f"derived variable '{name}': give {{variable: factor}} sources or a formula")
+        for source in names + ([weight] if weight is not None else []):
+            if self._find(source)[1][self._find(source)[2]].dtype == object:
+                raise TypeError(f"derived variable '{name}': '{source}' holds objects, which cannot be derived")
         source_locations = {self._find(source)[0] for source in names}
         if weight is not None:
             source_locations.add(self._find(weight)[0])
@@ -610,6 +653,9 @@ class VariableStoreMixin:
             if not self.has(variable):
                 raise KeyError(f"mask '{name}': variable '{variable}' is not registered")
             values = np.asarray(self.get(variable))
+            comparisons_names = (">0", "<0", ">=0", "<=0")
+            if hasattr(self, "resolve_codes") and not (isinstance(condition, str) and condition in comparisons_names):
+                condition = self.resolve_codes(variable, condition)     # label names -> codes
             if isinstance(condition, str):
                 comparisons = {">0": values > 0, "<0": values < 0, ">=0": values >= 0, "<=0": values <= 0}
                 if condition not in comparisons:
@@ -720,7 +766,7 @@ class VariableStoreMixin:
     def export(self, names=None) -> dict:
         """Copies of the values of *names* (default: every registered variable)."""
         names = self.available_vars() if names is None else names
-        return {name: np.array(self.get(name), dtype=float, copy=True) for name in names}
+        return {name: np.array(self.get(name), copy=True) for name in names}
 
     def to_dataframe(self, names=None, location: str = None, time=None):
         """
@@ -1557,6 +1603,39 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
             for e, vid in enumerate(self._bio_vids_sorted[idx]):
                 prop[int(vid)] = float(arr[e])
 
+    # ── Label names (design note time_and_data §5, T6) ─────────────────────────────
+
+    def label_code(self, name: str, variable: str = None) -> int:
+        """
+        Integer code of label *name*: a label value of the MTG's LabelsConfig (e.g. "RootSegment", "SymplasticNode"),
+        or a label attribute, looked up first in the group of *variable*'s scale, then in every group. Unknown or
+        ambiguous names raise ValueError with the candidates.
+        """
+        labels = self._mtg.labels
+        if name in labels.filters:
+            return int(labels.filters[name])
+        groups = {group: vars(getattr(labels, group)) for group in dir(labels)
+                  if not group.startswith("_") and isinstance(getattr(labels, group), type)}
+        scale = self._variable_meta().get(variable, {}).get("scale") if variable is not None else None
+        preferred = [group for group, members in groups.items() if members.get("scale") == scale] if scale else []
+        for candidates in (preferred, list(groups)):
+            codes = {f"{group}.{name}": members[name] for group in candidates for members in [groups[group]]
+                     if name in members and isinstance(members[name], (int, np.integer))}
+            if len(set(codes.values())) == 1:
+                return int(next(iter(codes.values())))
+            if codes:
+                raise ValueError(f"label '{name}' is ambiguous: {sorted(codes)}; use a label value such as "
+                                 f"{sorted(labels.filters)[:4]}")
+        raise ValueError(f"unknown label '{name}'")
+
+    def resolve_codes(self, variable: str, values):
+        """*values* (a value or a list) with label names replaced by their integer codes."""
+        def code(value):
+            return self.label_code(value, variable) if isinstance(value, str) else value
+        if isinstance(values, (list, tuple, set, np.ndarray)):
+            return [code(value) for value in values]
+        return code(values)
+
     # ── Declared variables: MTG reading and write-back (datastructure_contract §3) ──────
 
     def _scale_name(self, scale: int) -> str:
@@ -1565,8 +1644,9 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
 
     def _write_at(self, name: str, vids, values) -> None:
         prop = self._mtg_property_for_write(name)
-        for vid, value in zip(vids, np.asarray(values, dtype=np.float64)):
-            prop[int(vid)] = float(value)
+        values = np.asarray(values)
+        for vid, value in zip(vids, values):
+            prop[int(vid)] = int(value) if np.issubdtype(values.dtype, np.integer) else float(value)
 
     def read_mtg(self, spec):
         """
@@ -1575,6 +1655,14 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
         """
         if not spec.mtg_backed or self._mtg is None:
             return None
+        dtype = getattr(spec, "dtype", float)
+        if dtype is object:
+            if spec.location != "node" or spec.mapping is not None:
+                raise ValueError(f"'{spec.name}' holds objects: only node variables at their own scale are read")
+            prop = self._mtg.properties().get(spec.name)
+            if prop is None or len(prop) == 0:
+                return None
+            return [prop.get(int(v)) for v in self._idx_to_vid]
         if spec.location == "node":
             return self._mtg_to_node_array(spec.name, scale=spec.scale)
         if spec.location == "edge":
@@ -1604,6 +1692,11 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
         if not spec.mtg_backed or self._mtg is None:
             return
         values = self.get(spec.name)
+        if values.dtype == object:
+            prop = self._mtg_property_for_write(spec.name)
+            for vid, value in zip(self._idx_to_vid, values):
+                prop[int(vid)] = value
+            return
         if spec.location == "node":
             if spec.mapping is None:
                 self.write_node_to_mtg(spec.name, values)
@@ -1691,7 +1784,8 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
             for name, values_by_key in variables.items():
                 policy = meta.get(name, {"default": 0., "on_grow": "default"})
                 values = self._carry_over(values_by_key, keys, policy)
-                self.register(name, values, location=location, default=policy["default"], on_grow=policy["on_grow"])
+                self.register(name, values, location=location, default=policy["default"], on_grow=policy["on_grow"],
+                              dtype=policy.get("dtype", float))
         self._bump_version()
 
     # ── Anatomy mode: incremental junction rewiring (design note structure_and_boundaries §7, D12) ──
@@ -1754,7 +1848,7 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
 
     def _carry_over(self, values_by_key: dict, keys, policy: dict) -> np.ndarray:
         """Values for *keys* (vids): kept when known, else inherited from the nearest known ancestor or default."""
-        out = np.empty(len(keys), dtype=np.float64)
+        out = np.empty(len(keys), dtype=object if policy.get("dtype") is object else np.float64)
         for i, key in enumerate(keys):
             key = int(key)
             if key in values_by_key:
