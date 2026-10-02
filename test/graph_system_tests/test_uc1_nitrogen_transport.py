@@ -80,7 +80,7 @@ class NitrogenAxialTransport(FunctionalComponent):
         description="Net axial solute flux on the proximal edge of each segment.",
         min_value=-1.0, max_value=1.0, value_comment="", references="", DOI=[],
         state_variable_type="extensive", initialize=0.0, scale=scales.SubOrgan,
-        edge_mapping="proximal",
+        location="edge", mapping="child",
     )
     K_axial: float = parameter(
         unit="m3 s-1", unit_comment="",
@@ -88,7 +88,7 @@ class NitrogenAxialTransport(FunctionalComponent):
         min_value=0.0, max_value=1.0, value_comment="", references="", DOI=[],
         by="NitrogenAxialTransport",
         default=0.05, scale=scales.SubOrgan, state_variable_type="intensive",
-        edge_mapping="proximal",
+        location="edge", mapping="child",
     )
     radial_solute_input: float = state_variable(
         unit="mol s-1", unit_comment="net radial influx per segment",
@@ -267,7 +267,7 @@ class NitrogenAxialTransport(FunctionalComponent):
             B = self._graph_view.incidence
             return axial_flux - K_axial * np.asarray(B.T @ concentration).reshape(-1)
 
-        @graph_output("axial_divergence")
+        @graph_output("axial_divergence", location="node")
         def _compute_axial_divergence(self, axial_flux) -> np.ndarray:
             B = self._graph_view.incidence
             return np.asarray(B @ axial_flux).reshape(-1)
@@ -641,13 +641,14 @@ def test_uc1_stepinit_and_graph_system_via_choregrapher():
     in priority order: the three schedule_as="axial" graph systems first, then the @rate, then the five
     schedule_as="state" graph systems (asserted below, so that the test documents the actual order).
 
-    With a uniform concentration and no is_root flag, the axial systems leave the concentration uniform (the
-    Dirichlet condition is inactive without is_root), so radial_solute_input = k_radial * (c_ext - c0).
+    With a uniform concentration and no node flagged is_root, the axial systems leave the concentration uniform
+    (the Dirichlet condition selects no node), so radial_solute_input = k_radial * (c_ext - c0).
     """
     ds   = _make_ds()
     n, e = ds.n_nodes(), ds.n_edges()
     c0   = 0.3
     ds.set_node_property("concentration", np.full(n, c0))
+    ds.set_node_property("is_root", np.zeros(n))   # explicit: a missing filter variable raises (DS11)
 
     model          = NitrogenAxialTransport(data_structure=ds)
     model.k_radial = 0.2
@@ -807,8 +808,7 @@ def test_uc1_explicit_node_balance_matches_implicit():
 
 def _find_root_local_idx(ds: MPGDataStructure) -> int:
     """Local index of the graph root: the node that has no incoming edge."""
-    child_vids = {int(b) for (a, b) in ds.edges()}
-    return next(i for i, vid in enumerate(ds._idx_to_vid) if vid not in child_vids)
+    return int(ds.roots()[0])
 
 
 def _make_ds_with_root_flag() -> tuple:

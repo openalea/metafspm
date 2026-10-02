@@ -43,8 +43,14 @@ class Functor:
         """
         Evaluate the step on DataStructure arrays and write the outputs in place (design note §8).
         Vectorised by default: one call with whole arrays; functions marked vectorized=False are called per element.
+        When the DataStructure defines the step's mask (default "active", design note structure_and_boundaries §4,
+        D15), arguments at the mask's location are restricted to the selected entities and outputs at that location
+        are written back on them only: the other entities keep their values.
         """
         args = [ds.get(name) for name in self.input_names]
+        mask, mask_location = self._mask(instance, ds)
+        if mask is not None:
+            args = [a[mask] if ds.location(name) == mask_location else a for name, a in zip(self.input_names, args)]
         if getattr(self.fun, "__vectorized__", True):
             out = self.fun(instance, *args)
         else:
@@ -61,19 +67,63 @@ class Functor:
         outputs = [(self.name, out[0] if self.supplementary_outputs else out)]
         for s in range(self.supplementary_outputs):
             outputs.append((out[2 * s + 1], out[2 * s + 2]))
-        reference = next((a for a in args if a.ndim > 0), None)
+        declared = getattr(self.fun, "__output_locations__", {})
         for name, values in outputs:
             values = np.asarray(values, dtype=float)
+            masked = mask is not None and values.shape == (int(mask.sum()),)
             if not ds.has(name):
-                location = "scalar" if (self.total or values.ndim == 0) else (
-                    ds.location(self.input_names[0]) if self.input_names else ds._default_location)
+                if masked and name not in declared:
+                    from openalea.metafspm.solve.decorator import infer_output_location
+                    location = infer_output_location(f"{type(instance).__name__}.{self.name}", name, values.shape,
+                                                     {mask_location: values.shape})
+                else:
+                    location = self._output_location(instance, ds, name, values, declared)
                 ds.register(name, location=location)
+            if masked and ds.location(name) == mask_location:
+                full = np.array(ds.get(name), dtype=float)
+                full[mask] = values
+                values = full
             ds.set(name, values)
+
+    def _mask(self, instance, ds):
+        """(mask, location) restricting this step, or (None, None): "active" by default, where=None opts out."""
+        where = getattr(self.fun, "__where__", "active")
+        if where is None or not hasattr(ds, "has_mask"):
+            return None, None
+        if not ds.has_mask(where):
+            if where != "active":
+                raise KeyError(f"{type(instance).__name__}.{self.name}: mask '{where}' is not defined on the "
+                               "DataStructure")
+            return None, None
+        return ds.mask(where), ds.__dict__["_masks"][where]["location"]
+
+    def _output_location(self, instance, ds, name, values, declared):
+        """
+        Location of an output that is not a registered variable (design note datastructure_contract §5): given by
+        the step decorator, "scalar" for total steps and 0-d values, else inferred from its shape when unambiguous.
+        """
+        if name in declared:
+            location = declared[name]
+            if hasattr(ds, "_mtg"):
+                from openalea.metafspm.coupling.declaration import resolve_location
+                location = resolve_location(ds, location)
+            return location
+        if self.total or values.ndim == 0:
+            return "scalar"
+        from openalea.metafspm.solve.decorator import infer_output_location
+        stores = ds._var_stores()
+        shapes = {location: ds._location_shape(location) for location in ("node", "edge", "cell") if location in stores}
+        return infer_output_location(f"{type(instance).__name__}.{self.name}", name, values.shape, shapes)
 
     def __call__(self, instance, data, *args):
         """Run the step on *data*, the component's DataStructure (iterating steps only receive the instance)."""
         if self.iterating:
-            self.fun(instance)
+            # Steps without arguments of a StructuralComponent edit the MPG: the component synchronises around them
+            run_mpg_step = getattr(instance, "_run_mpg_step", None)
+            if run_mpg_step is not None:
+                run_mpg_step(lambda: self.fun(instance))
+            else:
+                self.fun(instance)
         elif hasattr(data, "get") and hasattr(data, "register") and hasattr(data, "location"):
             self._call_on_data_structure(instance, data)
         else:

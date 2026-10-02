@@ -41,10 +41,12 @@ import sys
 import types
 import inspect
 from collections import defaultdict
+import warnings
 from dataclasses import fields as dc_fields
 from typing      import Optional
 
 import numpy as np
+from scipy.sparse import coo_matrix, csc_matrix
 
 # ── New module hierarchy ──────────────────────────────────────────────────────
 from openalea.metafspm.data_structure.data_api import GraphView, BoundaryPort
@@ -57,7 +59,7 @@ from openalea.metafspm.solve.system_specs   import (
     SolverResult,
 )
 from openalea.metafspm.solve.solver         import (
-    SolverConfig, SolverSpec, make_solver, SOLVER_REGISTRY, ImplicitEulerSolver,
+    SolverConfig, SolverSpec, make_solver, SOLVER_REGISTRY, ImplicitEulerSolver, ExplicitEulerSolver, ScipyIVPSolver,
 )
 
 # Canonical method string for each concrete solver class (first key in SOLVER_REGISTRY wins).
@@ -90,11 +92,22 @@ def _step(name: str, *, total: bool = False, iterating: bool = False):
     step functions receive whole arrays (design note Q20); ``vectorized=False`` opts in to one call per element
     for functions written with scalar logic.
     """
-    def decorator(func=None, *, vectorized: bool = True):
+    def decorator(func=None, *, vectorized: bool = True, location: str = None, locations: dict = None,
+                  where="active"):
+        """
+        location:  of the step's output when it is not a declared field ("node", "edge", "scalar", "cell", or a
+                   coarse scale name); locations: {output name: location} for the supplementary outputs.
+        where:     mask of the DataStructure restricting the step to its selected entities ("active" by default,
+                   applied only when the DataStructure defines it); None computes on every entity.
+        """
         if func is None:
-            return lambda f: decorator(f, vectorized=vectorized)
+            return lambda f: decorator(f, vectorized=vectorized, location=location, locations=locations, where=where)
+        func.__where__ = where
         func.__step_tag__ = {"name": name, "total": total, "iterating": iterating, "vectorized": vectorized}
         func.__vectorized__ = vectorized
+        func.__output_locations__ = dict(locations or {})
+        if location is not None:
+            func.__output_locations__[func.__name__[1:]] = location
         Choregrapher().add_process(Functor(func, total=total, iteraring=iterating), name=name)
         return func
     return decorator
@@ -175,6 +188,12 @@ def boundary_condition(location, kind, field=None, filters=None, explicit=False)
     filters  : dict  entity-property filter selecting BC-active entities.
     explicit : bool  accepted for API symmetry; BCs always return values.
     """
+    if location == "edge":
+        raise NotImplementedError("@boundary_condition(location='edge') is not supported yet: conditions are applied "
+                                  "on nodes (edge boundary sets come with devplan_datastructures DS6)")
+    if location != "node":
+        raise ValueError(f"@boundary_condition: location must be 'node', got '{location}'")
+
     def decorator(func):
         func.__graph_tag__ = {
             "kind": "boundary_condition",
@@ -185,18 +204,93 @@ def boundary_condition(location, kind, field=None, filters=None, explicit=False)
     return decorator
 
 
+class boundary_set:
+    """
+    Boundary condition on a set of nodes, declared in a graph-system class and assembled by the framework (design
+    note structure_and_boundaries §6, DS6):
+
+        leaves = boundary_set(select={"label": [LEAF]}, kind="robin", value="air_water_potential",
+                              weight="leaf_conductance")
+
+    select  {variable: value or values} | a variable name (selects where it is > 0) | a callable ds -> boolean mask;
+            membership follows the selecting variables and topology changes.
+    kind    "robin":     + w * (x - v) in the field's residual (an outflow towards the external value v);
+            "dirichlet": the residual row becomes x - v;
+            "neumann":   - v in the residual (v is an inflow).
+    value, weight
+            node variables of the DataStructure (read at each solve) or constants.
+    field   the node unknown it applies to; default: the only node unknown.
+    """
+
+    KINDS = ("robin", "dirichlet", "neumann")
+
+    def __init__(self, select, kind, value, weight=1.0, field=None):
+        if kind not in self.KINDS:
+            raise ValueError(f"boundary_set: kind must be one of {self.KINDS}, got '{kind}'")
+        if not (callable(select) or isinstance(select, (dict, str))):
+            raise TypeError("boundary_set: select must be a {variable: values} dict, a variable name or a callable")
+        self.select, self.kind, self.value, self.weight, self.field = select, kind, value, weight, field
+        self.name = None
+        self.__graph_tag__ = {"kind": "boundary_set"}
+
+    def __set_name__(self, owner, name):
+        self.name = name
+
+    def variables(self) -> list:
+        """DataStructure variables read by the solve (value and weight given by name)."""
+        return [x for x in (self.value, self.weight if self.kind == "robin" else None) if isinstance(x, str)]
+
+    def members(self, instance, ds, size, take) -> np.ndarray:
+        """Indices, in the solved graph, of the nodes of the set."""
+        mask_name = f"__boundary_set:{type(instance).__name__}.{self.name}"
+        if not ds.has_mask(mask_name):
+            rule = self.select
+            if isinstance(rule, str):
+                rule = {rule: ">0"}
+            elif isinstance(rule, dict):
+                rule = {variable: (list(values) if isinstance(values, (list, tuple, set)) else values)
+                        for variable, values in rule.items()}
+            ds.define_mask(mask_name, rule)
+        mask = np.asarray(ds.mask(mask_name), dtype=bool)
+        if take is not None:
+            mask = mask[take]
+        return np.flatnonzero(mask)
+
+
 def graph_jacobian(func):
     """Tag a method as the optional analytic Jacobian evaluator."""
     func.__graph_tag__ = {"kind": "graph_jacobian"}
     return func
 
 
-def graph_output(name):
-    """Tag a method as a named post-solve output hook."""
+def graph_output(name, location: str = None):
+    """
+    Tag a method as a named post-solve output hook. *location* ("node" or "edge") is required when *name* is not a
+    declared field and its size does not identify a single location (design note datastructure_contract §5).
+    """
+    if location not in (None, "node", "edge"):
+        raise ValueError(f"@graph_output('{name}'): location must be 'node' or 'edge', got '{location}'")
+
     def decorator(func):
-        func.__graph_tag__ = {"kind": "graph_output", "name": name}
+        func.__graph_tag__ = {"kind": "graph_output", "name": name, "location": location}
         return func
     return decorator
+
+
+def infer_output_location(owner: str, name: str, shape: tuple, shapes: dict) -> str:
+    """
+    Location of an undeclared output that gives none, from its shape: accepted, with a DeprecationWarning, only
+    when exactly one of *shapes* ({location: shape}) matches; ambiguous or unmatched shapes raise.
+    """
+    matches = [location for location, location_shape in shapes.items() if tuple(location_shape) == tuple(shape)]
+    if len(matches) == 1:
+        warnings.warn(f"{owner}: output '{name}' has no declared location, '{matches[0]}' was inferred from its "
+                      "shape; declare the field or give location=", DeprecationWarning, stacklevel=3)
+        return matches[0]
+    if not matches:
+        raise ValueError(f"{owner}: output '{name}' of shape {tuple(shape)} matches no location {shapes}")
+    raise ValueError(f"{owner}: output '{name}' of shape {tuple(shape)} matches several locations {matches}: "
+                     "declare the field or give location=")
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -204,44 +298,15 @@ def graph_output(name):
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def _declared_locations(instance):
-    """Return {field_name: "node"|"edge"} from dataclass metadata.
-
-    Reads the ``scale`` metadata key (set by declare/state_variable/
-    input_variable/parameter).
-
-    Resolution order:
-      scale=Compartment (9)  → "node"
-      scale=Connection  (10) → "edge"
-      scale=bio-int + edge_mapping set → "edge"  (biological edge property)
-      scale=bio-int, no edge_mapping   → "node"  (biological node property)
-      scale="node"|"edge"              → direct
-      Falls back to legacy ``location`` key for backward compatibility.
-    """
-    locs = {}
-    try:
-        for f in dc_fields(type(instance)):
-            scale_raw    = f.metadata.get("scale")
-            edge_mapping = f.metadata.get("edge_mapping")
-            if scale_raw is None:
-                loc = f.metadata.get("location")
-            elif isinstance(scale_raw, int):
-                if scale_raw == _ScalesConfig.Compartment:
-                    loc = "node"
-                elif scale_raw == _ScalesConfig.Connection:
-                    loc = "edge"
-                elif edge_mapping is not None:
-                    loc = "edge"   # biological scale + edge_mapping → edge slot
-                else:
-                    loc = "node"   # biological scale without edge_mapping → node slot
-            elif scale_raw in ("node", "edge"):
-                loc = scale_raw
-            else:
-                loc = None
-            if loc is not None:
-                locs[f.name] = loc
-    except TypeError:
-        pass
-    return locs
+    """{field name: location} of the instance's declared DataStructure variables (resolve_declaration)."""
+    specs = getattr(instance, "_variable_specs", None)
+    if specs is None:
+        ds = getattr(instance, "data_structure", None)
+        if ds is None:
+            return {}
+        from openalea.metafspm.coupling.declaration import declared_specs
+        specs = declared_specs(instance, ds)
+    return {name: spec.location for name, spec in specs.items()}
 
 
 def _live_ds(instance):
@@ -253,14 +318,102 @@ def _live_ds(instance):
     return ds
 
 
-def _read_array(ds, name, location, size):
-    """Copy of variable *name* as a per-*location* array: scalars are broadcast; missing names give zeros."""
+def _read_array(ds, name, location, size, owner=None, take=None):
+    """
+    Copy of variable *name* as a per-*location* array: scalars are broadcast; a missing name raises (DS11).
+    *take*: indices of the entities of an active subgraph (where=), the others being left out.
+    """
     if not ds.has(name):
-        return np.zeros(size, dtype=np.float64)
+        raise KeyError(f"{owner + ': ' if owner else ''}'{name}' is used by a graph system but is not registered on "
+                       f"the DataStructure (declare it on the component, or register it). Registered: "
+                       f"{sorted(ds.available_vars())}")
     values = ds.get(name)
     if values.ndim == 0:
         return np.full(size, float(values))
+    if take is not None:
+        values = values[take]
     return np.array(values, dtype=np.float64)
+
+
+def _take(instance, location):
+    """Indices of the active subgraph's entities at *location* during a where= solve, else None."""
+    restriction = instance.__dict__.get("_restriction")
+    if restriction is None:
+        return None
+    return restriction.node_idx if location == "node" else restriction.edge_idx
+
+
+class _Restriction:
+    """
+    Active subgraph of a graph system solved with where= (design note structure_and_boundaries §5, DS21): the
+    selected nodes, the edges with both ends selected, and the corresponding GraphView.
+    """
+
+    def __init__(self, view, node_idx, edge_idx, n, m):
+        self.view, self.node_idx, self.edge_idx = view, node_idx, edge_idx
+        self.dropped_edges = np.setdiff1d(np.arange(m), edge_idx)
+        self.n, self.m = n, m
+
+    def scatter(self, ds, name, values, location, dropped=None):
+        """Write *values* of the subgraph's entities into the full variable; dropped edges get *dropped* if given."""
+        full = np.array(ds.get(name), dtype=np.float64)
+        if location == "node":
+            full[self.node_idx] = values
+        else:
+            full[self.edge_idx] = values
+            if dropped is not None:
+                full[self.dropped_edges] = dropped
+        ds.set(name, full)
+
+
+def _restriction_for(instance, where):
+    """The _Restriction of mask *where*, rebuilt when the topology or the mask's values changed."""
+    ds = _live_ds(instance)
+    if not hasattr(ds, "has_mask") or not ds.has_mask(where):
+        raise KeyError(f"{type(instance).__name__}: graph system with where='{where}' but the DataStructure "
+                       "defines no such mask")
+    if ds.__dict__["_masks"][where]["location"] != "node":
+        raise ValueError(f"{type(instance).__name__}: where='{where}' needs a node mask")
+    if getattr(instance, "_boundary_ports", None):
+        raise NotImplementedError(f"{type(instance).__name__}: boundary ports set by hand cannot follow an active "
+                                  "subgraph; use boundary sets (devplan_datastructures DS6)")
+    key = (ds.topology_version, ds.mask_version(where))
+    cache = instance.__dict__.setdefault("_restriction_cache", {})
+    if where in cache and cache[where][0] == key:
+        return cache[where][1]
+    full = instance._graph_view
+    mask = np.asarray(ds.mask(where), dtype=bool)
+    node_idx = np.flatnonzero(mask)
+    edge_idx = np.flatnonzero(mask[full.tail] & mask[full.head])
+    local = np.full(full.n_nodes, -1, dtype=np.int64)
+    local[node_idx] = np.arange(node_idx.size)
+    view = GraphView(
+        node_ids=full.node_ids[node_idx], edge_ids=full.edge_ids[edge_idx],
+        tail=local[full.tail[edge_idx]], head=local[full.head[edge_idx]],
+        incidence=full.incidence[node_idx][:, edge_idx].tocsc(),
+        boundary_incidence=csc_matrix((node_idx.size, 0), dtype=np.float64), boundary_names=(),
+    )
+    restriction = _Restriction(view, node_idx, edge_idx, full.n_nodes, full.n_edges)
+    cache[where] = (key, restriction)
+    return restriction
+
+
+def _check_well_posed(instance, method_name, view, anchored):
+    """
+    Every connected piece of a steady subgraph needs an anchor (a Dirichlet node; Robin boundaries come with
+    boundary sets), otherwise its solution is defined up to a constant (design note §8, P4).
+    """
+    from scipy.sparse.csgraph import connected_components
+    n = view.n_nodes
+    adjacency = coo_matrix((np.ones(view.n_edges), (view.tail, view.head)), shape=(n, n))
+    count, labels = connected_components(adjacency, directed=False)
+    for piece in range(count):
+        members = np.flatnonzero(labels == piece)
+        if not anchored[members].any():
+            raise ValueError(f"{type(instance).__name__}.{method_name}: piece of {members.size} nodes "
+                             f"{view.node_ids[members][:10].tolist()} has no Dirichlet "
+                             "or positive-weight Robin anchor in a steady system (declare transient=True if its balance has "
+                             "a time derivative)")
 
 
 def _snapshot(instance, required_names, node_vids_int, edge_vids_int,
@@ -271,12 +424,18 @@ def _snapshot(instance, required_names, node_vids_int, edge_vids_int,
     for name in required_names:
         if name in declared_locs:
             loc = declared_locs[name]
-        elif ds.has(name) and ds.location(name) in ("node", "edge"):
+        elif ds.has(name):
             loc = ds.location(name)
         else:
             loc = "node"
+        if loc == "scalar":
+            loc = "node"   # scalars are broadcast over the entities
+        elif loc not in ("node", "edge"):
+            raise ValueError(f"{type(instance).__name__}: '{name}' is stored at {loc}, graph equations take node "
+                             f"or edge arrays: declare it with location='node' and mapping='broadcast'")
         size = len(node_vids_int) if loc == "node" else len(edge_vids_int)
-        (node_snap if loc == "node" else edge_snap)[name] = _read_array(ds, name, loc, size)
+        (node_snap if loc == "node" else edge_snap)[name] = _read_array(ds, name, loc, size, type(instance).__name__,
+                                                                        take=_take(instance, loc))
     return node_snap, edge_snap
 
 
@@ -286,7 +445,8 @@ def _type_mask(type_filter, snap, size):
     for prop_name, allowed in type_filter.items():
         vals = snap.get(prop_name)
         if vals is None:
-            continue
+            raise KeyError(f"filter variable '{prop_name}' is not available at this location: a filter on a missing "
+                           "variable would select every entity")
         mask &= np.isin(np.asarray(vals, dtype=float), np.asarray(list(allowed), dtype=float))
     return mask
 
@@ -344,6 +504,8 @@ class GraphSystemBuilder:
         bc_items           = []   # (field, types, bc_kind, attr_name, bound, raw, explicit)
         jacobian_raw       = None
         output_items       = []   # (out_name, bound, raw)
+        boundary_sets      = []   # boundary_set objects (DS6)
+        self.output_locations = {}   # out_name -> location given by @graph_output (or None)
 
         for cls_ in inner_cls.__mro__:
             for attr_name, obj in cls_.__dict__.items():
@@ -352,6 +514,9 @@ class GraphSystemBuilder:
                 seen.add(attr_name)
                 tag = getattr(obj, "__graph_tag__", None)
                 if tag is None:
+                    continue
+                if tag["kind"] == "boundary_set":
+                    boundary_sets.append(obj)          # declared data, not a method
                     continue
                 bound = obj.__get__(instance, type(instance))
                 kind  = tag["kind"]
@@ -374,6 +539,7 @@ class GraphSystemBuilder:
                     jacobian_raw = (bound, obj)
                 elif kind == "graph_output":
                     output_items.append((tag["name"], bound, obj))
+                    self.output_locations[tag["name"]] = tag.get("location")
 
         # Sort node blocks to match node_unknowns order
         field_order = {f: i for i, f in enumerate(node_unknowns)}
@@ -396,9 +562,16 @@ class GraphSystemBuilder:
 
         ds = _live_ds(instance)
         # Framework-managed previous state (design note Q21): the unknowns at the start of this solve
-        instance._previous_state = {fn: np.array(ds.get(fn), dtype=np.float64)
-                                    for fn in list(node_unknowns) + list(edge_unknowns) if ds.has(fn)}
-        amount_olds = {fn: _read_array(ds, f"{fn}_amount", "edge", m) for fn in integrate_fields}
+        instance._previous_state = {fn: _read_array(ds, fn, location, n if location == "node" else m,
+                                                    take=_take(instance, location))
+                                    for location, names in (("node", node_unknowns), ("edge", edge_unknowns))
+                                    for fn in names if ds.has(fn)}
+        for fn in integrate_fields:
+            # The integrated amount starts at zero, registered explicitly rather than read as a missing variable
+            if not ds.has(f"{fn}_amount"):
+                ds.register(f"{fn}_amount", location="edge", default=0.)
+        amount_olds = {fn: _read_array(ds, f"{fn}_amount", "edge", m, take=_take(instance, "edge"))
+                       for fn in integrate_fields}
 
         all_edge_unknowns = list(edge_unknowns) + [f"{fn}_amount" for fn in integrate_fields]
 
@@ -424,16 +597,49 @@ class GraphSystemBuilder:
         for _, tf, _, _, _, _, _ in bc_items:
             if tf:
                 required.update(tf.keys())
+        for bset in boundary_sets:
+            required.update(bset.variables())
 
         node_snap, edge_snap = _snapshot(
             instance, required, node_vids_int, edge_vids_int,
             node_unknowns, edge_unknowns, declared_locs,
         )
 
+        # Boundary sets: members on the solved graph, values and weights read now (DS6)
+        set_terms = defaultdict(list)    # field -> [(kind, idx, value, weight)]
+        for bset in boundary_sets:
+            if bset.field is not None:
+                field = bset.field
+            elif len(node_unknowns) == 1:
+                field = node_unknowns[0]
+            else:
+                raise ValueError(f"boundary_set '{bset.name}': give field=, the system has several node unknowns")
+            idx = bset.members(instance, ds, n, _take(instance, "node"))
+
+            def read(x, idx=idx):
+                return node_snap[x][idx] if isinstance(x, str) else np.full(idx.size, float(x))
+            set_terms[field].append((bset.kind, idx, read(bset.value), read(bset.weight) if bset.kind == "robin"
+                                     else None))
+
+        if instance.__dict__.get("_restriction") is not None and not spec_def.get("transient", False):
+            anchored = np.zeros(n, dtype=bool)
+            for _, tf, bc_kind, _, _, _, _ in bc_items:
+                if bc_kind == "dirichlet":
+                    anchored |= _type_mask(tf, node_snap, n) if tf else True
+            for terms in set_terms.values():
+                for kind, idx, _, weight in terms:
+                    if kind == "dirichlet":
+                        anchored[idx] = True
+                    elif kind == "robin":
+                        anchored[idx[weight > 0]] = True
+            _check_well_posed(instance, spec_def["inner_class"].__name__, gv, anchored)
+
         # ── Initial-guess FieldStates ─────────────────────────────────────────
         # Copies: the implicit solvers also use them as u_prev, they must not follow later writes
-        node_fields_gs = {fn: FieldState(fn, "node", _read_array(ds, fn, "node", n)) for fn in node_unknowns}
-        edge_fields_gs = {fn: FieldState(fn, "edge", _read_array(ds, fn, "edge", m)) for fn in edge_unknowns}
+        node_fields_gs = {fn: FieldState(fn, "node", _read_array(ds, fn, "node", n, take=_take(instance, "node")))
+                          for fn in node_unknowns}
+        edge_fields_gs = {fn: FieldState(fn, "edge", _read_array(ds, fn, "edge", m, take=_take(instance, "edge")))
+                          for fn in edge_unknowns}
         for fn in integrate_fields:
             edge_fields_gs[f"{fn}_amount"] = FieldState(
                 f"{fn}_amount", "edge", amount_olds[fn].copy()
@@ -441,10 +647,19 @@ class GraphSystemBuilder:
 
         # ── Evaluator factory ─────────────────────────────────────────────────
 
+        def arg_location(aname):
+            """Entity ("node" or "edge") of an equation argument: filters slice only those of the filtered entity."""
+            if aname in node_unknowns or aname in node_snap:
+                return "node"
+            if aname in all_edge_unknowns or aname in edge_snap:
+                return "edge"
+            return None
+
         def make_evaluator(raw_func, bound_method, type_filter, entity):
             arg_names   = inspect.getfullargspec(raw_func)[0][1:]
             entity_size = n if entity == "node" else m
             mask_snap   = node_snap if entity == "node" else edge_snap
+            sliced      = [arg_location(aname) == entity for aname in arg_names]
 
             def evaluator(ctx):
                 args = []
@@ -465,9 +680,7 @@ class GraphSystemBuilder:
                         )
                 if type_filter:
                     mask = _type_mask(type_filter, mask_snap, entity_size)
-                    sub  = [a[mask] if isinstance(a, np.ndarray)
-                            and a.shape[0] == entity_size else a
-                            for a in args]
+                    sub  = [a[mask] if cut else a for a, cut in zip(args, sliced)]
                     result = np.asarray(bound_method(*sub), dtype=np.float64)
                     full   = np.zeros(entity_size, dtype=np.float64)
                     np.add.at(full, np.where(mask)[0], result)
@@ -481,6 +694,7 @@ class GraphSystemBuilder:
         def make_bc_eval(raw_func, bound_method, type_filter,
                           bc_kind="dirichlet", field=None, explicit=False):
             arg_names = inspect.getfullargspec(raw_func)[0][1:]
+            sliced    = [arg_location(aname) == "node" for aname in arg_names]
 
             def bc_eval(ctx):
                 args = []
@@ -500,8 +714,7 @@ class GraphSystemBuilder:
                 if type_filter:
                     mask = _type_mask(type_filter, node_snap, n)
                     idx  = np.where(mask)[0]
-                    sub  = [a[mask] if isinstance(a, np.ndarray)
-                            and a.shape[0] == n else a for a in args]
+                    sub  = [a[mask] if cut else a for a, cut in zip(args, sliced)]
                     vals = np.asarray(bound_method(*sub), dtype=np.float64)
                 else:
                     idx  = np.arange(n)
@@ -515,17 +728,28 @@ class GraphSystemBuilder:
 
         # ── Assemble equation blocks ──────────────────────────────────────────
 
-        def make_combined_node_ev(bulk_evals, bc_specs, neumann_scale=1.0):
+        def make_combined_node_ev(bulk_evals, bc_specs, neumann_scale=1.0, field=None):
+            terms = set_terms.get(field, [])
+
             def evaluator(ctx):
                 result = np.zeros(n, dtype=np.float64)
                 for w in bulk_evals:
                     result += w(ctx)
+                x = ctx.node_unknowns[field] if terms else None
+                for kind, idx, value, weight in terms:
+                    if kind == "robin":
+                        result[idx] += weight * (x[idx] - value)
+                    elif kind == "neumann":
+                        result[idx] -= value * neumann_scale
                 for bkind, bc_ev in bc_specs:
                     idx, vals = bc_ev(ctx)
                     if bkind == "dirichlet":
                         result[idx] = vals
                     else:
                         result[idx] += vals * neumann_scale
+                for kind, idx, value, _ in terms:
+                    if kind == "dirichlet":
+                        result[idx] = x[idx] - value
                 return result
             return evaluator
 
@@ -541,7 +765,7 @@ class GraphSystemBuilder:
         for field_name in node_unknowns:
             grp    = node_groups.get(field_name, [])
             bc_grp = bc_groups.get(field_name, [])
-            if not grp and not bc_grp:
+            if not grp and not bc_grp and not set_terms.get(field_name):
                 continue
             bulk_wrapped = []
             any_explicit = any(ex for _, _, _, ex in grp)
@@ -561,7 +785,7 @@ class GraphSystemBuilder:
             neumann_scale = dt_inst if any_explicit else 1.0
             equation_blocks.append(EquationBlock(
                 name      = f"node_balance_{field_name}",
-                evaluator = make_combined_node_ev(bulk_wrapped, bc_wrapped, neumann_scale),
+                evaluator = make_combined_node_ev(bulk_wrapped, bc_wrapped, neumann_scale, field=field_name),
             ))
 
         edge_groups: dict[str, list] = defaultdict(list)
@@ -615,6 +839,25 @@ class GraphSystemBuilder:
             make_evaluator(jacobian_raw[1], jacobian_raw[0], None, "node")
             if jacobian_raw else None
         )
+        if jac_evaluator is not None and any(set_terms.values()):
+            # The user's Jacobian covers the equations; the framework adds the boundary sets' terms
+            user_jacobian = jac_evaluator
+
+            def jac_evaluator(ctx, _user=user_jacobian):
+                from scipy.sparse import issparse
+                J = _user(ctx)
+                sparse = issparse(J)
+                J = J.tolil() if sparse else np.array(J, dtype=np.float64)
+                for field, terms in set_terms.items():
+                    offset = list(node_unknowns).index(field) * n
+                    for kind, idx, _, weight in terms:
+                        rows = offset + idx
+                        if kind == "robin":
+                            J[rows, rows] = np.asarray(J[rows, rows]).reshape(-1) + weight
+                        elif kind == "dirichlet":
+                            J[rows, :] = 0.
+                            J[rows, rows] = 1.
+                return J.tocsr() if sparse else J
 
         boundary_ports = tuple(getattr(instance, "_boundary_ports", None) or ())
 
@@ -670,11 +913,16 @@ class GraphSystemBuilder:
         ds = _live_ds(self._instance)
         for location, values_by_name in (("node", {fn: node_u[fn] for fn in self._spec_def["node_unknowns"]}),
                                          ("edge", {fn: edge_u[fn] for fn in spec.unknowns.edge_fields})):
+            restriction = self._instance.__dict__.get("_restriction")
             for fn, values in values_by_name.items():
-                if ds.has(fn):
+                if not ds.has(fn):
+                    ds.register(fn, location=location)
+                if restriction is None:
                     ds.set(fn, values)
                 else:
-                    ds.register(fn, values, location=location)
+                    # Inactive nodes stay frozen; dropped edges carry no flux, their integrated amounts are kept
+                    dropped = None if location == "node" or fn.endswith("_amount") else 0.
+                    restriction.scatter(ds, fn, values, location, dropped=dropped)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -695,6 +943,28 @@ def _invoke_graph_system(self, method_name: str) -> None:
     if hasattr(self, "_refresh_from_bio_scale"):
         self._refresh_from_bio_scale()
     spec_def = type(self)._graph_system_specs[method_name]
+    where = spec_def.get("where")
+    if where is None:
+        _solve_graph_system(self, method_name, spec_def)
+        return
+    # Active subgraph (DS21): the equations see its GraphView through self._graph_view
+    restriction = _restriction_for(self, where)
+    if restriction.node_idx.size == 0:
+        ds = _live_ds(self)
+        for fn in spec_def["edge_unknowns"]:
+            if ds.has(fn):
+                ds.set(fn, 0.)            # no active edge: no flux
+        return
+    self.__dict__["_restriction"], self.__dict__["_solve_view"] = restriction, restriction.view
+    try:
+        _solve_graph_system(self, method_name, spec_def)
+    finally:
+        self.__dict__.pop("_restriction", None)
+        self.__dict__.pop("_solve_view", None)
+
+
+def _solve_graph_system(self, method_name: str, spec_def: dict) -> None:
+    """Build, solve and write back one graph system, on the whole graph or on the current active subgraph."""
 
     # ── Advance previous-field bookkeeping ────────────────────────────────────
     _saved_key = f"_gsol_{method_name}"
@@ -712,8 +982,10 @@ def _invoke_graph_system(self, method_name: str) -> None:
         (_solver_cls is not None and issubclass(_solver_cls, ImplicitEulerSolver))
     )
     if previous_fields is None and _is_implicit:
-        previous_fields = {fn: _read_array(_live_ds(self), fn, "node", self._graph_view.n_nodes)
-                           for fn in spec_def["node_unknowns"]}
+        previous_fields = {fn: np.array(_live_ds(self).get(fn), dtype=np.float64) for fn in spec_def["node_unknowns"]}
+    take = _take(self, "node")
+    if previous_fields is not None and take is not None:
+        previous_fields = {fn: np.asarray(values)[take] for fn, values in previous_fields.items()}
 
     # ── Build + solve ─────────────────────────────────────────────────────────
     builder = GraphSystemBuilder(self, spec_def)
@@ -726,28 +998,37 @@ def _invoke_graph_system(self, method_name: str) -> None:
     spec       = builder.last_spec  # the spec that was solved
     node_u, _  = spec.unpack_unknowns(packed)
 
-    setattr(self, _saved_key, {fn: node_u[fn].copy()
-                                for fn in spec_def["node_unknowns"]})
     self._last_graph_solution = packed
     self._graph_solution_fields = {fn: node_u[fn].copy()
                                     for fn in spec_def["node_unknowns"]}
 
     # ── Inject results ────────────────────────────────────────────────────────
     builder.inject_result(packed, spec)
-
-    # ── Write biological-scale fields back to the MTG ─────────────────────────
-    if hasattr(self, "write_back_to_mtg"):
-        self.write_back_to_mtg()
+    # Kept on every node, so that a later solve on another active subgraph finds its previous values
+    setattr(self, _saved_key, {fn: np.array(_live_ds(self).get(fn), dtype=np.float64)
+                                for fn in spec_def["node_unknowns"]})
 
     # ── Write output-block results ─────────────────────────────────────────────
     n  = self._graph_view.n_nodes
     ds = _live_ds(self)
+    restriction = self.__dict__.get("_restriction")
     for oname, arr in outputs.items():
         arr = np.asarray(arr, dtype=np.float64).reshape(-1)
+        location = builder.output_locations.get(oname)
         if ds.has(oname):
+            if location is not None and ds.location(oname) != location:
+                raise ValueError(f"{type(self).__name__}: @graph_output('{oname}', location='{location}') but "
+                                 f"'{oname}' is registered at {ds.location(oname)}")
+        else:
+            if location is None:
+                location = infer_output_location(type(self).__name__, oname, arr.shape,
+                                                  {"node": (n,), "edge": (self._graph_view.n_edges,)})
+            ds.register(oname, location=location)
+        if restriction is None:
             ds.set(oname, arr)
         else:
-            ds.register(oname, arr, location="node" if arr.size == n else "edge")
+            location = ds.location(oname)
+            restriction.scatter(ds, oname, arr, location, dropped=None if location == "node" else 0.)
 
     # Attach GraphSystem for test introspection (backward compat hook)
     self._last_graph_system = _make_compat_graph_system(self, spec_def, spec)
@@ -838,6 +1119,8 @@ def graph_system(
     prefer_sparse  = True,
     linesearch     = False,
     schedule_as    = "axial",
+    where          = None,
+    transient      = None,
 ):
     """
     Inner-class decorator that wires a GraphSystem solve into the Choregrapher.
@@ -880,6 +1163,13 @@ def graph_system(
     prefer_sparse  : bool    use sparse linear solves when available.
     linesearch     : bool    Armijo backtracking in Newton loop.
     schedule_as    : str     Choregrapher step name.
+    where          : str | None
+        Mask of the DataStructure restricting the solve to its active subgraph (nodes selected by the mask and the
+        edges between them; inactive nodes are frozen, dropped edges carry no flux). None: the whole graph.
+    transient      : bool | None
+        Whether the balance has a time derivative. Steady systems on an active subgraph need a Dirichlet anchor in
+        every connected piece, which is checked. Default: True for the time-stepping solvers (explicit and implicit
+        Euler, IVP), False otherwise.
     """
     # Backward-compat: honour deprecated method= kwarg.
     if method is not None:
@@ -920,6 +1210,9 @@ def graph_system(
         "prefer_sparse" : prefer_sparse,
         "linesearch"    : linesearch,
         "schedule_as"   : schedule_as,
+        "where"         : where,
+        "transient"     : (issubclass(solver_cls, (ExplicitEulerSolver, ImplicitEulerSolver, ScipyIVPSolver))
+                           if transient is None else bool(transient)),
     }
 
     def decorator(cls):

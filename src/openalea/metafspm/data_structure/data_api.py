@@ -321,19 +321,47 @@ class VariableStoreMixin:
         return self._find(name)[0]
 
     def get(self, name: str) -> np.ndarray:
-        """Live view of a registered variable (aliases resolved)."""
+        """
+        Live view of a registered variable (aliases resolved). A derived variable is recomputed first if one of its
+        sources was written since its last computation (design note datastructure_contract §4, D10).
+        """
         location, store, target = self._find(name)
+        if target in self.__dict__.get("_derived", {}):
+            self._update_derived([target])
         return store[target]
 
     def set(self, name: str, values) -> None:
         """Write *values* in place into the registered variable *name* (broadcast allowed, shape checked)."""
         location, store, target = self._find(name)
+        if target in self.__dict__.get("_derived", {}):
+            raise ValueError(f"'{name}' is derived from {list(self._derived_sources(target))} and recomputed when "
+                             "read: write its sources instead")
+        self._write(store, target, values, name)
+
+    def _write(self, store, target: str, values, name: str = None) -> None:
         array = store[target]
         values = np.asarray(values, dtype=float)
         try:
             array[...] = np.broadcast_to(values, array.shape)
         except ValueError:
-            raise ValueError(f"Cannot write values of shape {values.shape} into '{name}' of shape {array.shape}.") from None
+            raise ValueError(f"Cannot write values of shape {values.shape} into '{name or target}' of shape "
+                             f"{array.shape}.") from None
+        self.mark_written(target)
+
+    # ── Write counters (design note datastructure_contract §4) ────────────────
+
+    def write_count(self, name: str) -> int:
+        """Number of writes of variable *name* (aliases resolved): bumped by register, set and topology changes."""
+        return self.__dict__.get("_writes", {}).get(self._resolve(name), 0)
+
+    def mark_written(self, name: str) -> None:
+        """
+        Record a write of *name*. set() does it; call it only after writing through a view (ds.get(x)[...] = v),
+        which is otherwise invisible to the variables derived from *name*.
+        """
+        writes = self.__dict__.setdefault("_writes", {})
+        target = self._resolve(name)
+        writes[target] = writes.get(target, 0) + 1
 
     def register(self, name: str, values=None, location: str = None, default: float = 0.,
                  on_grow: str = "default") -> np.ndarray:
@@ -361,7 +389,9 @@ class VariableStoreMixin:
             if other_location != location:
                 store.pop(name, None)
         stores[location][name] = array
-        self._variable_meta()[name] = {"default": float(default), "on_grow": on_grow}
+        self.mark_written(name)
+        # Declaration metadata (scale, mapping, kind, ...) is kept across re-registrations (growth)
+        self._variable_meta().setdefault(name, {}).update(default=float(default), on_grow=on_grow)
         self._bump_version()
         return array
 
@@ -391,7 +421,7 @@ class VariableStoreMixin:
         return dict(self.__dict__.get("_derived", {}))
 
     def derive(self, name: str, sources=None, formula=None, location: str = None, aggregation: str = None,
-               weight: str = None, default: float = 0., on_grow: str = "default") -> np.ndarray:
+               weight: str = None, default: float = 0., on_grow: str = "default", target: str = None) -> np.ndarray:
         """
         Declare *name* as derived from other variables and compute it.
 
@@ -400,6 +430,8 @@ class VariableStoreMixin:
         location:    of *name* (default: the sources' location). A different location requires an
                      *aggregation* understood by the data structure (e.g. "sum", "mean", "weighted_mean",
                      "broadcast", "proximal", "distal"); *weight* names the weights of "weighted_mean".
+        target:      a mask at *location*: the derived values are given on its entities only, the others getting
+                     *default* (e.g. a SubOrgan concentration broadcast to the symplastic Compartments only).
         The value is recomputed in place by refresh(); dependencies on other derived variables are refreshed first.
         """
         if not sources:
@@ -418,9 +450,11 @@ class VariableStoreMixin:
         if location != source_location and aggregation is None:
             raise ValueError(f"derived variable '{name}' at {location} from {source_location} needs an aggregation")
         derived = self.__dict__.setdefault("_derived", {})
+        if target is not None and not self.has_mask(target):
+            raise KeyError(f"derived variable '{name}': target mask '{target}' is not defined")
         spec = {"sources": dict(sources) if formula is None else tuple(names), "formula": formula,
                 "source_location": source_location, "location": location,
-                "aggregation": aggregation, "weight": weight}
+                "aggregation": aggregation, "weight": weight, "target": target, "default": float(default)}
         previous = derived.get(name)
         derived[name] = spec
         try:
@@ -462,23 +496,205 @@ class VariableStoreMixin:
             visit(name)
         return order
 
-    def refresh(self, name: str = None) -> None:
-        """Recompute derived variable *name* (and the derived variables it depends on), or all of them."""
+    def _derived_sources(self, target: str) -> list:
+        spec = self.__dict__["_derived"][target]
+        return list(spec["sources"]) + ([spec["weight"]] if spec["weight"] else [])
+
+    def _source_stamps(self, target: str) -> dict:
+        stamps = {self._resolve(source): self.write_count(source) for source in self._derived_sources(target)}
+        mask = self.__dict__["_derived"][target].get("target")
+        if mask is not None:
+            stamps[("mask", mask)] = self.mask_version(mask)
+        return stamps
+
+    def _compute_derived(self, target: str) -> None:
+        """Recompute derived variable *target* in place from its sources' current values."""
+        location, store, _ = self._find(target)
+        self._write(store, target, self._derived_values(target))
+        self.__dict__["_derived"][target]["stamps"] = self._source_stamps(target)
+
+    def _derived_values(self, target: str) -> np.ndarray:
+        """Values of derived variable *target* computed from its sources, without writing them."""
+        spec = self.__dict__["_derived"][target]
+
+        def value(source):
+            location, store, resolved = self._find(source)
+            return store[resolved]
+
+        if spec["formula"] is not None:
+            values = spec["formula"](*(value(source) for source in spec["sources"]))
+        else:
+            values = sum(float(factor) * value(source) for source, factor in spec["sources"].items())
+        values = np.asarray(values, dtype=float)
+        if spec["location"] != spec["source_location"]:
+            weights = value(spec["weight"]) if spec["weight"] else None
+            values = self._map(values, spec["source_location"], spec["location"], spec["aggregation"], weights)
+        if spec.get("target") is not None:
+            values = np.where(self.mask(spec["target"]), values, spec["default"])
+        return values
+
+    # ── Entity identity and traversal (design note structure_and_boundaries §2) ────────
+
+    def index_of(self, ids, location: str = "node"):
+        """
+        Local indices of entity *ids* at *location* (an id or an array of ids), the inverse of entity_ids().
+        Unknown ids raise KeyError.
+        """
+        cache = self.__dict__.setdefault("_index_cache", {})
+        key = (location, self.topology_version)
+        if key not in cache:
+            for stale in [k for k in cache if k[1] != self.topology_version]:
+                del cache[stale]
+            entity = np.asarray(self.entity_ids(location), dtype=np.int64)
+            order = np.argsort(entity, kind="stable")
+            cache[key] = (entity[order], order)
+        sorted_ids, order = cache[key]
+        scalar = np.ndim(ids) == 0
+        query = np.atleast_1d(np.asarray(ids, dtype=np.int64))
+        position = np.searchsorted(sorted_ids, query)
+        known = position < sorted_ids.size
+        known[known] = sorted_ids[position[known]] == query[known]
+        if not known.all():
+            raise KeyError(f"ids {query[~known][:10].tolist()} are not entities of location '{location}'")
+        result = order[position]
+        return int(result[0]) if scalar else result
+
+    # ── Named masks (design note structure_and_boundaries §4, D15) ─────────────────────
+
+    def define_mask(self, name: str, rule, location: str = "node") -> None:
+        """
+        Define mask *name* at *location* from *rule*:
+          {variable: condition}, every condition holding: ">0" (or "<0", ">=0", "<=0"), a value, or a list of values;
+          a callable ds -> boolean array (recomputed at every mask() call, its sources being unknown).
+        """
+        if not (callable(rule) or (isinstance(rule, dict) and rule)):
+            raise TypeError(f"mask '{name}': rule must be a non-empty {{variable: condition}} dict or a callable")
+        masks = self.__dict__.setdefault("_masks", {})
+        masks[name] = {"rule": rule, "location": location, "stamps": None, "values": None, "version": 0}
+
+    def has_mask(self, name: str) -> bool:
+        return name in self.__dict__.get("_masks", {})
+
+    def masks(self) -> list:
+        return list(self.__dict__.get("_masks", {}))
+
+    def mask(self, name: str) -> np.ndarray:
+        """Boolean array of mask *name*, recomputed when one of its variables was written or the topology changed."""
+        masks = self.__dict__.get("_masks", {})
+        if name not in masks:
+            raise KeyError(f"mask '{name}' is not defined (defined: {list(masks)})")
+        spec = masks[name]
+        rule = spec["rule"]
+        stamps = None if callable(rule) else (self.topology_version,
+                                              tuple(self.write_count(variable) for variable in rule))
+        if spec["values"] is None or stamps is None or stamps != spec["stamps"]:
+            values = np.asarray(rule(self), dtype=bool) if callable(rule) else self._evaluate_mask(name, rule)
+            shape = tuple(self._location_shape(spec["location"]))
+            if values.shape != shape:
+                raise ValueError(f"mask '{name}' has shape {values.shape}, its location '{spec['location']}' has {shape}")
+            if spec["values"] is None or not np.array_equal(values, spec["values"]):
+                spec["version"] += 1
+            spec["values"], spec["stamps"] = values, stamps
+        return spec["values"]
+
+    def mask_version(self, name: str) -> int:
+        """Incremented whenever the values of mask *name* change (views built on it must then be rebuilt)."""
+        self.mask(name)
+        return self.__dict__["_masks"][name]["version"]
+
+    def _evaluate_mask(self, name: str, rule: dict) -> np.ndarray:
+        result = None
+        for variable, condition in rule.items():
+            if not self.has(variable):
+                raise KeyError(f"mask '{name}': variable '{variable}' is not registered")
+            values = np.asarray(self.get(variable))
+            if isinstance(condition, str):
+                comparisons = {">0": values > 0, "<0": values < 0, ">=0": values >= 0, "<=0": values <= 0}
+                if condition not in comparisons:
+                    raise ValueError(f"mask '{name}': condition '{condition}' on '{variable}' is not one of "
+                                     f"{list(comparisons)}")
+                selected = comparisons[condition]
+            elif isinstance(condition, (list, tuple, set, np.ndarray)):
+                selected = np.isin(values, np.asarray(list(condition), dtype=float))
+            else:
+                selected = values == condition
+            result = selected if result is None else result & selected
+        return result
+
+    def parents(self) -> np.ndarray:
+        raise NotImplementedError(f"{type(self).__name__} has no graph traversal")
+
+    children = roots = tips = order = parents
+
+    # ── Validation (design note datastructure_contract §6) ────────────────────
+
+    def validate_variables(self, strict: bool = False) -> None:
+        """
+        Raise ValueError listing every inconsistency of the variable store:
+          * an array whose shape is not its location's (e.g. not carried over a topology change);
+          * an alias whose target is missing, or an alias cycle;
+          * a derived variable whose source or weight is missing or moved to another location, or which is not
+            stored at its declared location.
+        strict=True also recomputes every up-to-date derived variable and compares it with its stored values: a
+        difference reveals a write made through a view without mark_written() (D10).
+        """
+        problems = []
+        for location, store in self._var_stores().items():
+            shape = tuple(self._location_shape(location))
+            for name, array in store.items():
+                if tuple(np.shape(array)) != shape:
+                    problems.append(f"'{name}' has shape {np.shape(array)}, its location '{location}' has {shape}")
+        for name in self.__dict__.get("_aliases", {}):
+            try:
+                self._find(name)
+            except (KeyError, ValueError) as error:
+                problems.append(f"alias '{name}': {error}")
         derived = self.__dict__.get("_derived", {})
-        targets = None if name is None else [name]
+        for target, spec in derived.items():
+            if not self.has(target):
+                problems.append(f"derived variable '{target}' is not registered")
+                continue
+            if self.location(target) != spec["location"]:
+                problems.append(f"derived variable '{target}' is at {self.location(target)}, declared at "
+                                f"{spec['location']}")
+            for source in self._derived_sources(target):
+                if not self.has(source):
+                    problems.append(f"derived variable '{target}': source '{source}' is not registered")
+                elif self.location(source) != spec["source_location"]:
+                    problems.append(f"derived variable '{target}': source '{source}' is at {self.location(source)}, "
+                                    f"expected {spec['source_location']}")
+        if strict and not problems:
+            for target in derived:
+                if self.is_stale(target):
+                    continue
+                location, store, _ = self._find(target)
+                if not np.array_equal(store[target], self._derived_values(target), equal_nan=True):
+                    problems.append(f"derived variable '{target}' differs from its sources: a source or the "
+                                    "variable itself was written through a view without mark_written()")
+        if problems:
+            raise ValueError(f"{type(self).__name__} is inconsistent:\n  " + "\n  ".join(problems))
+
+    def _update_derived(self, targets, force: bool = False) -> None:
+        """Recompute the stale derived variables among *targets* and their derived sources, in dependency order."""
+        derived = self.__dict__.get("_derived", {})
+        for target in self._derivation_order(targets):
+            if force or derived[target].get("stamps") != self._source_stamps(target):
+                self._compute_derived(target)
+
+    def is_stale(self, name: str) -> bool:
+        """True when derived variable *name*, or a derived variable it depends on, would be recomputed at get()."""
+        derived = self.__dict__.get("_derived", {})
+        return any(derived[t].get("stamps") != self._source_stamps(t) for t in self._derivation_order([name]))
+
+    def refresh(self, name: str = None) -> None:
+        """
+        Recompute derived variable *name* (and the derived variables it depends on), or all of them, even when
+        they are up to date. get() already recomputes stale derived variables; refresh() forces it.
+        """
+        derived = self.__dict__.get("_derived", {})
         if name is not None and self._resolve(name) not in derived:
             raise KeyError(f"'{name}' is not a derived variable")
-        for target in self._derivation_order(targets):
-            spec = derived[target]
-            if spec["formula"] is not None:
-                values = spec["formula"](*(self.get(source) for source in spec["sources"]))
-            else:
-                values = sum(float(factor) * self.get(source) for source, factor in spec["sources"].items())
-            values = np.asarray(values, dtype=float)
-            if spec["location"] != spec["source_location"]:
-                weights = self.get(spec["weight"]) if spec["weight"] else None
-                values = self._map(values, spec["source_location"], spec["location"], spec["aggregation"], weights)
-            self.set(target, values)
+        self._update_derived(None if name is None else [name], force=True)
 
     def _map(self, values, from_location: str, to_location: str, aggregation: str, weights=None) -> np.ndarray:
         raise ValueError(f"{type(self).__name__} cannot map {from_location} to {to_location} ({aggregation})")
@@ -555,7 +771,9 @@ class VariableStoreMixin:
         if self.has(name):
             existing_location, store, target = self._find(name)
             if existing_location == location and store[target].shape == values.shape:
-                store[target][...] = values
+                if target in self.__dict__.get("_derived", {}):
+                    raise ValueError(f"'{name}' is derived and recomputed when read: write its sources instead")
+                self._write(store, target, values, name)
                 return
         meta = self._variable_meta().get(name, {})
         self.register(name, values, location=location, default=meta.get("default", 0.),
@@ -779,6 +997,10 @@ class LegacyMPGDataStructure(MTGDataStructure):
 
 # ─────────────────────────────────────────────────────────────────────────────
 
+# Edge mapping names of declarations (child / parent) and of the MTG edge readers and writers
+_EDGE_CONVENTIONS = {"child": "proximal", "parent": "distal"}
+
+
 class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
     """
     Level 4b — MPG wrapper operating at Compartment/Connection scales.
@@ -807,7 +1029,7 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
     (organ emergence, pruning, grafting) to rebuild B and index maps.
     """
 
-    def __init__(self, mtg, from_scale: int = None):
+    def __init__(self, mtg, from_scale: int = None, nodes: str = None, wiring: list = None):
         """
         Parameters
         ----------
@@ -819,9 +1041,27 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
             update_topology() call.
         from_scale : int, optional
             Biological scale whose vertices drive the Compartment/Connection
-            topology (e.g. g.scales.SubOrgan).  Required only for
-            update_topology(); normal solver usage does not need it.
+            topology (e.g. g.scales.SubOrgan). Inferred from the populated
+            graph when omitted; required for an unpopulated graph, whose
+            update_topology() would otherwise not know what to populate.
+        nodes : "Compartment", optional
+            Anatomy mode (design note structure_and_boundaries §7, DS8): the nodes are the Compartments of the
+            anatomies held below the from_scale vertices, keyed by their own vid; the edges are every Connection
+            (anatomy edges and junctions), keyed by their own vid. from_scale is then required, and the from_scale
+            name (e.g. "SubOrgan") becomes a coarse location. Default: one node per from_scale vertex.
+        wiring : list, optional
+            Anatomy mode: the junction rules between the anatomies of linked vertices (MPG.wire_junctions). They are
+            applied at construction when the MPG has no junction yet, and re-applied incrementally by
+            update_topology() to the vertices whose neighbourhood or anatomy changed.
         """
+        if nodes not in (None, "Compartment"):
+            raise ValueError(f"nodes must be None or 'Compartment', got '{nodes}'")
+        self._anatomy = nodes == "Compartment"
+        if self._anatomy and from_scale is None:
+            raise ValueError("anatomy mode (nodes='Compartment') needs from_scale, the scale owning the anatomies")
+        self._wiring = list(wiring or [])
+        if self._anatomy and self._wiring and not mtg.junction_vids():
+            mtg.wire_junctions(from_scale, self._wiring)
         # MTGDataStructure.__init__(mtg, scale) not called: MPGDataStructure
         # always operates at Compartment/Connection — no single fixed scale.
         self._mtg        = mtg
@@ -833,6 +1073,11 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
         self._scale_data  : dict[str, dict[str, np.ndarray]] = {}   # coarser biological scales, by scale name
         self._B_cached  = None
         self._build_index_map()
+        if self._from_scale is None:
+            # Inferred from the populated graph: the scale of the vertices the Compartments stand for (DS11)
+            self._from_scale = self._node_scale()
+        if self._anatomy:
+            self._anatomy_signature = self._anatomy_signatures()
 
     # ── Index map ─────────────────────────────────────────────────────────────
 
@@ -855,10 +1100,14 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
             self._bio_edge_a_idx   = np.empty(0, dtype=np.int64)
             self._bio_edge_b_idx   = np.empty(0, dtype=np.int64)
             return
-        raw = self._mtg.array_filtering(
-            "vertex_id", filter_in={"scale": self._mtg.scales.Compartment}
-        )
-        svids = [int(v) for v in raw]
+        if getattr(self, "_anatomy", False):
+            owners = self._mtg.compartments_by_owner(self._from_scale)
+            svids = sorted(nv for comps in owners.values() for nv in comps)
+        else:
+            raw = self._mtg.array_filtering(
+                "vertex_id", filter_in={"scale": self._mtg.scales.Compartment}
+            )
+            svids = [int(v) for v in raw]
         self._idx_to_vid = svids
         self._vid_to_idx = {v: i for i, v in enumerate(svids)}
         self._build_bio_index_map()
@@ -931,7 +1180,81 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
         )
         return [(int(a), int(b)) for a, b in zip(n_id_a, n_id_b)]
 
-    def validate(self) -> None:
+    # ── Traversal in local indices (design note structure_and_boundaries §2, DS2) ──────
+
+    def _traversal(self) -> dict:
+        """Parents, children (CSR), roots, tips and orders of the graph's nodes, from the Connections; cached."""
+        cache = self.__dict__.get("_traversal_cache")
+        if cache is not None and cache[0] == (self.topology_version, self.n_nodes(), self.n_edges()):
+            return cache[1]
+        n = self.n_nodes()
+        pairs = self.edges()
+        parent = np.full(n, -1, dtype=np.int64)
+        if pairs:
+            a = self.index_of(np.array([p for p, _ in pairs], dtype=np.int64))
+            b = self.index_of(np.array([c for _, c in pairs], dtype=np.int64))
+            if np.unique(b).size < b.size:
+                raise ValueError("the graph is not a tree: a node has several parents (traversal orders need one)")
+            parent[b] = a
+        else:
+            a = b = np.empty(0, dtype=np.int64)
+        by_parent = np.argsort(a, kind="stable")
+        indices = b[by_parent]
+        indptr = np.zeros(n + 1, dtype=np.int64)
+        np.add.at(indptr, a + 1, 1)
+        indptr = np.cumsum(indptr)
+        roots = np.flatnonzero(parent < 0)
+        tips = np.flatnonzero(np.diff(indptr) == 0)
+        pre, post = [], []
+        for root in roots:
+            stack = [(int(root), False)]
+            while stack:
+                node, done = stack.pop()
+                if done:
+                    post.append(node)
+                    continue
+                pre.append(node)
+                stack.append((node, True))
+                for child in indices[indptr[node]:indptr[node + 1]][::-1]:
+                    stack.append((int(child), False))
+        if len(pre) != n:
+            raise ValueError("the graph has a cycle: traversal orders need a tree")
+        result = {"parents": parent, "children": (indptr, indices), "roots": roots, "tips": tips,
+                  "pre": np.array(pre, dtype=np.int64), "post": np.array(post, dtype=np.int64)}
+        self.__dict__["_traversal_cache"] = ((self.topology_version, n, self.n_edges()), result)
+        return result
+
+    def parents(self) -> np.ndarray:
+        """Local index of each node's parent, -1 at a root."""
+        return self._traversal()["parents"]
+
+    def children(self) -> tuple:
+        """Children in CSR form, (indptr, indices): the children of node i are indices[indptr[i]:indptr[i + 1]]."""
+        return self._traversal()["children"]
+
+    def roots(self) -> np.ndarray:
+        return self._traversal()["roots"]
+
+    def tips(self) -> np.ndarray:
+        """Nodes without children."""
+        return self._traversal()["tips"]
+
+    def order(self, kind: str = "pre") -> np.ndarray:
+        """Node permutation: "pre" lists every parent before its children, "post" every child before its parent."""
+        if kind not in ("pre", "post"):
+            raise ValueError(f"order must be 'pre' or 'post', got '{kind}'")
+        return self._traversal()[kind]
+
+    def owner(self, location: str) -> np.ndarray:
+        """Index, in entity_ids(location), of the entity owning each node at a coarse location."""
+        if location == "node":
+            return np.arange(self.n_nodes(), dtype=np.int64)
+        if location not in self._coarse_scale_names():
+            raise ValueError(f"'{location}' is not a coarse location ({self._coarse_scale_names()})")
+        return self._membership(location)[1]
+
+    def validate(self, strict: bool = False) -> None:
+        """Topology and variable store consistency (VariableStoreMixin.validate_variables)."""
         if self._mtg is None:
             raise ValueError("MPGDataStructure has no MTG instance.")
         if self.n_nodes() == 0:
@@ -940,6 +1263,7 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
                 "Call g.populate_graph(from_scale) and "
                 "g.convert_properties_to_arraydict() before wrapping."
             )
+        self.validate_variables(strict=strict)
 
     # ── Migration ─────────────────────────────────────────────────────────────
 
@@ -972,8 +1296,9 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
         if node_scale is None:
             return []
         scales = self._mtg.scales
+        limit = self._from_scale + 1 if getattr(self, "_anatomy", False) else node_scale
         return [name for name, value in vars(type(scales)).items()
-                if isinstance(value, int) and not name.startswith("_") and 0 < value < node_scale]
+                if isinstance(value, int) and not name.startswith("_") and 0 < value < limit]
 
     def _var_stores(self) -> dict:
         stores = {"node": self._node_data, "edge": self._edge_data, "scalar": self._scalar_data}
@@ -1003,16 +1328,35 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
         cache = self.__dict__.setdefault("_membership_cache", {})
         if scale_name not in cache:
             scale = getattr(self._mtg.scales, scale_name)
-            owners = np.array([self._mtg.complex_at_scale(int(v), scale) for v in self._idx_to_vid], dtype=np.int64)
+            owners = np.array([self._owner_at(int(v), scale) for v in self._idx_to_vid], dtype=np.int64)
             entities = np.unique(owners)
             cache[scale_name] = (entities, np.searchsorted(entities, owners))
         return cache[scale_name]
 
+    def _owner_at(self, vid: int, scale: int) -> int:
+        """Vertex at *scale* owning node *vid*: its complex, or in anatomy mode its MTG parent and then its complex."""
+        if getattr(self, "_anatomy", False):
+            owner = int(self._mtg.parent(vid))
+            return owner if scale == self._from_scale else int(self._mtg.complex_at_scale(owner, scale))
+        return int(self._mtg.complex_at_scale(vid, scale))
+
+    def _connection_vids(self) -> np.ndarray:
+        """Connection vertices carrying endpoints, ascending (the order of edges())."""
+        scale_prop, n_id_a = self._mtg.property("scale"), self._mtg.property("n_id_a")
+        connections = scale_prop.order[:scale_prop.size][scale_prop.values_array() == self._mtg.scales.Connection]
+        keys = n_id_a.keys_array() if hasattr(n_id_a, "keys_array") else np.array(sorted(n_id_a), dtype=np.int64)
+        return np.intersect1d(np.asarray(connections, dtype=np.int64), np.asarray(keys, dtype=np.int64))
+
     def entity_ids(self, location: str) -> np.ndarray:
-        """Ids of the entities of *location*: node vids, edge child vids, or vids at a coarser scale (sorted)."""
+        """
+        Ids of the entities of *location*: node vids; edge child vids (Connection vids in anatomy mode); or vids at a
+        coarser scale (sorted).
+        """
         if location == "node":
             return np.array(self._idx_to_vid, dtype=np.int64)
         if location == "edge":
+            if getattr(self, "_anatomy", False):
+                return self._connection_vids()
             return np.array([b for _, b in self.edges()], dtype=np.int64)
         if location in self._coarse_scale_names():
             return self._membership(location)[0]
@@ -1024,9 +1368,9 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
             parents, children = self._connection_endpoints()
             tail = np.array([self._vid_to_idx[int(v)] for v in parents], dtype=np.int64)
             head = np.array([self._vid_to_idx[int(v)] for v in children], dtype=np.int64)
-            if aggregation == "proximal":
+            if aggregation in ("proximal", "child"):
                 return values[head]
-            if aggregation == "distal":
+            if aggregation in ("distal", "parent"):
                 return values[tail]
             if aggregation == "mean":
                 return (values[tail] + values[head]) / 2.
@@ -1083,7 +1427,7 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
         if scale > self._node_scale():
             raise ValueError(f"A property at scale {scale} is finer than the nodes (scale {self._node_scale()}): "
                              "downscaling needs an explicit scale operator.")
-        return [int(self._mtg.complex_at_scale(int(v), scale)) for v in vids]
+        return [self._owner_at(int(v), scale) for v in vids]
 
     def _mtg_values(self, name: str, vids, scale=None, fast_idx=None):
         """
@@ -1128,6 +1472,7 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
         if self._bio_edge_a_idx.size == 0:
             return np.empty(0, dtype=np.float64)
         n_id_a, n_id_b = self._connection_endpoints()
+        convention = _EDGE_CONVENTIONS.get(convention, convention)
         if convention in ("proximal", "mean"):
             b = self._mtg_values(name, n_id_b, scale=scale, fast_idx=self._bio_edge_b_idx)
             if b is None or convention == "proximal":
@@ -1170,12 +1515,16 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
           "mean"     — no write-back (symmetric property; no unique endpoint)
         Errors are raised.
         """
+        convention = _EDGE_CONVENTIONS.get(convention, convention)
         if convention == "mean" or self._mtg is None or self._bio_edge_b_idx.size == 0:
             return
         arr = np.asarray(arr, dtype=np.float64)
         if arr.shape != (self.n_edges(),):
             raise ValueError(f"write_edge_to_mtg('{name}'): expected shape ({self.n_edges()},), got {arr.shape}.")
         idx  = self._bio_edge_b_idx if convention == "proximal" else self._bio_edge_a_idx
+        if convention == "distal" and np.unique(idx).size < idx.size:
+            raise ValueError(f"write_edge_to_mtg('{name}'): several edges share a parent, their values cannot all "
+                             "be written to it (use the child mapping)")
         prop = self._mtg_property_for_write(name)
         if (isinstance(prop, ArrayDict) and prop.size == len(self._bio_vids_sorted)
                 and np.array_equal(prop.keys_array(), self._bio_vids_sorted)):
@@ -1183,6 +1532,68 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
         else:
             for e, vid in enumerate(self._bio_vids_sorted[idx]):
                 prop[int(vid)] = float(arr[e])
+
+    # ── Declared variables: MTG reading and write-back (datastructure_contract §3) ──────
+
+    def _scale_name(self, scale: int) -> str:
+        return next(name for name, value in vars(type(self._mtg.scales)).items()
+                    if isinstance(value, int) and not name.startswith("_") and value == scale)
+
+    def _write_at(self, name: str, vids, values) -> None:
+        prop = self._mtg_property_for_write(name)
+        for vid, value in zip(vids, np.asarray(values, dtype=np.float64)):
+            prop[int(vid)] = float(value)
+
+    def read_mtg(self, spec):
+        """
+        Values of the MTG property of declared variable *spec* (a VariableSpec) at its location, mapped from its
+        scale; None when the variable has no MTG scale or the property is absent.
+        """
+        if not spec.mtg_backed or self._mtg is None:
+            return None
+        if spec.location == "node":
+            return self._mtg_to_node_array(spec.name, scale=spec.scale)
+        if spec.location == "edge":
+            return self._mtg_to_edge_array(spec.name, convention=spec.mapping, scale=spec.scale)
+        if spec.mapping is None:
+            # Stored at its own coarse scale: the values of the vertices of that scale
+            return self._mtg_values(spec.name, self.entity_ids(spec.location))
+        values = self._mtg_to_node_array(spec.name)
+        if values is None:
+            return None
+        weights = None
+        if spec.weight is not None:
+            if not self.has(spec.weight):
+                raise ValueError(f"'{spec.name}' is aggregated with weight '{spec.weight}', which is not registered")
+            weights = self.get(spec.weight)
+        return self._map(values, "node", spec.location, spec.mapping, weights)
+
+    def write_mtg(self, spec) -> None:
+        """
+        Write declared variable *spec* to its MTG property at the vertices of its scale, through the inverse of
+        its mapping:
+          stored at its scale             -> as is;
+          broadcast from a coarse scale   -> the (weighted) mean of the nodes of each coarse entity;
+          (weighted) mean to a coarse one -> broadcast to the nodes;
+          on edges                        -> at the child (or parent) endpoint.
+        """
+        if not spec.mtg_backed or self._mtg is None:
+            return
+        values = self.get(spec.name)
+        if spec.location == "node":
+            if spec.mapping is None:
+                self.write_node_to_mtg(spec.name, values)
+                return
+            coarse = self._scale_name(spec.scale)
+            weights = self.get(spec.weight) if spec.weight else None
+            means = self._map(values, "node", coarse, "weighted_mean" if weights is not None else "mean", weights)
+            self._write_at(spec.name, self.entity_ids(coarse), means)
+        elif spec.location == "edge":
+            self.write_edge_to_mtg(spec.name, values, convention=spec.mapping)
+        elif spec.mapping is None:
+            self._write_at(spec.name, self.entity_ids(spec.location), values)
+        else:
+            self.write_node_to_mtg(spec.name, self._map(values, spec.location, "node", "broadcast"))
 
     # ── Incidence matrix ──────────────────────────────────────────────────────
 
@@ -1231,7 +1642,7 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
             raise AttributeError(
                 f"{type(self).__name__}.update_topology() requires from_scale "
                 "to be set at construction.  "
-                "Pass MPGDataStructure(g, from_scale=g.scales.SubOrgan)."
+                "Pass MPGDataStructure(g, from_scale=g.scales.SubOrgan) when the graph is not populated yet."
             )
         old = {}
         for location, store in self._var_stores().items():
@@ -1240,7 +1651,10 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
             keys = self.entity_ids(location)
             old[location] = {name: dict(zip(keys, arr)) for name, arr in store.items()}
 
-        self._mtg.repopulate_graph(self._from_scale)
+        if self._anatomy:
+            self._rewire_junctions()
+        else:
+            self._mtg.repopulate_graph(self._from_scale)
         self.invalidate_topology()
         self._node_data.clear()
         self._edge_data.clear()
@@ -1256,6 +1670,64 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
                 self.register(name, values, location=location, default=policy["default"], on_grow=policy["on_grow"])
         self._bump_version()
 
+    # ── Anatomy mode: incremental junction rewiring (design note structure_and_boundaries §7, D12) ──
+
+    def _anatomy_signatures(self) -> dict:
+        """{from_scale vid: (linked parent, anatomy)}, anatomy = its Compartments with their rule properties."""
+        g, from_scale = self._mtg, self._from_scale
+        valid = g._valid_vids_at(from_scale)
+        owners = g.compartments_by_owner(from_scale)
+        names = ["label"] + sorted({rule["ordering"] for rule in self._wiring
+                                    if isinstance(rule, dict) and rule.get("ordering")})
+        props = [g.properties().get(name, {}) for name in names]
+        signatures = {}
+        for vid in valid:
+            anatomy = tuple(sorted((nv,) + tuple(prop.get(nv) for prop in props) for nv in owners.get(vid, [])))
+            signatures[vid] = (g.linked_parent(vid, from_scale, valid), anatomy)
+        return signatures
+
+    def _rewire_junctions(self) -> None:
+        """
+        Rewire only the junctions that changed: those of a vertex that is new, has another linked parent, or whose
+        anatomy (or its parent's) changed. Every other Connection, with its vid and values, is kept (D12).
+        """
+        g, old = self._mtg, self._anatomy_signature
+        new = self._anatomy_signatures()
+
+        def anatomy(signatures, vid):
+            return signatures[vid][1] if vid in signatures else None
+
+        rewire = {vid for vid, (parent, own) in new.items()
+                  if vid not in old or old[vid][0] != parent or old[vid][1] != own
+                  or (parent is not None and anatomy(old, parent) != anatomy(new, parent))}
+        alive = {nv for comps in g.compartments_by_owner(self._from_scale).values() for nv in comps}
+        n_id_a, n_id_b = g.property("n_id_a"), g.property("n_id_b")
+        stale = [ev for ev in g.junction_vids()
+                 if int(n_id_a[ev]) not in alive or int(n_id_b[ev]) not in alive
+                 or int(g.parent(int(n_id_b[ev]))) in rewire]
+        g.remove_connections(stale)
+        g.wire_junctions(self._from_scale, self._wiring, children=sorted(rewire))
+        self._anatomy_signature = new
+        self.rewired = sorted(rewire)   # introspection: the vertices whose junctions were rebuilt
+
+    def _inherited_compartment(self, key: int, values_by_key: dict):
+        """
+        Anatomy mode: the Compartment a new Compartment inherits from, the first one with the same label in the
+        anatomy of its owner's linked ancestors; None when there is none (edges, or no such Compartment).
+        """
+        g = self._mtg
+        if g.scale(key) != g.scales.Compartment:
+            return None
+        label = g.property("label").get(key)
+        owners = g.compartments_by_owner(self._from_scale)
+        vertex = g.linked_parent(int(g.parent(key)), self._from_scale)
+        while vertex is not None:
+            for nv in owners.get(vertex, []):
+                if nv in values_by_key and g.property("label").get(nv) == label:
+                    return nv
+            vertex = g.linked_parent(vertex, self._from_scale)
+        return None
+
     def _carry_over(self, values_by_key: dict, keys, policy: dict) -> np.ndarray:
         """Values for *keys* (vids): kept when known, else inherited from the nearest known ancestor or default."""
         out = np.empty(len(keys), dtype=np.float64)
@@ -1265,6 +1737,10 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
                 out[i] = values_by_key[key]
                 continue
             value = policy["default"]
+            if policy["on_grow"] == "inherit" and getattr(self, "_anatomy", False):
+                inherited = self._inherited_compartment(key, values_by_key)
+                out[i] = values_by_key[inherited] if inherited is not None else value
+                continue
             if policy["on_grow"] == "inherit":
                 ancestor = self._mtg.parent(key)
                 while ancestor is not None and int(ancestor) not in values_by_key:
@@ -1451,6 +1927,10 @@ class ArrayDataStructure(VariableStoreMixin, FieldDataStructure):
 
     def _location_shape(self, location: str) -> tuple:
         return () if location == "scalar" else self._shape
+
+    def validate(self, strict: bool = False) -> None:
+        """Variable store consistency (VariableStoreMixin.validate_variables)."""
+        self.validate_variables(strict=strict)
 
     def _map(self, values, from_location: str, to_location: str, aggregation: str, weights=None) -> np.ndarray:
         if from_location == "cell" and to_location == "scalar":

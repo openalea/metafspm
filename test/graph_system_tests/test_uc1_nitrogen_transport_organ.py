@@ -12,10 +12,10 @@ Node balance (backward Euler):
 Edge constitutive law:
     q − K_axial (B^T c) = 0
 
-All variables anchored at scales.Organ with edge_mapping where needed:
+All variables anchored at scales.Organ, with location="edge" and a mapping for edge variables:
   concentration      — node state  (scale=Organ)
-  axial_flux         — edge state  (scale=Organ, edge_mapping="proximal")
-  K_axial            — edge param  (scale=Organ, edge_mapping="mean")
+  axial_flux         — edge state  (scale=Organ, location="edge", mapping="child")
+  K_axial            — edge param  (scale=Organ, location="edge", mapping="mean")
   radial_solute_input— node state  (scale=Organ)
   k_radial, c_ext, c_dirichlet, q_boundary — node params (scale=Organ)
 
@@ -79,7 +79,7 @@ class NitrogenAxialTransportOrgan(FunctionalComponent):
         description="Net axial solute flux on the proximal edge of each organ.",
         min_value=-1.0, max_value=1.0, value_comment="", references="", DOI=[],
         state_variable_type="extensive", initialize=0.0, scale=scales.Organ,
-        edge_mapping="proximal",
+        location="edge", mapping="child",
     )
     K_axial: float = parameter(
         unit="m3 s-1", unit_comment="",
@@ -87,7 +87,7 @@ class NitrogenAxialTransportOrgan(FunctionalComponent):
         min_value=0.0, max_value=1.0, value_comment="", references="", DOI=[],
         by="NitrogenAxialTransportOrgan",
         default=0.05, scale=scales.Organ, state_variable_type="intensive",
-        edge_mapping="proximal",
+        location="edge", mapping="child",
     )
     radial_solute_input: float = state_variable(
         unit="mol s-1", unit_comment="net radial influx per organ",
@@ -322,7 +322,7 @@ class NitrogenAxialTransportOrgan(FunctionalComponent):
             B = self._graph_view.incidence
             return axial_flux - K_axial * np.asarray(B.T @ concentration).reshape(-1)
 
-        @graph_output("axial_divergence")
+        @graph_output("axial_divergence", location="node")
         def _compute_axial_divergence(self, axial_flux) -> np.ndarray:
             B = self._graph_view.incidence
             return np.asarray(B @ axial_flux).reshape(-1)
@@ -373,7 +373,7 @@ def _make_ds() -> MPGDataStructure:
 def _find_root_local_idx(ds: MPGDataStructure) -> int:
     """Local index of the graph root: the node that has no incoming edge."""
     child_vids = {int(b) for (a, b) in ds.edges()}
-    for i, vid in enumerate(ds._idx_to_vid):
+    for i, vid in enumerate(ds.entity_ids("node")):
         if vid not in child_vids:
             return i
     return 0
@@ -515,7 +515,7 @@ def test_organ_mtg_props_auto_mapped():
     """MTG properties at Organ scale are auto-mapped to node/edge arrays.
 
     concentration (scale=Organ) → node array via direct VID lookup.
-    K_axial (scale=Organ, edge_mapping="mean") → edge array via arithmetic mean.
+    K_axial (scale=Organ, location="edge", mapping="mean") → edge array via arithmetic mean.
     """
     g, _ = generate_simple_mpg_seedling()
     g.populate_graph(g.scales.Organ)

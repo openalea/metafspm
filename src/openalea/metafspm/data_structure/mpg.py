@@ -278,7 +278,7 @@ class MPG(MTG):
         vertex via add_component_with_topo(node_anchor, vid, ...).  The method
         discovers the same topology and creates one Connection edge per entry in
         *custom_connections* between matching compartments of adjacent from_scale
-        vertices (selected by label).
+        vertices (selected by label).  It is wire_junctions() on every vertex.
 
         Parameters
         ----------
@@ -294,6 +294,7 @@ class MPG(MTG):
                            (greedy nearest-neighbour, each node used at most once).
                            When absent, all-to-all edges are created between the
                            two sets.
+            See wire_junctions() for the other matching modes and callable rules.
         filter_in, filter_out : dict, optional
             ``{property_name: value}`` — include / exclude from_scale vertices.
 
@@ -301,11 +302,14 @@ class MPG(MTG):
         -----
         Call convert_properties_to_arraydict() after this method.
         """
-        edge_anchor   = self.scales.anchors[self.scales.Connection]
+        self.wire_junctions(from_scale, custom_connections, filter_in=filter_in, filter_out=filter_out)
+
+    # ── Junctions between the anatomies of adjacent vertices (design note structure_and_boundaries §7) ──
+
+    def _valid_vids_at(self, from_scale, filter_in=None, filter_out=None) -> set:
+        """Non-anchor vertices at *from_scale* passing the filters."""
         scale_prop    = self.property('scale')
         isanchor_prop = self.property('isanchor')
-
-        # Pre-filter — valid from_scale VIDs via numpy intersection; exclude anchors.
         valid_keys = scale_prop.order[:scale_prop.size][scale_prop.values_array() == from_scale]
         for fp_name, fp_val in (filter_in or {}).items():
             fp = self.property(fp_name)
@@ -317,25 +321,19 @@ class MPG(MTG):
             valid_keys = valid_keys[~np.isin(valid_keys, match, assume_unique=False)]
         anchor_keys = isanchor_prop.order[:isanchor_prop.size][isanchor_prop.values_array() != 0]
         valid_keys  = valid_keys[~np.isin(valid_keys, anchor_keys, assume_unique=False)]
-        valid_vids  = set(int(v) for v in valid_keys)
+        return set(int(v) for v in valid_keys)
 
-        # Build {suborgan_vid → {label → [compartment_vid, ...]}}.
-        # Lists allow multiple nodes with the same label (e.g. several xylem vessels).
-        label_prop = self.property('label')
-        vid2comps  = {}
-        for nv in self.components_at_scale(self.root, scale=self.scales.Compartment):
-            if isanchor_prop.get(nv, False):
-                continue
-            src = self.parent(nv)
-            if src is None or scale_prop.get(src) != from_scale or src not in valid_vids:
-                continue
-            vid2comps.setdefault(src, {}).setdefault(label_prop.get(nv), []).append(nv)
+    def linked_parent(self, vid, from_scale, valid_vids=None):
+        """
+        The vertex at *from_scale* that *vid* is linked to, as populate_graph links them: its within-scale parent,
+        or, when it has none in *valid_vids*, the tip of its complex parent (multiscale branching). None at a root.
+        """
+        scale_prop = self.property('scale')
+        valid_vids = self._valid_vids_at(from_scale) if valid_vids is None else valid_vids
 
         def _tip_component(complex_v, exclude):
-            candidates = [
-                c for c in self.components_iter(complex_v)
-                if scale_prop.get(c) == from_scale and c in valid_vids and c != exclude
-            ]
+            candidates = [c for c in self.components_iter(complex_v)
+                          if scale_prop.get(c) == from_scale and c in valid_vids and c != exclude]
             if not candidates:
                 return None
             if len(candidates) == 1:
@@ -346,66 +344,119 @@ class MPG(MTG):
                     return c
             return candidates[0]
 
-        # Precompute ordering property lookups (once per unique ordering name).
-        ordering_props = {
-            conn['ordering']: self.property(conn['ordering'])
-            for conn in custom_connections if 'ordering' in conn
-        }
+        p = self.parent(vid)
+        while p is not None:
+            if p in valid_vids:
+                return p
+            tip = _tip_component(p, exclude=vid)
+            if tip is not None:
+                return tip
+            p = self.parent(p)
+        return None
 
-        # Pass 2 — wire edges between adjacent from_scale vertices.
-        for vid in sorted(valid_vids):
-            parent_found = None
-            p = self.parent(vid)
-            while p is not None:
-                if p in valid_vids:
-                    parent_found = p
-                    break
-                tip = _tip_component(p, exclude=vid)
-                if tip is not None:
-                    parent_found = tip
-                    break
-                p = self.parent(p)
-            if parent_found is None:
+    def compartments_by_owner(self, from_scale=None) -> dict:
+        """{owner vid: [Compartment vids]}: the Compartments created under each vertex (its anatomy)."""
+        isanchor_prop, scale_prop = self.property('isanchor'), self.property('scale')
+        owners = {}
+        for nv in self.components_at_scale(self.root, scale=self.scales.Compartment):
+            if isanchor_prop.get(nv, False):
                 continue
+            owner = self.parent(nv)
+            if owner is None or (from_scale is not None and scale_prop.get(owner) != from_scale):
+                continue
+            owners.setdefault(int(owner), []).append(int(nv))
+        return owners
 
-            parent_comps = vid2comps.get(parent_found, {})
-            child_comps  = vid2comps.get(vid, {})
-            for conn in custom_connections:
-                n_as = parent_comps.get(conn['node_label'], [])
-                n_bs = child_comps.get(conn['node_label'], [])
-                if not n_as or not n_bs:
-                    continue
-                ordering_name = conn.get('ordering')
-                if ordering_name is None:
-                    pairs = [(n_a, n_b) for n_a in n_as for n_b in n_bs]
-                else:
-                    ordering_p = ordering_props[ordering_name]
-                    def _val(nv, _p=ordering_p):
-                        v = _p.get(nv)
-                        return float(v) if v is not None else 0.0
-                    sorted_a = sorted(n_as, key=_val)
-                    sorted_b = sorted(n_bs, key=_val)
-                    used_b, pairs = set(), []
-                    for n_a in sorted_a:
-                        best_b, best_dist = None, float('inf')
-                        for n_b in sorted_b:
-                            if n_b in used_b:
-                                continue
-                            d = abs(_val(n_a) - _val(n_b))
-                            if d < best_dist:
-                                best_dist, best_b = d, n_b
-                        if best_b is not None:
-                            used_b.add(best_b)
-                            pairs.append((n_a, best_b))
+    def wire_junctions(self, from_scale, rules, children=None, filter_in=None, filter_out=None) -> list:
+        """
+        Create the junction Connections between the Compartments of linked vertices at *from_scale*, for each
+        vertex of *children* (default: every vertex) and its linked parent (linked_parent). Returns their vids.
+
+        rules: list of dict, one per link type:
+          {"node_label": L, "edge_label": E, "ordering": prop, "match": "nearest" | "equal" | "all"}
+              pairs the Compartments labelled L of both sides: "all" pairs every one with every one (the default
+              without ordering), "nearest" greedily matches the closest values of *ordering* (the default with
+              it), "equal" matches equal values of *ordering*;
+          {"rule": callable, "edge_label": E}
+              rule(g, parent_vid, child_vid, parent_compartments, child_compartments) -> [(a, b), ...].
+        Junctions get is_junction = 1 (anatomy Connections do not carry it); n_id_a is on the parent side, n_id_b on
+        the child side.
+        """
+        edge_anchor = self.scales.anchors[self.scales.Connection]
+        valid_vids = self._valid_vids_at(from_scale, filter_in, filter_out)
+        label_prop = self.property('label')
+        anatomy = {}
+        for owner, comps in self.compartments_by_owner(from_scale).items():
+            if owner in valid_vids:
+                for nv in comps:
+                    anatomy.setdefault(owner, {}).setdefault(label_prop.get(nv), []).append(nv)
+        created = []
+        for vid in sorted(valid_vids if children is None else set(children) & valid_vids):
+            parent = self.linked_parent(vid, from_scale, valid_vids)
+            if parent is None:
+                continue
+            for rule in rules:
+                pairs = self._junction_pairs(rule, parent, vid, anatomy.get(parent, {}), anatomy.get(vid, {}))
                 for n_a, n_b in pairs:
                     ev = self.add_component(edge_anchor, **PropsConfig(
-                        scale=self.scales.Connection,
-                        label=conn['edge_label'],
-                        edge_type='/',
-                    ))
+                        scale=self.scales.Connection, label=rule['edge_label'], edge_type='/'))
                     self.property("n_id_a")[ev] = n_a
                     self.property("n_id_b")[ev] = n_b
+                    self.property("is_junction")[ev] = 1.
+                    created.append(ev)
+        return created
 
+    def _junction_pairs(self, rule, parent, child, parent_anatomy, child_anatomy) -> list:
+        if "rule" in rule:
+            comps_a = [nv for comps in parent_anatomy.values() for nv in comps]
+            comps_b = [nv for comps in child_anatomy.values() for nv in comps]
+            return list(rule["rule"](self, parent, child, comps_a, comps_b))
+        n_as = parent_anatomy.get(rule['node_label'], [])
+        n_bs = child_anatomy.get(rule['node_label'], [])
+        if not n_as or not n_bs:
+            return []
+        ordering = rule.get('ordering')
+        match = rule.get('match', "nearest" if ordering else "all")
+        if match == "all":
+            return [(n_a, n_b) for n_a in n_as for n_b in n_bs]
+        if ordering is None:
+            raise ValueError(f"junction rule {rule}: match '{match}' needs an ordering property")
+        ordering_p = self.property(ordering)
+
+        def _val(nv):
+            v = ordering_p.get(nv)
+            return float(v) if v is not None else 0.0
+
+        sorted_a, sorted_b = sorted(n_as, key=_val), sorted(n_bs, key=_val)
+        used_b, pairs = set(), []
+        for n_a in sorted_a:
+            candidates = [n_b for n_b in sorted_b if n_b not in used_b]
+            if match == "equal":
+                candidates = [n_b for n_b in candidates if _val(n_b) == _val(n_a)]
+            elif match != "nearest":
+                raise ValueError(f"junction rule {rule}: match must be 'all', 'nearest' or 'equal'")
+            if candidates:
+                best_b = min(candidates, key=lambda n_b: abs(_val(n_a) - _val(n_b)))
+                used_b.add(best_b)
+                pairs.append((n_a, best_b))
+        return pairs
+
+    def junction_vids(self) -> list:
+        """Vids of the junction Connections (created by wire_junctions)."""
+        prop = self.properties().get("is_junction", {})
+        return [int(v) for v, flag in prop.items() if flag]
+
+    def remove_connections(self, vids) -> None:
+        """Delete Connection vertices *vids* and their property entries (see repopulate_graph)."""
+        props = self.properties()
+        for v in vids:
+            for prop in props.values():
+                if v in prop:
+                    try:
+                        del prop[v]
+                    except (KeyError, TypeError):
+                        pass
+            self.remove_vertex(v)
 
     def graph(self, property_name):
         node_scale = self.scales.Compartment
