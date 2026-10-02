@@ -1,6 +1,6 @@
 # Design note: the DataStructure variable contract (step 1)
 
-Status: **under review**. N1–N5 are agreed (2026-10-02). 1a done (`4d1353d`), 1b done (`15f8976`), 1c done (`cc3e588`), 1d done. It covers step 1 of `devplan_datastructures.md` §7: DS3 (locations and scale mapping), DS17 (derived variables resolved at read), DS5 (output locations), DS11 (validation) and DS16 (conventions).
+Status: **under review**. N1–N5 are agreed (2026-10-02). 1a done (`4d1353d`), 1b done (`15f8976`), 1c done (`cc3e588`), 1d done (`bf008e3`), 1e done. It covers step 1 of `devplan_datastructures.md` §7: DS3 (locations and scale mapping), DS17 (derived variables resolved at read), DS5 (output locations), DS11 (validation) and DS16 (conventions).
 Branch `data_structure_api`, written against `1bf8356`. Code starts only after this note is agreed. The open points are in §8.
 
 Decisions this note builds on: D2 (split `scale=` into location / scale / mapping), D3 (MTG optional, write state variables after every call), D8 (identity through `entity_ids`), D9 option A (defaults from `state_variable_type`), D10 (derived variables lazy at read).
@@ -117,7 +117,7 @@ total_N:       float = state_variable(..., location="scalar")
 - **`set()` on a derived variable raises** (§8, N3). Only the framework recomputes it. Today a receiver writing to its own input would have its write silently overwritten at the next refresh.
 - `refresh(name)` keeps its meaning (force a recomputation). `pull_available_inputs` becomes a freshness check, a no-op when nothing changed. It stays the hook that DS10's sub-steps will use.
 - **Views:** a view returned by `get` on a derived variable is up to date **at the time of the `get`**. Code holding a view across another component's writes must call `get` again. The Functor and the snapshot already call `get` at every step and every solve.
-- **Unsupported:** writing through a view, `ds.get(x)[...] = v`, does not bump `x`'s counter, so variables derived from `x` would stay stale. This is documented (DS16), and `validate(strict=True)` (§6) detects it in tests by comparing a checksum of each source with the one recorded at the last derivation.
+- **Unsupported:** writing through a view, `ds.get(x)[...] = v`, does not bump `x`'s counter, so variables derived from `x` would stay stale. This is documented (DS16), and `validate(strict=True)` (§6) detects it in tests by recomputing each up-to-date derived variable and comparing it with its stored values.
 - A variable derived from another DataStructure (the soil, through the Coupler) is not concerned: the Coupler writes with `set`.
 - **Measured (1c),** on a 20 000-entry DataStructure:
   - `get` of a plain variable: 0.3 µs;
@@ -146,7 +146,7 @@ total_N:       float = state_variable(..., location="scalar")
   - every variable has metadata;
   - `topology_version` and the entity maps agree.
 
-  It is called by `assert_component_couplable`, at the end of `declare_data_and_couple_components`, and by tests. `validate(strict=True)` adds the checksum check of §4.
+  It is called by `assert_component_couplable` (when given `data_structure=`), at the end of `declare_data_and_couple_components`, and by tests. `validate(strict=True)` recomputes every up-to-date derived variable and compares it with its stored values. This needs no checksum, and it detects writes through views.
 - **Missing variables raise instead of acting as zeros:**
   - `_read_array` raises `KeyError` with the solve name, the argument name, and the available variables at that location. The integrate-field amounts (`{fn}_amount`) are registered when the component is declared, instead of being read as zeros at the first solve.
   - A missing filter variable in `@node_balance` / `@edge_law` / `@boundary_condition` / step filters raises.

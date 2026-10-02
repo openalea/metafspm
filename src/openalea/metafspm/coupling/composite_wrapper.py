@@ -192,6 +192,13 @@ class CompositeModel:
         self.declare_data(shoot=shoot, root=root, atmosphere=atmosphere, soil=soil)
 
         self.couple_components(translator_path=translator_path, *components)
+        # The coupled DataStructures must be consistent (shapes, aliases, derivations; design note DS11)
+        checked = []
+        for component in getattr(self, "components", ()):
+            ds = getattr(component, "data_structure", None)
+            if ds is not None and hasattr(ds, "validate_variables") and not any(ds is other for other in checked):
+                ds.validate_variables()
+                checked.append(ds)
 
 
     def apply_input_tables(self, tables: dict, to: tuple, when: float):

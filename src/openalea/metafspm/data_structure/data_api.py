@@ -501,6 +501,12 @@ class VariableStoreMixin:
 
     def _compute_derived(self, target: str) -> None:
         """Recompute derived variable *target* in place from its sources' current values."""
+        location, store, _ = self._find(target)
+        self._write(store, target, self._derived_values(target))
+        self.__dict__["_derived"][target]["stamps"] = self._source_stamps(target)
+
+    def _derived_values(self, target: str) -> np.ndarray:
+        """Values of derived variable *target* computed from its sources, without writing them."""
         spec = self.__dict__["_derived"][target]
 
         def value(source):
@@ -515,9 +521,55 @@ class VariableStoreMixin:
         if spec["location"] != spec["source_location"]:
             weights = value(spec["weight"]) if spec["weight"] else None
             values = self._map(values, spec["source_location"], spec["location"], spec["aggregation"], weights)
-        location, store, _ = self._find(target)
-        self._write(store, target, values)
-        spec["stamps"] = self._source_stamps(target)
+        return values
+
+    # ── Validation (design note datastructure_contract §6) ────────────────────
+
+    def validate_variables(self, strict: bool = False) -> None:
+        """
+        Raise ValueError listing every inconsistency of the variable store:
+          * an array whose shape is not its location's (e.g. not carried over a topology change);
+          * an alias whose target is missing, or an alias cycle;
+          * a derived variable whose source or weight is missing or moved to another location, or which is not
+            stored at its declared location.
+        strict=True also recomputes every up-to-date derived variable and compares it with its stored values: a
+        difference reveals a write made through a view without mark_written() (D10).
+        """
+        problems = []
+        for location, store in self._var_stores().items():
+            shape = tuple(self._location_shape(location))
+            for name, array in store.items():
+                if tuple(np.shape(array)) != shape:
+                    problems.append(f"'{name}' has shape {np.shape(array)}, its location '{location}' has {shape}")
+        for name in self.__dict__.get("_aliases", {}):
+            try:
+                self._find(name)
+            except (KeyError, ValueError) as error:
+                problems.append(f"alias '{name}': {error}")
+        derived = self.__dict__.get("_derived", {})
+        for target, spec in derived.items():
+            if not self.has(target):
+                problems.append(f"derived variable '{target}' is not registered")
+                continue
+            if self.location(target) != spec["location"]:
+                problems.append(f"derived variable '{target}' is at {self.location(target)}, declared at "
+                                f"{spec['location']}")
+            for source in self._derived_sources(target):
+                if not self.has(source):
+                    problems.append(f"derived variable '{target}': source '{source}' is not registered")
+                elif self.location(source) != spec["source_location"]:
+                    problems.append(f"derived variable '{target}': source '{source}' is at {self.location(source)}, "
+                                    f"expected {spec['source_location']}")
+        if strict and not problems:
+            for target in derived:
+                if self.is_stale(target):
+                    continue
+                location, store, _ = self._find(target)
+                if not np.array_equal(store[target], self._derived_values(target), equal_nan=True):
+                    problems.append(f"derived variable '{target}' differs from its sources: a source or the "
+                                    "variable itself was written through a view without mark_written()")
+        if problems:
+            raise ValueError(f"{type(self).__name__} is inconsistent:\n  " + "\n  ".join(problems))
 
     def _update_derived(self, targets, force: bool = False) -> None:
         """Recompute the stale derived variables among *targets* and their derived sources, in dependency order."""
@@ -886,8 +938,9 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
             update_topology() call.
         from_scale : int, optional
             Biological scale whose vertices drive the Compartment/Connection
-            topology (e.g. g.scales.SubOrgan).  Required only for
-            update_topology(); normal solver usage does not need it.
+            topology (e.g. g.scales.SubOrgan). Inferred from the populated
+            graph when omitted; required for an unpopulated graph, whose
+            update_topology() would otherwise not know what to populate.
         """
         # MTGDataStructure.__init__(mtg, scale) not called: MPGDataStructure
         # always operates at Compartment/Connection — no single fixed scale.
@@ -900,6 +953,9 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
         self._scale_data  : dict[str, dict[str, np.ndarray]] = {}   # coarser biological scales, by scale name
         self._B_cached  = None
         self._build_index_map()
+        if self._from_scale is None:
+            # Inferred from the populated graph: the scale of the vertices the Compartments stand for (DS11)
+            self._from_scale = self._node_scale()
 
     # ── Index map ─────────────────────────────────────────────────────────────
 
@@ -998,7 +1054,8 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
         )
         return [(int(a), int(b)) for a, b in zip(n_id_a, n_id_b)]
 
-    def validate(self) -> None:
+    def validate(self, strict: bool = False) -> None:
+        """Topology and variable store consistency (VariableStoreMixin.validate_variables)."""
         if self._mtg is None:
             raise ValueError("MPGDataStructure has no MTG instance.")
         if self.n_nodes() == 0:
@@ -1007,6 +1064,7 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
                 "Call g.populate_graph(from_scale) and "
                 "g.convert_properties_to_arraydict() before wrapping."
             )
+        self.validate_variables(strict=strict)
 
     # ── Migration ─────────────────────────────────────────────────────────────
 
@@ -1365,7 +1423,7 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
             raise AttributeError(
                 f"{type(self).__name__}.update_topology() requires from_scale "
                 "to be set at construction.  "
-                "Pass MPGDataStructure(g, from_scale=g.scales.SubOrgan)."
+                "Pass MPGDataStructure(g, from_scale=g.scales.SubOrgan) when the graph is not populated yet."
             )
         old = {}
         for location, store in self._var_stores().items():
@@ -1585,6 +1643,10 @@ class ArrayDataStructure(VariableStoreMixin, FieldDataStructure):
 
     def _location_shape(self, location: str) -> tuple:
         return () if location == "scalar" else self._shape
+
+    def validate(self, strict: bool = False) -> None:
+        """Variable store consistency (VariableStoreMixin.validate_variables)."""
+        self.validate_variables(strict=strict)
 
     def _map(self, values, from_location: str, to_location: str, aggregation: str, weights=None) -> np.ndarray:
         if from_location == "cell" and to_location == "scalar":

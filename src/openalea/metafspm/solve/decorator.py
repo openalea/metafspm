@@ -183,6 +183,12 @@ def boundary_condition(location, kind, field=None, filters=None, explicit=False)
     filters  : dict  entity-property filter selecting BC-active entities.
     explicit : bool  accepted for API symmetry; BCs always return values.
     """
+    if location == "edge":
+        raise NotImplementedError("@boundary_condition(location='edge') is not supported yet: conditions are applied "
+                                  "on nodes (edge boundary sets come with devplan_datastructures DS6)")
+    if location != "node":
+        raise ValueError(f"@boundary_condition: location must be 'node', got '{location}'")
+
     def decorator(func):
         func.__graph_tag__ = {
             "kind": "boundary_condition",
@@ -254,10 +260,12 @@ def _live_ds(instance):
     return ds
 
 
-def _read_array(ds, name, location, size):
-    """Copy of variable *name* as a per-*location* array: scalars are broadcast; missing names give zeros."""
+def _read_array(ds, name, location, size, owner=None):
+    """Copy of variable *name* as a per-*location* array: scalars are broadcast; a missing name raises (DS11)."""
     if not ds.has(name):
-        return np.zeros(size, dtype=np.float64)
+        raise KeyError(f"{owner + ': ' if owner else ''}'{name}' is used by a graph system but is not registered on "
+                       f"the DataStructure (declare it on the component, or register it). Registered: "
+                       f"{sorted(ds.available_vars())}")
     values = ds.get(name)
     if values.ndim == 0:
         return np.full(size, float(values))
@@ -282,7 +290,7 @@ def _snapshot(instance, required_names, node_vids_int, edge_vids_int,
             raise ValueError(f"{type(instance).__name__}: '{name}' is stored at {loc}, graph equations take node "
                              f"or edge arrays: declare it with location='node' and mapping='broadcast'")
         size = len(node_vids_int) if loc == "node" else len(edge_vids_int)
-        (node_snap if loc == "node" else edge_snap)[name] = _read_array(ds, name, loc, size)
+        (node_snap if loc == "node" else edge_snap)[name] = _read_array(ds, name, loc, size, type(instance).__name__)
     return node_snap, edge_snap
 
 
@@ -292,7 +300,8 @@ def _type_mask(type_filter, snap, size):
     for prop_name, allowed in type_filter.items():
         vals = snap.get(prop_name)
         if vals is None:
-            continue
+            raise KeyError(f"filter variable '{prop_name}' is not available at this location: a filter on a missing "
+                           "variable would select every entity")
         mask &= np.isin(np.asarray(vals, dtype=float), np.asarray(list(allowed), dtype=float))
     return mask
 
@@ -406,6 +415,10 @@ class GraphSystemBuilder:
         # Framework-managed previous state (design note Q21): the unknowns at the start of this solve
         instance._previous_state = {fn: np.array(ds.get(fn), dtype=np.float64)
                                     for fn in list(node_unknowns) + list(edge_unknowns) if ds.has(fn)}
+        for fn in integrate_fields:
+            # The integrated amount starts at zero, registered explicitly rather than read as a missing variable
+            if not ds.has(f"{fn}_amount"):
+                ds.register(f"{fn}_amount", location="edge", default=0.)
         amount_olds = {fn: _read_array(ds, f"{fn}_amount", "edge", m) for fn in integrate_fields}
 
         all_edge_unknowns = list(edge_unknowns) + [f"{fn}_amount" for fn in integrate_fields]

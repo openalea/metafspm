@@ -85,6 +85,24 @@ The flat modules used before the 2026 restructure have been removed. No compatib
 - **Filtered equations and boundary conditions** slice an argument by its location (node or edge), no longer by its length.
 - A `@graph_output` whose location differs from that of the registered variable raises.
 
+### Validation and failure modes (step 1e)
+
+- **`DataStructure.validate(strict=False)`** (`MPGDataStructure`, `ArrayDataStructure`, through `validate_variables`) raises one `ValueError` listing every inconsistency:
+  - an array whose shape is not its location's;
+  - a dangling or cyclic alias;
+  - a derived variable whose source or weight is missing or moved, or which is not stored at its declared location.
+
+  `strict=True` also recomputes the up-to-date derived variables and detects writes made through views.
+- **Where it runs:**
+  - at the end of `CompositeModel.declare_data_and_couple_components`;
+  - in `testing.couplability_problems` / `assert_component_couplable`, when given `data_structure=`. These also report declarations that do not resolve on it.
+- **Missing variables raise instead of acting as zeros:**
+  - a graph-system argument that is not registered raises `KeyError`, naming the component;
+  - a missing filter variable raises (it used to select every entity);
+  - integrated `{field}_amount` unknowns are registered explicitly at zero before the first solve.
+- `@boundary_condition(location="edge")` raises `NotImplementedError`, since conditions were always applied on nodes; any other location raises `ValueError`.
+- `MPGDataStructure(g)` infers `from_scale` from the populated graph.
+
 ### Scene and coupling wrappers
 
 - `CompositeModel.open_or_create_translator(translator_path)` now takes the **full path of the translator YAML file**. It no longer takes a directory to which `/coupling_translator.yaml` was appended.

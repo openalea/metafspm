@@ -82,6 +82,7 @@ def test_props_is_a_read_only_view_of_the_data_structure():
 def test_rate_output_lands_in_the_data_structure():
     ds = _make_ds()
     ds.set_node_property("concentration", np.full(ds.n_nodes(), 0.3))
+    ds.set_node_property("is_root", np.zeros(ds.n_nodes()))   # no Dirichlet node; a missing filter variable raises
     model = NitrogenAxialTransport(data_structure=ds)
     model.k_radial, model.c_ext = 0.2, 1.0
     model._previous_fields = {"concentration": np.full(ds.n_nodes(), 0.3)}
