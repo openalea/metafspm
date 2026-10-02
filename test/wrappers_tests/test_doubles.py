@@ -19,7 +19,7 @@ def test_translator_covers_every_component_pair():
 
 def test_chain_plant_segments_fall_in_known_voxels():
     ds = doubles_ds.make_chain_plant_ds(coordinates=(0.025, 0.075, -0.01))
-    depths = [-(z1 + z2) / 2 for _, z1, z2 in sorted(zip(ds._idx_to_vid, ds.get("z1"), ds.get("z2")))]
+    depths = [-(z1 + z2) / 2 for _, z1, z2 in sorted(zip(ds.entity_ids("node"), ds.get("z1"), ds.get("z2")))]
     assert np.allclose(depths, [0.02, 0.04, 0.06])
     # voxel side 0.05: segments 1-2 in the first layer, segment 3 in the second
     assert [int(d // doubles.SOIL_VOXEL_SIDE) for d in depths] == [0, 0, 1]

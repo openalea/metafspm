@@ -163,7 +163,7 @@ def test_from_legacy_copies_node_properties():
     legacy = LegacyMPGDataStructure(g, sc)
     sparse = MPGDataStructure.from_legacy(legacy, ['water_potential'])
 
-    by_vid = dict(zip(sparse._idx_to_vid, sparse.node_property('water_potential')))
+    by_vid = dict(zip(sparse.entity_ids("node"), sparse.node_property('water_potential')))
     assert by_vid == {v1: -0.5, v2: -1.0, v3: -1.5}
     assert sparse.node_property('water_potential').shape == (sparse.n_nodes(),)
 

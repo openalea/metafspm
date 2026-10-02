@@ -44,13 +44,11 @@ def _fresh_choregrapher_run_state():
 
 
 def _root_local_idx(ds) -> int:
-    children = {b for _, b in ds.edges()}
-    return next(i for i, vid in enumerate(ds._idx_to_vid) if vid not in children)
+    return int(ds.roots()[0])
 
 
 def _tip_local_idx(ds) -> list:
-    parents = {a for a, _ in ds.edges()}
-    return [i for i, vid in enumerate(ds._idx_to_vid) if vid not in parents]
+    return [int(i) for i in ds.tips()]
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -187,11 +185,11 @@ def _build_anatomy_system():
     labels = g.property("label")
     root_label = g.labels.SubOrgan.RootSegment
     xylem_idx = [_root_local_idx(ds)]
-    soil_idx = [i for i in _tip_local_idx(ds) if labels[ds._idx_to_vid[i]] == root_label]
+    soil_idx = [i for i in _tip_local_idx(ds) if labels[ds.entity_ids("node")[i]] == root_label]
     boundary_ports = tuple(
-        [BoundaryPort(name=f"soil_{i}", node_id=int(ds._idx_to_vid[i]), kind="dirichlet", value=0.0, weight=0.6)
+        [BoundaryPort(name=f"soil_{i}", node_id=int(ds.entity_ids("node")[i]), kind="dirichlet", value=0.0, weight=0.6)
          for i in soil_idx]
-        + [BoundaryPort(name=f"xylem_{i}", node_id=int(ds._idx_to_vid[i]), kind="dirichlet", value=-1.0, weight=1.0)
+        + [BoundaryPort(name=f"xylem_{i}", node_id=int(ds.entity_ids("node")[i]), kind="dirichlet", value=-1.0, weight=1.0)
            for i in xylem_idx])
 
     child_labels = np.array([labels[b] for _, b in ds.edges()])

@@ -23,11 +23,11 @@ def _seedling_ds():
 
 
 def _by_vid(ds, name):
-    return dict(zip(ds._idx_to_vid, ds.get(name)))
+    return dict(zip(ds.entity_ids("node"), ds.get(name)))
 
 
 def _organ_of(g, ds):
-    return {v: g.complex_at_scale(v, g.scales.Organ) for v in ds._idx_to_vid}
+    return {v: g.complex_at_scale(v, g.scales.Organ) for v in ds.entity_ids("node")}
 
 
 # ---------------------------------------------------------------- derived variables
@@ -96,7 +96,7 @@ def test_derived_variables_follow_aliases():
 
 def test_sum_mean_and_weighted_mean_to_a_coarser_scale():
     g, _, ds = _seedling_ds()
-    vids = ds._idx_to_vid
+    vids = ds.entity_ids("node")
     ds.register("length", np.array([float(v) for v in vids]), location="node")
     ds.register("mass", np.array([1. + (v % 2) for v in vids]), location="node")
     ds.derive("organ_length", {"length": 1.}, location="Organ", aggregation="sum")
@@ -120,12 +120,12 @@ def test_broadcast_from_a_coarser_scale():
     ds.register("organ_temperature", np.array([float(o) for o in organs]), location="Organ")
     ds.derive("temperature", {"organ_temperature": 1.}, location="node", aggregation="broadcast")
     organ_of = _organ_of(g, ds)
-    assert _by_vid(ds, "temperature") == {v: float(organ_of[v]) for v in ds._idx_to_vid}
+    assert _by_vid(ds, "temperature") == {v: float(organ_of[v]) for v in ds.entity_ids("node")}
 
 
 def test_node_to_edge_mappings():
     _, _, ds = _seedling_ds()
-    ds.register("c", np.array([float(v) for v in ds._idx_to_vid]), location="node")
+    ds.register("c", np.array([float(v) for v in ds.entity_ids("node")]), location="node")
     for aggregation in ("proximal", "distal", "mean"):
         ds.derive(f"c_{aggregation}", {"c": 1.}, location="edge", aggregation=aggregation)
     parents, children = zip(*ds.edges())

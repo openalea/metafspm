@@ -10,7 +10,7 @@ VOXEL_VOLUME = 0.05 ** 3
 
 
 def _by_vid(ds, name):
-    return [float(v) for _, v in sorted(zip(ds._idx_to_vid, ds.get(name)))]
+    return [float(v) for _, v in sorted(zip(ds.entity_ids("node"), ds.get(name)))]
 
 
 def test_initialization_protocol(ds_in_process_scene):

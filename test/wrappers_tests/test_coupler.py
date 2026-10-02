@@ -112,7 +112,7 @@ def test_map_follows_growth():
     coupler.update_map()
     g = plant.mtg
     from simple_seedling import generate_simple_mpg_seedling  # noqa: F401 (path set by doubles_ds)
-    tip = next(v for v in plant._idx_to_vid if not any(p == v for p, _ in plant.edges()))
+    tip = int(plant.entity_ids("node")[plant.tips()[0]])
     g.add_child(tip, **PropsConfig(scale=g.scales.SubOrgan, edge_type='<', label=g.labels.SubOrgan.RootSegment))
     plant.update_topology()
 
@@ -128,7 +128,7 @@ def test_push_before_map_update_after_growth_raises():
     coupler = _coupler(plant, soil)
     coupler.update_map()
     g = plant.mtg
-    tip = next(v for v in plant._idx_to_vid if not any(p == v for p, _ in plant.edges()))
+    tip = int(plant.entity_ids("node")[plant.tips()[0]])
     g.add_child(tip, **PropsConfig(scale=g.scales.SubOrgan, edge_type='<', label=g.labels.SubOrgan.RootSegment))
     plant.update_topology()
     with pytest.raises(RuntimeError, match="update_map"):

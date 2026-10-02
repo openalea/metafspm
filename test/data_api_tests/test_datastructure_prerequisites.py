@@ -54,7 +54,7 @@ def test_incidence_matrix_matches_graph_view_convention():
     np.testing.assert_array_equal(ds.incidence_matrix().toarray(), ds.to_graph_view().incidence.toarray())
     parent, child = ds.edges()[0]
     B = ds.incidence_matrix().toarray()
-    assert B[ds._vid_to_idx[parent], 0] == 1. and B[ds._vid_to_idx[child], 0] == -1.
+    assert B[ds.index_of(parent), 0] == 1. and B[ds.index_of(child), 0] == -1.
 
 
 # ---------------------------------------------------------------- B-f accessors
@@ -164,14 +164,14 @@ def test_mtg_mapping_from_a_coarser_scale():
 
     values = ds._mtg_to_node_array("organ_value", scale=g.scales.Organ)
 
-    expected = [10. * g.complex_at_scale(v, g.scales.Organ) for v in ds._idx_to_vid]
+    expected = [10. * g.complex_at_scale(v, g.scales.Organ) for v in ds.entity_ids("node")]
     np.testing.assert_array_equal(values, expected)
 
 
 def test_mtg_mapping_fast_path_checks_keys_not_only_size():
     """Same number of entries but different keys used to be silently mis-mapped."""
     g, _, ds = _seedling_ds()
-    vids = sorted(ds._idx_to_vid)
+    vids = sorted(ds.entity_ids("node"))
     shifted = {v: float(v) for v in vids[1:]}
     shifted[max(vids) + 1000] = -1.
     g.properties()["shifted"] = ArrayDict(shifted)
@@ -182,7 +182,7 @@ def test_mtg_mapping_fast_path_checks_keys_not_only_size():
 
 def test_mtg_mapping_partial_coverage_raises_and_absent_returns_none():
     g, _, ds = _seedling_ds()
-    g.properties()["partial"] = {ds._idx_to_vid[0]: 1.}
+    g.properties()["partial"] = {ds.entity_ids("node")[0]: 1.}
     with pytest.raises(ValueError, match="partial"):
         ds._mtg_to_node_array("partial")
     with pytest.raises(ValueError, match="partial"):
@@ -196,7 +196,7 @@ def test_write_back_creates_missing_property():
     g, _, ds = _seedling_ds()
     ds.write_node_to_mtg("new_state", np.arange(ds.n_nodes(), dtype=float))
     written = g.properties()["new_state"]
-    assert [written[v] for v in ds._idx_to_vid] == list(range(ds.n_nodes()))
+    assert [written[v] for v in ds.entity_ids("node")] == list(range(ds.n_nodes()))
 
 
 def test_write_back_errors_are_not_swallowed():
@@ -211,18 +211,18 @@ def test_write_back_errors_are_not_swallowed():
 
 def test_update_topology_preserves_variables_on_growth():
     g, seedling, ds = _seedling_ds()
-    ds.register("c", np.array([float(v) for v in ds._idx_to_vid]), location="node", default=-1.)
-    ds.register("c_inherited", np.array([float(v) for v in ds._idx_to_vid]), location="node", on_grow="inherit")
+    ds.register("c", np.array([float(v) for v in ds.entity_ids("node")]), location="node", default=-1.)
+    ds.register("c_inherited", np.array([float(v) for v in ds.entity_ids("node")]), location="node", on_grow="inherit")
     ds.register("K", np.array([float(b) for _, b in ds.edges()]), location="edge", default=-2.)
     view = ds.get("c")
 
     new_vid = _grow(g, seedling)
     ds.update_topology()
 
-    c = dict(zip(ds._idx_to_vid, ds.get("c")))
-    assert all(c[v] == float(v) for v in ds._idx_to_vid if v != new_vid)
+    c = dict(zip(ds.entity_ids("node"), ds.get("c")))
+    assert all(c[v] == float(v) for v in ds.entity_ids("node") if v != new_vid)
     assert c[new_vid] == -1.                                                 # declared default
-    assert dict(zip(ds._idx_to_vid, ds.get("c_inherited")))[new_vid] == float(seedling.root_segment6)  # parent's value
+    assert dict(zip(ds.entity_ids("node"), ds.get("c_inherited")))[new_vid] == float(seedling.root_segment6)  # parent's value
     K = dict(zip([b for _, b in ds.edges()], ds.get("K")))                   # edges identified by their child
     assert all(K[b] == float(b) for b in K if b != new_vid) and K[new_vid] == -2.
     assert ds.get("c") is not view                                           # re-registered: version bumped
@@ -268,12 +268,12 @@ def test_component_fields_declare_their_on_grow_policy():
 
     g, seedling, ds = _seedling_ds()
     GrowingProbe(data_structure=ds)
-    ds.set("concentration", np.array([float(v) for v in ds._idx_to_vid]))
+    ds.set("concentration", np.array([float(v) for v in ds.entity_ids("node")]))
 
     new_vid = _grow(g, seedling)
     ds.update_topology()
 
-    concentration = dict(zip(ds._idx_to_vid, ds.get("concentration")))
-    amount = dict(zip(ds._idx_to_vid, ds.get("amount")))
+    concentration = dict(zip(ds.entity_ids("node"), ds.get("concentration")))
+    amount = dict(zip(ds.entity_ids("node"), ds.get("amount")))
     assert concentration[new_vid] == float(seedling.root_segment6)
     assert amount[new_vid] == 5.
