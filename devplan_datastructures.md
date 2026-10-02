@@ -129,7 +129,7 @@ These are done: in-place writes, aliases, derived variables, scale operators (su
 - [ ] **DS2 Traversal orders on the DS:** `ds.order("pre" | "post")`, `ds.parents()` (local index of the parent, −1 at the root), `ds.children()` (CSR), `ds.roots()`, `ds.tips()`, all in local indices and cached per `topology_version`.
   - The MPG implementation derives them from Connections, independently of the post-order accident of population.
   - Replace the private `_idx_to_vid` / `_vid_to_idx` accesses in tests and components with `entity_ids("node")` and `index_of(vids)`.
-- [ ] **DS3 Explicit `Location` for fields, symmetric scale mapping (D2 decided: split).** Split `declare(scale=...)` into:
+- [x] **DS3 Explicit `Location` for fields, symmetric scale mapping (D2 decided: split).** Split `declare(scale=...)` into:
   - `location`: `"node"` / `"edge"` / `"cell"` / `"scalar"`;
   - `scale`: a bio scale (live ScalesConfig reference);
   - `mapping`: how the variable maps to the solver entities — `broadcast` / `sum` / `mean` / `weighted_mean` (`weight=`), and for edges the `edge_mapping` values `proximal` / `distal` / `mean`.
@@ -146,7 +146,7 @@ These are done: in-place writes, aliases, derived variables, scale operators (su
   - Or no MTG at all, for DS-only models.
 
   It is implemented once in `FunctionalComponent.__call__`. It removes the silent case where `@rate` results never reach the MTG, and makes the MTG optional (D3).
-- [ ] **DS5 Declared output locations.** `@graph_output(name, location="node" | "edge")`, plus the same option on steps whose outputs are not declared fields. This replaces the `size == n` guess, which is ambiguous when n == m.
+- [x] **DS5 Declared output locations.** `@graph_output(name, location="node" | "edge")`, plus the same option on steps whose outputs are not declared fields. This replaces the `size == n` guess, which is ambiguous when n == m.
 - [ ] **DS6 Boundary sets (answers Q3).** `boundary_set(name, select=..., value="air_water_potential", weight="leaf_conductance", kind="robin" | "dirichlet" | "neumann")`, declared on the component.
   - `select` is a label, a variable (> 0), or a callable over DS variables.
   - Value and weight are DS variables or constants, read live at each solve.
@@ -314,7 +314,7 @@ These are done: in-place writes, aliases, derived variables, scale operators (su
   - Offer `@graph_system(integrate="step" | "adaptive" | "substeps", n_substeps=..., t_span=...)`, now that B5/B6 made the loops correct, and pass `BoundaryConditions` updates through it.
   - Sub-stepping is **per component** (Q8): a component's own `sub_time_step` within the Choregrapher step, as today. Its inputs from other components are those at the start of its call; groups are not planned.
   - `previous(fn)` stays the state at the start of the current solve; `previous(fn, at="step")` gives the state at the start of the Choregrapher step, for operator splitting.
-- [ ] **DS11 Validation and failure modes:**
+- [x] **DS11 Validation and failure modes:**
   - `DataStructure.validate()` checks that every registered array has its location's shape, and that aliases and derivations resolve;
   - `update_topology()` without `from_scale` becomes impossible (make `from_scale` required);
   - a missing filter variable, a missing `is_root`-style flag, or a derived variable with a missing source raises instead of acting as zeros (`_read_array` still returns zeros for missing names, `decorator.py`).
@@ -332,7 +332,7 @@ These are done: in-place writes, aliases, derived variables, scale operators (su
   - benchmark on a 20 000-segment root system;
   - decide whether a numba path is wanted on the vectorised steps (links to Q29: delete `specializer.py` or rewrite it).
 - [ ] **DS15 Persistence.** Checkpoint and restart of a DataStructure (arrays + locations + aliases + derivations + `topology_version`) independently of pickling the MPG, plus an MTG round trip for existing tooling. This builds on `export`.
-- [ ] **DS17 Derived variables resolved at read (answers D3).** Today aliases resolve at every read, but derived variables (factors, sums, scale changes) are recomputed only when the **receiver** refreshes them before its step, as the former `pull_available_inputs` did.
+- [x] **DS17 Derived variables resolved at read (answers D3).** Today aliases resolve at every read, but derived variables (factors, sums, scale changes) are recomputed only when the **receiver** refreshes them before its step, as the former `pull_available_inputs` did.
   - To keep "linked by name, read dynamically" for every link kind, a derived variable is recomputed **on `get()`** when one of its sources was written since its last computation. This needs per-variable write counters, maintained by `set()` and in-place step outputs.
   - Explicit `refresh()` stays available, and the receiver's pre-step refresh becomes a no-op when nothing changed.
   - **Rule to document:** writing through `ds.set` (or the framework) keeps links consistent; mutating `ds.get(x)[...]` by hand does not mark `x` as changed (D10).
@@ -346,7 +346,7 @@ These are done: in-place writes, aliases, derived variables, scale operators (su
     - intensive / massic_concentration → `mean` up and `broadcast` down;
     - extensive down, or a missing type → the coupling raises and asks for an explicit mapping.
   - The receiver's input therefore always exists at its declared location, with values for every entity of that scale, including after growth (the WD.3 carry-over).
-- [ ] **DS16 Documentation of conventions**, in one page:
+- [x] **DS16 Documentation of conventions**, in one page:
   - incidence sign (+1 at the parent);
   - the local order is not sorted;
   - `(x, y, z)` grids;
@@ -382,7 +382,7 @@ These are done: in-place writes, aliases, derived variables, scale operators (su
 
 ## 7. Suggested order
 
-1. **Contract:** DS3 (Location, with scale locations for coarse fields) + DS17 (derived at read) + DS5 (output locations) + DS11 (validation) + DS16 (conventions). Design note: `docs/design/datastructure_contract.md` (N1–N5 agreed). Progress: **1a done** (`4d1353d`), **1b done** (`15f8976`), **1c done** (`cc3e588`), **1d done** (`bf008e3`), **1e done** (2026-10-02); 1f next.
+1. **Contract:** DS3 (Location, with scale locations for coarse fields) + DS17 (derived at read) + DS5 (output locations) + DS11 (validation) + DS16 (conventions). Design note: `docs/design/datastructure_contract.md` (N1–N5 agreed). Progress: **1a done** (`4d1353d`), **1b done** (`15f8976`), **1c done** (`cc3e588`), **1d done** (`bf008e3`), **1e done** (`bc37e79`), **1f done** (2026-10-02): step 1 complete.
 2. **Multiscale topology and boundaries:** DS19 (StructuralComponent contract) + DS20 (repartition, active mask) + DS21 (active subgraph) + DS8 (assembled graph: anatomies + wiring rules, real anatomy UC3) + DS2 (traversal) + DS6 (boundary sets, validated on UC5 below).
 3. **Cross-scale coupling and grids:** DS18 (mappings, filtered broadcast, defaults) + DS1 (grid topology).
 4. **Time and data:** DS10 (sub-stepping, adaptive loop, `previous(at="step")`) + DS4 (sync) + DS9 (solve-time views) + DS12 (typed variables).

@@ -47,7 +47,8 @@ class RootCNUnified(Model):
 class RootCNUnified(FunctionalComponent):
     hexose: float = state_variable(..., initialize=1e-3, scale=scales.SubOrgan, on_grow="inherit")
     struct_mass: float = input_variable(..., scale=scales.SubOrgan)
-    total_cytokinins: float = state_variable(..., scale="scalar")          # plant-scale value (was vertex 1)
+    K_axial: float = parameter(..., scale=scales.SubOrgan, location="edge", mapping="mean")
+    total_cytokinins: float = state_variable(..., location="scalar")       # plant-scale value (was vertex 1)
 
     @rate
     def _hexose_exudation(self, hexose, struct_mass):        # receives whole arrays
@@ -60,15 +61,19 @@ model = RootCNUnified(data_structure=MPGDataStructure(g, from_scale=g.scales.Sub
 ```
 
 The rules:
-- **Every coupled or solved variable declares a `scale`.** It is then registered on the DataStructure automatically:
-  - a bio-scale integer (e.g. `scales.SubOrgan`), with `edge_mapping` for edge variables;
-  - `"node"`, `"edge"`, `"cell"` or `"scalar"`.
+- **Every coupled or solved variable declares where it lives** (`docs/conventions.md`), and is then registered on the DataStructure automatically:
+  - `scale=`: its MTG scale (e.g. `scales.SubOrgan`), read at registration and written back after every call;
+  - `location=`: where it is stored, defaulting to the location of its scale. Use `"edge"` for edge variables, `"node"` / `"edge"` / `"scalar"` / `"cell"` for solver-only variables, or a scale name;
+  - `mapping=`: when the scale and the location differ. `broadcast` goes down; `sum` / `mean` / `weighted_mean` go up; `child` / `parent` / `mean` go to edges (`edge_mapping="proximal"` becomes `location="edge", mapping="child"`). Without it, the mapping follows `state_variable_type` where unambiguous.
+  - **A variable at a scale coarser than the nodes** (e.g. `scales.Organ`) is stored at that scale. Add `location="node"` (broadcast) if the equations need one value per node.
 - **Step functions receive arrays** (Q20). Make the bodies numpy-compatible, e.g. with `np.where` instead of `if`, or mark the step `vectorized=False`.
 - **Previous state:** inside graph-system equations, use `self.previous("concentration")` instead of a user-managed `_previous_fields` (Q21).
 - **Growth:** declare `on_grow="inherit"` for variables that new segments should take from their parent. The default is the declared value. The growth model may still overwrite new entities, e.g. from parent concentrations or split extensive quantities (Q24).
 - **Growth models** call `ds.update_topology()` after changing the MTG. Registered variables are carried over, and components rebuild their graph views.
 - **Segment geometry:** the growth model registers `x1, x2, y1, y2, z1, z2` as node variables. The soil coupling needs them (Q25).
-- **`self.props`** is a read-only view kept for one release. Replace reads with `self.data_structure.get(name)`.
+- **`self.props`** is a read-only view kept for one release. Replace reads with `self.data_structure.get(name)`, and writes with `ds.set(name, values)`. Translator-derived inputs are read-only.
+- **Undeclared outputs** give their location: `@graph_output(name, location=...)`, `@rate(location=...)`.
+- **Missing variables raise:** a graph-system argument or a filter variable must be registered (declared, or set before the solve). Missing values are no longer read as zeros.
 - **Non-float variables** (lists such as `xylem_vessel_radii`) are not solver or transport variables. Keep them on the MTG or as instance attributes, and couple them by identity only (Q22).
 
 ## 3. Plant composite (GrassBRIDGES)
@@ -148,7 +153,7 @@ class GrassBRIDGES(CompositeModel):
 
 1. The imports are migrated (§1).
 2. Each component is a `FunctionalComponent`, with `scale` on its coupled and solved fields, vectorised steps (or the explicit opt-in), `previous()` and `on_grow`.
-3. `assert_component_couplable` passes for each component against the shipped translator.
+3. `assert_component_couplable` passes for each component against the shipped translator, with `data_structure=` the plant (or soil) DataStructure, so that declarations are resolved and the DataStructure validated.
 4. The composite uses `Transport` and passes `handshake_shape`; the soil and light models follow §4–§5.
 5. A short scene run gives the same outputs as before the migration, for a fixed seed and a few steps, the way `test_ds_scene_contract.py` does for the doubles.
 

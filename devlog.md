@@ -948,3 +948,29 @@ Per-file counts:
   - edge BC rejection;
   - couplability with a DataStructure.
 - **Suite:** 578 passed, same 10 warnings. CHANGELOG, note and plan updated. Not committed yet.
+
+---
+
+## 2026-10-02 (later): 1e committed (`bc37e79`); step 1f done, so step 1 is complete
+
+- **New `docs/conventions.md`**, a one-page reference:
+  - graph: entities from the MPG traversal; incidence `B[parent,e]=+1`, `B[child,e]=−1`; unsorted post-order with `entity_ids`; edges identified by their child;
+  - grids: `(x, y, z)` axes;
+  - the locations table, and scale names as locations;
+  - `scale` / `location` / `mapping`, with the mappings table and the D9 default table;
+  - write-back rules and the declarations rejected because they could not be written back;
+  - output locations;
+  - identity / alias / derived couplings (recomputed at read, read-only, `mark_written`, `validate(strict=True)`);
+  - `previous()` and `on_grow`;
+  - failure modes.
+- **`test/data_api_tests/test_conventions_doc.py`** (7 tests) checks the page's tables against `coupling.declaration`: locations, mappings, former names, and every row of the default table against `default_mapping`.
+- **`downstream_migration.md` §2** is rewritten for the new keys:
+  - coarse scales stored at their own scale;
+  - `edge_mapping="proximal"` becomes `location="edge", mapping="child"`;
+  - read-only derived inputs, output locations, and missing variables raising.
+
+  Checklist step 3 now passes `data_structure=`. The README model-design section points to the guide and the conventions (it still describes the former API).
+- **Plan:** DS3, DS5, DS11, DS16 and DS17 are ticked. The design note status says "step 1 complete".
+- **Gap noted:** D8 mentions `index_of`, which does not exist yet. The conventions page documents `entity_ids` only.
+- **Suite:** 585 passed, same 10 warnings. Not committed yet.
+- **Next in the plan (§7 step 2):** DS19 (StructuralComponent contract), DS20 (repartition and active mask), DS21 (active subgraph), DS8 (multiscale assembly), DS2 (traversal), DS6 (boundary sets with UC5). Each needs its design note first.
