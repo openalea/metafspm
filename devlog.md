@@ -832,3 +832,34 @@ Per-file counts:
 - **Suite:** 545 passed (516 before, plus 29), same 10 warnings.
 - **Not yet:** write-back of coarse-located state variables (1b), until then they are not written to the MTG. CHANGELOG is updated.
 - Nothing committed.
+
+---
+
+## 2026-10-02 (later): 1a committed (`4d1353d`); step 1b implemented (MTG write-back through the mapping)
+
+- **`MPGDataStructure.read_mtg(spec)` / `write_mtg(spec)`:** reading and writing a declared variable at the vertices of its scale, through its mapping and its inverse.
+  - **Own scale:** as is.
+  - **Broadcast down:** written back as the (weighted) mean of the nodes.
+  - **Mean up:** written back by broadcast.
+  - **Edges:** at the child or parent endpoint. A `parent` write raises where several edges share a parent.
+
+  The edge readers, writers and `_map` accept `child` / `parent`.
+- **`FunctionalComponent`:**
+  - registration and the pre-solve parameter refresh use `read_mtg`, so the refresh now also covers coarse-located parameters;
+  - `write_back_to_mtg` writes every state variable with a scale through `write_mtg`;
+  - the `_bio_scale_*_fields` bookkeeping is removed.
+- **N4:** `Component.__call__` writes back after every call, and the write-back at the end of a graph solve is removed. No existing test depended on it.
+- **Resolver:** state variables that could not be written back are rejected (summed to a coarser scale; edge state at a scale coarser than the nodes). The 1a tests using such declarations now use parameters.
+- **Tests:** new `test/data_api_tests/test_scale_mapping.py`, 9 tests:
+  - Organ pool written at Organ vids only;
+  - `@rate`-only component reaching the MTG;
+  - broadcast written back as the node mean;
+  - mean written back by broadcast;
+  - child edge write;
+  - parent ambiguity raising;
+  - parameters refreshed and never written back;
+  - `child` / `parent` operators.
+
+  Plus 2 resolver error cases.
+- **Suite:** 555 passed, the 9 slow scene tests included, same 10 warnings. CHANGELOG, plan progress and design note status are updated.
+- Not committed yet.

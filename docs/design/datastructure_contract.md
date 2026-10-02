@@ -1,6 +1,6 @@
 # Design note: the DataStructure variable contract (step 1)
 
-Status: **under review**. N1–N5 are agreed (2026-10-02). Implementation in progress (1a). It covers step 1 of `devplan_datastructures.md` §7: DS3 (locations and scale mapping), DS17 (derived variables resolved at read), DS5 (output locations), DS11 (validation) and DS16 (conventions).
+Status: **under review**. N1–N5 are agreed (2026-10-02). 1a done (`4d1353d`), 1b done. It covers step 1 of `devplan_datastructures.md` §7: DS3 (locations and scale mapping), DS17 (derived variables resolved at read), DS5 (output locations), DS11 (validation) and DS16 (conventions).
 Branch `data_structure_api`, written against `1bf8356`. Code starts only after this note is agreed. The open points are in §8.
 
 Decisions this note builds on: D2 (split `scale=` into location / scale / mapping), D3 (MTG optional, write state variables after every call), D8 (identity through `entity_ids`), D9 option A (defaults from `state_variable_type`), D10 (derived variables lazy at read).

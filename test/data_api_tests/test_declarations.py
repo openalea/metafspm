@@ -121,7 +121,7 @@ class Defaults:
     down_extensive: float = sv(initialize=0., scale=scales.Organ, location="node", state_variable_type="extensive")
     down_untyped: float = inp(initialize=0., scale=scales.Organ, location="node")
     down_explicit: float = inp(initialize=0., scale=scales.Organ, location="node", mapping="broadcast")
-    up_extensive: float = sv(initialize=0., scale=scales.SubOrgan, location="Organ", state_variable_type="extensive")
+    up_extensive: float = par(default=0., scale=scales.SubOrgan, location="Organ", state_variable_type="extensive")
     up_intensive: float = sv(initialize=0., scale=scales.SubOrgan, location="Organ",
                              state_variable_type="NonInertialIntensive")
     up_massic: float = sv(initialize=0., scale=scales.SubOrgan, location="Organ",
@@ -170,6 +170,8 @@ class Errors:
     both_mappings: float = sv(initialize=0., scale=scales.SubOrgan, edge_mapping="proximal", mapping="child")
     location_twice: float = sv(initialize=0., scale="node", location="edge")
     non_numeric: str = sv(initialize="seminal", scale=scales.SubOrgan)
+    summed_state: float = sv(initialize=0., scale=scales.SubOrgan, location="Organ", state_variable_type="extensive")
+    coarse_edge_state: float = sv(initialize=0., scale=scales.Organ, location="edge", mapping="child")
 
 
 @pytest.mark.parametrize("name, message", [
@@ -187,6 +189,8 @@ class Errors:
     ("both_mappings", "not both"),
     ("location_twice", "is a location"),
     ("non_numeric", "numeric default"),
+    ("summed_state", "could not be written back to the finer scale"),
+    ("coarse_edge_state", "several edges would write the same vertex"),
 ])
 def test_declaration_errors(seedling, name, message):
     _, _, ds = seedling
@@ -206,8 +210,8 @@ def test_errors_name_the_component_and_field(seedling):
 class OrganProbe(FunctionalComponent):
     organ_pool: float = sv(initialize=-1., scale=scales.Organ, state_variable_type="extensive")
     organ_temperature: float = inp(initialize=-1., scale=scales.Organ, location="node", mapping="broadcast")
-    organ_length: float = sv(initialize=-1., scale=scales.SubOrgan, location="Organ",
-                             state_variable_type="extensive")
+    organ_length: float = par(default=-1., scale=scales.SubOrgan, location="Organ",
+                              state_variable_type="extensive")
     total: float = sv(initialize=3., location="scalar")
 
 
@@ -245,7 +249,7 @@ def test_declaration_metadata_is_recorded_and_survives_growth(seedling):
     OrganProbe(data_structure=ds)
     meta = ds._variable_meta()["organ_length"]
     assert (meta["scale"], meta["mapping"], meta["kind"], meta["variable_type"]) == (
-        scales.SubOrgan, "sum", "extensive", "state_variable")
+        scales.SubOrgan, "sum", "extensive", "parameter")
     ds.update_topology()
     assert ds._variable_meta()["organ_length"]["mapping"] == "sum"
 

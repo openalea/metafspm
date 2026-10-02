@@ -6,7 +6,7 @@ from openalea.metafspm.solve.decorator import *
 from openalea.metafspm.data_structure.mpg import MPG
 from openalea.metafspm.data_structure.data_api import DataStructure, MPGDataStructure, GraphDataStructure, DataStructurePropsView
 from openalea.metafspm.data_structure.configs import ScalesConfig as _ScalesConfig
-from openalea.metafspm.coupling.declaration import declared_specs, legacy_edge_convention, DeclarationError
+from openalea.metafspm.coupling.declaration import declared_specs, DeclarationError
 
 # Map integer MPG scale constants to the generic "node"/"edge" vocabulary used
 # by GraphDataStructure.  Compartment nodes are graph nodes; Connection edges
@@ -162,6 +162,12 @@ class Component:
     def __call__(self, *args):
         self.pull_available_inputs()
         self.choregrapher(module_family=self.__class__.__name__, *args)
+        # State variables reach the MTG after every call (design note datastructure_contract §3, N4)
+        self.write_back_to_mtg()
+
+    def write_back_to_mtg(self) -> None:
+        """Write the component's state variables to the MTG; FunctionalComponent implements it."""
+        pass
 
     @property
     def inputs(self):
@@ -330,120 +336,47 @@ class FunctionalComponent(Component):
         Pre-registered variables are never overwritten; their location must match the declaration.
         """
         self._variable_specs = declared_specs(self, ds)
-        # MTG refresh and write-back bookkeeping (node and edge variables with an MTG scale)
-        self._bio_scale_node_fields: dict[str, int] = {}
-        self._bio_scale_edge_fields: dict[str, str] = {}
         for name, spec in self._variable_specs.items():
-            if spec.mtg_backed and spec.location == "node":
-                self._bio_scale_node_fields[name] = spec.scale
-            elif spec.mtg_backed and spec.location == "edge":
-                self._bio_scale_edge_fields[name] = legacy_edge_convention(spec.mapping)
-
             if ds.has(name):
                 registered = ds.location(name)
                 if registered != spec.location and name not in ds.aliases():
                     raise DeclarationError(f"{type(self).__name__}.{name} is declared at {spec.location} but is "
                                            f"already registered at {registered}")
             else:
-                ds.register(name, self._initial_values(ds, spec), location=spec.location, default=spec.default,
-                            on_grow=spec.on_grow)
+                values = ds.read_mtg(spec) if hasattr(ds, "read_mtg") else None
+                ds.register(name, values, location=spec.location, default=spec.default, on_grow=spec.on_grow)
             meta = ds._variable_meta().setdefault(name, {})
             meta.update({key: value for key, value in spec.meta().items() if value is not None})
 
-    @staticmethod
-    def _initial_values(ds, spec):
-        """Values of the MTG property of *spec* at its location, or None (no MTG, or no such property)."""
-        if not spec.mtg_backed or not hasattr(ds, "_mtg_to_node_array"):
-            return None
-        if spec.location == "node":
-            return ds._mtg_to_node_array(spec.name, scale=spec.scale)
-        if spec.location == "edge":
-            return ds._mtg_to_edge_array(spec.name, convention=legacy_edge_convention(spec.mapping),
-                                         scale=spec.scale)
-        if spec.mapping is None:
-            # Stored at its own coarse scale: the values of the vertices of that scale
-            return ds._mtg_values(spec.name, ds.entity_ids(spec.location))
-        values = ds._mtg_to_node_array(spec.name)
-        if values is None:
-            return None
-        weights = None
-        if spec.weight is not None:
-            if not ds.has(spec.weight):
-                raise DeclarationError(f"'{spec.name}' is aggregated with weight '{spec.weight}', which is not "
-                                       "registered yet: declare the weight first")
-            weights = ds.get(spec.weight)
-        return ds._map(values, "node", spec.location, spec.mapping, weights)
-
     def write_back_to_mtg(self) -> None:
-        """Write solver results for biological-scale state_variable fields back to the MTG.
+        """
+        Write the declared state variables with an MTG scale to the MTG, at the vertices of their scale, through the
+        inverse of their mapping (MPGDataStructure.write_mtg). Called after every component call.
 
-        Only ``state_variable`` fields are written back: these are the fields whose
-        values change during a solve step (either updated by the Newton solver or by
-        Choregrapher steps such as @rate).  ``parameter`` fields are intentionally
-        skipped — parameters are never modified by the solver, so their props arrays
-        stay at the construction-time default and writing them back would overwrite
-        any externally-set MTG values.
-
-        Node fields (scale=bio-int, no edge_mapping): written via write_node_to_mtg.
-        Edge fields (scale=bio-int, edge_mapping set): written via write_edge_to_mtg
-          using the declared convention ("proximal" or "distal"; "mean" is skipped
-          since no unique endpoint exists for a symmetric property).
+        Only ``state_variable`` fields are written: parameters and inputs are owned by whoever sets them, and
+        writing their defaults back would overwrite externally set MTG values.
         """
         ds = self.data_structure
-        sv_names: set[str] = {
-            f.name for f in fields(type(self))
-            if f.metadata.get("variable_type") == "state_variable"
-        }
-
-        for name in getattr(self, "_bio_scale_node_fields", {}):
-            if name in sv_names and ds.has(name):
-                ds.write_node_to_mtg(name, ds.get(name))
-        for name, convention in getattr(self, "_bio_scale_edge_fields", {}).items():
-            if name in sv_names and ds.has(name):
-                ds.write_edge_to_mtg(name, ds.get(name), convention=convention)
+        if not hasattr(ds, "write_mtg"):
+            return
+        for spec in getattr(self, "_variable_specs", {}).values():
+            if spec.variable_type == "state_variable" and spec.mtg_backed and ds.has(spec.name):
+                ds.write_mtg(spec)
 
     def _refresh_from_bio_scale(self) -> None:
-        """Re-map biological-scale MTG properties to solver node/edge arrays.
+        """
+        Re-read the declared parameters with an MTG scale from the MTG, before each graph-system solve, so that
+        parameters updated on the MTG by other components (e.g. K_axial by a growth model) are seen.
 
-        Called at the start of each graph-system solve so that parameters
-        updated by other model components at the biological scale (e.g.
-        K_axial updated at SubOrgan scale by a growth model) are reflected
-        in the solver arrays used during snapshotting.
-
-        Only ``parameter`` fields are refreshed.  State variables and inputs
-        that are computed by rate laws or other Choregrapher steps must NOT
-        be overwritten here — their props values are set by those steps and
-        must remain intact until the solver reads them.
-
-        Only fields whose MTG property is present and fully populated are
-        refreshed; fields pre-set via set_node_property/set_edge_property
-        without a corresponding MTG property are left unchanged (the MTG
-        lookup returns None and the refresh is a no-op for that field).
+        State variables and inputs are not refreshed: their DataStructure values are set by steps and couplings.
+        Parameters whose MTG property is absent keep their DataStructure values.
         """
         ds = self.data_structure
-        if not hasattr(ds, "_mtg_to_node_array"):
+        if not hasattr(ds, "read_mtg"):
             return
-
-        # Build a set of parameter field names for fast lookup.
-        param_names: set[str] = {
-            f.name for f in fields(type(self))
-            if f.metadata.get("variable_type") == "parameter"
-        }
-
-        for name in getattr(self, "_bio_scale_node_fields", {}):
-            if name not in param_names:
+        for spec in getattr(self, "_variable_specs", {}).values():
+            if spec.variable_type != "parameter" or not spec.mtg_backed:
                 continue
-            arr = ds._mtg_to_node_array(name, scale=self._bio_scale_node_fields[name])
-            if arr is None:
-                continue
-            ds.set_node_property(name, arr)
-
-        if not hasattr(ds, "_mtg_to_edge_array"):
-            return
-        for name, convention in getattr(self, "_bio_scale_edge_fields", {}).items():
-            if name not in param_names:
-                continue
-            arr = ds._mtg_to_edge_array(name, convention=convention)
-            if arr is None:
-                continue
-            ds.set_edge_property(name, arr)
+            values = ds.read_mtg(spec)
+            if values is not None:
+                ds.set(spec.name, values)

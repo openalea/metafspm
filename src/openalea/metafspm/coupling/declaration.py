@@ -237,6 +237,9 @@ def resolve_declaration(f, ds) -> Optional[VariableSpec]:
         if mapping == "mean" and common["variable_type"] == "state_variable":
             raise DeclarationError(f"'{f.name}' is a state variable with edge mapping 'mean': it could not be "
                                    "written back (no single owner), use 'child' or 'parent'")
+        if scale_location != "node" and common["variable_type"] == "state_variable":
+            raise DeclarationError(f"'{f.name}' is an edge state variable at scale {scale_names(ds)[scale]}, coarser "
+                                   "than the nodes: several edges would write the same vertex")
         return VariableSpec(location="edge", scale=scale, mapping=mapping, weight=weight, **common)
 
     if location == scale_location:
@@ -259,6 +262,10 @@ def resolve_declaration(f, ds) -> Optional[VariableSpec]:
                                f"mapping must be one of {allowed}, got '{mapping}'")
     if mapping == "weighted_mean" and weight is None:
         raise DeclarationError(f"'{f.name}': mapping 'weighted_mean' needs weight=")
+    if mapping == "sum" and common["variable_type"] == "state_variable":
+        raise DeclarationError(f"'{f.name}' is a state variable summed from scale {scale_names(ds)[scale]} to "
+                               f"{location}: it could not be written back to the finer scale, store it at its own "
+                               f"scale (scale={location})")
     return VariableSpec(location=location, scale=scale, mapping=mapping, weight=weight, **common)
 
 

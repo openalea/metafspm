@@ -711,10 +711,6 @@ def _invoke_graph_system(self, method_name: str) -> None:
     # ── Inject results ────────────────────────────────────────────────────────
     builder.inject_result(packed, spec)
 
-    # ── Write biological-scale fields back to the MTG ─────────────────────────
-    if hasattr(self, "write_back_to_mtg"):
-        self.write_back_to_mtg()
-
     # ── Write output-block results ─────────────────────────────────────────────
     n  = self._graph_view.n_nodes
     ds = _live_ds(self)
