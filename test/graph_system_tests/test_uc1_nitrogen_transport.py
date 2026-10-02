@@ -641,13 +641,14 @@ def test_uc1_stepinit_and_graph_system_via_choregrapher():
     in priority order: the three schedule_as="axial" graph systems first, then the @rate, then the five
     schedule_as="state" graph systems (asserted below, so that the test documents the actual order).
 
-    With a uniform concentration and no is_root flag, the axial systems leave the concentration uniform (the
-    Dirichlet condition is inactive without is_root), so radial_solute_input = k_radial * (c_ext - c0).
+    With a uniform concentration and no node flagged is_root, the axial systems leave the concentration uniform
+    (the Dirichlet condition selects no node), so radial_solute_input = k_radial * (c_ext - c0).
     """
     ds   = _make_ds()
     n, e = ds.n_nodes(), ds.n_edges()
     c0   = 0.3
     ds.set_node_property("concentration", np.full(n, c0))
+    ds.set_node_property("is_root", np.zeros(n))   # explicit: a missing filter variable raises (DS11)
 
     model          = NitrogenAxialTransport(data_structure=ds)
     model.k_radial = 0.2

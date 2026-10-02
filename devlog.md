@@ -915,3 +915,36 @@ Per-file counts:
   - declared outputs without warnings;
   - grid inference and an unmatched shape raising.
 - **Suite:** 570 passed, same 10 warnings. CHANGELOG, plan and note updated. Not committed yet.
+
+---
+
+## 2026-10-02 (later): 1d committed (`bf008e3`); step 1e implemented (validation, no silent zeros)
+
+- **`VariableStoreMixin.validate_variables(strict=False)`** backs `MPGDataStructure.validate` and the new `ArrayDataStructure.validate`. It reports, all at once:
+  - shape mismatches with the location;
+  - dangling or cyclic aliases;
+  - derived variables with missing or moved sources, or at the wrong location.
+- **`strict=True`** recomputes each up-to-date derived variable (`_derived_values`, split out of `_compute_derived`) and compares it with the stored values. It detects writes through views without any checksum.
+- **Where validation runs:**
+  - at the end of `declare_data_and_couple_components`, once per distinct DataStructure;
+  - in `couplability_problems` / `assert_component_couplable` when given `data_structure=` (plus declarations that do not resolve).
+- **No silent zeros:**
+  - `_read_array` raises `KeyError`, naming the component and the registered variables;
+  - `_type_mask` raises on a missing filter variable;
+  - `{field}_amount` is registered at 0 before the first integrated solve.
+- **Boundary conditions:** `@boundary_condition("edge")` raises `NotImplementedError`, and other non-node locations raise `ValueError`.
+- **`MPGDataStructure`** infers `from_scale` from the populated graph.
+  - It cannot be built on an unpopulated graph anyway: `vertex_id` does not exist yet, which predates 1e.
+  - So the `update_topology` error is a safeguard, and its test now clears `from_scale` by hand.
+- **Tests that relied on the silent paths, made explicit:**
+  - two UC1 tests (`test_uc1_stepinit_and_graph_system_via_choregrapher`, `test_rate_output_lands_in_the_data_structure`) used the `is_root` filter without registering it, so the Dirichlet condition was silently inactive. They now register `is_root = 0` everywhere, with the same physics and the same expected values;
+  - the `from_scale` test is adjusted as above, plus a new inference test.
+- **Tests:** new `test/data_api_tests/test_validation.py`, 7 tests:
+  - clean validation, normal and strict, on MPG and grid;
+  - every inconsistency reported in one error;
+  - strict detection of a write through a view, and `mark_written`;
+  - missing graph variable;
+  - missing filter;
+  - edge BC rejection;
+  - couplability with a DataStructure.
+- **Suite:** 578 passed, same 10 warnings. CHANGELOG, note and plan updated. Not committed yet.

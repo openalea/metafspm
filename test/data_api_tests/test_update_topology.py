@@ -153,18 +153,32 @@ def test_mpg_update_topology_keeps_edge_properties():
 
 
 def test_mpg_update_topology_requires_from_scale():
-    """AttributeError is raised when from_scale was not set at construction.
+    """AttributeError is raised when from_scale is unknown.
 
     from_scale tells update_topology() which biological scale to repopulate
     from.  Without it the method cannot safely delegate to repopulate_graph().
+    It is inferred whenever the DataStructure can be built (the graph must be
+    populated), so this guard is defensive: the test clears it by hand.
     """
     g, _ = generate_simple_mpg_seedling()
     g.populate_graph(g.scales.SubOrgan)
     g.convert_properties_to_arraydict()
-    ds = MPGDataStructure(g)  # from_scale intentionally omitted
+    ds = MPGDataStructure(g)
+    ds._from_scale = None
 
     with pytest.raises(AttributeError, match="from_scale"):
         ds.update_topology()
+
+
+def test_mpg_from_scale_is_inferred_from_the_populated_graph():
+    g, _ = generate_simple_mpg_seedling()
+    g.populate_graph(g.scales.SubOrgan)
+    g.convert_properties_to_arraydict()
+    ds = MPGDataStructure(g)  # from_scale omitted
+    assert ds._from_scale == g.scales.SubOrgan
+    n = ds.n_nodes()
+    ds.update_topology()
+    assert ds.n_nodes() == n
 
 
 def test_mpg_update_topology_graph_view_reflects_new_topology():
