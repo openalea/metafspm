@@ -23,6 +23,7 @@ These are the conventions that every component, translator and DataStructure fol
   - Periodic axes (`periodic=`) add wrap faces from the last cell to the first.
   - Outer faces are not edges, so there is no flux unless a boundary set says otherwise.
 - **Geometric factor.** `face_area` and `face_distance` are edge variables. A face flux reads `K · face_area / face_distance · (Bᵀc)`, and a cell balance divides by `cell_volume()`.
+- **Graph systems on grids.** The same decorators apply. Cell arrays are seen flat (C order) by the equations and written back on the cells. Boundary layers are boundary sets on `layer_mask(...)`.
 
 ## Locations
 

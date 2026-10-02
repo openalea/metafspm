@@ -1269,3 +1269,25 @@ Per-file counts:
   - `locate` defaults;
   - edge declarations on grids.
 - **Suite:** 652 passed, same 10 warnings. No open question: 3c committed, 3d starts.
+
+---
+
+## 2026-10-02 (later): 3c committed (`ceb6e2f`); step 3d implemented (graph systems on grids), so step 3 is complete
+
+- **Builder:**
+  - `_read_array` flattens multi-dimensional arrays (C order);
+  - `_snapshot` treats `"cell"` as nodes;
+  - `_Restriction.scatter` writes through a flat view;
+  - where-masks and boundary-set masks may be cell masks (boundary-set masks are defined at `"cell"` on grids);
+  - previous and saved fields are flattened;
+  - new unknowns and graph outputs at "node" are registered at `"cell"` on grids (`_entity_location`).
+- **`VariableStoreMixin._write`** reshapes a flat array of the right size onto a multi-dimensional variable.
+- **New `test/graph_system_tests/test_grid_graph_systems.py`**, 5 tests, with Fickian diffusion (`D · face_area / face_distance · Bᵀc` per face, balance divided by `cell_volume`, implicit Euler through `previous()`) on an anisotropic 4×3×5 grid:
+  - it matches the direct sparse solve of `(I − dt·D·L)c = c_old + dt·s`, within the Newton tolerance;
+  - a groundwater Dirichlet layer as a boundary set matches the direct solve with replaced rows;
+  - a pot conserves mass (outer faces are not edges);
+  - a frozen top layer through `where="active"` on cells;
+  - periodic wrap faces carry flux and conserve mass.
+- **Plan:** DS1 ticked (MultiGrid later).
+- **Suite:** 657 passed, same 10 warnings.
+- **Next:** §7 step 4 (DS10 sub-stepping and the adaptive loop, DS4 sync policy, DS9 solve-time views, DS12 typed variables) needs its design note first.

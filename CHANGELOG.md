@@ -18,6 +18,14 @@ The flat modules used before the 2026 restructure have been removed. No compatib
 | `openalea.metafspm.component.Model`, `declare` | `openalea.metafspm.coupling.component.Component` / `FunctionalComponent`, `declare` |
 | `openalea.metafspm.specializer` | `openalea.metafspm.solve.specializer` |
 
+### Graph systems on grids (step 3d)
+
+- **`@graph_system` solves on `ArrayDataStructure`s.**
+  - Cell variables are flattened for the solve (C order) and written back on the cells, edge variables live on the faces, and graph outputs at "node" are cell variables.
+  - Masks and boundary sets on cells (e.g. `boundary_set(select=lambda ds: ds.layer_mask(z=-1), kind="dirichlet", ...)`) work as on plant graphs.
+  - `where=` takes a cell mask.
+- **Flat writes.** `DataStructure.set()` accepts a flat array for a grid variable of the same size.
+
 ### Grid topology (step 3c)
 
 - **`ArrayDataStructure` has a graph topology** (DS1, D1): cells are nodes (flat C order), faces between adjacent cells are edges, axis by axis, oriented towards increasing coordinates (`B[lower, e] = +1`).
