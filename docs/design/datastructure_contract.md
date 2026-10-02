@@ -1,6 +1,6 @@
 # Design note: the DataStructure variable contract (step 1)
 
-Status: **under review**. N1–N5 are agreed (2026-10-02). 1a done (`4d1353d`), 1b done. It covers step 1 of `devplan_datastructures.md` §7: DS3 (locations and scale mapping), DS17 (derived variables resolved at read), DS5 (output locations), DS11 (validation) and DS16 (conventions).
+Status: **under review**. N1–N5 are agreed (2026-10-02). 1a done (`4d1353d`), 1b done (`15f8976`), 1c done. It covers step 1 of `devplan_datastructures.md` §7: DS3 (locations and scale mapping), DS17 (derived variables resolved at read), DS5 (output locations), DS11 (validation) and DS16 (conventions).
 Branch `data_structure_api`, written against `1bf8356`. Code starts only after this note is agreed. The open points are in §8.
 
 Decisions this note builds on: D2 (split `scale=` into location / scale / mapping), D3 (MTG optional, write state variables after every call), D8 (identity through `entity_ids`), D9 option A (defaults from `state_variable_type`), D10 (derived variables lazy at read).
@@ -119,6 +119,13 @@ total_N:       float = state_variable(..., location="scalar")
 - **Views:** a view returned by `get` on a derived variable is up to date **at the time of the `get`**. Code holding a view across another component's writes must call `get` again. The Functor and the snapshot already call `get` at every step and every solve.
 - **Unsupported:** writing through a view, `ds.get(x)[...] = v`, does not bump `x`'s counter, so variables derived from `x` would stay stale. This is documented (DS16), and `validate(strict=True)` (§6) detects it in tests by comparing a checksum of each source with the one recorded at the last derivation.
 - A variable derived from another DataStructure (the soil, through the Coupler) is not concerned: the Coupler writes with `set`.
+- **Measured (1c),** on a 20 000-entry DataStructure:
+  - `get` of a plain variable: 0.3 µs;
+  - `get` of an up-to-date derived variable: 2.2 µs;
+  - `get` at the end of an up-to-date 10-deep chain: 8.8 µs;
+  - recomputation of a stale two-source derived variable: 23 µs.
+- **Escape hatch:** `mark_written(name)` declares a write made through a view.
+- **Consequence for observers:** a derived input read after other components ran shows its current value, not the one its receiver last used. One line of the scene contract anchor encoded the old timing; it was updated, and every computed value is unchanged.
 
 ## 5. Output locations (DS5)
 

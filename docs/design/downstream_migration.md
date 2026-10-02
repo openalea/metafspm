@@ -90,7 +90,7 @@ class GrassBRIDGES(CompositeModel):
 
 - **Coupling:**
   - identity links need nothing;
-  - aliases and conversions become DataStructure aliases and derived variables, refreshed before each receiver's step;
+  - aliases and conversions become DataStructure aliases and derived variables. Derived variables are recomputed when read after a source changed, and are read-only;
   - `mtg_to_arraydict` and the "convert before coupling" ordering constraint are gone.
 - **Translator:** YAML files load unchanged. A Python translator (`translator = Translator().link(...)` in a `.py` module) adds live `scales.*` references, `aggregation=` / `weight=` for scale changes, and `formula=` (Q4b). Keep identity links written explicitly for readability (Q26). String factors are parsed arithmetic; `eval` is gone.
 - **Soil exchange:**

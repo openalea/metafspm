@@ -382,7 +382,7 @@ These are done: in-place writes, aliases, derived variables, scale operators (su
 
 ## 7. Suggested order
 
-1. **Contract:** DS3 (Location, with scale locations for coarse fields) + DS17 (derived at read) + DS5 (output locations) + DS11 (validation) + DS16 (conventions). Design note: `docs/design/datastructure_contract.md` (N1–N5 agreed). Progress: **1a done** (`4d1353d`), **1b done** (2026-10-02); 1c–1f next.
+1. **Contract:** DS3 (Location, with scale locations for coarse fields) + DS17 (derived at read) + DS5 (output locations) + DS11 (validation) + DS16 (conventions). Design note: `docs/design/datastructure_contract.md` (N1–N5 agreed). Progress: **1a done** (`4d1353d`), **1b done** (`15f8976`), **1c done** (2026-10-02); 1d–1f next.
 2. **Multiscale topology and boundaries:** DS19 (StructuralComponent contract) + DS20 (repartition, active mask) + DS21 (active subgraph) + DS8 (assembled graph: anatomies + wiring rules, real anatomy UC3) + DS2 (traversal) + DS6 (boundary sets, validated on UC5 below).
 3. **Cross-scale coupling and grids:** DS18 (mappings, filtered broadcast, defaults) + DS1 (grid topology).
 4. **Time and data:** DS10 (sub-stepping, adaptive loop, `previous(at="step")`) + DS4 (sync) + DS9 (solve-time views) + DS12 (typed variables).

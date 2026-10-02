@@ -105,8 +105,9 @@ class Coupler:
         for soil_name, sources in self.to_soil.items():
             values = sum(float(factor) * np.asarray(self.plant_ds.get(source), dtype=float)
                          for source, factor in sources.items())
-            target = self.soil_ds.get(soil_name)
-            np.add.at(target.reshape(-1), self.cells, values)
+            total = np.array(self.soil_ds.get(soil_name), dtype=float)
+            np.add.at(total.reshape(-1), self.cells, values)
+            self.soil_ds.set(soil_name, total)   # through set(): variables derived from it see the write
 
     def pull(self) -> None:
         self._check_map()

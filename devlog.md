@@ -863,3 +863,33 @@ Per-file counts:
   Plus 2 resolver error cases.
 - **Suite:** 555 passed, the 9 slow scene tests included, same 10 warnings. CHANGELOG, plan progress and design note status are updated.
 - Not committed yet.
+
+---
+
+## 2026-10-02 (later): 1b committed (`15f8976`); step 1c implemented (derived variables resolved at read)
+
+- **`VariableStoreMixin`:**
+  - per-variable write counters (`write_count`, `mark_written`), bumped by `register`, `set` (through `_write`) and re-registration at growth;
+  - each derived spec stores the source stamps of its last computation;
+  - `get()` on a derived variable recomputes the stale ones in dependency order, in place (`_update_derived`);
+  - `refresh()` forces a recomputation; `is_stale()` is new;
+  - `set()` and the legacy graph setters raise on derived variables (N3);
+  - internal recomputation reads sources raw, so it never recurses.
+- **`pull_available_inputs`** now only reads its derived inputs (a no-op when fresh).
+- **Coupler `push`:** writes through `set` instead of `np.add.at` on a view, so derived variables see soil updates.
+- **One contract expectation changed, with care.** `test_ds_scene_contract.py::test_two_cycles_regression_anchor` asserted `nitrogen_status == 4.103` after the run. That was the value PlantCarbon last refreshed, before PlantNitrogen's later update of `amino_acids`. Resolved at read (D10), it is now the current `amino_acids + 0.5·nitrate`.
+  - The assertion now checks that relation, with a comment.
+  - Every computed value of the anchor is unchanged (verified with the line skipped), including `hexose`, which consumes `nitrogen_status = 4.103`.
+- **Tests:** new `test/data_api_tests/test_lazy_derived.py`, 10 tests:
+  - stale then fresh, with the same view;
+  - no recomputation without writes (call counts);
+  - refresh forcing;
+  - chains;
+  - aliases both ways;
+  - read-only, including the graph setters;
+  - writes through views needing `mark_written`;
+  - counters;
+  - export reading the current value.
+- **Benchmark (20 000 entries):** `get` of a plain variable 0.3 µs, of a fresh derived variable 2.2 µs, of a 10-deep fresh chain 8.8 µs; stale two-source recomputation 23 µs. Recorded in the design note.
+- **Docs:** CHANGELOG, design note §4, and `downstream_migration.md` (derived variables now "recomputed when read, read-only").
+- **Suite:** 565 passed, same 10 warnings. Not committed yet.

@@ -62,6 +62,14 @@ The flat modules used before the 2026 restructure have been removed. No compatib
   Writing a `parent`-mapped edge state where several edges share a parent raises.
 - The DataStructure scale operators accept `child` / `parent` next to `proximal` / `distal`.
 
+### Derived variables resolved at read (step 1c)
+
+- **Per-variable write counters.** `register`, `set` and topology changes bump them; `write_count(name)` reads them.
+- **Recomputed when read.** A derived variable is recomputed at `get()` when one of its sources was written since its last computation, in dependency order and in place, so earlier views stay valid. Before, it was recomputed only by the receiver's `pull_available_inputs`, at the start of its call. `refresh()` still forces a recomputation, and `is_stale(name)` tells whether `get` would recompute.
+- **Read-only (N3).** `set()`, or `set_node_property` / `set_edge_property`, on a derived variable raises `ValueError`.
+- **Writes through views.** `ds.get(x)[...] = v` is not seen by the variables derived from `x`. Call `ds.mark_written(x)` after such a write. The Coupler's `push` now writes through `set`.
+- **Observable change.** Reading a derived input after other components ran now gives its current value, not the value its receiver last used. The scene contract anchor (`test_ds_scene_contract.py`) is updated accordingly, and every computed value is unchanged.
+
 ### Scene and coupling wrappers
 
 - `CompositeModel.open_or_create_translator(translator_path)` now takes the **full path of the translator YAML file**. It no longer takes a directory to which `/coupling_translator.yaml` was appended.
