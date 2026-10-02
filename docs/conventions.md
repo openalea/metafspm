@@ -100,6 +100,15 @@ Declarations that cannot be written back raise when the component is created: a 
 - **`previous(name)`:** inside a graph-system solve, the value of the unknown at the start of that solve.
 - **`on_grow`:** the value of entities created by growth. `"default"` gives the declared default; `"inherit"` gives the nearest pre-existing ancestor's value. The repartition of amounts at segmentation comes with DS20.
 
+## Anatomy mode
+
+- **Construction.** `MPGDataStructure(g, from_scale=scales.SubOrgan, nodes="Compartment", wiring=rules)` solves on the anatomies.
+  - Nodes are the Compartments created under each SubOrgan (`add_component_with_topo(compartment_anchor, suborgan)`).
+  - Edges are the anatomy Connections plus the junctions that `wiring` creates between linked SubOrgans.
+  - Both are keyed by their own vids.
+- **Locations.** `"SubOrgan"` and coarser scales are coarse locations; `scale=scales.Compartment` declarations read the Compartments' properties.
+- **Growth.** Only the junctions of changed SubOrgans are rewired. A new Compartment inherits from the same-label Compartment upstream.
+
 ## Boundary sets
 
 ```python

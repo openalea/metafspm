@@ -421,7 +421,7 @@ class VariableStoreMixin:
         return dict(self.__dict__.get("_derived", {}))
 
     def derive(self, name: str, sources=None, formula=None, location: str = None, aggregation: str = None,
-               weight: str = None, default: float = 0., on_grow: str = "default") -> np.ndarray:
+               weight: str = None, default: float = 0., on_grow: str = "default", target: str = None) -> np.ndarray:
         """
         Declare *name* as derived from other variables and compute it.
 
@@ -430,6 +430,8 @@ class VariableStoreMixin:
         location:    of *name* (default: the sources' location). A different location requires an
                      *aggregation* understood by the data structure (e.g. "sum", "mean", "weighted_mean",
                      "broadcast", "proximal", "distal"); *weight* names the weights of "weighted_mean".
+        target:      a mask at *location*: the derived values are given on its entities only, the others getting
+                     *default* (e.g. a SubOrgan concentration broadcast to the symplastic Compartments only).
         The value is recomputed in place by refresh(); dependencies on other derived variables are refreshed first.
         """
         if not sources:
@@ -448,9 +450,11 @@ class VariableStoreMixin:
         if location != source_location and aggregation is None:
             raise ValueError(f"derived variable '{name}' at {location} from {source_location} needs an aggregation")
         derived = self.__dict__.setdefault("_derived", {})
+        if target is not None and not self.has_mask(target):
+            raise KeyError(f"derived variable '{name}': target mask '{target}' is not defined")
         spec = {"sources": dict(sources) if formula is None else tuple(names), "formula": formula,
                 "source_location": source_location, "location": location,
-                "aggregation": aggregation, "weight": weight}
+                "aggregation": aggregation, "weight": weight, "target": target, "default": float(default)}
         previous = derived.get(name)
         derived[name] = spec
         try:
@@ -497,7 +501,11 @@ class VariableStoreMixin:
         return list(spec["sources"]) + ([spec["weight"]] if spec["weight"] else [])
 
     def _source_stamps(self, target: str) -> dict:
-        return {self._resolve(source): self.write_count(source) for source in self._derived_sources(target)}
+        stamps = {self._resolve(source): self.write_count(source) for source in self._derived_sources(target)}
+        mask = self.__dict__["_derived"][target].get("target")
+        if mask is not None:
+            stamps[("mask", mask)] = self.mask_version(mask)
+        return stamps
 
     def _compute_derived(self, target: str) -> None:
         """Recompute derived variable *target* in place from its sources' current values."""
@@ -521,6 +529,8 @@ class VariableStoreMixin:
         if spec["location"] != spec["source_location"]:
             weights = value(spec["weight"]) if spec["weight"] else None
             values = self._map(values, spec["source_location"], spec["location"], spec["aggregation"], weights)
+        if spec.get("target") is not None:
+            values = np.where(self.mask(spec["target"]), values, spec["default"])
         return values
 
     # ── Entity identity and traversal (design note structure_and_boundaries §2) ────────
@@ -1019,7 +1029,7 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
     (organ emergence, pruning, grafting) to rebuild B and index maps.
     """
 
-    def __init__(self, mtg, from_scale: int = None):
+    def __init__(self, mtg, from_scale: int = None, nodes: str = None, wiring: list = None):
         """
         Parameters
         ----------
@@ -1034,7 +1044,24 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
             topology (e.g. g.scales.SubOrgan). Inferred from the populated
             graph when omitted; required for an unpopulated graph, whose
             update_topology() would otherwise not know what to populate.
+        nodes : "Compartment", optional
+            Anatomy mode (design note structure_and_boundaries §7, DS8): the nodes are the Compartments of the
+            anatomies held below the from_scale vertices, keyed by their own vid; the edges are every Connection
+            (anatomy edges and junctions), keyed by their own vid. from_scale is then required, and the from_scale
+            name (e.g. "SubOrgan") becomes a coarse location. Default: one node per from_scale vertex.
+        wiring : list, optional
+            Anatomy mode: the junction rules between the anatomies of linked vertices (MPG.wire_junctions). They are
+            applied at construction when the MPG has no junction yet, and re-applied incrementally by
+            update_topology() to the vertices whose neighbourhood or anatomy changed.
         """
+        if nodes not in (None, "Compartment"):
+            raise ValueError(f"nodes must be None or 'Compartment', got '{nodes}'")
+        self._anatomy = nodes == "Compartment"
+        if self._anatomy and from_scale is None:
+            raise ValueError("anatomy mode (nodes='Compartment') needs from_scale, the scale owning the anatomies")
+        self._wiring = list(wiring or [])
+        if self._anatomy and self._wiring and not mtg.junction_vids():
+            mtg.wire_junctions(from_scale, self._wiring)
         # MTGDataStructure.__init__(mtg, scale) not called: MPGDataStructure
         # always operates at Compartment/Connection — no single fixed scale.
         self._mtg        = mtg
@@ -1049,6 +1076,8 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
         if self._from_scale is None:
             # Inferred from the populated graph: the scale of the vertices the Compartments stand for (DS11)
             self._from_scale = self._node_scale()
+        if self._anatomy:
+            self._anatomy_signature = self._anatomy_signatures()
 
     # ── Index map ─────────────────────────────────────────────────────────────
 
@@ -1071,10 +1100,14 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
             self._bio_edge_a_idx   = np.empty(0, dtype=np.int64)
             self._bio_edge_b_idx   = np.empty(0, dtype=np.int64)
             return
-        raw = self._mtg.array_filtering(
-            "vertex_id", filter_in={"scale": self._mtg.scales.Compartment}
-        )
-        svids = [int(v) for v in raw]
+        if getattr(self, "_anatomy", False):
+            owners = self._mtg.compartments_by_owner(self._from_scale)
+            svids = sorted(nv for comps in owners.values() for nv in comps)
+        else:
+            raw = self._mtg.array_filtering(
+                "vertex_id", filter_in={"scale": self._mtg.scales.Compartment}
+            )
+            svids = [int(v) for v in raw]
         self._idx_to_vid = svids
         self._vid_to_idx = {v: i for i, v in enumerate(svids)}
         self._build_bio_index_map()
@@ -1263,8 +1296,9 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
         if node_scale is None:
             return []
         scales = self._mtg.scales
+        limit = self._from_scale + 1 if getattr(self, "_anatomy", False) else node_scale
         return [name for name, value in vars(type(scales)).items()
-                if isinstance(value, int) and not name.startswith("_") and 0 < value < node_scale]
+                if isinstance(value, int) and not name.startswith("_") and 0 < value < limit]
 
     def _var_stores(self) -> dict:
         stores = {"node": self._node_data, "edge": self._edge_data, "scalar": self._scalar_data}
@@ -1294,16 +1328,35 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
         cache = self.__dict__.setdefault("_membership_cache", {})
         if scale_name not in cache:
             scale = getattr(self._mtg.scales, scale_name)
-            owners = np.array([self._mtg.complex_at_scale(int(v), scale) for v in self._idx_to_vid], dtype=np.int64)
+            owners = np.array([self._owner_at(int(v), scale) for v in self._idx_to_vid], dtype=np.int64)
             entities = np.unique(owners)
             cache[scale_name] = (entities, np.searchsorted(entities, owners))
         return cache[scale_name]
 
+    def _owner_at(self, vid: int, scale: int) -> int:
+        """Vertex at *scale* owning node *vid*: its complex, or in anatomy mode its MTG parent and then its complex."""
+        if getattr(self, "_anatomy", False):
+            owner = int(self._mtg.parent(vid))
+            return owner if scale == self._from_scale else int(self._mtg.complex_at_scale(owner, scale))
+        return int(self._mtg.complex_at_scale(vid, scale))
+
+    def _connection_vids(self) -> np.ndarray:
+        """Connection vertices carrying endpoints, ascending (the order of edges())."""
+        scale_prop, n_id_a = self._mtg.property("scale"), self._mtg.property("n_id_a")
+        connections = scale_prop.order[:scale_prop.size][scale_prop.values_array() == self._mtg.scales.Connection]
+        keys = n_id_a.keys_array() if hasattr(n_id_a, "keys_array") else np.array(sorted(n_id_a), dtype=np.int64)
+        return np.intersect1d(np.asarray(connections, dtype=np.int64), np.asarray(keys, dtype=np.int64))
+
     def entity_ids(self, location: str) -> np.ndarray:
-        """Ids of the entities of *location*: node vids, edge child vids, or vids at a coarser scale (sorted)."""
+        """
+        Ids of the entities of *location*: node vids; edge child vids (Connection vids in anatomy mode); or vids at a
+        coarser scale (sorted).
+        """
         if location == "node":
             return np.array(self._idx_to_vid, dtype=np.int64)
         if location == "edge":
+            if getattr(self, "_anatomy", False):
+                return self._connection_vids()
             return np.array([b for _, b in self.edges()], dtype=np.int64)
         if location in self._coarse_scale_names():
             return self._membership(location)[0]
@@ -1374,7 +1427,7 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
         if scale > self._node_scale():
             raise ValueError(f"A property at scale {scale} is finer than the nodes (scale {self._node_scale()}): "
                              "downscaling needs an explicit scale operator.")
-        return [int(self._mtg.complex_at_scale(int(v), scale)) for v in vids]
+        return [self._owner_at(int(v), scale) for v in vids]
 
     def _mtg_values(self, name: str, vids, scale=None, fast_idx=None):
         """
@@ -1598,7 +1651,10 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
             keys = self.entity_ids(location)
             old[location] = {name: dict(zip(keys, arr)) for name, arr in store.items()}
 
-        self._mtg.repopulate_graph(self._from_scale)
+        if self._anatomy:
+            self._rewire_junctions()
+        else:
+            self._mtg.repopulate_graph(self._from_scale)
         self.invalidate_topology()
         self._node_data.clear()
         self._edge_data.clear()
@@ -1614,6 +1670,64 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
                 self.register(name, values, location=location, default=policy["default"], on_grow=policy["on_grow"])
         self._bump_version()
 
+    # ── Anatomy mode: incremental junction rewiring (design note structure_and_boundaries §7, D12) ──
+
+    def _anatomy_signatures(self) -> dict:
+        """{from_scale vid: (linked parent, anatomy)}, anatomy = its Compartments with their rule properties."""
+        g, from_scale = self._mtg, self._from_scale
+        valid = g._valid_vids_at(from_scale)
+        owners = g.compartments_by_owner(from_scale)
+        names = ["label"] + sorted({rule["ordering"] for rule in self._wiring
+                                    if isinstance(rule, dict) and rule.get("ordering")})
+        props = [g.properties().get(name, {}) for name in names]
+        signatures = {}
+        for vid in valid:
+            anatomy = tuple(sorted((nv,) + tuple(prop.get(nv) for prop in props) for nv in owners.get(vid, [])))
+            signatures[vid] = (g.linked_parent(vid, from_scale, valid), anatomy)
+        return signatures
+
+    def _rewire_junctions(self) -> None:
+        """
+        Rewire only the junctions that changed: those of a vertex that is new, has another linked parent, or whose
+        anatomy (or its parent's) changed. Every other Connection, with its vid and values, is kept (D12).
+        """
+        g, old = self._mtg, self._anatomy_signature
+        new = self._anatomy_signatures()
+
+        def anatomy(signatures, vid):
+            return signatures[vid][1] if vid in signatures else None
+
+        rewire = {vid for vid, (parent, own) in new.items()
+                  if vid not in old or old[vid][0] != parent or old[vid][1] != own
+                  or (parent is not None and anatomy(old, parent) != anatomy(new, parent))}
+        alive = {nv for comps in g.compartments_by_owner(self._from_scale).values() for nv in comps}
+        n_id_a, n_id_b = g.property("n_id_a"), g.property("n_id_b")
+        stale = [ev for ev in g.junction_vids()
+                 if int(n_id_a[ev]) not in alive or int(n_id_b[ev]) not in alive
+                 or int(g.parent(int(n_id_b[ev]))) in rewire]
+        g.remove_connections(stale)
+        g.wire_junctions(self._from_scale, self._wiring, children=sorted(rewire))
+        self._anatomy_signature = new
+        self.rewired = sorted(rewire)   # introspection: the vertices whose junctions were rebuilt
+
+    def _inherited_compartment(self, key: int, values_by_key: dict):
+        """
+        Anatomy mode: the Compartment a new Compartment inherits from, the first one with the same label in the
+        anatomy of its owner's linked ancestors; None when there is none (edges, or no such Compartment).
+        """
+        g = self._mtg
+        if g.scale(key) != g.scales.Compartment:
+            return None
+        label = g.property("label").get(key)
+        owners = g.compartments_by_owner(self._from_scale)
+        vertex = g.linked_parent(int(g.parent(key)), self._from_scale)
+        while vertex is not None:
+            for nv in owners.get(vertex, []):
+                if nv in values_by_key and g.property("label").get(nv) == label:
+                    return nv
+            vertex = g.linked_parent(vertex, self._from_scale)
+        return None
+
     def _carry_over(self, values_by_key: dict, keys, policy: dict) -> np.ndarray:
         """Values for *keys* (vids): kept when known, else inherited from the nearest known ancestor or default."""
         out = np.empty(len(keys), dtype=np.float64)
@@ -1623,6 +1737,10 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
                 out[i] = values_by_key[key]
                 continue
             value = policy["default"]
+            if policy["on_grow"] == "inherit" and getattr(self, "_anatomy", False):
+                inherited = self._inherited_compartment(key, values_by_key)
+                out[i] = values_by_key[inherited] if inherited is not None else value
+                continue
             if policy["on_grow"] == "inherit":
                 ancestor = self._mtg.parent(key)
                 while ancestor is not None and int(ancestor) not in values_by_key:

@@ -199,7 +199,9 @@ def resolve_declaration(f, ds) -> Optional[VariableSpec]:
 
     scale = _scale_value(ds, raw_scale)
     scales = _scales_of(ds)
-    if scale in (scales.Compartment, scales.Connection):
+    if scale == scales.Compartment and node_scale(ds) == scales.Compartment:
+        pass    # anatomy mode: the Compartments are the MTG vertices behind the nodes, their properties are read
+    elif scale in (scales.Compartment, scales.Connection):
         # Solver entities themselves: no MTG property behind them
         if location is None:
             location = "node" if scale == scales.Compartment else "edge"
