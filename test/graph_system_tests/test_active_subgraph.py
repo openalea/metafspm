@@ -181,7 +181,7 @@ def test_a_steady_connected_subgraph_with_an_anchor_solves():
 def test_a_steady_piece_without_anchor_raises_with_its_nodes():
     s, ds = _steady_ds(dead_vid=s_vid("root_segment2"))
     model = SteadyPotential(data_structure=ds)
-    with pytest.raises(ValueError, match=r"_steady: piece of \d+ nodes .* has no Dirichlet anchor"):
+    with pytest.raises(ValueError, match=r"_steady: piece of \d+ nodes .* has no Dirichlet or positive-weight Robin anchor"):
         model()
 
 

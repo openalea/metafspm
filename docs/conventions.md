@@ -100,6 +100,26 @@ Declarations that cannot be written back raise when the component is created: a 
 - **`previous(name)`:** inside a graph-system solve, the value of the unknown at the start of that solve.
 - **`on_grow`:** the value of entities created by growth. `"default"` gives the declared default; `"inherit"` gives the nearest pre-existing ancestor's value. The repartition of amounts at segmentation comes with DS20.
 
+## Boundary sets
+
+```python
+leaves = boundary_set(select=is_leaf, kind="robin", value="air_water_potential", weight="leaf_conductance")
+```
+
+- **Declared** in a graph-system class, and assembled by the framework in the field's residual:
+
+  | kind | residual term |
+  |---|---|
+  | `robin` | `+ w·(x − v)` |
+  | `dirichlet` | the row becomes `x − v` |
+  | `neumann` | `− v` (`v` is an inflow) |
+
+  With a user Jacobian, the framework adds the sets' terms.
+- **`select`** is a `{variable: values}` dict, a variable name (selects where it is > 0), or a callable. Membership follows its variables and the topology.
+- **Live values.** `value` and `weight` are read at each solve.
+- **Parameters of grown entities.** A parameter read from the MTG gets its value for new entities at the refresh before the next solve. Until then, masks built on it use its `on_grow` value.
+- **Hand-set boundary ports** (`_boundary_ports`) are deprecated.
+
 ## Structural components
 
 - A `StructuralComponent` edits the MPG through `self.mtg`. The MPG is the source of truth for structure.

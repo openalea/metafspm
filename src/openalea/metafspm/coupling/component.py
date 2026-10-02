@@ -381,7 +381,12 @@ class FunctionalComponent(DataStructureComponent):
             return None
         version = getattr(ds, "topology_version", None)
         if "_graph_view_cache" not in self.__dict__ or self.__dict__.get("_graph_view_version") != version:
-            self.__dict__["_graph_view_cache"] = ds.to_graph_view(boundary_ports=getattr(self, "_boundary_ports", ()))
+            ports = getattr(self, "_boundary_ports", ())
+            if ports:
+                import warnings
+                warnings.warn(f"{type(self).__name__}: boundary ports set by hand are deprecated, declare boundary "
+                              "sets in the graph system (boundary_set)", DeprecationWarning, stacklevel=2)
+            self.__dict__["_graph_view_cache"] = ds.to_graph_view(boundary_ports=ports)
             self.__dict__["_graph_view_version"] = version
         return self.__dict__["_graph_view_cache"]
 
