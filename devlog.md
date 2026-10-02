@@ -1389,3 +1389,49 @@ Per-file counts:
 - **Docs:** CHANGELOG, conventions (types and label names), migration guide (non-float variables), plan (DS12 ticked), note (step 4 complete).
 - **Suite:** 675 passed, same 10 warnings.
 - **Next:** §7 step 5 (DS13 per-instance scheduling, DS14 performance, including the `RecursionError` on long chains found in 4a, and DS15 persistence) needs its design note first.
+- **Your `devplan_scene_paralellization.md`:** questions A and B are answered in the file, below your text (no code changed, as you asked):
+  - **A:** traversal-dependent computations vectorise from the cached topology arrays: level-by-level accumulation and propagation, segmented scans along axes (rhizodep's `distance_from_tip` is a reverse cumulative sum per axis, checked read-only), pointer jumping, or sparse triangular solves. The cost is O(tree height) numpy calls, independent of the number of plants. Order-dependent sequential rules (allocation, segmentation while iterating) need a decide-then-apply reformulation, or numba.
+  - **B:** the MPG traversals (`pre/post_order_mpg`, `components_iter`, `complex_at_scale`, `populate_graph`'s link search) are Python loops or recursion over openalea.mtg dicts. Array mirrors (parent, complex, scale) would make them vectorised, and remove the `RecursionError` found in 4a.
+  - Also covered: implications for a population held in one MPG (heterogeneity as per-plant variables, one Coupler, DS13 becoming a smaller need).
+  - Proposed DS14a (tree kernels), DS14b (MPG array mirrors) and DS13 reconsidered, with questions PA1 (sequential allocation rules) and PA2 (start step 5 with a population prototype).
+- **Step 5 design note:** not drafted yet; it waits for PA1/PA2, which change its order and scope.
+
+---
+
+## 2026-10-02 (later): PA1–PA2 answered; step 5 design note drafted
+
+- **PA1:** vectorising the C supply is fine if the result is numerically the same. **PA2:** start step 5 with the population prototype, to opt out of the multiprocessing constraint.
+- **Read (not edited):** rhizodep's `calculating_supply_for_elongation` and `actual_growth_and_corresponding_respiration`.
+  - Each apex walks its ancestors until a volume budget is reached, with a fractional last segment, reading without depletion.
+  - Consumption is accumulated (`+=`) onto the supplying segments.
+  - So there is no visiting-order dependence, except floating-point rounding where windows overlap.
+- **New `docs/design/population_and_performance.md`:**
+  - 5a: MPG array mirrors (`topology_arrays()`: parent, complex, scale, edge type), with `populate_graph`, `wire_junctions` and the memberships vectorised and iterative orders, giving the same Compartments in the same order;
+  - 5b: tree kernels (`levels`, `depth`, `accumulate`, `axes`, `axis_scan`, and `path_window` in numba `prange`), bitwise identical to rhizodep's order for scans and windows;
+  - 5c: N plants in one MPG, one instance per component, one Coupler, an in-process soil, and benchmarks for N = 1 to 1000 with a decision point;
+  - 5d: DS13 reduced to per-class-object registration with per-instance binding;
+  - 5e: DS15 checkpoints (npz + JSON).
+- **Your parallelism question,** answered in §7 of the note: numba `prange` (multi-threaded compiled loops), numexpr, multi-threaded BLAS, `pypardiso` / `scikit-umfpack` for sparse direct solves, per-component block solves, GPU later. The scene's `OMP_NUM_THREADS = 1` per worker would become several threads per population process.
+- **Questions S1–S8:**
+  - S1: exactness of accumulated consumption;
+  - S2: target sizes, and anatomies;
+  - S3: numba as a dependency;
+  - S4: rebuilding the mirrors;
+  - S5: persistence format;
+  - S6: the prototype scene in one process;
+  - S7: rhizodep rules reimplemented in test helpers;
+  - S8: the order.
+- Not committed yet.
+- **Step 5 note, after your answers S1–S8:**
+  - **S1:** bitwise by emitting contributions in rhizodep's visiting order, with an `(k − 1)·ε` bound otherwise.
+  - **S2:** per-connected-component solves (`split="components"`), threaded, benchmarked against one system.
+  - **S5:** re-explained (what a checkpoint is; pickle versus npz + JSON).
+  - **S7:** a read-only survey of cnwgrass, adel and GRANAP gave a kernel catalogue of 12 patterns (chain scans with max, lagged and forward chain writes, cross-chain gathers, transform composition, clamped recurrences, budgeted group depletion, …).
+  - **Readability (your new question):** rules (no indices in models, named kernels, per-element opt-in), with before/after examples for `distance_from_tip` and the supply window.
+  - **New questions:** S9 (chains), S10 (whether geometry and turtle frames are in scope), S11 (the 5b scope).
+- **S9–S11 answered:**
+  - S9: chains declared by name on StructuralComponents;
+  - S10: geometry in scope, since `x1 … z2` position elements for soil and light;
+  - S11: only the prototype's kernels, plus what decides the API's generality, namely vector-valued values and a minimal `path_compose`.
+
+  The note is agreed and committed; 5a starts.
