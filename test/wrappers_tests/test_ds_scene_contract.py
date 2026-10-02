@@ -37,7 +37,10 @@ def test_two_cycles_regression_anchor(ds_in_process_scene):
     assert grid.get("DOC")[0, 0, 0] == pytest.approx(33.8)
     assert grid.get("DOC")[0, 0, 1] == pytest.approx(16.9)
     assert grid.get("C_hexose_soil")[0, 0, 0] == pytest.approx(33.8 / VOXEL_VOLUME)
-    assert _by_vid(plant, "nitrogen_status") == pytest.approx([4.103] * 3)
+    # PlantCarbon read nitrogen_status = 4.103 at its last step (pinned by hexose below). Derived inputs are
+    # resolved at read (D10), so read now it reflects PlantNitrogen's later update of amino_acids.
+    expected_status = [a + 0.5 * n for a, n in zip(_by_vid(plant, "amino_acids"), _by_vid(plant, "nitrate"))]
+    assert _by_vid(plant, "nitrogen_status") == pytest.approx(expected_status)
     assert _by_vid(plant, "hexose_exudation") == pytest.approx([0.1804] * 3)
     assert _by_vid(plant, "hexose") == pytest.approx([0.627703] * 3)
     assert _by_vid(plant, "amino_acids_exudation") == pytest.approx([0.46595] * 3)

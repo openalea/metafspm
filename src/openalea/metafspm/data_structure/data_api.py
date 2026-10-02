@@ -321,19 +321,47 @@ class VariableStoreMixin:
         return self._find(name)[0]
 
     def get(self, name: str) -> np.ndarray:
-        """Live view of a registered variable (aliases resolved)."""
+        """
+        Live view of a registered variable (aliases resolved). A derived variable is recomputed first if one of its
+        sources was written since its last computation (design note datastructure_contract §4, D10).
+        """
         location, store, target = self._find(name)
+        if target in self.__dict__.get("_derived", {}):
+            self._update_derived([target])
         return store[target]
 
     def set(self, name: str, values) -> None:
         """Write *values* in place into the registered variable *name* (broadcast allowed, shape checked)."""
         location, store, target = self._find(name)
+        if target in self.__dict__.get("_derived", {}):
+            raise ValueError(f"'{name}' is derived from {list(self._derived_sources(target))} and recomputed when "
+                             "read: write its sources instead")
+        self._write(store, target, values, name)
+
+    def _write(self, store, target: str, values, name: str = None) -> None:
         array = store[target]
         values = np.asarray(values, dtype=float)
         try:
             array[...] = np.broadcast_to(values, array.shape)
         except ValueError:
-            raise ValueError(f"Cannot write values of shape {values.shape} into '{name}' of shape {array.shape}.") from None
+            raise ValueError(f"Cannot write values of shape {values.shape} into '{name or target}' of shape "
+                             f"{array.shape}.") from None
+        self.mark_written(target)
+
+    # ── Write counters (design note datastructure_contract §4) ────────────────
+
+    def write_count(self, name: str) -> int:
+        """Number of writes of variable *name* (aliases resolved): bumped by register, set and topology changes."""
+        return self.__dict__.get("_writes", {}).get(self._resolve(name), 0)
+
+    def mark_written(self, name: str) -> None:
+        """
+        Record a write of *name*. set() does it; call it only after writing through a view (ds.get(x)[...] = v),
+        which is otherwise invisible to the variables derived from *name*.
+        """
+        writes = self.__dict__.setdefault("_writes", {})
+        target = self._resolve(name)
+        writes[target] = writes.get(target, 0) + 1
 
     def register(self, name: str, values=None, location: str = None, default: float = 0.,
                  on_grow: str = "default") -> np.ndarray:
@@ -361,6 +389,7 @@ class VariableStoreMixin:
             if other_location != location:
                 store.pop(name, None)
         stores[location][name] = array
+        self.mark_written(name)
         # Declaration metadata (scale, mapping, kind, ...) is kept across re-registrations (growth)
         self._variable_meta().setdefault(name, {}).update(default=float(default), on_grow=on_grow)
         self._bump_version()
@@ -463,23 +492,54 @@ class VariableStoreMixin:
             visit(name)
         return order
 
-    def refresh(self, name: str = None) -> None:
-        """Recompute derived variable *name* (and the derived variables it depends on), or all of them."""
+    def _derived_sources(self, target: str) -> list:
+        spec = self.__dict__["_derived"][target]
+        return list(spec["sources"]) + ([spec["weight"]] if spec["weight"] else [])
+
+    def _source_stamps(self, target: str) -> dict:
+        return {self._resolve(source): self.write_count(source) for source in self._derived_sources(target)}
+
+    def _compute_derived(self, target: str) -> None:
+        """Recompute derived variable *target* in place from its sources' current values."""
+        spec = self.__dict__["_derived"][target]
+
+        def value(source):
+            location, store, resolved = self._find(source)
+            return store[resolved]
+
+        if spec["formula"] is not None:
+            values = spec["formula"](*(value(source) for source in spec["sources"]))
+        else:
+            values = sum(float(factor) * value(source) for source, factor in spec["sources"].items())
+        values = np.asarray(values, dtype=float)
+        if spec["location"] != spec["source_location"]:
+            weights = value(spec["weight"]) if spec["weight"] else None
+            values = self._map(values, spec["source_location"], spec["location"], spec["aggregation"], weights)
+        location, store, _ = self._find(target)
+        self._write(store, target, values)
+        spec["stamps"] = self._source_stamps(target)
+
+    def _update_derived(self, targets, force: bool = False) -> None:
+        """Recompute the stale derived variables among *targets* and their derived sources, in dependency order."""
         derived = self.__dict__.get("_derived", {})
-        targets = None if name is None else [name]
+        for target in self._derivation_order(targets):
+            if force or derived[target].get("stamps") != self._source_stamps(target):
+                self._compute_derived(target)
+
+    def is_stale(self, name: str) -> bool:
+        """True when derived variable *name*, or a derived variable it depends on, would be recomputed at get()."""
+        derived = self.__dict__.get("_derived", {})
+        return any(derived[t].get("stamps") != self._source_stamps(t) for t in self._derivation_order([name]))
+
+    def refresh(self, name: str = None) -> None:
+        """
+        Recompute derived variable *name* (and the derived variables it depends on), or all of them, even when
+        they are up to date. get() already recomputes stale derived variables; refresh() forces it.
+        """
+        derived = self.__dict__.get("_derived", {})
         if name is not None and self._resolve(name) not in derived:
             raise KeyError(f"'{name}' is not a derived variable")
-        for target in self._derivation_order(targets):
-            spec = derived[target]
-            if spec["formula"] is not None:
-                values = spec["formula"](*(self.get(source) for source in spec["sources"]))
-            else:
-                values = sum(float(factor) * self.get(source) for source, factor in spec["sources"].items())
-            values = np.asarray(values, dtype=float)
-            if spec["location"] != spec["source_location"]:
-                weights = self.get(spec["weight"]) if spec["weight"] else None
-                values = self._map(values, spec["source_location"], spec["location"], spec["aggregation"], weights)
-            self.set(target, values)
+        self._update_derived(None if name is None else [name], force=True)
 
     def _map(self, values, from_location: str, to_location: str, aggregation: str, weights=None) -> np.ndarray:
         raise ValueError(f"{type(self).__name__} cannot map {from_location} to {to_location} ({aggregation})")
@@ -556,7 +616,9 @@ class VariableStoreMixin:
         if self.has(name):
             existing_location, store, target = self._find(name)
             if existing_location == location and store[target].shape == values.shape:
-                store[target][...] = values
+                if target in self.__dict__.get("_derived", {}):
+                    raise ValueError(f"'{name}' is derived and recomputed when read: write its sources instead")
+                self._write(store, target, values, name)
                 return
         meta = self._variable_meta().get(name, {})
         self.register(name, values, location=location, default=meta.get("default", 0.),

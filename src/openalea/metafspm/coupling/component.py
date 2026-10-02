@@ -310,10 +310,13 @@ class FunctionalComponent(Component):
         self.__dict__["_graph_view_version"] = getattr(self.data_structure, "topology_version", None)
 
     def pull_available_inputs(self):
-        """Refresh the derived inputs registered on the DataStructure by the coupling, before the step."""
+        """
+        Bring the inputs derived by the coupling up to date before the step. Derived variables are recomputed when
+        read (D10), so this only recomputes those whose sources changed; it is the hook of future sub-steps.
+        """
         ds = self.data_structure
         for name in getattr(self, "_derived_inputs", []):
-            ds.refresh(name)
+            ds.get(name)
 
     def previous(self, name: str) -> np.ndarray:
         """
