@@ -1309,3 +1309,20 @@ Per-file counts:
     - T7: the order 4a → 4b → 4c.
   - Stopped for agreement (design note before a complex step).
 - **Step 4:** "Go on with step 4", with empty answer lines, is taken as agreement with the recommendations T1–T7 (recorded in the note). Note committed; 4a starts.
+
+---
+
+## 2026-10-02 (later): step 4 note committed (`2c0ccff`); step 4a implemented (DS4, DS9)
+
+- **`DataStructureComponent.mtg_sync`:** `"after_call"` (default) or `"never"`, checked when the component writes back.
+- **`pull_available_inputs`** now re-reads the MTG-backed parameters at the start of every call (and still before each solve).
+- **Snapshots:** `_read_array(read_only=True)` returns read-only views for parameters and inputs (float64, no restriction); unknowns, previous states and amounts stay copies.
+- **Benchmark (20 001-node branched tree, 10 parameters):** a snapshot takes 95.9 µs with copies (1.6 MB copied) against 44.6 µs with views (nothing copied).
+- **Found (recorded under DS14):** `populate_graph` on a single 20 000-segment chain raises `RecursionError` in openalea.mtg's recursive `pre_order` (via `post_order_mpg` → `components_iter`). The benchmark used 200 axes of 100 segments instead. This matters for long roots, and belongs to step 5 (performance).
+- **New `test/data_api_tests/test_sync_policy.py`**, 4 tests:
+  - an MTG parameter change is seen by a `@rate` at the next call;
+  - `"never"` leaves the MTG untouched;
+  - an invalid policy raises;
+  - an equation writing into a parameter raises `read-only`, with the DataStructure intact.
+- **Plan:** DS4 and DS9 ticked.
+- **Suite:** 661 passed, same 10 warnings. No open question: 4a committed, 4b starts.

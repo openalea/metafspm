@@ -242,6 +242,10 @@ class DataStructureComponent(Component):
 
     data_structure: Optional[DataStructure] = None
 
+    # MTG synchronisation policy (design note time_and_data §3, DS4): "after_call" writes the state variables to the
+    # MTG after every call; "never" leaves the MTG untouched (results are read through the DataStructure).
+    mtg_sync = "after_call"
+
     def __post_init__(self):
         if self.data_structure is None:
             raise TypeError(
@@ -268,9 +272,11 @@ class DataStructureComponent(Component):
 
     def pull_available_inputs(self):
         """
-        Bring the inputs derived by the coupling up to date before the step. Derived variables are recomputed when
-        read (D10), so this only recomputes those whose sources changed; it is the hook of future sub-steps.
+        Before the step: re-read the MTG-backed parameters (DS4), and bring the inputs derived by the coupling up
+        to date. Derived variables are recomputed when read (D10), so the latter only recomputes those whose sources
+        changed; it is the hook of future sub-steps.
         """
+        self._refresh_from_bio_scale()
         ds = self.data_structure
         for name in getattr(self, "_derived_inputs", []):
             ds.get(name)
@@ -312,8 +318,10 @@ class DataStructureComponent(Component):
         Only ``state_variable`` fields are written: parameters and inputs are owned by whoever sets them, and
         writing their defaults back would overwrite externally set MTG values.
         """
+        if self.mtg_sync not in ("after_call", "never"):
+            raise ValueError(f"{type(self).__name__}.mtg_sync must be 'after_call' or 'never', got '{self.mtg_sync}'")
         ds = self.data_structure
-        if not hasattr(ds, "write_mtg"):
+        if self.mtg_sync == "never" or not hasattr(ds, "write_mtg"):
             return
         for spec in getattr(self, "_variable_specs", {}).values():
             if spec.variable_type == "state_variable" and spec.mtg_backed and ds.has(spec.name):

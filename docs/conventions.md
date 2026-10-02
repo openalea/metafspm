@@ -98,6 +98,11 @@ Declarations that cannot be written back raise when the component is created: a 
 - Total steps and single values are `scalar`.
 - Shape inference remains only when exactly one location matches, with a `DeprecationWarning`.
 
+**MTG synchronisation.**
+- `mtg_sync = "after_call"` (default) writes state variables to the MTG after every call; `mtg_sync = "never"` leaves the MTG untouched.
+- MTG-backed parameters are re-read at the start of every call.
+- In graph systems, parameters and inputs are read-only.
+
 ## Couplings and derived variables
 
 - **Identity links:** components on one DataStructure share variables by name.
