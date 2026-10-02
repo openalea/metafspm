@@ -204,6 +204,59 @@ def boundary_condition(location, kind, field=None, filters=None, explicit=False)
     return decorator
 
 
+class boundary_set:
+    """
+    Boundary condition on a set of nodes, declared in a graph-system class and assembled by the framework (design
+    note structure_and_boundaries §6, DS6):
+
+        leaves = boundary_set(select={"label": [LEAF]}, kind="robin", value="air_water_potential",
+                              weight="leaf_conductance")
+
+    select  {variable: value or values} | a variable name (selects where it is > 0) | a callable ds -> boolean mask;
+            membership follows the selecting variables and topology changes.
+    kind    "robin":     + w * (x - v) in the field's residual (an outflow towards the external value v);
+            "dirichlet": the residual row becomes x - v;
+            "neumann":   - v in the residual (v is an inflow).
+    value, weight
+            node variables of the DataStructure (read at each solve) or constants.
+    field   the node unknown it applies to; default: the only node unknown.
+    """
+
+    KINDS = ("robin", "dirichlet", "neumann")
+
+    def __init__(self, select, kind, value, weight=1.0, field=None):
+        if kind not in self.KINDS:
+            raise ValueError(f"boundary_set: kind must be one of {self.KINDS}, got '{kind}'")
+        if not (callable(select) or isinstance(select, (dict, str))):
+            raise TypeError("boundary_set: select must be a {variable: values} dict, a variable name or a callable")
+        self.select, self.kind, self.value, self.weight, self.field = select, kind, value, weight, field
+        self.name = None
+        self.__graph_tag__ = {"kind": "boundary_set"}
+
+    def __set_name__(self, owner, name):
+        self.name = name
+
+    def variables(self) -> list:
+        """DataStructure variables read by the solve (value and weight given by name)."""
+        return [x for x in (self.value, self.weight if self.kind == "robin" else None) if isinstance(x, str)]
+
+    def members(self, instance, ds, size, take) -> np.ndarray:
+        """Indices, in the solved graph, of the nodes of the set."""
+        mask_name = f"__boundary_set:{type(instance).__name__}.{self.name}"
+        if not ds.has_mask(mask_name):
+            rule = self.select
+            if isinstance(rule, str):
+                rule = {rule: ">0"}
+            elif isinstance(rule, dict):
+                rule = {variable: (list(values) if isinstance(values, (list, tuple, set)) else values)
+                        for variable, values in rule.items()}
+            ds.define_mask(mask_name, rule)
+        mask = np.asarray(ds.mask(mask_name), dtype=bool)
+        if take is not None:
+            mask = mask[take]
+        return np.flatnonzero(mask)
+
+
 def graph_jacobian(func):
     """Tag a method as the optional analytic Jacobian evaluator."""
     func.__graph_tag__ = {"kind": "graph_jacobian"}
@@ -358,8 +411,9 @@ def _check_well_posed(instance, method_name, view, anchored):
         members = np.flatnonzero(labels == piece)
         if not anchored[members].any():
             raise ValueError(f"{type(instance).__name__}.{method_name}: piece of {members.size} nodes "
-                             f"{view.node_ids[members][:10].tolist()} has no Dirichlet anchor in a steady system "
-                             "(declare transient=True if its balance has a time derivative)")
+                             f"{view.node_ids[members][:10].tolist()} has no Dirichlet "
+                             "or positive-weight Robin anchor in a steady system (declare transient=True if its balance has "
+                             "a time derivative)")
 
 
 def _snapshot(instance, required_names, node_vids_int, edge_vids_int,
@@ -450,6 +504,7 @@ class GraphSystemBuilder:
         bc_items           = []   # (field, types, bc_kind, attr_name, bound, raw, explicit)
         jacobian_raw       = None
         output_items       = []   # (out_name, bound, raw)
+        boundary_sets      = []   # boundary_set objects (DS6)
         self.output_locations = {}   # out_name -> location given by @graph_output (or None)
 
         for cls_ in inner_cls.__mro__:
@@ -459,6 +514,9 @@ class GraphSystemBuilder:
                 seen.add(attr_name)
                 tag = getattr(obj, "__graph_tag__", None)
                 if tag is None:
+                    continue
+                if tag["kind"] == "boundary_set":
+                    boundary_sets.append(obj)          # declared data, not a method
                     continue
                 bound = obj.__get__(instance, type(instance))
                 kind  = tag["kind"]
@@ -539,17 +597,41 @@ class GraphSystemBuilder:
         for _, tf, _, _, _, _, _ in bc_items:
             if tf:
                 required.update(tf.keys())
+        for bset in boundary_sets:
+            required.update(bset.variables())
 
         node_snap, edge_snap = _snapshot(
             instance, required, node_vids_int, edge_vids_int,
             node_unknowns, edge_unknowns, declared_locs,
         )
 
+        # Boundary sets: members on the solved graph, values and weights read now (DS6)
+        set_terms = defaultdict(list)    # field -> [(kind, idx, value, weight)]
+        for bset in boundary_sets:
+            if bset.field is not None:
+                field = bset.field
+            elif len(node_unknowns) == 1:
+                field = node_unknowns[0]
+            else:
+                raise ValueError(f"boundary_set '{bset.name}': give field=, the system has several node unknowns")
+            idx = bset.members(instance, ds, n, _take(instance, "node"))
+
+            def read(x, idx=idx):
+                return node_snap[x][idx] if isinstance(x, str) else np.full(idx.size, float(x))
+            set_terms[field].append((bset.kind, idx, read(bset.value), read(bset.weight) if bset.kind == "robin"
+                                     else None))
+
         if instance.__dict__.get("_restriction") is not None and not spec_def.get("transient", False):
             anchored = np.zeros(n, dtype=bool)
             for _, tf, bc_kind, _, _, _, _ in bc_items:
                 if bc_kind == "dirichlet":
                     anchored |= _type_mask(tf, node_snap, n) if tf else True
+            for terms in set_terms.values():
+                for kind, idx, _, weight in terms:
+                    if kind == "dirichlet":
+                        anchored[idx] = True
+                    elif kind == "robin":
+                        anchored[idx[weight > 0]] = True
             _check_well_posed(instance, spec_def["inner_class"].__name__, gv, anchored)
 
         # ── Initial-guess FieldStates ─────────────────────────────────────────
@@ -646,17 +728,28 @@ class GraphSystemBuilder:
 
         # ── Assemble equation blocks ──────────────────────────────────────────
 
-        def make_combined_node_ev(bulk_evals, bc_specs, neumann_scale=1.0):
+        def make_combined_node_ev(bulk_evals, bc_specs, neumann_scale=1.0, field=None):
+            terms = set_terms.get(field, [])
+
             def evaluator(ctx):
                 result = np.zeros(n, dtype=np.float64)
                 for w in bulk_evals:
                     result += w(ctx)
+                x = ctx.node_unknowns[field] if terms else None
+                for kind, idx, value, weight in terms:
+                    if kind == "robin":
+                        result[idx] += weight * (x[idx] - value)
+                    elif kind == "neumann":
+                        result[idx] -= value * neumann_scale
                 for bkind, bc_ev in bc_specs:
                     idx, vals = bc_ev(ctx)
                     if bkind == "dirichlet":
                         result[idx] = vals
                     else:
                         result[idx] += vals * neumann_scale
+                for kind, idx, value, _ in terms:
+                    if kind == "dirichlet":
+                        result[idx] = x[idx] - value
                 return result
             return evaluator
 
@@ -672,7 +765,7 @@ class GraphSystemBuilder:
         for field_name in node_unknowns:
             grp    = node_groups.get(field_name, [])
             bc_grp = bc_groups.get(field_name, [])
-            if not grp and not bc_grp:
+            if not grp and not bc_grp and not set_terms.get(field_name):
                 continue
             bulk_wrapped = []
             any_explicit = any(ex for _, _, _, ex in grp)
@@ -692,7 +785,7 @@ class GraphSystemBuilder:
             neumann_scale = dt_inst if any_explicit else 1.0
             equation_blocks.append(EquationBlock(
                 name      = f"node_balance_{field_name}",
-                evaluator = make_combined_node_ev(bulk_wrapped, bc_wrapped, neumann_scale),
+                evaluator = make_combined_node_ev(bulk_wrapped, bc_wrapped, neumann_scale, field=field_name),
             ))
 
         edge_groups: dict[str, list] = defaultdict(list)
@@ -746,6 +839,25 @@ class GraphSystemBuilder:
             make_evaluator(jacobian_raw[1], jacobian_raw[0], None, "node")
             if jacobian_raw else None
         )
+        if jac_evaluator is not None and any(set_terms.values()):
+            # The user's Jacobian covers the equations; the framework adds the boundary sets' terms
+            user_jacobian = jac_evaluator
+
+            def jac_evaluator(ctx, _user=user_jacobian):
+                from scipy.sparse import issparse
+                J = _user(ctx)
+                sparse = issparse(J)
+                J = J.tolil() if sparse else np.array(J, dtype=np.float64)
+                for field, terms in set_terms.items():
+                    offset = list(node_unknowns).index(field) * n
+                    for kind, idx, _, weight in terms:
+                        rows = offset + idx
+                        if kind == "robin":
+                            J[rows, rows] = np.asarray(J[rows, rows]).reshape(-1) + weight
+                        elif kind == "dirichlet":
+                            J[rows, :] = 0.
+                            J[rows, rows] = 1.
+                return J.tocsr() if sparse else J
 
         boundary_ports = tuple(getattr(instance, "_boundary_ports", None) or ())
 

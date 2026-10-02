@@ -78,6 +78,7 @@ The rules:
   Registered variables are carried over, and FunctionalComponents rebuild their graph views.
 - **Segment geometry:** the growth model registers `x1, x2, y1, y2, z1, z2` as node variables. The soil coupling needs them (Q25).
 - **`self.props`** is a read-only view kept for one release. Replace reads with `self.data_structure.get(name)`, and writes with `ds.set(name, values)`. Translator-derived inputs are read-only.
+- **Boundary conditions on sets of nodes** (leaves, root surfaces, the collar) become `boundary_set(...)` in the graph system, with value and weight as DataStructure variables. Hand-set `_boundary_ports`, and Robin terms assembled in the balance and the Jacobian by hand, are deprecated (`test_uc5_leaf_transpiration.py` is the reference).
 - **Undeclared outputs** give their location: `@graph_output(name, location=...)`, `@rate(location=...)`.
 - **Missing variables raise:** a graph-system argument or a filter variable must be registered (declared, or set before the solve). Missing values are no longer read as zeros.
 - **Non-float variables** (lists such as `xylem_vessel_radii`) are not solver or transport variables. Keep them on the MTG or as instance attributes, and couple them by identity only (Q22).

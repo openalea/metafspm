@@ -1118,3 +1118,30 @@ Per-file counts:
   - hand ports rejected.
 - **Docs:** CHANGELOG, conventions, plan (DS21 ticked), note status.
 - **Suite:** 619 passed, same 10 warnings. Not committed yet.
+
+---
+
+## 2026-10-02 (later): 2d committed (`9e0b00b`); step 2e implemented (boundary sets, UC5)
+
+- **`boundary_set`** is a declared data object in the graph-system class, collected by the builder before method binding.
+  - Its membership is a DataStructure mask (`__boundary_set:<Class>.<name>`): a dict or variable-name select is recomputed on write counters and topology, a callable select at each solve. It is sliced to the active subgraph.
+  - `value` and `weight` are read from the snapshot (they are added to the required names) or are constants.
+  - The default field is the only node unknown; with several, `field=` is required.
+- **Assembly** in `make_combined_node_ev`, per field:
+  - Robin `+ w(x − v)` and Neumann `− v·scale` after the bulk terms;
+  - the existing `@boundary_condition` rows;
+  - then Dirichlet sets `x − v`, last.
+- **User `@graph_jacobian`:** the framework adds `w` on the Robin diagonal and replaces Dirichlet rows by identity, at the field's offset (`index · n`), for dense or sparse Jacobians.
+- **Well-posedness anchors** now include Dirichlet sets and positive-weight Robin sets. The error says "no Dirichlet or positive-weight Robin anchor"; the 2d test pattern is updated.
+- **Deprecation:** `FunctionalComponent._graph_view` warns when building a view with hand-set `_boundary_ports`. UC3/UC4 deliberately keep the former path, with a module-level `filterwarnings` for that message.
+- **UC5, `test/graph_system_tests/test_uc5_leaf_transpiration.py`** (6 tests): a steady water potential on the seedling, with leaves Robin to a per-leaf air water potential (callable select on the runtime label code) and roots Robin to the soil (variable-name select). The tests:
+  - match the direct linear solve `(B diag K Bᵀ + diag w) ψ = w v`, with and without a user Jacobian (the framework adds the Robin terms);
+  - see a changed leaf microclimate at the next solve without a view rebuild;
+  - include a grown leaf in the set;
+  - check that Robin sets anchor both steady pieces of a cut active subgraph;
+  - check the declarations.
+- **Observations:**
+  1. The leaf conductance `@rate` sits in a separate `Stomata` component. A step declared on a base dataclass is not inherited by subclasses: the Choregrapher registers steps by the function's class name, which is the DS13 class-name issue (step 5).
+  2. A parameter read from the MTG gets its values for new entities only at the parameter refresh before the next solve, so a mask on it lags until then. This is documented in the conventions.
+  3. The suite time grew from about 5 s to about 11 s. It is machine load on the multiprocessing scene tests, not 2e: those tests take 6.7 s before and 6.5 s after the 2e source changes, measured with the changes stashed.
+- **Suite:** 625 passed, same 10 warnings. CHANGELOG, conventions, migration guide, plan (DS6 ticked) and note updated. Not committed yet.

@@ -1,6 +1,6 @@
 # Design note: structure, growth, active sets and boundaries (step 2)
 
-Status: **agreed** (2026-10-02, P1–P7 answered in §8). 2a done (`4fbe3dc`), 2b done (`e659bd0`), 2c done (`6430b08`), 2d done. It covers step 2 of `devplan_datastructures.md` §7:
+Status: **agreed** (2026-10-02, P1–P7 answered in §8). 2a done (`4fbe3dc`), 2b done (`e659bd0`), 2c done (`6430b08`), 2d done (`9e0b00b`), 2e done. It covers step 2 of `devplan_datastructures.md` §7:
 - DS2: traversal orders;
 - DS19: the StructuralComponent contract;
 - DS20: repartition and the active mask;

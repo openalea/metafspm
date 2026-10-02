@@ -18,6 +18,17 @@ The flat modules used before the 2026 restructure have been removed. No compatib
 | `openalea.metafspm.component.Model`, `declare` | `openalea.metafspm.coupling.component.Component` / `FunctionalComponent`, `declare` |
 | `openalea.metafspm.specializer` | `openalea.metafspm.solve.specializer` |
 
+### Boundary sets (step 2e)
+
+- **`boundary_set(select=, kind="robin" | "dirichlet" | "neumann", value=, weight=, field=)`**, declared in a graph-system class, is assembled by the framework:
+  - Robin `+ w·(x − v)` in the field's residual, Dirichlet rows `x − v`, Neumann `− v` (an inflow);
+  - `select` is a `{variable: values}` dict, a variable name (> 0) or a callable, and membership follows its variables and the topology;
+  - `value` and `weight` are DataStructure variables, read at each solve, or constants.
+- **Jacobian.** With a user `@graph_jacobian`, the framework adds the sets' Robin and Dirichlet terms.
+- **Active subgraphs and anchors.** Sets follow active subgraphs. Dirichlet sets and positive-weight Robin sets anchor steady pieces in the well-posedness check.
+- **Boundary ports set by hand** (`component._boundary_ports`) are deprecated (`DeprecationWarning`).
+- **New use case UC5, leaf transpiration** (`test/graph_system_tests/test_uc5_leaf_transpiration.py`), checked against the direct linear solve.
+
 ### Graph systems on the active subgraph (step 2d)
 
 - **`@graph_system(where="active")`** solves on the nodes of a mask and the edges between them. The equations see the subgraph's view through `self._graph_view`; inactive nodes keep their values, and dropped edges carry no flux (their integrated amounts are kept).

@@ -21,6 +21,9 @@ UC4 tests:
 
 import numpy as np
 import pytest
+
+# UC3/UC4 deliberately keep exercising the former hand-set boundary ports (deprecated in favour of boundary sets)
+pytestmark = pytest.mark.filterwarnings("ignore:.*boundary ports set by hand are deprecated:DeprecationWarning")
 from dataclasses import dataclass
 from scipy.sparse import diags, issparse
 
