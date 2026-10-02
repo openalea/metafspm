@@ -341,6 +341,8 @@ class VariableStoreMixin:
     def _write(self, store, target: str, values, name: str = None) -> None:
         array = store[target]
         values = np.asarray(values, dtype=float)
+        if values.ndim == 1 and array.ndim > 1 and values.size == array.size:
+            values = values.reshape(array.shape)      # a grid variable written from a flat graph solve (C order)
         try:
             array[...] = np.broadcast_to(values, array.shape)
         except ValueError:

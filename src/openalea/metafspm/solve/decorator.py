@@ -250,8 +250,8 @@ class boundary_set:
             elif isinstance(rule, dict):
                 rule = {variable: (list(values) if isinstance(values, (list, tuple, set)) else values)
                         for variable, values in rule.items()}
-            ds.define_mask(mask_name, rule)
-        mask = np.asarray(ds.mask(mask_name), dtype=bool)
+            ds.define_mask(mask_name, rule, location="cell" if "cell" in ds._var_stores() else "node")
+        mask = np.asarray(ds.mask(mask_name), dtype=bool).reshape(-1)
         if take is not None:
             mask = mask[take]
         return np.flatnonzero(mask)
@@ -330,9 +330,15 @@ def _read_array(ds, name, location, size, owner=None, take=None):
     values = ds.get(name)
     if values.ndim == 0:
         return np.full(size, float(values))
+    values = np.asarray(values).reshape(-1) if values.ndim > 1 else values   # grid cells, in flat C order
     if take is not None:
         values = values[take]
     return np.array(values, dtype=np.float64)
+
+
+def _entity_location(ds, location):
+    """The DataStructure location of the graph's nodes or edges: grid cells play the nodes."""
+    return "cell" if location == "node" and "node" not in ds._var_stores() and "cell" in ds._var_stores() else location
 
 
 def _take(instance, location):
@@ -357,12 +363,13 @@ class _Restriction:
     def scatter(self, ds, name, values, location, dropped=None):
         """Write *values* of the subgraph's entities into the full variable; dropped edges get *dropped* if given."""
         full = np.array(ds.get(name), dtype=np.float64)
-        if location == "node":
-            full[self.node_idx] = values
+        flat = full.reshape(-1)          # grid cells are scattered in flat C order
+        if location in ("node", "cell"):
+            flat[self.node_idx] = values
         else:
-            full[self.edge_idx] = values
+            flat[self.edge_idx] = values
             if dropped is not None:
-                full[self.dropped_edges] = dropped
+                flat[self.dropped_edges] = dropped
         ds.set(name, full)
 
 
@@ -372,8 +379,8 @@ def _restriction_for(instance, where):
     if not hasattr(ds, "has_mask") or not ds.has_mask(where):
         raise KeyError(f"{type(instance).__name__}: graph system with where='{where}' but the DataStructure "
                        "defines no such mask")
-    if ds.__dict__["_masks"][where]["location"] != "node":
-        raise ValueError(f"{type(instance).__name__}: where='{where}' needs a node mask")
+    if ds.__dict__["_masks"][where]["location"] not in ("node", "cell"):
+        raise ValueError(f"{type(instance).__name__}: where='{where}' needs a node (or grid cell) mask")
     if getattr(instance, "_boundary_ports", None):
         raise NotImplementedError(f"{type(instance).__name__}: boundary ports set by hand cannot follow an active "
                                   "subgraph; use boundary sets (devplan_datastructures DS6)")
@@ -382,7 +389,7 @@ def _restriction_for(instance, where):
     if where in cache and cache[where][0] == key:
         return cache[where][1]
     full = instance._graph_view
-    mask = np.asarray(ds.mask(where), dtype=bool)
+    mask = np.asarray(ds.mask(where), dtype=bool).reshape(-1)
     node_idx = np.flatnonzero(mask)
     edge_idx = np.flatnonzero(mask[full.tail] & mask[full.head])
     local = np.full(full.n_nodes, -1, dtype=np.int64)
@@ -428,8 +435,8 @@ def _snapshot(instance, required_names, node_vids_int, edge_vids_int,
             loc = ds.location(name)
         else:
             loc = "node"
-        if loc == "scalar":
-            loc = "node"   # scalars are broadcast over the entities
+        if loc in ("scalar", "cell"):
+            loc = "node"   # scalars are broadcast over the entities; grid cells are the graph's nodes
         elif loc not in ("node", "edge"):
             raise ValueError(f"{type(instance).__name__}: '{name}' is stored at {loc}, graph equations take node "
                              f"or edge arrays: declare it with location='node' and mapping='broadcast'")
@@ -916,7 +923,7 @@ class GraphSystemBuilder:
             restriction = self._instance.__dict__.get("_restriction")
             for fn, values in values_by_name.items():
                 if not ds.has(fn):
-                    ds.register(fn, location=location)
+                    ds.register(fn, location=_entity_location(ds, location))
                 if restriction is None:
                     ds.set(fn, values)
                 else:
@@ -982,7 +989,8 @@ def _solve_graph_system(self, method_name: str, spec_def: dict) -> None:
         (_solver_cls is not None and issubclass(_solver_cls, ImplicitEulerSolver))
     )
     if previous_fields is None and _is_implicit:
-        previous_fields = {fn: np.array(_live_ds(self).get(fn), dtype=np.float64) for fn in spec_def["node_unknowns"]}
+        previous_fields = {fn: np.array(_live_ds(self).get(fn), dtype=np.float64).reshape(-1)
+                           for fn in spec_def["node_unknowns"]}
     take = _take(self, "node")
     if previous_fields is not None and take is not None:
         previous_fields = {fn: np.asarray(values)[take] for fn, values in previous_fields.items()}
@@ -1005,7 +1013,7 @@ def _solve_graph_system(self, method_name: str, spec_def: dict) -> None:
     # ── Inject results ────────────────────────────────────────────────────────
     builder.inject_result(packed, spec)
     # Kept on every node, so that a later solve on another active subgraph finds its previous values
-    setattr(self, _saved_key, {fn: np.array(_live_ds(self).get(fn), dtype=np.float64)
+    setattr(self, _saved_key, {fn: np.array(_live_ds(self).get(fn), dtype=np.float64).reshape(-1)
                                 for fn in spec_def["node_unknowns"]})
 
     # ── Write output-block results ─────────────────────────────────────────────
@@ -1023,7 +1031,7 @@ def _solve_graph_system(self, method_name: str, spec_def: dict) -> None:
             if location is None:
                 location = infer_output_location(type(self).__name__, oname, arr.shape,
                                                   {"node": (n,), "edge": (self._graph_view.n_edges,)})
-            ds.register(oname, location=location)
+            ds.register(oname, location=_entity_location(ds, location))
         if restriction is None:
             ds.set(oname, arr)
         else:
