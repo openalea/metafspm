@@ -1355,3 +1355,37 @@ Per-file counts:
 - **DS13 seen again:** two instances of one class cannot both be called, because the Choregrapher binds a class's steps to its last instance. The adaptive comparison builds and runs them one after the other.
 - **Plan:** DS10 ticked.
 - **Suite:** 670 passed, same 10 warnings. No open question: 4b committed, 4c starts.
+
+---
+
+## 2026-10-02 (later): 4b committed (`c254840`); step 4c implemented (DS12 typed variables), so step 4 is complete
+
+- **Variable store:**
+  - `register(dtype=float | int | object)`, with the dtype in the metadata (kept across growth);
+  - `_converted` writes values: integers checked; objects one per entity from a sequence of the right length, otherwise the same value for every entity (ragged lists handled);
+  - `_carry_over` builds object arrays for object variables;
+  - `derive` rejects object sources;
+  - `export` keeps dtypes.
+- **Declarations:**
+  - `dtype=` on `declare` and the three wrappers, carried by `VariableSpec.dtype`, and registration passes it;
+  - object defaults are not converted.
+- **MTG:** `read_mtg` reads object node variables at their own scale by identity, and `write_mtg` writes them back by identity; `_write_at` keeps integers.
+- **Label names:** `MPGDataStructure.label_code(name, variable)` / `resolve_codes`, through `LabelsConfig`:
+  - a label value (`labels.filters`, unique) first;
+  - then an attribute of the group whose `scale` is the variable's declared scale;
+  - then any group;
+  - ambiguous or unknown names raise.
+
+  Used by `_evaluate_mask` (masks and boundary-set dict selects) and `_type_mask(ds=)` (graph-system filters and anchors).
+- **Rejections:**
+  - `_read_array` rejects object variables in graph systems;
+  - `Coupler.push` rejects object sources.
+- **New `test/data_api_tests/test_typed_variables.py`**, 5 tests:
+  - integer labels kept as integers, with non-integral writes raising;
+  - label names in masks and filters;
+  - anatomy mode, where `"Symplastic"` resolves to the Compartment group from the variable's scale, and is ambiguous without one, with unknown names raising and label values unique;
+  - object vessel radii round-tripping through the MTG, used by a per-element `@rate`, carried over growth;
+  - object variables rejected by a graph system and by `derive`.
+- **Docs:** CHANGELOG, conventions (types and label names), migration guide (non-float variables), plan (DS12 ticked), note (step 4 complete).
+- **Suite:** 675 passed, same 10 warnings.
+- **Next:** §7 step 5 (DS13 per-instance scheduling, DS14 performance, including the `RecursionError` on long chains found in 4a, and DS15 persistence) needs its design note first.

@@ -329,6 +329,8 @@ def _read_array(ds, name, location, size, owner=None, take=None, read_only=False
                        f"the DataStructure (declare it on the component, or register it). Registered: "
                        f"{sorted(ds.available_vars())}")
     values = ds.get(name)
+    if values.dtype == object:
+        raise TypeError(f"{owner + ': ' if owner else ''}'{name}' holds objects, which graph systems cannot use")
     if values.ndim == 0:
         return np.full(size, float(values))
     values = np.asarray(values).reshape(-1) if values.ndim > 1 else values   # grid cells, in flat C order
@@ -452,10 +454,12 @@ def _snapshot(instance, required_names, node_vids_int, edge_vids_int,
     return node_snap, edge_snap
 
 
-def _type_mask(type_filter, snap, size):
-    """Boolean mask over *size* entities from {prop: [allowed]} filter."""
+def _type_mask(type_filter, snap, size, ds=None):
+    """Boolean mask over *size* entities from {prop: [allowed]} filter; label names are resolved through *ds*."""
     mask = np.ones(size, dtype=bool)
     for prop_name, allowed in type_filter.items():
+        if ds is not None and hasattr(ds, "resolve_codes"):
+            allowed = ds.resolve_codes(prop_name, allowed if isinstance(allowed, (list, tuple, set)) else [allowed])
         vals = snap.get(prop_name)
         if vals is None:
             raise KeyError(f"filter variable '{prop_name}' is not available at this location: a filter on a missing "
@@ -638,7 +642,7 @@ class GraphSystemBuilder:
             anchored = np.zeros(n, dtype=bool)
             for _, tf, bc_kind, _, _, _, _ in bc_items:
                 if bc_kind == "dirichlet":
-                    anchored |= _type_mask(tf, node_snap, n) if tf else True
+                    anchored |= _type_mask(tf, node_snap, n, ds) if tf else True
             for terms in set_terms.values():
                 for kind, idx, _, weight in terms:
                     if kind == "dirichlet":
@@ -692,7 +696,7 @@ class GraphSystemBuilder:
                             f"Edge: {list(edge_snap)}"
                         )
                 if type_filter:
-                    mask = _type_mask(type_filter, mask_snap, entity_size)
+                    mask = _type_mask(type_filter, mask_snap, entity_size, ds)
                     sub  = [a[mask] if cut else a for a, cut in zip(args, sliced)]
                     result = np.asarray(bound_method(*sub), dtype=np.float64)
                     full   = np.zeros(entity_size, dtype=np.float64)
@@ -725,7 +729,7 @@ class GraphSystemBuilder:
                             f"BC '{raw_func.__name__}': arg '{aname}' not found."
                         )
                 if type_filter:
-                    mask = _type_mask(type_filter, node_snap, n)
+                    mask = _type_mask(type_filter, node_snap, n, ds)
                     idx  = np.where(mask)[0]
                     sub  = [a[mask] if cut else a for a, cut in zip(args, sliced)]
                     vals = np.asarray(bound_method(*sub), dtype=np.float64)

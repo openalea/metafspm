@@ -102,6 +102,10 @@ class Coupler:
 
     def push(self) -> None:
         self._check_map()
+        for sources in self.to_soil.values():
+            for source in sources:
+                if self.plant_ds.get(source).dtype == object:
+                    raise TypeError(f"'{source}' holds objects, which cannot be transported to the soil")
         for soil_name, sources in self.to_soil.items():
             values = sum(float(factor) * np.asarray(self.plant_ds.get(source), dtype=float)
                          for source, factor in sources.items())

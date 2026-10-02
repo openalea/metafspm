@@ -18,6 +18,14 @@ The flat modules used before the 2026 restructure have been removed. No compatib
 | `openalea.metafspm.component.Model`, `declare` | `openalea.metafspm.coupling.component.Component` / `FunctionalComponent`, `declare` |
 | `openalea.metafspm.specializer` | `openalea.metafspm.solve.specializer` |
 
+### Typed variables (step 4c)
+
+- **`dtype=`** on `register` and declarations (`declare`, `state_variable`, `input_variable`, `parameter`):
+  - `"int"`: labels, types and indices kept as integers, read from the MTG as integers; non-integral writes raise;
+  - `"object"`: lists and records, one per entity, carried over by growth and written to and from the MTG by identity. Graph systems, derivations and soil transport reject them.
+- **Label names.** Masks, boundary-set dict selects and graph-system filters accept label names, e.g. `{"label": ["RootSegment"]}`. They are resolved by `MPGDataStructure.label_code` / `resolve_codes` through the MTG's `LabelsConfig`: a label value (unique) first, then an attribute of the variable's own scale group, then any group. Ambiguous or unknown names raise.
+- **`export()`** keeps each variable's dtype.
+
 ### Sub-stepping and adaptive integration of graph systems (step 4b)
 
 - **`@graph_system(integrate=...)`**:
