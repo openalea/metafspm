@@ -18,6 +18,16 @@ The flat modules used before the 2026 restructure have been removed. No compatib
 | `openalea.metafspm.component.Model`, `declare` | `openalea.metafspm.coupling.component.Component` / `FunctionalComponent`, `declare` |
 | `openalea.metafspm.specializer` | `openalea.metafspm.solve.specializer` |
 
+### Grid topology (step 3c)
+
+- **`ArrayDataStructure` has a graph topology** (DS1, D1): cells are nodes (flat C order), faces between adjacent cells are edges, axis by axis, oriented towards increasing coordinates (`B[lower, e] = +1`).
+  - `topology()` / `to_graph_view()`, `incidence_matrix()`, `edges()`, `n_nodes()`, `n_edges()`, `face_axis()`.
+  - The DataStructure itself also gets `topology()` as an alias of `to_graph_view()`.
+- **Periodic axes.** `ArrayDataStructure(..., periodic=(True, True, False))` adds wrap faces (not with 2 cells, where they would duplicate the internal face). `locate()` uses the grid's periodic axes by default.
+- **Edge location on grids.** An `"edge"` location holds face variables. `face_area` and `face_distance` are registered at construction, so `B · diag(face_area / face_distance) · Bᵀ / cell_volume()` equals `−laplacian()`.
+- **`layer_mask(x=, y=, z=)`** gives cell masks of given layers, for boundary sets.
+- **Declarations on grids** accept `location="edge"`.
+
 ### Translator link scales and targets (step 3b)
 
 - **`scale` / `source_scale` are checks.** When a link states them, the receiver's and the sources' declared locations must be those scales', otherwise the coupling raises. Declarations stay the reference (R1).

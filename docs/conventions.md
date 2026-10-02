@@ -18,6 +18,11 @@ These are the conventions that every component, translator and DataStructure fol
 ## Grids
 
 - Axes are `(x, y, z)`: `shape=(nx, ny, nz)`, and `cell_centers()` / `locate(points)` use that order.
+- **Topology.**
+  - Cells are graph nodes (flat C order). Faces between adjacent cells are edges, x faces first, then y, then z, oriented towards increasing coordinates: a positive face flux goes from the lower to the upper cell.
+  - Periodic axes (`periodic=`) add wrap faces from the last cell to the first.
+  - Outer faces are not edges, so there is no flux unless a boundary set says otherwise.
+- **Geometric factor.** `face_area` and `face_distance` are edge variables. A face flux reads `K · face_area / face_distance · (Bᵀc)`, and a cell balance divides by `cell_volume()`.
 
 ## Locations
 

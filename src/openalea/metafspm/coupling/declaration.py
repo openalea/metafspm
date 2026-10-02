@@ -149,7 +149,8 @@ def node_scale(ds) -> Optional[int]:
 
 
 def _is_graph(ds) -> bool:
-    return hasattr(ds, "to_graph_view")
+    """Plant graphs (MTG-backed); grids have a graph view too, but their own locations (cell, edge, scalar)."""
+    return hasattr(ds, "_mtg")
 
 
 def location_of_scale(ds, scale: int) -> str:
@@ -226,7 +227,7 @@ def resolve_declaration(f, ds) -> Optional[VariableSpec]:
 
     if not _is_graph(ds):
         # Grids: only their own locations; biological scales have no meaning there
-        if location in ("cell", "scalar") and raw_scale is None and mapping is None:
+        if location in ("cell", "scalar", "edge") and raw_scale is None and mapping is None:
             return VariableSpec(location=location, **common)
         return None
 
