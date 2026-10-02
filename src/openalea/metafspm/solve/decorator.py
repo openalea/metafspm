@@ -318,10 +318,11 @@ def _live_ds(instance):
     return ds
 
 
-def _read_array(ds, name, location, size, owner=None, take=None):
+def _read_array(ds, name, location, size, owner=None, take=None, read_only=False):
     """
     Copy of variable *name* as a per-*location* array: scalars are broadcast; a missing name raises (DS11).
     *take*: indices of the entities of an active subgraph (where=), the others being left out.
+    *read_only*: a read-only view instead of a copy when possible (parameters and inputs, DS9).
     """
     if not ds.has(name):
         raise KeyError(f"{owner + ': ' if owner else ''}'{name}' is used by a graph system but is not registered on "
@@ -333,6 +334,10 @@ def _read_array(ds, name, location, size, owner=None, take=None):
     values = np.asarray(values).reshape(-1) if values.ndim > 1 else values   # grid cells, in flat C order
     if take is not None:
         values = values[take]
+    if read_only and values.dtype == np.float64:
+        view = values.view()
+        view.flags.writeable = False
+        return view
     return np.array(values, dtype=np.float64)
 
 
@@ -441,8 +446,9 @@ def _snapshot(instance, required_names, node_vids_int, edge_vids_int,
             raise ValueError(f"{type(instance).__name__}: '{name}' is stored at {loc}, graph equations take node "
                              f"or edge arrays: declare it with location='node' and mapping='broadcast'")
         size = len(node_vids_int) if loc == "node" else len(edge_vids_int)
+        # Parameters and inputs: read-only views, so that equations cannot overwrite them (DS9)
         (node_snap if loc == "node" else edge_snap)[name] = _read_array(ds, name, loc, size, type(instance).__name__,
-                                                                        take=_take(instance, loc))
+                                                                        take=_take(instance, loc), read_only=True)
     return node_snap, edge_snap
 
 

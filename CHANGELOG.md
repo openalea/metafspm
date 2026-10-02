@@ -18,6 +18,12 @@ The flat modules used before the 2026 restructure have been removed. No compatib
 | `openalea.metafspm.component.Model`, `declare` | `openalea.metafspm.coupling.component.Component` / `FunctionalComponent`, `declare` |
 | `openalea.metafspm.specializer` | `openalea.metafspm.solve.specializer` |
 
+### MTG sync policy and read-only snapshots (step 4a)
+
+- **`mtg_sync`.** The class attribute `DataStructureComponent.mtg_sync = "after_call"` (default) writes the state variables to the MTG after every call; `"never"` leaves the MTG untouched.
+- **Parameter refresh.** MTG-backed parameters are re-read at the start of every call, as well as before each graph solve.
+- **Read-only snapshots.** Graph-system snapshots of parameters and inputs are read-only views instead of copies: an equation writing into one raises `ValueError`. On 20 000 nodes, a snapshot of ten parameters takes 45 µs instead of 96 µs and copies nothing.
+
 ### Graph systems on grids (step 3d)
 
 - **`@graph_system` solves on `ArrayDataStructure`s.**
