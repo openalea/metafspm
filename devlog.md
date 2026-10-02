@@ -1184,3 +1184,29 @@ Per-file counts:
   - **A3:** agreed (integer markers, consistent with integer types and labels).
   - **A2:** re-explained (options: a default outside the target, or a targeted write into an existing variable).
   - **A2: option 1** (a separate derived variable with a default outside the target; other cell types in their own variables, combined with `np.where` by the model). No code change.
+
+---
+
+## 2026-10-02 (later): 2f committed (`b8e9fba`), so step 2 is complete; step 3 design note drafted
+
+- **New `docs/design/cross_scale_and_grids.md`** for §7 step 3 (DS18 cross-scale links, DS1 grid topology), written against `b8e9fba`.
+- **Code facts:**
+  - the composite maps a cross-scale link with `derive(location=<receiver's>, aggregation=link.aggregation)`, which raises when no aggregation is given;
+  - `Link.scale` / `source_scale` are parsed but never used;
+  - inputs carry no `state_variable_type`;
+  - coarse ↔ coarse mappings are missing;
+  - grids have no `to_graph_view`, so `@graph_system` cannot run on soil;
+  - the reference soil model wraps lateral neighbours in x and y for symmetric scenes (`symetry`), and uses Neumann or groundwater boundaries at the bottom.
+- **Proposed:**
+  - 3a: defaults by provider kind (D9 table), kind agreement (optional `state_variable_type` on inputs), coarse ↔ coarse mappings;
+  - 3b: link scale checks, and translator `target=`;
+  - 3c: grid topology (cells as nodes, internal faces as edges, optional periodic axes, `face_area` / `face_distance` edge variables, `face_axis`, `layer_mask`);
+  - 3d: graph systems on grids. Validated by `B·diag(A/d)·Bᵀ/V == −laplacian()` exactly, and by an implicit-Euler soil diffusion against the direct sparse solve.
+- **Points to agree:**
+  - R1: link scales as checks only;
+  - R2: `target=` on translator links;
+  - R3: periodic axes as a grid option;
+  - R4: face orientation (positive flux towards increasing coordinates);
+  - R5: the order, with multigrid later.
+- No code changes; note and plan pointer not committed yet.
+- **R1–R5 agreed as recommended**; the note is committed and 3a starts.
