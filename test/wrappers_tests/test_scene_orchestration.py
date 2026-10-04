@@ -116,6 +116,18 @@ def test_failing_plant_stops_the_scene(orchestra, tmp_path):
     assert _no_segment_left(scene_folder)
 
 
+def test_a_plant_failing_in_its_constructor_does_not_hang_the_scene(orchestra, tmp_path):
+    """The soil waits in its constructor for the plants' first messages: the scene must stop, not hang (P1)."""
+    import doubles_ds
+    clean_exit, scene_folder = orchestra(n_workers=2, plant_models=[doubles.MinimalPlant],
+                                         plant_scenarios=[_scenario(fail_at="construction")],
+                                         soil_model=doubles_ds.DSFakeSoil, soil_scenario=_scenario(),
+                                         logger_class=doubles.FakeLogger, n_iterations=3, shutdown_timeout=2.,
+                                         scene_xrange=0.15, scene_yrange=0.15, row_spacing=0.15, sowing_density=1)
+    assert clean_exit is False
+    assert _no_segment_left(scene_folder)
+
+
 # ---------------------------------------------------------------- DataStructure-backed scene (WD.5b / WD.6)
 
 def test_data_structure_scene(orchestra, tmp_path):

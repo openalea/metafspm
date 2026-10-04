@@ -164,7 +164,7 @@ def _affinity():
 class MinimalPlant:
     """
     Plant model without environment exchange, for orchestration tests.
-    scenario["parameters"]: fail_at (raise at that run), delete_after (remove the scene stop file after that many runs),
+    scenario["parameters"]: fail_at (raise at that run, or "construction"), delete_after (remove the scene stop file after that many runs),
     stop_file, run_duration (seconds per run).
     """
 
@@ -172,6 +172,8 @@ class MinimalPlant:
                  name="Plant", time_step=TIME_STEP, coordinates=None, rotation=0, translator_path="", **scenario):
         self.name = name
         self.parameters = scenario["parameters"]
+        if self.parameters.get("fail_at") == "construction":
+            raise RuntimeError(f"{self.name} failed in its constructor")
         self.data_structures = {}
         self.components = []
         self.run_count = 0

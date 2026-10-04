@@ -1,6 +1,6 @@
 # Design note: a plant population in one MPG, vectorised traversals, scheduling and persistence (step 5)
 
-Status: **agreed** (2026-10-02: S1–S11 answered in §8 and §11, with refinements in §9–§12). 5a done; questions F1–F2 raised by it (§13). It covers step 5 of `devplan_datastructures.md` §7, reordered by your answers to PA1–PA2 in `devplan_scene_paralellization.md`:
+Status: **agreed** (2026-10-02: S1–S11 answered in §8 and §11, with refinements in §9–§12). 5a done (`bb36bd4`); F1–F2 agreed (§13). The steps after 5a continue in `devplan_population_scene.md` (P1–P8). It covers step 5 of `devplan_datastructures.md` §7, reordered by your answers to PA1–PA2 in `devplan_scene_paralellization.md`:
 - the population prototype first: DS14b (MPG array mirrors), DS14a (tree kernels on the DataStructure), and N plants in one MPG;
 - then DS13 (scheduling, reconsidered) and DS15 (persistence).
 
@@ -247,10 +247,10 @@ def _growing_zone_C_hexose_root(self, C_hexose_root, struct_mass, volume, radius
   - The main loop watches only `stop_event`, not the workers' exit codes.
 
   Proposed fix: the main loop also sets `stop_event` when any worker has exited with a non-zero code. After a grace period, `finally` terminates the workers still blocked on queues (`p.join(timeout)`, then `p.terminate()`), and the scene returns `clean_exit = False`. Tested with a plant whose constructor raises.
-  → answer:
+  → answer: agree
 - **F2, populating at population scale.** Two complementary options:
   - **incremental population in segment mode:** `update_topology()` creates Compartments and Connections only for new segments, and keeps the others with their vids (as anatomy mode already does for junctions, D12). This also keeps edge identities stable, and so edge values (P6 kept child-vid edge ids precisely because repopulation recreated them);
   - **bulk vertex creation:** an `MPG` method creating many vertices and their properties in one go, with one batched `ArrayDict` assignment per property instead of one insert per vertex per property.
 
   **Recommendation:** both, as the first part of 5c, measured before and after on the population, with `repopulate_graph` kept for explicit full rebuilds.
-  → answer:
+  → answer: agree
