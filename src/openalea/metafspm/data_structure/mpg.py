@@ -139,16 +139,11 @@ class MPG(MTG):
 
         # Pass 1: one Compartment node per from_scale vertex.
         # seg_to_node preserves post_order insertion order, required by Pass 3 chaining.
-        seg_to_node = {}
-        for vid in self.post_order_mpg():
-            if vid in valid_vids:
-                nv = self.add_component_with_topo(node_anchor, vid, **PropsConfig(
-                    scale=self.scales.Compartment,
-                    label=self.labels.Compartment.Symplastic,
-                    edge_type='/',
-                ))
-                self.property("vertex_id")[nv] = vid
-                seg_to_node[vid] = nv
+        ordered = [vid for vid in self.post_order_mpg() if vid in valid_vids]
+        compartments = self.add_components_bulk(
+            node_anchor, len(ordered), topo_parents=ordered, vertex_id=ordered,
+            **PropsConfig(scale=self.scales.Compartment, label=self.labels.Compartment.Symplastic, edge_type='/'))
+        seg_to_node = dict(zip(ordered, compartments))
 
         def _tip_component(complex_v, exclude):
             candidates = [
@@ -167,6 +162,7 @@ class MPG(MTG):
 
         # Pass 2 — wire edges between adjacent from_scale vertices.
         has_parent = set()
+        tails, heads = [], []
         for vid in seg_to_node:
             parent_found = None
             p = self.parent(vid)
@@ -182,13 +178,10 @@ class MPG(MTG):
             if parent_found is None:
                 continue
             has_parent.add(vid)
-            ev = self.add_component(edge_anchor, **PropsConfig(
-                scale=self.scales.Connection,
-                label=self.labels.Connection.Symplastic,
-                edge_type='/',
-            ))
-            self.property("n_id_a")[ev] = parent_found
-            self.property("n_id_b")[ev] = vid
+            tails.append(parent_found)
+            heads.append(vid)
+        self.add_components_bulk(edge_anchor, len(heads), n_id_a=tails, n_id_b=heads, **PropsConfig(
+            scale=self.scales.Connection, label=self.labels.Connection.Symplastic, edge_type='/'))
 
         # Pass 3 — reconnect orphans from filtered branching nodes.
         orphans = [vid for vid in seg_to_node if vid not in has_parent]
@@ -206,7 +199,9 @@ class MPG(MTG):
 
         groups = defaultdict(list)
         for vid in orphans:
-            groups[_root_filtered_ancestor(vid)].append(vid)
+            # Orphans are chained within one plant only: the plants of a population stay disconnected
+            ancestor = _root_filtered_ancestor(vid)
+            groups[ancestor if ancestor is not None else ("plant", self.complex_at_scale(vid, self.scales.Plant))].append(vid)
 
         for group in groups.values():
             for i in range(1, len(group)):
@@ -218,6 +213,96 @@ class MPG(MTG):
                 self.property("n_id_a")[ev] = group[i - 1]
                 self.property("n_id_b")[ev] = group[i]
 
+
+    def add_components_bulk(self, complex_id, count: int, topo_parents=None, **properties) -> list:
+        """
+        Create *count* components of *complex_id* at once, as add_component (or add_component_with_topo when
+        *topo_parents* gives their same-scale parents) would one by one, with one batched write per property instead of
+        one insert per vertex and property (design note population_and_performance §13, F2). A property value is a
+        sequence of *count* values, or one value for all. Returns the new vids, consecutive.
+        """
+        if count == 0:
+            return []
+        vids = list(range(self._id + 1, self._id + 1 + count))
+        self._id += count
+        self._components.setdefault(complex_id, []).extend(vids)
+        scale = self._scale[complex_id] + 1
+        for v in vids:
+            self._complex[v] = complex_id
+            self._scale[v] = scale
+        if topo_parents is not None:
+            for v, p in zip(vids, topo_parents):
+                self._parent[v] = p
+                self._children.setdefault(p, []).append(v)
+        for name, values in properties.items():
+            if name not in self._properties:
+                self.add_property(name)
+            if isinstance(values, (list, tuple, np.ndarray)) and len(values) == count:
+                items = dict(zip(vids, values))
+            else:
+                items = dict.fromkeys(vids, values)
+            self._properties[name].update(items)
+        return vids
+
+    def extend_graph(self, from_scale) -> dict:
+        """
+        Incremental counterpart of repopulate_graph() (F2): Compartments and Connections are created only for the new
+        vertices at *from_scale* and removed for the deleted ones; every other Compartment and Connection keeps its
+        vid. A vertex whose linked parent changed (e.g. an inserted parent) gets its Connection rebuilt.
+        Returns {"added": [...], "removed": [...], "relinked": [...]}, at from_scale ("repopulated": True when a new
+        root vertex required a full rebuild).
+        """
+        node_anchor = self.scales.anchors[self.scales.Compartment]
+        edge_anchor = self.scales.anchors[self.scales.Connection]
+        scale_prop = self.property("scale")
+        compartment_of = {int(self.property("vertex_id")[nv]): nv
+                          for nv in self.components_at_scale(self.root, scale=self.scales.Compartment)
+                          if nv in self.property("vertex_id")}
+        connections = [ev for ev in self.components_at_scale(self.root, scale=self.scales.Connection)
+                       if ev in self.property("n_id_b")]
+        incoming = {int(self.property("n_id_b")[ev]): ev for ev in connections}
+        valid = self._valid_vids_at(from_scale)
+        removed = sorted(set(compartment_of) - valid)
+        added = sorted(valid - set(compartment_of))
+        gone = set(removed)
+        # Connections whose endpoint is no longer a vertex at from_scale (removed, e.g. pruned with remove_tree, which
+        # also removes the vertex's Compartment), then the Compartments of removed vertices still present
+        stale = [ev for ev in connections
+                 if int(self.property("n_id_a")[ev]) not in valid or int(self.property("n_id_b")[ev]) not in valid]
+        gone |= {int(self.property("n_id_b")[ev]) for ev in stale if int(self.property("n_id_b")[ev]) not in valid}
+        removed = sorted(gone)
+        self.remove_connections(stale)
+        self.remove_connections([compartment_of[v] for v in removed if v in compartment_of])
+        # Existing vertices whose linked parent changed: children of new vertices, or of removed ones
+        candidates = {c for v in added + removed for c in self._children.get(v, ()) if c in valid and c not in added}
+        relinked = []
+        for vid in sorted(candidates):
+            parent = self.linked_parent(vid, from_scale, valid)
+            ev = incoming.get(vid)
+            current = int(self.property("n_id_a")[ev]) if ev is not None and ev not in stale else None
+            if parent != current:
+                if ev is not None and ev not in stale:
+                    self.remove_connections([ev])
+                relinked.append(vid)
+        orphans = [vid for vid in added if self.linked_parent(vid, from_scale, valid) is None]
+        if orphans and len(valid) > len(orphans):
+            # A new vertex with no linked parent is chained to the other roots of its plant by populate_graph's
+            # pass 3, in traversal order: rebuild everything in that rare case (not met by segment growth)
+            self.repopulate_graph(from_scale)
+            return {"added": added, "removed": removed, "relinked": [], "repopulated": True}
+        self.add_components_bulk(node_anchor, len(added), topo_parents=added, vertex_id=added,
+                                 **PropsConfig(scale=self.scales.Compartment,
+                                               label=self.labels.Compartment.Symplastic, edge_type='/'))
+        tails, heads = [], []
+        for vid in added + relinked:
+            parent = self.linked_parent(vid, from_scale, valid)
+            if parent is not None:
+                tails.append(parent)
+                heads.append(vid)
+        self.add_components_bulk(edge_anchor, len(heads), n_id_a=tails, n_id_b=heads,
+                                 **PropsConfig(scale=self.scales.Connection,
+                                               label=self.labels.Connection.Symplastic, edge_type='/'))
+        return {"added": added, "removed": removed, "relinked": relinked}
 
     def repopulate_graph(self, from_scale, filter_in=None, filter_out=None):
         """Clear all Compartment/Connection nodes and rebuild from *from_scale*.

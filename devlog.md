@@ -1512,3 +1512,29 @@ Per-file counts:
 - **Limit of the check:** running the new test against the old `scene_wrapper` fails at once, because the old function does not accept `shutdown_timeout`. So it does not reproduce the hang. The hang itself was observed during 5a: 60 s, then the watchdog.
 - **Suite:** 685 passed.
 - **Correction:** P1 was committed (`e528e46`) before I read that run's result, and 5 scene unit tests failed. Their fake process classes lacked `join(timeout)` and `is_alive()`. Fixed in a follow-up commit; 685 pass.
+
+---
+
+## 2026-10-05 (later): P1 committed (`e528e46`, test fakes fixed in `d0a32a7`); P2 implemented (graph at population scale)
+
+- **`MPG.add_components_bulk(complex, count, topo_parents=, **properties)`:** the MTG bookkeeping per vertex, then one `update` per property (`ArrayDict` appends in one go since new vids are larger). Same vids and properties as one-by-one creation (tested).
+- **`populate_graph`:** passes 1 and 2 use it (compartments first, then connections, so the vids are unchanged).
+  - **Pass 3 bug found and fixed:** orphans with no filtered ancestor were all chained together, which would link the plants of a population. They are now chained per plant (`complex_at_scale(vid, Plant)`).
+  - This chaining is how organ-scale roots of one plant get linked: the UC1-Organ graph needs it, and the first version, which removed it, broke that test.
+- **`MPG.extend_graph(from_scale)`:**
+  - adds Compartments and Connections for new vertices;
+  - removes the Connections whose endpoints are gone, and the Compartments of removed vertices still present;
+  - relinks children whose linked parent changed;
+  - falls back to `repopulate_graph` only for a new parentless vertex in a plant that has others.
+
+  Segment-mode `update_topology` uses it, and records `last_extension`.
+- **Pruning:** use `remove_tree`. `remove_vertex` refuses, because the segment's Compartment is its MTG child.
+- **New `test/mpg_tests/test_population_graph.py`**, 4 tests:
+  - bulk creation equals one-by-one creation;
+  - 3 plants in one MPG give 3 connected components;
+  - growth keeps every Compartment and Connection vid, and equals a full repopulation of a twin (modulo the new vids);
+  - pruning removes the vertex and its edges.
+- **Benchmark (20 001 segments):**
+  - `populate_graph` 1.99 → 1.30 s;
+  - `update_topology` after 10 new segments **398 s → 0.42 s**. The old full repopulation deleted properties vertex by vertex: `ArrayDict.__delitem__` is O(n), so the rebuild was quadratic.
+- **Suite:** 689 passed. No open question: P2 committed, P3 (tree kernels) starts.

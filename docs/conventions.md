@@ -131,7 +131,7 @@ Declarations that cannot be written back raise when the component is created: a 
   - Edges are the anatomy Connections plus the junctions that `wiring` creates between linked SubOrgans.
   - Both are keyed by their own vids.
 - **Locations.** `"SubOrgan"` and coarser scales are coarse locations; `scale=scales.Compartment` declarations read the Compartments' properties.
-- **Growth.** Only the junctions of changed SubOrgans are rewired. A new Compartment inherits from the same-label Compartment upstream.
+- **Growth.** Only the junctions of changed SubOrgans are rewired. In segment mode too, growth only adds or removes the Compartments and Connections of new or pruned segments (prune with `remove_tree`, which also removes the segment's Compartment). A new Compartment inherits from the same-label Compartment upstream.
 
 ## Boundary sets
 

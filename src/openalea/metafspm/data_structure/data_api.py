@@ -1780,7 +1780,8 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
         if self._anatomy:
             self._rewire_junctions()
         else:
-            self._mtg.repopulate_graph(self._from_scale)
+            # Incremental: only new segments get Compartments and Connections, the others keep theirs (F2)
+            self.last_extension = self._mtg.extend_graph(self._from_scale)
         self.invalidate_topology()
         self._node_data.clear()
         self._edge_data.clear()
