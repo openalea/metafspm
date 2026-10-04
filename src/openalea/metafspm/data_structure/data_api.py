@@ -1293,6 +1293,85 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
             raise ValueError(f"order must be 'pre' or 'post', got '{kind}'")
         return self._traversal()[kind]
 
+    # ── Tree kernels (design note population_and_performance §3, §9, §12; plan P3) ─────
+
+    def define_chain(self, name: str, edge_type: str = None, group: str = None, rank: str = None) -> None:
+        """
+        Declare chain *name*: by an edge type (each node follows its parent when the edge to it has that type, e.g.
+        "<" for the successors along an axis), or by a *group* variable and a *rank* variable (e.g. the metamer ranks
+        of each axis). Chains are recomputed when the topology (or the group and rank variables) change.
+        """
+        if (edge_type is None) == (group is None or rank is None):
+            raise ValueError("define_chain: give edge_type, or group and rank")
+        self.__dict__.setdefault("_chain_specs", {})[name] = {"edge_type": edge_type, "group": group, "rank": rank}
+        self.__dict__.setdefault("_chain_cache", {}).pop(name, None)
+
+    def chain(self, name: str = "axis") -> dict:
+        """Chain *name* as {order, offsets, chain, position} (tree_kernels); "axis" is the '<' successors by default."""
+        from openalea.metafspm.data_structure import tree_kernels
+        specs = self.__dict__.setdefault("_chain_specs", {})
+        if name not in specs:
+            if name != "axis":
+                raise KeyError(f"chain '{name}' is not defined (define_chain)")
+            self.define_chain("axis", edge_type="<")
+        spec = specs[name]
+        stamp = (self.topology_version, self.n_nodes(),
+                 None if spec["group"] is None else (self.write_count(spec["group"]), self.write_count(spec["rank"])))
+        cache = self.__dict__.setdefault("_chain_cache", {})
+        if name not in cache or cache[name][0] != stamp:
+            if spec["edge_type"] is not None:
+                if getattr(self, "_anatomy", False):
+                    raise NotImplementedError("edge-type chains in anatomy mode: define them by group and rank")
+                code = self._mtg._EDGE_TYPE_CODES[spec["edge_type"]]
+                vids = np.array(self._idx_to_vid, dtype=np.int64)
+                follows = self._mtg.topology_arrays()["edge_type"][vids] == code
+                pred = np.where(follows, self.parents(), -1)
+                chains = tree_kernels.chains_from_predecessors(pred)
+            else:
+                chains = tree_kernels.chains_from_groups(np.asarray(self.get(spec["group"])),
+                                                         np.asarray(self.get(spec["rank"])))
+            cache[name] = (stamp, chains)
+        return cache[name][1]
+
+    def chain_scan(self, values, chain: str = "axis", op: str = "sum", reverse: bool = False,
+                   exclusive: bool = False) -> np.ndarray:
+        """Cumulative sum or max along each chain (e.g. distance from tip: chain_scan(length, reverse=True))."""
+        from openalea.metafspm.data_structure import tree_kernels
+        return tree_kernels.chain_scan(values, self.chain(chain), op=op, reverse=reverse, exclusive=exclusive)
+
+    def chain_shift(self, values, k: int = 1, chain: str = "axis", fill=np.nan) -> np.ndarray:
+        """The value of the node k positions earlier on the same chain (k < 0: later)."""
+        from openalea.metafspm.data_structure import tree_kernels
+        return tree_kernels.chain_shift(values, self.chain(chain), k=k, fill=fill)
+
+    def chain_write(self, event, values, k: int = 1, chain: str = "axis", base=None) -> np.ndarray:
+        """Where *event* holds, the node k positions later on the chain gets the node's value; others keep *base*."""
+        from openalea.metafspm.data_structure import tree_kernels
+        return tree_kernels.chain_write(event, values, self.chain(chain), k=k, base=base)
+
+    def depth(self) -> np.ndarray:
+        from openalea.metafspm.data_structure import tree_kernels
+        return tree_kernels.depth(self.parents())
+
+    def levels(self) -> list:
+        from openalea.metafspm.data_structure import tree_kernels
+        return tree_kernels.levels(self.parents())
+
+    def accumulate(self, values, direction: str = "up", op: str = "sum") -> np.ndarray:
+        """Subtree (direction="up") or root path (direction="down") sum or max of node values (n,) or (n, k)."""
+        from openalea.metafspm.data_structure import tree_kernels
+        return tree_kernels.accumulate(values, self.parents(), direction=direction, op=op)
+
+    def path_window(self, budget, extent, values, where=None, include=None) -> np.ndarray:
+        """Sums of *values* over each node's ancestors until *extent* reaches its *budget* (tree_kernels.path_window)."""
+        from openalea.metafspm.data_structure import tree_kernels
+        return tree_kernels.path_window(self.parents(), budget, extent, values, where=where, include=include)
+
+    def path_compose(self, transforms) -> np.ndarray:
+        """Composed 4x4 transform of each node from its root (e.g. a turtle's frames)."""
+        from openalea.metafspm.data_structure import tree_kernels
+        return tree_kernels.path_compose(transforms, self.parents())
+
     def owner(self, location: str) -> np.ndarray:
         """Index, in entity_ids(location), of the entity owning each node at a coarse location."""
         if location == "node":

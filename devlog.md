@@ -1538,3 +1538,26 @@ Per-file counts:
   - `populate_graph` 1.99 → 1.30 s;
   - `update_topology` after 10 new segments **398 s → 0.42 s**. The old full repopulation deleted properties vertex by vertex: `ArrayDict.__delitem__` is O(n), so the rebuild was quadratic.
 - **Suite:** 689 passed. No open question: P2 committed, P3 (tree kernels) starts.
+
+---
+
+## 2026-10-05 (later): P2 committed (`e5c864f`); P3 implemented (tree kernels)
+
+- **New `src/openalea/metafspm/data_structure/tree_kernels.py`:**
+  - chains from predecessors (the '<' edge type) or from group and rank;
+  - `_segmented_scan` and `_path_window` as numba `parallel=True` kernels, sequential within a chain or a walk, so the order is the reference loops';
+  - `chain_shift` and `chain_write` vectorised;
+  - `depth` (pointer doubling; the first version was wrong and caught by the subtree check), `levels`, `accumulate` by levels (`np.add.at` / `np.maximum.at`), `path_compose` (batched matmul by levels).
+  - **Exactness detail:** the fractional contribution is computed as `value * remaining / extent`, rhizodep's order, not `value * (remaining / extent)`.
+- **`MPGDataStructure`:** `define_chain`, `chain` (cached by topology version and by the group and rank write counters; `"axis"` defined by default; edge-type chains not in anatomy mode), `chain_scan`, `chain_shift`, `chain_write`, `depth`, `levels`, `accumulate`, `path_window`, `path_compose`.
+- **New `test/structure_tests/test_tree_kernels.py`**, 7 tests, against plain loops on a branched root system:
+  - distance from tip equals rhizodep's recursion **bit for bit**;
+  - the supply window equals rhizodep's walk (zero-length elements skipped, fractional last element) **bit for bit**;
+  - subtree sum and max, and 3-D root-path sums;
+  - rank chains: cnwgrass-style prefix max and exclusive sums;
+  - chain shift and forward write;
+  - `path_compose` against the product from the root;
+  - a 3-plant population computed at once.
+- **Deferred to the population growth helper (P4–P7):** emitting the supply contributions in visiting order for the consumption scatter (S1's bitwise accumulation). The window sums are done here.
+- **Suite:** 696 passed.
+- **P4** (population builder) **waits for QH1**, in `devplan_population_scene.md` §6: how per-plant parameters reach the equations.

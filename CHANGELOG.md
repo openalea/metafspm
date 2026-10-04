@@ -18,6 +18,19 @@ The flat modules used before the 2026 restructure have been removed. No compatib
 | `openalea.metafspm.component.Model`, `declare` | `openalea.metafspm.coupling.component.Component` / `FunctionalComponent`, `declare` |
 | `openalea.metafspm.specializer` | `openalea.metafspm.solve.specializer` |
 
+### Tree kernels (P3)
+
+- **New `data_structure/tree_kernels.py`**, through `MPGDataStructure` methods, vectorised over every plant of the DataStructure:
+  - `define_chain(name, edge_type="<" | group=, rank=)` / `chain(name)`: chains along '<' successors (`"axis"` by default) or by rank within a group;
+  - `chain_scan(values, chain=, op="sum" | "max", reverse=, exclusive=)`;
+  - `chain_shift(values, k)` and `chain_write(event, values, k)` (lagged neighbours and forward writes);
+  - `accumulate(values, direction="up" | "down", op=)` (subtree or root-path sums or maxima, by levels);
+  - `path_window(budget, extent, values, where=, include=)` (sums over ancestors up to a budget);
+  - `path_compose(transforms)` (4×4 frames from the root);
+  - `depth()`, `levels()`.
+- **Values** may be vector-valued (`(n, k)`).
+- **Implementation:** chain scans and path windows are numba loops, parallel over chains and over nodes. They add their terms in the order of the loops they replace, so rhizodep's distance from tip and supply for elongation are reproduced bit for bit (tested).
+
 ### Building the graph at population scale (P2)
 
 - **Incremental growth updates.** `MPGDataStructure.update_topology()` (segment mode) calls the new `MPG.extend_graph(from_scale)`: only new vertices get Compartments and Connections, removed ones (pruned with `remove_tree`) lose theirs, and children whose linked parent changed are relinked. Every other Compartment and Connection keeps its vid, so edge values carry over by identity.
