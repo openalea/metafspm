@@ -125,8 +125,11 @@ def test_play_orchestra_allocates_the_requested_buffer(monkeypatch, tmp_path):
         def start(self):
             pass
 
-        def join(self):
+        def join(self, timeout=None):
             pass
+
+        def is_alive(self):
+            return False
 
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(scene_wrapper, "SharedMemory", recording_shared_memory)

@@ -152,8 +152,11 @@ class _FakeProcess:
 
     exitcode = 0
 
-    def join(self):
+    def join(self, timeout=None):
         pass
+
+    def is_alive(self):
+        return False
 
 
 class _PlantModel:
