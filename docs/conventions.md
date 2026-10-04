@@ -109,6 +109,22 @@ Declarations that cannot be written back raise when the component is created: a 
 - MTG-backed parameters are re-read at the start of every call.
 - In graph systems, parameters and inputs are read-only.
 
+## Tree kernels
+
+Models never write traversals: they call the DataStructure's kernels, which run on every plant at once.
+
+| Kernel | For |
+|---|---|
+| `ds.chain_scan(length, reverse=True)` | distance from tip (rhizodep) |
+| `ds.chain_scan(height, chain="phytomers", op="max", exclusive=True)` | the maximum over lower ranks (cnwgrass pseudostem) |
+| `ds.accumulate(x)` | subtree totals |
+| `ds.accumulate(dx, direction="down")` | positions from the base |
+| `ds.path_window(budget, volume, values, where=apex)` | supply windows towards the base |
+| `ds.chain_shift` / `ds.chain_write` | neighbours on a chain, and forward writes |
+| `ds.path_compose` | frames |
+
+Chains are `"axis"` ('<' successors) by default, or declared with `define_chain(name, group=, rank=)`.
+
 ## Couplings and derived variables
 
 - **Identity links:** components on one DataStructure share variables by name.
