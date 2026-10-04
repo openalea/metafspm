@@ -18,6 +18,12 @@ The flat modules used before the 2026 restructure have been removed. No compatib
 | `openalea.metafspm.component.Model`, `declare` | `openalea.metafspm.coupling.component.Component` / `FunctionalComponent`, `declare` |
 | `openalea.metafspm.specializer` | `openalea.metafspm.solve.specializer` |
 
+### Scene: a failing worker stops the scene (P1)
+
+- **Model construction** of the plant, soil and light workers now runs inside their `try`: a failure there stops the scene like a failure in a step. Before, a plant failing in its constructor left the soil blocked in its own constructor, waiting for that plant's first message, and the scene hung.
+- **Exit codes.** `play_Orchestra` also stops the scene when a worker exits with a non-zero code.
+- **`shutdown_timeout`** (default 30 s) bounds the wait for the workers after the scene stops. Workers still alive are terminated (then killed), the shared memory is released, and the scene returns `False`.
+
 ### MPG traversals without recursion, and topology arrays (step 5a)
 
 - **`MPG.components_iter`** keeps openalea.mtg's order (component roots, then '+' children before '<' successors) without its recursive `pre_order`. `populate_graph` and the multiscale traversals work on long axes: a 20 000-segment chain raised `RecursionError` before.

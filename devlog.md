@@ -1460,3 +1460,54 @@ Per-file counts:
   - F2: incremental segment-mode population and bulk vertex creation as the first part of 5c.
 
   5a is committed; stopped for F1/F2.
+
+---
+
+## 2026-10-04: F1–F2 agreed; plan for a scene of populations in one process
+
+- **F1** (stopping the scene on a worker failure) and **F2** (incremental segment-mode population, bulk vertex creation) are agreed.
+- **Your questions 1–3** (environment models as components with scene-level exchanges, the scene as a CompositeModel, heterogeneity between plants) are answered in the new plan file **`devplan_population_scene.md`**:
+  - environment models become FunctionalComponents on their grids;
+  - translator links between DataStructures become cross-DataStructure mappings (sparse incidence from a locator, recomputed on topology or geometry changes), generalising the existing `Coupler` / `VoxelLocator`;
+  - the light model is a component reading every population's geometry;
+  - `Scene(CompositeModel)` runs environment then populations, with one MPG per sub-population and intercropping through the environment;
+  - planting comes from `stand_initialization`;
+  - heterogeneous parameters are Plant-scale declarations, broadcast to segments.
+- **Steps P1–P8:** robustness, incremental population, tree kernels, population builder, cross-DataStructure links, Scene, benchmarks and decision, then DS13 / DS15.
+- **Questions Q1–Q10:**
+  - Q1: exchange timing;
+  - Q2: barycentre or overlap;
+  - Q3: light geometry;
+  - Q4: initial structures;
+  - Q5: staggered emergence;
+  - Q6: parameter laws;
+  - Q7: logging;
+  - Q8: two cultivars;
+  - Q9: environment time steps;
+  - Q10: `play_Orchestra`.
+- The step 5 note and the plan point to the new file. No code changes.
+- **2026-10-05:** Q1–Q10 answered and recorded in `devplan_population_scene.md` §5:
+  - fixed-point exchanges;
+  - barycentre by default;
+  - light on an MPG or a grid;
+  - per-plant initialisation;
+  - staggered emergence later;
+  - one scenario per plant;
+  - selected-plant logging;
+  - cultivars as one population, so DS13 is reduced to its hazard fix;
+  - one time step;
+  - `play_Orchestra` removed after P7.
+
+  Follow-up QH1 (how per-plant parameters reach the equations; (b) declared-scale recommended) blocks only P4. P1 starts.
+
+---
+
+## 2026-10-05: P1 implemented (a failing worker stops the scene)
+
+- **`scene_wrapper`:**
+  - plant, soil and light model construction (and the loggers) moved inside the workers' `try`, so a construction failure sets `stop_event` and exits 1;
+  - the main loop sets `stop_event` when a worker has a non-zero exit code;
+  - `finally` joins within `shutdown_timeout` (new argument, 30 s), then terminates (and kills if needed) the workers still alive, and returns `clean_exit = False`.
+- **`doubles.MinimalPlant`** accepts `fail_at="construction"`. A new slow test (fork, spawn, forkserver) runs a plant failing in its constructor next to a `DSFakeSoil`, which waits for the plants in its constructor. It returns `False` with no shared memory left, in about 2 s per start method.
+- **Limit of the check:** running the new test against the old `scene_wrapper` fails at once, because the old function does not accept `shutdown_timeout`. So it does not reproduce the hang. The hang itself was observed during 5a: 60 s, then the watchdog.
+- **Suite:** 685 passed.

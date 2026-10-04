@@ -22,7 +22,8 @@ def play_Orchestra(scene_name, output_folder,
                  n_iterations = 2500, time_step=3600, scene_xrange=1, scene_yrange=1, sowing_density=250, row_spacing=0.15, sowing_depth=[0.025],
                  voxel_widht=0.01, voxel_height=0.01,
                  record_performance=False, log_only_one: bool = False,
-                 debug_runs: bool = False, poll_interval: float = 10, handshake_shape: tuple = None):
+                 debug_runs: bool = False, poll_interval: float = 10, handshake_shape: tuple = None,
+                 shutdown_timeout: float = 30.):
     """
     Orchestrator function launching in parallel plant models and then environment models
 
@@ -32,6 +33,8 @@ def play_Orchestra(scene_name, output_folder,
     :param debug_runs: ignore the persisted cpu availability file and start from a fresh attribution.
     :param poll_interval: seconds between two checks of the stop conditions by the orchestrator.
     :param handshake_shape: shape of each plant / soil shared buffer, Transport.from_translator(...).shape
+    :param shutdown_timeout: seconds given to the workers to exit once the scene stops; workers still alive then (e.g.
+                             blocked on a queue whose peer failed) are terminated and the scene returns False.
         (coupler.Transport: one row per exchanged variable, one column per plant node).
     ---
     TODO : Scene orientation regarding an angle relative to North
@@ -159,6 +162,11 @@ def play_Orchestra(scene_name, output_folder,
             if not os.path.exists(stop_file):
                 stop_event.set()
                 clean_exit = False
+            # A worker that failed (e.g. while constructing its model) stops the scene: its peers may be waiting
+            # for messages it will never send
+            if any(p.exitcode not in (None, 0) for p in processes):
+                stop_event.set()
+                clean_exit = False
             time.sleep(poll_interval)
 
     except Exception as e:
@@ -167,9 +175,20 @@ def play_Orchestra(scene_name, output_folder,
         clean_exit = False
 
     finally:
-        # Wait for all processes to exit. A worker exiting with a non-zero code failed
+        # Wait for all processes to exit. A worker exiting with a non-zero code failed; a worker still alive after
+        # shutdown_timeout is blocked (e.g. on a queue whose peer failed) and is terminated
+        deadline = time.time() + shutdown_timeout
         for p in processes:
-            p.join()
+            p.join(max(0., deadline - time.time()))
+        for p in processes:
+            if p.is_alive():
+                print(f"Terminating {p.name}, still running {shutdown_timeout} s after the scene stopped")
+                p.terminate()
+                p.join(5.)
+                if p.is_alive():
+                    p.kill()
+                    p.join()
+                clean_exit = False
         if any(p.exitcode != 0 for p in processes):
             clean_exit = False
 
@@ -236,26 +255,28 @@ def plant_worker(queues_soil_to_plants, queue_plants_to_soil, queues_light_to_pl
     # Logging requires a logger class
     logging = logging and logger_class is not None
 
-    # Each process creates its local instance (which includes the unique properties).
-    instance = plant_model(queues_soil_to_plants=queues_soil_to_plants, queue_plants_to_soil=queue_plants_to_soil, 
-                            queues_light_to_plants=queues_light_to_plants, queue_plants_to_light=queue_plants_to_light,
-                            name=plant_id, time_step=time_step, coordinates=coordinates, rotation=rotation, translator_path=translator_path, **scenario)
-    
-    if logging:
-        logger = logger_class(model_instance=instance, components=instance.components,
-                        outputs_dirpath=output_dirpath, 
-                        time_step_in_hours=1, logging_period_in_hours=heavy_log_period,
-                        echo=False, **log_settings)
-    
     failed = False
     iteration = 0
+    logger = None
     try:
+        # Each process creates its local instance (which includes the unique properties). A failure here, as in a
+        # step, stops the scene (the environment workers wait for this plant's messages)
+        instance = plant_model(queues_soil_to_plants=queues_soil_to_plants, queue_plants_to_soil=queue_plants_to_soil,
+                               queues_light_to_plants=queues_light_to_plants, queue_plants_to_light=queue_plants_to_light,
+                               name=plant_id, time_step=time_step, coordinates=coordinates, rotation=rotation,
+                               translator_path=translator_path, **scenario)
+        if logging:
+            logger = logger_class(model_instance=instance, components=instance.components,
+                                  outputs_dirpath=output_dirpath,
+                                  time_step_in_hours=1, logging_period_in_hours=heavy_log_period,
+                                  echo=False, **log_settings)
+
         while not stop_event.is_set() and iteration < n_iterations: 
             # Run plant time step
-            if record_performance and logging:
+            if record_performance and logger is not None:
                 logger.run_and_monitor_model_step()
             else:
-                if logging:
+                if logger is not None:
                     logger()
                 instance.run()
 
@@ -270,7 +291,7 @@ def plant_worker(queues_soil_to_plants, queue_plants_to_soil, queues_light_to_pl
         print("Plant stopped")
         stop_event.set()
 
-        if logging:
+        if logger is not None:
             logger.stop()
 
         os._exit(1 if failed else 0)
@@ -282,22 +303,22 @@ def soil_worker(queues_soil_to_plants, queue_plants_to_soil, cpu_ids, stop_event
     
     pin_to_cpus(cpu_ids)
 
-    # Each process creates its local instance (which includes the unique properties).
-    instance = soil_model(queues_soil_to_plants=queues_soil_to_plants, queue_plants_to_soil=queue_plants_to_soil, 
-                           time_step=time_step, scene_xrange=scene_xrange, scene_yrange=scene_yrange, translator_path=translator_path, **scenario)
-    
-    logger = None
-    if logger_class is not None:
-        logger = logger_class(model_instance=instance, components=instance.components,
-                        outputs_dirpath=output_dirpath, 
-                        time_step_in_hours=1, logging_period_in_hours=heavy_log_period,
-                        echo=True, **log_settings)
-
     # Environment workers only stop the scene on failure: on normal completion, setting stop_event could make the
     # other environment worker skip its last step while plants still wait for it. Plants end the scene.
     failed = False
     iteration = 0
+    logger = None
     try:
+        # Each process creates its local instance (which includes the unique properties); a failure stops the scene
+        instance = soil_model(queues_soil_to_plants=queues_soil_to_plants, queue_plants_to_soil=queue_plants_to_soil,
+                              time_step=time_step, scene_xrange=scene_xrange, scene_yrange=scene_yrange,
+                              translator_path=translator_path, **scenario)
+        if logger_class is not None:
+            logger = logger_class(model_instance=instance, components=instance.components,
+                                  outputs_dirpath=output_dirpath,
+                                  time_step_in_hours=1, logging_period_in_hours=heavy_log_period,
+                                  echo=True, **log_settings)
+
         while not stop_event.is_set() and iteration < n_iterations: 
             # Run time step
             if logger is not None:
@@ -333,15 +354,13 @@ def light_worker(queues_light_to_plants, queue_plants_to_light, cpu_ids, stop_ev
     scenario = dict(scenario)
     meteo = load_meteo(scenario.pop("meteo", None))
 
-    # As the soil model, the light model answers the plants' initialization messages in its constructor
-    instance = light_model(queues_light_to_plants=queues_light_to_plants, queue_plants_to_light=queue_plants_to_light,
-                           scene_xrange=scene_xrange, scene_yrange=scene_yrange, meteo=meteo, **scenario)
-
-    # Here no logging of the interception is performed as shoot models already log the energy they captured
-
-    # See soil_worker: only a failure stops the scene
+    # See soil_worker: only a failure stops the scene. Here no logging of the interception is performed as shoot
+    # models already log the energy they captured
     iteration = 0
     try:
+        # As the soil model, the light model answers the plants' initialization messages in its constructor
+        instance = light_model(queues_light_to_plants=queues_light_to_plants, queue_plants_to_light=queue_plants_to_light,
+                               scene_xrange=scene_xrange, scene_yrange=scene_yrange, meteo=meteo, **scenario)
         while not stop_event.is_set() and iteration < n_iterations: 
             # Run time step
             instance.run(queues_light_to_plants=queues_light_to_plants, queue_plants_to_light=queue_plants_to_light)
