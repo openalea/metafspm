@@ -1511,3 +1511,4 @@ Per-file counts:
 - **`doubles.MinimalPlant`** accepts `fail_at="construction"`. A new slow test (fork, spawn, forkserver) runs a plant failing in its constructor next to a `DSFakeSoil`, which waits for the plants in its constructor. It returns `False` with no shared memory left, in about 2 s per start method.
 - **Limit of the check:** running the new test against the old `scene_wrapper` fails at once, because the old function does not accept `shutdown_timeout`. So it does not reproduce the hang. The hang itself was observed during 5a: 60 s, then the watchdog.
 - **Suite:** 685 passed.
+- **Correction:** P1 was committed (`e528e46`) before I read that run's result, and 5 scene unit tests failed. Their fake process classes lacked `join(timeout)` and `is_alive()`. Fixed in a follow-up commit; 685 pass.
