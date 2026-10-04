@@ -18,6 +18,14 @@ The flat modules used before the 2026 restructure have been removed. No compatib
 | `openalea.metafspm.component.Model`, `declare` | `openalea.metafspm.coupling.component.Component` / `FunctionalComponent`, `declare` |
 | `openalea.metafspm.specializer` | `openalea.metafspm.solve.specializer` |
 
+### Building the graph at population scale (P2)
+
+- **Incremental growth updates.** `MPGDataStructure.update_topology()` (segment mode) calls the new `MPG.extend_graph(from_scale)`: only new vertices get Compartments and Connections, removed ones (pruned with `remove_tree`) lose theirs, and children whose linked parent changed are relinked. Every other Compartment and Connection keeps its vid, so edge values carry over by identity.
+  - It falls back to a full rebuild only when a new vertex has no linked parent and its plant has others.
+  - On 20 000 segments, an update after 10 new segments takes 0.42 s instead of 398 s: the full repopulation deleted the properties vertex by vertex, which is quadratic.
+- **`MPG.add_components_bulk`** creates many components with one batched write per property. `populate_graph` uses it, with the same vids and properties (1.99 → 1.30 s on 20 000 segments).
+- **Plants stay disconnected.** `populate_graph` chains orphan vertices only within one plant, so the plants of a population are no longer linked to each other.
+
 ### Scene: a failing worker stops the scene (P1)
 
 - **Model construction** of the plant, soil and light workers now runs inside their `try`: a failure there stops the scene like a failure in a step. Before, a plant failing in its constructor left the soil blocked in its own constructor, waiting for that plant's first message, and the scene hung.
