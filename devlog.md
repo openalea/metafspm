@@ -1947,3 +1947,33 @@ Per-file counts:
 - **Checked:** the audit's claim that `_ivp_time` is never set is wrong. The graph system's `time_hook` sets it at each IVP evaluation.
 - **Questions QPw–QPζ** added to `devplan_porting.md` §13: legacy APIs, the solver layer, the time-term convention, `@boundary_condition`, the old example files, `docs/design`, the example scripts, the test layout, the UC rewrites, `legacy_functor.py`.
 - **Suite:** 754 passed.
+
+## 2026-10-05 (later): QPw–QPζ answered; QPy detailed; the decided items
+
+- **QPy:** you asked for more detail. `devplan_porting.md` §14 now explains the current meaning of graph-system equations for each solver, and proposes two forms: the residual form for the Newton family, and a new `@node_rate` form for every solver. `implicit_euler` would become an alias of `newton, transient=True`. Waiting for your answer.
+- **QPζ:** `solve/legacy_functor.py` → `solve/functor.py`.
+- **QPβ:** `docs/design/*` → `dev/design/`; the migration guide → `docs/migration.md`. Sphinx builds with no metafspm warning, and nothing is left outside the toctree.
+- **QPα:** `composite_wrapper_example.py` and `rhizosoil_component_example.py` are rewritten as current-API sketches (a population model, an environment model). `rhizosoil_core_model.py` and `logger_api_reference.py` move to `provide_usage_examples/legacy/` with a README. `light_component_example.py` is removed.
+- **QPz:** `@boundary_condition` emits a DeprecationWarning. UC4 and the active-subgraph test use `boundary_set`; UC1 keeps the decorator until QPε, with the warning filtered there.
+- **QPw, removed:**
+  - `LegacyMPGDataStructure` and `from_legacy`, with their tests and example scripts;
+  - `GraphView.from_mtg_subset` and `_array_at_scale`; its test, which asserted the method's bug, is replaced by a `to_graph_view()` test;
+  - `set_node_property`, `set_edge_property`, `add_field`, `_get_field` / `_set_field` and `_set_or_register`; the abstract `inject_state` / `extract_state` go through `get` / `set`;
+  - `MPG.graph`, `integrate_at_scale` and `average_at_scale`, with their tests;
+  - the Choregrapher's `build_schedule`, `add_schedule` and by-name runs;
+  - `CompositeModel.declare_data`, and the unused DataStructure keywords of `declare_data_and_couple_components`;
+  - `Translator.inputs_outputs`.
+
+  The `props` view and `_last_graph_system` wait for QPε.
+- **QPx:** `system_specs` and the solver internals are documented as internal and removed from the API reference. The solver unit tests stay, in `test/graph_systems/solver_layer/`.
+- **QPγ:** the array example script becomes `test_examples.py` (the soil column, with conservation and smoothing asserted, and the plant graph plots, written to `tmp_path`).
+- **QPδ:**
+  - tests are organised by feature, with the helpers in `test/helpers/`; `conftest.py` puts only that folder on the path, and the 35 per-file `sys.path` insertions are removed;
+  - helpers imported from test modules move to `helpers/plants.py`: `branched_root_system`, `population`, `seedling_ds`, `grow_root`;
+  - `test_datastructure_prerequisites.py` is split by subject (graph view, variable store, grid topology, scale mapping, update_topology);
+  - the two composite files are merged into `coupling/test_composite_model.py`.
+- **Slips, caught by the suite:**
+  - a method-removal regex also cut the header of `DataStructurePropsView`, restored;
+  - a failed `git rm` left a merged test file in place, so its tests ran twice once, then removed;
+  - my plant sketch called a method that does not exist, corrected.
+- **Suite:** 728 passed, no warnings.
