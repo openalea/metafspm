@@ -171,8 +171,9 @@ def edge_law(func=None, *, field=None, filters=None,
 
 def boundary_condition(location, kind, field=None, filters=None, explicit=False):
     """
-    Tag a method as a boundary condition that superimposes on the field's
-    node_balance.
+    Deprecated, use boundary_set. Tag a method as a boundary condition that superimposes on the field's
+    node_balance: "dirichlet" replaces the selected nodes' residual by the method's values, "neumann" adds them to
+    it (so an inflow is returned negative, the opposite of boundary_set's value).
 
     Parameters
     ----------
@@ -187,6 +188,8 @@ def boundary_condition(location, kind, field=None, filters=None, explicit=False)
                                   "on nodes (use a boundary_set on the nodes)")
     if location != "node":
         raise ValueError(f"@boundary_condition: location must be 'node', got '{location}'")
+    warnings.warn("@boundary_condition is deprecated, use a boundary_set (whose Neumann value is an inflow, while "
+                  "@boundary_condition's values are added to the residual)", DeprecationWarning, stacklevel=2)
 
     def decorator(func):
         func.__graph_tag__ = {

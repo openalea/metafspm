@@ -2,6 +2,11 @@
 
 ## Unreleased (release2026)
 
+### Deprecated: `@boundary_condition`
+
+- **`@boundary_condition` warns** (DeprecationWarning) and will be removed: use `boundary_set`, which selects nodes by variables, masks or callables, and supports Robin and per-node kinds. Mind the Neumann sign: a `boundary_set` value is an inflow, while `@boundary_condition` added its method's values to the residual (an inflow returned negative).
+- **Module rename:** `solve/legacy_functor.py` is now `solve/functor.py` (the step wrapper).
+
 ### Fixes found by the test audit
 
 - **`forcing()`** accepts a `(times, values)` pair; it was taken for a Series, since tuples have an `index` method.

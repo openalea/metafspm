@@ -24,6 +24,11 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 import numpy as np
 import pytest
+
+import warnings
+
+# UC1 keeps @boundary_condition (decorated at import) until its rewrite on the public API
+warnings.filterwarnings("ignore", message="@boundary_condition is deprecated", category=DeprecationWarning)
 from openalea.metafspm.coupling.choregrapher import Choregrapher
 from dataclasses import dataclass
 from typing import Type
