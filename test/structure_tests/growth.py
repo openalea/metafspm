@@ -65,7 +65,8 @@ class RootGrowthProbe(StructuralComponent):
         return self.mtg.property(name)
 
     def _apices(self):
-        return [v for v, flag in self._prop("is_apex").items() if flag]
+        active = set(self.active_ids().tolist())
+        return [v for v, flag in self._prop("is_apex").items() if flag and v in active]
 
     @classmethod
     def initiate_plant(cls, g, plant, parameters):

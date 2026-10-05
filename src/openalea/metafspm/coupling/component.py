@@ -389,6 +389,15 @@ class DataStructureComponent(Component):
         """
         return self.data_structure.parameter_view(name, location)
 
+    def active_ids(self) -> np.ndarray:
+        """
+        Node ids selected by the DataStructure's "active" mask (every node without one), for MPG-style steps, which
+        loop over vertices themselves: e.g. plants before emergence are skipped (P6, QP6c).
+        """
+        ds = self.data_structure
+        ids = np.asarray(ds.entity_ids("node"))
+        return ids[np.asarray(ds.mask("active"), dtype=bool)] if ds.has_mask("active") else ids
+
     def write_back_to_mtg(self) -> None:
         """
         Write the declared state variables with an MTG scale to the MTG, at the vertices of their scale, through the

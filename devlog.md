@@ -1657,3 +1657,34 @@ Per-file counts:
   - RATP-like light on a grid.
 - **Suite:** 718 passed.
 - **P6 design note** drafted in `devplan_population_scene.md` §10 (Scene contract, step order, logging, emergence), with questions QP6a–d. Stopped for the answers.
+
+## 2026-10-06 (later): QP6a–d agreed; P6 implemented (the population scene)
+
+- **Answers:** all recommendations agreed. QP6b: environment components that generate a structure expose it to the scene (as root growth does), and other components of the same compartment may operate on it. QP6d: (a).
+- **`scene/scene.py`:**
+  - **`Scene`:**
+    - groups the planting table by model;
+    - for each model: `build_population`, `populate_graph`, `MPGDataStructure`, the model, then `apply_plant_scenarios`;
+    - builds the environment models with the population DataStructures;
+    - refuses duplicate component class names;
+    - infers the mappings from the translator links;
+    - `run()`: emergence, then for each environment model `exchange(into=its DataStructures)` and its `run()`, then for each population `exchange(into=population)` and its `run()`;
+    - `simulate()` / `stop()`, and the `logger_class` hook.
+  - **`_shared_scenario`:** the model is built with its first plant's scenario. Numeric parameters may differ, or be missing for some plants; other entries must be equal (`_same` compares dicts, DataFrames and arrays).
+  - **Emergence:** a Plant `emergence_time`, a node `emerged` (on_grow inherit) updated at the start of each step, the masks `emerged` and `active`; a model's `active` rule is kept as `_model_active` and combined.
+  - **`SceneRecorder`:** CSV appends per population (pyarrow and netCDF are not installed in the env).
+- **`CrossMapping(mask=)`:** rows outside the mask are dropped (the stamp includes `mask_version`), and `Exchanges` keeps their values on the way down.
+- **`DataStructureComponent.active_ids()`;** the growth helper's `_apices` uses it.
+- **`planting_table`:** `emergence_times=`, and the stand size in `table.attrs`.
+- **New `test/structure_tests/test_scene.py`**, 9 tests:
+  - one population per model, and the inferred mappings;
+  - the fixed-point step order;
+  - per-plant numeric parameters, and shared other entries;
+  - duplicate component classes refused;
+  - frozen until emergence (no growth, no exudation, not exchanged), then growing;
+  - the recorder files;
+  - a light model on the union of the populations;
+  - the planting table's stand size and emergence;
+  - emergence combined with a model's `active` mask.
+- **Found while testing:** a step named `_seedling_exudation` silently wrote a new `seedling_exudation` variable (only a DeprecationWarning). Step names must match their output.
+- **Suite:** 727 passed.

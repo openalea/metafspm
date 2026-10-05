@@ -82,13 +82,15 @@ class CrossMapping:
     periodic:    per grid axis, wrap positions into the grid (a periodic stand in x and y by default); the other
                  axes are clipped into the grid.
     flip_z:      plant z is negative below ground while the soil z axis points down (reference soil model).
+    mask:        a node mask of the source: its other entities are left out (they neither push nor receive, e.g.
+                 plants before emergence, P6).
 
     The incidence is rebuilt at the next use after the source's topology or a coordinate changed; refresh() forces
     it (coordinates written through a view without mark_written()).
     """
 
     def __init__(self, source, target, method: str = "barycentre", coordinates=SEGMENT_COORDINATES,
-                 periodic=(True, True, False), flip_z: bool = True):
+                 periodic=(True, True, False), flip_z: bool = True, mask: str = None):
         if method not in ("barycentre", "overlap"):
             raise ValueError(f"method must be 'barycentre' or 'overlap', got '{method}'")
         self.source, self.target = source, target
@@ -96,6 +98,7 @@ class CrossMapping:
         self.coordinates = tuple(coordinates)
         self.periodic = periodic
         self.flip_z = flip_z
+        self.mask = mask
         self._stamp, self._incidence = None, None
 
     # ── incidence ─────────────────────────────────────────────────────────────
@@ -103,7 +106,8 @@ class CrossMapping:
     def _current_stamp(self):
         counts = (tuple(self.source.write_count(name) for name in self.coordinates)
                   if hasattr(self.source, "write_count") else ())
-        return self.source.topology_version, counts
+        masked = self.source.mask_version(self.mask) if self.mask is not None else None
+        return self.source.topology_version, counts, masked
 
     def refresh(self) -> None:
         self._stamp = None
@@ -121,7 +125,18 @@ class CrossMapping:
             self._incidence, self._stamp = self._build(), stamp
         return self._incidence
 
+    def covered(self) -> Optional[np.ndarray]:
+        """Source entities taking part in the exchanges (None: all of them)."""
+        return None if self.mask is None else np.asarray(self.source.mask(self.mask), dtype=bool)
+
     def _build(self) -> tuple:
+        rows, columns, weights = self._build_all()
+        if self.mask is not None:
+            kept = self.covered()[rows]
+            rows, columns, weights = rows[kept], columns[kept], weights[kept]
+        return rows, columns, weights
+
+    def _build_all(self) -> tuple:
         p1, p2 = self._ends()
         n = p1.shape[0]
         if self.method == "barycentre":
@@ -142,8 +157,8 @@ class CrossMapping:
     @property
     def cells(self) -> np.ndarray:
         """Cell of each source node (barycentre method)."""
-        if self.method != "barycentre":
-            raise ValueError("cells: one cell per node only with method='barycentre', use incidence()")
+        if self.method != "barycentre" or self.mask is not None:
+            raise ValueError("cells: one cell per node only with method='barycentre' and no mask, use incidence()")
         return self.incidence()[1]
 
     # ── mapping values ────────────────────────────────────────────────────────
@@ -451,7 +466,7 @@ class Exchanges:
         ds = getattr(into, "data_structure", into)
         if isinstance(ds, UnionDataStructure):
             ds.update_topology()
-        pending = {}
+        pending, keep = {}, {}
         for cross in self.links:
             if cross.receiver_ds is not ds:
                 continue
@@ -465,6 +480,9 @@ class Exchanges:
                 totals = self._split_totals(cross) if cross.aggregation == "split" else None
                 numerator = cross.mapping.down(values, cross.aggregation, weights=weights, totals=totals)
                 denominator = None
+                covered = cross.mapping.covered()
+                if covered is not None:                 # entities left out keep their values
+                    keep.setdefault(variable, covered)
             elif cross.direction == "into_union":
                 numerator, denominator = np.zeros(ds.n_nodes()), None
                 numerator[ds.part_slice(cross.part)] = np.asarray(values, dtype=float).reshape(-1)
@@ -487,4 +505,6 @@ class Exchanges:
                 default = ds._variable_meta().get(ds._resolve(variable), {}).get("default", 0.)
                 numerator = np.where(denominator > 0., numerator / np.where(denominator > 0., denominator, 1.),
                                      default)
+            if variable in keep:
+                numerator = np.where(keep[variable], numerator, np.ravel(ds.get(variable)))
             ds.set(variable, np.reshape(numerator, ds._location_shape(ds.location(variable))))

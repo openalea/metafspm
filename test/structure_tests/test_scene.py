@@ -1,0 +1,323 @@
+"""
+The population scene (devplan_population_scene §10, P6): one population per model, environment models building their
+DataStructures, mappings inferred from the scene translator, the fixed-point step order, staggered emergence and the
+scene recorder. Class names are unique in the test session (the Choregrapher identifies components by class name).
+"""
+from dataclasses import dataclass
+
+import numpy as np
+import pandas as pd
+import pytest
+
+from openalea.metafspm.coupling.choregrapher import Choregrapher
+from openalea.metafspm.coupling.component import FunctionalComponent, input_variable, parameter, state_variable
+from openalea.metafspm.coupling.cross import CrossMapping, UnionDataStructure, UnionMapping
+from openalea.metafspm.coupling.translator import Translator
+from openalea.metafspm.data_structure.configs import ScalesConfig as scales
+from openalea.metafspm.data_structure.data_api import ArrayDataStructure
+from openalea.metafspm.scene.population import planting_table
+from openalea.metafspm.scene.scene import Scene
+from openalea.metafspm.solve.decorator import rate
+
+from growth import DOC, CarbonProbe, RootGrowthProbe
+
+DT = 3600.
+
+
+@pytest.fixture(autouse=True)
+def _fresh_choregrapher():
+    Choregrapher().reset()
+    yield
+    Choregrapher().reset()
+
+
+def _coordinate():
+    return state_variable(**DOC, initialize=0., scale=scales.SubOrgan, state_variable_type="descriptor",
+                          on_grow="inherit")
+
+
+@dataclass
+class SceneGeometry(FunctionalComponent):
+    """Segment ends, from the MTG (RootGrowthProbe.initiate_plant), inherited by new segments."""
+    x1: float = _coordinate()
+    x2: float = _coordinate()
+    y1: float = _coordinate()
+    y2: float = _coordinate()
+    z1: float = _coordinate()
+    z2: float = _coordinate()
+
+
+@dataclass
+class SceneExudation(SceneGeometry):
+    exudation: float = state_variable(**DOC, initialize=0., scale=scales.SubOrgan, state_variable_type="extensive")
+    soil_nitrate: float = input_variable(**DOC, by="SceneSoilNitrate", initialize=0., scale=scales.SubOrgan)
+    struct_mass: float = input_variable(**DOC, by="RootGrowthProbe", initialize=0., scale=scales.SubOrgan)
+    exudation_rate: float = parameter(**DOC, by="", default=0.1)
+
+    @rate
+    def _exudation(self, struct_mass, soil_nitrate, exudation_rate):
+        return exudation_rate * struct_mass * (1. + soil_nitrate)
+
+
+@dataclass
+class SeedlingExudation(SceneGeometry):
+    """The second model's component (no growth): a constant exudation."""
+    exudation: float = state_variable(**DOC, initialize=0., scale=scales.SubOrgan, state_variable_type="extensive")
+    soil_nitrate: float = input_variable(**DOC, by="SceneSoilNitrate", initialize=0., scale=scales.SubOrgan)
+
+    @rate
+    def _exudation(self, soil_nitrate):
+        return np.ones_like(soil_nitrate)
+
+
+class RootPopulation:
+    """A plant model as a population model (QP6a)."""
+    initiators = (RootGrowthProbe,)
+
+    def __init__(self, data_structure, time_step, parameters=None, **scenario):
+        self.growth = RootGrowthProbe(data_structure=data_structure)
+        self.carbon = CarbonProbe(data_structure=data_structure)
+        self.exudation = SceneExudation(data_structure=data_structure)
+        self.components = [self.growth, self.carbon, self.exudation]
+
+    def run(self):
+        self.growth()
+        self.carbon()
+        self.exudation()
+
+
+class Seedlings:
+    initiators = (RootGrowthProbe,)          # its initial structure only: RootGrowthProbe is not instantiated
+
+    def __init__(self, data_structure, time_step, **scenario):
+        self.exudation = SeedlingExudation(data_structure=data_structure)
+        self.components = [self.exudation]
+
+    def run(self):
+        self.exudation()
+
+
+@dataclass
+class SceneSoilNitrate(FunctionalComponent):
+    exudation: float = input_variable(**DOC, by="SceneExudation", initialize=0., location="cell",
+                                      state_variable_type="extensive")
+    soil_nitrate: float = state_variable(**DOC, initialize=1., location="cell", state_variable_type="intensive")
+
+    @rate
+    def _soil_nitrate(self, soil_nitrate, exudation):
+        return 0.9 * soil_nitrate + 0.01 * exudation
+
+
+class SceneSoil:
+    """An environment model building its grid (QP6b)."""
+
+    def __init__(self, populations, scene_xrange, scene_yrange, time_step, **scenario):
+        self.populations = populations
+        self.grid = ArrayDataStructure(shape=(2, 1, 4), dx=0.4)
+        self.nitrate = SceneSoilNitrate(data_structure=self.grid)
+        self.components = [self.nitrate]
+
+    def run(self):
+        self.nitrate()
+
+
+def _soil_translator(*plant_components):
+    translator = Translator()
+    for component in plant_components:
+        translator.link("SceneSoilNitrate", "exudation", component, {"exudation": 1.})
+        translator.link(component, "soil_nitrate", "SceneSoilNitrate", {"soil_nitrate": 1.})
+    return translator
+
+
+def _planting(models, scenarios=None, **columns):
+    scenarios = scenarios or [{"parameters": {}}] * len(models)
+    table = pd.DataFrame([dict(plant=f"p{i}", model=model, x=0.1 + 0.4 * (i % 2), y=0.05, z=0., rotation=0.,
+                               scenario=scenario) for i, (model, scenario) in enumerate(zip(models, scenarios))])
+    for name, values in columns.items():
+        table[name] = values
+    table.attrs.update(xrange=0.8, yrange=0.4)
+    return table
+
+
+def _scene(models=(RootPopulation, Seedlings, RootPopulation, Seedlings), **options):
+    return Scene(_planting(list(models), **options.pop("planting", {})), environment=[SceneSoil],
+                 translator=_soil_translator("SceneExudation", "SeedlingExudation"), time_step=DT, **options)
+
+
+def test_one_population_per_model_and_inferred_mappings():
+    scene = _scene()
+    assert [p.name for p in scene.populations] == ["RootPopulation", "Seedlings"]
+    assert [len(p.plants) for p in scene.populations] == [2, 2]
+    assert [p.plant_names() for p in scene.populations][1] == dict(zip(scene.populations[1].plants, ["p1", "p3"]))
+    assert len(scene.mappings) == 2 and all(isinstance(m, CrossMapping) for m in scene.mappings)
+    assert scene.scene_xrange == 0.8
+
+
+def test_a_step_runs_the_environment_then_the_populations_at_fixed_points():
+    scene = _scene()
+    roots, seedlings = (p.data_structure for p in scene.populations)
+    grid = scene.environment[0].grid
+    scene.run()
+    exuded = roots.get("exudation").sum() + seedlings.get("exudation").sum()
+    assert roots.get("exudation").sum() > 0. and seedlings.get("exudation").sum() == seedlings.n_nodes()
+    nitrate_before = grid.get("soil_nitrate").copy()
+    scene.run()
+    # the soil saw the plants' exudation of the previous step, then the plants the soil's new state
+    assert grid.get("exudation").sum() == pytest.approx(exuded)
+    np.testing.assert_allclose(grid.get("soil_nitrate"), 0.9 * nitrate_before + 0.01 * grid.get("exudation"))
+    seedling_mapping = next(m for m in scene.mappings if m.source is seedlings)
+    np.testing.assert_allclose(seedlings.get("soil_nitrate"), grid.get("soil_nitrate").reshape(-1)[seedling_mapping.cells])
+    assert scene.time == 2 * DT and scene.iteration == 2
+
+
+def test_per_plant_numeric_parameters_and_shared_other_entries():
+    fast = {"parameters": {"exudation_rate": 0.3}}
+    scene = _scene(models=(RootPopulation, RootPopulation), planting=dict(scenarios=[{"parameters": {}}, fast]))
+    np.testing.assert_allclose(scene.populations[0].data_structure.get("exudation_rate"), [0.1, 0.3])
+    with pytest.raises(ValueError, match="'mode' differs between plants"):
+        _scene(models=(RootPopulation, RootPopulation),
+               planting=dict(scenarios=[{"parameters": {}, "mode": "a"}, {"parameters": {}, "mode": "b"}]))
+
+
+class SamePopulationComponents(RootPopulation):
+    pass
+
+
+def test_component_classes_must_differ_between_models():
+    with pytest.raises(ValueError, match="appear in several models"):
+        _scene(models=(RootPopulation, SamePopulationComponents))
+
+
+def test_plants_are_frozen_until_their_emergence():
+    scene = _scene(models=(RootPopulation, RootPopulation), planting=dict(emergence_time=[0., 2 * DT]))
+    ds = scene.populations[0].data_structure
+    early, late = scene.populations[0].plants
+
+    def of(plant, name):
+        owner = ds.entity_ids("Plant")[ds.owner("Plant")]
+        return ds.get(name)[owner == plant]
+
+    length = of(late, "length").sum()
+    scene.run()
+    scene.run()
+    assert of(late, "length").sum() == length and (of(late, "exudation") == 0.).all()     # frozen
+    assert of(early, "length").sum() > length
+    rows, _, _ = scene.mappings[0].incidence()
+    owner = ds.entity_ids("Plant")[ds.owner("Plant")]
+    assert (owner[rows] == early).all()                                                    # not exchanged
+    assert (of(late, "soil_nitrate") == 0.).all()
+    scene.run()
+    assert of(late, "length").sum() > length and (of(late, "exudation") > 0.).all()
+    owner = ds.entity_ids("Plant")[ds.owner("Plant")]
+    assert set(owner[scene.mappings[0].incidence()[0]].tolist()) == {early, late}                  # exchanged
+
+
+def test_the_recorder_writes_plant_summaries_and_selected_plants(tmp_path):
+    scene = _scene(output_dirpath=str(tmp_path), log_plants=["p0"], heavy_log_period=2)
+    scene.simulate(3)
+    summaries = pd.read_csv(tmp_path / "RootPopulation" / "summaries.csv")
+    assert len(summaries) == 3 * 2 and set(summaries["plant"]) == {"p0", "p2"}
+    np.testing.assert_allclose(summaries[summaries["t"] == 3 * DT]["exudation"].sum(),
+                               scene.populations[0].data_structure.get("exudation").sum())
+    segments = pd.read_csv(tmp_path / "RootPopulation" / "segments.csv")
+    assert set(segments["plant"]) == {"p0"} and set(segments["t"]) == {2 * DT}
+    assert not (tmp_path / "Seedlings" / "segments.csv").exists()
+    assert len(pd.read_csv(tmp_path / "Seedlings" / "summaries.csv")) == 3 * 2
+
+
+# ---------------------------------------------------------------- a light model over both populations (QP5b)
+
+@dataclass
+class SceneLeaves(FunctionalComponent):
+    z1: float = _coordinate()
+    intercepted: float = input_variable(**DOC, by="SceneLight", initialize=0., scale=scales.SubOrgan)
+
+
+@dataclass
+class SeedlingLeaves(FunctionalComponent):
+    z1: float = _coordinate()
+    intercepted: float = input_variable(**DOC, by="SceneLight", initialize=0., scale=scales.SubOrgan)
+
+
+@dataclass
+class SceneLight(FunctionalComponent):
+    z1: float = input_variable(**DOC, by="SceneLeaves", initialize=0., scale=scales.SubOrgan)
+    intercepted: float = state_variable(**DOC, initialize=0., scale=scales.SubOrgan, state_variable_type="intensive")
+
+    @rate
+    def _intercepted(self, z1):
+        return np.exp(z1)                    # deeper elements get less light, from every population
+
+
+class LeafPopulation:
+    initiators = (RootGrowthProbe,)
+
+    def __init__(self, data_structure, time_step, **scenario):
+        self.leaves = SceneLeaves(data_structure=data_structure)
+        self.components = [self.leaves]
+
+    def run(self):
+        pass
+
+
+class SeedlingLeafPopulation(LeafPopulation):
+    def __init__(self, data_structure, time_step, **scenario):
+        self.leaves = SeedlingLeaves(data_structure=data_structure)
+        self.components = [self.leaves]
+
+
+class SceneLightModel:
+    """A CARIBU-like environment model on the union of the populations."""
+
+    def __init__(self, populations, scene_xrange, scene_yrange, time_step, **scenario):
+        self.scene = UnionDataStructure(populations)
+        self.light = SceneLight(data_structure=self.scene)
+        self.components = [self.light]
+
+    def run(self):
+        self.light()
+
+
+def test_a_light_model_on_the_union_of_the_populations():
+    translator = Translator()
+    for leaves in ("SceneLeaves", "SeedlingLeaves"):
+        translator.link("SceneLight", "z1", leaves, {"z1": 1.})
+        translator.link(leaves, "intercepted", "SceneLight", {"intercepted": 1.})
+    scene = Scene(_planting([LeafPopulation, SeedlingLeafPopulation]), environment=[SceneLightModel],
+                  translator=translator, time_step=DT)
+    assert len(scene.mappings) == 1 and isinstance(scene.mappings[0], UnionMapping)
+    scene.run()
+    for population in scene.populations:
+        ds = population.data_structure
+        np.testing.assert_allclose(ds.get("intercepted"), np.exp(ds.get("z1")))
+
+
+def test_planting_table_keeps_the_stand_and_emergence():
+    table = planting_table(0.6, 0.3, sowing_density=100, row_spacing=0.15, plant_models=[RootPopulation],
+                           plant_scenarios=[{"parameters": {}}], exact=True, seed=1, emergence_times=[0.] * 16)
+    assert table.attrs["xrange"] == pytest.approx(0.6) and (table["emergence_time"] == 0.).all()
+
+
+class ApexOnlyLeaves(LeafPopulation):
+    """A model defining its own "active" mask (its apices)."""
+
+    def __init__(self, data_structure, time_step, **scenario):
+        self.leaves = ApexLeaves(data_structure=data_structure)
+        data_structure.define_mask("active", {"is_apex": ">0"})
+        self.components = [self.leaves]
+
+
+@dataclass
+class ApexLeaves(FunctionalComponent):
+    is_apex: float = state_variable(**DOC, initialize=0., scale=scales.SubOrgan, state_variable_type="descriptor")
+
+
+def test_emergence_combines_with_a_model_active_mask():
+    scene = Scene(_planting([ApexOnlyLeaves, ApexOnlyLeaves], emergence_time=[0., DT]), time_step=DT)
+    ds = scene.populations[0].data_structure
+    early, late = scene.populations[0].plants
+    owner = ds.entity_ids("Plant")[ds.owner("Plant")]
+    np.testing.assert_array_equal(ds.mask("active"), (ds.get("is_apex") > 0) & (owner == early))
+    scene.run()                                   # the step starting at t = 0
+    scene.run()                                   # the step starting at t = DT: the late plant emerged
+    np.testing.assert_array_equal(ds.mask("active"), ds.get("is_apex") > 0)
