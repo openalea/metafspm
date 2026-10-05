@@ -189,6 +189,12 @@ leaves = boundary_set(select=is_leaf, kind="robin", value="air_water_potential",
 - An **environment model** receives the populations and builds its DataStructures.
 - **MPG-style steps** loop over `self.active_ids()`.
 
+## Random draws
+
+- **Reproducible draws per entity:** `self.random(stream, distribution="uniform", ids=None, **parameters)` in a component, or `ds.random(...)` with an explicit `step`. A draw depends on (seed, stream, step, entity id) only, not on the visiting order (PT2).
+- **Advancing:** each call of a stream is a new step. Step counters are kept by checkpoints. `random_seed` (a component attribute) chooses the seed.
+- **MPG-style steps** that create vertices one after the other (a chain of segments, each from the one just created) are plain Python, and draw for the new vertices with `self.random(stream, ids=new_vids)`.
+
 ## Structural components
 
 - A `StructuralComponent` edits the MPG through `self.mtg`. The MPG is the source of truth for structure.

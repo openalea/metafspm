@@ -606,6 +606,17 @@ class VariableStoreMixin:
 
     # ── Parameters seen by equations (devplan_population_scene §7) ────────────────────
 
+    def random(self, distribution: str = "uniform", stream: str = "", step: int = 0, ids=None,
+               location: str = "node", seed: int = 0, **parameters) -> np.ndarray:
+        """
+        Reproducible draws, one per entity of *location* (or per entity id of *ids*, e.g. vids just created by an
+        MPG-style step): a pure function of (seed, stream, step, entity id), independent of the visiting order
+        (random_streams, PT2). *parameters*: low / high, loc / scale, ...
+        """
+        from openalea.metafspm.data_structure import random_streams
+        ids = self.entity_ids(location) if ids is None else ids
+        return random_streams.draw(distribution, ids, seed=seed, stream=stream, step=step, **parameters)
+
     def parameter_view(self, name: str, to: str) -> np.ndarray:
         """
         Parameter *name* (stored per plant, or as a scalar) as one value per entity of location *to*, read-only: a
@@ -847,6 +858,7 @@ class VariableStoreMixin:
 
     # DataStructure state kept by a checkpoint, besides the variables: metadata, links, masks, counters
     _CHECKPOINT_STATE = ("_var_meta", "_aliases", "_derived", "_masks", "_writes", "_version", "_topology_version",
+                         "_random_steps",
                          "_stored_ids", "_mtg_tracked", "_mtg_synced")
 
     def checkpoint(self, path: str, include_mtg: bool = True) -> None:

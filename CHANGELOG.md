@@ -18,6 +18,12 @@ The flat modules used before the 2026 restructure have been removed. No compatib
 | `openalea.metafspm.component.Model`, `declare` | `openalea.metafspm.coupling.component.Component` / `FunctionalComponent`, `declare` |
 | `openalea.metafspm.specializer` | `openalea.metafspm.solve.specializer` |
 
+### Reproducible random draws (PT2)
+
+- **New `data_structure/random_streams.py`:** counter-based draws (uniform, normal, exponential, integers), a pure function of (seed, stream, step, entity id).
+- **`ds.random(...)`** and the component helper **`self.random(stream, ...)`**: its step counters live on the DataStructure and are kept by checkpoints; `random_seed` chooses the seed.
+- Draws do not depend on the visiting order or on the other entities (QPa: rhizodep's global re-seeding is replaced by per-vertex streams with the same distributions).
+
 ### Tree kernels, round 2 (PT1)
 
 - **`ds.fold(update, values, direction="up" | "down")`:** a level-by-level fold with a custom vectorised function. Each `FoldLevel` gives its nodes, their edge types, `children(values, op, edge=, where=, fill=)` (sum, max, min, all, any, count) and `parent(values)`. It is for nonlinear pipe models, death propagation, filtered maxima over laterals and turtle-like frames; tested exactly against rhizodep's and Root-CyNAPS' loops.
