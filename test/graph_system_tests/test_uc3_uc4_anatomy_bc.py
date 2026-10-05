@@ -1,7 +1,7 @@
 """
 UC3 — MechaAnatomyHydraulics: heterogeneous typed edge conductances, Robin-penalty BCs, analytic Jacobian,
       @graph_output.
-UC4 — LaplacianWithBC: @boundary_condition Dirichlet and Neumann semantics.
+UC4 — LaplacianWithBC: boundary_set Dirichlet and Neumann semantics.
 
 Migrated to FunctionalComponent on MPGDataStructure. UC3 used a cross-sectional anatomy graph built
 by generate_anatomy_in_mtg.py, which no longer works with the current MPG API: it now runs on the seedling
@@ -32,7 +32,7 @@ from openalea.metafspm.data_structure.configs import PropsConfig
 from openalea.metafspm.data_structure.data_api import BoundaryPort, MPGDataStructure
 from openalea.metafspm.data_structure.mpg import MPG
 from openalea.metafspm.solve.decorator import (
-    boundary_condition, graph_jacobian, graph_output, graph_system, node_balance,
+    boundary_set, graph_jacobian, graph_output, graph_system, node_balance,
 )
 
 from simple_seedling import generate_simple_mpg_seedling
@@ -312,9 +312,7 @@ class LaplacianWithBC(FunctionalComponent):
             B = self._graph_view.incidence
             return np.asarray((B @ diags(K) @ B.T) @ pressure).reshape(-1)
 
-        @boundary_condition("node", "dirichlet", field="pressure", filters={"is_collar": [1.0]})
-        def _collar_dirichlet(self, pressure):
-            return pressure - 2.0   # prescribe P = 2.0 at collar
+        collar = boundary_set(select={"is_collar": [1.0]}, kind="dirichlet", value=2.0)   # P = 2.0 at the collar
 
     @graph_system(
         node_unknowns=["pressure"],
@@ -335,9 +333,7 @@ class LaplacianWithBC(FunctionalComponent):
                 + 0.5 * pressure
             )
 
-        @boundary_condition("node", "neumann", field="pressure", filters={"is_collar": [1.0]})
-        def _collar_neumann(self):
-            return np.array([-1.0])   # add 1.0 source at collar
+        collar = boundary_set(select={"is_collar": [1.0]}, kind="neumann", value=1.0)     # an inflow of 1.0
 
 
 # ══════════════════════════════════════════════════════════════════════════════

@@ -13,7 +13,7 @@ import pytest
 from openalea.metafspm.coupling.component import FunctionalComponent, parameter, state_variable
 from openalea.metafspm.data_structure.configs import ScalesConfig as scales
 from openalea.metafspm.data_structure.data_api import BoundaryPort, MPGDataStructure
-from openalea.metafspm.solve.decorator import boundary_condition, edge_law, graph_system, node_balance
+from openalea.metafspm.solve.decorator import boundary_set, edge_law, graph_system, node_balance
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'mpg_tests'))
 from simple_seedling import generate_simple_mpg_seedling
@@ -139,10 +139,7 @@ class SteadyPotential(FunctionalComponent):
         def _balance(self, water_flux):
             return np.asarray(self._graph_view.incidence @ water_flux).reshape(-1)
 
-        @boundary_condition(location="node", kind="dirichlet", field="potential", filters={"is_collar": [1]},
-                            explicit=True)
-        def _collar(self):
-            return np.array([-0.1])
+        collar = boundary_set(select={"is_collar": [1]}, kind="dirichlet", value=-0.1)
 
         @edge_law(field="water_flux")
         def _darcy(self, potential, water_flux, K):

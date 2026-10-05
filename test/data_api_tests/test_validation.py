@@ -100,6 +100,11 @@ def test_edge_boundary_conditions_are_rejected_until_boundary_sets():
         boundary_condition("cell", "dirichlet", field="flux")
 
 
+def test_boundary_condition_is_deprecated_for_boundary_sets():
+    with pytest.warns(DeprecationWarning, match="use a boundary_set"):
+        boundary_condition("node", "dirichlet", field="flux")
+
+
 # ---------------------------------------------------------------- couplability with a DataStructure
 
 @dataclass
