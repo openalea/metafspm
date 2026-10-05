@@ -18,6 +18,11 @@ The flat modules used before the 2026 restructure have been removed. No compatib
 | `openalea.metafspm.component.Model`, `declare` | `openalea.metafspm.coupling.component.Component` / `FunctionalComponent`, `declare` |
 | `openalea.metafspm.specializer` | `openalea.metafspm.solve.specializer` |
 
+### Growth bookkeeping proportional to the growth (F5)
+
+- `MPG.topology_arrays()` is extended for the vertices created since the last read (rebuilt only after removals). The vid → index dict is built lazily, graph builders look vids up in bulk, and the carry-over matches ids once per location.
+- 1000 plants of 2 000 segments: 3.3 → 2.0 s per step.
+
 ### Removed: `solve/specializer.py` (Q29)
 
 - It was unused since the legacy path was removed. Numba is used by steps directly: a step calls an `@njit` function on the arrays it receives.

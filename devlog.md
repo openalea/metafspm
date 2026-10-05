@@ -1806,3 +1806,13 @@ Per-file counts:
   - `devplan_datastructures.md`: DS13, DS14 and DS15 ticked with their commits;
   - `devplan.md`: W2.12 and W5.6 dropped (the per-process scene is gone); Q29 answered from your message (remove it unless numba needs it; it does not) and `specializer.py` deleted;
   - `test_conventions_doc` closes its file.
+- **F5:**
+  - incremental `topology_arrays` (`_extended_topology_arrays`: new vids only, children of inserted vertices re-linked, capacity doubling, full rebuild on removals);
+  - lazy `_vid_to_idx` (property) and `_vid_index` (bulk sorted lookup) in `incidence_matrix`, `to_graph_view` and node → edge `_map`;
+  - one id match per location in the carry-over.
+
+  Test: incremental arrays equal a full rebuild after elongation, a bulk lateral, an inserted parent and a removal. 1000 plants: 3.3 → 2.0 s per step; growth 1.6–2.2 → 0.9–1.1 s.
+- **Porting audit** (four read-only agents on rhizodep / Root-CyNAPS / Root_BRIDGES, cnwgrass / WheatFspm / adel, RhizoSoil / soiltemp / Wheat-BRIDGES / fspm-utility, GRANAP):
+  - results in the new `devplan_porting.md`: gaps G1–G15, steps PT1–PT9, questions QPa–QPf plus GRANAP's;
+  - checked against the code, three reported gaps are already covered: multi-output steps (`-> tuple[...]`), weighted sums (a formula link plus `sum`), and per-vertex lists (`dtype=object`).
+- **Suite:** 670 passed.

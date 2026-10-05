@@ -712,6 +712,62 @@ class MPG(MTG):
         cache = self.__dict__.get("_topology_arrays")
         if cache is not None and cache[0] == signature:
             return cache[1]
+        if cache is not None and cache[0][1] is not None and signature[1] is not None:
+            # Incremental (F5): vids are allocated in increasing order, so the vertices created since the last read
+            # are above the last vid seen; when none was removed, only they (and children they were inserted above)
+            # are read from the MTG
+            (count, last), arrays = cache
+            new = [v for v in range(last + 1, signature[1] + 1) if v in self._scale]
+            if signature[0] == count + len(new):
+                arrays = self._extended_topology_arrays(arrays, new, signature[1] + 1)
+                self.__dict__["_topology_arrays"] = (signature, arrays)
+                return arrays
+        arrays = self._full_topology_arrays()
+        self.__dict__["_topology_arrays"] = (signature, arrays)
+        return arrays
+
+    def _extended_topology_arrays(self, arrays: dict, new: list, size: int) -> dict:
+        """*arrays* with the entries of the *new* vertices, and of the children they were inserted above."""
+        if arrays["parent"].size < size:            # capacity doubles, so that growth extends in amortised O(new)
+            capacity = max(size, 2 * arrays["parent"].size)
+            grown = {}
+            for name, values in arrays.items():
+                fill = False if values.dtype == bool else (0 if name == "edge_type" else -1)
+                extended = np.full(capacity, fill, dtype=values.dtype)
+                extended[:values.size] = values
+                grown[name] = extended
+            arrays = grown
+        if not new:
+            return arrays
+        parent, complex_, scale = arrays["parent"], arrays["complex"], arrays["scale"]
+        edge_type, is_anchor = arrays["edge_type"], arrays["is_anchor"]
+        types, anchors = self.property('edge_type'), self.property('isanchor')
+        codes = self._EDGE_TYPE_CODES
+        vids = np.array(new, dtype=np.int64)
+
+        def read(mapping):
+            return np.array([-1 if mapping.get(v) is None else mapping.get(v) for v in new], dtype=np.int64)
+
+        parent[vids], scale[vids], complex_[vids] = read(self._parent), read(self._scale), read(self._complex)
+        edge_type[vids] = [codes.get(types.get(v), 0) for v in new]
+        is_anchor[vids] = [bool(anchors.get(v, False)) for v in new]
+        fresh = set(new)
+        for v in new:                                  # an existing child below an inserted vertex
+            for child in self._children.get(v, ()):
+                if child not in fresh:
+                    parent[child] = v
+                    edge_type[child] = codes.get(types.get(child), 0)
+        missing = vids[(complex_[vids] < 0) & (parent[vids] >= 0)]
+        ancestor = parent[missing]
+        while missing.size:                            # new vertices without a complex: their nearest ancestor's
+            known = complex_[ancestor] >= 0
+            complex_[missing[known]] = complex_[ancestor[known]]
+            missing, ancestor = missing[~known], parent[ancestor[~known]]
+            keep = ancestor >= 0
+            missing, ancestor = missing[keep], ancestor[keep]
+        return arrays
+
+    def _full_topology_arrays(self) -> dict:
         size = max(getattr(self, "_id", 0), max(self._scale.keys(), default=0), max(self._parent.keys(), default=0)) + 1
         def filled(mapping):
             """Array of *mapping* by vid, -1 for missing or None values (bulk reads of the MTG dicts)."""
@@ -753,10 +809,7 @@ class MPG(MTG):
             flags = np.fromiter((bool(f) for f in anchors.values()), dtype=bool, count=len(anchors))
         inside = keys < size
         is_anchor[keys[inside & flags]] = True
-        arrays = {"parent": parent, "complex": complex_, "scale": scale, "edge_type": edge_type,
-                  "is_anchor": is_anchor}
-        self.__dict__["_topology_arrays"] = (signature, arrays)
-        return arrays
+        return {"parent": parent, "complex": complex_, "scale": scale, "edge_type": edge_type, "is_anchor": is_anchor}
 
     def complex_at_scale_array(self, vids, scale: int) -> np.ndarray:
         """complex_at_scale for many vertices at once (from topology_arrays)."""

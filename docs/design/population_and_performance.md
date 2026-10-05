@@ -316,7 +316,7 @@ Anatomy mode at 8·10⁵ Compartments: rates and states 0.15 → 0.003 s, graph 
   - an MPG-style step flushes the variables of its own component;
   - write-back properties are ArrayDicts.
 - **F4:** the graph extension, the carry-over, the topology arrays and `edges()` are array work.
-- **F5 (open), growth at the largest sizes:** growth bookkeeping is still not linear: ×10 plants gives ×16–22 between 100 and 1000 plants. The cause is the remaining O(MTG) Python reads per growth event: `topology_arrays` reading the MTG's `_parent`, `_scale`, `_complex` and `edge_type` dicts (about 6·10⁶ vertices with the Compartments and Connections), and `_build_index_map`. Making those arrays incremental (extended for the vertices created since the last read, rebuilt on removals or relinking) would make growth proportional to the growth. That needs the MPG to record its structural edits (`add_child`, `insert_parent`, `remove_tree`), so it is left for later.
+- **F5 (done, see §17), growth at the largest sizes:** growth bookkeeping is still not linear: ×10 plants gives ×16–22 between 100 and 1000 plants. The cause is the remaining O(MTG) Python reads per growth event: `topology_arrays` reading the MTG's `_parent`, `_scale`, `_complex` and `edge_type` dicts (about 6·10⁶ vertices with the Compartments and Connections), and `_build_index_map`. Making those arrays incremental (extended for the vertices created since the last read, rebuilt on removals or relinking) would make growth proportional to the growth. That needs the MPG to record its structural edits (`add_child`, `insert_parent`, `remove_tree`), so it is left for later.
 
 ## 16. S2 as implemented (2026-10-06)
 
@@ -335,3 +335,20 @@ Anatomy mode at 8·10⁵ Compartments: rates and states 0.15 → 0.003 s, graph 
 
   Each piece pays its own spec build, finite-difference colouring and SuperLU call (a few ms), and one sparse LU of a block-diagonal system already costs no more than the blocks. So `whole` stays the default (a deviation from §9, which made `components` the default with several pieces). `components` is for convergence (a slow plant does not hold the others) and per-plant adaptive steps.
 - **Not done: the thread pool.** The solve keeps its state on the component instance (`_restriction`, `_solve_view`, `_current_dt`, the previous fields), so pieces cannot run in threads without moving that state into a per-solve context. The Python work per piece (residual evaluation, assembly) also holds the GIL, so threads would only overlap the SuperLU calls. Processes or a numba assembly would be the route if graph systems become the bottleneck.
+
+## 17. F5: incremental topology arrays (2026-10-06)
+
+- **`MPG.topology_arrays()` is incremental.** Vids are allocated in increasing order, so the vertices created since the last read are those above the last vid seen. Only they are read from the MTG dicts; the children they were inserted above are re-linked; capacity doubles. A full rebuild happens only when vertices were removed (the vertex count does not add up).
+- **`MPGDataStructure`:**
+  - the vid → index dict is built at first use;
+  - `incidence_matrix`, `to_graph_view` and node → edge mappings look vids up in bulk (`_vid_index`);
+  - the carry-over matches ids once per location.
+- **Benchmark** (`bench_population.py`), seconds per step:
+
+  | plants | step | growth | graph system | exchanges (bar. / overlap) |
+  |---:|---:|---:|---:|---:|
+  | 100 | 0.12–0.17 (0.16–0.21 before) | 0.064 (0.10) | 0.03 | 0.008 / 0.066 |
+  | 1000 | 2.0 (3.3) | 0.87–1.09 (1.6–2.2) | 0.35–0.49 | 0.21 / 0.72 |
+
+  Anatomy mode at 8·10⁵ Compartments: 0.003 s for rates and states, 0.12 s for the graph system.
+- **What remains above linear (×14–17 for ×10 plants)** is numpy work on whole-population arrays at each growth event (sorted searches, set operations, `array_filtering`, MTG property writes), no longer Python loops. Since 1000 plants of 2 000 segments now take about 2 s per step, it is left as is.
