@@ -12,6 +12,7 @@
   - `declare_data_and_couple_components(translator_path=, components=)` no longer takes `shoot=` / `root=` / `atmosphere=` / `soil=`, since the components carry their DataStructures;
   - `Translator.inputs_outputs` is removed.
 - **Examples:** the legacy-to-MPG migration demos are removed.
+- **Internal solver layer:** `system_specs` (GraphSystem, GraphDAESpec, ODESystemSpec, BoundaryConditions), the `solve()` time loop, `SolverResult`, `LinearDirectSolver` and `make_solver` are internal. Graph systems choose their solver with `@graph_system(solver=...)`, as a class or a key.
 
 ### Deprecated: `@boundary_condition`
 

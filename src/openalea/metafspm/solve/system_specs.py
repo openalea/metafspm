@@ -1,24 +1,22 @@
 """
-system_specs.py
-───────────────
-System specification hierarchy for metafspm graph models.
+Internal: the system specifications graph systems are assembled into. Components declare graph systems with the
+decorators of solve.decorator; nothing here is part of the public API, and it may change without notice.
 
-BoundaryConditions            time-varying environmental drivers
-FieldState                    one named field on nodes or edges
-UnknownLayout                 ordered layout of unknowns (node + edge)
-EquationBlock                 one residual block (evaluator callable)
-OutputBlock                   post-solve output hook
-EquationContext               context passed to all evaluator callables
+::
 
-BaseSystemSpec (abstract)     minimal: variables, parameters, t_span, x0
-  └── GraphDAESpec            graph-based DAE: spec + evaluation engine
-        pack/unpack/make_context/residual/jacobian/sparsity/outputs
+    BoundaryConditions            time-varying environmental drivers
+    FieldState                    one named field on nodes or edges
+    UnknownLayout                 ordered layout of unknowns (node + edge)
+    EquationBlock                 one residual block (evaluator callable)
+    OutputBlock                   post-solve output hook
+    EquationContext               context passed to all evaluator callables
 
-GraphSystem  ── compatibility shim wrapping GraphDAESpec + a SolverConfig
-weighted_laplacian            utility: B diag(k) B^T
+    BaseSystemSpec (abstract)     minimal: variables, parameters, t_span, x0
+      └── GraphDAESpec            graph-based DAE: spec + evaluation engine
+            pack/unpack/make_context/residual/jacobian/sparsity/outputs
 
-GraphDAESpec consolidates what was previously the non-solve half of
-GraphSystem.  The solve half moves to solver.py.
+    GraphSystem  ── compatibility shim wrapping GraphDAESpec + a SolverConfig
+    weighted_laplacian            utility: B diag(k) B^T
 """
 
 from __future__ import annotations

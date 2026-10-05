@@ -27,8 +27,7 @@
              boundary_condition, boundary_set, pool_balance, graph_output, graph_jacobian
 
 .. automodule:: openalea.metafspm.solve.solver
-   :members: NewtonSolver, ImplicitEulerSolver, ExplicitEulerSolver, ScipyIVPSolver, ScipyRootSolver, SolverConfig,
-             make_solver
+   :members: NewtonSolver, ImplicitEulerSolver, ExplicitEulerSolver, ScipyIVPSolver, ScipyRootSolver
 
 .. automodule:: openalea.metafspm.coupling.choregrapher
    :members: Choregrapher, family_of
