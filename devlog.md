@@ -1688,3 +1688,4 @@ Per-file counts:
   - emergence combined with a model's `active` mask.
 - **Found while testing:** a step named `_seedling_exudation` silently wrote a new `seedling_exudation` variable (only a DeprecationWarning). Step names must match their output.
 - **Suite:** 727 passed.
+- **P6 committed** (`0867486`). **P7 design note** drafted (§11: benchmark protocol and the list of what is removed), with questions QP7a–b. Stopped for the answers: the removal is breaking for downstream users.
