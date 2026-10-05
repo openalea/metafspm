@@ -46,7 +46,7 @@ from dataclasses import fields as dc_fields
 from typing      import Optional
 
 import numpy as np
-from scipy.sparse import coo_matrix, csc_matrix
+from scipy.sparse import coo_matrix, csc_matrix, csr_matrix
 
 # ── New module hierarchy ──────────────────────────────────────────────────────
 from openalea.metafspm.data_structure.data_api import GraphView, BoundaryPort
@@ -152,6 +152,17 @@ def node_balance(field=None, filters=None, explicit=False):
     return decorator
 
 
+def pool_balance(field):
+    """
+    Tag a method as the residual of pool unknown *field* (PT4): it returns one value per pool entity (e.g. per plant),
+    and takes the pool's values as an argument named after it, like any unknown.
+    """
+    def decorator(func):
+        func.__graph_tag__ = {"kind": "pool_balance", "field": field}
+        return func
+    return decorator
+
+
 def edge_law(func=None, *, field=None, filters=None,
              explicit=False, integrate=False):
     """
@@ -220,13 +231,24 @@ class boundary_set:
     value, weight
             node variables of the DataStructure (read at each solve) or constants.
     field   the node unknown it applies to; default: the only node unknown.
+    kind=None: a selection only (no term), e.g. the nodes exchanging with a pool unknown (PT4).
+    kinds=<node variable name>, instead of kind: each node's kind read at each solve from that variable, as boundary_set.CODES
+            (1 dirichlet, 2 neumann, 3 robin, anything else no condition): e.g. a collar switching between a
+            pressure and a flux (QPi).
     """
 
     KINDS = ("robin", "dirichlet", "neumann")
+    # Codes of a per-node kind variable (PT4, QPi); other values (e.g. 0) apply no condition
+    CODES = {"dirichlet": 1, "neumann": 2, "robin": 3}
 
-    def __init__(self, select, kind, value, weight=1.0, field=None):
-        if kind not in self.KINDS:
+    def __init__(self, select, kind=None, value=0., weight=1.0, field=None, kinds: str = None):
+        if kind is not None and kind not in self.KINDS:
             raise ValueError(f"boundary_set: kind must be one of {self.KINDS}, got '{kind}'")
+        if kinds is not None:
+            if kind is not None:
+                raise ValueError("boundary_set: give kind= (one kind) or kinds= (a node variable), not both")
+            kind = "per_node"
+        self.kind_variable = kinds
         if not (callable(select) or isinstance(select, (dict, str))):
             raise TypeError("boundary_set: select must be a {variable: values} dict, a variable name or a callable")
         self.select, self.kind, self.value, self.weight, self.field = select, kind, value, weight, field
@@ -238,7 +260,8 @@ class boundary_set:
 
     def variables(self) -> list:
         """DataStructure variables read by the solve (value and weight given by name)."""
-        return [x for x in (self.value, self.weight if self.kind == "robin" else None) if isinstance(x, str)]
+        weight = self.weight if self.kind in ("robin", "per_node") else None
+        return [x for x in (self.value, weight, self.kind_variable) if isinstance(x, str)]
 
     def members(self, instance, ds, size, take) -> np.ndarray:
         """Indices, in the solved graph, of the nodes of the set."""
@@ -606,6 +629,9 @@ class GraphSystemBuilder:
         jacobian_raw       = None
         output_items       = []   # (out_name, bound, raw)
         boundary_sets      = []   # boundary_set objects (DS6)
+        pool_items         = []   # (field, bound, raw): pool balances (PT4)
+        pool_specs         = spec_def.get("pool_unknowns") or {}
+        pool_names         = list(pool_specs)
         self.output_locations = {}   # out_name -> location given by @graph_output (or None)
 
         for cls_ in inner_cls.__mro__:
@@ -636,6 +662,8 @@ class GraphSystemBuilder:
                         tag.get("field"), tag.get("filters"), tag.get("bc_kind"),
                         attr_name, bound, obj, tag.get("explicit", False)
                     ))
+                elif kind == "pool_balance":
+                    pool_items.append((tag["field"], bound, obj))
                 elif kind == "graph_jacobian":
                     jacobian_raw = (bound, obj)
                 elif kind == "graph_output":
@@ -683,11 +711,12 @@ class GraphSystemBuilder:
             + [r for _, _, _, _, _, r, _ in bc_items]
             + ([jacobian_raw[1]] if jacobian_raw else [])
             + [r for _, _, r in output_items]
+            + [r for _, _, r in pool_items]
         )
         required: set[str] = set()
         for raw in all_raws:
             for aname in inspect.getfullargspec(raw)[0][1:]:
-                if aname not in node_unknowns and aname not in all_edge_unknowns:
+                if aname not in node_unknowns and aname not in all_edge_unknowns and aname not in pool_names:
                     required.add(aname)
         for _, tf, _, _, _, _ in node_balance_items:
             if tf:
@@ -709,6 +738,8 @@ class GraphSystemBuilder:
         # Boundary sets: members on the solved graph, values and weights read now (DS6)
         set_terms = defaultdict(list)    # field -> [(kind, idx, value, weight)]
         for bset in boundary_sets:
+            if bset.kind is None:
+                continue                      # a selection only (e.g. a pool's exchange set)
             if bset.field is not None:
                 field = bset.field
             elif len(node_unknowns) == 1:
@@ -719,6 +750,14 @@ class GraphSystemBuilder:
 
             def read(x, idx=idx):
                 return node_snap[x][idx] if isinstance(x, str) else np.full(idx.size, float(x))
+            if bset.kind == "per_node":
+                codes = np.asarray(read(bset.kind_variable)).round().astype(np.int64)
+                value, weight = read(bset.value), read(bset.weight)
+                for kind, code in boundary_set.CODES.items():
+                    chosen = codes == code
+                    set_terms[field].append((kind, idx[chosen], value[chosen],
+                                             weight[chosen] if kind == "robin" else None))
+                continue
             set_terms[field].append((bset.kind, idx, read(bset.value), read(bset.weight) if bset.kind == "robin"
                                      else None))
 
@@ -734,6 +773,40 @@ class GraphSystemBuilder:
                     elif kind == "robin":
                         anchored[idx[weight > 0]] = True
             _check_well_posed(instance, spec_def["inner_class"].__name__, gv, anchored)
+
+        # ── Pool unknowns (PT4): the pools of the solved nodes' entities, coupled to their exchange set ──
+        pool_fields_gs, pool_coupling, pool_targets = {}, {}, {}
+        sets_by_name = {bset.name: bset for bset in boundary_sets}
+        for pname, pspec in pool_specs.items():
+            if not ds.has(pname):
+                ds.register(pname, location=pspec["location"])
+            location = ds.location(pname)
+            owner = np.asarray(ds.owner(location), dtype=np.int64)
+            take_nodes = _take(instance, "node")
+            owner = owner if take_nodes is None else owner[take_nodes]
+            entities = np.unique(owner)
+            local = np.searchsorted(entities, owner)
+            if pspec["exchange"] is None:
+                members = np.arange(n)
+            elif pspec["exchange"] in sets_by_name:
+                members = sets_by_name[pspec["exchange"]].members(instance, ds, n, take_nodes)
+            else:
+                raise KeyError(f"{type(instance).__name__}: pool '{pname}' exchanges with boundary set "
+                               f"'{pspec['exchange']}', which the graph system does not declare")
+            pool_coupling[pname] = csr_matrix((np.ones(members.size), (members, local[members])),
+                                              shape=(n, entities.size))
+            values = np.array(np.asarray(ds.get(pname), dtype=np.float64).reshape(-1)[entities])
+            pool_fields_gs[pname] = FieldState(pname, "pool", values)
+            pool_targets[pname] = entities
+            instance._previous_state[pname] = values.copy()
+        instance.__dict__["_pool_exchange"] = pool_coupling
+        self.pool_targets = pool_targets
+        if pool_names and jacobian_raw is not None:
+            raise NotImplementedError(f"{type(instance).__name__}: an analytic @graph_jacobian with pool unknowns")
+        missing_balances = set(pool_names) - {field for field, _, _ in pool_items}
+        if missing_balances:
+            raise ValueError(f"{type(instance).__name__}: pool unknowns {sorted(missing_balances)} have no "
+                             "@pool_balance")
 
         # ── Initial-guess FieldStates ─────────────────────────────────────────
         # Copies: the implicit solvers also use them as u_prev, they must not follow later writes
@@ -774,6 +847,8 @@ class GraphSystemBuilder:
                         args.append(ctx.node_unknowns[aname])
                     elif aname in edge_unknowns:
                         args.append(ctx.edge_unknowns[aname])
+                    elif aname in ctx.pool_unknowns:
+                        args.append(ctx.pool_unknowns[aname])
                     elif aname in own_snap:
                         args.append(own_snap[aname])
                     elif aname in other_snap:
@@ -809,6 +884,8 @@ class GraphSystemBuilder:
                         args.append(ctx.node_unknowns[aname])
                     elif aname in edge_unknowns:
                         args.append(ctx.edge_unknowns[aname])
+                    elif aname in ctx.pool_unknowns:
+                        args.append(ctx.pool_unknowns[aname])
                     elif aname in node_snap:
                         args.append(node_snap[aname])
                     elif aname in edge_snap:
@@ -919,6 +996,13 @@ class GraphSystemBuilder:
                 name=f"edge_law_{field_name}", evaluator=ev
             ))
 
+        for pname in pool_names:
+            balances = [make_evaluator(raw, bound, None, "pool") for field, bound, raw in pool_items if field == pname]
+            equation_blocks.append(EquationBlock(
+                name=f"pool_balance_{pname}",
+                evaluator=balances[0] if len(balances) == 1 else (lambda ctx, _b=balances: sum(b(ctx) for b in _b)),
+            ))
+
         # ── Amount integration equations: (Q_new − Q_old)/dt − q = 0 ─────────
         def _make_amount_ev(flux_field, q_old, dt):
             def evaluator(ctx):
@@ -975,12 +1059,17 @@ class GraphSystemBuilder:
             unknowns          = UnknownLayout(
                 node_fields   = tuple(node_unknowns),
                 edge_fields   = tuple(all_edge_unknowns),
+                pool_fields   = tuple(pool_names),
             ),
             equation_blocks   = tuple(equation_blocks),
             output_blocks     = output_blocks,
             jacobian_evaluator= jac_evaluator,
             parameters        = {},
+            pool_fields       = pool_fields_gs,
+            pool_coupling     = pool_coupling,
         )
+        # IVP solvers report their evaluation time, at which equations read forcings (PT4, QPj)
+        spec.parameters["time_hook"] = lambda t, _i=instance: _i.__dict__.__setitem__("_ivp_time", t)
         return spec, node_snap, edge_snap
 
     # ── Solve + inject ────────────────────────────────────────────────────────
@@ -1029,6 +1118,11 @@ class GraphSystemBuilder:
                     # Inactive nodes stay frozen; dropped edges carry no flux, their integrated amounts are kept
                     dropped = None if location == "node" or fn.endswith("_amount") else 0.
                     restriction.scatter(ds, fn, values, location, dropped=dropped)
+        for pname, values in spec.unpack_pools(packed).items():      # pools at their own scale (PT4)
+            stored = ds.get(pname)
+            full = np.array(stored, dtype=np.float64).reshape(-1)
+            full[self.pool_targets[pname]] = values
+            ds.set(pname, full.reshape(stored.shape))
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -1102,7 +1196,8 @@ def _solve_restricted(self, method_name, spec_def, restriction) -> None:
 
 def _unknown_names(ds, spec_def) -> list:
     names = list(spec_def["node_unknowns"]) + list(spec_def["edge_unknowns"])
-    return names + [f"{fn}_amount" for fn in spec_def["edge_unknowns"] if ds.has(f"{fn}_amount")]
+    names += [f"{fn}_amount" for fn in spec_def["edge_unknowns"] if ds.has(f"{fn}_amount")]
+    return names + [pool for pool in (spec_def.get("pool_unknowns") or {}) if ds.has(pool)]
 
 
 def _capture(ds, names, instance=None) -> dict:
@@ -1113,7 +1208,11 @@ def _capture(ds, names, instance=None) -> dict:
     captured = {}
     for name in names:
         if ds.has(name):
-            location = "edge" if ds.location(name) == "edge" else "node"
+            stored = ds.location(name)
+            if stored not in ("node", "cell", "edge"):          # pools at a coarse scale: small, kept whole
+                captured[name] = (stored, np.array(ds.get(name), dtype=np.float64))
+                continue
+            location = "edge" if stored == "edge" else "node"
             idx = restriction.node_idx if location == "node" else restriction.edge_idx
             captured[name] = (location, np.array(np.asarray(ds.get(name)).reshape(-1)[idx], dtype=np.float64))
     return captured
@@ -1131,7 +1230,10 @@ def _restore(ds, state, instance=None) -> None:
             ds.set(name, values)
         else:
             location, values = values
-            restriction.scatter(ds, name, values, location)
+            if location in ("node", "edge"):
+                restriction.scatter(ds, name, values, location)
+            else:
+                ds.set(name, values)
 
 
 def _saved_fields(self, key, ds, names) -> None:
@@ -1177,18 +1279,21 @@ def _solve_graph_system(self, method_name: str, spec_def: dict) -> None:
         for location, unknowns in (("node", spec_def["node_unknowns"]), ("edge", spec_def["edge_unknowns"]))
         for fn in unknowns if ds.has(fn)}
     try:
+        self.__dict__["_solve_offset"] = 0.         # start of the current (sub-)step within the call (forcings)
         if integrate == "step":
             self.__dict__["_current_dt"] = time_step
             _solve_once(self, method_name, spec_def)
         elif integrate == "substeps":
             n = int(spec_def["n_substeps"])
-            for _ in range(n):
+            for k in range(n):
+                self.__dict__["_solve_offset"] = k * time_step / n
                 _solve_substep(self, method_name, spec_def, time_step / n)
             self._last_integration = {"steps": n, "rejected": 0}
         else:
             _integrate_adaptive(self, method_name, spec_def, time_step, names)
     finally:
-        self.__dict__.pop("_current_dt", None)
+        for key in ("_current_dt", "_solve_offset", "_ivp_time"):
+            self.__dict__.pop(key, None)
 
 
 def _solve_substep(self, method_name, spec_def, h) -> None:
@@ -1213,10 +1318,12 @@ def _integrate_adaptive(self, method_name, spec_def, time_step, names) -> None:
     while t < time_step * (1. - 1e-12):
         h = min(h, time_step - t)
         start = _capture(ds, names, self)
+        self.__dict__["_solve_offset"] = t
         _solve_substep(self, method_name, spec_def, h)
         coarse = _capture(ds, spec_def["node_unknowns"], self)
         _restore(ds, start, self)
         _solve_substep(self, method_name, spec_def, h / 2.)
+        self.__dict__["_solve_offset"] = t + h / 2.
         _solve_substep(self, method_name, spec_def, h / 2.)
         fine = _capture(ds, spec_def["node_unknowns"], self)
         error = max((np.max(np.abs(_captured(fine, fn) - _captured(coarse, fn))
@@ -1399,6 +1506,7 @@ def graph_system(
     min_step       = None,
     max_step       = None,
     split          = "whole",
+    pool_unknowns  = None,
 ):
     """
     Inner-class decorator that wires a GraphSystem solve into the Choregrapher.
@@ -1452,6 +1560,11 @@ def graph_system(
         "step": one solve of the component's time_step (default); "substeps": n_substeps solves of
         time_step / n_substeps; "adaptive": step doubling with rtol / atol, min_step / max_step. Equations must
         write their time terms with self.dt and self.previous() (design note time_and_data §2).
+    pool_unknowns  : {name: location} | {name: {"location": ..., "exchange": boundary set name}} | None
+        Unknowns at a coarse scale, one per entity (e.g. the shoot phloem pool of each plant, location "Plant"),
+        solved with the node and edge unknowns (PT4). Their residual is a @pool_balance method; equations exchange
+        with them through self.pool_exchange(name), the sparse map between the nodes of the exchange set (default:
+        every node) and the pool of their entity. Newton solvers only.
     split          : "whole" | "components"
         "components": each connected piece of the graph (of the active subgraph with where=), e.g. each plant of a
         population, is solved on its own, with its own Newton convergence and integration steps (S2). "whole": one
@@ -1466,6 +1579,12 @@ def graph_system(
             )
         solver = method
 
+    pools = {}
+    for pool_name, pool_spec in (pool_unknowns or {}).items():
+        pool_spec = {"location": pool_spec} if isinstance(pool_spec, str) else dict(pool_spec)
+        if "location" not in pool_spec:
+            raise ValueError(f"graph_system: pool '{pool_name}' needs a location (e.g. 'Plant')")
+        pools[pool_name] = {"location": pool_spec["location"], "exchange": pool_spec.get("exchange")}
     if split not in ("whole", "components"):
         raise ValueError(f"graph_system: split must be 'whole' or 'components', got '{split}'")
     if integrate not in ("step", "substeps", "adaptive"):
@@ -1492,6 +1611,9 @@ def graph_system(
             f"DAESolver subclass, got {type(solver).__name__!r}."
         )
 
+    if pools and issubclass(solver_cls, (ExplicitEulerSolver, ImplicitEulerSolver, ScipyIVPSolver)):
+        raise ValueError("graph_system: pool unknowns need a Newton solver (write their time terms in @pool_balance)")
+
     spec = {
         "node_unknowns" : list(node_unknowns),
         "edge_unknowns" : list(edge_unknowns),
@@ -1511,6 +1633,7 @@ def graph_system(
         "min_step"      : min_step,
         "max_step"      : max_step,
         "split"         : split,
+        "pool_unknowns" : pools,
         "transient"     : (issubclass(solver_cls, (ExplicitEulerSolver, ImplicitEulerSolver, ScipyIVPSolver))
                            if transient is None else bool(transient)),
     }

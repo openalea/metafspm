@@ -18,6 +18,20 @@ The flat modules used before the 2026 restructure have been removed. No compatib
 | `openalea.metafspm.component.Model`, `declare` | `openalea.metafspm.coupling.component.Component` / `FunctionalComponent`, `declare` |
 | `openalea.metafspm.specializer` | `openalea.metafspm.solve.specializer` |
 
+### Graph-system extensions (PT4)
+
+- **Pool unknowns at a coarse scale:** `@graph_system(pool_unknowns={"shoot_sugar": {"location": "Plant", "exchange": "collar"}})` adds one unknown per entity (e.g. the shoot phloem pool of each plant), solved with the graph by Newton.
+  - Its residual is a `@pool_balance(field=...)`.
+  - Equations take the pool as an argument and exchange through `self.pool_exchange(name)`, the sparse map between the exchange set's nodes and their entity's pool.
+  - Pools follow `where=` and `split=` solves, are written back at their scale, and take part in adaptive steps.
+- **`boundary_set(select=..., kind=None)`** is a selection only (for exchanges).
+- **`boundary_set(..., kinds="variable")`:** each node's kind is read at every solve from a node variable (`boundary_set.CODES`: 1 Dirichlet, 2 Neumann, 3 Robin; otherwise no condition), e.g. a collar switching between a pressure and a flux.
+- **Forcings:** `self.forcing(name)` interpolates a table of `self.forcings` (a Series indexed by time, `(times, values)` or a callable) at `self.forcing_time()`:
+  - at the end of the current (sub-)step for implicit solves and steps;
+  - at the evaluation time inside an IVP solve (a time hook of `ScipyIVPSolver`).
+
+  Components keep a clock advanced at each call, set to the scene time by the Scene.
+
 ### Structure edits and inheritance (PT3)
 
 - **`MPG.remove_vertex(vid, reparent_child=True)`** works on segments:

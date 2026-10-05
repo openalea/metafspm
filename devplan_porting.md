@@ -58,7 +58,7 @@ Each step gets a short design note, tests against a reference loop taken from th
 | **PT1** ✓ | Tree kernels, round 2: `fold(values, direction, fn)`, a numba fold applied level by level for nonlinear and min/max/all reductions, with a children filter; `chain_gather`; `chain_recurrence` | G1, G2, G6 (turtle) |
 | **PT2** ✓ | Reproducible random draws: `ds.rng(entities, seed)`, one stream per (plant seed, vid, step), vectorised; documented MPG-style patterns for chained creation | G3 |
 | **PT3** ✓ (templating: QPg) | Structure edits: tests and fixes for adel-like edits (inserting elements in a chain, removing with relinking, rebuilding elements each step) and the repartition after them; disabling inherited steps (`steps_removed`), and templated components | G11, §1 |
-| **PT4** | Graph systems: extra unknowns outside the graph, coupled to nodes (a pool with its own balance); boundary sets whose kind is chosen per call; `self.forcing(name, t)` interpolating input tables inside solves | G4, G5 |
+| **PT4** ✓ | Graph systems: extra unknowns outside the graph, coupled to nodes (a pool with its own balance); boundary sets whose kind is chosen per call; `self.forcing(name, t)` interpolating input tables inside solves | G4, G5 |
 | **PT5** | Scene services: one forcing table; `every=` / `when=` scheduling; spin-up hooks; events and stop conditions | G8, G9 |
 | **PT6** | Mappings: population → environment scalars (a reduction over the plants of every population); column ↔ grid (layer mean and broadcast) | G7 |
 | **PT7** | Non-variable state: component state saved by checkpoints (a `__checkpoint__` hook); vector-valued variables `(n, k)` | G10 |
@@ -148,7 +148,7 @@ Not planned in metafspm: G13 (a masked loop in a step), G14 (until stratificatio
   - **(c) One class per solute** written by hand (duplication).
 
   **Recommendation:** (a). It keeps one DataStructure name per solute, so the translator, logging and checkpoints are unchanged. Conversions per solute become parameters of the generated class.
-  → answer:
+  → answer: I would rather like duplication for now (c) to keep things explicitly declared.
 
 **PT4 design: graph-system extensions (G4, G5).**
 1. **Pool unknowns at a coarse scale (QPc agreed):**
@@ -160,9 +160,9 @@ Not planned in metafspm: G13 (a masked loop in a step), G14 (until stratificatio
 3. **Forcings inside solves:** `self.forcing(name)` in an equation returns the forcing at the end of the current (sub-)step (implicit Euler's time), linearly interpolated in the time series given to the component or, after PT5, the scene's shared table. With adaptive steps each trial sees its own time.
 
 - **QPh, pools (1).** Pool unknowns at a coarse scale, as above? The alternative is virtual nodes appended to the graph, with an edge to the collar, as Root-CyNAPS does today. **Recommendation:** pools at a scale. One pool per plant comes from the population without bookkeeping, and the pool is an ordinary Plant variable outside the solve.
-  → answer:
+  → answer: follow Recommendation
 - **QPi, boundary kinds (2).** A per-node kind variable, read at each solve? **Recommendation:** yes. It also lets one set mix kinds (some tips Dirichlet, others Neumann) without one boundary set per kind.
-  → answer:
+  → answer: yes to Recommendation
 - **QPj, forcings (3).** Is the end of the (sub-)step the right time? cnwheat's `solve_ivp` reads forcings continuously, which implicit Euler cannot do; IVP solvers would read them at each evaluation time. **Recommendation:** the end of the (sub-)step for implicit solvers, and the evaluation time for the IVP solver.
-  → answer:
+  → answer: yes to Recommendation
 

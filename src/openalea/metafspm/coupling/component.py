@@ -207,6 +207,9 @@ class Component:
             self._check_mtg_sync()
             if self.mtg_sync == "after_call":
                 self.write_back_to_mtg()
+        # The component's clock (forcings, PT4): the start of its next call
+        self.__dict__["_clock"] = self.__dict__.get("_clock", 0.) + float(
+            getattr(self.choregrapher, "simulation_time_step", 0.) or 0.)
 
     def write_back_to_mtg(self) -> None:
         """Write the component's state variables to the MTG; FunctionalComponent implements it."""
@@ -526,6 +529,49 @@ class FunctionalComponent(DataStructureComponent):
         # Explicit views (e.g. with boundary ports built by hand) are kept until the topology changes
         self.__dict__["_graph_view_cache"] = view
         self.__dict__["_graph_view_version"] = getattr(self.data_structure, "topology_version", None)
+
+    # Forcings read inside steps and equations (PT4): {name: pandas Series indexed by time (s), (times, values),
+    # or a callable t -> value}, interpolated linearly
+    forcings = None
+
+    def forcing_time(self) -> float:
+        """
+        The time at which forcings are read (QPj): the end of the current (sub-)step for implicit solves and steps,
+        the evaluation time inside an IVP solve; times count from the component's clock (the scene time).
+        """
+        start = self.__dict__.get("_clock", 0.)
+        offset = self.__dict__.get("_solve_offset", 0.)
+        if "_ivp_time" in self.__dict__:
+            return start + offset + self.__dict__["_ivp_time"]
+        step = self.__dict__.get("_current_dt", None)
+        if step is None:
+            step = float(getattr(self.choregrapher, "simulation_time_step", 0.) or 0.)
+        return start + offset + step
+
+    def forcing(self, name: str):
+        """Forcing *name* at forcing_time(), linearly interpolated in its table."""
+        table = (self.forcings or {}).get(name)
+        if table is None:
+            raise KeyError(f"{type(self).__name__} has no forcing '{name}' (set self.forcings)")
+        t = self.forcing_time()
+        if callable(table):
+            return table(t)
+        if hasattr(table, "index"):
+            times, values = np.asarray(table.index, dtype=np.float64), np.asarray(table, dtype=np.float64)
+        else:
+            times, values = (np.asarray(x, dtype=np.float64) for x in table)
+        return float(np.interp(t, times, values))
+
+    def pool_exchange(self, name: str):
+        """
+        During a graph-system solve with pool unknowns (PT4): the sparse (n_nodes, n_pools) map between the nodes of
+        the pool's exchange set and the pool of their entity. P @ pool gives each node its pool's value; P.T @ flux
+        sums node fluxes into their pools.
+        """
+        maps = self.__dict__.get("_pool_exchange") or {}
+        if name not in maps:
+            raise KeyError(f"'{name}' is not a pool unknown of the graph system being solved")
+        return maps[name]
 
     @property
     def dt(self) -> float:

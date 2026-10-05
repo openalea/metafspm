@@ -1843,3 +1843,21 @@ Per-file counts:
   - Templated components are not done; a question is asked (QPg).
 - **Suite:** 687 passed.
 - **PT4 design and questions QPg–QPj** written in `devplan_porting.md` §7. Stopped for the answers: they add API to graph systems and choose the templating mechanism.
+
+## 2026-10-06 (later): QPg–QPj answered; PT4 (pools, per-node boundary kinds, forcings)
+
+- **Answers:** QPg duplication by hand (no templating); QPh pools at a scale; QPi a per-node kind variable; QPj the end of the (sub-)step for implicit solvers, the evaluation time for IVP. Your note said the plan was not saved at first; it was re-read and QPj picked up.
+- **Pools:**
+  - `GraphDAESpec` gains `pool_fields` / `pool_coupling`, a third packed block, `unpack_pools`, `EquationContext.pool_unknowns`, and a block sparsity (`_sparsity_with_pools`: a pool couples to its exchange nodes, the edges at them, and itself);
+  - the builder takes the pools of the solved nodes' owners (`ds.owner(location)` restricted by the take), builds the coupling from the exchange set, records previous values, and adds `@pool_balance` blocks;
+  - pools are written back at their scale and captured whole in adaptive steps;
+  - Newton only, and an analytic Jacobian with pools is refused.
+- **Boundary kinds:** `boundary_set(kinds=var)` splits members by code into the three kinds at each build. A first version took `kind=` itself as a variable name, which would have hidden typos (a UC5 test caught it).
+- **Forcings:** `_solve_offset` is set per (sub-)step in `_solve_graph_system` and `_integrate_adaptive`; the `time_hook` reports `_ivp_time`; the clock advances in `Component.__call__` and is set by `Scene.run`.
+- **Tests** (`test_pools_and_kinds.py`, 5):
+  - pools against a hand-assembled linear solve, with conservation and each plant fed by its own collar;
+  - split against whole;
+  - Dirichlet and Neumann collars switched per node, then removed;
+  - forcings at the 8 sub-step ends (two calls) and the implicit Euler of `d(sugar)/dt = t`;
+  - the Newton-only check.
+- **Suite:** 692 passed.

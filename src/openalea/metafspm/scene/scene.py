@@ -259,6 +259,8 @@ class Scene(CompositeModel):
     def run(self) -> None:
         """One scene step: the environment, then the populations, each after the exchanges into it."""
         self._update_emergence()
+        for component in self.components:
+            component.__dict__["_clock"] = self.time        # forcings read at the scene time (PT4)
         for model in self.environment:
             for ds in self._data_structures(model):
                 self.exchanges.exchange(into=ds)
