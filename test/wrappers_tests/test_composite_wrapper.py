@@ -24,7 +24,7 @@ def _coupled_plant(tmp_path, translator=None):
     ds = doubles_ds.make_plant_ds()
     carbon, nitrogen = doubles_ds.PlantCarbon(data_structure=ds), doubles_ds.PlantNitrogen(data_structure=ds)
     model = CompositeModel()
-    model.declare_data_and_couple_components(root=ds, translator_path=path, components=(carbon, nitrogen))
+    model.declare_data_and_couple_components(translator_path=path, components=(carbon, nitrogen))
     return model, carbon, nitrogen, ds
 
 

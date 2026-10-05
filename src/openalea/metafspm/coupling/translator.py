@@ -163,24 +163,6 @@ class Translator:
                     names.append(name)
         return names
 
-    # ── queries ───────────────────────────────────────────────────────────────
-
-    def inputs_outputs(self, components, target: str, names_for_others: bool = True) -> tuple:
-        """
-        Variables exchanged between *target* and *components* (same semantics as
-        CompositeModel.get_component_inputs_outputs): outputs of *target* read by the components and inputs of
-        *target* from them, named on the components' side (names_for_others=True) or on the target's side.
-        """
-        inputs, outputs = set(), set()
-        for component in components:
-            if component == target:
-                continue
-            for link in self.links_of(component, provider=target):
-                outputs.update([link.variable] if names_for_others else list(link.sources))
-            for link in self.links_of(target, provider=component):
-                inputs.update(list(link.sources) if names_for_others else [link.variable])
-        return list(inputs), list(outputs)
-
     # ── conversions ───────────────────────────────────────────────────────────
 
     def to_nested(self) -> dict:

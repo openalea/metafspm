@@ -51,7 +51,7 @@ class ContractPlant(CompositeModel):
             ds.register(name, [g.property(name)[v] for v in ds.entity_ids("node")], location="node")
         self.carbon = doubles_ds.PlantCarbon(data_structure=ds)
         self.nitrogen = doubles_ds.PlantNitrogen(data_structure=ds)
-        self.declare_data_and_couple_components(root=ds, translator_path=self.translator_path,
+        self.declare_data_and_couple_components(translator_path=self.translator_path,
                                                 components=(self.carbon, self.nitrogen))
 
     def run(self):

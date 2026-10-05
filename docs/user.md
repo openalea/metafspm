@@ -221,7 +221,7 @@ formula=)`, or a nested YAML/Python dictionary. Links become aliases (same value
 (factors, sums, formulas, mappings between scales), computed when read.
 
 ```python
-self.declare_data_and_couple_components(root=ds, translator_path="translator.py", components=self.components)
+self.declare_data_and_couple_components(translator_path="translator.py", components=self.components)
 ```
 
 `openalea.metafspm.testing.assert_component_couplable(Component, translator)` checks a component against a

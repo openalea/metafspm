@@ -86,28 +86,6 @@ class Choregrapher(Singleton):
         self.simulation_time_step = simulation_time_step
 
 
-    def add_schedule(self, schedule):
-        """
-        Method to edit standarded scheduling proposed by the choregrapher. 
-        Guidelines :
-        - Rows' index in the list are priority order.
-        - Elements' index in the rows are in priority order.
-        Thus, you should design the priority of this schedule so that "actual rate" comming before "potential state" is indeed the expected behavior in computation scheduling.
-        :param schedule: List of lists of stings associated to available decorators :
-
-        For metabolic models, soil models (priority order) : 
-        - rate : for process rate computation that will affect model states (ex : transport flow, metabolic consumption) 
-        - state : for state balance computation, from previous state and integration of rates' modification (ex : concentrations and contents)
-        - deficit : for abnormal state values resulting from rate balance, cumulative deficits are computed before thresholding state values (ex : negative concentrations)
-
-        For growth models (priority order) : 
-        - potential : potential element growth computations regarding element initial state
-        - actual : actual element growth computations regarding element states actualizing structural states (belongs to state)
-        - segmentation : single element partitionning in several uppon actual growth if size exceeds a threshold.
-        """
-        self.consensus_scheduling = schedule
-
-
     def add_process(self, f, name):
         """Register step functor *f* in category *name* for its class, identified by module and qualified name."""
         family = f.family
@@ -151,19 +129,9 @@ class Choregrapher(Singleton):
             groups.setdefault(str(priority), []).append(functor)
         return {k: groups[k] for k in sorted(groups)}
 
-    def build_schedule(self, module_family):
-        """Former name-keyed schedule builder, kept for code calling it with a class (see schedule_of)."""
-        if isinstance(module_family, type):
-            self.scheduled_groups[family_of(module_family)] = self.schedule_of(module_family)
-
-    def __call__(self, module_family=None, instance=None):
-        """Run the bound schedule of *instance* (or, formerly, of the last bound instance of class *module_family*)."""
-        if instance is not None:
-            sub_time_step, groups = instance.__dict__["_choregraphy"]
-        else:
-            family = next((f for f in self.scheduled_groups if f == module_family or f.endswith(f":{module_family}")),
-                          module_family)
-            sub_time_step, groups = self.sub_time_step[family], self.scheduled_groups[family]
+    def __call__(self, instance):
+        """Run the bound schedule of component *instance*, over its sub time steps."""
+        sub_time_step, groups = instance.__dict__["_choregraphy"]
         for increment in range(int(self.simulation_time_step / sub_time_step)):
             for step in groups:
                 for functor in groups[step]:

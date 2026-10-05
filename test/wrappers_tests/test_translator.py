@@ -55,20 +55,6 @@ def test_yaml_round_trip_matches_the_legacy_nested_format():
                 assert nested[receiver][provider][variable] == {s: parse_factor(f) for s, f in sources.items()}
 
 
-def test_inputs_outputs_of_the_soil():
-    translator = Translator.from_yaml(WHEATBRIDGES)
-    inputs, outputs = translator.inputs_outputs(PLANT_COMPONENTS, target="SoilModel", names_for_others=False)
-    assert sorted(outputs) == ['C_amino_acids_soil', 'C_hexose_soil', 'C_mineralN_soil', 'Cs_cells_soil', 'Cs_mucilage_soil',
-                               'Cv_solutes_soil', 'microbial_C', 'microbial_N', 'soil_temperature', 'water_potential_soil']
-    assert len(inputs) == 18
-    assert {"hexose_exudation_massic", "mineralN_uptake", "water_uptake"} <= set(inputs)
-    # names_for_others=True: plant-side names on both sides
-    inputs, outputs = Translator.from_dict(doubles.TRANSLATOR).inputs_outputs(["RootCarbon", "RootNitrogen"],
-                                                                              target="SoilModel")
-    assert sorted(outputs) == ["C_hexose_soil", "soil_temperature"]
-    assert sorted(inputs) == ["amino_acids_exudation", "hexose_exudation"]
-
-
 def test_yaml_long_form_with_scale_and_aggregation(tmp_path):
     path = tmp_path / "translator.yaml"
     path.write_text(yaml.dump({"RootCN": {"Soil": {"mean_temperature": {

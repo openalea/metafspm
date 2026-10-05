@@ -36,7 +36,7 @@ class GrassBRIDGES(CompositeModel):
         self.components = [self.root_growth, self.root_anatomy, self.root_water, self.root_cn, self.shoot]
 
         # Links between these components (one DataStructure): aliases and derived variables
-        self.declare_and_couple_components(*self.components, translator_path=os.path.join(
+        self.declare_data_and_couple_components(components=self.components, translator_path=os.path.join(
             openalea.grassbridges.__path__[0], "plant_translator.py"))
 
     def run(self):

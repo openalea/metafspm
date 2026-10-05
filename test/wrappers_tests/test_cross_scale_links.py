@@ -185,7 +185,7 @@ def test_python_translators_keep_link_options_through_the_composite(tmp_path):
     g.convert_properties_to_arraydict()
     ds = MPGDataStructure(g, from_scale=g.scales.SubOrgan)
     components = (Segments(data_structure=ds), Organs(data_structure=ds))
-    CompositeModel().declare_data_and_couple_components(root=ds, translator_path=str(module), components=components)
+    CompositeModel().declare_data_and_couple_components(translator_path=str(module), components=components)
     per_organ = _per_organ(g, ds, np.ones(ds.n_nodes()))
     np.testing.assert_allclose(ds.get("organ_uptake"), [len(per_organ[o]) for o in ds.entity_ids("Organ")])
     np.testing.assert_allclose(ds.get("organ_concentration"), 3.)
