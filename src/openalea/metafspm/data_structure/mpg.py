@@ -612,33 +612,6 @@ class MPG(MTG):
                         pass
             self.remove_vertex(v)
 
-    def graph(self, property_name):
-        node_scale = self.scales.Compartment
-        edge_scale = self.scales.Connection
-
-        nids = np.asarray(
-            self.array_filtering("vertex_id", filter_in=dict(scale=node_scale)), dtype=np.int64
-        )
-        n_id_a = np.asarray(
-            self.array_filtering("n_id_a", filter_in=dict(scale=edge_scale)), dtype=np.int64
-        )
-        n_id_b = np.asarray(
-            self.array_filtering("n_id_b", filter_in=dict(scale=edge_scale)), dtype=np.int64
-        )
-        target_prop = np.asarray(
-            self.array_filtering(property_name, filter_in=dict(scale=edge_scale)), dtype=np.float64,
-        )
-
-        nid_to_index = {vid: idx for idx, vid in enumerate(nids)}
-        idx_a = np.asarray([nid_to_index[vid] for vid in n_id_a], dtype=np.int64)
-        idx_b = np.asarray([nid_to_index[vid] for vid in n_id_b], dtype=np.int64)
-
-        rows = np.r_[idx_a, idx_b, idx_a, idx_b]
-        cols = np.r_[idx_a, idx_b, idx_b, idx_a]
-        data = np.r_[target_prop, target_prop, -target_prop, -target_prop]
-        return rows, cols, data
-   
-
     def array_filtering(self, name: str, filter_in: dict = None, filter_out: dict = None):
         """Return the values of property *name* for the subset of vertices that
         satisfy all filter conditions, without requiring every property to be
@@ -1020,88 +993,6 @@ class MPG(MTG):
                 stack.pop()
                 if not isanchor.get(v, False):
                     yield v
-
-
-    # UPSCALING METHODS
-    def integrate_at_scale(self, property_name, from_scale, target_scale):
-        """Sum property_name from from_scale into every ancestor at every coarser scale.
-
-        Writes the aggregated value at every scale in [target_scale, from_scale),
-        so all intermediate scales are populated in a single pass.
-
-        Parameters
-        ----------
-        g              : MPG
-        property_name  : str — read at from_scale, written at all coarser scales.
-                        Vertices missing an entry are treated as 0.
-        from_scale     : int — fine scale (larger number)
-        target_scale   : int — coarsest scale to write (smaller number, < from_scale)
-        """
-        assert from_scale > target_scale, "from_scale must be finer (larger) than target_scale"
-
-        scale_prop = self.property('scale')
-        props      = self.property(property_name)   # setdefault → always internal dict
-        accum      = {}
-
-        for v in self.post_order_mpg():
-            sv = scale_prop.get(v)
-            if sv is None or sv < target_scale or sv > from_scale:
-                continue
-
-            if sv == from_scale:
-                accum[v] = props.get(v, 0.0)
-            else:
-                total    = sum(accum.get(c, 0.0) for c in self.components_iter(v))
-                props[v] = total
-                accum[v] = total
-
-
-    def average_at_scale(self, property_name, from_scale, target_scale,
-                        normalization_property=None):
-        """Weighted-average property_name from from_scale up to every coarser scale.
-
-        Without normalization_property every source vertex has weight 1
-        (plain arithmetic mean over all from_scale descendants).
-
-        With normalization_property, weight = normalization_property[v] at
-        from_scale (mass- or volume-weighted mean).  Typical use: pass a
-        concentration and its associated mass/volume so that the aggregated value
-        is the correct bulk concentration at each scale.
-
-        Parameters
-        ----------
-        g                      : MPG
-        property_name          : str — property to average (read at from_scale, written elsewhere)
-        from_scale             : int — fine scale (larger number)
-        target_scale           : int — coarsest scale to write (smaller number, < from_scale)
-        normalization_property : str or None
-            If given, its value at from_scale is used as the weight.
-            Vertices missing an entry default to weight 0.
-        """
-        assert from_scale > target_scale, "from_scale must be finer (larger) than target_scale"
-
-        scale_prop = self.property('scale')
-        props      = self.property(property_name)
-        norm_props = self.property(normalization_property) if normalization_property else None
-
-        accum_sum = {}   # weighted sum: Σ (value × weight)
-        accum_wt  = {}   # total weight: Σ weight
-
-        for v in self.post_order_mpg():
-            sv = scale_prop.get(v)
-            if sv is None or sv < target_scale or sv > from_scale:
-                continue
-
-            if sv == from_scale:
-                w            = norm_props.get(v, 0.0) if norm_props else 1.0
-                accum_sum[v] = props.get(v, 0.0) * w
-                accum_wt[v]  = w
-            else:
-                S = sum(accum_sum.get(c, 0.0) for c in self.components_iter(v))
-                W = sum(accum_wt.get(c,  0.0) for c in self.components_iter(v))
-                props[v]     = S / W if W > 0 else 0.0
-                accum_sum[v] = S   # relay numerator
-                accum_wt[v]  = W   # relay denominator
 
 
     def convert_properties_to_arraydict(self, g = None, ignore: list = []):
