@@ -254,23 +254,25 @@ class MPG(MTG):
         """
         node_anchor = self.scales.anchors[self.scales.Compartment]
         edge_anchor = self.scales.anchors[self.scales.Connection]
-        scale_prop = self.property("scale")
-        compartment_of = {int(self.property("vertex_id")[nv]): nv
-                          for nv in self.components_at_scale(self.root, scale=self.scales.Compartment)
-                          if nv in self.property("vertex_id")}
-        connections = [ev for ev in self.components_at_scale(self.root, scale=self.scales.Connection)
-                       if ev in self.property("n_id_b")]
-        incoming = {int(self.property("n_id_b")[ev]): ev for ev in connections}
-        valid = self._valid_vids_at(from_scale)
-        removed = sorted(set(compartment_of) - valid)
-        added = sorted(valid - set(compartment_of))
-        gone = set(removed)
+        # Array reads of the properties, not traversals of the whole MTG: the cost follows the growth (QF4)
+        compartments, vertex_of = self._property_at("vertex_id", self._vertices_at_scale(self.scales.Compartment))
+        connections, heads = self._property_at("n_id_b", self._vertices_at_scale(self.scales.Connection))
+        connections, tails = self._property_at("n_id_a", connections) if connections.size else (connections, heads)
+        if tails.size != heads.size:
+            raise ValueError("Connections without n_id_a")
+        vertex_of, heads, tails = (np.asarray(a, dtype=np.int64) for a in (vertex_of, heads, tails))
+        compartment_of = dict(zip(vertex_of.tolist(), compartments.tolist()))
+        incoming = dict(zip(heads.tolist(), connections.tolist()))
+        valid = _SortedIds(self._valid_vids_at(from_scale, as_array=True))
+        present = np.unique(vertex_of)
+        added = np.setdiff1d(valid.ids, present).tolist()
         # Connections whose endpoint is no longer a vertex at from_scale (removed, e.g. pruned with remove_tree, which
         # also removes the vertex's Compartment), then the Compartments of removed vertices still present
-        stale = [ev for ev in connections
-                 if int(self.property("n_id_a")[ev]) not in valid or int(self.property("n_id_b")[ev]) not in valid]
-        gone |= {int(self.property("n_id_b")[ev]) for ev in stale if int(self.property("n_id_b")[ev]) not in valid}
+        stale_mask = ~(valid.contains(tails) & valid.contains(heads))
+        stale = connections[stale_mask].tolist()
+        gone = set(np.setdiff1d(present, valid.ids).tolist()) | set(heads[stale_mask & ~valid.contains(heads)].tolist())
         removed = sorted(gone)
+        stale_set = set(stale)
         self.remove_connections(stale)
         self.remove_connections([compartment_of[v] for v in removed if v in compartment_of])
         # Existing vertices whose linked parent changed: children of new vertices, or of removed ones
@@ -279,13 +281,13 @@ class MPG(MTG):
         for vid in sorted(candidates):
             parent = self.linked_parent(vid, from_scale, valid)
             ev = incoming.get(vid)
-            current = int(self.property("n_id_a")[ev]) if ev is not None and ev not in stale else None
+            current = int(self.property("n_id_a")[ev]) if ev is not None and ev not in stale_set else None
             if parent != current:
-                if ev is not None and ev not in stale:
+                if ev is not None and ev not in stale_set:
                     self.remove_connections([ev])
                 relinked.append(vid)
         orphans = [vid for vid in added if self.linked_parent(vid, from_scale, valid) is None]
-        if orphans and len(valid) > len(orphans):
+        if orphans and valid.ids.size > len(orphans):
             # A new vertex with no linked parent is chained to the other roots of its plant by populate_graph's
             # pass 3, in traversal order: rebuild everything in that rare case (not met by segment growth)
             self.repopulate_graph(from_scale)
@@ -391,8 +393,28 @@ class MPG(MTG):
 
     # ── Junctions between the anatomies of adjacent vertices (design note structure_and_boundaries §7) ──
 
-    def _valid_vids_at(self, from_scale, filter_in=None, filter_out=None) -> set:
-        """Non-anchor vertices at *from_scale* passing the filters."""
+    def _vertices_at_scale(self, scale) -> np.ndarray:
+        """Vertices whose "scale" property is *scale*, sorted (an array read, no traversal)."""
+        prop = self.property("scale")
+        if isinstance(prop, ArrayDict):
+            return prop.order[:prop.size][prop.values_array() == scale].copy()
+        return np.array(sorted(v for v, s in prop.items() if s == scale), dtype=np.int64)
+
+    def _property_at(self, name, vids) -> tuple:
+        """(the vertices of sorted *vids* having property *name*, their values)."""
+        prop, vids = self.property(name), np.asarray(vids, dtype=np.int64)
+        if isinstance(prop, ArrayDict):
+            order, values = prop.order[:prop.size], prop.values_array()
+            if order.size == 0 or vids.size == 0:
+                return vids[:0], values[:0]
+            position = np.searchsorted(order, vids).clip(0, order.size - 1)
+            found = order[position] == vids
+            return vids[found], values[position[found]]
+        found = np.array([v in prop for v in vids.tolist()], dtype=bool)
+        return vids[found], np.array([prop[v] for v in vids[found].tolist()])
+
+    def _valid_vids_at(self, from_scale, filter_in=None, filter_out=None, as_array=False):
+        """Non-anchor vertices at *from_scale* passing the filters (a set, or a sorted array)."""
         scale_prop    = self.property('scale')
         isanchor_prop = self.property('isanchor')
         valid_keys = scale_prop.order[:scale_prop.size][scale_prop.values_array() == from_scale]
@@ -406,6 +428,8 @@ class MPG(MTG):
             valid_keys = valid_keys[~np.isin(valid_keys, match, assume_unique=False)]
         anchor_keys = isanchor_prop.order[:isanchor_prop.size][isanchor_prop.values_array() != 0]
         valid_keys  = valid_keys[~np.isin(valid_keys, anchor_keys, assume_unique=False)]
+        if as_array:
+            return np.unique(np.asarray(valid_keys, dtype=np.int64))
         return set(int(v) for v in valid_keys)
 
     def linked_parent(self, vid, from_scale, valid_vids=None):
@@ -689,17 +713,17 @@ class MPG(MTG):
         if cache is not None and cache[0] == signature:
             return cache[1]
         size = max(getattr(self, "_id", 0), max(self._scale.keys(), default=0), max(self._parent.keys(), default=0)) + 1
-        parent = np.full(size, -1, dtype=np.int64)
-        for v, p in self._parent.items():
-            if p is not None:
-                parent[v] = p
-        scale = np.full(size, -1, dtype=np.int64)
-        for v, sc in self._scale.items():
-            scale[v] = sc
-        complex_ = np.full(size, -1, dtype=np.int64)
-        for v, c in self._complex.items():
-            if c is not None:
-                complex_[v] = c
+        def filled(mapping):
+            """Array of *mapping* by vid, -1 for missing or None values (bulk reads of the MTG dicts)."""
+            out = np.full(size, -1, dtype=np.int64)
+            if mapping:
+                keys = np.fromiter(mapping.keys(), dtype=np.int64, count=len(mapping))
+                values = np.fromiter((-1 if x is None else x for x in mapping.values()), dtype=np.int64,
+                                     count=len(mapping))
+                out[keys] = values
+            return out
+
+        parent, scale, complex_ = filled(self._parent), filled(self._scale), filled(self._complex)
         alive = scale >= 0
         missing = np.flatnonzero(alive & (complex_ < 0) & (parent >= 0))
         jump = parent.copy()
@@ -711,13 +735,22 @@ class MPG(MTG):
             jump[missing] = np.where(jump[jump[missing]] >= 0, jump[jump[missing]], -1)
             missing = missing[jump[missing] >= 0]
         edge_type = np.zeros(size, dtype=np.int64)
-        for v, t in self.property('edge_type').items():
-            if v < size:
-                edge_type[v] = self._EDGE_TYPE_CODES.get(t, 0)
+        types = self.property('edge_type')
+        if types:
+            keys = np.fromiter(types.keys(), dtype=np.int64, count=len(types))
+            codes = np.fromiter((self._EDGE_TYPE_CODES.get(t, 0) for t in types.values()), dtype=np.int64,
+                                count=len(types))
+            inside = keys < size
+            edge_type[keys[inside]] = codes[inside]
         is_anchor = np.zeros(size, dtype=bool)
-        for v, flag in self.property('isanchor').items():
-            if v < size and flag:
-                is_anchor[v] = True
+        anchors = self.property('isanchor')
+        if isinstance(anchors, ArrayDict):
+            keys, flags = anchors.order[:anchors.size], anchors.values_array() != 0
+        else:
+            keys = np.fromiter(anchors.keys(), dtype=np.int64, count=len(anchors))
+            flags = np.fromiter((bool(f) for f in anchors.values()), dtype=bool, count=len(anchors))
+        inside = keys < size
+        is_anchor[keys[inside & flags]] = True
         arrays = {"parent": parent, "complex": complex_, "scale": scale, "edge_type": edge_type,
                   "is_anchor": is_anchor}
         self.__dict__["_topology_arrays"] = (signature, arrays)
@@ -983,3 +1016,25 @@ class MPG(MTG):
                 stored = v.to_dict()
                 props[k] = ArrayDict(stored)
 
+
+class _SortedIds:
+    """A sorted id array with set-like membership, for vertex sets of a whole population (QF4)."""
+
+    def __init__(self, ids):
+        self.ids = np.asarray(ids, dtype=np.int64)
+
+    def contains(self, values) -> np.ndarray:
+        values = np.asarray(values, dtype=np.int64)
+        if self.ids.size == 0:
+            return np.zeros(values.shape, dtype=bool)
+        position = np.searchsorted(self.ids, values).clip(0, self.ids.size - 1)
+        return self.ids[position] == values
+
+    def __contains__(self, value) -> bool:
+        return value is not None and bool(self.contains(np.asarray([value]))[0])
+
+    def __len__(self) -> int:
+        return int(self.ids.size)
+
+    def __iter__(self):
+        return iter(self.ids.tolist())

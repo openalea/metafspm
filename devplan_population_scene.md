@@ -352,6 +352,6 @@ Two framework costs dominate. They are not model costs, and fixing them changes 
   - **(b)** a declaration per variable (`mtg=True`) listing the variables kept in the MTG at each step.
 
   **Recommendation:** (a). The MTG is then a view brought up to date when someone reads it; the DataStructure is the reference.
-  → answer:
+  → answer: agreed with the recommendation (2026-10-06)
 - **QF4, the incremental graph extension.** `extend_graph` traverses the whole MTG (`components_at_scale`) at each growth event. **Recommendation:** restrict it to the vertices created since the last extension (their ids are above the last one seen) and their complexes, so that the cost follows the growth, not the population. This is internal, with no API change; I can do it without waiting, as part of P8 or before it.
-  → answer:
+  → answer: agreed with the recommendation (2026-10-06)

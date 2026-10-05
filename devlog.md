@@ -1717,3 +1717,12 @@ Per-file counts:
 - **New `test/wrappers_tests/test_scene_contract.py`:** the DS doubles in a Scene, with 3 plants feeding one soil without zeroing.
 - **Docs:** migration guide §3–§5 rewritten for the population contracts and the Scene.
 - **Suite:** 649 passed.
+
+## 2026-10-06 (later): QF3 and QF4 agreed; F4 implemented (growth bookkeeping follows the growth)
+
+- **`MPG.extend_graph`:** Compartments, Connections and endpoints are read as property arrays (`_vertices_at_scale`, `_property_at`) instead of `components_at_scale` traversals. The valid vertices are a sorted array (`_SortedIds`, with set-like membership for `linked_parent`), and added, removed and stale entities come from numpy set operations. 3.4 s → 0.21 s at 2·10⁵ segments.
+- **`MPGDataStructure.update_topology`:** the carry-over of registered variables matches ids in bulk (`_KeyedValues`). Only new entities go through the per-key inherit walk, and the `default` policy is one assignment (object variables excepted).
+- **Latent issue fixed:** in anatomy mode, the edge ids read at the start of `update_topology` are live, and growth has already added Connections. The old `zip(keys, arr)` only paired the values correctly because new vids are larger. The DataStructure now keeps the ids its arrays were built for (`_stored_ids`).
+- **`MPG.topology_arrays`:** bulk `fromiter` reads of the MTG dicts instead of per-element numpy writes.
+- **Result:** one growth step with an update at 100 plants (2·10⁵ segments) goes from 5.1 s to about 0.6 s. The remaining cost is O(population) numpy work (`unique`, `searchsorted`) and the `edges()` list.
+- **Suite:** 649 passed.
