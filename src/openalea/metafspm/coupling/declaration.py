@@ -12,6 +12,8 @@ MTG write-back all use the VariableSpec it returns. "node" and "edge" are the en
 the MPG traversal; declarations anchored on biological scales are resolved against that graph.
 """
 import warnings
+
+import numpy as np
 from dataclasses import dataclass, fields as dc_fields
 from typing import Optional
 
@@ -213,6 +215,18 @@ def resolve_declaration(f, ds) -> Optional[VariableSpec]:
     kind = meta.get("state_variable_type")
     from openalea.metafspm.data_structure.data_api import _canonical_dtype
     dtype = _canonical_dtype(meta.get("dtype"))
+    if isinstance(raw_scale, str) and raw_scale in SOLVER_LOCATIONS and location is None:
+        location, raw_scale = raw_scale, None
+    if raw_scale is None and location is None:
+        # A numeric parameter without a place is stored per plant (design devplan_population_scene §7-8): at the
+        # "Plant" location of plant DataStructures, at "scalar" elsewhere. Other fields are not DataStructure variables.
+        numeric = (dtype is not object and not isinstance(f.default, bool)
+                   and isinstance(f.default, (int, float, np.integer, np.floating)))
+        if meta.get("variable_type") != "parameter" or not numeric or mapping is not None:
+            return None
+        plant = _scales_of(ds).Plant
+        on_plants = _is_graph(ds) and "Plant" in getattr(ds, "_coarse_scale_names", lambda: [])()
+        raw_scale, location = (plant, "Plant") if on_plants else (None, "scalar")
     if dtype is object:
         default = None if _is_missing(f.default) else f.default
     else:
@@ -229,9 +243,6 @@ def resolve_declaration(f, ds) -> Optional[VariableSpec]:
         if location is not None:
             raise DeclarationError(f"'{f.name}': scale='{raw_scale}' is a location, do not also give location=")
         location, raw_scale = raw_scale, None
-    if raw_scale is None and location is None:
-        return None
-
     if not _is_graph(ds):
         # Grids: only their own locations; biological scales have no meaning there
         if location in ("cell", "scalar", "edge") and raw_scale is None and mapping is None:

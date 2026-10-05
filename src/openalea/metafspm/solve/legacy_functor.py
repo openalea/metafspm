@@ -47,10 +47,40 @@ class Functor:
         D15), arguments at the mask's location are restricted to the selected entities and outputs at that location
         are written back on them only: the other entities keep their values.
         """
-        args = [ds.get(name) for name in self.input_names]
+        args, locations = self._arguments(instance, ds)
         mask, mask_location = self._mask(instance, ds)
         if mask is not None:
-            args = [a[mask] if ds.location(name) == mask_location else a for name, a in zip(self.input_names, args)]
+            args = [a[mask] if location == mask_location else a for a, location in zip(args, locations)]
+        instance.__dict__["_in_equation"] = True        # self.<parameter> is refused inside steps (QH2)
+        try:
+            out = self._evaluate(instance, args)
+        finally:
+            instance.__dict__["_in_equation"] = False
+        self._write_outputs(instance, ds, out, args, mask, mask_location)
+
+    def _arguments(self, instance, ds):
+        """
+        The step's arguments and their locations. Parameters stored per plant (or as scalars) come broadcast to the
+        step's location, the location of its other arguments (nodes, or cells on grids), as read-only views.
+        """
+        specs = getattr(instance, "_variable_specs", {})
+        is_parameter = [getattr(specs.get(name), "variable_type", None) == "parameter"
+                        and ds.location(name) not in ("node", "edge", "cell") for name in self.input_names]
+        others = [ds.location(name) for name, p in zip(self.input_names, is_parameter) if not p]
+        stores = ds._var_stores()
+        step_location = next((loc for loc in others if loc in ("node", "edge", "cell")),
+                             "node" if "node" in stores else "cell")
+        args, locations = [], []
+        for name, parameter in zip(self.input_names, is_parameter):
+            if parameter:
+                args.append(ds.parameter_view(name, step_location))
+                locations.append(step_location)
+            else:
+                args.append(ds.get(name))
+                locations.append(ds.location(name))
+        return args, locations
+
+    def _evaluate(self, instance, args):
         if getattr(self.fun, "__vectorized__", True):
             out = self.fun(instance, *args)
         else:
@@ -63,7 +93,9 @@ class Functor:
                     x[0] if k % 2 == 0 else np.asarray(x) for k, x in enumerate(out[1:]))
             else:
                 out = np.asarray(per_element)
+        return out
 
+    def _write_outputs(self, instance, ds, out, args, mask, mask_location):
         outputs = [(self.name, out[0] if self.supplementary_outputs else out)]
         for s in range(self.supplementary_outputs):
             outputs.append((out[2 * s + 1], out[2 * s + 2]))

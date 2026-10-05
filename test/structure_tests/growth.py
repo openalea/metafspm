@@ -67,13 +67,41 @@ class RootGrowthProbe(StructuralComponent):
     def _apices(self):
         return [v for v, flag in self._prop("is_apex").items() if flag]
 
+    @classmethod
+    def initiate_plant(cls, g, plant, parameters):
+        """One plant's root chain under its Plant vertex: n_segments (default 3), the last an apex (P4, QP4a-b)."""
+        s = g.scales
+        n_segments = int(parameters.get("n_segments", 3))
+        apex_length = float(parameters.get("apex_length", 0.5))
+        axis = g.add_component(plant, **PropsConfig(scale=s.Axis, edge_type='/', label=g.labels.Axis.Root))
+        gu = g.add_component(axis, **PropsConfig(scale=s.GrowthUnit, edge_type='/', label=g.labels.GrowthUnit.Root))
+        phytomer = g.add_component(gu, **PropsConfig(scale=s.Phytomer, edge_type='/', label=g.labels.Phytomer.Root))
+        organ = g.add_component(phytomer, **PropsConfig(scale=s.Organ, edge_type='/', label=g.labels.Organ.RootInternode))
+        segments = [g.add_component(organ, **PropsConfig(scale=s.SubOrgan, edge_type='/',
+                                                         label=g.labels.SubOrgan.RootSegment))]
+        for _ in range(n_segments - 1):
+            segments.append(g.add_child(segments[-1], **PropsConfig(scale=s.SubOrgan, edge_type='<',
+                                                                    label=g.labels.SubOrgan.RootSegment)))
+        x, y, z = (g.property(name)[plant] for name in ("x", "y", "z"))
+        top = z
+        for rank, v in enumerate(segments):
+            length = apex_length if v == segments[-1] else SEGMENT_LENGTH
+            for name, value in (("length", length), ("is_apex", float(v == segments[-1])),
+                                ("struct_mass", DENSITY * length), ("radius", 1.), ("potential_elongation", 0.),
+                                ("distance_from_tip", 0.), ("x1", x), ("x2", x), ("y1", y), ("y2", y),
+                                ("z1", top), ("z2", top - length)):
+                g.property(name)[v] = value
+            top -= length
+
     @potential
     def _potential_growth(self):
-        """MPG-style: reads the flushed C_hexose_root on the MPG."""
+        """MPG-style: reads the flushed C_hexose_root on the MPG, and its plant's rate per vertex."""
         hexose, potential_elongation = self._prop("C_hexose_root"), self._prop("potential_elongation")
+        rate = dict(zip(self.data_structure.entity_ids("node").tolist(),
+                        self.parameter_values("elongation_rate").tolist()))
         self.read_hexose = {v: float(hexose[v]) for v in self._apices()}
         for v in self._apices():
-            potential_elongation[v] = self.elongation_rate * hexose[v]
+            potential_elongation[v] = rate[v] * hexose[v]
 
     @actual
     def _actual_growth(self):

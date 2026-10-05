@@ -604,6 +604,36 @@ class VariableStoreMixin:
         result = order[position]
         return int(result[0]) if scalar else result
 
+    # ── Parameters seen by equations (devplan_population_scene §7) ────────────────────
+
+    def parameter_view(self, name: str, to: str) -> np.ndarray:
+        """
+        Parameter *name* (stored per plant, or as a scalar) as one value per entity of location *to*, read-only: a
+        zero-stride view when every value is the same (no copy), else each entity's owner value (gathered once, and
+        again only when the parameter or the topology changes).
+        """
+        location = self.location(name)
+        shape = tuple(self._location_shape(to))
+        values = np.asarray(self.get(name))
+        cache = self.__dict__.setdefault("_parameter_views", {})
+        key = (name, to)
+        stamp = (self.write_count(name), self.topology_version, shape)
+        if key in cache and cache[key][0] == stamp:
+            return cache[key][1]
+        if location == to:
+            view = values.view()
+        elif values.size == 0 or np.all(values == values.flat[0]):
+            view = np.broadcast_to(np.asarray(values.flat[0] if values.size else 0., dtype=float), shape)
+        else:
+            view = np.ascontiguousarray(self._broadcast_to_entities(values, location, to))
+        view = view.view()
+        view.flags.writeable = False
+        cache[key] = (stamp, view)
+        return view
+
+    def _broadcast_to_entities(self, values, location: str, to: str) -> np.ndarray:
+        return self._map(values, location, to, "broadcast")
+
     # ── Named masks (design note structure_and_boundaries §4, D15) ─────────────────────
 
     def define_mask(self, name: str, rule, location: str = "node") -> None:
@@ -1549,6 +1579,14 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
         elif from_location == "scalar" and aggregation == "broadcast":
             return np.full(self._location_shape(to_location), float(values))
         return super()._map(values, from_location, to_location, aggregation, weights)
+
+    def _broadcast_to_entities(self, values, location: str, to: str) -> np.ndarray:
+        """Owner values for nodes, and for edges the value of their child node (edges never join two plants)."""
+        on_nodes = self._map(values, location, "node", "broadcast") if location != "node" else values
+        if to == "edge":
+            return on_nodes[self.index_of(self.entity_ids("edge"))] if not getattr(self, "_anatomy", False) \
+                else on_nodes[self.index_of(np.array([b for _, b in self.edges()], dtype=np.int64))]
+        return on_nodes
 
     def node_property(self, name: str) -> np.ndarray:
         if self.has(name) and self.location(name) == "node":

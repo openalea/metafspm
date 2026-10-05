@@ -348,6 +348,16 @@ def _entity_location(ds, location):
     return "cell" if location == "node" and "node" not in ds._var_stores() and "cell" in ds._var_stores() else location
 
 
+def _in_equation(instance, method, args):
+    """Call an equation with the instance flagged, so that self.<parameter> is refused inside it (QH2)."""
+    previous = instance.__dict__.get("_in_equation", False)
+    instance.__dict__["_in_equation"] = True
+    try:
+        return method(*args)
+    finally:
+        instance.__dict__["_in_equation"] = previous
+
+
 def _take(instance, location):
     """Indices of the active subgraph's entities at *location* during a where= solve, else None."""
     restriction = instance.__dict__.get("_restriction")
@@ -435,7 +445,20 @@ def _snapshot(instance, required_names, node_vids_int, edge_vids_int,
     """Pull required variables into float64 arrays before the Newton loop (copies, read at each solve)."""
     ds = _live_ds(instance)
     node_snap, edge_snap = {}, {}
+    specs = getattr(instance, "_variable_specs", {})
+    node_location = "cell" if "cell" in ds._var_stores() else "node"
     for name in required_names:
+        spec = specs.get(name)
+        if (spec is not None and spec.variable_type == "parameter" and ds.has(name)
+                and ds.location(name) not in ("node", "edge", "cell")):
+            # A parameter stored per plant (or as a scalar) is seen by node equations per node and by edge laws per
+            # edge, each edge taking its child's plant (devplan_population_scene §7)
+            on_nodes = np.asarray(ds.parameter_view(name, node_location)).reshape(-1)
+            on_edges = np.asarray(ds.parameter_view(name, "edge")).reshape(-1)
+            take_nodes, take_edges = _take(instance, "node"), _take(instance, "edge")
+            node_snap[name] = on_nodes if take_nodes is None else on_nodes[take_nodes]
+            edge_snap[name] = on_edges if take_edges is None else on_edges[take_edges]
+            continue
         if name in declared_locs:
             loc = declared_locs[name]
         elif ds.has(name):
@@ -676,7 +699,12 @@ class GraphSystemBuilder:
             arg_names   = inspect.getfullargspec(raw_func)[0][1:]
             entity_size = n if entity == "node" else m
             mask_snap   = node_snap if entity == "node" else edge_snap
-            sliced      = [arg_location(aname) == entity for aname in arg_names]
+            own_unknowns = node_unknowns if entity == "node" else all_edge_unknowns
+            own = node_snap if entity == "node" else edge_snap
+            sliced      = [aname in own_unknowns or (aname not in node_unknowns and aname not in all_edge_unknowns
+                                                     and aname in own) for aname in arg_names]
+
+            own_snap, other_snap = (edge_snap, node_snap) if entity == "edge" else (node_snap, edge_snap)
 
             def evaluator(ctx):
                 args = []
@@ -685,10 +713,10 @@ class GraphSystemBuilder:
                         args.append(ctx.node_unknowns[aname])
                     elif aname in edge_unknowns:
                         args.append(ctx.edge_unknowns[aname])
-                    elif aname in node_snap:
-                        args.append(node_snap[aname])
-                    elif aname in edge_snap:
-                        args.append(edge_snap[aname])
+                    elif aname in own_snap:
+                        args.append(own_snap[aname])
+                    elif aname in other_snap:
+                        args.append(other_snap[aname])
                     else:
                         raise KeyError(
                             f"Method '{raw_func.__name__}': arg '{aname}' not "
@@ -698,11 +726,11 @@ class GraphSystemBuilder:
                 if type_filter:
                     mask = _type_mask(type_filter, mask_snap, entity_size, ds)
                     sub  = [a[mask] if cut else a for a, cut in zip(args, sliced)]
-                    result = np.asarray(bound_method(*sub), dtype=np.float64)
+                    result = np.asarray(_in_equation(instance, bound_method, sub), dtype=np.float64)
                     full   = np.zeros(entity_size, dtype=np.float64)
                     np.add.at(full, np.where(mask)[0], result)
                     return full
-                return np.asarray(bound_method(*args), dtype=np.float64)
+                return np.asarray(_in_equation(instance, bound_method, args), dtype=np.float64)
 
             return evaluator
 
@@ -732,10 +760,10 @@ class GraphSystemBuilder:
                     mask = _type_mask(type_filter, node_snap, n, ds)
                     idx  = np.where(mask)[0]
                     sub  = [a[mask] if cut else a for a, cut in zip(args, sliced)]
-                    vals = np.asarray(bound_method(*sub), dtype=np.float64)
+                    vals = np.asarray(_in_equation(instance, bound_method, sub), dtype=np.float64)
                 else:
                     idx  = np.arange(n)
-                    vals = np.asarray(bound_method(*args), dtype=np.float64)
+                    vals = np.asarray(_in_equation(instance, bound_method, args), dtype=np.float64)
 
                 if explicit and bc_kind == "dirichlet" and field is not None:
                     vals = ctx.node_unknowns[field][idx] - vals
