@@ -558,6 +558,23 @@ class MPG(MTG):
         prop = self.properties().get("is_junction", {})
         return [int(v) for v, flag in prop.items() if flag]
 
+    # ── Children at the vertex's own scale (B-i, QPq) ───────────────────────────
+    # populate_graph links each Compartment to its segment with a topological parent; openalea's traversals
+    # (children, Sons, post_order2, pre_order2, ...) would then return Compartments among a segment's children.
+    # These accessors return the children at the vertex's own scale, as on a plain MTG; the framework reads the raw
+    # links in _children where it needs them.
+
+    def children(self, vtx_id):
+        scale = self._scale.get(vtx_id)
+        return [c for c in self._children.get(vtx_id, ()) if self._scale.get(c) == scale]
+
+    def children_iter(self, vtx_id):
+        scale = self._scale.get(vtx_id)
+        return (c for c in self._children.get(vtx_id, ()) if self._scale.get(c) == scale)
+
+    def nb_children(self, vtx_id):
+        return len(self.children(vtx_id))
+
     def remove_vertex(self, vid, reparent_child=False):
         """
         MTG.remove_vertex, removing first the Compartments the vertex owns (its graph nodes), which openalea would

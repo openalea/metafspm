@@ -1890,3 +1890,9 @@ Per-file counts:
   - coverage tools are not installed in the environment.
 - **Written** as `devplan_porting.md` §10, with questions QPp–QPr.
 - **Suite:** 706 passed, 0 warnings.
+- **Answers to QPp–QPr:**
+  - **QPq (a):** `MPG.children` / `children_iter` / `nb_children` keep the same-scale children, so openalea traversals see segments only (test `test_openalea_traversals_see_segments_only`).
+  - **QPr:** `pytest-cov` installed in the env; coverage 86 % (numba bodies untraced in `tree_kernels`; legacy solver paths).
+  - **QPp:** answered with a question about adaptive discretisation. I proposed cell-based octree refinement on the grid graph contract (PT10), with QPs–QPu.
+  - The "parallel pieces" deferred item is explained in the conversation.
+- **Suite:** 707 passed.

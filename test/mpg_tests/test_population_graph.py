@@ -101,3 +101,20 @@ def test_pruning_removes_vertices_and_relinks_their_children():
     assert tip not in nodes_after and all(tip not in pair for pair in edges_after)
     assert ds.last_extension["removed"] == [tip] and middle_parent in nodes_after
     assert ds.n_nodes() == len(nodes) - 1 and ds.n_edges() == len(edges) - 1
+
+
+def test_openalea_traversals_see_segments_only():
+    """Compartments are linked to their segment as topological children (populate_graph); the MPG's children,
+    Sons, post_order2 and pre_order2 return the segments only, as on a plain MTG (QPq)."""
+    from openalea.mtg.traversal import post_order2, pre_order2
+    g, roots = _population(2)
+    g.populate_graph(g.scales.SubOrgan)
+    g.convert_properties_to_arraydict()
+    ds = MPGDataStructure(g, from_scale=g.scales.SubOrgan)
+    segment = roots[0]
+    assert any(g.scale(c) == g.scales.Compartment for c in g._children[segment])        # the raw links
+    assert all(g.scale(c) == g.scales.SubOrgan for c in g.children(segment))
+    assert g.Sons(segment) == g.children(segment) and g.nb_children(segment) == 1
+    for traversal in (post_order2, pre_order2):
+        assert all(g.scale(v) == g.scales.SubOrgan for v in traversal(g, segment))
+    assert ds.n_nodes() == 10 and ds.n_edges() == 8                                       # the graph is unchanged
