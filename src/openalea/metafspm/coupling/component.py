@@ -617,11 +617,12 @@ class StructuralComponent(DataStructureComponent):
         ds = self.data_structure
         specs = [spec for spec in getattr(self, "_variable_specs", {}).values() if spec.mtg_backed and ds.has(spec.name)]
         if hasattr(ds, "flush_mtg"):
-            # The MPG-style code reads the MTG: every tracked variable changed since its last synchronisation, and
-            # this component's own (inputs and parameters included), are written first (QF3)
+            # The MPG-style code reads the MTG: the variables this component declares (its states, inputs and
+            # parameters) changed since their last synchronisation are written first (QF3). Others are not: a step
+            # reads what its component declares
             for spec in specs:
                 ds.track_mtg(spec)
-            ds.flush_mtg()
+            ds.flush_mtg([spec.name for spec in specs])
         else:
             for spec in specs:
                 ds.write_mtg(spec)

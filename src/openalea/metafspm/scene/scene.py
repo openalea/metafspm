@@ -38,6 +38,19 @@ from openalea.metafspm.data_structure.data_api import MPGDataStructure
 from openalea.metafspm.scene.population import apply_plant_scenarios, build_population
 
 
+class AllMasks:
+    """Mask rule selecting the entities of every named mask (picklable, for checkpoints)."""
+
+    def __init__(self, *names):
+        self.names = names
+
+    def __call__(self, ds) -> np.ndarray:
+        selected = ds.mask(self.names[0])
+        for name in self.names[1:]:
+            selected = selected & ds.mask(name)
+        return selected
+
+
 class Population:
     """The plants of one model: their planting rows, Plant vertices, MPGDataStructure and model instance."""
 
@@ -195,7 +208,7 @@ class Scene(CompositeModel):
         if ds.has_mask("active"):        # a component's own rule (e.g. living segments), and emergence
             masks = ds.__dict__["_masks"]
             masks["_model_active"] = masks.pop("active")
-            ds.define_mask("active", lambda d: d.mask("_model_active") & d.mask("emerged"))
+            ds.define_mask("active", AllMasks("_model_active", "emerged"))
         else:
             ds.define_mask("active", {"emerged": ">0"})
 

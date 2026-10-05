@@ -1747,3 +1747,34 @@ Per-file counts:
   - `__call__(instance=)` runs them. The `module_family=` call stays for the usage examples (it resolves a bare class name to the last bound family). The `inheriting` hack is removed.
 - **Tests:** the three schedule-introspection tests use `schedule_of` / the instance schedule. New `test_per_instance_scheduling.py` (4 tests): two instances in any order, subclass steps (inherited and redefined), same-named classes from two modules (built with `exec`), a function-local class. `EagerCounter` is a plain subclass again.
 - **Suite:** 656 passed.
+
+## 2026-10-06 (later): P8.2, checkpoints (DS15), and F3 refined
+
+- **DS15, `VariableStoreMixin.checkpoint` / `restore`:**
+  - stores are written per location (`location::name` keys in the npz; object arrays in the pickle), together with the entity ids;
+  - `_CHECKPOINT_STATE` (metadata, aliases, derivations, masks, write counters, versions, stored ids, MTG tracking) plus class extras (`_wiring`, `_anatomy_signature`, `last_extension`), and the MPG flushed first;
+  - restore constructs the class from the JSON construction (MPG: `from_scale`, `nodes`, wiring only when the MTG has no junctions; grid: shape, dx, origin, periodic), checks the entity ids, sets the stores and the state, and drops the caches.
+- **Pickling:** `LabelsConfig.__getstate__` / `__setstate__` rebuild the label-group types, the only thing that kept an MPG from pickling. Lambdas in derivations or masks get a clear `TypeError`; the Scene's emergence mask became `AllMasks`.
+- **New `test_checkpoint.py`**, 6 tests:
+  - a population with growth, a formula derivation and a mask: checkpoint at step 2, then 2 more steps, equals 4 uninterrupted steps bit for bit;
+  - the layout, with object variables pickled;
+  - restoring with an MTG given back, and a different MTG refused;
+  - lambdas refused;
+  - a grid continues bit for bit;
+  - an anatomy keeps rewiring incrementally after restore.
+- **F3 refined after the benchmark:** growth had not improved at 1000 plants, because the flush before an MPG-style step wrote every changed variable, so the write-back cost had only moved into growth. Now:
+  - only the stepping component's declared variables are flushed;
+  - numeric properties created by the write-back are ArrayDicts (they were plain dicts, filled one key at a time on each flush);
+  - integer properties stay dicts;
+  - `edges()` is cached by (topology version, vertex count, last vid).
+
+  One scene step at 100 plants: 0.69 s → about 0.4 s.
+- **Suite:** 662 passed.
+- **More superlinear costs removed** (profile at 400 plants):
+  - `np.unique` hashing on sorted ids became sort + neighbour comparison (`_sorted_unique`);
+  - the inherit carry-over walks ancestors level by level for all new entities at once (segment mode);
+  - `topology_arrays` reads the dict values in bulk (object array, None → -1), and edge-type codes by string comparison.
+
+  Growth (4 calls) at 400 plants: 5.7 → 2.9 s.
+- **Final benchmark:** 1000 plants of 2 000 segments take 3.3 s per step (6.7 s before F3 and F4); rates and states take 0.03 s (0.77 s before). Growth is still superlinear at 1000 plants (F5 in the design doc §15: O(MTG) dict reads per growth event); left open.
+- **Suite:** 662 passed. **P8 done:** P1–P8 of `devplan_population_scene.md` are complete.
