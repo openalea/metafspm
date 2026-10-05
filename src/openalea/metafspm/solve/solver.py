@@ -1,6 +1,9 @@
 
 """
-Solvers of graph systems, selected by ``@graph_system(solver=...)`` (a class or one of SOLVER_REGISTRY's keys).
+Solvers of graph systems, selected by ``@graph_system(solver=...)``: a solver class or one of the keys "newton",
+"newton_fd", "implicit_euler", "explicit_euler", "scipy_krylov", "scipy_anderson", "scipy_hybr", "scipy_ivp_bdf",
+"scipy_ivp_radau". The rest of this module (the solve() time loop, SolverResult, linear assembly with
+LinearDirectSolver, ODE specifications, make_solver) is internal and may change without notice.
 
 ::
 
