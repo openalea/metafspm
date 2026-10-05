@@ -472,3 +472,20 @@ Today `implicit_euler`, `explicit_euler` and the IVP solvers are only correct if
 - **Found while doing it, QPη:** a numeric parameter declared with a place (`scale=` / `location=`, e.g. UC1's `c_dirichlet` at `Organ`) is stored in the DataStructure. But `model.c_dirichlet = 2.0` only sets an instance attribute, and `self.c_dirichlet` reads it inside steps, so the two copies diverge. Only parameters without a place (stored per plant) go through the descriptor, where writing sets the DataStructure and reading inside equations raises.
   - **QPη:** give placed numeric parameters the same descriptor? Writing would set every entity's value, and reading `self.<name>` inside a step or equation would raise, so the parameter becomes an argument. **Recommendation:** yes, so a parameter has one value, the DataStructure's. UC1 reads `self.k_radial` and `self.c_ext` in a step and is rewritten anyway (QPε).
   → answer:
+
+**Progress (2026-10-05, later):**
+- **QPy done:**
+  - `@node_rate` (du/dt) is solved by every solver: backward Euler with the Newton family, forward Euler with `explicit_euler`, `solve_ivp` with the IVP solvers.
+  - `@node_balance` (residual) is for the Newton family; the explicit and IVP solvers refuse it, and refuse Dirichlet conditions.
+  - `implicit_euler` is a deprecated alias of `newton, transient=True`.
+  - Found on the way: `explicit_euler` stepped with the previous step's fluxes. It now recovers them at the current state.
+- **QPε done:**
+  - UC1 is one file at both scales (segments and organs), with every variant checked against hand-written equations, including the rate form with the three solvers. The shared components are in `test/helpers/nitrogen.py`.
+  - UC2 checks its analytic Jacobian by one Newton step against the finite-difference solution.
+  - UC3 uses boundary sets (Robin at the soil and the xylem) instead of hand-set ports; UC4 checks its balances by hand.
+  - `test_live_datastructure` is on the shared components.
+- **QPw finished:** the `props` view and the `_last_graph_system` / `_last_graph_solution` shim are removed.
+- **Still open:**
+  - QPη (§15).
+  - Hand-set boundary ports (`component._boundary_ports`) still work, with a deprecation warning; no test or example uses them any more. **QPθ:** remove them now? **Recommendation:** yes, boundary sets and `@boundary_condition` cover them.
+  → answer:
