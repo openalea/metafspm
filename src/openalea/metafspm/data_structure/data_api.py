@@ -1888,11 +1888,17 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
                 "Pass MPGDataStructure(g, from_scale=g.scales.SubOrgan) when the graph is not populated yet."
             )
         old = {}
+        stored_ids = self.__dict__.setdefault("_stored_ids", {})
         for location, store in self._var_stores().items():
             if location == "scalar" or not store:
                 continue
-            keys = self.entity_ids(location)
-            old[location] = {name: dict(zip(keys, arr)) for name, arr in store.items()}
+            size = len(next(iter(store.values())))
+            # The ids the arrays were built for: kept from the last update, as anatomy Connections are read live from
+            # the MTG, which growth already changed. Otherwise the live ids, new vertices coming last (larger vids)
+            keys = stored_ids.get(location)
+            if keys is None or keys.size != size:
+                keys = np.asarray(self.entity_ids(location), dtype=np.int64)[:size]
+            old[location] = (keys, {name: arr.copy() for name, arr in store.items()})
 
         if self._anatomy:
             self._rewire_junctions()
@@ -1906,13 +1912,15 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
             store.clear()
 
         meta = self._variable_meta()
-        for location, variables in old.items():
-            keys = self.entity_ids(location)
-            for name, values_by_key in variables.items():
+        for location, (old_keys, variables) in old.items():
+            keys = np.asarray(self.entity_ids(location), dtype=np.int64)
+            order = np.argsort(old_keys, kind="stable")
+            for name, array in variables.items():
                 policy = meta.get(name, {"default": 0., "on_grow": "default"})
-                values = self._carry_over(values_by_key, keys, policy)
+                values = self._carry_over(_KeyedValues(old_keys[order], array[order]), keys, policy)
                 self.register(name, values, location=location, default=policy["default"], on_grow=policy["on_grow"],
                               dtype=policy.get("dtype", float))
+            stored_ids[location] = keys
         self._bump_version()
 
     # ── Anatomy mode: incremental junction rewiring (design note structure_and_boundaries §7, D12) ──
@@ -1973,11 +1981,24 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
             vertex = g.linked_parent(vertex, self._from_scale)
         return None
 
-    def _carry_over(self, values_by_key: dict, keys, policy: dict) -> np.ndarray:
-        """Values for *keys* (vids): kept when known, else inherited from the nearest known ancestor or default."""
+    def _carry_over(self, values_by_key, keys, policy: dict) -> np.ndarray:
+        """
+        Values for *keys* (vids): kept when known (one array match, QF4), else inherited from the nearest known
+        ancestor or default.
+        """
+        keys = np.asarray(keys, dtype=np.int64)
         out = np.empty(len(keys), dtype=object if policy.get("dtype") is object else np.float64)
-        for i, key in enumerate(keys):
-            key = int(key)
+        if isinstance(values_by_key, _KeyedValues):
+            known, source = values_by_key.match(keys)
+            out[known] = values_by_key.values[source[known]]
+            unknown = np.flatnonzero(~known)
+            if policy["on_grow"] != "inherit" and out.dtype != object:    # objects (lists) are set one by one
+                out[unknown] = policy["default"]
+                return out
+        else:
+            unknown = range(len(keys))
+        for i in unknown:
+            key = int(keys[i])
             if key in values_by_key:
                 out[i] = values_by_key[key]
                 continue
@@ -2089,6 +2110,30 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
 # ═══════════════════════════════════════════════════════════════════════════════
 # Field / grid branch
 # ═══════════════════════════════════════════════════════════════════════════════
+
+class _KeyedValues:
+    """Values of a variable by entity id, as two sorted arrays: a read-only mapping matched in bulk (QF4)."""
+
+    def __init__(self, keys: np.ndarray, values: np.ndarray):
+        self.keys, self.values = keys, values
+
+    def match(self, ids) -> tuple:
+        """(known mask, position of each known id in values)."""
+        ids = np.asarray(ids, dtype=np.int64)
+        if self.keys.size == 0:
+            return np.zeros(ids.shape, dtype=bool), np.zeros(ids.shape, dtype=np.int64)
+        position = np.searchsorted(self.keys, ids).clip(0, self.keys.size - 1)
+        return self.keys[position] == ids, position
+
+    def __contains__(self, key) -> bool:
+        return bool(self.match([int(key)])[0][0])
+
+    def __getitem__(self, key):
+        known, position = self.match([int(key)])
+        if not known[0]:
+            raise KeyError(key)
+        return self.values[position[0]]
+
 
 class FieldDataStructure(DataStructure):
     """
