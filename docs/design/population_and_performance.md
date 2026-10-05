@@ -317,3 +317,21 @@ Anatomy mode at 8·10⁵ Compartments: rates and states 0.15 → 0.003 s, graph 
   - write-back properties are ArrayDicts.
 - **F4:** the graph extension, the carry-over, the topology arrays and `edges()` are array work.
 - **F5 (open), growth at the largest sizes:** growth bookkeeping is still not linear: ×10 plants gives ×16–22 between 100 and 1000 plants. The cause is the remaining O(MTG) Python reads per growth event: `topology_arrays` reading the MTG's `_parent`, `_scale`, `_complex` and `edge_type` dicts (about 6·10⁶ vertices with the Compartments and Connections), and `_build_index_map`. Making those arrays incremental (extended for the vertices created since the last read, rebuilt on removals or relinking) would make growth proportional to the growth. That needs the MPG to record its structural edits (`add_child`, `insert_parent`, `remove_tree`), so it is left for later.
+
+## 16. S2 as implemented (2026-10-06)
+
+- **`split="components"`:**
+  - the pieces of the graph (or of the `where=` subgraph) come from `connected_components`, cached per topology, each with a GraphView built from its own edges;
+  - each piece goes through the restricted-solve path, with the same equations, its own Newton iterations and its own adaptive steps;
+  - edges outside the active subgraph are zeroed once;
+  - the previous / solved node fields are one dict, copied once per call and updated at each piece's nodes.
+- **Validation:** each plant of a population solved by pieces equals that plant solved alone (atol 1e-15, adaptive integration with slow and fast plants); `split` and `whole` agree within the adaptive tolerances.
+- **Cost on one core** (the benchmark's diffusion system with random initial sucrose, finite-difference Jacobian; seconds per call):
+
+  | plants | whole | components |
+  |---:|---:|---:|
+  | 10 | 0.05–0.07 | 0.08–0.10 |
+  | 100 | 0.73–0.89 | 1.18–1.20 |
+
+  Each piece pays its own spec build, finite-difference colouring and SuperLU call (a few ms), and one sparse LU of a block-diagonal system already costs no more than the blocks. So `whole` stays the default (a deviation from §9, which made `components` the default with several pieces). `components` is for convergence (a slow plant does not hold the others) and per-plant adaptive steps.
+- **Not done: the thread pool.** The solve keeps its state on the component instance (`_restriction`, `_solve_view`, `_current_dt`, the previous fields), so pieces cannot run in threads without moving that state into a per-solve context. The Python work per piece (residual evaluation, assembly) also holds the GIL, so threads would only overlap the SuperLU calls. Processes or a numba assembly would be the route if graph systems become the bottleneck.

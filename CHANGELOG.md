@@ -18,6 +18,12 @@ The flat modules used before the 2026 restructure have been removed. No compatib
 | `openalea.metafspm.component.Model`, `declare` | `openalea.metafspm.coupling.component.Component` / `FunctionalComponent`, `declare` |
 | `openalea.metafspm.specializer` | `openalea.metafspm.solve.specializer` |
 
+### Graph systems solved per connected piece (S2)
+
+- `@graph_system(split="components")` solves each connected piece of the graph (of the active subgraph with `where=`), e.g. each plant of a population, on its own, with its own Newton convergence and adaptive steps. A piece gives the same values as its plant solved alone (to 1e-15 in the tests).
+- The pieces are computed once per topology, each with a local incidence. The restricted-solve bookkeeping is now proportional to the subgraph: in-place scatters, previous fields updated at the subgraph's nodes, adaptive capture and restore of the subgraph only. This also helps `where=` solves.
+- `split="whole"` stays the default: on one core the pieces' per-solve overhead makes `components` about 1.3–1.6× slower at 100 plants (see the design doc §16).
+
 ### Consumption shared in visiting order (S1)
 
 - `tree_kernels.path_contributions` / `ds.path_contributions(budget, extent, values, where=, include=)` give each supply window of `path_window` element by element as (owner, supplier, contribution), emitted in visiting order. `tree_kernels.scatter_contributions` / `ds.scatter_contributions` then add `amount[owner] · contribution / total[owner]` onto the suppliers one after the other.

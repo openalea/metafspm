@@ -368,26 +368,87 @@ def _take(instance, location):
 
 class _Restriction:
     """
-    Active subgraph of a graph system solved with where= (design note structure_and_boundaries §5, DS21): the
-    selected nodes, the edges with both ends selected, and the corresponding GraphView.
+    Active subgraph of a graph system solved with where= (design note structure_and_boundaries §5, DS21), or one
+    connected piece of it (split="components", S2): the selected nodes, the edges with both ends selected, and the
+    corresponding GraphView. A piece leaves the other edges alone (drops_edges=False).
     """
 
-    def __init__(self, view, node_idx, edge_idx, n, m):
+    def __init__(self, view, node_idx, edge_idx, n, m, drops_edges: bool = True):
         self.view, self.node_idx, self.edge_idx = view, node_idx, edge_idx
-        self.dropped_edges = np.setdiff1d(np.arange(m), edge_idx)
         self.n, self.m = n, m
+        self.drops_edges = drops_edges
+        self._dropped = None
+
+    @property
+    def dropped_edges(self) -> np.ndarray:
+        if self._dropped is None:
+            kept = np.zeros(self.m, dtype=bool)
+            kept[self.edge_idx] = True
+            self._dropped = np.flatnonzero(~kept) if self.drops_edges else np.empty(0, dtype=np.int64)
+        return self._dropped
 
     def scatter(self, ds, name, values, location, dropped=None):
-        """Write *values* of the subgraph's entities into the full variable; dropped edges get *dropped* if given."""
-        full = np.array(ds.get(name), dtype=np.float64)
-        flat = full.reshape(-1)          # grid cells are scattered in flat C order
+        """
+        Write *values* of the subgraph's entities into the full variable, in place (O(subgraph)); dropped edges get
+        *dropped* if given.
+        """
+        full = ds.get(name)
+        in_place = full.dtype == np.float64 and full.flags.writeable and full.flags.c_contiguous
+        flat = full.reshape(-1) if in_place else np.array(full, dtype=np.float64).reshape(-1)
         if location in ("node", "cell"):
             flat[self.node_idx] = values
         else:
             flat[self.edge_idx] = values
-            if dropped is not None:
+            if dropped is not None and self.dropped_edges.size:
                 flat[self.dropped_edges] = dropped
-        ds.set(name, full)
+        if in_place:
+            ds.mark_written(name)
+        else:
+            ds.set(name, flat.reshape(full.shape))
+
+
+def _pieces_of(instance, base) -> list:
+    """
+    The connected pieces of *base* (a _Restriction, or None for the whole graph) as piece restrictions, computed once
+    per topology and subgraph; each with its local GraphView built from its own edges (S2).
+    """
+    from scipy.sparse.csgraph import connected_components
+    ds = _live_ds(instance)
+    full = instance._graph_view
+    if getattr(instance, "_boundary_ports", None):
+        raise NotImplementedError(f"{type(instance).__name__}: split='components' with boundary ports set by hand; "
+                                  "use boundary sets")
+    key = (ds.topology_version, id(base))
+    cache = instance.__dict__.get("_pieces_cache")
+    if cache is not None and cache[0] == key:
+        return cache[1]
+    view = base.view if base is not None else full
+    nodes = base.node_idx if base is not None else np.arange(full.n_nodes)
+    edges = base.edge_idx if base is not None else np.arange(full.n_edges)
+    n = view.n_nodes
+    adjacency = coo_matrix((np.ones(view.n_edges), (view.tail, view.head)), shape=(n, n))
+    count, labels = connected_components(adjacency, directed=False)
+    node_order = np.argsort(labels, kind="stable")
+    node_bounds = np.searchsorted(labels[node_order], np.arange(count + 1))
+    edge_labels = labels[view.tail]
+    edge_order = np.argsort(edge_labels, kind="stable")
+    edge_bounds = np.searchsorted(edge_labels[edge_order], np.arange(count + 1))
+    local = np.empty(n, dtype=np.int64)
+    pieces = []
+    for piece in range(count):
+        members = node_order[node_bounds[piece]:node_bounds[piece + 1]]
+        links = edge_order[edge_bounds[piece]:edge_bounds[piece + 1]]
+        local[members] = np.arange(members.size)
+        tail, head, k = local[view.tail[links]], local[view.head[links]], links.size
+        incidence = csc_matrix((np.r_[np.ones(k), -np.ones(k)], (np.r_[tail, head], np.r_[np.arange(k), np.arange(k)])),
+                               shape=(members.size, k))
+        piece_view = GraphView(node_ids=view.node_ids[members], edge_ids=view.edge_ids[links], tail=tail, head=head,
+                               incidence=incidence,
+                               boundary_incidence=csc_matrix((members.size, 0), dtype=np.float64), boundary_names=())
+        pieces.append(_Restriction(piece_view, nodes[members], edges[links], full.n_nodes, full.n_edges,
+                                   drops_edges=False))
+    instance.__dict__["_pieces_cache"] = (key, pieces)
+    return pieces
 
 
 def _restriction_for(instance, where):
@@ -989,17 +1050,48 @@ def _invoke_graph_system(self, method_name: str) -> None:
         self._refresh_from_bio_scale()
     spec_def = type(self)._graph_system_specs[method_name]
     where = spec_def.get("where")
-    if where is None:
+    split = spec_def.get("split", "whole") == "components"
+    if where is None and not split:
         _solve_graph_system(self, method_name, spec_def)
         return
-    # Active subgraph (DS21): the equations see its GraphView through self._graph_view
-    restriction = _restriction_for(self, where)
-    if restriction.node_idx.size == 0:
+    restriction = None
+    if where is not None:
+        # Active subgraph (DS21): the equations see its GraphView through self._graph_view
+        restriction = _restriction_for(self, where)
+        if restriction.node_idx.size == 0:
+            ds = _live_ds(self)
+            for fn in spec_def["edge_unknowns"]:
+                if ds.has(fn):
+                    ds.set(fn, 0.)            # no active edge: no flux
+            return
+    if not split:
+        _solve_restricted(self, method_name, spec_def, restriction)
+        return
+    # One solve per connected piece (S2); edges outside the active subgraph carry no flux, set once
+    if restriction is not None and restriction.dropped_edges.size:
         ds = _live_ds(self)
         for fn in spec_def["edge_unknowns"]:
             if ds.has(fn):
-                ds.set(fn, 0.)            # no active edge: no flux
-        return
+                values = np.array(ds.get(fn), dtype=np.float64).reshape(-1)
+                values[restriction.dropped_edges] = 0.
+                ds.set(fn, values)
+    # The pieces share one dict of previous / solved node fields, copied once and updated at each piece's nodes, so
+    # that the bookkeeping stays proportional to each piece
+    saved_key, previous_key = f"_gsol_{method_name}", f"_gprev_{method_name}"
+    saved = getattr(self, saved_key, None)
+    if saved is not None:
+        saved = {fn: np.array(values, dtype=np.float64) for fn, values in saved.items()}
+        setattr(self, saved_key, saved)
+        setattr(self, previous_key, saved)
+    self.__dict__["_in_pieces"] = True
+    try:
+        for piece in _pieces_of(self, restriction):
+            _solve_restricted(self, method_name, spec_def, piece)
+    finally:
+        self.__dict__.pop("_in_pieces", None)
+
+
+def _solve_restricted(self, method_name, spec_def, restriction) -> None:
     self.__dict__["_restriction"], self.__dict__["_solve_view"] = restriction, restriction.view
     try:
         _solve_graph_system(self, method_name, spec_def)
@@ -1013,13 +1105,59 @@ def _unknown_names(ds, spec_def) -> list:
     return names + [f"{fn}_amount" for fn in spec_def["edge_unknowns"] if ds.has(f"{fn}_amount")]
 
 
-def _capture(ds, names) -> dict:
-    return {name: np.array(ds.get(name), dtype=np.float64) for name in names if ds.has(name)}
+def _capture(ds, names, instance=None) -> dict:
+    """Copies of *names*: of the current subgraph's entities only during a restricted solve, as (location, values)."""
+    restriction = instance.__dict__.get("_restriction") if instance is not None else None
+    if restriction is None:
+        return {name: np.array(ds.get(name), dtype=np.float64) for name in names if ds.has(name)}
+    captured = {}
+    for name in names:
+        if ds.has(name):
+            location = "edge" if ds.location(name) == "edge" else "node"
+            idx = restriction.node_idx if location == "node" else restriction.edge_idx
+            captured[name] = (location, np.array(np.asarray(ds.get(name)).reshape(-1)[idx], dtype=np.float64))
+    return captured
 
 
-def _restore(ds, state) -> None:
+def _captured(state, name) -> np.ndarray:
+    values = state[name]
+    return values[1] if isinstance(values, tuple) else values
+
+
+def _restore(ds, state, instance=None) -> None:
+    restriction = instance.__dict__.get("_restriction") if instance is not None else None
     for name, values in state.items():
-        ds.set(name, values)
+        if restriction is None:
+            ds.set(name, values)
+        else:
+            location, values = values
+            restriction.scatter(ds, name, values, location)
+
+
+def _saved_fields(self, key, ds, names) -> None:
+    """Keep the node unknowns on every node (attribute *key*), updating only the subgraph's during a restricted solve."""
+    restriction = self.__dict__.get("_restriction")
+    saved = getattr(self, key, None)
+    if (restriction is None or saved is None
+            or any(fn not in saved or np.size(saved[fn]) != restriction.n for fn in names)):
+        setattr(self, key, {fn: np.array(ds.get(fn), dtype=np.float64).reshape(-1) for fn in names})
+        return
+    if self.__dict__.get("_in_pieces"):
+        for fn in names:
+            saved[fn][restriction.node_idx] = np.asarray(ds.get(fn)).reshape(-1)[restriction.node_idx]
+        return
+    # A new dict of the same arrays: _gprev_ (the previous solve's) may hold the old dict, whose arrays it must keep
+    updated = {}
+    for fn in names:
+        values = saved[fn] if not _shared_with_previous(self, key, saved[fn]) else np.array(saved[fn])
+        values[restriction.node_idx] = np.asarray(ds.get(fn)).reshape(-1)[restriction.node_idx]
+        updated[fn] = values
+    setattr(self, key, updated)
+
+
+def _shared_with_previous(self, key, array) -> bool:
+    previous = getattr(self, key.replace("_gsol_", "_gprev_"), None) if key.startswith("_gsol_") else None
+    return previous is not None and any(array is other for other in previous.values())
 
 
 def _solve_graph_system(self, method_name: str, spec_def: dict) -> None:
@@ -1057,8 +1195,7 @@ def _solve_substep(self, method_name, spec_def, h) -> None:
     """One sub-step of length h starting from the current DataStructure state."""
     ds = _live_ds(self)
     # The solver's previous fields are the state at the start of the sub-step
-    setattr(self, f"_gsol_{method_name}", {fn: np.array(ds.get(fn), dtype=np.float64).reshape(-1)
-                                            for fn in spec_def["node_unknowns"]})
+    _saved_fields(self, f"_gsol_{method_name}", ds, spec_def["node_unknowns"])
     self.__dict__["_current_dt"] = h
     _solve_once(self, method_name, spec_def)
 
@@ -1075,20 +1212,20 @@ def _integrate_adaptive(self, method_name, spec_def, time_step, names) -> None:
     t, h, steps, rejected = 0., max_step, 0, 0
     while t < time_step * (1. - 1e-12):
         h = min(h, time_step - t)
-        start = _capture(ds, names)
+        start = _capture(ds, names, self)
         _solve_substep(self, method_name, spec_def, h)
-        coarse = _capture(ds, spec_def["node_unknowns"])
-        _restore(ds, start)
+        coarse = _capture(ds, spec_def["node_unknowns"], self)
+        _restore(ds, start, self)
         _solve_substep(self, method_name, spec_def, h / 2.)
         _solve_substep(self, method_name, spec_def, h / 2.)
-        fine = _capture(ds, spec_def["node_unknowns"])
-        error = max((np.max(np.abs(fine[fn] - coarse[fn]) / (atol + rtol * np.abs(fine[fn])))
-                     for fn in fine), default=0.)
+        fine = _capture(ds, spec_def["node_unknowns"], self)
+        error = max((np.max(np.abs(_captured(fine, fn) - _captured(coarse, fn))
+                            / (atol + rtol * np.abs(_captured(fine, fn)))) for fn in fine), default=0.)
         if error <= 1.:
             t, steps = t + h, steps + 1
             h *= min(2., max(0.2, 0.9 / np.sqrt(max(error, 1e-12))))
         else:
-            _restore(ds, start)
+            _restore(ds, start, self)
             rejected += 1
             h *= max(0.2, 0.9 / np.sqrt(error))
             if h < min_step:
@@ -1139,9 +1276,8 @@ def _solve_once(self, method_name: str, spec_def: dict) -> None:
 
     # ── Inject results ────────────────────────────────────────────────────────
     builder.inject_result(packed, spec)
-    # Kept on every node, so that a later solve on another active subgraph finds its previous values
-    setattr(self, _saved_key, {fn: np.array(_live_ds(self).get(fn), dtype=np.float64).reshape(-1)
-                                for fn in spec_def["node_unknowns"]})
+    # Kept on every node, so that a later solve on another active subgraph (or piece) finds its previous values
+    _saved_fields(self, _saved_key, _live_ds(self), spec_def["node_unknowns"])
 
     # ── Write output-block results ─────────────────────────────────────────────
     n  = self._graph_view.n_nodes
@@ -1262,6 +1398,7 @@ def graph_system(
     atol           = 1e-8,
     min_step       = None,
     max_step       = None,
+    split          = "whole",
 ):
     """
     Inner-class decorator that wires a GraphSystem solve into the Choregrapher.
@@ -1315,6 +1452,10 @@ def graph_system(
         "step": one solve of the component's time_step (default); "substeps": n_substeps solves of
         time_step / n_substeps; "adaptive": step doubling with rtol / atol, min_step / max_step. Equations must
         write their time terms with self.dt and self.previous() (design note time_and_data §2).
+    split          : "whole" | "components"
+        "components": each connected piece of the graph (of the active subgraph with where=), e.g. each plant of a
+        population, is solved on its own, with its own Newton convergence and integration steps (S2). "whole": one
+        system (default).
     """
     # Backward-compat: honour deprecated method= kwarg.
     if method is not None:
@@ -1325,6 +1466,8 @@ def graph_system(
             )
         solver = method
 
+    if split not in ("whole", "components"):
+        raise ValueError(f"graph_system: split must be 'whole' or 'components', got '{split}'")
     if integrate not in ("step", "substeps", "adaptive"):
         raise ValueError(f"graph_system: integrate must be 'step', 'substeps' or 'adaptive', got '{integrate}'")
     if integrate == "substeps" and int(n_substeps) < 1:
@@ -1367,6 +1510,7 @@ def graph_system(
         "atol"          : atol,
         "min_step"      : min_step,
         "max_step"      : max_step,
+        "split"         : split,
         "transient"     : (issubclass(solver_cls, (ExplicitEulerSolver, ImplicitEulerSolver, ScipyIVPSolver))
                            if transient is None else bool(transient)),
     }

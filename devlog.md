@@ -1788,3 +1788,13 @@ Per-file counts:
   - `ds.order("post", convention="openalea")` rebuilds `post_order2`'s order from the MTG children lists (`reversed(plus + successor)`), cached per topology. Nodes linked across complexes fall back to the graph order.
 - **Tests:** the reference is rhizodep's `actual_growth` sharing written as a loop over `post_order2`, equal bit for bit with partial and maximal overlap; the openalea order equals `post_order2`. Index order instead of visiting order differs on 6 of 110 segments (1.9e-16 relative), so the test is sensitive to the order.
 - **Suite:** 665 passed.
+- **S2 implemented, `@graph_system(split="components")`:**
+  - `_pieces_of` (connected components, local incidences from tail/head, cached by topology version and base subgraph);
+  - `_solve_restricted` for both where= and pieces;
+  - `_Restriction.scatter` writes in place (O(subgraph)), and dropped edges are computed lazily (none for pieces);
+  - `_capture` / `_restore` of the subgraph for adaptive integration;
+  - `_saved_fields` updates the previous fields at the subgraph's nodes; in piece loops one shared dict is copied once.
+- **Also fixed:** `n_edges()` no longer copies the cached edge list (it was called per piece through `_location_shape`).
+- **Tests** (`test_split_components.py`, 4): pieces equal plants alone (1e-15, adaptive, slow and fast plants), split against whole within tolerances, pieces of an active subgraph, option check. The first version of the toy used rtol=1e-6, which meant about 1300 adaptive steps per call (slow, not hung).
+- **Timing:** split is 1.3–1.6× slower than whole on one core at 10–100 plants (per-piece builder and FD Jacobian overhead), so the default stays "whole", deviating from §9 and reported. Thread pool not done (state on the instance; GIL).
+- **Suite:** 669 passed.
