@@ -258,21 +258,57 @@ Not planned in metafspm: G13 (a masked loop in a step), G14 (until stratificatio
    - **(c)** both.
 
    **QPp:** which use do you intend? **Recommendation:** (a) first. It is the modelling feature, it generalises the column ↔ grid mapping (a `GridMapping` by cell-volume overlaps in N-D), and it fits the existing exchanges. (b) is a solver optimisation, worth doing only if grid solves become the bottleneck.
-   → answer:
+   → answer: What is the best for adaptative discretization uppon solved processes / flows intensity?
 2. **Compartments are topological children of their segments** (B-i, deferred in WD.P). `populate_graph` links each Compartment to its segment with a topological parent, so openalea's `g.children(segment)`, `Sons()` and `post_order2` return Compartments (scale 9) mixed with the child segments (scale 6). The DataStructure and the kernels are not affected (they use the Connections). But MPG-style code ported from rhizodep, which loops on `children()` and `post_order2`, would count Compartments as children: death counts, the pipe model, `len(apex.children())` for primordia. Options:
    - **(a)** the MPG's `children` / `children_iter` / `Sons` / `nb_children` return the same-scale children only (overrides; raw `_children` unchanged for the framework);
    - **(b)** Compartments become components of their segment instead of children (a change in `populate_graph`, `extend_graph` and the anatomy wiring);
    - **(c)** leave it, and document that ported code must filter by scale.
 
    **QPq:** which? **Recommendation:** (a). It makes openalea's traversals (which use `children_iter`) behave as on a plain MTG, with a small, testable change.
-   → answer:
+   → answer: yes to (a)
 3. **Coverage cannot be measured:** `coverage` / `pytest-cov` are not installed in the metafspm environment, although `[tool.coverage]` is configured (B1).
 
    **QPr:** may I install `pytest-cov` in that conda environment, to report untested code before GRANAP? **Recommendation:** yes.
-   → answer:
+   → answer: yes you can
 4. **Still deferred, by earlier decisions, listed so that nothing is forgotten:**
    - DS7's MPG ↔ MPG coupler (until a plant uses two DataStructures);
    - W6.1 (an integration marker for downstream CI);
    - parallel pieces (S2);
    - the anatomy repartition and Q-A4's implementation (PT9, with GRANAP's guidelines).
+
+## 11. After your answers (2026-10-06)
+
+- **QPq (a), done:** the MPG's `children`, `children_iter` and `nb_children` return the children at the vertex's own scale, so openalea's `Sons`, `post_order2` and `pre_order2` see segments only, as on a plain MTG. The framework reads the raw links in `_children`, and the graph is unchanged. A test covers it.
+- **QPr, done:**
+  - `pytest-cov` is installed in the metafspm environment;
+  - coverage is 86 % overall, with `pytest --cov=src/openalea/metafspm`;
+  - `tree_kernels.py` shows 62 % only because numba-compiled bodies are not traced;
+  - `solver.py` and `system_specs.py` (76–78 %) are mostly older solver paths and introspection helpers no current component uses.
+- **QPp, your question:** "what is the best for adaptive discretization upon solved processes / flows intensity?"
+
+  A fixed multigrid hierarchy (QPp's options) is not adaptive: its levels cover the whole domain at fixed resolutions. For a resolution that follows where the processes are intense (around roots, along strong fluxes or gradients), the usual answer is **cell-based adaptive refinement (an octree in 3-D)**:
+  - **Refinement:** a cell whose indicator is high (flux magnitude, gradient, root length density) is split into 8 children; children whose indicator is low are merged back.
+  - **Graph:** neighbouring cells may differ in size, and the faces between them get their real area and centre distance. Cells are nodes and faces are edges, with `face_area` and `face_distance`, exactly the grid's graph contract (DS1). So graph systems, boundary sets, masks and steps work on it unchanged.
+  - **Carried values:** refining or coarsening is a topology change between steps, like growth. Extensive values are split by volume or summed, and intensive values copied or volume-averaged: the repartition rules of the plants, with cell volume as the weight.
+  - **Coupling:** `locate` searches the tree, so CrossMapping (barycentre, overlap) and the exchanges are unchanged.
+  - **Why not the others:** block-structured refinement (fine patches over a coarse grid) needs flux corrections at patch borders. A multigrid hierarchy only accelerates solves. Neither adapts as directly.
+
+  **Proposed step, PT10, `AdaptiveGridDataStructure`:**
+  - an octree over a coarse base grid, with periodic axes and a maximum level;
+  - the 2:1 balance between neighbours, so a face has at most four neighbours on its other side;
+  - a refinement criterion given as a function of the DataStructure, applied at fixed points by `refine(criterion)` / `coarsen(criterion)`, then `update_topology()` with conservative carry-over;
+  - tests: conservation through refine and coarsen, a diffusion solve against the uniform fine grid, CrossMapping on refined cells.
+
+  The current `MultiGridDataStructure` (no variable store, 1-D-only operators, no users) would then be removed. Multi-resolution variables (microbes on a coarse grid) can be two grids linked by an overlap mapping if a model asks for it.
+
+### Questions
+
+- **QPs:** cell-based octree refinement as above (PT10)? **Recommendation:** yes. It keeps one graph contract for plants and soils, so the models do not change when the soil becomes adaptive.
+  → answer:
+- **QPt:** refinement at fixed points (between steps, like growth) from a user criterion, with a maximum level and the 2:1 balance? Or within a step (re-solving after refinement)? **Recommendation:** between steps. The flux of the step that just ended decides the next step's mesh, which keeps solves on a fixed graph.
+  → answer:
+- **QPu:** remove `MultiGridDataStructure` once PT10 exists? **Recommendation:** yes. It is unusable as is, and adaptive cells cover the need it was meant for.
+  → answer:
+- **Before or after GRANAP?** PT10 concerns the soil, which GRANAP does not need. **Recommendation:** after GRANAP, unless you want the soil first.
+  → answer:
 
