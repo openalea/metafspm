@@ -75,7 +75,7 @@ class CompositeModel:
         for component in self.components:
             if _live_data_structure(component) is None:
                 raise TypeError(f"{type(component).__name__} is not DataStructure-backed: props-based components were "
-                                "removed, see docs/design/downstream_migration.md")
+                                "removed, see docs/migration.md")
 
         translator = self.open_or_create_translator(translator_path)
         self._couple_on_data_structures(translator)

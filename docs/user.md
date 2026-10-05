@@ -4,7 +4,7 @@ MetaFSPM gives FSPM components one way to declare their variables, describe thei
 components, whatever they run on (one plant, a population, a soil grid). This guide follows the order in which a
 model is usually written: the data, a component, its equations, its structure, its couplings, and the scene that runs
 it. The declaration rules are summarised in [Conventions](conventions.md); porting an existing model is described in
-[Migrating a model](design/downstream_migration.md).
+[Migrating a model](migration.md).
 
 ## 1. DataStructures
 

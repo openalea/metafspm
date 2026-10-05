@@ -17,12 +17,12 @@ Each phase ends green and gets its own commit.
 2. ~~W1 infrastructure~~ **done 2026-09-29** (`409a0e9`).
 3. ~~W2–W4 `[contract]` tests + xfail-first fixes~~ **done 2026-09-29** (`1f6a416`). Coverage: composite_wrapper 96.5 %, scene_wrapper 92.6 %.
 4. ~~W5 end-to-end `play_Orchestra`~~ **done 2026-09-29** (`062c61c`). Three scene protocol bugs fixed; 9 slow tests; 0 failures in 30 runs under full CPU load.
-5. ~~WD.0 translator schema + WD.1 design note~~ **accepted 2026-09-29** (`docs/design/coupling_through_datastructures.md`, Q20–Q26 decided).
+5. ~~WD.0 translator schema + WD.1 design note~~ **accepted 2026-09-29** (`dev/design/coupling_through_datastructures.md`, Q20–Q26 decided).
 6. ~~WD.P prerequisites~~ **done 2026-09-29** (`42e00eb`). B-a…B-h are fixed. B-i is deferred to WD.3, where the scale operators must exclude anchors and Compartments.
 7. **WD.2–WD.6 implementation** (WD.3 done `b671415`, WD.2 done `d7546f3`, WD.0 implemented). WD.4 done (`ee7bbc4`), WD.5a done (`26433fc`). Epic WD complete: the legacy path is removed (`b3c11c8`), the UC tests are migrated (`8f6f055`), and the backlog is closed except B11 (downstream, out of scope). live DataStructure reading, links on the DataStructure, a Coupler across DataStructures, and a scene transport sized from the handshake. Retarget the W doubles to MPG and 3-D grid and re-run the `[contract]` suite unchanged.
 8. **WD.7–WD.9 downstream migration**: guide, Logger adapter, `assert_component_couplable` (W6.2).
 
-**See also `devplan_datastructures.md`:** the DataStructure API stabilisation plan (DS1–DS21, decisions D1–D16), with its step 1 design note `docs/design/datastructure_contract.md`.
+**See also `devplan_datastructures.md`:** the DataStructure API stabilisation plan (DS1–DS21, decisions D1–D16), with its step 1 design note `dev/design/datastructure_contract.md`.
 
 ## Decisions log
 
@@ -47,7 +47,7 @@ Each phase ends green and gets its own commit.
 | 2026-09-29 | Q17 | **The light model sends an initial reply in `__init__`, like the soil does** (W5.0). |
 | 2026-09-29 | Q18 | A worker failure makes `clean_exit` False: plant and soil workers exit with code 1, and the orchestrator checks the exit codes (`a3a9877`). |
 | 2026-09-29 | Q19 | `plant_model_frequency` is an argument of `play_Orchestra`, uniform by default, so it is implicit for one model (`a3a9877`). |
-| 2026-09-29 | WD.0/WD.1 | **Design note accepted:** `docs/design/coupling_through_datastructures.md`, strategy and §11 recommendations. |
+| 2026-09-29 | WD.0/WD.1 | **Design note accepted:** `dev/design/coupling_through_datastructures.md`, strategy and §11 recommendations. |
 | 2026-09-29 | Q20 | Step functions receive arrays; a per-element loop only by opt-in (`vectorized=False`). |
 | 2026-09-29 | Q21 | A framework-managed `self.previous(fn)` replaces the user-managed `_previous_fields`, with a one-release deprecation. |
 | 2026-09-29 | Q22 | Non-float variables go in an object store on the DS, couplable by identity or alias only. |
@@ -271,7 +271,7 @@ The messages:
   - Anything that needs real code is referenced **by name** from a Python registry (`@register_aggregation("my_fn")`), not embedded in the file.
   - Accept a Python `dict` or `Link` list as an alternative input for programmatic use. It loads into the same objects.
   - The short form `name: {src: factor}` stays valid, with the defaults "same scale" and `sum`.
-- [x] WD.1 **Design note** in `docs/`, for your review before any code: **Drafted:** `docs/design/coupling_through_datastructures.md`, covering the current state, the blocking bugs B-a…B-i, requirements R1–R12, DS `get` / `set` / `register` in place, aliases, derived variables, scale operators and a scalar store, the Coupler / VoxelLocator / Transport, live reading in Functor and decorator, the Logger export, and a gated migration sequence.
+- [x] WD.1 **Design note** in `docs/`, for your review before any code: **Drafted:** `dev/design/coupling_through_datastructures.md`, covering the current state, the blocking bugs B-a…B-i, requirements R1–R12, DS `get` / `set` / `register` in place, aliases, derived variables, scale operators and a scalar store, the Coupler / VoxelLocator / Transport, live reading in Functor and decorator, the Logger export, and a gated migration sequence.
   - **Links**: identity is a no-op; an alias is a name-level alias table on the DS; a derived link is a vectorised `ds[r] = Σ fᵢ · A(ds[sᵢ])`, with `A` the scale mapping or aggregation from WD.0, evaluated before the receiver's step.
   - **Across DataStructures**, a `Coupler(ds_a, ds_b, mapping)`:
     - MPG ↔ 3-D grid: vertex → voxel index arrays built from the barycenters, recomputed after `update_topology`;
@@ -314,7 +314,7 @@ The messages:
   - a configurable `play_Orchestra` buffer shape;
   - DataStructure-backed scene doubles, with contract tests reproducing the regression-anchor numbers.
 - [x] WD.6 Retarget the W1 doubles and fixtures to `MPGDataStructure` / the 3-D grid, then re-run all of W2–W5 unchanged. **Done, following Q28:** the DataStructure doubles `doubles_ds.py` (PlantCarbon / PlantNitrogen, GridSoil, DSFakePlant, DSFakeSoil) have their own contract tests that **reproduce the props-based regression anchor exactly**, in process and with real processes. The legacy doubles and tests stay as the legacy contract until the legacy path is removed at the end of WD.7.
-- [x] WD.7 Migration guide for downstream packages (RootGrowth, RootAnatomy, RootWater, RootCN, CNW_Grass, and SoilModel, which is still on the legacy `openalea.metafspm.component.Model` + `component_factory`). **Guide written 2026-09-29:** `docs/design/downstream_migration.md`. It gives per-role steps pointing to the tested DS doubles, plus a checklist. The actual migration happens in the downstream repositories, followed by the removal of the legacy path (Q28). **Scope set (your 2026-09-29 rule):** the downstream packages are not edited from this repo. The in-repo UC tests are migrated (B9), and the legacy path is removed (`b3c11c8`).
+- [x] WD.7 Migration guide for downstream packages (RootGrowth, RootAnatomy, RootWater, RootCN, CNW_Grass, and SoilModel, which is still on the legacy `openalea.metafspm.component.Model` + `component_factory`). **Guide written 2026-09-29:** `docs/migration.md`. It gives per-role steps pointing to the tested DS doubles, plus a checklist. The actual migration happens in the downstream repositories, followed by the removal of the legacy path (Q28). **Scope set (your 2026-09-29 rule):** the downstream packages are not edited from this repo. The in-repo UC tests are migrated (B9), and the legacy path is removed (`b3c11c8`).
 - [x] WD.8 `assert_component_couplable` (W6.2), updated for DS-backed components and the WD.0 schema. **Done (`3c85536`):** `openalea.metafspm.testing.couplability_problems` / `assert_component_couplable`.
 - [x] WD.9 **Logger compatibility (scope reduced by Q15).** Add read-only export helpers in metafspm (`DataStructure.available_vars()` plus a per-variable array with coordinates and ids) and adapt only the Logger's xarray (`mtg_to_dataset` / `recording_raw_MTG_properties_in_xarray`) and csv (`recording_summed_MTG_properties_to_csv`) writers onto them. Test them on `MPGDataStructure` and `ArrayDataStructure`. The remaining Logger features stay as they are. Original analysis: `openalea.fspm` `Logger` only accepts an exact `openalea.mtg.MTG` or a `dict` in `model_instance.data_structures`, and reads `props["root"]` / `props["soil"]`. MPG and grid DataStructures will be rejected. Option (a): metafspm provides a small read-only export API on `DataStructure` (`available_vars()`, `to_dataset()` / `variable(name)` with coordinates and ids) and the Logger is migrated onto it. Option (b): an adapter lives in metafspm. See Q15. **metafspm side done (`3c85536`):** `export`, `to_dataframe` (entity and time index, cell centres, `.to_xarray()` ready) and `summarize`. The Logger's two writers are adapted downstream, following the guide §6.
 
