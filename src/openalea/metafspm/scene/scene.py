@@ -10,7 +10,8 @@ Contracts::
   plant model        Model(data_structure, time_step, **scenario), built once per population (the plants of one model
                      in the planting table) on an MPG holding all of them. Class attributes: initiators (the
                      StructuralComponent classes building each plant, StructuralComponent.initiate_plant), from_scale
-                     (graph nodes, default "SubOrgan") and nodes (e.g. "Compartment" for anatomies). It exposes
+                     (graph nodes, default "SubOrgan"), nodes ("Compartment" for anatomies, which the initiators
+                     build) and wiring (the junction rules between anatomies, or a callable g -> rules). It exposes
                      components and run(). Numeric parameters come per plant from the planting table's scenarios.
   environment model  Model(populations, scene_xrange, scene_yrange, time_step, **scenario): builds its DataStructures
                      (a grid, a UnionDataStructure of the populations, or works on a population's MPG) and exposes
@@ -173,6 +174,7 @@ class Scene(CompositeModel):
         for component in self.components:
             component.__dict__["_scene_forcings"] = forcings
         self.events = sorted(list(events), key=lambda event: event[0])
+        self._n_events = len(self.events)
         self.stop_when, self.stopped = stop_when, False
         for model in self.environment + [population.instance for population in self.populations]:
             if hasattr(model, "spin_up"):
@@ -191,9 +193,13 @@ class Scene(CompositeModel):
         g, plants = build_population(rows, initiators=getattr(model, "initiators", ()))
         scale = getattr(model, "from_scale", None) or "SubOrgan"
         scale = getattr(g.scales, scale) if isinstance(scale, str) else scale
-        g.populate_graph(scale)
+        nodes = getattr(model, "nodes", None)
+        if nodes is None:
+            g.populate_graph(scale)                 # anatomy mode: the initiators built the Compartments
         g.convert_properties_to_arraydict()
-        ds = MPGDataStructure(g, from_scale=scale, nodes=getattr(model, "nodes", None))
+        wiring = getattr(model, "wiring", None)
+        wiring = wiring(g) if callable(wiring) else wiring
+        ds = MPGDataStructure(g, from_scale=scale, nodes=nodes, wiring=wiring)
         instance = model(data_structure=ds, time_step=self.time_step, **scenario)
         population = Population(model, rows, plants, ds, instance)
         apply_plant_scenarios(ds, population.components, rows, plants)
@@ -358,6 +364,7 @@ class Scene(CompositeModel):
             pickle.dump(states, f)
         with open(os.path.join(path, "scene.json"), "w") as f:
             json.dump({"time": self.time, "iteration": self.iteration, "stopped": self.stopped,
+                       "events_fired": self._n_events - len(self.events),
                        "data_structures": len(self._all_data_structures())}, f)
 
     @classmethod
@@ -393,7 +400,7 @@ class Scene(CompositeModel):
             if key in states and hasattr(obj, "restore_state"):
                 obj.restore_state(states[key])
         self.time, self.iteration, self.stopped = saved["time"], saved["iteration"], saved["stopped"]
-        self.events = [event for event in self.events if event[0] >= self.time]
+        self.events = self.events[saved["events_fired"]:]         # the ones not fired yet, whatever their time
         if self.recorder is not None:
             self.recorder.resume = True
 
