@@ -18,6 +18,13 @@ The flat modules used before the 2026 restructure have been removed. No compatib
 | `openalea.metafspm.component.Model`, `declare` | `openalea.metafspm.coupling.component.Component` / `FunctionalComponent`, `declare` |
 | `openalea.metafspm.specializer` | `openalea.metafspm.solve.specializer` |
 
+### Scene services (PT5)
+
+- **`Scene(forcings=table)`:** one forcing table (a DataFrame indexed by time) shared by every model. A component's `forcing(name)` falls back on it.
+- **Scheduling:** models may set `run_every = n` or `run_when(scene)`. On the other steps they and the exchanges into them are skipped, and their outputs keep their values.
+- **`spin_up(scene)`:** an optional model method, run once after the scene is built.
+- **`Scene(events=[(time, action)], stop_when=condition)`:** actions run at the start of the first step at or after their time; `simulate` stops when the condition holds after a step (`scene.stopped`).
+
 ### Mappings for the environment (PT6)
 
 - **Environment scalars:** a link between a population variable (at nodes or a coarse scale) and an environment variable stored at `"scalar"` is exchanged over every plant of every population. Extensive values are summed, intensive values averaged (weighted with `weight=`), and a scalar is broadcast, or split by weight for extensive values (`ScalarMapping`, created by `Exchanges`).
