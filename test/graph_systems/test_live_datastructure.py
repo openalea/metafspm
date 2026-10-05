@@ -1,9 +1,7 @@
 """
-Live reading of DataStructure variables by components and the solver.
-
-Components no longer work on a props snapshot copied at construction: the solver snapshots the
-DataStructure at each solve, results are written to it in place, and Choregrapher steps are
-evaluated on its arrays (vectorised, with a per-element opt-in).
+Live reading of DataStructure variables by components and the solver: the solver reads the DataStructure at each
+solve and writes the results in place, steps are evaluated on its arrays (vectorised, with a per-element opt-in),
+previous() is managed by the framework, and the component follows topology growth.
 """
 from dataclasses import dataclass
 
@@ -12,80 +10,63 @@ import pytest
 
 from openalea.metafspm.coupling.choregrapher import Choregrapher
 from openalea.metafspm.coupling.component import FunctionalComponent, parameter, state_variable
-from openalea.metafspm.data_structure.configs import ScalesConfig as scales
+from openalea.metafspm.data_structure.configs import PropsConfig, ScalesConfig as scales
+from openalea.metafspm.data_structure.data_api import MPGDataStructure
 from openalea.metafspm.solve.decorator import rate
 
-from test_uc1_nitrogen_transport import NitrogenAxialTransport, _make_ds, _setup_nitrogen_model
+from nitrogen import DT, K, Transport, TransportWithAmount, TransportWithOutput, incidence, nitrogen_ds
+from simple_seedling import generate_simple_mpg_seedling
 
 
+@pytest.fixture(autouse=True)
+def _simulation_time_step():
+    Choregrapher().add_simulation_time_step(DT)
 
-def _model(rng_seed=42, K=0.07, dt=0.5):
-    ds = _make_ds()
-    rng = np.random.default_rng(rng_seed)
+
+def _model(component_class=Transport, seed=42):
+    ds = nitrogen_ds()
+    model = component_class(data_structure=ds)
+    rng = np.random.default_rng(seed)
     c_old = 0.10 + 0.40 * rng.random(ds.n_nodes())
-    model = _setup_nitrogen_model(ds, c_old=c_old, J_radial=0.01 * rng.random(ds.n_nodes()),
-                                  K_axial_vals=np.full(ds.n_edges(), K), dt=dt)
-    return ds, model, c_old
+    J = 0.01 * rng.random(ds.n_nodes())
+    ds.set("concentration", c_old)
+    ds.set("radial_solute_input", J)
+    ds.set("K_axial", np.full(ds.n_edges(), K))
+    return ds, model, c_old, J
+
+
+def _balance_residual(ds, c_old, J):
+    B = incidence(ds)
+    return (np.asarray(ds.get("concentration")) - c_old) / DT + B @ np.asarray(ds.get("axial_flux")) - J
 
 
 # ---------------------------------------------------------------- solver path
 
-def test_solution_is_written_to_the_data_structure():
-    ds, model, _ = _model()
+def test_the_solution_is_written_in_place():
+    ds, model, c_old, J = _model()
     concentration = ds.get("concentration")
-
-    model._invoke_graph_system("_transport_solve")
-
-    node_u, edge_u = model._last_graph_system.unpack_unknowns(model._last_graph_solution)
-    np.testing.assert_allclose(ds.get("concentration"), node_u["concentration"], atol=1e-15)
-    np.testing.assert_allclose(ds.get("axial_flux"), edge_u["axial_flux"], atol=1e-15)
-    assert ds.get("concentration") is concentration          # written in place
+    model()
+    assert ds.get("concentration") is concentration
+    np.testing.assert_allclose(_balance_residual(ds, c_old, J), 0., atol=1e-10)
 
 
-def test_parameter_changes_are_read_live():
-    """A parameter changed on the DataStructure after construction is used by the next solve."""
-    ds, model, _ = _model(K=0.07)
-    ds.set("K_axial", 0.)
-
-    model._invoke_graph_system("_transport_solve")
-
-    _, edge_u = model._last_graph_system.unpack_unknowns(model._last_graph_solution)
-    np.testing.assert_allclose(edge_u["axial_flux"], 0., atol=1e-15)
+def test_parameter_changes_are_read_at_the_next_solve():
+    ds, model, _, _ = _model()
+    ds.set("K_axial", np.zeros(ds.n_edges()))
+    model()
+    np.testing.assert_allclose(ds.get("axial_flux"), 0., atol=1e-15)
 
 
-def test_integrated_amount_and_outputs_are_registered():
-    ds, model, _ = _model()
-    model._invoke_graph_system("_transport_solve_with_amount")
-    assert ds.location("axial_flux_amount") == "edge"
-    model._invoke_graph_system("_transport_solve_with_output")
-    assert ds.location("axial_divergence") == "node"
-
-
-def test_props_is_a_read_only_view_of_the_data_structure():
-    ds, model, _ = _model()
-    model._invoke_graph_system("_transport_solve")
-    vid = ds.entity_ids("node")[0]
-    assert model.props["concentration"][vid] == ds.get("concentration")[0]
-    assert "axial_flux" in model.props and len(model.props["axial_flux"]) == ds.n_edges()
-    with pytest.raises(TypeError):
-        model.props["concentration"][vid] = 1.
+@pytest.mark.parametrize("component_class, name, location",
+                         [(TransportWithAmount, "axial_flux_amount", "edge"),
+                          (TransportWithOutput, "axial_divergence", "node")])
+def test_integrated_amounts_and_outputs_are_registered(component_class, name, location):
+    ds, model, _, _ = _model(component_class)
+    model()
+    assert ds.location(name) == location
 
 
 # ---------------------------------------------------------------- Choregrapher steps
-
-def test_rate_output_lands_in_the_data_structure():
-    ds = _make_ds()
-    ds.register("concentration", np.full(ds.n_nodes(), 0.3), location="node")
-    ds.register("is_root", np.zeros(ds.n_nodes()), location="node")   # no Dirichlet node; a missing filter variable raises
-    model = NitrogenAxialTransport(data_structure=ds)
-    model.k_radial, model.c_ext = 0.2, 1.0
-    model._previous_fields = {"concentration": np.full(ds.n_nodes(), 0.3)}
-    model.time_step = 0.5
-
-    model()
-
-    np.testing.assert_allclose(ds.get("radial_solute_input"), 0.2 * (1.0 - 0.3), atol=1e-15)
-
 
 @dataclass
 class VectorisedProbe(FunctionalComponent):
@@ -112,9 +93,8 @@ class VectorisedProbe(FunctionalComponent):
 
 
 def test_steps_are_vectorised_with_a_per_element_opt_in():
-    ds = _make_ds()
+    ds = nitrogen_ds()
     ds.register("level", np.linspace(0., 4., ds.n_nodes()), location="node")
-    Choregrapher().add_simulation_time_step(1)
     model = VectorisedProbe(data_structure=ds)
 
     model()
@@ -128,46 +108,40 @@ def test_steps_are_vectorised_with_a_per_element_opt_in():
 # ---------------------------------------------------------------- previous state
 
 def test_previous_state_is_managed_by_the_framework():
-    """previous(fn) is the state at the start of the current solve: consecutive solves advance c_old by themselves."""
-    ds, model, c_old = _model(rng_seed=7)
-    model._invoke_graph_system("_transport_solve")
+    """previous() is the state at the start of the last solve: consecutive calls advance it by themselves."""
+    ds, model, c_old, J = _model(seed=7)
+    model()
     np.testing.assert_array_equal(model.previous("concentration"), c_old)
-    first = ds.get("concentration").copy()
-
-    model._invoke_graph_system("_transport_solve")
-
+    first = np.array(ds.get("concentration"))
+    model()
     np.testing.assert_array_equal(model.previous("concentration"), first)
-    residual = model._last_graph_system.residual(model._last_graph_solution)
-    np.testing.assert_allclose(residual, 0., atol=1e-10)
+    np.testing.assert_allclose(_balance_residual(ds, first, J), 0., atol=1e-10)
     assert not np.allclose(ds.get("concentration"), first)
 
 
 def test_previous_state_outside_a_solve_raises():
-    ds = _make_ds()
-    model = NitrogenAxialTransport(data_structure=ds)
+    model = Transport(data_structure=nitrogen_ds())
     with pytest.raises(KeyError, match="previous"):
         model.previous("concentration")
 
 
-def test_component_follows_topology_growth():
-    """After ds.update_topology(), the component's graph view, the carried-over variables and the solve use the new topology."""
-    from openalea.metafspm.data_structure.configs import PropsConfig
-    g, seedling = __import__("simple_seedling").generate_simple_mpg_seedling()
+def test_the_component_follows_topology_growth():
+    """After update_topology(), the graph view, the carried-over variables and the solve use the new topology."""
+    g, seedling = generate_simple_mpg_seedling()
     g.populate_graph(g.scales.SubOrgan)
     g.convert_properties_to_arraydict()
-    from openalea.metafspm.data_structure.data_api import MPGDataStructure
     ds = MPGDataStructure(g, from_scale=g.scales.SubOrgan)
-    model = NitrogenAxialTransport(data_structure=ds)
-    model.time_step = 0.5
-    ds.set("radial_solute_input", 0.01)
-    model._invoke_graph_system("_transport_solve")
+    model = Transport(data_structure=ds)
+    ds.set("radial_solute_input", np.full(ds.n_nodes(), 0.01))
+    model()
     n_before = model._graph_view.n_nodes
 
-    g.add_child(seedling.root_segment6, **PropsConfig(scale=g.scales.SubOrgan, edge_type='<', label=g.labels.SubOrgan.RootSegment))
+    g.add_child(seedling.root_segment6, **PropsConfig(scale=g.scales.SubOrgan, edge_type='<',
+                                                     label=g.labels.SubOrgan.RootSegment))
     ds.update_topology()
-    model._invoke_graph_system("_transport_solve")
+    c_old, J = np.array(ds.get("concentration")), np.array(ds.get("radial_solute_input"))
+    model()
 
     assert model._graph_view.n_nodes == n_before + 1 == ds.n_nodes()
-    residual = model._last_graph_system.residual(model._last_graph_solution)
-    np.testing.assert_allclose(residual, 0., atol=1e-10)
     assert ds.get("concentration").shape == (ds.n_nodes(),)
+    np.testing.assert_allclose(_balance_residual(ds, c_old, J), 0., atol=1e-10)

@@ -176,10 +176,10 @@ def test_transient_defaults_from_the_solver():
     assert systems["_diffusion"]["transient"] is True                       # declared
     assert SteadyPotential._graph_system_specs["_steady"]["transient"] is False   # newton: steady by default
 
-    @graph_system(node_unknowns=["c"], solver="implicit_euler")
-    class _implicit:
+    @graph_system(node_unknowns=["c"], solver="explicit_euler")
+    class _explicit:
         pass
-    assert _implicit._spec["transient"] is True
+    assert _explicit._spec["transient"] is True
 
 
 def test_hand_set_boundary_ports_cannot_follow_an_active_subgraph():
