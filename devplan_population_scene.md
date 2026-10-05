@@ -305,3 +305,35 @@ All of these are tested on in-repo doubles: the growth helper as a plant model, 
 
   **Recommendation:** (a). (b) would need per-plant MTG views that the vectorised populations no longer have.
   → answer: (a)
+
+## 11. P7 design: benchmarks, then the removal of `play_Orchestra` (draft, 2026-10-06)
+
+**Benchmark** (a script under `test/benchmarks/`, not part of the suite, with results in `docs/design/population_and_performance.md` §14):
+- **Population sizes:** 1, 10, 100 and 1000 plants of about 2 000 segments each, grown up to that size before timing.
+- **Phases timed per step:**
+  - vectorised steps (rate/state);
+  - one graph system (axial diffusion on the segments, per plant connected piece);
+  - growth (`update_topology`, repartition);
+  - exchanges with a soil grid (barycentre and overlap);
+  - the recorder.
+- **Anatomy mode:** the same with Compartment nodes (2 symplastic + 1 apoplastic Compartment per segment).
+- **Reference:** today's one-plant-per-process scene (`play_Orchestra` with `Transport` buffers), on the same toy plant, for 1, 10 and 100 plants. Per plant, the time is the slowest worker's step plus the queue round trips, measured in-process with the scene's barriers.
+- **Models:** in-repo doubles only:
+  - a rhizodep-like carbon model (vectorised rates, one graph system);
+  - the growth helper rewritten with the P3 tree kernels, so that it does not measure Python loops;
+  - the toy soil of P6.
+
+**Removal (Q10), after the benchmark:**
+- `scene/scene_wrapper.py`: `play_Orchestra`, the workers, the CPU-affinity helpers and the queues. `stand_initialization` moves to `scene/population.py`.
+- `coupling/coupler.py`: `Coupler`, `Transport`, `BufferPlantView`, `VoxelLocator`.
+- `CompositeModel` members tied to them: `soil_name`, `soil_inputs` / `soil_outputs`, `get_component_inputs_outputs`, and the soil-output registration in `_couple_on_data_structures`.
+- Their tests and doubles: `test_scene_orchestration`, `test_scene_wrapper*`, `test_transport`, `test_coupler`, `test_ds_scene_contract`, and the multiprocessing part of the doubles. The equivalent cases are re-expressed on `Scene` where they are not already covered.
+- `test/provide_usage_examples/scene_wrapper_example.py`, rewritten for `Scene`.
+- Docs: the migration guide's per-process section is replaced by the `Scene` contract; the CHANGELOG gets a breaking entry.
+
+### Questions
+
+- **QP7a, the models benchmarked.** The real models (rhizodep, Root-CyNAPS, cnwgrass, GRANAP) are not yet ported to the population contract and live outside this repo, so the benchmark can only use in-repo doubles that reproduce their cost structure (vectorised rates, graph systems, growth with tree kernels). Is that enough for the decision, or do you want to port one model first (outside this repo, by you) and run the benchmark on it? **Recommendation:** the doubles now, to time the framework's own overhead (exchanges, growth bookkeeping, the solver per piece); you can rerun the same script on a ported model later.
+  → answer:
+- **QP7b, removal regardless of the results.** Q10 says remove after P7. If the benchmark showed that one process is too slow for 1000 plants (e.g. graph systems limited to one core), should the removal still go ahead, with the parallelisation then done inside the Scene (blocks of plants or connected pieces over threads or processes, `split="components"`, §9 S2)? **Recommendation:** yes. Parallelism inside the Scene does not need the per-plant workers or `Transport`.
+  → answer:
