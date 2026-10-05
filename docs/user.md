@@ -138,7 +138,7 @@ Coupled equations over a graph (transport along a root system, diffusion in a so
 an inner class whose methods give the residuals of the node and edge unknowns.
 
 ```python
-from openalea.metafspm.solve.decorator import boundary_set, edge_law, graph_system, node_balance
+from openalea.metafspm.solve.decorator import boundary_set, edge_law, graph_system, node_balance, node_rate
 
 @dataclass
 class SoilDiffusion(FunctionalComponent):
@@ -162,9 +162,15 @@ class SoilDiffusion(FunctionalComponent):
             return solute_flux - diffusivity * face_area / face_distance * (B.T @ solute)
 ```
 
-- **Solvers.** `solver="newton"` (default), `"implicit_euler"`, `"explicit_euler"`, `"scipy_ivp_bdf"`, … Time terms
-  are written with `self.previous(name)` and `self.dt`; `integrate="substeps"` (with `n_substeps`) or `"adaptive"`
-  (step doubling, `rtol` / `atol`) integrate over the component's time step.
+- **Two forms of a node balance.** The *residual form*, `@node_balance`, returns the residual at the end of the
+  (sub-)step, time term included (`(u - self.previous("u")) / self.dt + ...`): it is solved by the Newton family,
+  `solver="newton"` (default), `"newton_fd"`, `"scipy_krylov"`, `"scipy_hybr"`, … The *rate form*, `@node_rate`,
+  returns du/dt without time term (`J - B q`); the framework writes the time term for the solver chosen: backward
+  Euler with the Newton family, `u += dt * rate` with `"explicit_euler"`, an IVP integration with `"scipy_ivp_bdf"`
+  or `"scipy_ivp_radau"`. One rate-form model can thus be solved by any solver; a residual can only be solved by
+  Newton. The node unknowns of one system use one form. `integrate="substeps"` (with `n_substeps`) or `"adaptive"`
+  (step doubling, `rtol` / `atol`) integrate over the component's time step. Edge unknowns are algebraic
+  (`@edge_law`), whatever the solver.
 - **Boundary sets.** `boundary_set(select=..., kind="robin" | "dirichlet" | "neumann", value=..., weight=...)` on a
   set of nodes (a mask rule, a variable, a callable), with values and weights read at each solve. `kinds="variable"`
   reads each node's kind from a node variable (`boundary_set.CODES`: 1 Dirichlet, 2 Neumann, 3 Robin, otherwise

@@ -1,6 +1,6 @@
 # metafspm conventions
 
-These are the conventions that every component, translator and DataStructure follows. The design is explained in `design/datastructure_contract.md`. This page is the reference to keep at hand, and `test/data_api_tests/test_conventions_doc.py` checks it against the code.
+These are the conventions that every component, translator and DataStructure follows. The design is explained in `dev/design/datastructure_contract.md`. This page is the reference to keep at hand, and `test/data_structures/test_conventions_doc.py` checks it against the code.
 
 ## Graph
 

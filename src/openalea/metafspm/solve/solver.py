@@ -1,9 +1,11 @@
 
 """
 Solvers of graph systems, selected by ``@graph_system(solver=...)``: a solver class or one of the keys "newton",
-"newton_fd", "implicit_euler", "explicit_euler", "scipy_krylov", "scipy_anderson", "scipy_hybr", "scipy_ivp_bdf",
-"scipy_ivp_radau". The rest of this module (the solve() time loop, SolverResult, linear assembly with
-LinearDirectSolver, ODE specifications, make_solver) is internal and may change without notice.
+"newton_fd", "explicit_euler", "scipy_krylov", "scipy_anderson", "scipy_hybr", "scipy_ivp_bdf",
+"scipy_ivp_radau" ("implicit_euler" is a deprecated alias of "newton" with transient=True). The Newton family
+solves residuals (time terms written by the equations, or by the framework from a @node_rate); explicit_euler and
+the IVP solvers integrate the du/dt of a @node_rate. The rest of this module (the solve() time loop, SolverResult,
+linear assembly with LinearDirectSolver, ODE specifications, make_solver) is internal and may change without notice.
 
 ::
 

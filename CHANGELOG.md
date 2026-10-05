@@ -14,6 +14,24 @@
 - **Examples:** the legacy-to-MPG migration demos are removed.
 - **Internal solver layer:** `system_specs` (GraphSystem, GraphDAESpec, ODESystemSpec, BoundaryConditions), the `solve()` time loop, `SolverResult`, `LinearDirectSolver` and `make_solver` are internal. Graph systems choose their solver with `@graph_system(solver=...)`, as a class or a key.
 
+### One time-term convention: `@node_rate` and `@node_balance`
+
+- **`@node_rate(field)`** (new) writes a balance in the rate form: the method returns du/dt, with no time term. The framework adds the time term for the solver chosen:
+  - backward Euler with the Newton family, `(u - previous(u))/dt - rate`, also with `integrate="substeps"` / `"adaptive"`;
+  - forward Euler with `explicit_euler`;
+  - `solve_ivp` with `scipy_ivp_bdf` / `scipy_ivp_radau`.
+
+  One model can thus be compared across solvers by switching `solver=`.
+- **`@node_balance`** (the residual form, time term written by the equation) is for the Newton family. `explicit_euler` and the IVP solvers refuse it, and refuse Dirichlet conditions. The node unknowns of one graph system use one form.
+- **Breaking:**
+  - `solver="implicit_euler"` is a deprecated alias of `"newton"` with `transient=True`. It used to add `(u - u_prev)/h` to every unknown, edge fluxes included, so equations writing their own time term got it twice.
+  - `explicit_euler` evaluates the edge unknowns at the current state before stepping (it used the previous step's fluxes), and leaves the step's fluxes in the DataStructure.
+
+### Breaking: compatibility views removed
+
+- **`FunctionalComponent.props`** (the read-only `DataStructurePropsView`) is removed. Use `data_structure.get(name)`, or take the variable as a step argument.
+- **`_last_graph_system` / `_last_graph_solution`** (the test introspection shim) are removed. Results are read from the DataStructure.
+
 ### Boundary conditions as equations: `@boundary_condition`
 
 - **The method form stays** for conditions given by an equation. A `@boundary_condition` method takes its arguments by name, like the balances: unknowns and DataStructure variables, read at each solve and sliced to the selected nodes. So coupled values reach it dynamically.

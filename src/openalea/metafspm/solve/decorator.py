@@ -9,7 +9,8 @@ coupled equations over a DataStructure's graph.
 
     @graph_system(node_unknowns, edge_unknowns=(), solver="newton", ...)    an inner class of equations, solved
                                                                             at its schedule_as row
-        @node_balance(field)                     a node residual
+        @node_balance(field)                     a node residual (time term written; Newton family)
+        @node_rate(field)                        a node du/dt (time term by the framework; any solver)
         @edge_law(field=, integrate=False)       an edge residual (or an integrated edge flux)
         @pool_balance(field)                     the residual of a pool unknown (pool_unknowns=)
         name = boundary_set(select=, kind=, value=, weight=)   a boundary condition on a set of nodes
@@ -1438,7 +1439,6 @@ def _solve_once(self, method_name: str, spec_def: dict) -> None:
     spec       = builder.last_spec  # the spec that was solved
     node_u, _  = spec.unpack_unknowns(packed)
 
-    self._last_graph_solution = packed
     self._graph_solution_fields = {fn: node_u[fn].copy()
                                     for fn in spec_def["node_unknowns"]}
 
@@ -1468,32 +1468,6 @@ def _solve_once(self, method_name: str, spec_def: dict) -> None:
         else:
             location = ds.location(oname)
             restriction.scatter(ds, oname, arr, location, dropped=None if location == "node" else 0.)
-
-    # Attach GraphSystem for test introspection (backward compat hook)
-    self._last_graph_system = _make_compat_graph_system(self, spec_def, spec)
-
-
-def _make_compat_graph_system(instance, spec_def, spec: GraphDAESpec):
-    """Return a minimal GraphSystem for test introspection."""
-    return GraphSystem(
-        graph             = spec.graph,
-        node_fields       = spec.node_fields,
-        edge_fields       = spec.edge_fields,
-        boundary_ports    = spec.boundary_ports,
-        unknowns          = spec.unknowns,
-        solver            = SolverConfig(
-            method    = spec_def["method"],
-            max_iter  = spec_def["max_iter"],
-            tol       = spec_def["tol"],
-            fd_eps    = spec_def["fd_eps"],
-            prefer_sparse = spec_def["prefer_sparse"],
-            linesearch    = spec_def["linesearch"],
-        ),
-        equation_blocks   = spec.equation_blocks,
-        output_blocks     = spec.output_blocks,
-        jacobian_evaluator= spec.jacobian_evaluator,
-        parameters        = spec.parameters,
-    )
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

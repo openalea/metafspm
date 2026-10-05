@@ -23,11 +23,11 @@
 ```{eval-rst}
 .. automodule:: openalea.metafspm.solve.decorator
    :members: rate, state, totalrate, totalstate, stepinit, deficit, axial, potential, allocation, actual,
-             segmentation, postsegmentation, priorbalance, selfbalance, graph_system, node_balance, edge_law,
+             segmentation, postsegmentation, priorbalance, selfbalance, graph_system, node_balance, node_rate, edge_law,
              boundary_condition, boundary_set, pool_balance, graph_output, graph_jacobian
 
 .. automodule:: openalea.metafspm.solve.solver
-   :members: NewtonSolver, ImplicitEulerSolver, ExplicitEulerSolver, ScipyIVPSolver, ScipyRootSolver
+   :members: NewtonSolver, ExplicitEulerSolver, ScipyIVPSolver, ScipyRootSolver
 
 .. automodule:: openalea.metafspm.coupling.choregrapher
    :members: Choregrapher, family_of
