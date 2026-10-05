@@ -18,6 +18,10 @@ The flat modules used before the 2026 restructure have been removed. No compatib
 | `openalea.metafspm.component.Model`, `declare` | `openalea.metafspm.coupling.component.Component` / `FunctionalComponent`, `declare` |
 | `openalea.metafspm.specializer` | `openalea.metafspm.solve.specializer` |
 
+### Removed: `solve/specializer.py` (Q29)
+
+- It was unused since the legacy path was removed. Numba is used by steps directly: a step calls an `@njit` function on the arrays it receives.
+
 ### Graph systems solved per connected piece (S2)
 
 - `@graph_system(split="components")` solves each connected piece of the graph (of the active subgraph with `where=`), e.g. each plant of a population, on its own, with its own Newton convergence and adaptive steps. A piece gives the same values as its plant solved alone (to 1e-15 in the tests).

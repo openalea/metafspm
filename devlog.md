@@ -1798,3 +1798,11 @@ Per-file counts:
 - **Tests** (`test_split_components.py`, 4): pieces equal plants alone (1e-15, adaptive, slow and fast plants), split against whole within tolerances, pieces of an active subgraph, option check. The first version of the toy used rtol=1e-6, which meant about 1300 adaptive steps per call (slow, not hung).
 - **Timing:** split is 1.3–1.6× slower than whole on one core at 10–100 plants (per-piece builder and FD Jacobian overhead), so the default stays "whole", deviating from §9 and reported. Thread pool not done (state on the instance; GIL).
 - **Suite:** 669 passed.
+
+## 2026-10-06 (later): audit, housekeeping, then F5
+
+- **Audit given in the conversation:** every plan is done, apart from the anatomy repartition (A1 / Q-A4), Q29, F5, the S7 kernels deferred to the model ports, and minor scope limits.
+- **Housekeeping:**
+  - `devplan_datastructures.md`: DS13, DS14 and DS15 ticked with their commits;
+  - `devplan.md`: W2.12 and W5.6 dropped (the per-process scene is gone); Q29 answered from your message (remove it unless numba needs it; it does not) and `specializer.py` deleted;
+  - `test_conventions_doc` closes its file.
