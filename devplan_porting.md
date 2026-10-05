@@ -326,3 +326,67 @@ Not planned in metafspm: G13 (a masked loop in a step), G14 (until stratificatio
   **QPv:** rewrite it on the current API, or delete it (the migration guide covers the path)? **Recommendation:** delete it, with its image, since `LegacyMPGDataStructure` / `from_legacy` are only kept for that migration.
   → answer:
 
+
+## 13. Documentation and test audit (2026-10-05): questions
+
+**Done:**
+- the docs (`docs/index.md`, `user.md`, `ref.md`, `conventions.md`, the migration guide) and the README describe the current API, with no step numbers;
+- the docstrings build as RST with no warnings;
+- the tests:
+  - one Choregrapher reset fixture for the whole suite;
+  - obsolete tests and helpers removed (`test_component_base`, `test_field_consensus`, `test_partial_traversal`, `generate_anatomy_in_mtg.py`, `component_api_changelog.md`, the duplicate `example_translator.yaml`);
+  - stale docstrings rewritten;
+  - scene doubles moved to `structure_tests/scene_doubles.py`;
+  - `solver=` and `self.dt` used throughout;
+  - new tests for the API that had none (72, in four files).
+- **Fixed** (bugs found by the new tests, see the CHANGELOG):
+  - tuple forcings;
+  - long-form links in `to_nested`;
+  - same-name links stating their scales;
+  - anatomy-mode populations and their `wiring`;
+  - pending events across scene checkpoints;
+  - Python translators in `CompositeModel`.
+
+**Found, to decide:**
+- **Neumann signs.** `boundary_set(kind="neumann")` subtracts its value (an inflow), but `@boundary_condition(kind="neumann")` adds the method's values (`solve/decorator.py`, `make_combined_node_ev`).
+- **Time terms.** Equations write their own time terms (`(u - self.previous(u)) / self.dt`), solved by the Newton family. But `implicit_euler` adds `(u − u_prev)/h` to every unknown itself, and `explicit_euler` / `scipy_ivp_*` take `−R` as du/dt. With these solvers, a balance written to the convention has its time term twice. UC1 uses them with edge time terms (`q(1 + 1/dt)`).
+
+### Questions
+
+- **QPw — legacy APIs.** Remove the following, or keep them one more release?
+  - `LegacyMPGDataStructure` / `from_legacy`, with `test_legacy_mpg`, `example_legacy_mpg` and `example_mpg_data_structure` (QPv);
+  - `MPG.graph()`, `integrate_at_scale`, `average_at_scale`;
+  - `GraphView.from_mtg_subset` (a test asserts its current bug);
+  - the setters `set_node_property`, `add_field`, `_get_field`;
+  - in the Choregrapher: `__call__(module_family)`, `build_schedule`, `add_schedule`;
+  - `CompositeModel.declare_data`, `Translator.inputs_outputs`, the `props` view, the `_last_graph_system` shim.
+
+  **Recommendation:** remove them now, before the models are ported (nothing ported depends on them yet). Keep only the `props` view if the logger needs it.
+  → answer:
+- **QPx — the solver layer below graph systems.** Make the following internal (no longer public API, tests through components only), or keep them public?
+  - the `GraphSystem` shim, `ODESystemSpec`, the `solve(t_span)` time loop and `SolverResult`;
+  - `BoundaryConditions`, the linear-assembly mode with `LinearDirectSolver`.
+
+  **Recommendation:** make them internal. Keep the solver unit tests, but drop them from the API reference.
+  → answer:
+- **QPy — time-term convention.** Make one convention: equations write their own time terms. Then `implicit_euler` stops adding its own, and becomes Newton with a transient check. `explicit_euler` and `scipy_ivp_*` would take an explicit `rate` form (du/dt given by the equations), declared separately from the residual form. **Recommendation:** yes. UC1's solver comparisons are rewritten to the convention.
+  → answer:
+- **QPz — `@boundary_condition`.** Deprecate it in favour of `boundary_set`? It has the opposite Neumann sign and less selection. **Recommendation:** yes. Port UC4 to `boundary_set`, and keep the decorator one release with a warning.
+  → answer:
+- **QPα — old-protocol files in `test/provide_usage_examples`:**
+  - rewrite `composite_wrapper_example` and `rhizosoil_component_example` as current-API sketches;
+  - move `rhizosoil_core_model` and `logger_api_reference` (which no longer runs) to `test/provide_usage_examples/legacy/`;
+  - delete `light_component_example` (`test_light_component` covers it).
+
+  **Recommendation:** as listed.
+  → answer:
+- **QPβ — `docs/design/*`.** The development notes there are full of step numbers. Move them out of `docs/`, e.g. to `dev/design/`, keeping the migration guide in `docs/`? **Recommendation:** yes.
+  → answer:
+- **QPγ — the `data_api_tests/examples` scripts.** Turn them into pytest smoke tests writing their images to `tmp_path`, so they cannot rot again? **Recommendation:** yes, for the ones on the current API (array, MPG). The legacy ones follow QPw.
+  → answer:
+- **QPδ — test layout.** Reorganise the test files by feature (data structures, components, graph systems, coupling, scenes), e.g. split `test_datastructure_prerequisites` and merge the two `test_composite_*` files? **Recommendation:** yes, as one commit of file moves only, after QPw.
+  → answer:
+- **QPε — UC1, UC1-organ and UC3.** They still use the `props` view and solver internals. UC3's hand-built ports also duplicate `test_anatomy_mode`. Rewrite them on the public API (components, `boundary_set`, `previous`) after QPy? **Recommendation:** yes.
+  → answer:
+- **QPζ — `legacy_functor.py`.** It is the current step wrapper, not a legacy one: rename it `functor.py`? **Recommendation:** yes.
+  → answer:
