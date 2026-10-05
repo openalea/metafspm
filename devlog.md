@@ -1880,3 +1880,13 @@ Per-file counts:
 - **PT8** (`test_light_component.py`): a toy CARIBU on a `UnionDataStructure` of a Wheat and a Pea population (classes made with `dataclass(type(...))` to share field definitions under distinct names). It triangulates elements as ribbons, shades with Beer's law per horizontal cell, writes `absorbed` back through the union, and runs with `run_every = 4`. Exact against the same functions applied to the concatenated geometry; outputs held between runs, updated at the next. The first versions found no shading because vertical ribbons project no area (a test issue, not an API one). No API change was needed.
 - **Status written** in `devplan_porting.md` §9: everything before porting is done except PT9 (GRANAP, waiting for your guidelines).
 - **Suite:** 706 passed.
+
+## 2026-10-06 (later): your question before GRANAP
+
+- **Warnings:** the 10 were SciPy `LinAlgWarning`s from Anderson's singular history matrix at convergence; they are silenced inside `ScipyRootSolver` for Anderson only, since the residual is checked after the call. The suite is warning-free, also with `-W default`.
+- **Found:**
+  - `MultiGridDataStructure` has no variable store, graph topology or checkpoint, and builds 1-D-only restriction and prolongation on flat indices;
+  - Compartments are topological children of segments, so openalea's `children()`, `Sons()` and `post_order2` return them, a hazard for ported MPG-style code (B-i was deferred since WD.P);
+  - coverage tools are not installed in the environment.
+- **Written** as `devplan_porting.md` §10, with questions QPp–QPr.
+- **Suite:** 706 passed, 0 warnings.
