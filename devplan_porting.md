@@ -166,3 +166,55 @@ Not planned in metafspm: G13 (a masked loop in a step), G14 (until stratificatio
 - **QPj, forcings (3).** Is the end of the (sub-)step the right time? cnwheat's `solve_ivp` reads forcings continuously, which implicit Euler cannot do; IVP solvers would read them at each evaluation time. **Recommendation:** the end of the (sub-)step for implicit solvers, and the evaluation time for the IVP solver.
   → answer: yes to Recommendation
 
+## 8. After PT4 (2026-10-06): designs for PT6, PT5 and PT7 (the soil)
+
+**Done:**
+- **PT4:**
+  - pool unknowns per plant, solved with the graph;
+  - per-node boundary kinds read at each solve (`kinds=`);
+  - forcings at the end of each (sub-)step, or at the IVP evaluation time.
+- **PT3's templating:** dropped (QPg: duplication by hand).
+
+**PT6, mappings for the environment (G7):**
+1. **Population ↔ environment scalars.** A translator link between a population variable and an environment variable stored at `"scalar"`. Examples: total LAI or aboveground dry matter to Campbell; the air temperature to every node. It is exchanged by `Exchanges` over every plant of every population: extensive values summed, intensive values averaged (weighted when `weight=` is given), a scalar broadcast to the nodes.
+2. **Column ↔ grid.** `LayerMapping(column, grid, axis="z")` between a 1-D grid (Campbell's layers) and a 3-D grid (the soil):
+   - weights are the overlaps of the layer intervals along z, so the layer thicknesses may differ;
+   - grid → column: layer means of intensive values (sums of extensive ones);
+   - column → grid: broadcast over x and y.
+
+   Given to the Scene explicitly (`Scene(mappings=[...])`), since grid-to-grid pairs cannot be inferred from links alone.
+
+**PT5, scene services (G8, G9):**
+1. **Shared forcings:** `Scene(forcings=table)`, a DataFrame indexed by time (s). A component's `forcing(name)` falls back on it, so meteo is read once by every model.
+2. **Scheduling:**
+   - a model may set `run_every = n` (steps) or `run_when(scene) -> bool` (e.g. Caribu every 4 h, when there is light);
+   - on the skipped steps its exchanges are not run, and its outputs keep their last values (a model may rescale them itself, as the Caribu adapter does with Erel).
+3. **Spin-up:** an environment model's optional `spin_up(scene)` runs once after the scene is built, before the first step (MIMICS' steady state, Campbell's 351 days).
+4. **Events and stops:**
+   - `Scene(events=[(time, action)])` runs `action(scene)` at the start of the first step at or after `time` (fertilisation, rehydration);
+   - `Scene(stop_when=condition)` ends `simulate` when `condition(scene)` holds after a step (plant death).
+
+**PT7, state outside variables (G10):**
+1. **`Scene.checkpoint(path)` / `Scene.restore(path, ...)`:**
+   - every DataStructure as today;
+   - plus each model's and component's optional `checkpoint_state()` (pickled) and `restore_state(state)`, e.g. the cmf project and Campbell's state tuple;
+   - plus the scene time, the iteration and the recorder's position.
+2. **Vector-valued variables:** `register(name, shape=(k,))` / `state_variable(..., shape=(k,))` stores an `(n, k)` array (MIMICS' 15 pools per voxel):
+   - steps receive `(n, k)` arrays;
+   - mappings and exchanges apply per column;
+   - checkpoints and the recorder keep them (one column per component);
+   - they are not graph-system unknowns for now.
+
+### Questions
+
+- **QPk, scalars (PT6.1).** Should exchanges between a population and an environment scalar reduce over every plant of every population (sums for extensive values, means for intensive ones), with no mapping to declare? **Recommendation:** yes, by kind, as the other exchanges.
+  → answer:
+- **QPl, column ↔ grid (PT6.2).** Should the mapping be given explicitly to the Scene, weighted by layer overlaps? **Recommendation:** yes.
+  → answer:
+- **QPm, skipped steps (PT5.2).** On steps a model does not run, should its outputs keep their last values, and the exchanges into it be skipped? **Recommendation:** yes. Rescaling, as Caribu's Erel × PARi does, stays in the model.
+  → answer:
+- **QPn, checkpoint hooks (PT7.1).** Should models and components save their non-variable state through `checkpoint_state()` / `restore_state()` hooks? **Recommendation:** yes. The DataStructures already restore bit for bit, and only opaque external solvers need the hooks.
+  → answer:
+- **QPo, vector variables (PT7.2).** Are `(n, k)` variables enough for MIMICS' pools (steps, mappings, checkpoints, recorder; not graph-system unknowns)? Or should they also be graph-system unknowns (k coupled fields per node)? **Recommendation:** the former now; graph-system unknowns of shape `(n, k)` when a model needs them (e.g. a vectorised multi-solute transport).
+  → answer:
+

@@ -1861,3 +1861,4 @@ Per-file counts:
   - forcings at the 8 sub-step ends (two calls) and the implicit Euler of `d(sugar)/dt = t`;
   - the Newton-only check.
 - **Suite:** 692 passed.
+- **PT6 / PT5 / PT7 designs and questions QPk–QPo** written in `devplan_porting.md` §8. Stopped for the answers.
