@@ -105,7 +105,13 @@ Declarations that cannot be written back raise when the component is created: a 
 - Shape inference remains only when exactly one location matches, with a `DeprecationWarning`.
 
 **MTG synchronisation.**
-- `mtg_sync = "after_call"` (default) writes state variables to the MTG after every call; `mtg_sync = "never"` leaves the MTG untouched.
+- **`mtg_sync = "lazy"`** (the default, QF3): the DataStructure is the reference, and the MTG a view kept up to date when read. A state variable changed since its last synchronisation is written to the MTG:
+  - before an MPG-style step;
+  - when the MTG is read through `ds.mtg` (or `component.mtg`);
+  - by `ds.flush_mtg()`.
+
+  Code holding the MTG object itself (e.g. a Logger given `g`) calls `ds.flush_mtg()` first.
+- **`mtg_sync = "after_call"`** writes the state variables after every call (the former default); **`"never"`** leaves the MTG untouched.
 - MTG-backed parameters are re-read at the start of every call.
 - In graph systems, parameters and inputs are read-only.
 

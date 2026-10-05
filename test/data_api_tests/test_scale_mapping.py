@@ -71,7 +71,7 @@ def test_a_coarse_state_is_written_at_the_vertices_of_its_scale(seedling):
 
     model()
 
-    assert _prop(g, "organ_pool") == {o: 10. * o + 1. for o in organs}   # no SubOrgan vertex written
+    assert _prop(ds.mtg, "organ_pool") == {o: 10. * o + 1. for o in organs}   # no SubOrgan vertex written
 
 
 @dataclass
@@ -84,13 +84,13 @@ class Level(FunctionalComponent):
 
 
 def test_a_rate_only_component_reaches_the_mtg(seedling):
-    """N4: write-back after every call, not only after a graph solve."""
+    """N4: every state reaches the MTG, not only graph-solve results; written when the MTG is read (QF3)."""
     g, ds, _ = seedling
     model = Level(data_structure=ds)
 
     model()
 
-    assert _prop(g, "level") == {v: 2. for v in ds.entity_ids("node")}
+    assert _prop(ds.mtg, "level") == {v: 2. for v in ds.entity_ids("node")}
 
 
 # ---------------------------------------------------------------- mapped between the nodes and a coarse scale
@@ -118,7 +118,7 @@ def test_a_broadcast_state_is_written_back_as_the_mean_of_its_nodes(seedling):
 
     rank = dict(zip(ds.entity_ids("node"), np.arange(ds.n_nodes(), dtype=float)))
     expected = {o: 20. + np.mean([rank[v] for v in owner if owner[v] == o]) for o in organs}
-    written = _prop(g, "organ_temperature")
+    written = _prop(ds.mtg, "organ_temperature")
     assert written.keys() == expected.keys()
     np.testing.assert_allclose([written[o] for o in organs], [expected[o] for o in organs])
 
@@ -140,7 +140,7 @@ def test_a_state_averaged_to_a_coarse_scale_is_written_back_by_broadcast(seedlin
     model()
 
     means = {o: np.mean([float(v) for v in owner if owner[v] == o]) for o in set(owner.values())}
-    written = _prop(g, "concentration")
+    written = _prop(ds.mtg, "concentration")
     np.testing.assert_allclose([written[v] for v in ds.entity_ids("node")], [means[owner[v]] + 1. for v in ds.entity_ids("node")])
 
 
@@ -162,7 +162,7 @@ def test_an_edge_state_is_written_at_its_child_endpoint(seedling):
     model()
 
     children = [int(b) for _, b in ds.edges()]
-    assert _prop(g, "flux") == {child: 1. for child in children}
+    assert _prop(ds.mtg, "flux") == {child: 1. for child in children}
 
 
 @dataclass
@@ -177,8 +177,9 @@ class ParentFlux(FunctionalComponent):
 def test_a_parent_mapped_state_cannot_be_written_where_edges_share_a_parent(seedling):
     _, ds, _ = seedling
     model = ParentFlux(data_structure=ds)
+    model()
     with pytest.raises(ValueError, match="several edges share a parent"):
-        model()
+        ds.flush_mtg()                            # written when the MTG is read (QF3)
 
 
 # ---------------------------------------------------------------- what is read and written
@@ -201,8 +202,8 @@ def test_parameters_are_refreshed_from_the_mtg_and_never_written_back(seedling):
 
     ds.set("organ_k", 0.)
     model.write_back_to_mtg()
-    assert _prop(g, "organ_k") == {o: float(o) for o in organs}
-    assert _prop(g, "level") == {v: 1. for v in ds.entity_ids("node")}
+    assert _prop(ds.mtg, "organ_k") == {o: float(o) for o in organs}
+    assert _prop(ds.mtg, "level") == {v: 1. for v in ds.entity_ids("node")}
 
 
 def test_child_and_parent_are_accepted_by_the_scale_operators(seedling):

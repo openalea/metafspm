@@ -79,7 +79,7 @@ def test_the_sync_policy_is_checked(seedling):
     _, ds = seedling
     model = Silent(data_structure=ds)
     model.mtg_sync = "sometimes"
-    with pytest.raises(ValueError, match="mtg_sync must be 'after_call' or 'never'"):
+    with pytest.raises(ValueError, match="mtg_sync must be 'lazy', 'after_call' or 'never'"):
         model()
 
 
@@ -102,3 +102,61 @@ def test_equations_cannot_write_into_their_parameters(seedling):
     with pytest.raises(ValueError, match="read-only"):
         model()
     np.testing.assert_array_equal(ds.get("k"), 1.)      # the DataStructure is intact
+
+
+# ---------------------------------------------------------------- lazy synchronisation (QF3)
+
+@dataclass
+class Counter(FunctionalComponent):
+    count: float = state_variable(**DOC, initialize=0., scale=scales.SubOrgan)
+
+    @rate
+    def _count(self, count):
+        return count + 1.
+
+
+@dataclass
+class EagerCounter(FunctionalComponent):            # not a subclass: inherited steps are not scheduled (DS13, P8)
+    count: float = state_variable(**DOC, initialize=0., scale=scales.SubOrgan)
+    mtg_sync = "after_call"
+
+    @rate
+    def _count(self, count):
+        return count + 1.
+
+
+def _mtg_values(g, ds, name):
+    prop = g.property(name)
+    return np.array([prop.get(int(v), np.nan) for v in ds.entity_ids("node")])
+
+
+def test_lazy_states_reach_the_mtg_when_it_is_read(seedling):
+    g, ds = seedling
+    model = Counter(data_structure=ds)
+    model()
+    model()
+    assert np.isnan(_mtg_values(g, ds, "count")).all() or (_mtg_values(g, ds, "count") == 0.).all()   # not yet
+    np.testing.assert_array_equal(_mtg_values(ds.mtg, ds, "count"), 2.)                               # on read
+    model()
+    ds.flush_mtg()
+    np.testing.assert_array_equal(_mtg_values(g, ds, "count"), 3.)
+
+
+def test_only_changed_variables_are_written(seedling, monkeypatch):
+    g, ds = seedling
+    Counter(data_structure=ds)()
+    written = []
+    original = ds.write_mtg
+    monkeypatch.setattr(ds, "write_mtg", lambda spec: (written.append(spec.name), original(spec)))
+    ds.flush_mtg()
+    ds.flush_mtg()                    # nothing changed since
+    assert written == ["count"]
+    ds.set("count", 5.)
+    ds.mtg
+    assert written == ["count", "count"]
+
+
+def test_after_call_writes_after_every_call(seedling):
+    g, ds = seedling
+    EagerCounter(data_structure=ds)()
+    np.testing.assert_array_equal(_mtg_values(g, ds, "count"), 1.)

@@ -18,6 +18,17 @@ The flat modules used before the 2026 restructure have been removed. No compatib
 | `openalea.metafspm.component.Model`, `declare` | `openalea.metafspm.coupling.component.Component` / `FunctionalComponent`, `declare` |
 | `openalea.metafspm.specializer` | `openalea.metafspm.solve.specializer` |
 
+### Performance at population scale (F3, F4)
+
+- **Breaking: lazy MTG synchronisation.** `mtg_sync = "lazy"` is the new default, and the DataStructure is the reference. A state variable changed since its last synchronisation is written to the MTG:
+  - before an MPG-style step;
+  - when the MTG is read through `ds.mtg` / `component.mtg`;
+  - by `ds.flush_mtg()`.
+
+  Code reading the MTG object itself calls `ds.flush_mtg()` first; `mtg_sync = "after_call"` restores the former behaviour. Rates and states no longer pay the MTG write after each call, which was 97 % of their time at 2·10⁵ segments.
+- **Faster growth bookkeeping:** `extend_graph`, the variable carry-over of `update_topology` and `topology_arrays` work on property arrays instead of MTG traversals and per-vertex loops. Writes to MTG properties that are not keyed like the nodes are batched.
+- **Fix:** in anatomy mode, `update_topology` pairs the stored edge values with the ids they were built for. It used to rely on new Connections having the largest vids.
+
 ### Breaking: the one-plant-per-process scene is removed (P7)
 
 - **Removed:**

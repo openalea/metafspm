@@ -201,8 +201,12 @@ class Component:
     def __call__(self, *args):
         self.pull_available_inputs()
         self.choregrapher(module_family=self.__class__.__name__, *args)
-        # State variables reach the MTG after every call (design note datastructure_contract §3, N4)
-        self.write_back_to_mtg()
+        # State variables reach the MTG after every call with mtg_sync = "after_call"; by default ("lazy") the
+        # DataStructure writes them when the MTG is read (QF3)
+        if hasattr(self, "mtg_sync"):
+            self._check_mtg_sync()
+            if self.mtg_sync == "after_call":
+                self.write_back_to_mtg()
 
     def write_back_to_mtg(self) -> None:
         """Write the component's state variables to the MTG; FunctionalComponent implements it."""
@@ -279,9 +283,10 @@ class DataStructureComponent(Component):
 
     data_structure: Optional[DataStructure] = None
 
-    # MTG synchronisation policy (design note time_and_data §3, DS4): "after_call" writes the state variables to the
-    # MTG after every call; "never" leaves the MTG untouched (results are read through the DataStructure).
-    mtg_sync = "after_call"
+    # MTG synchronisation policy (design note time_and_data §3, DS4; QF3): "lazy" (default) writes the state variables
+    # changed since the last synchronisation when the MTG is read (ds.mtg, MPG-style steps, ds.flush_mtg());
+    # "after_call" writes them after every call; "never" leaves the MTG untouched.
+    mtg_sync = "lazy"
 
     def __post_init__(self):
         self._install_plant_parameters()
@@ -355,6 +360,16 @@ class DataStructureComponent(Component):
         self.__dict__["_registered_parameters"] = {name for name in getattr(type(self), "_plant_parameter_names", ())
                                                    if name in self._variable_specs}
         self.__dict__.pop("_pending_parameters", None)
+        self._check_mtg_sync()
+        if self.mtg_sync == "lazy" and hasattr(ds, "track_mtg"):
+            for spec in self._variable_specs.values():
+                if spec.variable_type == "state_variable" and spec.mtg_backed:
+                    ds.track_mtg(spec)
+
+    def _check_mtg_sync(self) -> None:
+        if self.mtg_sync not in ("lazy", "after_call", "never"):
+            raise ValueError(f"{type(self).__name__}.mtg_sync must be 'lazy', 'after_call' or 'never', got "
+                             f"'{self.mtg_sync}'")
 
     @classmethod
     def _plant_parameter_fields(cls) -> dict:
@@ -401,13 +416,13 @@ class DataStructureComponent(Component):
     def write_back_to_mtg(self) -> None:
         """
         Write the declared state variables with an MTG scale to the MTG, at the vertices of their scale, through the
-        inverse of their mapping (MPGDataStructure.write_mtg). Called after every component call.
+        inverse of their mapping (MPGDataStructure.write_mtg). Called after every component call with
+        mtg_sync = "after_call"; with "lazy" the DataStructure does it when the MTG is read.
 
         Only ``state_variable`` fields are written: parameters and inputs are owned by whoever sets them, and
         writing their defaults back would overwrite externally set MTG values.
         """
-        if self.mtg_sync not in ("after_call", "never"):
-            raise ValueError(f"{type(self).__name__}.mtg_sync must be 'after_call' or 'never', got '{self.mtg_sync}'")
+        self._check_mtg_sync()
         ds = self.data_structure
         if self.mtg_sync == "never" or not hasattr(ds, "write_mtg"):
             return
@@ -429,6 +444,8 @@ class DataStructureComponent(Component):
         for spec in getattr(self, "_variable_specs", {}).values():
             if spec.variable_type != "parameter" or not spec.mtg_backed:
                 continue
+            if hasattr(ds, "flush_mtg"):
+                ds.flush_mtg([spec.name])            # a value set on the DataStructure is not lost to a stale MTG one
             values = ds.read_mtg(spec)
             if values is not None:
                 ds.set(spec.name, values)
@@ -599,8 +616,15 @@ class StructuralComponent(DataStructureComponent):
         """Run an MPG-style step with the synchronisation of the DataStructure around it, then the repartition."""
         ds = self.data_structure
         specs = [spec for spec in getattr(self, "_variable_specs", {}).values() if spec.mtg_backed and ds.has(spec.name)]
-        for spec in specs:
-            ds.write_mtg(spec)
+        if hasattr(ds, "flush_mtg"):
+            # The MPG-style code reads the MTG: every tracked variable changed since its last synchronisation, and
+            # this component's own (inputs and parameters included), are written first (QF3)
+            for spec in specs:
+                ds.track_mtg(spec)
+            ds.flush_mtg()
+        else:
+            for spec in specs:
+                ds.write_mtg(spec)
         weights = self._weights()
         if weights is not None:
             ids = ds.entity_ids("node").tolist()
@@ -616,6 +640,8 @@ class StructuralComponent(DataStructureComponent):
                 values = ds.read_mtg(spec)
                 if values is not None:
                     ds.set(spec.name, values)
+                    if hasattr(ds, "mark_mtg_synced"):
+                        ds.mark_mtg_synced(spec.name)
         if weights is not None:
             self._repartition(weight_before, active_before)
 
