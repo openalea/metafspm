@@ -320,6 +320,77 @@ class Scene(CompositeModel):
         finally:
             self.stop()
 
+    # ── Checkpoints (PT7, QPn) ────────────────────────────────────────────────
+
+    def _all_data_structures(self) -> list:
+        """Every DataStructure of the scene, in a fixed order: the populations', then each environment model's."""
+        found = [population.data_structure for population in self.populations]
+        for model in self.environment:
+            found += [ds for ds in self._data_structures(model) if not any(ds is other for other in found)]
+        return found
+
+    def _stateful(self) -> dict:
+        """{key: object} of the models and components whose non-variable state checkpoints keep (hooks)."""
+        objects = {f"environment_{i}": model for i, model in enumerate(self.environment)}
+        objects.update({f"population_{p.name}": p.instance for p in self.populations})
+        objects.update({f"component_{type(c).__name__}": c for c in self.components})
+        return objects
+
+    def checkpoint(self, path: str) -> None:
+        """
+        Save the scene to folder *path*: every DataStructure (ds.checkpoint), the checkpoint_state() of the models
+        and components defining it (e.g. an external solver's state), and the scene's time and iteration (PT7).
+        """
+        import json
+        import pickle
+        os.makedirs(path, exist_ok=True)
+        for i, ds in enumerate(self._all_data_structures()):
+            ds.checkpoint(os.path.join(path, f"data_structure_{i}"))
+        states = {key: obj.checkpoint_state() for key, obj in self._stateful().items()
+                  if hasattr(obj, "checkpoint_state")}
+        with open(os.path.join(path, "states.pkl"), "wb") as f:
+            pickle.dump(states, f)
+        with open(os.path.join(path, "scene.json"), "w") as f:
+            json.dump({"time": self.time, "iteration": self.iteration, "stopped": self.stopped,
+                       "data_structures": len(self._all_data_structures())}, f)
+
+    @classmethod
+    def restore(cls, path: str, *args, **kwargs) -> "Scene":
+        """A scene built with the original arguments, then loaded from the checkpoint of folder *path*."""
+        scene = cls(*args, **kwargs)
+        scene.load_checkpoint(path)
+        return scene
+
+    def load_checkpoint(self, path: str) -> None:
+        """Load a scene checkpoint into this (freshly built) scene, in place; the next steps continue the run."""
+        import json
+        import pickle
+        with open(os.path.join(path, "scene.json")) as f:
+            saved = json.load(f)
+        data_structures = self._all_data_structures()
+        if saved["data_structures"] != len(data_structures):
+            raise ValueError(f"{path} holds {saved['data_structures']} DataStructures, the scene has "
+                             f"{len(data_structures)}: build it with the same arguments")
+        for i, ds in enumerate(data_structures):
+            ds.load_checkpoint(os.path.join(path, f"data_structure_{i}"))
+        for component in self.components:          # views and restrictions built on the old topology
+            for key in [k for k in component.__dict__ if k in ("_graph_view_cache", "_graph_view_version",
+                                                                "_restriction_cache", "_pieces_cache")
+                        or k.startswith(("_gsol_", "_gprev_"))]:
+                del component.__dict__[key]
+        for mapping in self.mappings:
+            if hasattr(mapping, "refresh"):
+                mapping.refresh()
+        with open(os.path.join(path, "states.pkl"), "rb") as f:
+            states = pickle.load(f)
+        for key, obj in self._stateful().items():
+            if key in states and hasattr(obj, "restore_state"):
+                obj.restore_state(states[key])
+        self.time, self.iteration, self.stopped = saved["time"], saved["iteration"], saved["stopped"]
+        self.events = [event for event in self.events if event[0] >= self.time]
+        if self.recorder is not None:
+            self.recorder.resume = True
+
     def stop(self) -> None:
         if self.logger is not None:
             self.logger.stop()
@@ -338,6 +409,7 @@ class SceneRecorder:
         self.log_plants = {str(name) for name in log_plants}
         self.heavy_log_period = int(heavy_log_period)
         self._columns = {}
+        self.resume = False            # after a restore: files are appended to, under their existing header
         os.makedirs(output_dirpath, exist_ok=True)
 
     @staticmethod
@@ -358,14 +430,17 @@ class SceneRecorder:
         names = population.plant_names()
         table = {"t": time, "plant": [names.get(int(v), str(v)) for v in plants]}
         for name, kind in self._state_variables(population).items():
-            location, values = ds.location(name), np.asarray(ds.get(name), dtype=float)
-            if location == "Plant":
-                table[name] = values
-            elif location == "node" and kind in EXTENSIVE_KINDS:
-                table[name] = np.bincount(owner, weights=values, minlength=plants.size)
-            elif location == "node" and (kind in INTENSIVE_KINDS or kind in MASSIC_KINDS):
-                sums = np.bincount(owner, weights=values, minlength=plants.size)
-                table[name] = np.divide(sums, counts, out=np.full(plants.size, np.nan), where=counts > 0)
+            location, stored = ds.location(name), np.asarray(ds.get(name), dtype=float)
+            columns = ({name: stored} if stored.ndim == 1 else            # vector variables: one column each (PT7)
+                       {f"{name}_{j}": stored[:, j] for j in range(stored.reshape(stored.shape[0], -1).shape[1])})
+            for column, values in columns.items():
+                if location == "Plant":
+                    table[column] = values
+                elif location == "node" and kind in EXTENSIVE_KINDS:
+                    table[column] = np.bincount(owner, weights=values, minlength=plants.size)
+                elif location == "node" and (kind in INTENSIVE_KINDS or kind in MASSIC_KINDS):
+                    sums = np.bincount(owner, weights=values, minlength=plants.size)
+                    table[column] = np.divide(sums, counts, out=np.full(plants.size, np.nan), where=counts > 0)
         return pd.DataFrame(table)
 
     def selected_segments(self, population: Population, time: float) -> pd.DataFrame:
@@ -385,6 +460,10 @@ class SceneRecorder:
         os.makedirs(folder, exist_ok=True)
         path = os.path.join(folder, file)
         key = (population.name, file)
+        if key not in self._columns and self.resume and os.path.exists(path):
+            self._columns[key] = list(pd.read_csv(path, nrows=0, index_col=None).columns)
+            if index:
+                self._columns[key] = [c for c in self._columns[key] if c not in frame.index.names]
         if key not in self._columns:
             self._columns[key] = list(frame.columns)
             frame.to_csv(path, index=index)
