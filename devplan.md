@@ -179,7 +179,7 @@ The messages:
   Also xfail-first (Q5): the stale `models_data_required` cache. The fix is to compute the selection at coupling time, or key it on the `to` components.
 - [x] W2.10 xfail-first: `get_documentation`, `documentation` and `inputs` crash on any current component (`None.__format__`, `KeyError 'variable_type'`, a column chosen by position). Fix them. Done in `1f6a416`.
 - [x] W2.11 Remove `recursive_reload` (Q6). Point `test/utils.py::deep_reload_package` users at W1.6 (see B3). Done in `1f6a416`.
-- [~] W2.12 xfail-first **handshake capacity**: the real translator fills exactly the hard-coded 35 rows (25 plant-side + 10 soil outputs), and the column count is capped at 20000 vertices. The interim fix is a height derived from `len(handshake)` and passed in the first message. The full fix is WD.5. **Partly done (`1f6a416`):** `scene_wrapper.HANDSHAKE_SHAPE` is the single constant (the doubles import it), `CompositeModel.soil_handshake_inputs()` was extracted, and a test pins that the WheatBRIDGES translator fills all 35 rows. Dynamic sizing is left to WD.5.
+- [-] W2.12 (dropped 2026-10-06: the per-process scene and its handshake were removed in P7) xfail-first **handshake capacity**: the real translator fills exactly the hard-coded 35 rows (25 plant-side + 10 soil outputs), and the column count is capped at 20000 vertices. The interim fix is a height derived from `len(handshake)` and passed in the first message. The full fix is WD.5. **Partly done (`1f6a416`):** `scene_wrapper.HANDSHAKE_SHAPE` is the single constant (the doubles import it), `CompositeModel.soil_handshake_inputs()` was extracted, and a test pins that the WheatBRIDGES translator fills all 35 rows. Dynamic sizing is left to WD.5.
 
 ### W3: Composite contract test, in-process
 
@@ -240,7 +240,7 @@ The messages:
   - soil and light were pinned (W4.7).
 - [x] W5.4 Deleting `Delete_to_Stop` mid-run gives `clean_exit is False`, and every process joins. Done in `062c61c` (the plant deletes the stop file after 2 runs).
 - [x] W5.5 A plant whose `run()` raises sets `stop_event`, and the scene exits. Hangs caused by blocking queues are out of scope (Q12): the fake soil and light must not block when this scenario runs. Done in `062c61c`. The scene ends and cleans up, `clean_exit` is False since `a3a9877` (Q18).
-- [~] W5.6 The doubles must be importable under `spawn` when tests run from `test/`. Run the suite once with `mp.set_start_method("spawn")`. **Partly done (`062c61c`):** fork, spawn and forkserver run on Linux; fork is skipped on macOS. **Skipped on Windows:** a Windows shared memory block is destroyed when its last handle closes, and `play_Orchestra` closes its creation handle before the plants open theirs. Keep the handle open until the join for Windows support.
+- [-] W5.6 (dropped 2026-10-06: no multiprocessing scene since P7) The doubles must be importable under `spawn` when tests run from `test/`. Run the suite once with `mp.set_start_method("spawn")`. **Partly done (`062c61c`):** fork, spawn and forkserver run on Linux; fork is skipped on macOS. **Skipped on Windows:** a Windows shared memory block is destroyed when its last handle closes, and `play_Orchestra` closes its creation handle before the plants open theirs. Keep the handle open until the join for Windows support.
 
 ### W6: Keep the real packages coupled (optional)
 
@@ -343,7 +343,7 @@ The messages:
   - (b) keep it, and plan its reuse on the vectorised DataStructure step path (a numba-compiled `fun(*arrays)`).
 
   Recommendation: (a) now. Vectorised numpy steps have most of the speed-up, and a DS-path specialiser would be written against the new Functor anyway.
-  → answer:
+  → answer (2026-10-06): remove it if it is not needed for numba vectorisation. It is not: steps call `@njit` functions on the arrays they receive (`test_population.py::test_numba_steps_take_homogeneous_and_heterogeneous_parameters`). Deleted.
 
 ### Answered 2026-09-29 (kept verbatim; decisions are in the log above)
 

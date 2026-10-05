@@ -15,7 +15,8 @@ PAGE = os.path.join(os.path.dirname(__file__), "..", "..", "docs", "conventions.
 
 def _table(header: str) -> list:
     """Rows of the markdown table whose header starts with *header*, as lists of cells."""
-    lines = open(PAGE, encoding="utf-8").read().splitlines()
+    with open(PAGE, encoding="utf-8") as f:
+        lines = f.read().splitlines()
     start = next(i for i, line in enumerate(lines) if line.startswith(f"| {header}"))
     rows = []
     for line in lines[start + 2:]:

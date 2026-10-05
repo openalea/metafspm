@@ -318,17 +318,17 @@ These are done: in-place writes, aliases, derived variables, scale operators (su
   - An object store (`location` with `dtype=object`) for lists and records, not solver- or transport-eligible.
   - Integer categorical variables (labels, types) stored as ints, not coerced to float, with name ↔ code resolution through the per-instance `LabelsConfig`.
   - Filters then accept names: `filters={"label": ["RootSegment"]}`.
-- [ ] **DS13 Choregrapher per-instance scheduling.**
+- [x] **DS13 Choregrapher per-instance scheduling.** (done in P8, `2c47000`: steps keyed by module and class, bound per instance, inherited steps run)
   - Steps are registered by **class name**, and bound to the **last** instance of a class. Two plants of one class cannot run in one process, and same-named classes in different modules merge.
   - Bind schedules per instance, with registration per class object instead of name. That removes the one-plant-per-process constraint of the in-process scene and the name-collision hazard.
   - Also clarify the scheduling order: rows currently run in reverse of their listed order (`axial` before `rate`, see B8).
-- [ ] **DS14 Performance paths:**
+- [x] **DS14 Performance paths:** (done across 5a, P2, P3, F3, F4: array mirrors, bulk creation, incremental extension, tree kernels, lazy MTG sync; benchmarks in `population_and_performance.md` §14–§16; numba is used by steps directly, `specializer.py` deleted, Q29)
   - vectorise `_mtg_values` and `complex_at_scale` membership (Python loops per vid);
   - vectorise the `to_graph_view` vid → index dicts;
   - benchmark on a 20 000-segment root system;
   - decide whether a numba path is wanted on the vectorised steps (links to Q29: delete `specializer.py` or rewrite it).
   - **Found in 4a:** `MPG.populate_graph` on a single 20 000-segment chain raises `RecursionError` in openalea.mtg's recursive `pre_order` (through `post_order_mpg` → `components_iter`). Long axes need an iterative traversal there.
-- [ ] **DS15 Persistence.** Checkpoint and restart of a DataStructure (arrays + locations + aliases + derivations + `topology_version`) independently of pickling the MPG, plus an MTG round trip for existing tooling. This builds on `export`.
+- [x] **DS15 Persistence.** (done in P8, `a83308f`: `checkpoint` / `restore`, npz + JSON + pickle) Checkpoint and restart of a DataStructure (arrays + locations + aliases + derivations + `topology_version`) independently of pickling the MPG, plus an MTG round trip for existing tooling. This builds on `export`.
 - [x] **DS17 Derived variables resolved at read (answers D3).** Today aliases resolve at every read, but derived variables (factors, sums, scale changes) are recomputed only when the **receiver** refreshes them before its step, as the former `pull_available_inputs` did.
   - To keep "linked by name, read dynamically" for every link kind, a derived variable is recomputed **on `get()`** when one of its sources was written since its last computation. This needs per-variable write counters, maintained by `set()` and in-place step outputs.
   - Explicit `refresh()` stays available, and the receiver's pre-step refresh becomes a no-op when nothing changed.
