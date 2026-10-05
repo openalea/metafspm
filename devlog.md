@@ -1918,3 +1918,32 @@ Per-file counts:
 - **`MultiGridDataStructure` removed:** the class, 20 tests, two example scripts with their images, and the plotting helper.
 - **Found:** `example_mpg_data_structure.py` was already broken before this step (QPv asked).
 - **Suite:** 693 passed.
+
+## 2026-10-05: documentation and test audit
+
+- **Docs:**
+  - `docs/index.md`, `user.md` (a full user guide) and `ref.md` (autodoc of every public module) rewritten for the current API;
+  - `conventions.md`, the migration guide, the CHANGELOG and every docstring and comment in `src/` and `test/` cleaned of plan step numbers;
+  - the README example rewritten (FunctionalComponent on an MPGDataStructure);
+  - docstrings fixed to build as RST: Sphinx now builds with no warning from metafspm, except the six `docs/design` notes outside the toctree (QPβ);
+  - module docstrings of `decorator`, `solver` and `data_api`, and the `MPGDataStructure` class docstring, describe the current API.
+- **A cleaning slip, caught:** the reference-stripping regex took `next(answers)` for a plan reference in a test (two lines). Restored, and the other removals were checked to be in strings or comments only.
+- **Test hygiene:**
+  - one autouse Choregrapher reset in `test/conftest.py`, replacing 30 copies;
+  - removed: `test_component_base`, `test_field_consensus`, `test_partial_traversal` (no assertions), `generate_anatomy_in_mtg.py` (broken), `component_api_changelog.md` (stale), the duplicate `example_translator.yaml`, and the tautological explicit-form MMS tests (`explicit=` is covered through UC1);
+  - redundant `children` filters removed, now that `MPG.children` is same-scale;
+  - scene doubles in `structure_tests/scene_doubles.py`;
+  - subclasses instead of copied declarations (Wheat/Pea, light organs, seedling leaves);
+  - `solver=` and `self.dt` in the graph-system tests;
+  - a tighter lazy-sync assertion; unused imports removed.
+- **New tests (72):** `test_variable_store_api.py` (16), `test_graph_system_options.py` (24), `test_scene_options.py` (15), `test_mapping_options.py` (10), plus small additions.
+- **Bugs they found, fixed:**
+  - `forcing()` took `(times, values)` tuples for Series;
+  - `to_nested()` refused long-form links;
+  - a same-name link stating only its scales derived itself;
+  - anatomy-mode populations got the segment graph on top of their anatomies, with no way to wire junctions (now a `wiring` class attribute);
+  - scene checkpoints dropped events timed between the last step and the checkpoint;
+  - `CompositeModel` turned Python translators into dicts, losing link options.
+- **Checked:** the audit's claim that `_ivp_time` is never set is wrong. The graph system's `time_hook` sets it at each IVP evaluation.
+- **Questions QPw–QPζ** added to `devplan_porting.md` §13: legacy APIs, the solver layer, the time-term convention, `@boundary_condition`, the old example files, `docs/design`, the example scripts, the test layout, the UC rewrites, `legacy_functor.py`.
+- **Suite:** 754 passed.
