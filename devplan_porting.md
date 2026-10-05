@@ -449,3 +449,15 @@ Today `implicit_euler`, `explicit_euler` and the IVP solvers are only correct if
 6. QPx: internal solver layer.
 7. QPγ: smoke tests for the example scripts.
 8. QPδ: test layout, as file moves only.
+
+**Progress (2026-10-05):**
+- **Done:**
+  - QPζ: `solve/functor.py`.
+  - QPβ: `dev/design/`, with the migration guide at `docs/migration.md`.
+  - QPα: plant and soil sketches; former-API reference code in `legacy/`.
+  - QPz: `@boundary_condition` deprecated; UC4 on `boundary_set`.
+  - QPw, except the two items below: Legacy MPG DS, `from_mtg_subset`, the legacy setters, `MPG.graph` and the aggregations, the Choregrapher by-name entry points, `declare_data`, `inputs_outputs`.
+  - QPx: the solver layer is internal and out of the API reference.
+  - QPγ: smoke tests in `test/data_structures/test_examples.py`.
+  - QPδ: `test/{data_structures,components,graph_systems,coupling,scenes,helpers}`.
+- **Waiting for QPy, done with QPε:** the `props` view and the `_last_graph_system` shim. UC1–UC3 and `test_live_datastructure` still read them, so they go when those tests are rewritten on the public API.
