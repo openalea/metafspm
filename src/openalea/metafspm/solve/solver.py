@@ -1,41 +1,42 @@
 
 """
-solver.py
-─────────
-Solver hierarchy for metafspm graph models.
+Solvers of graph systems, selected by ``@graph_system(solver=...)`` (a class or one of SOLVER_REGISTRY's keys).
 
-SolverConfig / SolverSpec       numerical settings
+::
 
-AbstractSolver (abstract)       step_once() interface + shared numerics
-  └── ODESolver (abstract)      adaptive time loop, _integrate_step abstract
-        └── DAESolver (abstract) BC injection, algebraic recovery, _recover_algebraic abstract
-              ├── NewtonSolver              quasi-static  (method="newton"/"newton_fd")
-              ├── ImplicitEulerSolver       backward-Euler (method="implicit_euler")
-              ├── LinearDirectSolver        Ax=b           (method="linear_direct")
-              ├── ScipyRootSolver           scipy.root     (method="scipy_krylov/anderson/hybr")
-              └── ScipyIVPSolver            solve_ivp      (method="scipy_ivp_bdf/radau")
+    SolverConfig / SolverSpec       numerical settings
 
-Design rationale
-────────────────
-AbstractSolver   — pure interface, shared numerics (_linear_step, _armijo_linesearch).
-ODESolver        — adds the adaptive time loop (solve → SolverResult) and the
-                   step-size control utilities.  _integrate_step is abstract so
-                   subclasses supply the actual numerical method.
-DAESolver        — extends ODESolver for DAE systems (GraphDAESpec):
-                   • _update_p   injects BoundaryConditions into p before every f/g call.
-                   • _recover_algebraic  recovers y from g(x,y,p)=0 after each accepted step.
-                     For solvers that handle x and y jointly in one Newton loop
-                     (implicit path), _recover_algebraic is a no-op.
-                   • step_once   per-tick Choregrapher interface; calls _integrate_step
-                     with the previous-field state for time-derivative terms.
-                   • solve       overrides ODESolver.solve() to thread prev_fields
-                     through the loop and call _recover_algebraic after each step.
-NewtonSolver     — _integrate_step = Newton on R(x,y)=0 (quasi-static, ignores h as dt).
-ImplicitEulerSolver — _integrate_step = backward-Euler Newton; h IS the dt.
-LinearDirectSolver  — _integrate_step = direct sparse A x = b.
-ScipyRootSolver     — _integrate_step = scipy.optimize.root.
-ScipyIVPSolver      — _integrate_step = one solve_ivp step from t to t+h;
-                      _recover_algebraic = inner Newton for edge algebraics (explicit path).
+    AbstractSolver (abstract)       step_once() interface + shared numerics
+      └── ODESolver (abstract)      adaptive time loop, _integrate_step abstract
+            └── DAESolver (abstract) BC injection, algebraic recovery, _recover_algebraic abstract
+                  ├── ExplicitEulerSolver       forward Euler  (solver="explicit_euler")
+                  ├── NewtonSolver              quasi-static  (solver="newton"/"newton_fd")
+                  ├── ImplicitEulerSolver       backward-Euler (solver="implicit_euler")
+                  ├── LinearDirectSolver        Ax=b           (solver="linear_direct")
+                  ├── ScipyRootSolver           scipy.root     (solver="scipy_krylov/anderson/hybr")
+                  └── ScipyIVPSolver            solve_ivp      (solver="scipy_ivp_bdf/radau")
+
+Design rationale::
+
+    AbstractSolver   — pure interface, shared numerics (_linear_step, _armijo_linesearch).
+    ODESolver        — adds the adaptive time loop (solve → SolverResult) and the
+                       step-size control utilities.  _integrate_step is abstract so
+                       subclasses supply the actual numerical method.
+    DAESolver        — extends ODESolver for DAE systems (GraphDAESpec):
+                       • _update_p   injects BoundaryConditions into p before every f/g call.
+                       • _recover_algebraic  recovers y from g(x,y,p)=0 after each accepted step.
+                         For solvers that handle x and y jointly in one Newton loop
+                         (implicit path), _recover_algebraic is a no-op.
+                       • step_once   per-tick Choregrapher interface; calls _integrate_step
+                         with the previous-field state for time-derivative terms.
+                       • solve       overrides ODESolver.solve() to thread prev_fields
+                         through the loop and call _recover_algebraic after each step.
+    NewtonSolver     — _integrate_step = Newton on R(x,y)=0 (quasi-static, ignores h as dt).
+    ImplicitEulerSolver — _integrate_step = backward-Euler Newton; h IS the dt.
+    LinearDirectSolver  — _integrate_step = direct sparse A x = b.
+    ScipyRootSolver     — _integrate_step = scipy.optimize.root.
+    ScipyIVPSolver      — _integrate_step = one solve_ivp step from t to t+h;
+                          _recover_algebraic = inner Newton for edge algebraics (explicit path).
 """
 
 from __future__ import annotations
@@ -530,8 +531,8 @@ class NewtonSolver(DAESolver):
     at the current parameter state p.  When called from the Choregrapher
     per tick, p carries the updated BoundaryConditions for that tick.
 
-    method="newton"    — analytic Jacobian if available, FD otherwise.
-    method="newton_fd" — always finite-difference Jacobian.
+    solver="newton"    — analytic Jacobian if available, FD otherwise.
+    solver="newton_fd" — always finite-difference Jacobian.
     """
 
     @property
@@ -584,7 +585,7 @@ class ImplicitEulerSolver(DAESolver):
     On the first call (prev_fields=None) falls back to NewtonSolver so the
     initial state is the quasi-static equilibrium.
 
-    method="implicit_euler".
+    solver="implicit_euler".
     """
 
     @property
@@ -640,17 +641,18 @@ class ExplicitEulerSolver(DAESolver):
         x_{n+1} = x_n + h · f(x_n, y_n, p)
 
     without any linear solve for the node update — just one function
-    evaluation per step.  This is the explicit DAE path:
+    evaluation per step.  This is the explicit DAE path::
 
       1. _integrate_step  — recovers y_n algebraically, evaluates the explicit
                             RHS, steps x forward.
       2. _recover_algebraic — Newton on edge sub-system at the new x_{n+1}.
 
-    The explicit RHS is obtained from:
-      ``spec.rhs_evaluator``   if set — user-provided ẋ = f(x, p) callable.
-      ``-spec.residual[:n_node]``  otherwise — quasi-static proxy that assumes
-           the node balance is ``C·ẋ + R_spatial(x,y) = 0`` with C = I.
-           Supply ``rhs_evaluator`` (via ``@graph_output`` or equivalent) for
+    The explicit RHS is obtained from::
+
+      spec.rhs_evaluator   if set — user-provided ẋ = f(x, p) callable.
+      -spec.residual[:n_node]  otherwise — quasi-static proxy that assumes
+           the node balance is C·ẋ + R_spatial(x,y) = 0 with C = I.
+           Supply rhs_evaluator (via @graph_output or equivalent) for
            correct scaling when C ≠ I.
 
     The error estimate returned is **zero** — ``DAESolver.solve()`` always
@@ -660,7 +662,7 @@ class ExplicitEulerSolver(DAESolver):
     Not suitable for stiff systems (e.g. coupled fast hydraulics + slow growth).
     Use ``ImplicitEulerSolver`` or ``ScipyIVPSolver`` for stiff problems.
 
-    method="explicit_euler"
+    solver="explicit_euler"
     """
 
     @property
@@ -707,7 +709,7 @@ class LinearDirectSolver(DAESolver):
     One-shot direct sparse/dense solve for linear DAE systems: A x = b.
 
     Requires spec.matrix_evaluator and spec.rhs_evaluator to be set.
-    method="linear_direct".
+    solver="linear_direct".
     """
 
     @property
@@ -739,9 +741,9 @@ class ScipyRootSolver(DAESolver):
     """
     scipy.optimize.root wrappers for quasi-static DAE.
 
-    method="scipy_krylov"   — Newton-GMRES (matrix-free, best for large N)
-    method="scipy_anderson" — Anderson acceleration (weakly coupled systems)
-    method="scipy_hybr"     — MINPACK hybrd trust-region Newton
+    solver="scipy_krylov"   — Newton-GMRES (matrix-free, best for large N)
+    solver="scipy_anderson" — Anderson acceleration (weakly coupled systems)
+    solver="scipy_hybr"     — MINPACK hybrd trust-region Newton
     """
 
     @property
@@ -806,23 +808,19 @@ class ScipyIVPSolver(DAESolver):
     Inherits solve() from DAESolver (which overrides ODESolver.solve() to
     thread prev_fields and call _recover_algebraic).
 
-    _integrate_step
-    ───────────────
-    Delegates one step [t, t+h] to solve_ivp (BDF or Radau).
+    _integrate_step delegates one step [t, t+h] to solve_ivp (BDF or Radau)::
 
-    For ODESystemSpec: calls f(x, p) directly.
-    For GraphDAESpec:  constructs the ODE rhs by recovering edge algebraics
-                       at each evaluation (explicit DAE path):
-                         ẏ_node = −R_spatial(y_node, q)  with M = I assumed.
+      For ODESystemSpec: calls f(x, p) directly.
+      For GraphDAESpec:  constructs the ODE rhs by recovering edge algebraics
+                         at each evaluation (explicit DAE path):
+                           ẏ_node = −R_spatial(y_node, q)  with M = I assumed.
 
-    _recover_algebraic
-    ──────────────────
-    For GraphDAESpec with edge unknowns: runs an inner Newton solve on the
+    _recover_algebraic: for GraphDAESpec with edge unknowns: runs an inner Newton solve on the
     edge algebraic sub-system after each accepted node step.
     For ODESystemSpec or node-only specs: returns empty array (no-op).
 
-    method="scipy_ivp_bdf"   — stiff BDF, recommended for FSPM.
-    method="scipy_ivp_radau" — stiff Radau, higher order.
+    solver="scipy_ivp_bdf" (stiff BDF, recommended for FSPM) or solver="scipy_ivp_radau" (stiff Radau, higher
+    order).
     """
 
     @property

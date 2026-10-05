@@ -1,19 +1,18 @@
 """
-data_structure.py
-─────────────────
-Data structure hierarchy for metafspm graph models.
+DataStructures: where components' variables live, by name and location, with the topology graph systems solve on.
 
-DataStructure (abstract)                 storage, topology, state I/O
-  ├── GraphDataStructure (abstract)       nodes, edges, incidence matrix B
-  │     └── MTGDataStructure (abstract)  OpenAlea MTG plant graph
-  │           ├── LegacyMPGDataStructure  properties in g.property() dicts
-  │           └── MPGDataStructure  properties as numpy arrays + index map
-  └── FieldDataStructure (abstract)       spatial grid (env models)
-        ├── ArrayDataStructure            1-D or 3-D numpy grid
+::
 
-GraphView and BoundaryPort (formerly in graph_system.py) are also defined here —
-they are the "compiled" solver-facing view of a graph, produced by
-MPGDataStructure.to_graph_view().
+    DataStructure (abstract)                  storage, topology, state I/O
+      ├── GraphDataStructure (abstract)       nodes, edges, incidence matrix
+      │     └── MTGDataStructure (abstract)   an OpenAlea MTG plant graph
+      │           ├── MPGDataStructure        variables as arrays, segments or anatomy Compartments as nodes
+      │           └── LegacyMPGDataStructure  variables in the MTG's property dicts
+      └── FieldDataStructure (abstract)       spatial grids
+            └── ArrayDataStructure            regular 1-D or 3-D grids (cells as nodes, faces as edges)
+
+VariableStoreMixin gives MPGDataStructure, ArrayDataStructure and AdaptiveGridDataStructure (adaptive_grid) their
+variable store. GraphView and BoundaryPort are the solver-facing view of a graph, built by to_graph_view().
 """
 
 from __future__ import annotations
@@ -397,11 +396,12 @@ class VariableStoreMixin:
     def register(self, name: str, values=None, location: str = None, default: float = 0.,
                  on_grow: str = "default", dtype=float, shape: tuple = ()) -> np.ndarray:
         """
-        (Re)create the variable *name* at *location* from *values* (copied) or *default*.
-        shape:   per-entity shape of a vector-valued variable: the array is (entities,) + shape.
-        on_grow: value given to entities created by topology growth, "default" or "inherit" (parent's value).
-        dtype:   float (default); int for labels, types and indices (kept as integers); object for lists and
-                 records, one per entity (not usable by graph systems, derivations or transport).
+        (Re)create the variable *name* at *location* from *values* (copied) or *default*. ::
+
+            shape:   per-entity shape of a vector-valued variable: the array is (entities,) + shape.
+            on_grow: value given to entities created by topology growth, "default" or "inherit" (parent's value).
+            dtype:   float (default); int for labels, types and indices (kept as integers); object for lists and
+                     records, one per entity (not usable by graph systems, derivations or transport).
         """
         location = location or self._default_location
         stores = self._var_stores()
@@ -464,15 +464,16 @@ class VariableStoreMixin:
     def derive(self, name: str, sources=None, formula=None, location: str = None, aggregation: str = None,
                weight: str = None, default: float = 0., on_grow: str = "default", target: str = None) -> np.ndarray:
         """
-        Declare *name* as derived from other variables and compute it.
+        Declare *name* as derived from other variables and compute it::
 
-        sources:     {variable: factor} for a weighted sum Σ f_i * x_i, or a sequence of variable names passed
-                     to *formula* (which then returns the values).
-        location:    of *name* (default: the sources' location). A different location requires an
-                     *aggregation* understood by the data structure (e.g. "sum", "mean", "weighted_mean",
-                     "broadcast", "proximal", "distal"); *weight* names the weights of "weighted_mean".
-        target:      a mask at *location*: the derived values are given on its entities only, the others getting
-                     *default* (e.g. a SubOrgan concentration broadcast to the symplastic Compartments only).
+            sources:     {variable: factor} for a weighted sum Σ f_i * x_i, or a sequence of variable names passed
+                         to *formula* (which then returns the values).
+            location:    of *name* (default: the sources' location). A different location requires an
+                         *aggregation* understood by the data structure (e.g. "sum", "mean", "weighted_mean",
+                         "broadcast", "proximal", "distal"); *weight* names the weights of "weighted_mean".
+            target:      a mask at *location*: the derived values are given on its entities only, the others getting
+                         *default* (e.g. a SubOrgan concentration broadcast to the symplastic Compartments only).
+
         The value is recomputed in place by refresh(); dependencies on other derived variables are refreshed first.
         """
         if not sources:
@@ -719,10 +720,12 @@ class VariableStoreMixin:
     def validate_variables(self, strict: bool = False) -> None:
         """
         Raise ValueError listing every inconsistency of the variable store:
+
           * an array whose shape is not its location's (e.g. not carried over a topology change);
           * an alias whose target is missing, or an alias cycle;
           * a derived variable whose source or weight is missing or moved to another location, or which is not
             stored at its declared location.
+
         strict=True also recomputes every up-to-date derived variable and compares it with its stored values: a
         difference reveals a write made through a view without mark_written().
         """
@@ -2040,11 +2043,12 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
 
     def write_edge_to_mtg(self, name: str, arr: np.ndarray,
                            convention: str = "proximal") -> None:
-        """Write an edge array to MTG property *name* at the endpoint chosen by *convention*.
+        """Write an edge array to MTG property *name* at the endpoint chosen by *convention*::
 
           "proximal" — write to child  (n_id_b); natural for xylem flow
           "distal"   — write to parent (n_id_a)
           "mean"     — no write-back (symmetric property; no unique endpoint)
+
         Errors are raised.
         """
         convention = _EDGE_CONVENTIONS.get(convention, convention)
@@ -2180,7 +2184,8 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
     def write_mtg(self, spec) -> None:
         """
         Write declared variable *spec* to its MTG property at the vertices of its scale, through the inverse of
-        its mapping:
+        its mapping::
+
           stored at its scale             -> as is;
           broadcast from a coarse scale   -> the (weighted) mean of the nodes of each coarse entity;
           (weighted) mean to a coarse one -> broadcast to the nodes;
@@ -2235,11 +2240,13 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
 
     def update_topology(self) -> None:
         """
-        Repopulate Compartment/Connection nodes from *from_scale* after growth and carry the registered
-        variables over to the new topology.
+        Extend the graph after the MTG's structure changed (growth, pruning) and carry the registered variables
+        over to the new topology.
 
-        Delegates the clear-and-repopulate step to mpg.repopulate_graph(self._from_scale), then rebuilds
-        the index maps and incidence cache. Registered variables are re-registered at the new size:
+        Segment mode extends the graph incrementally (MPG.extend_graph: only new segments get Compartments and
+        Connections); anatomy mode rewires the junctions of the changed segments. Registered variables are
+        re-registered at the new size:
+
           * nodes are matched by their from_scale vid, edges by their child vid (n_id_b);
           * new entities take the declared default, or their parent's value when registered with
             on_grow="inherit" (the growth model may overwrite them afterwards);

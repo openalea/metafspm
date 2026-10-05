@@ -1,38 +1,21 @@
 """
-decorator.py
-────────────
-Public API for metafspm graph-based equation systems.
+Steps and graph systems: the decorators placing a component's methods in the schedule, and the declaration of
+coupled equations over a DataStructure's graph.
 
-Replaces graph_system.py + graph_system_decorators.py and builds on:
-  data_structure.py   →  GraphView, BoundaryPort, DataStructure hierarchy
-  system_specs.py     →  GraphDAESpec, EquationBlock, EquationContext, …
-  solver.py           →  make_solver, SOLVER_REGISTRY, SolverConfig
+::
 
-Decorators (unchanged API)
-──────────────────────────
-  @graph_system(node_unknowns, edge_unknowns, method, …)
-      Inner-class descriptor that wires a Choregrapher Functor.
+    @rate, @state, @totalrate, @totalstate, @stepinit, @deficit, @axial,      a step, by its row in the schedule
+    @potential, @allocation, @actual, @segmentation, @postsegmentation, ...
 
-  @node_balance(field, filters=None, explicit=False)
-      Tag a method as a node residual block.
-
-  @edge_law(field="flux", filters=None, explicit=False, integrate=False)
-      Tag a method as an edge residual block.
-
-  @boundary_condition(location, kind, field=None, filters=None, explicit=False)
-      Tag a method as a Dirichlet or Neumann boundary condition.
-
-  @graph_jacobian
-      Tag a method as the optional analytic Jacobian.
-
-  @graph_output(name)
-      Tag a method as a post-solve output hook.
-
-Re-exports for backward compatibility with code that previously imported
-from graph_system or graph_system_decorators:
-  GraphView, BoundaryPort, FieldState, UnknownLayout,
-  EquationBlock, OutputBlock, EquationContext,
-  GraphSystem, SolverSpec, weighted_laplacian
+    @graph_system(node_unknowns, edge_unknowns=(), solver="newton", ...)    an inner class of equations, solved
+                                                                            at its schedule_as row
+        @node_balance(field)                     a node residual
+        @edge_law(field=, integrate=False)       an edge residual (or an integrated edge flux)
+        @pool_balance(field)                     the residual of a pool unknown (pool_unknowns=)
+        name = boundary_set(select=, kind=, value=, weight=)   a boundary condition on a set of nodes
+        @boundary_condition(location, kind)      a boundary condition written as a method
+        @graph_jacobian                          an optional analytic Jacobian
+        @graph_output(name, location=None)       a variable computed after the solve
 """
 
 from __future__ import annotations
@@ -217,23 +200,25 @@ def boundary_condition(location, kind, field=None, filters=None, explicit=False)
 
 class boundary_set:
     """
-    Boundary condition on a set of nodes, declared in a graph-system class and assembled by the framework:
+    Boundary condition on a set of nodes, declared in a graph-system class and assembled by the framework::
 
         leaves = boundary_set(select={"label": [LEAF]}, kind="robin", value="air_water_potential",
                               weight="leaf_conductance")
 
-    select  {variable: value or values} | a variable name (selects where it is > 0) | a callable ds -> boolean mask;
-            membership follows the selecting variables and topology changes.
-    kind    "robin":     + w * (x - v) in the field's residual (an outflow towards the external value v);
-            "dirichlet": the residual row becomes x - v;
-            "neumann":   - v in the residual (v is an inflow).
-    value, weight
-            node variables of the DataStructure (read at each solve) or constants.
-    field   the node unknown it applies to; default: the only node unknown.
-    kind=None: a selection only (no term), e.g. the nodes exchanging with a pool unknown.
-    kinds=<node variable name>, instead of kind: each node's kind read at each solve from that variable, as boundary_set.CODES
-            (1 dirichlet, 2 neumann, 3 robin, anything else no condition): e.g. a collar switching between a
-            pressure and a flux.
+    Arguments::
+
+        select  {variable: value or values} | a variable name (selects where it is > 0) | a callable ds -> boolean
+                mask; membership follows the selecting variables and topology changes.
+        kind    "robin":     + w * (x - v) in the field's residual (an outflow towards the external value v);
+                "dirichlet": the residual row becomes x - v;
+                "neumann":   - v in the residual (v is an inflow);
+                None:        a selection only (no term), e.g. the nodes exchanging with a pool unknown.
+        kinds   instead of kind, a node variable name: each node's kind is read at each solve from that variable,
+                as boundary_set.CODES (1 dirichlet, 2 neumann, 3 robin, anything else no condition), e.g. a collar
+                switching between a pressure and a flux.
+        value, weight
+                node variables of the DataStructure (read at each solve) or constants.
+        field   the node unknown it applies to; default: the only node unknown.
     """
 
     KINDS = ("robin", "dirichlet", "neumann")
