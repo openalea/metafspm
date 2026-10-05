@@ -383,10 +383,10 @@ def _setup_nitrogen_model(
     K_axial_vals: np.ndarray,
     dt: float,
 ) -> NitrogenAxialTransportOrgan:
-    ds.set_node_property("concentration",      np.asarray(c_old,        dtype=np.float64))
-    ds.set_node_property("radial_solute_input", np.asarray(J_radial,     dtype=np.float64))
-    ds.set_edge_property("axial_flux",          np.zeros(ds.n_edges()))
-    ds.set_edge_property("K_axial",             np.asarray(K_axial_vals, dtype=np.float64))
+    ds.register("concentration", np.asarray(c_old,        dtype=np.float64), location="node")
+    ds.register("radial_solute_input", np.asarray(J_radial,     dtype=np.float64), location="node")
+    ds.register("axial_flux", np.zeros(ds.n_edges()), location="edge")
+    ds.register("K_axial", np.asarray(K_axial_vals, dtype=np.float64), location="edge")
 
     model                  = NitrogenAxialTransportOrgan(data_structure=ds)
     model.time_step        = dt
@@ -400,7 +400,7 @@ def _make_ds_with_root_flag() -> tuple:
     root_idx = _find_root_local_idx(ds)
     is_root  = np.zeros(n)
     is_root[root_idx] = 1
-    ds.set_node_property("is_root", is_root)
+    ds.register("is_root", is_root, location="node")
     return ds, root_idx
 
 
@@ -484,7 +484,7 @@ def test_organ_auto_declaration_fills_defaults():
     """FunctionalComponent registers default arrays for all scale-annotated fields."""
     ds   = _make_ds()
     n, e = ds.n_nodes(), ds.n_edges()
-    ds.set_node_property("concentration", np.full(n, 0.3))
+    ds.register("concentration", np.full(n, 0.3), location="node")
 
     model = NitrogenAxialTransportOrgan(data_structure=ds)
 
@@ -500,7 +500,7 @@ def test_organ_K_axial_preset_overrides_default():
     n, e = ds.n_nodes(), ds.n_edges()
     K_val = 0.07
 
-    ds.set_edge_property("K_axial", np.full(e, K_val))
+    ds.register("K_axial", np.full(e, K_val), location="edge")
     NitrogenAxialTransportOrgan(data_structure=ds)
 
     np.testing.assert_allclose(

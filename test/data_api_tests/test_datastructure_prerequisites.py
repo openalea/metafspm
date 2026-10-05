@@ -67,8 +67,6 @@ def test_get_set_are_live_and_in_place():
 
     ds.set("c", np.ones(n))
     assert view is ds.get("c") and (view == 1.).all()
-    ds.set_node_property("c", np.full(n, 2.))  # legacy setter is in place too
-    assert (view == 2.).all()
     assert ds.location("c") == "node" and ds.has("c") and not ds.has("nope")
 
 

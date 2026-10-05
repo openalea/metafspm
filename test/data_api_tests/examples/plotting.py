@@ -8,8 +8,8 @@ Every public function accepts an abstract-base-class instance and uses
     FieldDataStructure  →  coordinates(), extract_state(), n_dof
 
 This is the same insulation the solver and GraphSystemBuilder will use:
-the consumer never cares whether it receives a LegacyMPGDataStructure, an
-MPGDataStructure or an ArrayDataStructure.
+the consumer never cares whether it receives an MPGDataStructure or an
+ArrayDataStructure.
 """
 
 from __future__ import annotations
@@ -145,8 +145,7 @@ def plot_incidence_structure(
 
     Abstract API consumed:  ds.incidence_matrix()
 
-    Works identically for the dense matrix (LegacyMPGDataStructure / MTGDataStructure)
-    and the sparse CSR matrix (MPGDataStructure).
+    Works identically for a dense and a sparse (CSR) matrix.
     """
     if ax is None:
         ax = plt.gca()

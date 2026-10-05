@@ -85,7 +85,7 @@ class MPG(MTG):
         The source MTG is never modified.  The returned MPG holds its own
         vertex structure (scale anchors + data vertices) and is typically used
         as a transient object: populate it with populate_graph() or
-        populate_graph_custom_connections(), pass it to GraphView.from_mtg_subset(),
+        populate_graph_custom_connections(), wrap it in an MPGDataStructure,
         then discard it.
 
         Parameters

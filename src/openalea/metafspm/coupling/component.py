@@ -495,13 +495,13 @@ class FunctionalComponent(DataStructureComponent):
     * In production, simply construct the model — all fields with declared
       scale appear in ds with their default values automatically.
     * When non-default values are needed (tests, scenario setup), call
-      ds.set_node_property / ds.set_edge_property BEFORE constructing the
+      ds.register(name, values, location=...) BEFORE constructing the
       model.  Pre-registered values are never overwritten.
 
     Usage::
 
         ds = MPGDataStructure(g, from_scale=g.scales.SubOrgan)
-        ds.set_node_property("concentration", c_init)   # non-default — must pre-set
+        ds.register("concentration", c_init, location="node")   # non-default — must pre-set
         model = MyTransportModel(data_structure=ds)
         # ds now also contains default arrays for K_axial, volumetric_capacity, etc.
     """

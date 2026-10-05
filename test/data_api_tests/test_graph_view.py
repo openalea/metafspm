@@ -6,15 +6,7 @@ boundary-port incidence.
 
 Construction
 ------------
-GraphView.from_mtg_subset(g, ...) is the intended constructor, but it relies
-on _array_at_scale which calls prop.indices_of(all_scale_vids).  Since the
-MPG includes anchor vertices at every scale — and anchors are absent from
-sparse properties like vertex_id and n_id_a — from_mtg_subset raises KeyError
-when the anchor VID is passed to indices_of.
-
-The limitation is documented in test_from_mtg_subset_anchor_issue below.
-The other tests build GraphView directly from arrays, which is the path used
-by the solver layer and does not touch _array_at_scale.
+The tests build GraphView directly from arrays; an MPGDataStructure builds it with to_graph_view().
 
 Relationship to MPG
 -------------------
@@ -211,107 +203,21 @@ def test_boundary_incidence_entries():
     assert B_bc[1, 0] == pytest.approx(0.0)   # node 1, port 0
 
 
-# ── from_mtg_subset anchor limitation ────────────────────────────────────────
-
-def test_from_mtg_subset_anchor_issue():
-    """_array_at_scale includes anchor VIDs not present in sparse properties.
-
-    MPG.property('vertex_id') is an ArrayDict that only stores non-anchor
-    Compartment nodes.  g.components_at_scale(..., scale=Compartment) returns
-    ALL Compartment VIDs including the anchor.  indices_of raises KeyError
-    for the anchor VID.
-
-    This test documents the current limitation.  Once array_at_scale is
-    added to MPG (filtering out anchors), from_mtg_subset will work directly.
-    """
-    from simple_seedling import generate_simple_mpg_seedling
-
-    g, _ = generate_simple_mpg_seedling()
-    g.populate_graph(g.scales.SubOrgan)
-    g.convert_properties_to_arraydict()
-
-    node_vids = [v for v in g.components_at_scale(g.root, scale=g.scales.Compartment)
-                 if not g.property('isanchor').get(v, False)]
-    edge_vids = [v for v in g.components_at_scale(g.root, scale=g.scales.Connection)
-                 if not g.property('isanchor').get(v, False)]
-
-    # from_mtg_subset internally calls _array_at_scale which requests ALL
-    # Compartment-scale VIDs (including anchor) from the vertex_id ArrayDict.
-    # The anchor VID is absent from the ArrayDict → KeyError.
-    with pytest.raises(KeyError):
-        GraphView.from_mtg_subset(
-            g=g,
-            node_scale=g.scales.Compartment,
-            node_ids=np.array(node_vids, dtype=np.int64),
-            edge_scale=g.scales.Connection,
-            edge_ids=np.array(edge_vids, dtype=np.int64),
-        )
-
-
 # ── Integration: GraphView from populate_graph results ───────────────────────
 
 def test_graph_view_from_mpg_after_populate_graph():
-    """Manually build the GraphView from a populated MPG (anchor-filtered).
-
-    This is the workaround until MPG.array_at_scale is implemented.
-    It demonstrates the correct solver-facing view structure that
-    GraphSystemBuilder should produce.
-    """
+    """MPGDataStructure.to_graph_view() on a populated MPG: one node per segment, one edge per Connection."""
     from simple_seedling import generate_simple_mpg_seedling
+    from openalea.metafspm.data_structure.data_api import MPGDataStructure
 
     g, _ = generate_simple_mpg_seedling()
     g.populate_graph(g.scales.SubOrgan)
     g.convert_properties_to_arraydict()
+    gv = MPGDataStructure(g, from_scale=g.scales.SubOrgan).to_graph_view()
 
-    node_vids = sorted(
-        v for v in g.components_at_scale(g.root, scale=g.scales.Compartment)
-        if not g.property('isanchor').get(v, False)
-    )
-    edge_vids = sorted(
-        v for v in g.components_at_scale(g.root, scale=g.scales.Connection)
-        if not g.property('isanchor').get(v, False)
-    )
-
-    assert len(node_vids) == 14
-    assert len(edge_vids) == 13
-
-    node_ids = np.array(node_vids, dtype=np.int64)
-    edge_ids = np.array(edge_vids, dtype=np.int64)
-    node_local = {int(v): i for i, v in enumerate(node_ids)}
-
-    # n_id_a / n_id_b store SubOrgan VIDs (the topology source VIDs from
-    # populate_graph).  We need to map SubOrgan VID → Compartment node VID
-    # via the vertex_id property (which maps Compartment VID → SubOrgan VID).
-    vertex_id_prop  = g.property('vertex_id')
-    suborgan_to_comp = {int(vertex_id_prop[nv]): nv for nv in node_vids}
-
-    n_id_a = g.property('n_id_a')
-    n_id_b = g.property('n_id_b')
-    tail   = np.array([node_local[suborgan_to_comp[int(n_id_a[ev])]]
-                       for ev in edge_vids], dtype=np.int64)
-    head   = np.array([node_local[suborgan_to_comp[int(n_id_b[ev])]]
-                       for ev in edge_vids], dtype=np.int64)
-
-    from scipy.sparse import coo_matrix as _coo
-    m  = len(edge_vids)
-    ec = np.arange(m, dtype=np.int64)
-    B  = _coo(
-        (np.r_[np.ones(m), -np.ones(m)],
-         (np.r_[tail, head], np.r_[ec, ec])),
-        shape=(14, 13),
-    ).tocsc()
-
-    gv = GraphView(
-        node_ids=node_ids, edge_ids=edge_ids,
-        tail=tail, head=head,
-        incidence=B,
-        boundary_incidence=csc_matrix((14, 0), dtype=np.float64),
-        boundary_names=(),
-    )
-
-    assert gv.n_nodes == 14
-    assert gv.n_edges == 13
-    assert gv.incidence.shape == (14, 13)
-
-    col_sums = np.asarray(gv.incidence.sum(axis=0)).ravel()
-    np.testing.assert_array_equal(col_sums, np.zeros(13))
+    assert gv.n_nodes == 14 and gv.n_edges == 13
+    B = gv.incidence.toarray()
+    assert B.shape == (14, 13)
+    np.testing.assert_array_equal(B.sum(axis=0), 0.)              # one tail, one head per edge
+    assert (B[gv.tail, np.arange(13)] == 1.).all() and (B[gv.head, np.arange(13)] == -1.).all()
+    assert np.bincount(gv.head, minlength=14).max() == 1          # a tree: one parent per node
