@@ -767,14 +767,21 @@ class ScipyRootSolver(DAESolver):
             if scipy_method == "hybr"
             else {"maxiter": self.config.max_iter}
         )
-        result = scipy_root(
-            fun    = lambda xv: spec.residual(xv, prev_fields, h),
-            x0     = packed0,
-            method = scipy_method,
-            jac    = jac_fn,
-            tol    = self.config.tol,
-            options= options,
-        )
+        import warnings
+        from scipy.linalg import LinAlgWarning
+        with warnings.catch_warnings():
+            if scipy_method == "anderson":
+                # Anderson's history matrix becomes singular as the residual vanishes (e.g. a linear system solved in
+                # a few iterations): scipy warns although the iterate converged, which is checked below
+                warnings.simplefilter("ignore", LinAlgWarning)
+            result = scipy_root(
+                fun    = lambda xv: spec.residual(xv, prev_fields, h),
+                x0     = packed0,
+                method = scipy_method,
+                jac    = jac_fn,
+                tol    = self.config.tol,
+                options= options,
+            )
         if not result.success:
             actual = np.linalg.norm(
                 spec.residual(result.x, prev_fields, h), ord=np.inf

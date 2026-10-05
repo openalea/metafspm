@@ -246,3 +246,33 @@ Not planned in metafspm: G13 (a masked loop in a step), G14 (until stratificatio
 
 **Port order (QPf):** GRANAP first, after its guidelines; then rhizodep, Root-CyNAPS, RhizoSoil (with cmf and MIMICS wrapped as opaque solvers), and the shoot (cnwgrass and WheatFspm on MTG scales). The light model triangulates by itself.
 
+## 10. Before GRANAP: remaining items (2026-10-06, your question)
+
+**Done now:**
+- **The test suite's warnings:** all 10 came from SciPy's Anderson root method, whose history matrix becomes singular as the residual vanishes (`LinAlgWarning`), while the iterate has converged. `ScipyRootSolver` checks the residual after the call anyway, so that warning is silenced for Anderson only. The suite now runs without any warning, hidden categories included (`-W default`).
+
+**Open, with questions:**
+1. **`MultiGridDataStructure` is barely integrated.** It has no variable store, so it cannot host a component. It has no graph topology, so graph systems cannot run on it, and no checkpoint. Its restriction and prolongation are built on flat indices, which is only right in 1-D. It is tested only for construction, delegation to the fine level and the topology hook. What it should be depends on its use:
+   - **(a)** several resolutions holding their own variables (e.g. microbes on a coarse grid, transport on the fine one), exchanged by restriction (volume average) and prolongation at fixed points. Each level would be an `ArrayDataStructure`, and `MultiGrid` the set of levels with N-D operators, i.e. grid ↔ grid mappings at different resolutions (also soil ↔ atmosphere);
+   - **(b)** a geometric multigrid accelerating the solves of graph systems on the fine grid (a preconditioner), invisible to models;
+   - **(c)** both.
+
+   **QPp:** which use do you intend? **Recommendation:** (a) first. It is the modelling feature, it generalises the column ↔ grid mapping (a `GridMapping` by cell-volume overlaps in N-D), and it fits the existing exchanges. (b) is a solver optimisation, worth doing only if grid solves become the bottleneck.
+   → answer:
+2. **Compartments are topological children of their segments** (B-i, deferred in WD.P). `populate_graph` links each Compartment to its segment with a topological parent, so openalea's `g.children(segment)`, `Sons()` and `post_order2` return Compartments (scale 9) mixed with the child segments (scale 6). The DataStructure and the kernels are not affected (they use the Connections). But MPG-style code ported from rhizodep, which loops on `children()` and `post_order2`, would count Compartments as children: death counts, the pipe model, `len(apex.children())` for primordia. Options:
+   - **(a)** the MPG's `children` / `children_iter` / `Sons` / `nb_children` return the same-scale children only (overrides; raw `_children` unchanged for the framework);
+   - **(b)** Compartments become components of their segment instead of children (a change in `populate_graph`, `extend_graph` and the anatomy wiring);
+   - **(c)** leave it, and document that ported code must filter by scale.
+
+   **QPq:** which? **Recommendation:** (a). It makes openalea's traversals (which use `children_iter`) behave as on a plain MTG, with a small, testable change.
+   → answer:
+3. **Coverage cannot be measured:** `coverage` / `pytest-cov` are not installed in the metafspm environment, although `[tool.coverage]` is configured (B1).
+
+   **QPr:** may I install `pytest-cov` in that conda environment, to report untested code before GRANAP? **Recommendation:** yes.
+   → answer:
+4. **Still deferred, by earlier decisions, listed so that nothing is forgotten:**
+   - DS7's MPG ↔ MPG coupler (until a plant uses two DataStructures);
+   - W6.1 (an integration marker for downstream CI);
+   - parallel pieces (S2);
+   - the anatomy repartition and Q-A4's implementation (PT9, with GRANAP's guidelines).
+
