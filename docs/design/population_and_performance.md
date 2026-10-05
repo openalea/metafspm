@@ -254,3 +254,46 @@ def _growing_zone_C_hexose_root(self, C_hexose_root, struct_mass, volume, radius
 
   **Recommendation:** both, as the first part of 5c, measured before and after on the population, with `repopulate_graph` kept for explicit full rebuilds.
   → answer: agree
+
+## 14. P7 benchmarks (2026-10-06)
+
+The scripts are in `test/benchmarks/`. They ran on a 14-core machine, one process, with 5 timed steps after one warm-up step. The models are in-repo doubles with the cost structure of the real ones (QP7a):
+- vectorised rates and states;
+- an implicit axial-diffusion graph system per plant;
+- growth by bulk segmentation (6 apices per plant, one new segment per apex every 3–4 steps) with an incremental `update_topology`;
+- a 20 × 20 × 50 soil grid exchanging both ways;
+- the recorder.
+
+**A. Segment mode** (plants of 2 000 segments; seconds per step):
+
+| plants | segments | step | exchanges (barycentre / overlap) | rates + states | graph system | growth | recorder | build |
+|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 1 | 2·10³ | 0.009 | 0.0003 / 0.0008 | 0.0008 | 0.0015 | 0.0035 | 0.003 | 0.08 |
+| 10 | 2·10⁴ | 0.058 | 0.0009 / 0.0057 | 0.0065 | 0.012 | 0.034 | 0.004 | 0.75 |
+| 100 | 2·10⁵ | 0.69 | 0.010 / 0.068 | 0.080 | 0.17 | 0.42 | 0.015 | 8.6 |
+| 1000 | 2·10⁶ | 6.7 | 0.12 / 0.67 | 0.77 | 1.68 | 4.05 | 0.11 | 95 |
+
+Every phase scales linearly with the number of segments.
+
+**B. Anatomy mode** (4 Compartments per segment):
+
+| segments | Compartments | edges | rates + states | graph system | build |
+|---:|---:|---:|---:|---:|---:|
+| 2·10³ | 8·10³ | 1.2·10⁴ | 0.0014 | 0.004 | 0.40 |
+| 2·10⁴ | 8·10⁴ | 1.2·10⁵ | 0.015 | 0.044 | 4.0 |
+| 2·10⁵ | 8·10⁵ | 1.2·10⁶ | 0.15 | 0.46 | 44 |
+
+**C. Overhead against the one-plant-per-process scene** (`bench_reference.py`; toy plants of 3 segments, so these are the scenes' own costs; seconds per step):
+
+| plants | `play_Orchestra` (processes, `Transport`) | `Scene` (one process) |
+|---:|---:|---:|
+| 1 | 4.7·10⁻⁴ | 2.8·10⁻⁴ |
+| 4 | 1.7·10⁻³ | 3.4·10⁻⁴ |
+| 12 | 6.6·10⁻³ | 2.7·10⁻⁴ |
+
+The per-process scene's overhead grows with the plants, because the soil worker serialises every plant's buffer and message. The Scene's overhead stays flat.
+
+**Findings (profiled at 100 plants):**
+- **F3, writing back to the MTG.** 97 % of the rates-and-states time is `write_back_to_mtg`, which runs after every component call and copies each MTG-scale state variable into the MTG properties (0.44 s of 0.46 s); the arithmetic takes 13 ms. Two options: write back only before an MPG-style step reads the MTG and on export, or declare per variable which ones MPG-style code needs. Either would make rates and states about 30 times faster.
+- **F4, the incremental graph extension.** Each `update_topology` after growth spends 3.4 of its 5 s in `extend_graph`, almost all in `components_at_scale` (the openalea traversal of the whole MTG), plus 0.6 s in the owner maps. The cost is proportional to the population, not to the new segments. Restricting the extension to the vertices created since the last extension (`vid > last _id`, and their complexes) would make growth bookkeeping proportional to the growth.
+- **Estimate:** with F3 and F4, a step of 1000 plants of 2 000 segments would take about 2 s, of which about 1.7 s is graph systems. Those could later be split into pieces solved in parallel inside the Scene (`split="components"`, §9 S2).
