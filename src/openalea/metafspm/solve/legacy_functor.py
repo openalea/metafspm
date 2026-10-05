@@ -107,7 +107,8 @@ class Functor:
         declared = getattr(self.fun, "__output_locations__", {})
         for name, values in outputs:
             values = np.asarray(values, dtype=float)
-            masked = mask is not None and values.shape == (int(mask.sum()),)
+            masked = (mask is not None and values.ndim >= 1 and values.shape[0] == int(mask.sum())
+                      and (values.ndim == 1 or (ds.has(name) and ds.get(name).shape[1:] == values.shape[1:])))
             if not ds.has(name):
                 if masked and name not in declared:
                     from openalea.metafspm.solve.decorator import infer_output_location

@@ -44,15 +44,16 @@ class VariableSpec:
     default: float = 0.
     on_grow: str = "default"
     dtype: type = float                  # float, int or object (design note time_and_data §5)
+    shape: tuple = ()                    # per-entity shape of a vector-valued variable (PT7)
 
     @property
     def mtg_backed(self) -> bool:
-        return self.scale is not None
+        return self.scale is not None and not self.shape
 
     def meta(self) -> dict:
         """Metadata recorded on the DataStructure next to the values."""
         return {"scale": self.scale, "mapping": self.mapping, "weight": self.weight, "kind": self.kind,
-                "variable_type": self.variable_type, "dtype": self.dtype}
+                "variable_type": self.variable_type, "dtype": self.dtype, "shape": self.shape}
 
 
 class DeclarationError(ValueError):
@@ -237,7 +238,8 @@ def resolve_declaration(f, ds) -> Optional[VariableSpec]:
             raise DeclarationError(f"'{f.name}': a DataStructure variable needs a numeric default (or dtype='object'), "
                                    f"got {default!r}") from None
     common = dict(name=f.name, kind=kind, variable_type=meta.get("variable_type"),
-                  default=default, on_grow=meta.get("on_grow") or "default", dtype=dtype)
+                  default=default, on_grow=meta.get("on_grow") or "default", dtype=dtype,
+                  shape=tuple(meta.get("shape") or ()))
 
     if isinstance(raw_scale, str) and raw_scale in SOLVER_LOCATIONS:
         if location is not None:

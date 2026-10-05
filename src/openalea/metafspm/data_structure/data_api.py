@@ -398,9 +398,10 @@ class VariableStoreMixin:
         writes[target] = writes.get(target, 0) + 1
 
     def register(self, name: str, values=None, location: str = None, default: float = 0.,
-                 on_grow: str = "default", dtype=float) -> np.ndarray:
+                 on_grow: str = "default", dtype=float, shape: tuple = ()) -> np.ndarray:
         """
         (Re)create the variable *name* at *location* from *values* (copied) or *default*.
+        shape:   per-entity shape of a vector-valued variable (PT7): the array is (entities,) + shape.
         on_grow: value given to entities created by topology growth, "default" or "inherit" (parent's value).
         dtype:   float (default); int for labels, types and indices (kept as integers); object for lists and
                  records, one per entity (not usable by graph systems, derivations or transport; design note
@@ -415,7 +416,8 @@ class VariableStoreMixin:
         if name in self.__dict__.get("_aliases", {}):
             raise ValueError(f"'{name}' is an alias of '{self._resolve(name)}', register the source instead.")
         dtype = _canonical_dtype(dtype)
-        shape = self._location_shape(location)
+        entity_shape = tuple(shape or ())
+        shape = tuple(self._location_shape(location)) + entity_shape
         if dtype is object:
             array = np.empty(shape, dtype=object)
             array[...] = _converted(default, array, name)
@@ -433,7 +435,8 @@ class VariableStoreMixin:
         self.mark_written(name)
         # Declaration metadata (scale, mapping, kind, ...) is kept across re-registrations (growth)
         self._variable_meta().setdefault(name, {}).update(
-            default=default if dtype is object else dtype(default), on_grow=on_grow, dtype=dtype)
+            default=default if dtype is object else dtype(default), on_grow=on_grow, dtype=dtype,
+            shape=entity_shape)
         self._bump_version()
         return array
 
@@ -728,9 +731,10 @@ class VariableStoreMixin:
         difference reveals a write made through a view without mark_written() (D10).
         """
         problems = []
+        meta = self._variable_meta()
         for location, store in self._var_stores().items():
-            shape = tuple(self._location_shape(location))
             for name, array in store.items():
+                shape = tuple(self._location_shape(location)) + tuple(meta.get(name, {}).get("shape") or ())
                 if tuple(np.shape(array)) != shape:
                     problems.append(f"'{name}' has shape {np.shape(array)}, its location '{location}' has {shape}")
         for name in self.__dict__.get("_aliases", {}):
@@ -822,7 +826,17 @@ class VariableStoreMixin:
         for name in names:
             if self.location(name) != location:
                 raise ValueError(f"'{name}' is at {self.location(name)}, not at {location}")
-        table = pd.DataFrame({name: np.ravel(self.get(name)) for name in names},
+        n_entities = int(np.prod(self._location_shape(location)))
+        columns = {}
+        for name in names:
+            values = np.asarray(self.get(name))
+            if values.size == n_entities:
+                columns[name] = np.ravel(values)
+            else:                                   # a vector-valued variable: one column per component (PT7)
+                values = values.reshape(n_entities, -1)
+                for j in range(values.shape[1]):
+                    columns[f"{name}_{j}"] = values[:, j]
+        table = pd.DataFrame(columns,
                              index=pd.Index(self.entity_ids(location), name=self._INDEX_NAMES.get(location, location)))
         if location == "cell" and hasattr(self, "cell_centers"):
             centers = self.cell_centers()
@@ -898,35 +912,62 @@ class VariableStoreMixin:
                        "variables": variables, "version": self.version, "topology_version": self.topology_version},
                       f, indent=1)
 
-    @classmethod
-    def restore(cls, path: str, **construction):
-        """The DataStructure checkpointed in folder *path* (see checkpoint(); *construction* overrides, e.g. mtg=)."""
+    # Caches built on the topology or the values, dropped when a checkpoint is loaded
+    _TOPOLOGY_CACHES = ("_parameter_views", "_index_cache", "_traversal_cache", "_levels_cache", "_edges_cache",
+                        "_openalea_post", "_vid_to_idx_dict", "_sorted_to_local", "_chain_cache", "_membership_cache")
+
+    @staticmethod
+    def _read_checkpoint(path: str, class_name: str) -> tuple:
         import json
         import os
         import pickle
         with open(os.path.join(path, "manifest.json")) as f:
             manifest = json.load(f)
-        if manifest["class"] != cls.__name__:
-            raise TypeError(f"{path} holds a {manifest['class']}, not a {cls.__name__}")
+        if manifest["class"] != class_name:
+            raise TypeError(f"{path} holds a {manifest['class']}, not a {class_name}")
         with open(os.path.join(path, "state.pkl"), "rb") as f:
             saved = pickle.load(f)
         with np.load(os.path.join(path, "arrays.npz"), allow_pickle=False) as npz:
             arrays = {key: npz[key] for key in npz.files}
+        return manifest, saved, arrays
+
+    @classmethod
+    def restore(cls, path: str, **construction):
+        """The DataStructure checkpointed in folder *path* (see checkpoint(); *construction* overrides, e.g. mtg=)."""
+        manifest, saved, arrays = cls._read_checkpoint(path, cls.__name__)
         ds = cls._from_construction(dict(manifest["construction"], **construction), saved)
+        ds._apply_checkpoint(path, manifest, saved, arrays)
+        return ds
+
+    def load_checkpoint(self, path: str, **construction) -> None:
+        """
+        Load the checkpoint of folder *path* into this DataStructure, in place (PT7): components, mappings and
+        scenes keep their references to it. An MPG DataStructure takes the checkpointed MTG (or *mtg*).
+        """
+        manifest, saved, arrays = self._read_checkpoint(path, type(self).__name__)
+        self._load_construction(dict(manifest["construction"], **construction), saved)
+        self._apply_checkpoint(path, manifest, saved, arrays)
+
+    def _load_construction(self, construction: dict, saved: dict) -> None:
+        """Make this DataStructure's construction the checkpointed one (in-place loads)."""
+        raise NotImplementedError(f"{type(self).__name__} cannot load a checkpoint in place")
+
+    def _apply_checkpoint(self, path, manifest, saved, arrays) -> None:
+        for name in self._TOPOLOGY_CACHES:
+            self.__dict__.pop(name, None)
         for location in {info["location"] for info in manifest["variables"].values()} - {"scalar"}:
-            if not np.array_equal(np.asarray(ds.entity_ids(location)), arrays[f"_ids::{location}"]):
+            if not np.array_equal(np.asarray(self.entity_ids(location)), arrays[f"_ids::{location}"]):
                 raise ValueError(f"{path}: the entities at {location} differ from the checkpointed ones (another MTG?)")
-        stores = ds._var_stores()
+        stores = self._var_stores()
         for store in stores.values():
             store.clear()
         for name, info in manifest["variables"].items():
             key = f"{info['location']}::{name}"
             values = saved["objects"][key] if key in saved["objects"] else arrays[key]
             stores[info["location"]][name] = np.array(values, copy=True)
-        for name in ("_parameter_views", "_index_cache"):
-            ds.__dict__.pop(name, None)
-        ds.__dict__.update(saved["state"])
-        return ds
+        self.__dict__.update(saved["state"])
+        for name in self._TOPOLOGY_CACHES:
+            self.__dict__.pop(name, None)
 
     def _construction(self) -> dict:
         """JSON arguments rebuilding an empty DataStructure of this class (restore)."""
@@ -1728,6 +1769,17 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
     def _checkpoint_extra(self) -> tuple:
         return ("_wiring", "_anatomy_signature", "last_extension")
 
+    def _load_construction(self, construction: dict, saved: dict) -> None:
+        mtg = construction.get("mtg") or saved["mtg"]
+        if mtg is None:
+            raise ValueError("the checkpoint holds no MTG (include_mtg=False): give load_checkpoint(path, mtg=...)")
+        if (construction["nodes"] == "Compartment") != bool(self._anatomy):
+            raise ValueError("the checkpoint and this DataStructure differ in anatomy mode")
+        self._mtg, self._from_scale = mtg, construction["from_scale"]
+        self._B_cached = None
+        self._membership_cache = {}
+        self._build_index_map()
+
     @classmethod
     def _from_construction(cls, construction: dict, saved: dict):
         mtg = construction.pop("mtg", None) or saved["mtg"]
@@ -2242,7 +2294,7 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
                 values = self._carry_over(_KeyedValues(old_keys[order], array[order], matched=(keys, *matched)),
                                           keys, policy)
                 self.register(name, values, location=location, default=policy["default"], on_grow=policy["on_grow"],
-                              dtype=policy.get("dtype", float))
+                              dtype=policy.get("dtype", float), shape=policy.get("shape") or ())
             stored_ids[location] = keys
         self._bump_version()
 
@@ -2310,7 +2362,8 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
         ancestor or default.
         """
         keys = np.asarray(keys, dtype=np.int64)
-        out = np.empty(len(keys), dtype=object if policy.get("dtype") is object else np.float64)
+        out = np.empty((len(keys),) + tuple(policy.get("shape") or ()),
+                       dtype=object if policy.get("dtype") is object else np.float64)
         if isinstance(values_by_key, _KeyedValues):
             known, source = values_by_key.match(keys)
             out[known] = values_by_key.values[source[known]]
@@ -2583,6 +2636,10 @@ class ArrayDataStructure(VariableStoreMixin, FieldDataStructure):
     def _construction(self) -> dict:
         return {"shape": list(self._shape), "dx": self._dx.tolist(), "origin": self._origin.tolist(),
                 "periodic": self._periodic.tolist()}
+
+    def _load_construction(self, construction: dict, saved: dict) -> None:
+        if self._construction() != {key: construction[key] for key in ("shape", "dx", "origin", "periodic")}:
+            raise ValueError("the checkpointed grid has another shape, spacing, origin or periodicity")
 
     @classmethod
     def _from_construction(cls, construction: dict, saved: dict):

@@ -374,7 +374,7 @@ class UnionDataStructure(VariableStoreMixin, DataStructure):
         n = int(sum(ids.size for ids in new_ids))
         for name, array in list(self._fields.items()):
             default = self._variable_meta().get(name, {}).get("default", 0.)
-            new = np.empty(n, dtype=array.dtype)
+            new = np.empty((n,) + array.shape[1:], dtype=array.dtype)      # vector variables keep their components
             new[...] = default
             start = 0
             for old, ids, piece in zip(self._ids, new_ids, old_slices):
@@ -389,6 +389,17 @@ class UnionDataStructure(VariableStoreMixin, DataStructure):
         self._ids, self._layout = new_ids, self._current_layout()
         self._topology_version = self.topology_version + 1
         self._bump_version()
+
+    def _construction(self) -> dict:
+        return {"parts": len(self.parts)}
+
+    def _checkpoint_extra(self) -> tuple:
+        return ("_ids", "_layout")
+
+    def _load_construction(self, construction: dict, saved: dict) -> None:
+        if construction["parts"] != len(self.parts):
+            raise ValueError("the checkpointed union has another number of parts")
+        self._ids = saved["state"]["_ids"]                 # the layout the arrays were saved with
 
     def extract_state(self, var_names: list) -> np.ndarray:
         return np.concatenate([np.ravel(self.get(name)) for name in var_names])
@@ -469,11 +480,35 @@ class _CrossLink:
     def provider_ds(self):
         return self.provider.data_structure
 
+    def components(self) -> int:
+        """Components per entity of a vector-valued source (PT7), 0 for a plain variable."""
+        if self.link.formula is not None:
+            return 0
+        meta = self.provider_ds._variable_meta()
+        shapes = {tuple(meta.get(self.provider_ds._resolve(source), {}).get("shape") or ()) for source in self.link.sources}
+        (shape,) = shapes if len(shapes) == 1 else ((),)
+        return int(np.prod(shape)) if shape else 0
+
     def source_values(self) -> np.ndarray:
         ds, link = self.provider_ds, self.link
         if link.formula is not None:
             return np.asarray(link.formula(*(ds.get(source) for source in link.sources)), dtype=float)
         return sum(float(factor) * np.asarray(ds.get(source), dtype=float) for source, factor in link.sources.items())
+
+
+def _per_column(apply, values, components: int = 0, pair: bool = False):
+    """
+    *apply* on each component of a vector-valued variable (PT7: *components* per entity), stacked as columns
+    (entities, components); directly on a plain variable. *pair*: apply returns (numerator, denominator), the
+    denominator shared by the components.
+    """
+    if not components:
+        return apply(values)
+    flat = np.asarray(values, dtype=float).reshape(-1, components)
+    results = [apply(flat[:, j]) for j in range(components)]
+    if pair:
+        return np.stack([np.asarray(r[0]).reshape(-1) for r in results], axis=1), results[0][1]
+    return np.stack([np.asarray(r).reshape(-1) for r in results], axis=1)
 
 
 class Exchanges:
@@ -591,20 +626,23 @@ class Exchanges:
                 continue
             variable, values = cross.link.variable, cross.source_values()
             weight = cross.link.weight
+            components = cross.components()
             if cross.direction == "up":
                 weights = cross.provider_ds.get(weight) if weight is not None else None
-                numerator, denominator = cross.mapping.up(values, cross.aggregation, weights=weights)
+                numerator, denominator = _per_column(
+                    lambda v: cross.mapping.up(v, cross.aggregation, weights=weights), values, components, pair=True)
             elif cross.direction == "down":
                 weights = cross.receiver_ds.get(weight) if weight is not None else None
                 totals = self._split_totals(cross) if cross.aggregation == "split" else None
-                numerator = cross.mapping.down(values, cross.aggregation, weights=weights, totals=totals)
+                numerator = _per_column(lambda v: cross.mapping.down(v, cross.aggregation, weights=weights,
+                                                                     totals=totals), values, components)
                 denominator = None
                 covered = cross.mapping.covered()
                 if covered is not None:                 # entities left out keep their values
                     keep.setdefault(variable, covered)
             elif cross.direction == "layer":
-                numerator = cross.mapping.transfer(values, cross.provider_ds is cross.mapping.column,
-                                                   cross.aggregation)
+                numerator = _per_column(lambda v: cross.mapping.transfer(
+                    v, cross.provider_ds is cross.mapping.column, cross.aggregation), values, components)
                 denominator = None
             elif cross.direction == "into_union":
                 numerator, denominator = np.zeros(ds.n_nodes()), None
@@ -626,8 +664,12 @@ class Exchanges:
                 ds.register(variable)
             if denominator is not None:
                 default = ds._variable_meta().get(ds._resolve(variable), {}).get("default", 0.)
+                if numerator.ndim == 2 and denominator.ndim == 1:
+                    denominator = denominator[:, None]
                 numerator = np.where(denominator > 0., numerator / np.where(denominator > 0., denominator, 1.),
                                      default)
+            stored = ds.get(variable)
             if variable in keep:
-                numerator = np.where(keep[variable], numerator, np.ravel(ds.get(variable)))
-            ds.set(variable, np.reshape(numerator, ds._location_shape(ds.location(variable))))
+                kept = keep[variable] if numerator.ndim == 1 else keep[variable][:, None]
+                numerator = np.where(kept, numerator, np.asarray(stored).reshape(numerator.shape))
+            ds.set(variable, np.reshape(numerator, stored.shape))

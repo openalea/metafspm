@@ -22,7 +22,7 @@ def declare(unit: str, unit_comment: str, description: str, min_value: float, ma
             variable_type: Literal["state_variable", "plant_scale_state", "input", "parameter"],
             by: str, state_variable_type: str, edit_by: Literal["user", "dev"],
             default=None, default_factory=None, scale=None, edge_mapping=None, on_grow="default",
-            location=None, mapping=None, weight=None, dtype=None):
+            location=None, mapping=None, weight=None, dtype=None, shape=None):
     """
     Constrain component variable declarations in a commonly agreed-upon way.
 
@@ -53,6 +53,9 @@ def declare(unit: str, unit_comment: str, description: str, min_value: float, ma
     :param weight:             Weight variable of "weighted_mean".
     :param dtype:              "int" for labels, types and indices (kept as integers), "object" for lists and records
                                (not usable by graph systems, derivations or transport); default float.
+    :param shape:              Per-entity shape of a vector-valued variable, e.g. (15,) for 15 pools per cell: an
+                               (n, 15) array, used by steps, mappings, checkpoints and outputs; not an MTG property
+                               nor a graph-system unknown (PT7).
     :param on_grow:            Value of entities created by topology growth: "default" (the declared
                                default) or "inherit" (the parent's value). The growth model may still
                                overwrite them, e.g. from parent states for concentrations.
@@ -64,6 +67,7 @@ def declare(unit: str, unit_comment: str, description: str, min_value: float, ma
         state_variable_type=state_variable_type, edit_by=edit_by,
         scale=scale, edge_mapping=edge_mapping, on_grow=on_grow,
         location=location, mapping=mapping, weight=weight, dtype=dtype,
+        shape=tuple(shape) if shape is not None else None,
     )
     if default_factory:
         return field(default_factory=default_factory, metadata=metadata)
@@ -73,7 +77,7 @@ def declare(unit: str, unit_comment: str, description: str, min_value: float, ma
 def input_variable(unit: str, unit_comment: str, description: str, min_value: float,
                    max_value: float, value_comment: str, references: str, DOI: list,
                    by: str, initialize=None, scale=None, edge_mapping=None, on_grow="default",
-                   location=None, mapping=None, weight=None, state_variable_type=None, dtype=None):
+                   location=None, mapping=None, weight=None, state_variable_type=None, dtype=None, shape=None):
     """Declare an input field — a variable driven by another model component.
 
     When the component is run in isolation (not coupled), the field keeps
@@ -89,7 +93,7 @@ def input_variable(unit: str, unit_comment: str, description: str, min_value: fl
         value_comment=value_comment, references=references, DOI=DOI,
         variable_type="input", by=by, state_variable_type=state_variable_type,
         edit_by="user", scale=scale, edge_mapping=edge_mapping, on_grow=on_grow,
-        location=location, mapping=mapping, weight=weight, dtype=dtype,
+        location=location, mapping=mapping, weight=weight, dtype=dtype, shape=shape,
     )
 
 
@@ -100,7 +104,8 @@ def state_variable(unit: str, unit_comment: str, description: str, min_value: fl
                        "NonInertialExtensive", "NonInertialIntensive", "descriptor"
                    ] = None,
                    initialize=None, scale=None, by: str = None,
-                   edge_mapping=None, on_grow="default", location=None, mapping=None, weight=None, dtype=None):
+                   edge_mapping=None, on_grow="default", location=None, mapping=None, weight=None, dtype=None,
+                   shape=None):
     """Declare a prognostic state variable solved or integrated by this component.
 
     :param state_variable_type: Thermodynamic / extensive classification.
@@ -118,7 +123,7 @@ def state_variable(unit: str, unit_comment: str, description: str, min_value: fl
         variable_type="state_variable", by=by,
         state_variable_type=state_variable_type, edit_by="user",
         scale=scale, edge_mapping=edge_mapping, on_grow=on_grow,
-        location=location, mapping=mapping, weight=weight, dtype=dtype,
+        location=location, mapping=mapping, weight=weight, dtype=dtype, shape=shape,
     )
 
 
@@ -350,7 +355,7 @@ class DataStructureComponent(Component):
                 values = ds.read_mtg(spec) if hasattr(ds, "read_mtg") else None
                 default = pending.get(name, spec.default) if spec.dtype is not object else spec.default
                 ds.register(name, values, location=spec.location, default=default, on_grow=spec.on_grow,
-                            dtype=spec.dtype)
+                            dtype=spec.dtype, shape=spec.shape)
             # Metadata precedence: the component that owns the variable (not an input) sets its default, growth
             # policy and kind; a component reading it as an input only fills what is still unknown.
             meta = ds._variable_meta().setdefault(name, {})

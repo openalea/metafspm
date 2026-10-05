@@ -18,6 +18,24 @@ The flat modules used before the 2026 restructure have been removed. No compatib
 | `openalea.metafspm.component.Model`, `declare` | `openalea.metafspm.coupling.component.Component` / `FunctionalComponent`, `declare` |
 | `openalea.metafspm.specializer` | `openalea.metafspm.solve.specializer` |
 
+### State outside variables (PT7)
+
+- **`Scene.checkpoint(path)` / `Scene.restore(path, *scene arguments)`:**
+  - every DataStructure, loaded in place by the restored scene (`ds.load_checkpoint`, which takes the checkpointed MTG and drops the topology caches);
+  - the models' and components' `checkpoint_state()` / `restore_state(state)` hooks, for external solvers (cmf, Campbell);
+  - the scene's time, iteration and pending events.
+
+  A restored scene continues bit for bit, and its recorder appends to the existing files.
+- **Vector-valued variables:** `state_variable(..., shape=(k,))` (or `register(..., shape=)`) store `(entities, k)` arrays, e.g. MIMICS' pools per cell. They are:
+  - carried over by growth, and validated;
+  - used by steps;
+  - exchanged component by component;
+  - expanded into one column per component by `to_dataframe` and the recorder;
+  - kept by checkpoints.
+
+  They are not MTG properties nor graph-system unknowns (QPo).
+- `UnionDataStructure` can be checkpointed and loaded in place.
+
 ### Scene services (PT5)
 
 - **`Scene(forcings=table)`:** one forcing table (a DataFrame indexed by time) shared by every model. A component's `forcing(name)` falls back on it.
