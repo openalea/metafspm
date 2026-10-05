@@ -110,10 +110,10 @@ class VectorisedProbe(FunctionalComponent):
         return 2. * level
 
     @rate(vectorized=False)
-    def _clipped(self, level):
+    def _clipped(self, level, threshold):
         self.scalar_calls = getattr(self, "scalar_calls", 0) + 1
-        if level > self.threshold:          # scalar logic: needs the per-element opt-in
-            return self.threshold
+        if level > threshold:               # scalar logic: needs the per-element opt-in
+            return threshold
         return level
 
 

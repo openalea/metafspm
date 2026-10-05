@@ -55,7 +55,7 @@ Each step has its design detail in a short note before code (complex steps), its
 | **P1** ✓ | Scene robustness (F1, agreed): the main loop stops on a worker's non-zero exit, then terminates blocked workers after a grace period; tested with a plant whose constructor raises | independent, small |
 | **P2** ✓ | Population at scale (F2, agreed): incremental `update_topology()` in segment mode (only new segments get Compartments and Connections; vids and edge values kept), and bulk vertex creation in the MPG (one batched `ArrayDict` assignment per property) | measured on 2·10⁶ segments |
 | **P3** ✓ | Tree kernels (5b, agreed): `chain_scan`, `accumulate`, `path_window`, `chain_shift` / `chain_write`, vector-valued values, minimal `path_compose`; reference loops from rhizodep, cnwgrass, adel and GRANAP rules | needed by growth at population scale |
-| **P4** | Population builder and planting: a planting table from `stand_initialization`; one MPG per sub-population (Plant vertices; initial structures placed by position and rotation; Plant-scale `x, y, z, rotation`); per-plant parameters from the table or from distributions | Q4–Q6 |
+| **P4** ✓ (emergence moved to P6) | Population builder and planting: a planting table from `stand_initialization`; one MPG per sub-population (Plant vertices; initial structures placed by position and rotation; Plant-scale `x, y, z, rotation`); per-plant parameters from the table or from distributions | Q4–Q6 |
 | **P5** | Cross-DataStructure links: `CrossMapping` (incidence matrix from a locator: barycentre, or length overlap), recomputed on topology or geometry changes; translator links between DataStructures become mapped exchanges with D9 defaults; the light model as a component reading several DataStructures | generalises `Coupler`; Q1–Q3 |
 | **P6** | `Scene(CompositeModel)`: environment components and populations, `__call__` order (environment, then each population), one or several populations (intercropping), the Logger per population and per plant | Q7–Q9 |
 | **P7** | Benchmarks and decision: time per step for 1 to 1000 plants of about 2 000 segments, with and without anatomies, split by phase, against today's one-plant-per-process scene; then decide on `play_Orchestra` (Q10) | |
@@ -120,4 +120,75 @@ Order: P1 → P2 → P3 → P4 → P5 → P6 → P7 → P8. P1 can go first beca
   - **(b) Declared:** a parameter that may vary between plants declares where it is used, `parameter(..., scale=scales.Plant, location="node", mapping="broadcast")`, and the equations take it as an argument (`def _rate(self, hexose, k)`). A scenario list making an undeclared scalar parameter differ between plants raises, naming the parameter and the declaration to add.
 
   **Recommendation:** (b). It keeps every equation's inputs explicit and works the same in steps and graph systems. Any parameter can be made heterogeneous by its declaration, with no specialisation of the mechanism. (a) can come later as a convenience for `@rate` steps if wanted.
-  → answer:
+  → answer: I am rather for a systematic storage of parameters at plant scale, even if they don't vary, to keep the equation writing the same everywhere and only if the input scenario varies it is mapped as heterogeneous for each plant. But how to differentiate parameters from variables in method's arguments in this case, while still ensuring methods are still vectorizable / numba compatible?
+
+## 7. Parameters stored at Plant scale (your QH1 answer, 2026-10-06)
+
+You chose: **every parameter is stored at Plant scale**, even when it does not vary, so that equations are written the same way everywhere. Only when the input scenarios differ between plants do the values differ. Your question: how are parameters told apart from variables in a method's arguments, while methods stay vectorisable and numba-compatible?
+
+**Answer: by their declaration, not by the method's signature.** Nothing in the signature needs to change.
+- The framework already knows each argument's declaration. When a step or an equation is called, it looks up every argument name in the component's resolved declarations (`VariableSpec`, step 1a): `variable_type` says parameter, input or state variable, and the declaration also gives the location and mapping. The method stays `def _rate(self, hexose, k)`.
+- **What each argument receives:** always an array at the equation's entity, so the types are uniform and numba compiles one specialisation:
+  - a state variable or input: its node (or edge) array, as today;
+  - a parameter: its Plant-scale values **broadcast to the equation's entity**, so each segment gets its plant's value:
+    - **heterogeneous:** an array gathered through the owner map (step 1 `broadcast`, step 2a `owner("Plant")`), cached as a derived variable and recomputed only when the parameter or the topology changes (D10);
+    - **homogeneous** (all plants equal): a **zero-stride view**, `np.broadcast_to(value, (n,))`. It costs no memory, numba reads it like any array, and it is read-only, so an equation cannot overwrite it (4a).
+- **For graph systems,** the entity is known from the decorator: node balances get node arrays, and edge laws get edge arrays, with each edge taking its child segment's plant. An edge never joins two plants (P2 keeps plants disconnected), so this is unambiguous.
+- **numba:** a step compiled with `@njit` receives float arrays only, never Python scalars, so the same signature serves the homogeneous and the heterogeneous cases. Read-only and zero-stride arrays are supported by numba (they compile as `readonly`, layout `A`).
+
+**Where the values come from:**
+- one scenario per plant, as Q6 decided;
+- the scene fills each Plant-scale parameter with the values of the plants' scenarios, or with the declared default;
+- a single scenario for all plants gives the homogeneous case, with no special code.
+
+**What changes for model writers:**
+- equations take their parameters as arguments, like their variables;
+- `self.k` remains readable when the population is homogeneous, and raises when the parameter differs between plants, naming the arguments to use instead (QH2);
+- grids and other DataStructures without a Plant scale keep parameters at the `"scalar"` location, also passed as zero-stride arrays, so environment components are written the same way.
+
+### Questions
+
+- **QH2, `self.k`.** Keep `self.k` readable (one value) when the parameter is homogeneous, and raise when it is not? Or forbid it always, so that equations are written with arguments only, and a model that is correct in a homogeneous population cannot fail later in a heterogeneous one? **Recommendation:** forbid it inside steps and equations (a clear error naming the argument to add), and keep it readable outside them (initialisation, scenario setup) as the population value when homogeneous.
+  → answer: follow recommendation
+- **QH3, the default.** Should `parameter(...)` **without a scale** now default to the Plant scale on plant DataStructures (and `"scalar"` on grids)? That way every existing parameter declaration becomes population-ready with no change. A parameter that must stay a plain Python value (e.g. a configuration flag or a file path) would be declared `dtype="object"` or kept out of `declare`. **Recommendation:** yes, for numeric parameters.
+  → answer: yes
+
+## 8. P4 design: population builder, planting and Plant-scale parameters (draft, 2026-10-06)
+
+QH2 and QH3 are agreed: `self.k` is forbidden inside steps and equations, and numeric parameters default to the Plant scale.
+
+**Parameters**
+- **Storage.**
+  - On a plant DataStructure, a numeric `parameter(...)` declared without a scale is stored at the `"Plant"` location: one value per plant, filled from each plant's scenario, or from the declared default.
+  - On grids, and on DataStructures without a Plant scale, it is stored at `"scalar"`.
+  - Parameters declared with a scale keep today's behaviour. Object or non-numeric parameters (`dtype="object"`, paths, flags) stay plain attributes.
+- **In steps and equations:** every argument is resolved by its declaration. A parameter is broadcast to the equation's entity:
+  - heterogeneous: owner-map gather, cached and recomputed on change;
+  - homogeneous: a zero-stride read-only view.
+
+  Steps (Functor) and graph systems (snapshot) both do this.
+- **`self.k`:** for each numeric parameter, the class gets a data descriptor (installed once per class, at its first instantiation):
+  - **inside** a step or an equation (a flag set by the Functor and the builder while they evaluate), reading `self.k` raises `AttributeError("... declare k as an argument of _rate")`;
+  - **outside,** reading gives the population value when homogeneous, and raises when heterogeneous;
+  - **writing** `model.k = 0.2` (scenario setup, tests) sets every plant's value. Writes before the DataStructure is bound (the dataclass `__init__`) are kept and applied at registration.
+- **Migration in this repo:** the test models reading declared parameters through `self.` inside equations (about 20 reads: UC1, UC3/UC4, the doubles, the growth helper) take them as arguments. `self.time_step`, `self.dt` and `self.previous()` are not declared parameters and stay.
+
+**Population and planting**
+- **Planting table:** from `stand_initialization` (positions, rotations, model per position, depth) plus one scenario per plant, as a `pandas.DataFrame` with one row per plant. For P4 a helper builds it from the existing arguments (`sowing_density`, `row_spacing`, …); P6 wires it into the Scene.
+- **Plant vertices:** `build_population(g, table)` adds one Plant-scale vertex per row to a new MPG, with Plant-scale variables `x`, `y`, `z`, `rotation` and `model`.
+- **Initial structures (Q4):** the population's StructuralComponent provides `initiate_plant(g, plant_vid, parameters)`, called once per plant. It builds that plant's initial structure (seed, first axes) under its Plant vertex, from its own scenario's parameters, positioned at the plant's coordinates. This is a new contract for structural components; rhizodep's `initiate_mtg` is the model of it.
+- **Then:** `populate_graph`, one `MPGDataStructure` for the population, and every component constructed once on it.
+- **Staggered emergence (Q5, not a priority):** an `emergence_time` Plant variable and a Plant-scale `"active"` mask, broadcast to segments, so that dormant plants are skipped (steps 2c/2d).
+
+**Validation**
+- 1 plant and 100 plants built from one scenario give identical per-plant results for the growth helper and a transport system, and the 100-plant run is computed in one call.
+- Two plant groups with different scenarios give each group its own values, compared against separate one-plant runs.
+- `self.k` inside a step raises with the argument to add; `model.k = …` sets every plant's value.
+- Zero-stride parameters are accepted by a numba-compiled step.
+
+### Questions
+
+- **QP4a, `initiate_plant`.** Is this contract right for the structural components you will port (rhizodep's seed and first axes; later cnwgrass/adel tillers and phytomers; GRANAP anatomies)? The alternative is a separate "seed" component outside the structural components. **Recommendation:** the structural component, since it owns the topology rules.
+  → answer: yes, the structural component will hold the initialization topology rules, probably several structuralcomponents will need to operate successively to initiate the plant before first execution / initialization of FunctionalComponents in __init__
+- **QP4b, positions.** Should the segments' coordinates (`x1 … z2`) be computed by the structural component from the plant's `x, y, z, rotation`, as rhizodep's turtle does today from the plant's origin? Or should the scene apply each plant's translation and rotation to coordinates the component computed in a local frame? **Recommendation:** by the component, from Plant-scale inputs; the scene only provides the plant variables.
+  → answer: This can be the job of the structural component / the component creating the datastructure. The datastructure translator should then operate from initialized variables to find neighbors and pass variables.

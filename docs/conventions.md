@@ -169,6 +169,13 @@ leaves = boundary_set(select=is_leaf, kind="robin", value="air_water_potential",
 - **Parameters of grown entities.** A parameter read from the MTG gets its value for new entities at the refresh before the next solve. Until then, masks built on it use its `on_grow` value.
 - **Hand-set boundary ports** (`_boundary_ports`) are deprecated.
 
+## Parameters
+
+- **Storage.** Numeric parameters declared without a scale are stored per plant (`"Plant"`; `"scalar"` on grids). They are uniform unless the plants' scenarios differ.
+- **In steps and equations,** parameters are **arguments**, broadcast to the equation's nodes or edges: uniform values as zero-stride views, varied ones per entity. `self.<parameter>` raises there.
+- **Outside them,** `self.k` reads the value (or the per-plant values when they differ), and `model.k = v` sets every plant.
+- **MPG-style structural steps** use `self.parameter_values("k")`.
+
 ## Structural components
 
 - A `StructuralComponent` edits the MPG through `self.mtg`. The MPG is the source of truth for structure.

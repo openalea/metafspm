@@ -18,6 +18,21 @@ The flat modules used before the 2026 restructure have been removed. No compatib
 | `openalea.metafspm.component.Model`, `declare` | `openalea.metafspm.coupling.component.Component` / `FunctionalComponent`, `declare` |
 | `openalea.metafspm.specializer` | `openalea.metafspm.solve.specializer` |
 
+### Plant populations and per-plant parameters (P4)
+
+- **Parameters per plant.** A numeric `parameter(...)` declared without a scale is stored per plant (`"Plant"` location) on plant DataStructures, and at `"scalar"` on grids. String, boolean and object parameters stay plain attributes.
+- **Parameters are arguments.** Steps and graph-system equations take parameters as arguments (`def _rate(self, hexose, k)`), broadcast to the equation's entities: nodes, or edges through their child's plant. Uniform values come as zero-stride read-only views, varied ones as cached gathers, so numba steps get float arrays in both cases.
+- **`self.<parameter>`:**
+  - inside a step or an equation, reading it raises `AttributeError`, naming the argument to add;
+  - outside, it reads the population value (or the per-plant values), and writing it sets every plant.
+
+  MPG-style structural steps read per-vertex values with `self.parameter_values(name)`.
+- **New `scene/population.py`:**
+  - `planting_table(...)`: `stand_initialization`'s layout, with one scenario per plant possible;
+  - `build_population(table, initiators)`: one Plant vertex per plant, each plant's initial structure built by `StructuralComponent.initiate_plant(g, plant, parameters)`, in order;
+  - `apply_plant_scenarios(ds, components, table, plants)`: per-plant parameters from the scenarios.
+- **Fix:** the declaration resolver no longer converts the defaults of fields that are not DataStructure variables, so string parameters without a scale raised before.
+
 ### Tree kernels (P3)
 
 - **New `data_structure/tree_kernels.py`**, through `MPGDataStructure` methods, vectorised over every plant of the DataStructure:

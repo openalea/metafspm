@@ -152,6 +152,41 @@ def parameter(unit: str, unit_comment: str, description: str, min_value: float,
     )
 
 
+class _PlantParameter:
+    """
+    A numeric parameter stored per plant on the DataStructure (devplan_population_scene §7-8, QH2-QH3).
+      * inside a step or a graph-system equation, reading self.<name> raises: the parameter is an argument;
+      * outside, reading gives the population value when every plant has the same, else the per-plant values;
+      * writing (scenario setup, tests) sets every plant's value; before the DataStructure is bound, the value is
+        kept and used at registration.
+    """
+
+    def __init__(self, name, default):
+        self.name, self.default = name, default
+
+    def __get__(self, obj, owner=None):
+        if obj is None:
+            return self.default
+        if obj.__dict__.get("_in_equation"):
+            raise AttributeError(f"{type(obj).__name__}.{self.name} is a parameter stored per plant: take it as an "
+                                 f"argument of the step or equation ({self.name}) instead of reading self.{self.name}")
+        if self.name not in obj.__dict__.get("_registered_parameters", ()):
+            return obj.__dict__.get("_pending_parameters", {}).get(self.name, self.default)
+        values = np.asarray(obj.data_structure.get(self.name))
+        if values.size and np.all(values == values.flat[0]):
+            return values.flat[0].item()
+        return values.copy()
+
+    def __set__(self, obj, value):
+        if self.name in obj.__dict__.get("_registered_parameters", ()):
+            obj.data_structure.set(self.name, value)
+        else:
+            obj.__dict__.setdefault("_pending_parameters", {})[self.name] = value
+
+    def values_at(self, obj, location: str = "node") -> np.ndarray:
+        return obj.data_structure.parameter_view(self.name, location)
+
+
 @dataclass
 class Component:
     """
@@ -249,6 +284,7 @@ class DataStructureComponent(Component):
     mtg_sync = "after_call"
 
     def __post_init__(self):
+        self._install_plant_parameters()
         if self.data_structure is None:
             raise TypeError(
                 f"{type(self).__name__}() requires a DataStructure as its first argument. "
@@ -294,14 +330,18 @@ class DataStructureComponent(Component):
         """
         self._variable_specs = declared_specs(self, ds)
         for name, spec in self._variable_specs.items():
+            pending = self.__dict__.get("_pending_parameters", {})
             if ds.has(name):
                 registered = ds.location(name)
                 if registered != spec.location and name not in ds.aliases():
                     raise DeclarationError(f"{type(self).__name__}.{name} is declared at {spec.location} but is "
                                            f"already registered at {registered}")
+                if name in pending and pending[name] != spec.default:
+                    ds.set(name, pending[name])          # a value given to the constructor
             else:
                 values = ds.read_mtg(spec) if hasattr(ds, "read_mtg") else None
-                ds.register(name, values, location=spec.location, default=spec.default, on_grow=spec.on_grow,
+                default = pending.get(name, spec.default) if spec.dtype is not object else spec.default
+                ds.register(name, values, location=spec.location, default=default, on_grow=spec.on_grow,
                             dtype=spec.dtype)
             # Metadata precedence: the component that owns the variable (not an input) sets its default, growth
             # policy and kind; a component reading it as an input only fills what is still unknown.
@@ -312,6 +352,42 @@ class DataStructureComponent(Component):
                     meta.setdefault(key, value)
             else:
                 meta.update(declared, default=spec.default, on_grow=spec.on_grow)
+        self.__dict__["_registered_parameters"] = {name for name in getattr(type(self), "_plant_parameter_names", ())
+                                                   if name in self._variable_specs}
+        self.__dict__.pop("_pending_parameters", None)
+
+    @classmethod
+    def _plant_parameter_fields(cls) -> dict:
+        """{name: default} of the numeric parameters declared without a place, stored per plant (QH3)."""
+        names = {}
+        for f in fields(cls):
+            meta = f.metadata
+            if (meta.get("variable_type") == "parameter" and meta.get("scale") is None and meta.get("location") is None
+                    and meta.get("dtype") in (None, float, int, "float", "int") and not isinstance(f.default, bool)
+                    and isinstance(f.default, (int, float, np.integer, np.floating))):
+                names[f.name] = f.default
+        return names
+
+    def _install_plant_parameters(self) -> None:
+        """Replace, once per class, each per-plant parameter's attribute by a _PlantParameter descriptor (QH2)."""
+        cls = type(self)
+        if "_plant_parameter_names" not in cls.__dict__:
+            names = cls._plant_parameter_fields()
+            for name, default in names.items():
+                setattr(cls, name, _PlantParameter(name, default))
+            cls._plant_parameter_names = tuple(names)
+        # Values set by the dataclass __init__ before the descriptors existed (first instance of the class)
+        pending = self.__dict__.setdefault("_pending_parameters", {})
+        for name in cls._plant_parameter_names:
+            if name in self.__dict__:
+                pending[name] = self.__dict__.pop(name)
+
+    def parameter_values(self, name: str, location: str = "node") -> np.ndarray:
+        """
+        Per-entity values of a per-plant parameter, for code that cannot take it as an argument (MPG-style structural
+        steps): each node (or edge) gets its plant's value.
+        """
+        return self.data_structure.parameter_view(name, location)
 
     def write_back_to_mtg(self) -> None:
         """
@@ -470,6 +546,17 @@ class StructuralComponent(DataStructureComponent):
     @property
     def mtg(self):
         return self.data_structure.mtg
+
+    @classmethod
+    def initiate_plant(cls, g, plant_vid: int, parameters: dict) -> None:
+        """
+        Build the initial structure of one plant under its Plant-scale vertex *plant_vid* in the population MPG *g*,
+        from that plant's scenario *parameters*, before any component is constructed (devplan_population_scene §8,
+        QP4a). Several structural components may each add their part, in order (e.g. roots, then anatomies). The
+        plant's position is in g.property("x"/"y"/"z"/"rotation")[plant_vid]; the component computes its elements'
+        coordinates from it (QP4b).
+        """
+        raise NotImplementedError(f"{cls.__name__} does not initiate plants")
 
     def _mpg_signature(self) -> tuple:
         """Cheap topology signature of the MPG: vertex count and last allocated vertex id (P3)."""

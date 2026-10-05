@@ -1561,3 +1561,61 @@ Per-file counts:
 - **Deferred to the population growth helper (P4–P7):** emitting the supply contributions in visiting order for the consumption scatter (S1's bitwise accumulation). The window sums are done here.
 - **Suite:** 696 passed.
 - **P4** (population builder) **waits for QH1**, in `devplan_population_scene.md` §6: how per-plant parameters reach the equations.
+
+---
+
+## 2026-10-06: QH1 answered (every parameter stored at Plant scale)
+
+- **Your choice:** every parameter is stored at Plant scale, heterogeneous only when the scenarios differ. Your question was how parameters and variables are told apart in method arguments while staying vectorisable and numba-compatible.
+- **Answer** (devplan_population_scene.md §7): by declaration, not signature.
+  - Each argument is resolved through its `VariableSpec`.
+  - Parameters arrive broadcast to the equation's entity: node arrays for balances and rates, edge arrays from the child segment's plant.
+  - Heterogeneous parameters come through a cached owner-map gather; homogeneous ones as a zero-stride read-only view.
+  - Float arrays always, so one numba specialisation serves both cases.
+- **New questions:**
+  - QH2: whether `self.k` is forbidden inside equations;
+  - QH3: whether `parameter()` without a scale defaults to Plant on plant DataStructures.
+- P4 waits for them. No code changes.
+- **QH2 / QH3 agreed:** `self.k` is forbidden inside equations, and numeric parameters default to Plant scale. The P4 design is drafted in the plan's §8:
+  - Plant-scale storage;
+  - per-argument broadcast (owner gather, or zero-stride);
+  - a class data descriptor enforcing QH2 and setting every plant's value on write;
+  - the planting table;
+  - `build_population`;
+  - a new `StructuralComponent.initiate_plant(g, plant_vid, parameters)` contract;
+  - staggered emergence through a Plant-level active mask;
+  - migration of about 20 in-repo `self.<parameter>` reads.
+
+  Questions QP4a (`initiate_plant`) and QP4b (who computes positions). Stopped for agreement (design note before a complex step).
+
+---
+
+## 2026-10-06 (later): QH2/QH3 and QP4a/QP4b agreed; P4 implemented (populations, per-plant parameters)
+
+- **QP4a:** several structural components may initiate a plant in sequence. **QP4b:** structural components compute positions; the P5 translator maps from the initialised variables.
+- **Resolver:** a numeric parameter without scale or location resolves to `"Plant"` (scale Plant) on plant DataStructures, `"scalar"` otherwise; other unplaced fields return `None` before any default conversion.
+  - **Latent 1a bug fixed:** string parameters without a scale raised "needs a numeric default".
+- **`parameter_view(name, to)`** (mixin, with an MPG override for edges by their child node): a zero-stride read-only view when uniform, else an owner gather, cached by write count and topology.
+- **Functor:** `_arguments` broadcasts parameter arguments to the step's location, before masking; `_in_equation` is flagged around the evaluation. Split into `_arguments`, `_evaluate` and `_write_outputs`.
+- **Graph systems:**
+  - `_snapshot` puts per-plant parameters into both the node and the edge snapshots;
+  - evaluators look up their own entity's snapshot first, and filtered slicing is entity-aware;
+  - `_in_equation` wraps the equation calls.
+- **`_PlantParameter` data descriptor** (installed once per class, with values set by the dataclass `__init__` moved to pending): QH2's refusal inside equations; outside, the uniform value or the per-plant array; writes set every plant. Registration uses the constructor's value; a pre-registered variable is overwritten only by an explicit non-default value. `parameter_values()` serves MPG-style steps.
+- **`StructuralComponent.initiate_plant`** contract; new `scene/population.py` (`planting_table` on `stand_initialization` with a seed and `per_plant_scenarios`, `build_population`, `apply_plant_scenarios`).
+- **Test changes:**
+  - `VectorisedProbe._clipped` takes `threshold` as an argument (the one migration needed in the suite);
+  - the growth helper gained `initiate_plant` (chain under the Plant vertex, with positions from the plant's `x, y, z`) and reads `elongation_rate` per vertex.
+- **New `test/structure_tests/test_population.py`**, 9 tests:
+  - 100 identical plants give each plant exactly the single-plant result, in one call;
+  - alternating scenarios match separate single-plant runs;
+  - initial structures follow per-plant scenarios;
+  - the planting table: size, seed reproducibility, per-plant scenarios;
+  - parameters at Plant, broadcast and settable;
+  - `self.k` inside a step refused;
+  - zero-stride read-only views;
+  - a numba step with uniform and varied parameters;
+  - grid parameters at `"scalar"`.
+- **DS13 hazard seen in the suite:** a test class named `GridDecay` collided with another in `test_transport.py`, because the Choregrapher merges same-named classes. The test class is renamed; P8 fixes the cause.
+- **Moved to P6:** staggered emergence (Q5), which needs the scene clock.
+- **Suite:** 705 passed.
