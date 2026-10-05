@@ -1619,3 +1619,6 @@ Per-file counts:
 - **DS13 hazard seen in the suite:** a test class named `GridDecay` collided with another in `test_transport.py`, because the Choregrapher merges same-named classes. The test class is renamed; P8 fixes the cause.
 - **Moved to P6:** staggered emergence (Q5), which needs the scene clock.
 - **Suite:** 705 passed.
+
+- **P4 committed** (`4f097f5`): CHANGELOG, conventions (Parameters section), migration guide (parameters as arguments), plan ✓.
+- **P5 design note** drafted in `devplan_population_scene.md` §9, with questions QP5a–c. Waiting for the answers before any code, since they decide the default mappings and the light-over-populations design.

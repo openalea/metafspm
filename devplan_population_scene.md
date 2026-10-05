@@ -192,3 +192,51 @@ QH2 and QH3 are agreed: `self.k` is forbidden inside steps and equations, and nu
   → answer: yes, the structural component will hold the initialization topology rules, probably several structuralcomponents will need to operate successively to initiate the plant before first execution / initialization of FunctionalComponents in __init__
 - **QP4b, positions.** Should the segments' coordinates (`x1 … z2`) be computed by the structural component from the plant's `x, y, z, rotation`, as rhizodep's turtle does today from the plant's origin? Or should the scene apply each plant's translation and rotation to coordinates the component computed in a local frame? **Recommendation:** by the component, from Plant-scale inputs; the scene only provides the plant variables.
   → answer: This can be the job of the structural component / the component creating the datastructure. The datastructure translator should then operate from initialized variables to find neighbors and pass variables.
+
+## 9. P5 design: links between DataStructures (draft, 2026-10-06)
+
+**What exists.** `Coupler` maps each plant node to the cell holding its segment barycentre (`VoxelLocator`):
+- `push()` scatter-adds plant fluxes into soil cells;
+- `pull()` gathers the soil state of each node's cell.
+
+It is plant ↔ soil only. The map is rebuilt by hand (`update_map()`), the soil inputs must be zeroed before several plants push, and the D9 defaults are not applied. `CompositeModel._couple_on_data_structures` refuses links across DataStructures.
+
+**Proposal.**
+
+1. **`CrossMapping(source_ds, target_ds, locator="barycentre" | "overlap", ...)`:** a sparse incidence (rows = source entities, columns = target cells, weights).
+   - *Barycentre*: one cell per segment, weight 1. This is today's map, keeping the `flip_z` and periodic options.
+   - *Overlap*: each segment is cut by the cell faces (a 3-D grid traversal), weight = its length fraction in each cell.
+   - *Recompute*: automatic, at the next exchange after the source's `topology_version` or a coordinate variable's write count changed. `update_map()` is no longer needed.
+2. **Exchange links.** A translator link whose receiver and provider are on different DataStructures becomes an exchange through the mapping of that DataStructure pair. Its default follows D9 from the variables' kinds:
+
+   | Direction | Extensive (fluxes, amounts) | Intensive / massic (concentrations, temperature) |
+   |---|---|---|
+   | plant → cell | sum, split by weight | weighted mean (`weight=` required, e.g. `length`) |
+   | cell → plant | split by weight (`weight=` required) | weight-averaged gather |
+
+   - Both sides are checked with `kinds_agree`, and an explicit `aggregation=` overrides the default, as within one DataStructure.
+   - A formula link is evaluated on the source DataStructure, then mapped.
+   - Several sources feeding one target variable (several populations into one soil) are **summed in one exchange**, written by one `set()`. This removes `zero_soil_inputs()` and its ordering hazard.
+3. **Fixed points (Q1).** The links are grouped per receiving DataStructure, and `exchange(into=ds)` runs them all. `couple_components` builds these exchanges; P6's Scene calls `exchange(into=population)` after the environment components, and `exchange(into=environment)` after the populations. Until P6 the exchanges are called by hand, as `push` / `pull` are today.
+4. **`Coupler`** is reimplemented on `CrossMapping` (same results, tested bit for bit against today's map), so `Transport` keeps working until P7 removes both (Q10).
+5. **Out of scope:** grid ↔ grid mappings at different resolutions (soil ↔ atmosphere); masks of dormant plants (Q5, P6).
+
+**Sub-steps:**
+- 5.1: `CrossMapping` (barycentre, overlap, automatic recompute), with tests against `VoxelLocator` and hand-computed overlaps.
+- 5.2: exchange links from the translator, D9 defaults, several sources summed, `exchange(into=)`.
+- 5.3: `Coupler` on `CrossMapping`.
+- 5.4: the light cases of QP5b, as tests.
+
+### Questions
+
+- **QP5a, intensive plant → cell.** When a plant variable that is intensive is sent to a cell (e.g. root surface temperature, read by a soil model), is a weighted mean with a required `weight=` right? The alternative is to refuse such links, the soil model receiving extensive variables only. **Recommendation:** weighted mean with a required `weight=`, as D9 does upward within one DataStructure.
+  → answer:
+- **QP5b, light over several populations.** A CARIBU-like light component on an MPG sees only its own DataStructure. With two populations of different models (Q8: intercropping), it would not see the shading of the other population. Options:
+  - **(a)** a component declared on several DataStructures (reads and writes each);
+  - **(b)** a **union mapping**: the light component runs on its own flat DataStructure of scene elements, i.e. the concatenation of the populations' elements. It reads geometry and writes interception through one-to-one exchanges (rows = elements of each population, in order), so components keep one DataStructure each.
+  - **(c)** for now, one light component per population, with no shading between populations.
+
+  **Recommendation:** (b). It needs no change to the component base and fits Q3 ("only the DataStructure coupling gives the correspondence"). With one population, the light component simply runs on the population's MPG.
+  → answer:
+- **QP5c, cell → plant for extensive variables.** For example, a soil supply given per cell and shared among the segments in it. Is splitting by a required `weight=` (e.g. root length or surface in the cell) the right default? Or should the cell's amount be shared in proportion to the plants' demand, which is a model process and not a mapping? **Recommendation:** split by `weight=`, with demand-based sharing left to the models (computed as an intensive rate per cell, then gathered).
+  → answer:
