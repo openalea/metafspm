@@ -1,5 +1,4 @@
 from simple_seedling import seedling
-from openalea.mtg.traversal import pre_order_in_scale, pre_order2, post_order2
 
 
 g = seedling.g
@@ -82,30 +81,6 @@ _TOPO_PAIRS = [
 ]
 
 
-def test_partial_traversal():
-    """Show why existing single-axis traversals were insufficient for MPG."""
-    label = g.property('label')
-    scale = g.property('scale')
-
-    print("\npre_order_in_scale")
-    for vid in pre_order_in_scale(g, g.root):
-        if vid != g.root:
-            print(g.scales.translator[scale[vid]], g.labels.translator[label[vid]])
-
-    print("\nvertices")
-    for vid in g.vertices():
-        if vid != g.root:
-            print(vid, g.scales.translator[scale[vid]], g.labels.translator[label[vid]])
-
-    print("\npre_order2 (finest scale from leafelement1)")
-    for vid in pre_order2(g, leafelement1):
-        print(vid, g.scales.translator[scale[vid]], g.labels.translator[label[vid]])
-
-    print("\npost_order2 (finest scale from leafelement1)")
-    for vid in post_order2(g, leafelement1):
-        print(vid, g.scales.translator[scale[vid]], g.labels.translator[label[vid]])
-
-
 def test_combined_traversal():
     """pre_order_mpg and post_order_mpg visit every vertex in the correct order.
 
@@ -159,6 +134,5 @@ def test_combined_traversal():
 
 
 if __name__ == "__main__":
-    test_partial_traversal()
     test_combined_traversal()
     print("All assertions passed.")

@@ -1,5 +1,5 @@
 """
-Reproducible random draws per entity (devplan_porting PT2, QPa): a pure function of (seed, stream, step, entity id),
+Reproducible random draws per entity: a pure function of (seed, stream, step, entity id),
 independent of the visiting order and of the other entities, with the expected distributions; component streams
 advance at each call and continue across checkpoints.
 """
@@ -25,11 +25,8 @@ DOC = dict(unit="", unit_comment="", description="", min_value=0., max_value=1.,
 
 
 @pytest.fixture(autouse=True)
-def _fresh_choregrapher():
-    Choregrapher().reset()
+def _simulation_time_step():
     Choregrapher().add_simulation_time_step(1)
-    yield
-    Choregrapher().reset()
 
 
 def test_draws_depend_on_the_entity_not_on_the_order_or_the_others():

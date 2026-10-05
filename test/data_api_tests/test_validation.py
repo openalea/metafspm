@@ -1,5 +1,5 @@
 """
-Validation and failure modes (design note datastructure_contract §6, step 1e, DS11): inconsistencies are reported
+Validation and failure modes: inconsistencies are reported
 by DataStructure.validate(), and missing variables raise instead of acting as zeros.
 """
 import os
@@ -9,7 +9,6 @@ from dataclasses import dataclass
 import numpy as np
 import pytest
 
-from openalea.metafspm.coupling.choregrapher import Choregrapher
 from openalea.metafspm.coupling.component import FunctionalComponent, state_variable
 from openalea.metafspm.coupling.translator import Translator
 from openalea.metafspm.data_structure.configs import ScalesConfig as scales
@@ -23,12 +22,6 @@ from simple_seedling import generate_simple_mpg_seedling
 DOC = dict(unit="", unit_comment="", description="", min_value=0., max_value=1., value_comment="", references="",
            DOI=[])
 
-
-@pytest.fixture(autouse=True)
-def _fresh_choregrapher():
-    Choregrapher().reset()
-    yield
-    Choregrapher().reset()
 
 
 @pytest.fixture
@@ -80,7 +73,7 @@ def test_strict_validation_detects_writes_through_views():
     ds = _grid()
     ds.derive("c", {"a": 1., "b": 1.})
     ds.validate(strict=True)
-    ds.get("a")[...] = 10.                                       # invisible to the write counters (D10)
+    ds.get("a")[...] = 10.                                       # invisible to the write counters
     with pytest.raises(ValueError, match="'c' differs from its sources: .* written through a view"):
         ds.validate(strict=True)
     ds.validate()                                                # the structure itself is fine

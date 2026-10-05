@@ -1,5 +1,5 @@
 """
-Structure edits and inheritance (devplan_porting PT3): a vertex inserted in the middle of a chain (an element emerging
+Structure edits and inheritance: a vertex inserted in the middle of a chain (an element emerging
 between two others) and a vertex removed with its children re-linked to their grandparent, with the variables carried
 over; steps disabled in a subclass by returning None or listing them in steps_removed.
 """
@@ -17,11 +17,8 @@ from growth import DOC, make_chain
 
 
 @pytest.fixture(autouse=True)
-def _fresh_choregrapher():
-    Choregrapher().reset()
+def _simulation_time_step():
     Choregrapher().add_simulation_time_step(1)
-    yield
-    Choregrapher().reset()
 
 
 @dataclass

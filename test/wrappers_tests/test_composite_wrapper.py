@@ -1,7 +1,8 @@
 """
-CompositeModel behaviour (devplan W2, on DataStructure-backed components since the removal of the props path):
+CompositeModel behaviour, on DataStructure-backed components:
 translator files and the interactive builder, soil exchange queries, input tables, documentation.
-Coupling semantics are in test_composite_datastructure.py, the plant/soil exchange in test_coupler.py.
+Coupling semantics are in test_composite_datastructure.py; exchanges between DataStructures in
+structure_tests/test_cross_datastructures.py.
 """
 import os
 import types

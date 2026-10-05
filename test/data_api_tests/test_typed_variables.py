@@ -1,5 +1,5 @@
 """
-Typed variables (design note time_and_data §5, step 4c, DS12, T6, Q22): integer variables kept as integers, label
+Typed variables: integer variables kept as integers, label
 names resolved through the MTG's LabelsConfig, and object variables (lists, records) stored per entity but kept out
 of graph systems, derivations and transport.
 """
@@ -10,7 +10,6 @@ from dataclasses import dataclass
 import numpy as np
 import pytest
 
-from openalea.metafspm.coupling.choregrapher import Choregrapher
 from openalea.metafspm.coupling.component import FunctionalComponent, parameter, state_variable
 from openalea.metafspm.data_structure.configs import PropsConfig, ScalesConfig as scales
 from openalea.metafspm.data_structure.data_api import MPGDataStructure
@@ -23,12 +22,6 @@ from simple_seedling import generate_simple_mpg_seedling
 DOC = dict(unit="", unit_comment="", description="", min_value=0., max_value=1., value_comment="", references="",
            DOI=[])
 
-
-@pytest.fixture(autouse=True)
-def _fresh_choregrapher():
-    Choregrapher().reset()
-    yield
-    Choregrapher().reset()
 
 
 @pytest.fixture

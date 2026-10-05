@@ -1,5 +1,5 @@
 """
-Derived variables resolved at read (design note datastructure_contract §4, step 1c, D10, N3): per-variable write
+Derived variables resolved at read: per-variable write
 counters, recomputation at get() when a source changed, and read-only derived variables.
 """
 import numpy as np
@@ -105,7 +105,7 @@ def test_graph_setters_cannot_write_a_derived_variable():
 
 
 def test_writes_through_a_view_need_mark_written():
-    """Unsupported unless declared (D10): the write counter only sees set() and mark_written()."""
+    """Unsupported unless declared: the write counter only sees set() and mark_written()."""
     ds = _ds()
     ds.derive("status", {"amino_acids": 1., "nitrate": 0.5})
     ds.get("nitrate")[...] = 8.

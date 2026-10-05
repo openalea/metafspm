@@ -1,7 +1,6 @@
 """
-CompositeModel coupling DataStructure-backed components (devplan WD.4): translator links become aliases and derived
-variables on the shared DataStructure. Expected values are the ones of the props-based contract
-(test_composite_wrapper.py::test_link_values_seen_by_receivers), so both couplings agree.
+CompositeModel coupling DataStructure-backed components: translator links become aliases and derived
+variables on the shared DataStructure.
 """
 import copy
 

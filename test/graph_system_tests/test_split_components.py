@@ -1,5 +1,5 @@
 """
-Graph systems solved per connected piece (S2, design note population_and_performance §9): split="components" solves
+Graph systems solved per connected piece: split="components" solves
 each plant of a population on its own, with its own Newton convergence and integration steps, as if it were alone.
 """
 import os
@@ -24,11 +24,8 @@ DT = 10.
 
 
 @pytest.fixture(autouse=True)
-def _fresh_choregrapher():
-    Choregrapher().reset()
+def _simulation_time_step():
     Choregrapher().add_simulation_time_step(DT)
-    yield
-    Choregrapher().reset()
 
 
 class _Diffusion:

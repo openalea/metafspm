@@ -1,5 +1,5 @@
 """
-Building the graph at population scale (design note population_and_performance §13 F2, plan P2): bulk vertex
+Building the graph at population scale: bulk vertex
 creation, plants of one MPG kept disconnected, and incremental extension of the graph on growth.
 """
 import numpy as np
@@ -105,7 +105,7 @@ def test_pruning_removes_vertices_and_relinks_their_children():
 
 def test_openalea_traversals_see_segments_only():
     """Compartments are linked to their segment as topological children (populate_graph); the MPG's children,
-    Sons, post_order2 and pre_order2 return the segments only, as on a plain MTG (QPq)."""
+    Sons, post_order2 and pre_order2 return the segments only, as on a plain MTG."""
     from openalea.mtg.traversal import post_order2, pre_order2
     g, roots = _population(2)
     g.populate_graph(g.scales.SubOrgan)

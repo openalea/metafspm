@@ -1,5 +1,5 @@
 """
-Graph systems on grids (design note cross_scale_and_grids §3, step 3d, DS1): soil transport written with the same
+Graph systems on grids: soil transport written with the same
 @graph_system decorators as plant transport, on the cells (nodes) and faces (edges) of an ArrayDataStructure, with
 boundary sets on boundary layers and active subgraphs of cells.
 """
@@ -10,7 +10,6 @@ import pytest
 from scipy.sparse import identity
 from scipy.sparse.linalg import spsolve
 
-from openalea.metafspm.coupling.choregrapher import Choregrapher
 from openalea.metafspm.coupling.component import FunctionalComponent, parameter, state_variable
 from openalea.metafspm.data_structure.data_api import ArrayDataStructure
 from openalea.metafspm.solve.decorator import boundary_set, edge_law, graph_system, node_balance
@@ -19,12 +18,6 @@ DOC = dict(unit="", unit_comment="", description="", min_value=0., max_value=1.,
            DOI=[])
 SHAPE, DX, DT, D = (4, 3, 5), (0.1, 0.2, 0.05), 0.5, 1e-3
 
-
-@pytest.fixture(autouse=True)
-def _fresh_choregrapher():
-    Choregrapher().reset()
-    yield
-    Choregrapher().reset()
 
 
 class _DiffusionEquations:

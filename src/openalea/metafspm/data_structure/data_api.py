@@ -189,7 +189,7 @@ class GraphView:
 
 class DataStructure(ABC):
     """
-    Level 1 — Abstract base for all data structures.
+    Abstract base for all data structures.
 
     Defines the minimal contract between the data layer and the solver layer:
       extract_state  : DataStructure  →  flat numpy x   (for solver)
@@ -1029,7 +1029,7 @@ class DataStructurePropsView(Mapping):
 
 class GraphDataStructure(DataStructure):
     """
-    Level 2a — Abstract graph data structure.
+    Abstract graph data structure.
 
     Adds plant topology: ordered nodes, directed edges (parent → child), incidence matrix B.
 
@@ -1095,7 +1095,7 @@ class GraphDataStructure(DataStructure):
 
 class MTGDataStructure(GraphDataStructure):
     """
-    Level 3a — Abstract MTG plant graph wrapper.
+    Abstract MTG plant graph wrapper.
 
     Vertex ids (vids) may be non-contiguous integers — both subclasses
     maintain a vid ↔ contiguous-index bijection via _build_index_map().
@@ -1174,7 +1174,7 @@ class MTGDataStructure(GraphDataStructure):
 
 class LegacyMPGDataStructure(MTGDataStructure):
     """
-    Level 4a — MTG with properties in g.property() dicts.
+    MTG with properties in g.property() dicts.
 
     Legacy OpenAlea format:
         mtg.property('water_potential')  →  {vid: value, ...}
@@ -1214,30 +1214,17 @@ _EDGE_CONVENTIONS = {"child": "proximal", "parent": "distal"}
 
 class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
     """
-    Level 4b — MPG wrapper operating at Compartment/Connection scales.
+    The variables of a plant population on one MPG, as arrays, with the MPG's solver graph as topology.
 
-    Requires g.populate_graph(from_scale) and g.convert_properties_to_arraydict()
-    to have been called before construction.  populate_graph() creates one
-    Compartment node per biological segment and one Connection edge per
-    adjacency; this class wraps those into numpy arrays for the solver.
+    Segment mode (default): one node per from_scale vertex (the Compartment populate_graph created for it), keyed
+    by that vertex's vid, and one edge per Connection between them, keyed by the child vertex's vid. Anatomy mode
+    (nodes="Compartment"): the nodes are the Compartments of the anatomies below the from_scale vertices and the
+    edges every Connection (anatomy edges and junctions), keyed by their own vids.
 
-        _node_data[name]  →  np.ndarray of shape (n_nodes,)
-        _edge_data[name]  →  np.ndarray of shape (n_edges,)
-
-    Node IDs (used as props keys and in GraphView.node_ids) are the SubOrgan
-    VIDs stored in the vertex_id property of Compartment nodes — the same IDs
-    that mpg.graph() uses, so the two APIs are consistent.
-
-    Edge identity: edges are 0-based indices in the order returned by
-    array_filtering("n_id_a", filter_in={"scale": Connection}), i.e. ascending
-    Connection vertex ID order.
-
-    Proposed adjustment to MPG: a future mpg.incidence(filter_in=None) method
-    returning (n_id_a_arr, n_id_b_arr, node_vids) would let to_graph_view()
-    delegate topology assembly entirely to the MPG, mirroring mpg.graph().
-
-    invalidate_topology() must be called after any structural change
-    (organ emergence, pruning, grafting) to rebuild B and index maps.
+    Variables are stored per location: "node", "edge", "scalar" and the coarser MTG scales ("Plant", "Axis", ...),
+    whose entities own nodes (owner(), entity_ids()). After the MTG's structure changed, update_topology() extends
+    the graph and carries the variables over; ds.mtg and flush_mtg() write the state variables back to the MTG's
+    properties.
     """
 
     def __init__(self, mtg, from_scale: int = None, nodes: str = None, wiring: list = None):
@@ -2546,7 +2533,7 @@ class _KeyedValues:
 
 class FieldDataStructure(DataStructure):
     """
-    Level 2b — Abstract spatially discretized field.
+    Abstract spatially discretized field.
 
     PDEs are discretized in space (method of lines) reducing them to an
     ODE system the solver can integrate:  ∂u/∂t = D(x) * L @ u + source
@@ -2592,7 +2579,7 @@ class FieldDataStructure(DataStructure):
 
 class ArrayDataStructure(VariableStoreMixin, FieldDataStructure):
     """
-    Level 3b — 1-D or 3-D numpy array field.
+    1-D or 3-D numpy array field.
 
     Covers:
       1D: soil water content as function of depth   shape = (n_z,)

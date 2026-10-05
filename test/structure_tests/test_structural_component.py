@@ -1,5 +1,5 @@
 """
-StructuralComponent (design note structure_and_boundaries §3, step 2b, DS19): MPG-style and array-style steps,
+StructuralComponent: MPG-style and array-style steps,
 the synchronisation of the DataStructure around MPG-style steps, and topology updates only when the MPG changed.
 """
 import numpy as np
@@ -9,12 +9,6 @@ from openalea.metafspm.coupling.choregrapher import Choregrapher
 
 from growth import SEGMENT_LENGTH, CarbonProbe, RootGrowthProbe, make_chain
 
-
-@pytest.fixture(autouse=True)
-def _fresh_choregrapher():
-    Choregrapher().reset()
-    yield
-    Choregrapher().reset()
 
 
 @pytest.fixture

@@ -1,6 +1,5 @@
 """
-A small rhizodep-like growth model on a chain of root segments, to test StructuralComponent (design note
-structure_and_boundaries §3, step 2b). Not a plant model: deterministic, and simple enough to compute by hand.
+A small rhizodep-like growth model on a chain of root segments, to test StructuralComponent. Not a plant model: deterministic, and simple enough to compute by hand.
 
 Steps, in the growth rows of the Choregrapher:
   potential         (MPG-style)   potential elongation of the apex = rate * C_hexose_root
@@ -70,7 +69,7 @@ class RootGrowthProbe(StructuralComponent):
 
     @classmethod
     def initiate_plant(cls, g, plant, parameters):
-        """One plant's root chain under its Plant vertex: n_segments (default 3), the last an apex (P4, QP4a-b)."""
+        """One plant's root chain under its Plant vertex: n_segments (default 3), the last an apex."""
         s = g.scales
         n_segments = int(parameters.get("n_segments", 3))
         apex_length = float(parameters.get("apex_length", 0.5))
@@ -135,7 +134,7 @@ class RootGrowthProbe(StructuralComponent):
         g, length, distance = self.mtg, self._prop("length"), self._prop("distance_from_tip")
 
         def below(v):
-            return sum(length[c] + below(c) for c in g.children(v) if c in length)
+            return sum(length[c] + below(c) for c in g.children(v))
 
         for v in list(length.keys()):
             distance[v] = below(v)

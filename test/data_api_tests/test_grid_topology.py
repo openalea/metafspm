@@ -1,5 +1,5 @@
 """
-Grid topology (design note cross_scale_and_grids §3, step 3c, DS1, D1): cells as nodes, faces as edges oriented
+Grid topology: cells as nodes, faces as edges oriented
 towards increasing coordinates, periodic axes, and the face_area / face_distance geometric factor.
 """
 from dataclasses import dataclass
@@ -7,7 +7,6 @@ from dataclasses import dataclass
 import numpy as np
 import pytest
 
-from openalea.metafspm.coupling.choregrapher import Choregrapher
 from openalea.metafspm.coupling.component import FunctionalComponent, parameter, state_variable
 from openalea.metafspm.data_structure.data_api import ArrayDataStructure
 
@@ -70,12 +69,6 @@ def test_locate_wraps_along_the_grid_periodic_axes_by_default():
     flat = ArrayDataStructure(shape=(4, 4, 2), dx=1.)
     assert flat.locate([[4.5, 0.5, 0.5]])[0] == flat.locate([[3.5, 0.5, 0.5]])[0]   # clipped, not wrapped
 
-
-@pytest.fixture(autouse=True)
-def _fresh_choregrapher():
-    Choregrapher().reset()
-    yield
-    Choregrapher().reset()
 
 
 @dataclass

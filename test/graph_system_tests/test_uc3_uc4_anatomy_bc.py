@@ -3,7 +3,7 @@ UC3 — MechaAnatomyHydraulics: heterogeneous typed edge conductances, Robin-pen
       @graph_output.
 UC4 — LaplacianWithBC: @boundary_condition Dirichlet and Neumann semantics.
 
-Migrated to FunctionalComponent on MPGDataStructure (devplan B9). UC3 used a cross-sectional anatomy graph built
+Migrated to FunctionalComponent on MPGDataStructure. UC3 used a cross-sectional anatomy graph built
 by generate_anatomy_in_mtg.py, which no longer works with the current MPG API: it now runs on the seedling
 root-system graph, with edge conductances typed by the child segment label and Robin ports at the root tips
 (soil) and at the collar (xylem). UC4 runs on a 3-segment chain with the collar at the graph root.
@@ -27,7 +27,6 @@ pytestmark = pytest.mark.filterwarnings("ignore:.*boundary ports set by hand are
 from dataclasses import dataclass
 from scipy.sparse import diags, issparse
 
-from openalea.metafspm.coupling.choregrapher import Choregrapher
 from openalea.metafspm.coupling.component import FunctionalComponent, declare
 from openalea.metafspm.data_structure.configs import PropsConfig
 from openalea.metafspm.data_structure.data_api import BoundaryPort, MPGDataStructure
@@ -38,12 +37,6 @@ from openalea.metafspm.solve.decorator import (
 
 from simple_seedling import generate_simple_mpg_seedling
 
-
-@pytest.fixture(autouse=True)
-def _fresh_choregrapher_run_state():
-    Choregrapher().reset()
-    yield
-    Choregrapher().reset()
 
 
 def _root_local_idx(ds) -> int:

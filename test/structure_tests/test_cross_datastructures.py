@@ -1,7 +1,7 @@
 """
-Links between DataStructures (devplan_population_scene §9, P5): plant segments <-> grid cells (barycentre, length
-overlap), mapped exchanges with the D9 defaults at fixed points, several populations pooled into one grid, and a
-light model over several populations through a union DataStructure (QP5b).
+Links between DataStructures: plant segments <-> grid cells (barycentre, length
+overlap), mapped exchanges with the defaults by kind at fixed points, several populations pooled into one grid, and a
+light model over several populations through a union DataStructure.
 """
 from dataclasses import dataclass
 
@@ -9,7 +9,6 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from openalea.metafspm.coupling.choregrapher import Choregrapher
 from openalea.metafspm.coupling.component import FunctionalComponent, input_variable, parameter, state_variable
 from openalea.metafspm.coupling.cross import (CrossMapping, Exchanges, UnionDataStructure, UnionMapping,
                                               cross_default_mapping)
@@ -24,12 +23,6 @@ from growth import DOC, RootGrowthProbe
 
 COORDINATES = ("x1", "x2", "y1", "y2", "z1", "z2")
 
-
-@pytest.fixture(autouse=True)
-def _fresh_choregrapher():
-    Choregrapher().reset()
-    yield
-    Choregrapher().reset()
 
 
 def _descriptor(**options):
@@ -243,7 +236,7 @@ def test_formula_links_are_evaluated_on_the_provider_then_mapped():
     assert soil.get("exudation").sum() == pytest.approx(3. * roots.n_nodes())
 
 
-# ---------------------------------------------------------------- 5.4 light over several populations (QP5b)
+# ---------------------------------------------------------------- light over several populations
 
 @dataclass
 class Leaves(FunctionalComponent):

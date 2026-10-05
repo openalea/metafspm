@@ -1,5 +1,5 @@
 """
-Tree kernels, round 2 (devplan_porting PT1): folds with a custom function, gathers and recurrences along chains, each
+Tree kernels, round 2: folds with a custom function, gathers and recurrences along chains, each
 checked against a loop written after the rule it replaces (rhizodep's pipe model and death propagation in
 potential_growth, Root-CyNAPS' barrier reopening, elongwheat's tiller cohort reads, a turtle-like frame), exactly.
 """
@@ -25,10 +25,6 @@ def plant():
     return g, ds, vids, {v: i for i, v in enumerate(vids)}, np.random.default_rng(3)
 
 
-def _children(g, vid, index):
-    return [c for c in g.children(vid) if c in index]
-
-
 def test_the_pipe_model_is_rhizodeps(plant):
     g, ds, vids, index, rng = plant
     n, SGC = ds.n_nodes(), 0.3
@@ -41,7 +37,7 @@ def test_the_pipe_model_is_rhizodeps(plant):
     for root in ds.roots().tolist():
         for vid in post_order2(g, vids[root]):
             i = index.get(vid)
-            children = _children(g, vid, index) if i is not None else []
+            children = g.children(vid) if i is not None else []
             if not children:
                 continue
             son_section, sum_of_lateral_sections = 0., 0.
@@ -79,7 +75,7 @@ def test_death_propagates_up_with_the_minimum_time_since_death(plant):
             if vid not in index:                 # MTG vertices that are not graph nodes
                 continue
             i = index[vid]
-            children = [index[c] for c in _children(g, vid, index)]
+            children = [index[c] for c in g.children(vid)]
             if not children:
                 continue
             dead = [c for c in children if ref_state[c] in (JUST_DEAD, DEAD)]
@@ -112,7 +108,7 @@ def test_barrier_reopening_is_a_filtered_max_over_laterals(plant):
     reference = np.zeros(n)                    # Root-CyNAPS: max length over '+' children longer than the radius
     for vid in vids:
         i = index[vid]
-        eligible = [length[index[c]] for c in _children(g, vid, index)
+        eligible = [length[index[c]] for c in g.children(vid)
                     if edge.get(c) == '+' and length[index[c]] >= radius[i]]
         reference[i] = max(eligible) if eligible else 0.
     long_enough = length >= np.where(parents >= 0, radius[np.maximum(parents, 0)], np.inf)

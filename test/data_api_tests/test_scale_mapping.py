@@ -1,7 +1,7 @@
 """
-MTG reading and write-back of declared variables through their scale mapping (design note datastructure_contract §3,
-step 1b): values are written at the vertices of the declared scale, through the inverse mapping, after every
-component call (N4).
+MTG reading and write-back of declared variables through their scale mapping: values are written at the vertices
+of the declared scale, through the inverse mapping, when the MTG is read (mtg_sync="lazy") or after every component
+call (mtg_sync="after_call").
 """
 import os
 import sys
@@ -10,7 +10,6 @@ from dataclasses import dataclass
 import numpy as np
 import pytest
 
-from openalea.metafspm.coupling.choregrapher import Choregrapher
 from openalea.metafspm.coupling.component import FunctionalComponent, parameter, state_variable
 from openalea.metafspm.data_structure.configs import ScalesConfig as scales
 from openalea.metafspm.data_structure.data_api import MPGDataStructure
@@ -30,12 +29,6 @@ def sv(**kwargs):
 def par(**kwargs):
     return parameter(**DOC, by="Probe", **kwargs)
 
-
-@pytest.fixture(autouse=True)
-def _fresh_choregrapher():
-    Choregrapher().reset()
-    yield
-    Choregrapher().reset()
 
 
 @pytest.fixture
@@ -84,7 +77,7 @@ class Level(FunctionalComponent):
 
 
 def test_a_rate_only_component_reaches_the_mtg(seedling):
-    """N4: every state reaches the MTG, not only graph-solve results; written when the MTG is read (QF3)."""
+    """N4: every state reaches the MTG, not only graph-solve results; written when the MTG is read."""
     g, ds, _ = seedling
     model = Level(data_structure=ds)
 
@@ -179,7 +172,7 @@ def test_a_parent_mapped_state_cannot_be_written_where_edges_share_a_parent(seed
     model = ParentFlux(data_structure=ds)
     model()
     with pytest.raises(ValueError, match="several edges share a parent"):
-        ds.flush_mtg()                            # written when the MTG is read (QF3)
+        ds.flush_mtg()                            # written when the MTG is read
 
 
 # ---------------------------------------------------------------- what is read and written

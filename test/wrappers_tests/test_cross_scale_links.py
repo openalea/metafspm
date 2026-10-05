@@ -1,7 +1,6 @@
 """
-Cross-scale links between components sharing a DataStructure (design note cross_scale_and_grids §2, step 3a,
-DS18, D9 option A): default mappings from the provider's state_variable_type, kind agreement, and mappings between
-coarse scales.
+Cross-scale links between components sharing a DataStructure: default mappings from the provider's
+state_variable_type, kind agreement, and mappings between coarse scales.
 """
 import os
 import sys
@@ -10,7 +9,6 @@ from dataclasses import dataclass
 import numpy as np
 import pytest
 
-from openalea.metafspm.coupling.choregrapher import Choregrapher
 from openalea.metafspm.coupling.component import FunctionalComponent, input_variable, state_variable
 from openalea.metafspm.coupling.composite_wrapper import CompositeModel
 from openalea.metafspm.coupling.declaration import DeclarationError
@@ -23,12 +21,6 @@ from simple_seedling import generate_simple_mpg_seedling
 DOC = dict(unit="", unit_comment="", description="", min_value=0., max_value=1., value_comment="", references="",
            DOI=[])
 
-
-@pytest.fixture(autouse=True)
-def _fresh_choregrapher():
-    Choregrapher().reset()
-    yield
-    Choregrapher().reset()
 
 
 @dataclass
@@ -144,7 +136,7 @@ def test_couplability_reports_kind_conflicts_and_missing_mappings():
     assert any("organ_tag <- Segments" in p and "does not imply one" in p for p in problems)
 
 
-# ---------------------------------------------------------------- link scales and targets (step 3b)
+# ---------------------------------------------------------------- link scales and targets
 
 def test_link_scales_are_checked_against_the_declarations():
     _couple(_link("Organs", "Segments", "organ_uptake", "uptake", scale="Organ", source_scale="SubOrgan"))

@@ -1,5 +1,5 @@
 """
-Multi-step time integration and edge (algebraic) unknowns (devplan B5, B6).
+Multi-step time integration and edge (algebraic) unknowns.
 
 Diffusion between two nodes: node balance dc/dt = -(B q), edge law q = K (B^T c), edge 0 -> 1.
 With c(0) = (1, 0) and K = 1: c0(t) = (1 + exp(-2t)) / 2, c1 = 1 - c0, q = c0 - c1.
@@ -44,7 +44,7 @@ def _exact(t):
     return np.array([c0, 1. - c0, 2. * c0 - 1.])
 
 
-# ---------------------------------------------------------------- B5: time loops
+# ---------------------------------------------------------------- time loops
 
 def test_explicit_euler_time_loop_with_edge_recovery():
     solver = ExplicitEulerSolver(SolverConfig(method="explicit_euler", max_step=1e-3, max_steps=100_000))
@@ -88,7 +88,7 @@ def test_solvers_start_from_the_given_state():
     assert x_new[0] == pytest.approx(0.5 / 1.1)
 
 
-# ---------------------------------------------------------------- B6: make_solver configuration
+# ---------------------------------------------------------------- make_solver configuration
 
 def test_make_solver_accepts_a_dict_config():
     solver = make_solver("newton", {"tol": 1e-3, "max_iter": 7})

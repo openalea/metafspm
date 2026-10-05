@@ -1,6 +1,5 @@
 """
-Traversal and entity identity on the DataStructure, in local indices (design note structure_and_boundaries §2,
-step 2a, DS2): parents, children, roots, tips, pre/post orders, index_of and owner, cached per topology.
+Traversal and entity identity on the DataStructure, in local indices: parents, children, roots, tips, pre/post orders, index_of and owner, cached per topology.
 """
 import os
 import sys

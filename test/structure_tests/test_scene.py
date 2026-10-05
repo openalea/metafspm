@@ -1,7 +1,7 @@
 """
-The population scene (devplan_population_scene §10, P6): one population per model, environment models building their
+The population scene: one population per model, environment models building their
 DataStructures, mappings inferred from the scene translator, the fixed-point step order, staggered emergence and the
-scene recorder. Class names are unique in the test session (the Choregrapher identifies components by class name).
+scene recorder.
 """
 from dataclasses import dataclass
 
@@ -23,12 +23,6 @@ from growth import DOC, CarbonProbe, RootGrowthProbe
 
 DT = 3600.
 
-
-@pytest.fixture(autouse=True)
-def _fresh_choregrapher():
-    Choregrapher().reset()
-    yield
-    Choregrapher().reset()
 
 
 def _coordinate():
@@ -71,7 +65,7 @@ class SeedlingExudation(SceneGeometry):
 
 
 class RootPopulation:
-    """A plant model as a population model (QP6a)."""
+    """A plant model as a population model."""
     initiators = (RootGrowthProbe,)
 
     def __init__(self, data_structure, time_step, parameters=None, **scenario):
@@ -109,7 +103,7 @@ class SceneSoilNitrate(FunctionalComponent):
 
 
 class SceneSoil:
-    """An environment model building its grid (QP6b)."""
+    """An environment model building its grid."""
 
     def __init__(self, populations, scene_xrange, scene_yrange, time_step, **scenario):
         self.populations = populations
@@ -225,7 +219,7 @@ def test_the_recorder_writes_plant_summaries_and_selected_plants(tmp_path):
     assert len(pd.read_csv(tmp_path / "Seedlings" / "summaries.csv")) == 3 * 2
 
 
-# ---------------------------------------------------------------- a light model over both populations (QP5b)
+# ---------------------------------------------------------------- a light model over both populations
 
 @dataclass
 class SceneLeaves(FunctionalComponent):

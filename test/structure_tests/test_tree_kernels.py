@@ -1,5 +1,5 @@
 """
-Tree kernels (design note population_and_performance §3, §9, §12; plan P3), each checked against a plain loop
+Tree kernels, each checked against a plain loop
 written after the rule it replaces (rhizodep's distance from tip and supply for elongation, cnwgrass's prefix
 maximum of ligule heights and forward writes, adel's frames). Scans and windows are compared bit for bit.
 """
@@ -26,7 +26,7 @@ def _by_vid(ds, values):
 
 
 def _successor(g, vid):
-    return next((c for c in g.children(vid) if g.property("edge_type").get(c) == '<' and g.scale(c) == g.scale(vid)), None)
+    return next((c for c in g.children(vid) if g.property("edge_type").get(c) == '<'), None)
 
 
 def test_distance_from_tip_is_identical_to_rhizodeps_loop(plant):
@@ -173,7 +173,7 @@ def test_kernels_run_on_every_plant_of_a_population_at_once():
         assert distance[root] == sum(reversed(lengths)) and totals[root] == pytest.approx(sum(lengths))
 
 
-# ---------------------------------------------------------------- S1: consumption shared in rhizodep's order
+# ---------------------------------------------------------------- consumption shared in rhizodep's order
 
 @pytest.mark.parametrize("overlap", ["partial", "maximal"])
 def test_consumption_is_shared_bit_for_bit_as_rhizodeps_loop(plant, overlap):
@@ -232,5 +232,5 @@ def test_the_openalea_post_order_is_post_order2(plant):
     from openalea.mtg.traversal import post_order2
     g, ds, _ = plant
     vids = ds.entity_ids("node").tolist()
-    expected = [v for root in ds.roots().tolist() for v in post_order2(g, vids[root]) if v in set(vids)]
+    expected = [v for root in ds.roots().tolist() for v in post_order2(g, vids[root])]
     assert [vids[i] for i in ds.order("post", convention="openalea")] == expected

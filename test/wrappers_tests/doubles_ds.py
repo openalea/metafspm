@@ -1,5 +1,5 @@
 """
-DataStructure-backed doubles of the downstream models (devplan WD.4-WD.6): plant components (PlantCarbon,
+DataStructure-backed doubles of the downstream models: plant components (PlantCarbon,
 PlantNitrogen) on an MPGDataStructure and the GridSoil component on an (x, y, z) ArrayDataStructure. Their contract
 tests reproduce the numbers of the former props-based coupling.
 """
@@ -86,7 +86,7 @@ class PlantNitrogen(FunctionalComponent):
         return amino_acids - amino_acids_exudation + 0.5 * sugar + 0.25 * hexose + C_hexose_soil
 
 
-# ---------------------------------------------------------------- scene doubles on DataStructures (WD.5b / WD.6)
+# ---------------------------------------------------------------- scene doubles on DataStructures
 
 SOIL = "GridSoil"
 PLANT_COMPONENTS = ["PlantCarbon", "PlantNitrogen"]

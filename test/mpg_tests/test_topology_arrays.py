@@ -1,5 +1,5 @@
 """
-MPG traversals without recursion, and topology arrays (design note population_and_performance §2, step 5a, DS14b):
+MPG traversals without recursion, and topology arrays:
 components_iter in openalea.mtg's order without its recursion limit, vid-indexed topology arrays, and vectorised
 complex_at_scale.
 """

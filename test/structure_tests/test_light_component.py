@@ -1,5 +1,5 @@
 """
-A light model working from the MPG DataStructures and triangulating by itself (devplan_porting PT8, QPd): it runs on
+A light model working from the MPG DataStructures and triangulating by itself: it runs on
 the union of two populations of different models, reads each element's geometry, builds its own triangles, writes
 the absorbed light per element back to every population, and runs every 4 steps with its outputs kept in between.
 A toy radiation model (Beer's law on the projected area above each triangle), enough to check that the API gives a
@@ -8,9 +8,7 @@ CARIBU-like component what it needs.
 from dataclasses import dataclass
 
 import numpy as np
-import pytest
 
-from openalea.metafspm.coupling.choregrapher import Choregrapher
 from openalea.metafspm.coupling.component import FunctionalComponent, input_variable, state_variable
 from openalea.metafspm.coupling.cross import UnionDataStructure
 from openalea.metafspm.coupling.translator import Translator
@@ -118,12 +116,6 @@ def _translator():
         translator.link(organs, "absorbed", "ToyCaribu", {"absorbed": 1.})
     return translator
 
-
-@pytest.fixture(autouse=True)
-def _fresh_choregrapher():
-    Choregrapher().reset()
-    yield
-    Choregrapher().reset()
 
 
 def test_a_light_model_triangulates_the_populations_itself():

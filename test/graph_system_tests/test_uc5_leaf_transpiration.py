@@ -1,5 +1,5 @@
 """
-UC5, leaf transpiration (design note structure_and_boundaries §6, step 2e, DS6): boundary sets assembled by the
+UC5, leaf transpiration: boundary sets assembled by the
 framework. A steady water potential on the seedling's shoot and root graph, with
   * axial conductance on edges;
   * leaves: Robin to a per-leaf air water potential (microclimate input), with a leaf conductance computed by the
@@ -15,7 +15,6 @@ from dataclasses import dataclass
 import numpy as np
 import pytest
 
-from openalea.metafspm.coupling.choregrapher import Choregrapher
 from openalea.metafspm.coupling.component import FunctionalComponent, input_variable, parameter, state_variable
 from openalea.metafspm.data_structure.configs import PropsConfig, ScalesConfig as scales
 from openalea.metafspm.data_structure.data_api import MPGDataStructure
@@ -108,12 +107,6 @@ class LeafTranspirationWithJacobian(TranspirationFields):
 class ActiveLeafTranspiration(TranspirationFields):
     _water = _water(where="active")
 
-
-@pytest.fixture(autouse=True)
-def _fresh_choregrapher():
-    Choregrapher().reset()
-    yield
-    Choregrapher().reset()
 
 
 def _plant():

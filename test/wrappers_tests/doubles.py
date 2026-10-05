@@ -43,7 +43,7 @@ TRANSLATOR = {
             "hexose_exudation_massic": {"hexose_exudation": "12 * 6"},  # string expression, _massic rename
         },
         "RootNitrogen": {
-            "amino_acids_exudation": {"amino_acids_exudation": 5.0},  # same name with factor != 1 (devplan W2.5)
+            "amino_acids_exudation": {"amino_acids_exudation": 5.0},  # same name with factor != 1
         },
         "SoilModel": {},
     },

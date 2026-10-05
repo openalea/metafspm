@@ -13,7 +13,7 @@ from openalea.soiltemp.model import PyCampbell
 
 # Utility packages
 from openalea.metafspm.solve.decorator import *
-from openalea.metafspm.coupling.component import Component as Model, declare  # TODO(WD): migrate to FunctionalComponent on the 3-D grid DataStructure
+from openalea.metafspm.coupling.component import Component as Model, declare  # TODO: migrate to FunctionalComponent on the 3-D grid DataStructure
 
 
 debug = False
@@ -1290,7 +1290,7 @@ class SoilModel(Model):
         Parameters correspond to the value of the process at reference temperature T_ref (process_at_T_ref),
         to two empirical coefficients A and B, and to a coefficient C used to switch between different formalisms.
         If C=0 and B=1, then the relationship corresponds to a classical linear increase with temperature (thermal time).
-        If C=1, A=0 and B>1, then the relationship corresponds to a classical exponential increase with temperature (Q10).
+        If C=1, A=0 and B>1, then the relationship corresponds to a classical exponential increase with temperature.
         If C=1, A<0 and B>0, then the relationship corresponds to bell-shaped curve, close to the one from Parent et al. (2010).
         :param T_ref: the reference temperature
         :param A: parameter A (may be equivalent to the coefficient of linear increase)

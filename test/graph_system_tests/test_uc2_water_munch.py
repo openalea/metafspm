@@ -20,23 +20,15 @@ Tests:
 """
 
 import numpy as np
-import pytest
 from dataclasses import dataclass
 from scipy.sparse import diags, issparse
 
-from openalea.metafspm.coupling.choregrapher import Choregrapher
 from openalea.metafspm.coupling.component import FunctionalComponent, declare
 from openalea.metafspm.data_structure.configs import PropsConfig
 from openalea.metafspm.data_structure.data_api import MPGDataStructure
 from openalea.metafspm.data_structure.mpg import MPG
 from openalea.metafspm.solve.decorator import graph_system, node_balance, graph_jacobian
 
-
-@pytest.fixture(autouse=True)
-def _fresh_choregrapher_run_state():
-    Choregrapher().reset()
-    yield
-    Choregrapher().reset()
 
 
 def _segment_chain(n_segments=3) -> MPGDataStructure:

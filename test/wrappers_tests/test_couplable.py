@@ -1,5 +1,5 @@
 """
-Couplability checks for downstream packages (devplan WD.8): a component class declares every variable its
+Couplability checks for downstream packages: a component class declares every variable its
 translator links refer to, with the metadata the coupling layer needs.
 """
 from dataclasses import dataclass, field

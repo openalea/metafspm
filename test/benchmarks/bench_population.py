@@ -1,10 +1,10 @@
 """
-P7 benchmark (devplan_population_scene.md §11): time per scene step by phase, for populations of 1 to 1000 plants of
+P7 benchmark: time per scene step by phase, for populations of 1 to 1000 plants of
 about 2 000 segments, in segment and anatomy modes. Not part of the test suite.
 
     python test/benchmarks/bench_population.py [--plants 1,10,100,1000] [--steps 5] [--anatomy 2000,20000,200000]
 
-The models are in-repo doubles with the cost structure of the real ones (QP7a): vectorised rates and states, one graph
+The models are in-repo doubles with the cost structure of the real ones: vectorised rates and states, one graph
 system (axial diffusion per plant), growth by bulk segmentation (array-style elongation, one batched vertex creation
 per step, incremental update_topology), exchanges with a soil grid, and the scene recorder.
 """

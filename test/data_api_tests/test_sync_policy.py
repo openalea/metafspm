@@ -1,5 +1,5 @@
 """
-MTG synchronisation policy and solve-time data (design note time_and_data §3–4, step 4a, DS4, DS9): mtg_sync, the
+MTG synchronisation policy and solve-time data: mtg_sync, the
 parameters re-read at the start of every call, and read-only snapshot views of parameters and inputs.
 """
 import os
@@ -9,7 +9,6 @@ from dataclasses import dataclass
 import numpy as np
 import pytest
 
-from openalea.metafspm.coupling.choregrapher import Choregrapher
 from openalea.metafspm.coupling.component import FunctionalComponent, parameter, state_variable
 from openalea.metafspm.data_structure.configs import ScalesConfig as scales
 from openalea.metafspm.data_structure.data_api import MPGDataStructure
@@ -21,12 +20,6 @@ from simple_seedling import generate_simple_mpg_seedling
 DOC = dict(unit="", unit_comment="", description="", min_value=0., max_value=1., value_comment="", references="",
            DOI=[])
 
-
-@pytest.fixture(autouse=True)
-def _fresh_choregrapher():
-    Choregrapher().reset()
-    yield
-    Choregrapher().reset()
 
 
 @pytest.fixture
@@ -104,7 +97,7 @@ def test_equations_cannot_write_into_their_parameters(seedling):
     np.testing.assert_array_equal(ds.get("k"), 1.)      # the DataStructure is intact
 
 
-# ---------------------------------------------------------------- lazy synchronisation (QF3)
+# ---------------------------------------------------------------- lazy synchronisation
 
 @dataclass
 class Counter(FunctionalComponent):

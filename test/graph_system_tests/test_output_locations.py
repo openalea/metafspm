@@ -1,5 +1,5 @@
 """
-Output locations (design note datastructure_contract §5, step 1d): declared outputs take their declared location,
+Output locations: declared outputs take their declared location,
 undeclared ones give it to the decorator, and shape inference remains only when exactly one location matches.
 """
 import os
@@ -10,7 +10,6 @@ from dataclasses import dataclass
 import numpy as np
 import pytest
 
-from openalea.metafspm.coupling.choregrapher import Choregrapher
 from openalea.metafspm.coupling.component import FunctionalComponent, state_variable
 from openalea.metafspm.data_structure.configs import ScalesConfig as scales
 from openalea.metafspm.data_structure.data_api import ArrayDataStructure, MPGDataStructure
@@ -22,12 +21,6 @@ from simple_seedling import generate_simple_mpg_seedling
 DOC = dict(unit="", unit_comment="", description="", min_value=0., max_value=1., value_comment="", references="",
            DOI=[])
 
-
-@pytest.fixture(autouse=True)
-def _fresh_choregrapher():
-    Choregrapher().reset()
-    yield
-    Choregrapher().reset()
 
 
 @pytest.fixture

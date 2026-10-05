@@ -1,5 +1,5 @@
 """
-The plant / soil contract of the DataStructure doubles (PlantCarbon, PlantNitrogen, GridSoil) in a Scene (P7): the
+The plant / soil contract of the DataStructure doubles (PlantCarbon, PlantNitrogen, GridSoil) in a Scene: the
 plant model couples its components within its MPG, the scene exchanges the soil links through a CrossMapping, and
 several plants feed one soil without zeroing (formerly play_Orchestra with Transport and Coupler).
 """

@@ -1,7 +1,7 @@
 """
-A plant population in one MPG (devplan_population_scene §7-8, P4): planting table, per-plant initial structures,
+A plant population in one MPG: planting table, per-plant initial structures,
 per-plant parameters from one scenario per plant, components computed once for the whole population, and the
-self.<parameter> rule inside equations (QH2).
+self.<parameter> rule inside equations.
 """
 from dataclasses import dataclass
 
@@ -10,7 +10,6 @@ import pandas as pd
 import pytest
 from numba import njit
 
-from openalea.metafspm.coupling.choregrapher import Choregrapher
 from openalea.metafspm.coupling.component import FunctionalComponent, parameter, state_variable
 from openalea.metafspm.data_structure.configs import ScalesConfig as scales
 from openalea.metafspm.data_structure.data_api import ArrayDataStructure, MPGDataStructure
@@ -19,12 +18,6 @@ from openalea.metafspm.solve.decorator import rate
 
 from growth import DOC, CarbonProbe, RootGrowthProbe
 
-
-@pytest.fixture(autouse=True)
-def _fresh_choregrapher():
-    Choregrapher().reset()
-    yield
-    Choregrapher().reset()
 
 
 def _table(scenarios):
@@ -91,7 +84,7 @@ def test_planting_table():
                        plant_scenarios=[{"parameters": {}}], per_plant_scenarios=scenarios[:1])
 
 
-# ---------------------------------------------------------------- parameters seen by equations (QH2, QH3)
+# ---------------------------------------------------------------- parameters seen by equations
 
 @dataclass
 class Exudation(FunctionalComponent):
