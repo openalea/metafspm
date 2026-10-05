@@ -277,6 +277,9 @@ class MPG(MTG):
         self.remove_connections([compartment_of[v] for v in removed if v in compartment_of])
         # Existing vertices whose linked parent changed: children of new vertices, or of removed ones
         candidates = {c for v in added + removed for c in self._children.get(v, ()) if c in valid and c not in added}
+        # ... and the children of a removed vertex, re-linked by the removal (remove_vertex(reparent_child=True)):
+        # their incoming Connection went stale while they stay valid
+        candidates |= {c for c in heads[stale_mask & valid.contains(heads)].tolist() if c not in added}
         relinked = []
         for vid in sorted(candidates):
             parent = self.linked_parent(vid, from_scale, valid)
@@ -555,6 +558,27 @@ class MPG(MTG):
         prop = self.properties().get("is_junction", {})
         return [int(v) for v, flag in prop.items() if flag]
 
+    def remove_vertex(self, vid, reparent_child=False):
+        """
+        MTG.remove_vertex, removing first the Compartments the vertex owns (its graph nodes), which openalea would
+        refuse to re-parent (PT3). The graph follows at the next update_topology (extend_graph).
+        """
+        compartment = self.scales.Compartment         # linked to their segment as children (or components)
+        owned = [c for c in list(self._children.get(vid, [])) + list(self._components.get(vid, []))
+                 if self._scale.get(c) == compartment]
+        if owned:
+            self.remove_connections(owned)
+        if reparent_child:
+            # openalea's MTG.replace_parent also re-parents the child's complex to the new parent's complex, which
+            # makes a complex its own parent when both share it: re-link within a complex at the tree level only
+            new_parent = self.parent(vid)
+            for child in list(self.children_iter(vid)):
+                if new_parent is not None and self._complex.get(child) == self._complex.get(new_parent):
+                    super(MTG, self).replace_parent(child, new_parent)
+                else:
+                    self.replace_parent(child, new_parent)
+        return super().remove_vertex(vid, reparent_child=False)
+
     def remove_connections(self, vids) -> None:
         """Delete Connection vertices *vids* and their property entries (see repopulate_graph)."""
         props = self.properties()
@@ -783,13 +807,17 @@ class MPG(MTG):
         alive = scale >= 0
         missing = np.flatnonzero(alive & (complex_ < 0) & (parent >= 0))
         jump = parent.copy()
-        while missing.size:
+        for _ in range(130):                           # pointer doubling: log2(depth) rounds without a cycle
+            if not missing.size:
+                break
             above = jump[missing]
             known = complex_[above] >= 0
             complex_[missing[known]] = complex_[above[known]]
             missing = missing[~known]
             jump[missing] = np.where(jump[jump[missing]] >= 0, jump[jump[missing]], -1)
             missing = missing[jump[missing] >= 0]
+        else:
+            raise ValueError(f"the MTG's parent links contain a cycle (vertices {missing[:5].tolist()})")
         edge_type = np.zeros(size, dtype=np.int64)
         types = self.property('edge_type')
         if types:

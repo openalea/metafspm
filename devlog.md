@@ -1835,3 +1835,10 @@ Per-file counts:
 - **Cost:** a fold takes 0.2 s on 2·10⁵ segments (about 1000 levels; per-level numpy overhead, independent of the number of plants).
 - **Suite:** 677 passed.
 - **PT2:** `random_streams` (SplitMix64 mixing of seed, crc32 of the stream name, step, draw and id; Box-Muller normals), `ds.random`, and `DataStructureComponent.random` with per-stream step counters on the DataStructure (`_random_steps`, in `_CHECKPOINT_STATE`) and a `random_seed` attribute. Conventions: a "Random draws" section, and chained creation in MPG-style steps is plain Python drawing with `ids=new_vids`. Tests (5): order and other entities don't matter, moments, component streams advance and replay, continuation across a checkpoint, unknown distributions refused.
+- **PT3 (edits and inheritance):**
+  - **Found:** `remove_vertex(reparent_child=True)` on a segment raised, because its Compartment is a topological child of another scale. Once that was handled, openalea's `MTG.replace_parent` recursion (`replace_parent(old_complex, complex(new_parent))`) made complexes their own parents (0:0 … 5:5) when both share a complex, and `_full_topology_arrays` then looped forever.
+  - **Fixes:** `MPG.remove_vertex` removes the owned Compartments and re-links children at the tree level within a complex; `extend_graph` adds the valid heads of stale Connections to the relink candidates; the pointer doubling is bounded and raises on cycles.
+  - **Steps:** a functor output `None` is skipped; `Choregrapher.schedule_of` honours `steps_removed` along the MRO and raises on unknown names.
+  - **Tests** (`test_structure_edits.py`, 5): insertion mid-chain (edges, kept and inherited values), removal with relinking, a None-returning override, `steps_removed`, unknown names.
+  - Templated components are not done; a question is asked (QPg).
+- **Suite:** 687 passed.

@@ -18,6 +18,15 @@ The flat modules used before the 2026 restructure have been removed. No compatib
 | `openalea.metafspm.component.Model`, `declare` | `openalea.metafspm.coupling.component.Component` / `FunctionalComponent`, `declare` |
 | `openalea.metafspm.specializer` | `openalea.metafspm.solve.specializer` |
 
+### Structure edits and inheritance (PT3)
+
+- **`MPG.remove_vertex(vid, reparent_child=True)`** works on segments:
+  - their Compartments are removed first;
+  - children are re-linked within their complex. openalea's `MTG.replace_parent` made a shared complex its own parent, which then looped `topology_arrays` forever.
+- **The graph follows:** `extend_graph` relinks the children of a removed vertex, and a vertex inserted in a chain (`insert_parent`) is linked and its variables carried over (tested).
+- **`topology_arrays` raises** on a cycle in parent links instead of looping.
+- **Disabling inherited steps:** a step returning `None` writes nothing (Root_BRIDGES' way), and a subclass can list `steps_removed = ("name", ...)`.
+
 ### Reproducible random draws (PT2)
 
 - **New `data_structure/random_streams.py`:** counter-based draws (uniform, normal, exponential, integers), a pure function of (seed, stream, step, entity id).
