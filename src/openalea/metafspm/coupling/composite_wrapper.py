@@ -53,17 +53,6 @@ class CompositeModel:
         return self.get_documentation(filters=dict(variable_type=["input"]), models=getattr(self, "components", []))
 
 
-    def declare_data(self, shoot=None, root=None, atmosphere=None, soil=None):
-        self.data_structures = {}
-        if shoot:
-            self.data_structures["shoot"] = shoot
-        if root:
-            self.data_structures["root"] = root
-        if atmosphere:
-            self.data_structures["atmosphere"] = atmosphere
-        if soil:
-            self.data_structures["soil"] = soil
-
     def couple_components(self, *args, translator_path: str = ""):
         """
         Couple the DataStructure-backed components *args* through the translator at *translator_path*
@@ -243,9 +232,11 @@ class CompositeModel:
 
         return translator
 
-    def declare_data_and_couple_components(self, shoot=None, root=None, atmosphere=None, soil=None, translator_path: str = "", components: tuple = ()):
-        self.declare_data(shoot=shoot, root=root, atmosphere=atmosphere, soil=soil)
-
+    def declare_data_and_couple_components(self, translator_path: str = "", components: tuple = ()):
+        """
+        Couple *components* through the translator at *translator_path* (couple_components), then check that
+        their DataStructures are consistent (shapes, aliases, derivations).
+        """
         self.couple_components(translator_path=translator_path, *components)
         # The coupled DataStructures must be consistent (shapes, aliases, derivations)
         checked = []

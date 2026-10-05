@@ -2,6 +2,17 @@
 
 ## Unreleased (release2026)
 
+### Breaking: legacy APIs removed
+
+- **DataStructures:** `LegacyMPGDataStructure` and `MPGDataStructure.from_legacy`, `GraphView.from_mtg_subset`, and the setters `set_node_property`, `set_edge_property`, `add_field`, `_get_field` / `_set_field`. Use `register()` to create a variable, and `set()` / `get()` for its values. The abstract `extract_state` / `inject_state` contracts go through `get()` / `set()`.
+- **MPG:** `graph()`, `integrate_at_scale` and `average_at_scale`. Scale changes are DataStructure mappings: coarse-scale declarations, derived variables, translator links with `aggregation=`.
+- **Choregrapher:** `build_schedule`, `add_schedule`, and running a schedule by class name (`Choregrapher()(module_family)`). A component is run by calling it, i.e. `Choregrapher()(instance=component)`.
+- **Coupling:**
+  - `CompositeModel.declare_data` is removed;
+  - `declare_data_and_couple_components(translator_path=, components=)` no longer takes `shoot=` / `root=` / `atmosphere=` / `soil=`, since the components carry their DataStructures;
+  - `Translator.inputs_outputs` is removed.
+- **Examples:** the legacy-to-MPG migration demos are removed.
+
 ### Deprecated: `@boundary_condition`
 
 - **`@boundary_condition` warns** (DeprecationWarning) and will be removed: use `boundary_set`, which selects nodes by variables, masks or callables, and supports Robin and per-node kinds. Mind the Neumann sign: a `boundary_set` value is an inflow, while `@boundary_condition` added its method's values to the residual (an inflow returned negative).

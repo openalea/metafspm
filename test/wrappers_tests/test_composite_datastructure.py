@@ -19,7 +19,7 @@ def _coupled(tmp_path, translator=None):
     carbon = doubles_ds.PlantCarbon(data_structure=ds)
     nitrogen = doubles_ds.PlantNitrogen(data_structure=ds)
     model = CompositeModel()
-    model.declare_data_and_couple_components(root=ds, translator_path=path, components=(carbon, nitrogen))
+    model.declare_data_and_couple_components(translator_path=path, components=(carbon, nitrogen))
     return model, carbon, nitrogen, ds
 
 
@@ -61,7 +61,7 @@ def test_python_translator_module(tmp_path):
                       f"translator = Translator.from_dict({doubles_ds.translator()!r})\n")
     ds = doubles_ds.make_plant_ds()
     carbon, nitrogen = doubles_ds.PlantCarbon(data_structure=ds), doubles_ds.PlantNitrogen(data_structure=ds)
-    CompositeModel().declare_data_and_couple_components(root=ds, translator_path=str(module), components=(carbon, nitrogen))
+    CompositeModel().declare_data_and_couple_components(translator_path=str(module), components=(carbon, nitrogen))
     assert ds.aliases() == {"sugar": "hexose"}
 
 
