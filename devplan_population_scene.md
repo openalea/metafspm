@@ -57,7 +57,7 @@ Each step has its design detail in a short note before code (complex steps), its
 | **P3** ✓ | Tree kernels (5b, agreed): `chain_scan`, `accumulate`, `path_window`, `chain_shift` / `chain_write`, vector-valued values, minimal `path_compose`; reference loops from rhizodep, cnwgrass, adel and GRANAP rules | needed by growth at population scale |
 | **P4** ✓ (emergence moved to P6) | Population builder and planting: a planting table from `stand_initialization`; one MPG per sub-population (Plant vertices; initial structures placed by position and rotation; Plant-scale `x, y, z, rotation`); per-plant parameters from the table or from distributions | Q4–Q6 |
 | **P5** ✓ | Cross-DataStructure links: `CrossMapping` (incidence matrix from a locator: barycentre, or length overlap), recomputed on topology or geometry changes; translator links between DataStructures become mapped exchanges with D9 defaults; the light model as a component reading several DataStructures | generalises `Coupler`; Q1–Q3 |
-| **P6** | `Scene(CompositeModel)`: environment components and populations, `__call__` order (environment, then each population), one or several populations (intercropping), the Logger per population and per plant | Q7–Q9 |
+| **P6** ✓ (with Q5 emergence) | `Scene(CompositeModel)`: environment components and populations, `__call__` order (environment, then each population), one or several populations (intercropping), the Logger per population and per plant | Q7–Q9 |
 | **P7** | Benchmarks and decision: time per step for 1 to 1000 plants of about 2 000 segments, with and without anatomies, split by phase, against today's one-plant-per-process scene; then decide on `play_Orchestra` (Q10) | |
 | **P8** | DS13 (per-instance scheduling) if Q8 needs it; DS15 (persistence, agreed: npz + JSON) | |
 
@@ -290,18 +290,18 @@ All of these are tested on in-repo doubles: the growth helper as a plant model, 
 ### Questions
 
 - **QP6a, plant model contract.** A plant model becomes a population model: `Model(data_structure, time_step, **scenario)` with a class attribute `initiators` (the StructuralComponent classes that build each plant). It is built once for all its plants; its parameters per plant come from the planting table. The queue, coordinate and rotation arguments go away. Is this the contract for your ports (rhizodep, Root-CyNAPS, cnwgrass, GRANAP)? **Recommendation:** yes. The in-repo UC tests follow it, and the external models are ported outside this repo.
-  → answer:
+  → answer: yes to the recommendation
 - **QP6b, who builds the environment's DataStructures.** The proposal lets each environment model receive the populations and build its own grid or union. The alternative is for the Scene to build them from options (`soil_grid=…`, `light="union" | "grid"`). **Recommendation:** the environment model builds them, as plant models build their MPG. The Scene only infers the mappings from the translator links and the DataStructure types.
-  → answer:
+  → answer: Follow the recommendation I agree, Some of the environment components generate the structure and expose it to the scene for coupling as root_growth would to it, while keeping the possibility for other environment components of the same compartment to operate on it.
 - **QP6c, plants before emergence.** Options:
   - **frozen**: no step runs on their entities; they are excluded from the mappings (they neither push to nor receive from the environment), and their values stay at their initial state;
   - **seed-only processes**: some steps (e.g. seed reserve mobilisation) run before emergence, by components that do not honour the mask.
 
   **Recommendation:** frozen by default, with a component able to opt out of the mask (it runs on all plants).
-  → answer:
+  → answer: yes to recommendation.
 - **QP6d, the Logger.** The fspm-utility `Logger` (outside this repo) reads `model_instance.data_structures` and components per plant. Options:
   - **(a)** a Scene-native recorder in metafspm (the summaries and selected plants of point 6, written as one table per population, e.g. parquet or netCDF), with a `logger_class` hook kept so that you can adapt fspm-utility's Logger later;
   - **(b)** a per-plant view of the population, to plug today's Logger in unchanged.
 
   **Recommendation:** (a). (b) would need per-plant MTG views that the vectorised populations no longer have.
-  → answer:
+  → answer: (a)

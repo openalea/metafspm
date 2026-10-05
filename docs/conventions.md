@@ -176,6 +176,12 @@ leaves = boundary_set(select=is_leaf, kind="robin", value="air_water_potential",
 - **Outside them,** `self.k` reads the value (or the per-plant values when they differ), and `model.k = v` sets every plant.
 - **MPG-style structural steps** use `self.parameter_values("k")`.
 
+## Scenes
+
+- A **plant model** is a population model: `Model(data_structure, time_step, **scenario)` with `initiators`, and component classes of its own (they are identified by class name in the scene).
+- An **environment model** receives the populations and builds its DataStructures.
+- **MPG-style steps** loop over `self.active_ids()`.
+
 ## Structural components
 
 - A `StructuralComponent` edits the MPG through `self.mtg`. The MPG is the source of truth for structure.

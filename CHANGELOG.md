@@ -18,6 +18,19 @@ The flat modules used before the 2026 restructure have been removed. No compatib
 | `openalea.metafspm.component.Model`, `declare` | `openalea.metafspm.coupling.component.Component` / `FunctionalComponent`, `declare` |
 | `openalea.metafspm.specializer` | `openalea.metafspm.solve.specializer` |
 
+### The population scene (P6)
+
+- **New `scene/scene.py`, `Scene(CompositeModel)`:** the populations and the environment models of a stand, in one process.
+  - **Populations:** one per model in the planting table. Each is built once on an MPG holding all its plants, as `Model(data_structure, time_step, **scenario)`, with the class attributes `initiators`, `from_scale` and `nodes`. Numeric parameters come per plant from the table; other scenario entries must be shared.
+  - **Environment models:** `Model(populations, scene_xrange, scene_yrange, time_step, **scenario)` builds its own grid or `UnionDataStructure`.
+  - **Coupling:** mappings are inferred from the scene translator (a `CrossMapping` per population and grid pair, a `UnionMapping` per union) and run through one `Exchanges`.
+  - **Step:** each environment model after the exchanges into it, then each population after the exchanges into it.
+  - Component classes must differ between models.
+- **Staggered emergence:** an `emergence_time` column (s) keeps a plant frozen until it emerges. Its nodes leave the `active` mask, combined with a model's own `active` rule, and the mappings (`CrossMapping(mask=)`); values of entities left out are kept.
+  - MPG-style steps restrict themselves with the new `DataStructureComponent.active_ids()`.
+- **`SceneRecorder`:** for each population, `summaries.csv` gets one row per plant per step (sums of the extensive and means of the intensive state variables). `segments.csv` gets the `log_plants`' segments every `heavy_log_period` steps. A `logger_class` hook remains for adapting an external Logger.
+- **`planting_table`:** a new `emergence_times=` argument, and the stand size is kept in `table.attrs`.
+
 ### Links between DataStructures (P5)
 
 - **New `coupling/cross.py`:**

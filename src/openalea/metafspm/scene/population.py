@@ -23,12 +23,14 @@ from openalea.metafspm.data_structure.mpg import MPG
 
 def planting_table(xrange: float, yrange: float, sowing_density: float, row_spacing: float, plant_models: list,
                    plant_scenarios: list, sowing_depth=(0.025,), plant_model_frequency: list = None,
-                   per_plant_scenarios: list = None, exact: bool = False, seed: int = None) -> pd.DataFrame:
+                   per_plant_scenarios: list = None, exact: bool = False, seed: int = None,
+                   emergence_times: list = None) -> pd.DataFrame:
     """
     One row per plant (columns plant, model, x, y, z, rotation, scenario), with the layout of play_Orchestra's
     stand_initialization: rows every row_spacing, plants per row from sowing_density, a model drawn per position
     from plant_model_frequency. Each plant's scenario is its model's, or per_plant_scenarios[i] when given (Q6: one
-    scenario per plant, the statistical repartition being built upstream).
+    scenario per plant, the statistical repartition being built upstream). emergence_times (s, one per plant) adds
+    the emergence_time column read by the Scene (Q5). The stand's size is kept in table.attrs (xrange, yrange).
     """
     from openalea.metafspm.scene.scene_wrapper import stand_initialization
     if plant_model_frequency is None:
@@ -38,7 +40,7 @@ def planting_table(xrange: float, yrange: float, sowing_density: float, row_spac
     if seed is not None:
         random.seed(seed)
     try:
-        _, _, sequence = stand_initialization("population", xrange, yrange, sowing_density, sowing_depth, row_spacing,
+        xrange, yrange, sequence = stand_initialization("population", xrange, yrange, sowing_density, sowing_depth, row_spacing,
                                               plant_models, plant_scenarios, plant_model_frequency, exact=exact)
     finally:
         if seed is not None:
@@ -51,6 +53,11 @@ def planting_table(xrange: float, yrange: float, sowing_density: float, row_spac
         if len(per_plant_scenarios) != len(table):
             raise ValueError(f"per_plant_scenarios gives {len(per_plant_scenarios)} scenarios for {len(table)} plants")
         table["scenario"] = list(per_plant_scenarios)
+    if emergence_times is not None:
+        if len(emergence_times) != len(table):
+            raise ValueError(f"emergence_times gives {len(emergence_times)} times for {len(table)} plants")
+        table["emergence_time"] = np.asarray(emergence_times, dtype=float)
+    table.attrs.update(xrange=xrange, yrange=yrange)
     return table
 
 
