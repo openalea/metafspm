@@ -1,11 +1,12 @@
 """
-A scene of plant populations and environment models in one process.
+A scene of plant populations and environment models in one process::
 
   scene = Scene(planting=planting_table(...), environment=[SoilModel, LightModel], environment_scenarios=[{}, {}],
                 translator="scene_translator.py", time_step=3600, output_dirpath="outputs", log_plants=["plant_0"])
   scene.simulate(n_iterations=2500)
 
-Contracts (QP6a, QP6b):
+Contracts::
+
   plant model        Model(data_structure, time_step, **scenario), built once per population (the plants of one model
                      in the planting table) on an MPG holding all of them. Class attributes: initiators (the
                      StructuralComponent classes building each plant, StructuralComponent.initiate_plant), from_scale
@@ -105,27 +106,32 @@ def _numeric(value) -> bool:
 
 class Scene(CompositeModel):
     """
-    planting:              one row per plant (columns plant, model, x, y, z, rotation, scenario, optionally
-                           emergence_time), e.g. scene.population.planting_table(...).
-    environment:           environment model classes, run in this order; environment_scenarios: one dict each.
-    translator:            the links between the populations' and the environment's components (a Translator, a
-                           nested dict, a .py or YAML path). Links within one DataStructure are the models' own.
-    mapping_method:        "barycentre" or "overlap", for every population <-> grid mapping; periodic, flip_z as
-                           in CrossMapping.
-    scene_xrange, _yrange: the stand's size (default: the planting table's, from planting_table).
-    output_dirpath:        where the SceneRecorder writes (None: no recording); log_plants: the plants (names of the
-                           planting table) whose per-segment state is written every heavy_log_period steps.
-    forcings:              a table shared by every model (a DataFrame indexed by time in s): a component's
-                           forcing(name) reads its column when the component has no forcing of that name.
-    events:                (time, action) pairs: action(scene) runs at the start of the first step at or after time.
-    stop_when:             a condition(scene), checked after each step: simulate() stops when it holds.
+    Plant populations and environment models run together, exchanging their values at fixed points.
+
+    Arguments::
+
+        planting:              one row per plant (columns plant, model, x, y, z, rotation, scenario, optionally
+                               emergence_time), e.g. scene.population.planting_table(...).
+        environment:           environment model classes, run in this order; environment_scenarios: one dict each.
+        translator:            the links between the populations' and the environment's components (a Translator, a
+                               nested dict, a .py or YAML path). Links within one DataStructure are the models' own.
+        mapping_method:        "barycentre" or "overlap", for every population <-> grid mapping; periodic, flip_z as
+                               in CrossMapping.
+        scene_xrange, _yrange: the stand's size (default: the planting table's, from planting_table).
+        output_dirpath:        where the SceneRecorder writes (None: no recording); log_plants: the plants (names of the
+                               planting table) whose per-segment state is written every heavy_log_period steps.
+        forcings:              a table shared by every model (a DataFrame indexed by time in s): a component's
+                               forcing(name) reads its column when the component has no forcing of that name.
+        events:                (time, action) pairs: action(scene) runs at the start of the first step at or after time.
+        stop_when:             a condition(scene), checked after each step: simulate() stops when it holds.
+        mappings:              further mappings between DataStructures (e.g. a LayerMapping between a column model and
+                               the soil grid), or a callable scene -> mappings, called once the models are built.
+        logger_class:          optional, called as logger_class(scene=self, outputs_dirpath=..., **log_settings), then
+                               logger() after each step and logger.stop() at the end.
+
     Models may set run_every (steps) and run_when(scene) -> bool: on the other steps they and the exchanges into
     them are skipped, their outputs keeping their values; an environment model's spin_up(scene) runs once,
     after the scene is built.
-    mappings:              further mappings between DataStructures (e.g. a LayerMapping between a column model and
-                           the soil grid), or a callable scene -> mappings, called once the models are built.
-    logger_class:          optional, called as logger_class(scene=self, outputs_dirpath=..., **log_settings), then
-                           logger() after each step and logger.stop() at the end (QP6d hook).
     """
 
     def __init__(self, planting: pd.DataFrame, environment=(), environment_scenarios=None, translator=None,
@@ -398,7 +404,8 @@ class Scene(CompositeModel):
 
 class SceneRecorder:
     """
-    Scene outputs, one folder per population:
+    Scene outputs, one folder per population::
+
       summaries.csv  every step, one row per plant: sums of the extensive and means of the intensive node state
                      variables, and the Plant-located state variables;
       segments.csv   every heavy_log_period steps, the node state variables of the log_plants only.

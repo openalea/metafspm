@@ -588,11 +588,12 @@ class FunctionalComponent(DataStructureComponent):
 
     def previous(self, name: str, at: str = "substep") -> np.ndarray:
         """
-        Value of unknown *name*, managed by the framework:
-          at="substep" (default): at the start of the current (sub-)step of the solve;
-          at="solve":             at the start of this call's solve (the same with integrate="step");
-          at="step":              at the start of the component's call, e.g. for operator splitting between
-                                  several graph systems of one component.
+        Value of unknown *name*, managed by the framework::
+
+              at="substep" (default): at the start of the current (sub-)step of the solve;
+              at="solve":             at the start of this call's solve (the same with integrate="step");
+              at="step":              at the start of the component's call, e.g. for operator splitting between
+                                      several graph systems of one component.
         """
         if at == "substep":
             state = getattr(self, "_previous_state", None)

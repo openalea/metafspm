@@ -75,10 +75,6 @@ html_theme = 'pydata_sphinx_theme'
 # documentation.
 html_theme_options = {
   "header_links_before_dropdown": 6,
-  "sidebarwidth": 200,
-  "sticky_navigation": "false",
-  "collapse_navigation": "false",
-  "display_version": "true",
   "icon_links": [
     {
         "name": "GitHub",
@@ -121,7 +117,7 @@ html_context = {
     "github_user": "openalea",
     "github_repo": "metafspm",
     "github_version": "main",
-    "doc_path": "doc",
+    "doc_path": "docs",
 }
 
 # -- Options for LaTeX output ---------------------------------------------

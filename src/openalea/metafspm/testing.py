@@ -11,11 +11,13 @@ _FRAMEWORK_FIELDS = {"data_structure"}
 def couplability_problems(component_cls, translator, name: str = None, data_structure=None) -> list:
     """
     Problems preventing *component_cls* from being coupled through *translator* (a coupling.translator.Translator):
+
       * a declared field without declare() metadata;
       * a link whose receiving variable the component does not declare;
       * a link reading a variable of the component that it does not declare;
       * with a *data_structure*: a declaration that does not resolve on it (scale, location, mapping), and an
         inconsistent DataStructure (DataStructure.validate).
+
     *name* is the component name used in the translator (default: the class name).
     """
     name = name or component_cls.__name__

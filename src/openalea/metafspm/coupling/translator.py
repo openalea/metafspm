@@ -60,18 +60,19 @@ def _scale(value) -> Optional[int]:
 @dataclass(frozen=True)
 class Link:
     """
-    ``receiver.variable`` is provided by ``provider``.
+    ``receiver.variable`` is provided by ``provider``::
 
-    sources:     {provider variable: factor} (weighted sum; factors may be arithmetic strings), or the provider
-                 variable names passed to *formula*.
-    scale:       receiver-side scale when the link changes scale (live ScalesConfig reference or name).
-    aggregation: how values are mapped across locations ("sum", "mean", "weighted_mean", "broadcast",
-                 "child", "parent", ...), with *weight* for "weighted_mean". Without it, a link between two
-                 locations is mapped from its provider's state_variable_type.
-    scale, source_scale:
-                 when given, checks that the receiver's (and the sources') declared location is that scale's.
-    target:      a mask of the DataStructure: the mapped values go to its entities only, the others getting the
-                 receiver's default (e.g. a segment concentration broadcast to its symplastic Compartments).
+        sources:     {provider variable: factor} (weighted sum; factors may be arithmetic strings), or the provider
+                     variable names passed to *formula*.
+        aggregation: how values are mapped across locations ("sum", "mean", "weighted_mean", "broadcast",
+                     "child", "parent", ...), with *weight* for "weighted_mean". Without it, a link between two
+                     locations is mapped from its provider's state_variable_type.
+        scale, source_scale:
+                     the receiver-side (and sources') scale when the link changes scale (a ScalesConfig reference
+                     or name); when given, the receiver's (and the sources') declared location must be that
+                     scale's.
+        target:      a mask of the DataStructure: the mapped values go to its entities only, the others getting the
+                     receiver's default (e.g. a segment concentration broadcast to its symplastic Compartments).
     """
     receiver: str
     variable: str

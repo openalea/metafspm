@@ -1,17 +1,17 @@
 """
-Links between DataStructures.
+Links between DataStructures::
 
-  CrossMapping(plants, soil, method="barycentre" | "overlap")   plant segments <-> grid cells, a sparse incidence
-  UnionDataStructure([population_1, population_2])               the nodes of several DataStructures, one after the other
-  UnionMapping(union)                                            one-to-one between a union and its parts
-  Exchanges(translator, components, mappings)                    translator links across DataStructures, run at the
-                                                                 scene's fixed points by exchange(into=ds)
+      CrossMapping(plants, soil, method="barycentre" | "overlap")   plant segments <-> grid cells, a sparse incidence
+      UnionDataStructure([population_1, population_2])               the nodes of several DataStructures, one after the other
+      UnionMapping(union)                                            one-to-one between a union and its parts
+      Exchanges(translator, components, mappings)                    translator links across DataStructures, run at the
+                                                                     scene's fixed points by exchange(into=ds)
 
 Mappings recompute themselves when their source's topology or coordinates changed, at the next exchange. Values go
 "up" from plant entities to cells (sum, mean, weighted_mean) and "down" from cells to plant entities (broadcast:
-the overlap-weighted cell values; split: the cell amount shared by weight). Defaults follow the variables' kinds
-: extensive up "sum", down "split" (weight= required); intensive up "weighted_mean" (weight=
-required), down "broadcast".
+the overlap-weighted cell values; split: the cell amount shared by weight). Defaults follow the variables' kinds:
+extensive up "sum", down "split" (weight= required); intensive up "weighted_mean" (weight= required), down
+"broadcast".
 """
 from typing import Mapping, Optional
 
@@ -74,16 +74,16 @@ def _pieces(p1, p2, origin, dx, counts, offsets, middles, fractions):
 class CrossMapping:
     """
     Incidence between the nodes of a plant DataStructure (*source*) and the cells of a grid (*target*): rows (source
-    entities), columns (cells) and weights, each row's weights summing to 1.
+    entities), columns (cells) and weights, each row's weights summing to 1::
 
-    method:      "barycentre", the cell of the segment's middle (weight 1, the reference soil model's map), or
-                 "overlap", the cells the segment crosses, weighted by its length fraction in each.
-    coordinates: the source's segment end variables, (x1, x2, y1, y2, z1, z2).
-    periodic:    per grid axis, wrap positions into the grid (a periodic stand in x and y by default); the other
-                 axes are clipped into the grid.
-    flip_z:      plant z is negative below ground while the soil z axis points down (reference soil model).
-    mask:        a node mask of the source: its other entities are left out (they neither push nor receive, e.g.
-                 plants before emergence).
+        method:      "barycentre", the cell of the segment's middle (weight 1, the reference soil model's map), or
+                     "overlap", the cells the segment crosses, weighted by its length fraction in each.
+        coordinates: the source's segment end variables, (x1, x2, y1, y2, z1, z2).
+        periodic:    per grid axis, wrap positions into the grid (a periodic stand in x and y by default); the other
+                     axes are clipped into the grid.
+        flip_z:      plant z is negative below ground while the soil z axis points down (reference soil model).
+        mask:        a node mask of the source: its other entities are left out (they neither push nor receive, e.g.
+                     plants before emergence).
 
     The incidence is rebuilt at the next use after the source's topology or a coordinate changed; refresh() forces
     it (coordinates written through a view without mark_written()).
@@ -258,11 +258,12 @@ class ScalarMapping:
 class LayerMapping:
     """
     Between a 1-D column (e.g. a soil temperature model's layers) and the layers of a 3-D grid along *axis*,
-    weighted by the overlaps of the layer intervals, so that thicknesses may differ:
-      grid -> column: "mean" (intensive: each column layer the overlap-weighted mean of the grid layers' means over
-                      the other axes) or "sum" (extensive: the overlapping fractions of the grid layers' totals);
-      column -> grid: "mean" (intensive: broadcast over the other axes) or "sum" (extensive: shared over the cells
-                      of each grid layer by overlap fraction).
+    weighted by the overlaps of the layer intervals, so that thicknesses may differ::
+
+          grid -> column: "mean" (intensive: each column layer the overlap-weighted mean of the grid layers' means over
+                          the other axes) or "sum" (extensive: the overlapping fractions of the grid layers' totals);
+          column -> grid: "mean" (intensive: broadcast over the other axes) or "sum" (extensive: shared over the cells
+                          of each grid layer by overlap fraction).
     """
 
     def __init__(self, column, grid, axis: str = "z"):
@@ -304,7 +305,7 @@ class LayerMapping:
         return np.broadcast_to(per_layer.reshape(shape), self.grid.shape).reshape(-1).copy()
 
 
-# ── The nodes of several DataStructures, one after the other (QP5b) ────────────────
+# ── The nodes of several DataStructures, one after the other ────────────────
 
 class UnionDataStructure(VariableStoreMixin, DataStructure):
     """
@@ -431,8 +432,8 @@ class UnionMapping:
 
 def cross_default_mapping(kind: Optional[str], direction: str, name: str, weight: Optional[str] = None) -> str:
     """
-    Mapping of a link between a plant DataStructure and a grid implied by its kind (
-    QP5a, QP5c). direction: "up" (plant entities -> cells) or "down" (cells -> plant entities).
+    Mapping of a link between a plant DataStructure and a grid implied by its kind.
+    direction: "up" (plant entities -> cells) or "down" (cells -> plant entities).
     """
     extensive, intensive = kind in EXTENSIVE_KINDS, kind in INTENSIVE_KINDS or kind in MASSIC_KINDS
     if direction == "up":

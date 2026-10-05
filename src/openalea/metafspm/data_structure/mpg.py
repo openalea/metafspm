@@ -375,7 +375,8 @@ class MPG(MTG):
         from_scale : int
             Scale whose vertices provide topology (e.g. g.scales.SubOrgan).
         custom_connections : list of dict
-            Each entry specifies one inter-organ link type:
+            Each entry specifies one inter-organ link type::
+
               node_label — label of the Compartment nodes to pair
               edge_label — label of the Connection edge to create
               ordering   — (optional) name of a numerical property stored on the
@@ -384,6 +385,7 @@ class MPG(MTG):
                            (greedy nearest-neighbour, each node used at most once).
                            When absent, all-to-all edges are created between the
                            two sets.
+
             See wire_junctions() for the other matching modes and callable rules.
         filter_in, filter_out : dict, optional
             ``{property_name: value}`` — include / exclude from_scale vertices.
@@ -484,13 +486,15 @@ class MPG(MTG):
         Create the junction Connections between the Compartments of linked vertices at *from_scale*, for each
         vertex of *children* (default: every vertex) and its linked parent (linked_parent). Returns their vids.
 
-        rules: list of dict, one per link type:
+        rules: list of dict, one per link type::
+
           {"node_label": L, "edge_label": E, "ordering": prop, "match": "nearest" | "equal" | "all"}
               pairs the Compartments labelled L of both sides: "all" pairs every one with every one (the default
               without ordering), "nearest" greedily matches the closest values of *ordering* (the default with
               it), "equal" matches equal values of *ordering*;
           {"rule": callable, "edge_label": E}
               rule(g, parent_vid, child_vid, parent_compartments, child_compartments) -> [(a, b), ...].
+
         Junctions get is_junction = 1 (anatomy Connections do not carry it); n_id_a is on the parent side, n_id_b on
         the child side.
         """
@@ -744,8 +748,8 @@ class MPG(MTG):
 
     def topology_arrays(self) -> dict:
         """
-        Integer arrays indexed by vid, cached until the MPG changes (vertex count or last vertex id):
-          parent (-1 for none), complex (-1 for none), scale, edge_type (0 none, 1 '/', 2 '<', 3 '+'), is_anchor.
+        Integer arrays indexed by vid, cached until the MPG changes (vertex count or last vertex id): parent (-1
+        for none), complex (-1 for none), scale, edge_type (0 none, 1 '/', 2 '<', 3 '+'), is_anchor.
         complex is resolved for every vertex at once (pointer doubling up the parent chains), whereas MTG.complex
         walks the chain of each vertex.
         """
@@ -928,9 +932,10 @@ class MPG(MTG):
         """Pre-order multiscale traversal of an MPG.
 
         Yields each vertex *before* its descendants, combining two axes:
+
         • Scale axis  : a complex is yielded before its fine-scale components.
         • Topo axis   : within a complex's component set, a topological parent
-                        is yielded before its same-scale children.
+          is yielded before its same-scale children.
 
         Algorithm — iterative explicit stack (matches pre_order2 style):
         Pop v from the stack → yield v (if not an anchor) → compute v's
@@ -971,16 +976,19 @@ class MPG(MTG):
         """Post-order multiscale traversal of an MPG.
 
         Yields each vertex *after* all its descendants, combining two axes:
+
         • Scale axis  : fine-scale components are yielded before their complex.
         • Topo axis   : within a complex's component set, topological children
-                        are yielded before their same-scale parent.
+          are yielded before their same-scale parent.
 
-        Algorithm — iterative, "peek-don't-pop" (matches post_order2 style):
+        Algorithm — iterative, "peek-don't-pop" (matches post_order2 style).
         Each stack entry is (vertex, iterator-over-post-ordered-components).
+
         • Peek at the top: if the component iterator has a next component c,
-            push a new entry for c (with c's own component iterator) and continue.
+          push a new entry for c (with c's own component iterator) and continue.
         • When the iterator is exhausted, pop the entry and yield the vertex
-            (if not an anchor).
+          (if not an anchor).
+
         No Python recursion is used, so depth is limited only by the stack.
 
         Parameters

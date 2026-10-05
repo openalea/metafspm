@@ -41,7 +41,7 @@ A **scale name** is also a location:
 - `"Connection"` means `edge`;
 - a coarser scale (e.g. `"Organ"`) is its own location, with one value per vertex of that scale.
 
-Prefer scale names for biological variables: they keep their meaning when the graph's nodes change (anatomies, DS8). Keep `node` / `edge` for solver-level variables, which follow the graph's entities whatever they are.
+Prefer scale names for biological variables: they keep their meaning when the graph's nodes change (anatomies). Keep `node` / `edge` for solver-level variables, which follow the graph's entities whatever they are.
 
 ## Declarations: `scale`, `location`, `mapping`
 
@@ -65,7 +65,7 @@ flux:    float = state_variable(..., location="edge")                       # so
 | `child` | to edges: the child's value (formerly `proximal`) |
 | `parent` | to edges: the parent's value (formerly `distal`) |
 
-**Default mapping when none is given,** from `state_variable_type` (decision D9):
+**Default mapping when none is given,** from `state_variable_type`:
 
 | `state_variable_type` | up | down |
 |---|---|---|
@@ -105,7 +105,7 @@ Declarations that cannot be written back raise when the component is created: a 
 - Shape inference remains only when exactly one location matches, with a `DeprecationWarning`.
 
 **MTG synchronisation.**
-- **`mtg_sync = "lazy"`** (the default, QF3): the DataStructure is the reference, and the MTG a view kept up to date when read. A state variable changed since its last synchronisation is written to the MTG:
+- **`mtg_sync = "lazy"`** (the default): the DataStructure is the reference, and the MTG a view kept up to date when read. A state variable changed since its last synchronisation is written to the MTG:
   - before an MPG-style step;
   - when the MTG is read through `ds.mtg` (or `component.mtg`);
   - by `ds.flush_mtg()`.
@@ -145,7 +145,7 @@ Chains are `"axis"` ('<' successors) by default, or declared with `define_chain(
 
 - **`previous(name)`:** inside a graph-system solve, the value of the unknown at the start of the current (sub-)step. `previous(name, at="solve")` gives the start of the call's solve, and `previous(name, at="step")` the start of the component's call.
 - **`self.dt`:** the length of the current (sub-)step. Time terms use `self.dt`, which equals `time_step` unless the graph system sub-steps (`integrate="substeps"` or `"adaptive"`).
-- **`on_grow`:** the value of entities created by growth. `"default"` gives the declared default; `"inherit"` gives the nearest pre-existing ancestor's value. The repartition of amounts at segmentation comes with DS20.
+- **`on_grow`:** the value of entities created by growth. `"default"` gives the declared default; `"inherit"` gives the nearest pre-existing ancestor's value. After structural steps, the other components' amounts are repartitioned by kind (`partition_weight`, `active`).
 
 ## Anatomy mode
 
@@ -185,7 +185,7 @@ leaves = boundary_set(select=is_leaf, kind="robin", value="air_water_potential",
 
 ## Scenes
 
-- A **plant model** is a population model: `Model(data_structure, time_step, **scenario)` with `initiators`, and component classes of its own (the scene translator identifies components by class name). Steps are scheduled per instance, and subclasses run their bases' steps (DS13).
+- A **plant model** is a population model: `Model(data_structure, time_step, **scenario)` with `initiators`, and component classes of its own (the scene translator identifies components by class name). Steps are scheduled per instance, and subclasses run their bases' steps.
 - An **environment model** receives the populations and builds its DataStructures.
 - **MPG-style steps** loop over `self.active_ids()`.
 
@@ -198,7 +198,7 @@ leaves = boundary_set(select=is_leaf, kind="robin", value="air_water_potential",
 
 ## Random draws
 
-- **Reproducible draws per entity:** `self.random(stream, distribution="uniform", ids=None, **parameters)` in a component, or `ds.random(...)` with an explicit `step`. A draw depends on (seed, stream, step, entity id) only, not on the visiting order (PT2).
+- **Reproducible draws per entity:** `self.random(stream, distribution="uniform", ids=None, **parameters)` in a component, or `ds.random(...)` with an explicit `step`. A draw depends on (seed, stream, step, entity id) only, not on the visiting order.
 - **Advancing:** each call of a stream is a new step. Step counters are kept by checkpoints. `random_seed` (a component attribute) chooses the seed.
 - **MPG-style steps** that create vertices one after the other (a chain of segments, each from the one just created) are plain Python, and draw for the new vertices with `self.random(stream, ids=new_vids)`.
 
@@ -232,7 +232,7 @@ These raise; none of them is silently ignored:
 - a variable used by a graph system that is not registered;
 - a missing filter variable;
 - an ambiguous output location;
-- an edge boundary condition (until boundary sets, DS6);
+- an edge boundary condition (use a boundary set on the nodes);
 - a declaration that does not resolve;
 - a write to a derived variable.
 

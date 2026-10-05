@@ -165,9 +165,11 @@ def levels(parents: np.ndarray) -> list:
 
 def accumulate(values, parents: np.ndarray, direction: str = "up", op: str = "sum") -> np.ndarray:
     """
-    direction="up":   each node gets its value combined with its descendants' (subtree sum or max), level by level
-                      from the deepest;
-    direction="down": each node gets its value combined with its ancestors' (path sum or max from the root).
+    Values accumulated along the tree (op "sum" or "max")::
+
+        direction="up":   each node gets its value combined with its descendants' (subtree sum or max), level by level
+                          from the deepest;
+        direction="down": each node gets its value combined with its ancestors' (path sum or max from the root).
     """
     if direction not in ("up", "down") or op not in ("sum", "max"):
         raise ValueError("accumulate: direction must be 'up' or 'down', op 'sum' or 'max'")

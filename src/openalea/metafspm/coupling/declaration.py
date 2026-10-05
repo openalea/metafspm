@@ -200,10 +200,12 @@ def resolve_declaration(f, ds) -> Optional[VariableSpec]:
     VariableSpec of dataclass field *f* on DataStructure *ds*, or None when the field is not a DataStructure
     variable (no declare() metadata, or neither scale nor location given).
 
-    Legacy forms (accepted for one release):
+    Legacy forms (accepted for one release)::
+
       scale="node" | "edge" | "scalar" | "cell"  -> that location, no MTG property;
       scale=<int>, edge_mapping=m                -> location "edge", mapping m;
       scale=Compartment / Connection             -> "node" / "edge", no MTG property.
+
     A scale coarser than the nodes without a location is stored at that scale.
     """
     meta = f.metadata

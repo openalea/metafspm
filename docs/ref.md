@@ -1,82 +1,88 @@
-.. |cnwheat| replace:: :mod:`cnwheat`
+# API reference
 
-.. _cnwheat_reference:
+## Package
 
-Reference guide
-#################
+```{eval-rst}
+.. automodule:: openalea.metafspm
+   :members: FunctionalComponent, StructuralComponent, CompositeModel, Scene, planting_table
+```
 
-This manual details, for each module of |cnwheat|, 
-the functions and objects included in |cnwheat|, 
-describing what they are and what they do.
+## Components and declarations
 
-.. contents::
+```{eval-rst}
+.. automodule:: openalea.metafspm.coupling.component
+   :members: declare, state_variable, input_variable, parameter, DataStructureComponent, FunctionalComponent,
+             StructuralComponent
 
-.. currentmodule:: cnwheat.__init__
+.. automodule:: openalea.metafspm.coupling.declaration
+   :members: VariableSpec, DeclarationError, resolve_declaration, default_mapping, kinds_agree
+```
 
-|cnwheat| package
-*********************************************************
+## Steps and graph systems
 
-.. automodule:: cnwheat
-    :members:
-    :undoc-members:
-    :show-inheritance:
-    :synopsis:
-    
+```{eval-rst}
+.. automodule:: openalea.metafspm.solve.decorator
+   :members: rate, state, totalrate, totalstate, stepinit, deficit, axial, potential, allocation, actual,
+             segmentation, postsegmentation, priorbalance, selfbalance, graph_system, node_balance, edge_law,
+             boundary_condition, boundary_set, pool_balance, graph_output, graph_jacobian
 
-:mod:`cnwheat.simulation` module
-*********************************************************
+.. automodule:: openalea.metafspm.solve.solver
+   :members: NewtonSolver, ImplicitEulerSolver, ExplicitEulerSolver, ScipyIVPSolver, ScipyRootSolver, SolverConfig,
+             make_solver
 
-.. automodule:: cnwheat.simulation
-    :members:
-    :undoc-members:
-    :show-inheritance:
-    :synopsis: 
-    
-    
-:mod:`cnwheat.model` module
-*********************************************************
+.. automodule:: openalea.metafspm.coupling.choregrapher
+   :members: Choregrapher, family_of
+```
 
-.. automodule:: cnwheat.model
-    :members:
-    :undoc-members:
-    :show-inheritance:
-    :synopsis: 
-    
+## DataStructures
 
-:mod:`cnwheat.parameters` module
-*********************************************************
+```{eval-rst}
+.. automodule:: openalea.metafspm.data_structure.data_api
+   :members: VariableStoreMixin, MPGDataStructure, ArrayDataStructure, GraphView, BoundaryPort
 
-.. automodule:: cnwheat.parameters
-    :members:
-    :undoc-members:
-    :show-inheritance:
-    :synopsis: 
-    
-    
-:mod:`cnwheat.tools` module
-*********************************************************
+.. automodule:: openalea.metafspm.data_structure.adaptive_grid
+   :members: AdaptiveGridDataStructure
 
-.. automodule:: cnwheat.tools
-    :members:
-    :undoc-members:
-    :show-inheritance:
-    :synopsis: 
+.. automodule:: openalea.metafspm.data_structure.mpg
+   :members: MPG
 
-:mod:`cnwheat.converter` module
-*********************************************************
+.. automodule:: openalea.metafspm.data_structure.tree_kernels
+   :members:
 
-.. automodule:: cnwheat.converter
-    :members:
-    :undoc-members:
-    :show-inheritance:
-    :synopsis:
-    
-:mod:`cnwheat.postprocessing` module
-*********************************************************
+.. automodule:: openalea.metafspm.data_structure.random_streams
+   :members:
 
-.. automodule:: cnwheat.postprocessing
-    :members:
-    :undoc-members:
-    :show-inheritance:
-    :synopsis:
-    
+.. automodule:: openalea.metafspm.data_structure.configs
+   :members: ScalesConfig, PropsConfig, LabelsConfig
+```
+
+## Coupling
+
+```{eval-rst}
+.. automodule:: openalea.metafspm.coupling.translator
+   :members: Link, Translator, parse_factor
+
+.. automodule:: openalea.metafspm.coupling.composite_wrapper
+   :members: CompositeModel
+
+.. automodule:: openalea.metafspm.coupling.cross
+   :members: CrossMapping, ScalarMapping, LayerMapping, UnionDataStructure, UnionMapping, Exchanges,
+             cross_default_mapping
+```
+
+## Scenes
+
+```{eval-rst}
+.. automodule:: openalea.metafspm.scene.population
+   :members: planting_table, stand_initialization, build_population, apply_plant_scenarios
+
+.. automodule:: openalea.metafspm.scene.scene
+   :members: Scene, SceneRecorder, Population, AllMasks, load_translator
+```
+
+## Testing helpers
+
+```{eval-rst}
+.. automodule:: openalea.metafspm.testing
+   :members: couplability_problems, assert_component_couplable
+```
