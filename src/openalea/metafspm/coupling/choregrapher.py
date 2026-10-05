@@ -129,11 +129,18 @@ class Choregrapher(Singleton):
     def schedule_of(self, cls) -> dict:
         """
         Unbound schedule of class *cls*: {priority: [functors]}, sorted. A class runs its own steps and those of its
-        bases, a step redefined by a subclass replacing its base's (by name, with its own categories).
+        bases, a step redefined by a subclass replacing its base's (by name, with its own categories), except the
+        steps listed in a steps_removed class attribute.
         """
         steps = {}
         for klass in reversed(cls.__mro__):
             steps.update(self._steps_of_family(family_of(klass)))
+        # Steps a class removes from its bases (PT3): steps_removed = ("name", ...), names without the leading "_"
+        removed = {name.lstrip("_") for klass in cls.__mro__ for name in klass.__dict__.get("steps_removed", ())}
+        unknown = removed - set(steps)
+        if unknown:
+            raise ValueError(f"{cls.__name__}.steps_removed: no step named {sorted(unknown)} (steps: {sorted(steps)})")
+        steps = {name: step for name, step in steps.items() if name not in removed}
         groups = {}
         for name, (functor, categories) in steps.items():
             priority = [0] * len(self.consensus_scheduling)

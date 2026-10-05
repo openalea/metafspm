@@ -59,6 +59,8 @@ class Functor:
             out = self._evaluate(instance, args)
         finally:
             instance.__dict__["_in_equation"] = False
+        if out is None:            # a step returning None writes nothing (e.g. an inherited step disabled, PT3)
+            return
         self._write_outputs(instance, ds, out, args, mask, mask_location)
 
     def _arguments(self, instance, ds):
