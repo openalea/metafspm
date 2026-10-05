@@ -1,5 +1,5 @@
 """
-Checks for downstream packages (design note WD.8): run them in a package's own tests to make sure its components
+Checks for downstream packages: run them in a package's own tests to make sure its components
 stay couplable with the translators it ships.
 """
 from dataclasses import fields

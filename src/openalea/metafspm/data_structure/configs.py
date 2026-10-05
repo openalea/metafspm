@@ -211,7 +211,7 @@ class LabelsConfig:
                 setattr(self, name, type(name, (), group))
 
     def __getstate__(self):
-        """Pickling (checkpoints, DS15): the per-instance label groups are rebuilt on load, not stored."""
+        """Pickling (checkpoints): the per-instance label groups are rebuilt on load, not stored."""
         return {key: value for key, value in self.__dict__.items() if not isinstance(value, type)}
 
     def __setstate__(self, state):

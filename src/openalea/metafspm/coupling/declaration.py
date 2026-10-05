@@ -1,6 +1,5 @@
 """
-Resolution of component field declarations into DataStructure variables (design note
-docs/design/datastructure_contract.md §2).
+Resolution of component field declarations into DataStructure variables.
 
 A declaration carries three keys:
   scale     where the MTG property lives (an MTG scale int, or None for solver-only variables);
@@ -23,7 +22,7 @@ SOLVER_LOCATIONS = ("node", "edge", "scalar", "cell")
 UP_MAPPINGS = ("sum", "mean", "weighted_mean")
 DOWN_MAPPINGS = ("broadcast",)
 EDGE_MAPPINGS = ("child", "parent", "mean")
-# Former edge mapping names (N2): "proximal" took the child's value, "distal" the parent's
+# Former edge mapping names: "proximal" took the child's value, "distal" the parent's
 _EDGE_MAPPING_RENAMES = {"proximal": "child", "distal": "parent"}
 
 EXTENSIVE_KINDS = ("extensive", "NonInertialExtensive")
@@ -43,8 +42,8 @@ class VariableSpec:
     variable_type: Optional[str] = None  # "state_variable" | "input" | "parameter" | "plant_scale_state"
     default: float = 0.
     on_grow: str = "default"
-    dtype: type = float                  # float, int or object (design note time_and_data §5)
-    shape: tuple = ()                    # per-entity shape of a vector-valued variable (PT7)
+    dtype: type = float                  # float, int or object
+    shape: tuple = ()                    # per-entity shape of a vector-valued variable
 
     @property
     def mtg_backed(self) -> bool:
@@ -76,7 +75,7 @@ def legacy_edge_convention(mapping: str) -> str:
 
 def default_mapping(kind: Optional[str], direction: str, name: str, weight: Optional[str] = None) -> str:
     """
-    Mapping implied by the variable's state_variable_type when the declaration gives none (D9, option A).
+    Mapping implied by the variable's state_variable_type when the declaration gives none.
     direction: "up" (fine -> coarse) or "down" (coarse -> fine).
     """
     if direction == "up":
@@ -169,12 +168,12 @@ def location_of_scale(ds, scale: int) -> str:
         return "node"
     if scale > nodes:
         raise DeclarationError(f"scale {scale_names(ds).get(scale, scale)} is finer than the graph's nodes "
-                               f"({scale_names(ds).get(nodes, nodes)}): a finer scale needs an anatomy (DS8)")
+                               f"({scale_names(ds).get(nodes, nodes)}): a finer scale needs an anatomy")
     return scale_names(ds)[scale]
 
 
 def resolve_location(ds, location: str) -> str:
-    """Location name as stored: scale names are accepted and resolved against the graph (N5)."""
+    """Location name as stored: scale names are accepted and resolved against the graph."""
     if location in SOLVER_LOCATIONS:
         return location
     names = {name: value for value, name in scale_names(ds).items()}
@@ -201,11 +200,11 @@ def resolve_declaration(f, ds) -> Optional[VariableSpec]:
     VariableSpec of dataclass field *f* on DataStructure *ds*, or None when the field is not a DataStructure
     variable (no declare() metadata, or neither scale nor location given).
 
-    Legacy forms (accepted for one release, D2):
+    Legacy forms (accepted for one release):
       scale="node" | "edge" | "scalar" | "cell"  -> that location, no MTG property;
       scale=<int>, edge_mapping=m                -> location "edge", mapping m;
       scale=Compartment / Connection             -> "node" / "edge", no MTG property.
-    A scale coarser than the nodes without a location is stored at that scale (N1).
+    A scale coarser than the nodes without a location is stored at that scale.
     """
     meta = f.metadata
     if meta.get("variable_type") is None:
@@ -219,7 +218,7 @@ def resolve_declaration(f, ds) -> Optional[VariableSpec]:
     if isinstance(raw_scale, str) and raw_scale in SOLVER_LOCATIONS and location is None:
         location, raw_scale = raw_scale, None
     if raw_scale is None and location is None:
-        # A numeric parameter without a place is stored per plant (design devplan_population_scene §7-8): at the
+        # A numeric parameter without a place is stored per plant: at the
         # "Plant" location of plant DataStructures, at "scalar" elsewhere. Other fields are not DataStructure variables.
         numeric = (dtype is not object and not isinstance(f.default, bool)
                    and isinstance(f.default, (int, float, np.integer, np.floating)))
@@ -251,7 +250,7 @@ def resolve_declaration(f, ds) -> Optional[VariableSpec]:
             return VariableSpec(location=location, **common)
         element_scale = getattr(ds, "element_scale", None)
         if element_scale is not None and (raw_scale is not None or location == "node"):
-            # The elements of several populations (UnionDataStructure, P5): their nodes' scale, and "node"
+            # The elements of several populations (UnionDataStructure): their nodes' scale, and "node"
             scale = _scale_value(ds, raw_scale) if raw_scale is not None else element_scale
             if scale == element_scale and location in (None, "node") and mapping is None:
                 return VariableSpec(location="node", **common)

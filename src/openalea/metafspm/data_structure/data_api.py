@@ -295,8 +295,7 @@ def _converted(values, array: np.ndarray, name: str):
 
 class VariableStoreMixin:
     """
-    Named variables with a location, live views, in-place writes, name-level aliases and a version counter
-    (design note docs/design/coupling_through_datastructures.md §5.1-5.2).
+    Named variables with a location, live views, in-place writes, name-level aliases and a version counter.
 
     Subclasses provide _var_stores() -> {location: {name: ndarray}}, _location_shape(location) and
     _default_location. A registered array is only rebound by register() and update_topology(), which bump
@@ -360,7 +359,7 @@ class VariableStoreMixin:
     def get(self, name: str) -> np.ndarray:
         """
         Live view of a registered variable (aliases resolved). A derived variable is recomputed first if one of its
-        sources was written since its last computation (design note datastructure_contract §4, D10).
+        sources was written since its last computation.
         """
         location, store, target = self._find(name)
         if target in self.__dict__.get("_derived", {}):
@@ -380,7 +379,7 @@ class VariableStoreMixin:
         array[...] = _converted(values, array, name or target)
         self.mark_written(target)
 
-    # ── Write counters (design note datastructure_contract §4) ────────────────
+    # ── Write counters ────────────────
 
     def write_count(self, name: str) -> int:
         """Number of writes of variable *name* (aliases resolved): bumped by register, set and topology changes."""
@@ -399,11 +398,10 @@ class VariableStoreMixin:
                  on_grow: str = "default", dtype=float, shape: tuple = ()) -> np.ndarray:
         """
         (Re)create the variable *name* at *location* from *values* (copied) or *default*.
-        shape:   per-entity shape of a vector-valued variable (PT7): the array is (entities,) + shape.
+        shape:   per-entity shape of a vector-valued variable: the array is (entities,) + shape.
         on_grow: value given to entities created by topology growth, "default" or "inherit" (parent's value).
         dtype:   float (default); int for labels, types and indices (kept as integers); object for lists and
-                 records, one per entity (not usable by graph systems, derivations or transport; design note
-                 time_and_data §5).
+                 records, one per entity (not usable by graph systems, derivations or transport).
         """
         location = location or self._default_location
         stores = self._var_stores()
@@ -458,7 +456,7 @@ class VariableStoreMixin:
         self.__dict__.setdefault("_aliases", {})[name] = target
         self._bump_version()
 
-    # ── Derived variables (design note §5.3, §6.1) ────────────────────────────
+    # ── Derived variables ────────────────────────────
 
     def derived(self) -> dict:
         return dict(self.__dict__.get("_derived", {}))
@@ -579,7 +577,7 @@ class VariableStoreMixin:
             values = np.where(self.mask(spec["target"]), values, spec["default"])
         return values
 
-    # ── Entity identity and traversal (design note structure_and_boundaries §2) ────────
+    # ── Entity identity and traversal ────────
 
     def index_of(self, ids, location: str = "node"):
         """
@@ -605,14 +603,14 @@ class VariableStoreMixin:
         result = order[position]
         return int(result[0]) if scalar else result
 
-    # ── Parameters seen by equations (devplan_population_scene §7) ────────────────────
+    # ── Parameters seen by equations ────────────────────
 
     def random(self, distribution: str = "uniform", stream: str = "", step: int = 0, ids=None,
                location: str = "node", seed: int = 0, **parameters) -> np.ndarray:
         """
         Reproducible draws, one per entity of *location* (or per entity id of *ids*, e.g. vids just created by an
         MPG-style step): a pure function of (seed, stream, step, entity id), independent of the visiting order
-        (random_streams, PT2). *parameters*: low / high, loc / scale, ...
+        (random_streams). *parameters*: low / high, loc / scale, ...
         """
         from openalea.metafspm.data_structure import random_streams
         ids = self.entity_ids(location) if ids is None else ids
@@ -646,7 +644,7 @@ class VariableStoreMixin:
     def _broadcast_to_entities(self, values, location: str, to: str) -> np.ndarray:
         return self._map(values, location, to, "broadcast")
 
-    # ── Named masks (design note structure_and_boundaries §4, D15) ─────────────────────
+    # ── Named masks ─────────────────────
 
     def define_mask(self, name: str, rule, location: str = "node") -> None:
         """
@@ -716,7 +714,7 @@ class VariableStoreMixin:
 
     children = roots = tips = order = parents
 
-    # ── Validation (design note datastructure_contract §6) ────────────────────
+    # ── Validation ────────────────────
 
     def validate_variables(self, strict: bool = False) -> None:
         """
@@ -726,7 +724,7 @@ class VariableStoreMixin:
           * a derived variable whose source or weight is missing or moved to another location, or which is not
             stored at its declared location.
         strict=True also recomputes every up-to-date derived variable and compares it with its stored values: a
-        difference reveals a write made through a view without mark_written() (D10).
+        difference reveals a write made through a view without mark_written().
         """
         problems = []
         meta = self._variable_meta()
@@ -802,7 +800,7 @@ class VariableStoreMixin:
             return np.sum(values * weights, axis=axis) / np.sum(weights, axis=axis)
         raise ValueError(f"unknown aggregation '{aggregation}'")
 
-    # ── Export for loggers (design note §9) ────────────────────────────────────
+    # ── Export for loggers ────────────────────────────────────
 
     _INDEX_NAMES = {"node": "vid", "edge": "edge", "cell": "voxel"}
 
@@ -830,7 +828,7 @@ class VariableStoreMixin:
             values = np.asarray(self.get(name))
             if values.size == n_entities:
                 columns[name] = np.ravel(values)
-            else:                                   # a vector-valued variable: one column per component (PT7)
+            else:                                   # a vector-valued variable: one column per component
                 values = values.reshape(n_entities, -1)
                 for j in range(values.shape[1]):
                     columns[f"{name}_{j}"] = values[:, j]
@@ -866,7 +864,7 @@ class VariableStoreMixin:
             summary["scalar"][name] = float(self.get(name))
         return summary
 
-    # ── Persistence (DS15): checkpoint and restore ───────────────────────────────
+    # ── Persistence: checkpoint and restore ───────────────────────────────
 
     # DataStructure state kept by a checkpoint, besides the variables: metadata, links, masks, counters
     _CHECKPOINT_STATE = ("_var_meta", "_aliases", "_derived", "_masks", "_writes", "_version", "_topology_version",
@@ -875,7 +873,7 @@ class VariableStoreMixin:
 
     def checkpoint(self, path: str, include_mtg: bool = True) -> None:
         """
-        Write the DataStructure to the folder *path* (DS15): numeric variables in arrays.npz, a JSON manifest
+        Write the DataStructure to the folder *path*: numeric variables in arrays.npz, a JSON manifest
         (class, construction, variables with location and dtype, counters), and state.pkl with what JSON cannot hold
         (object variables, derivation formulas, mask rules, metadata; the MPG itself when *include_mtg*).
         restore() rebuilds an equal DataStructure: the next steps give the same values, bit for bit.
@@ -939,7 +937,7 @@ class VariableStoreMixin:
 
     def load_checkpoint(self, path: str, **construction) -> None:
         """
-        Load the checkpoint of folder *path* into this DataStructure, in place (PT7): components, mappings and
+        Load the checkpoint of folder *path* into this DataStructure, in place: components, mappings and
         scenes keep their references to it. An MPG DataStructure takes the checkpointed MTG (or *mtg*).
         """
         manifest, saved, arrays = self._read_checkpoint(path, type(self).__name__)
@@ -993,7 +991,7 @@ class VariableStoreMixin:
 class DataStructurePropsView(Mapping):
     """
     Read-only {name: {id: value}} view of a DataStructure, for code written against the former props snapshot
-    (compatibility for one release, design note §8.7). Node values are keyed by node id, edge values by edge index,
+    (compatibility for one release). Node values are keyed by node id, edge values by edge index,
     coarse-scale values by entity id and scalars by 1. Values are read at access time; mappings are read-only.
     """
 
@@ -1255,7 +1253,7 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
             graph when omitted; required for an unpopulated graph, whose
             update_topology() would otherwise not know what to populate.
         nodes : "Compartment", optional
-            Anatomy mode (design note structure_and_boundaries §7, DS8): the nodes are the Compartments of the
+            Anatomy mode: the nodes are the Compartments of the
             anatomies held below the from_scale vertices, keyed by their own vid; the edges are every Connection
             (anatomy edges and junctions), keyed by their own vid. from_scale is then required, and the from_scale
             name (e.g. "SubOrgan") becomes a coarse location. Default: one node per from_scale vertex.
@@ -1284,7 +1282,7 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
         self._B_cached  = None
         self._build_index_map()
         if self._from_scale is None:
-            # Inferred from the populated graph: the scale of the vertices the Compartments stand for (DS11)
+            # Inferred from the populated graph: the scale of the vertices the Compartments stand for
             self._from_scale = self._node_scale()
         if self._anatomy:
             self._anatomy_signature = self._anatomy_signatures()
@@ -1319,7 +1317,7 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
             )
             svids = np.asarray(raw, dtype=np.int64).tolist()
         self._idx_to_vid = svids
-        self._vid_to_idx = None            # built at first use (F5): array code uses _vid_index
+        self._vid_to_idx = None            # built at first use: array code uses _vid_index
         self._build_bio_index_map()
 
     @property
@@ -1436,7 +1434,7 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
     def n_edges(self) -> int:
         return len(self._edges_cached())
 
-    # ── Traversal in local indices (design note structure_and_boundaries §2, DS2) ──────
+    # ── Traversal in local indices ──────
 
     def _traversal(self) -> dict:
         """Parents, children (CSR), roots, tips and orders of the graph's nodes, from the Connections; cached."""
@@ -1500,7 +1498,7 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
         Node permutation: "pre" lists every parent before its children, "post" every child before its parent.
         convention="openalea": the post order of openalea.mtg.traversal.post_order2 (children taken from the MTG, the
         successor '<' subtree first, then the branches in reverse insertion order), the visiting order of models
-        written with it, e.g. rhizodep (S1). Segment mode only.
+        written with it, e.g. rhizodep. Segment mode only.
         """
         if kind not in ("pre", "post"):
             raise ValueError(f"order must be 'pre' or 'post', got '{kind}'")
@@ -1549,7 +1547,7 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
         self.__dict__["_openalea_post"] = (key, order)
         return order
 
-    # ── Tree kernels (design note population_and_performance §3, §9, §12; plan P3) ─────
+    # ── Tree kernels ─────
 
     def define_chain(self, name: str, edge_type: str = None, group: str = None, rank: str = None) -> None:
         """
@@ -1636,14 +1634,14 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
         return self._mtg.topology_arrays()["edge_type"][np.asarray(self._idx_to_vid, dtype=np.int64)]
 
     def fold(self, update, values, direction: str = "up") -> np.ndarray:
-        """Level-by-level fold with a custom vectorised *update* (tree_kernels.fold, PT1)."""
+        """Level-by-level fold with a custom vectorised *update* (tree_kernels.fold)."""
         from openalea.metafspm.data_structure import tree_kernels
         return tree_kernels.fold(update, values, self.parents(), self.children(), direction=direction,
                                  edge_codes=self._edge_codes(), groups=self.levels())
 
     def chain_gather(self, values, rank, chain: str = "axis", source=None, fill=np.nan) -> np.ndarray:
         """
-        Per node, the value of the node at rank *rank* on the chain given by *source* (tree_kernels.chain_gather, PT1).
+        Per node, the value of the node at rank *rank* on the chain given by *source* (tree_kernels.chain_gather).
         Chains by group and rank: *source* is a group value and *rank* a rank value. Edge-type chains: *source* is a
         vid of the chain and *rank* a 0-based position.
         """
@@ -1677,7 +1675,7 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
         return tree_kernels.chain_gather(values, chains, np.where(known, source_chain, -1), position, fill=fill)
 
     def chain_recurrence(self, update, values, chain: str = "axis") -> np.ndarray:
-        """Recurrence along chains, position by position (tree_kernels.chain_recurrence, PT1)."""
+        """Recurrence along chains, position by position (tree_kernels.chain_recurrence)."""
         from openalea.metafspm.data_structure import tree_kernels
         return tree_kernels.chain_recurrence(update, values, self.chain(chain))
 
@@ -1685,7 +1683,7 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
         """
         Each supply window of path_window element by element, (owner, supplier, contribution) in local indices, emitted
         in visiting order: the nodes of *where* in the post order of *order* ("openalea", as rhizodep's post_order2;
-        None, the graph's), their suppliers in walking order (S1). scatter_contributions then shares amounts bit for bit
+        None, the graph's), their suppliers in walking order. scatter_contributions then shares amounts bit for bit
         as rhizodep's loops do.
         """
         from openalea.metafspm.data_structure import tree_kernels
@@ -1810,7 +1808,7 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
             names += list(store)
         return names
 
-    # ── Scale operators (design note §6.1) ─────────────────────────────────────
+    # ── Scale operators ─────────────────────────────────────
 
     def _membership(self, scale_name: str):
         """(sorted entity ids at *scale_name*, index of each node's entity) — the node → coarse map."""
@@ -2066,7 +2064,7 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
         else:
             _scatter(prop, np.asarray(self._bio_vids_sorted[idx], dtype=np.int64), arr)
 
-    # ── Label names (design note time_and_data §5, T6) ─────────────────────────────
+    # ── Label names ─────────────────────────────
 
     def label_code(self, name: str, variable: str = None) -> int:
         """
@@ -2099,7 +2097,7 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
             return [code(value) for value in values]
         return code(values)
 
-    # ── Declared variables: MTG reading and write-back (datastructure_contract §3) ──────
+    # ── Declared variables: MTG reading and write-back ──────────────────────────────
 
     def _scale_name(self, scale: int) -> str:
         return next(name for name, value in vars(type(self._mtg.scales)).items()
@@ -2143,7 +2141,7 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
             weights = self.get(spec.weight)
         return self._map(values, "node", spec.location, spec.mapping, weights)
 
-    # ── Lazy MTG synchronisation (QF3): the DataStructure is the reference, the MTG a view kept up to date on read ──
+    # ── Lazy MTG synchronisation: the DataStructure is the reference, the MTG a view kept up to date on read ──
 
     @property
     def mtg(self):
@@ -2274,7 +2272,7 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
         if self._anatomy:
             self._rewire_junctions()
         else:
-            # Incremental: only new segments get Compartments and Connections, the others keep theirs (F2)
+            # Incremental: only new segments get Compartments and Connections, the others keep theirs
             self.last_extension = self._mtg.extend_graph(self._from_scale)
         self.invalidate_topology()
         self._node_data.clear()
@@ -2296,7 +2294,7 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
             stored_ids[location] = keys
         self._bump_version()
 
-    # ── Anatomy mode: incremental junction rewiring (design note structure_and_boundaries §7, D12) ──
+    # ── Anatomy mode: incremental junction rewiring ──
 
     def _anatomy_signatures(self) -> dict:
         """{from_scale vid: (linked parent, anatomy)}, anatomy = its Compartments with their rule properties."""
@@ -2315,7 +2313,7 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
     def _rewire_junctions(self) -> None:
         """
         Rewire only the junctions that changed: those of a vertex that is new, has another linked parent, or whose
-        anatomy (or its parent's) changed. Every other Connection, with its vid and values, is kept (D12).
+        anatomy (or its parent's) changed. Every other Connection, with its vid and values, is kept.
         """
         g, old = self._mtg, self._anatomy_signature
         new = self._anatomy_signatures()
@@ -2356,7 +2354,7 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
 
     def _carry_over(self, values_by_key, keys, policy: dict) -> np.ndarray:
         """
-        Values for *keys* (vids): kept when known (one array match, QF4), else inherited from the nearest known
+        Values for *keys* (vids): kept when known (one array match), else inherited from the nearest known
         ancestor or default.
         """
         keys = np.asarray(keys, dtype=np.int64)
@@ -2475,7 +2473,7 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
         )
 
     def topology(self, boundary_ports: tuple = ()) -> "GraphView":
-        """The graph view: one name for every DataStructure (design note cross_scale_and_grids §3)."""
+        """The graph view: one name for every DataStructure."""
         return self.to_graph_view(boundary_ports=boundary_ports)
 
     def to_props_dict(self) -> dict:
@@ -2513,7 +2511,7 @@ def _scatter(prop, vids: np.ndarray, values: np.ndarray, integer: bool = False) 
 
 
 class _KeyedValues:
-    """Values of a variable by entity id, as two sorted arrays: a read-only mapping matched in bulk (QF4)."""
+    """Values of a variable by entity id, as two sorted arrays: a read-only mapping matched in bulk."""
 
     def __init__(self, keys: np.ndarray, values: np.ndarray, matched: tuple = None):
         self.keys, self.values = keys, values
@@ -2593,12 +2591,12 @@ class ArrayDataStructure(VariableStoreMixin, FieldDataStructure):
       1D: soil water content as function of depth   shape = (n_z,)
       3D: voxel grid (light, temperature, moisture) shape = (nx, ny, nz)
 
-    Axes are named ("x", "y", "z") in that order (canonical order of the soil grid, devplan Q16b);
+    Axes are named ("x", "y", "z") in that order (the canonical order of the soil grid);
     flat cell indices follow the C-order ravel of `shape` (the last axis varies fastest).
 
     Second-order finite-difference Laplacian with Neumann BC.
 
-    Graph topology (design note cross_scale_and_grids §3, DS1, D1): the cells are the nodes and the faces between
+    Graph topology: the cells are the nodes and the faces between
     adjacent cells the edges, axis by axis, oriented towards increasing coordinates (B[lower, e] = +1). Periodic
     axes add the wrap faces (last cell -> first cell). The edge variables face_area and face_distance give the
     geometric factor of fluxes, K * face_area / face_distance * (B^T c).
@@ -2653,7 +2651,7 @@ class ArrayDataStructure(VariableStoreMixin, FieldDataStructure):
             return (self._face_tail.size,)
         return () if location == "scalar" else self._shape
 
-    # ── Graph topology: cells and faces (DS1) ─────────────────────────────────────────
+    # ── Graph topology: cells and faces ─────────────────────────────────────────
 
     def _build_faces(self) -> None:
         cells = np.arange(int(np.prod(self._shape)), dtype=np.int64).reshape(self._shape)
@@ -2708,7 +2706,7 @@ class ArrayDataStructure(VariableStoreMixin, FieldDataStructure):
                          boundary_incidence=csc_matrix((n, 0), dtype=np.float64), boundary_names=())
 
     def topology(self, boundary_ports: tuple = ()) -> "GraphView":
-        """The graph view: one name for every DataStructure (design note cross_scale_and_grids §3)."""
+        """The graph view: one name for every DataStructure."""
         return self.to_graph_view(boundary_ports=boundary_ports)
 
     def layer_mask(self, **layers) -> np.ndarray:

@@ -59,7 +59,7 @@ class Choregrapher(Singleton):
 
     def add_time_and_data(self, instance, sub_time_step: int, data, compartment: str = "graph"):
         """
-        Bind the steps of the instance's class, its own and those inherited from its bases (DS13), to the instance and
+        Bind the steps of the instance's class, its own and those inherited from its bases, to the instance and
         its DataStructure. The bound schedule is kept on the instance, so that several instances of one class run
         their own steps on their own DataStructures.
 
@@ -109,7 +109,7 @@ class Choregrapher(Singleton):
 
 
     def add_process(self, f, name):
-        """Register step functor *f* in category *name* for its class, identified by module and qualified name (DS13)."""
+        """Register step functor *f* in category *name* for its class, identified by module and qualified name."""
         family = f.family
         registered = getattr(self, name).setdefault(family, [])
         for k, other in enumerate(registered):
@@ -135,7 +135,7 @@ class Choregrapher(Singleton):
         steps = {}
         for klass in reversed(cls.__mro__):
             steps.update(self._steps_of_family(family_of(klass)))
-        # Steps a class removes from its bases (PT3): steps_removed = ("name", ...), names without the leading "_"
+        # Steps a class removes from its bases: steps_removed = ("name", ...), names without the leading "_"
         removed = {name.lstrip("_") for klass in cls.__mro__ for name in klass.__dict__.get("steps_removed", ())}
         unknown = removed - set(steps)
         if unknown:

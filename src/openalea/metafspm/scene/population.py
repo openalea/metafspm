@@ -1,5 +1,5 @@
 """
-A plant population in one MPG (devplan_population_scene.md, P4).
+A plant population in one MPG.
 
   table = planting_table(...)                 one row per plant: position, rotation, model, scenario
   g, plants = build_population(table, initiators=(RootGrowth, ...))
@@ -27,9 +27,9 @@ def planting_table(xrange: float, yrange: float, sowing_density: float, row_spac
                    emergence_times: list = None) -> pd.DataFrame:
     """
     One row per plant (columns plant, model, x, y, z, rotation, scenario), with the layout of stand_initialization: rows every row_spacing, plants per row from sowing_density, a model drawn per position
-    from plant_model_frequency. Each plant's scenario is its model's, or per_plant_scenarios[i] when given (Q6: one
+    from plant_model_frequency. Each plant's scenario is its model's, or per_plant_scenarios[i] when given (one
     scenario per plant, the statistical repartition being built upstream). emergence_times (s, one per plant) adds
-    the emergence_time column read by the Scene (Q5). The stand's size is kept in table.attrs (xrange, yrange).
+    the emergence_time column read by the Scene. The stand's size is kept in table.attrs (xrange, yrange).
     """
     if plant_model_frequency is None:
         plant_model_frequency = [1. / len(plant_models)] * len(plant_models)

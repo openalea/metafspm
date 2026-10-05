@@ -1,5 +1,5 @@
 """
-Coupling translators as Python objects (design note docs/design/coupling_through_datastructures.md §4).
+Coupling translators as Python objects.
 
 A translator is a list of Links: ``receiver.variable <- Σ factor * provider.source`` (or a formula), optionally
 changing scale with an aggregation. Python translators can use live references (``scales.SubOrgan``) and
@@ -67,7 +67,7 @@ class Link:
     scale:       receiver-side scale when the link changes scale (live ScalesConfig reference or name).
     aggregation: how values are mapped across locations ("sum", "mean", "weighted_mean", "broadcast",
                  "child", "parent", ...), with *weight* for "weighted_mean". Without it, a link between two
-                 locations is mapped from its provider's state_variable_type (design note cross_scale_and_grids §2).
+                 locations is mapped from its provider's state_variable_type.
     scale, source_scale:
                  when given, checks that the receiver's (and the sources') declared location is that scale's.
     target:      a mask of the DataStructure: the mapped values go to its entities only, the others getting the
