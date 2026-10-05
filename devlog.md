@@ -1977,3 +1977,23 @@ Per-file counts:
   - a failed `git rm` left a merged test file in place, so its tests ran twice once, then removed;
   - my plant sketch called a method that does not exist, corrected.
 - **Suite:** 728 passed, no warnings.
+
+## 2026-10-05 (evening): `@boundary_condition` kept; QPy and QPε
+
+- **`@boundary_condition` (your question):** its methods already took their arguments by name from the DataStructure, coupled variables included, read at each solve. The tests only used `self` attributes and constants, so nothing showed it.
+  - Following your choice (option 2), the decorator stays, for conditions given by equations.
+  - Neumann values are now inflows (`boundary_set`'s sign).
+  - `select=` takes a dict, a variable, a mask name or a callable; `boundary_set` also accepts mask names.
+  - Three tests cover it: a coupled inflow changed between calls, an exchange equation of the unknown checked against a hand solve, and a Dirichlet condition on a mask following a coupled value.
+- **Found:** placed numeric parameters have two copies (QPη, asked). `model.c_dirichlet = 2.0` sets an attribute while the DataStructure keeps its own value.
+- **QPy:**
+  - `@node_rate` added; `implicit_euler` deprecated as an alias of `newton`, transient; explicit and IVP solvers refuse residual forms and Dirichlet conditions.
+  - Explicit Euler now recovers the fluxes at the current state before stepping. It used the previous step's, zero at the start, which a forward-Euler test caught.
+  - Tests in `test_rate_form.py` (9).
+- **QPε:**
+  - UC1 and UC1-organ (1880 lines) became one parametrised file of 40 tests through the public API, with shared components in `helpers/nitrogen.py`. The `implicit_euler` tests asserting the spurious edge term `q(1 + 1/dt)` are replaced by the rate form solved three ways.
+  - UC2 now checks its Jacobian by one Newton step (a deliberately wrong Jacobian fails it, checked).
+  - UC3 uses boundary sets instead of hand-set ports; UC4 checks its balances by hand.
+- **QPw finished:** `FunctionalComponent.props`, `DataStructurePropsView`, `_last_graph_system`, `_last_graph_solution` and `_make_compat_graph_system` are removed.
+- **Docs:** the user guide explains the two forms; the migration guide, conventions and API reference follow the new paths and API.
+- **Suite:** 743 passed, no warnings.
