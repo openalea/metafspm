@@ -18,6 +18,12 @@ The flat modules used before the 2026 restructure have been removed. No compatib
 | `openalea.metafspm.component.Model`, `declare` | `openalea.metafspm.coupling.component.Component` / `FunctionalComponent`, `declare` |
 | `openalea.metafspm.specializer` | `openalea.metafspm.solve.specializer` |
 
+### Per-instance scheduling (DS13 hazard fix, P8)
+
+- Steps are registered per class, keyed by module and qualified name (`choregrapher.family_of`), and bound per instance at construction; `Component.__call__` runs its own instance's schedule. Several instances of one class run on their own DataStructures in any order, and same-named classes of different modules no longer collide.
+- **Fix:** subclasses run their bases' steps, a redefined step replacing its base's. Before, a subclass without steps of its own silently ran nothing. The `inheriting` globals mechanism is removed.
+- **Introspection:** `Choregrapher().schedule_of(cls)` gives a class's unbound schedule. `scheduled_groups` is keyed by `module:qualname`.
+
 ### Performance at population scale (F3, F4)
 
 - **Breaking: lazy MTG synchronisation.** `mtg_sync = "lazy"` is the new default, and the DataStructure is the reference. A state variable changed since its last synchronisation is written to the MTG:

@@ -1737,3 +1737,13 @@ Per-file counts:
   - Tests: the scale-mapping tests read through `ds.mtg`; the parent-mapping write error now surfaces at the flush; 3 new tests cover lazy, only-changed and after_call.
 - **DS13 seen again:** a subclass without its own steps (`EagerCounter(Counter)`) silently ran nothing. Inherited steps are dropped unless the subclass defines steps (the `inheriting` globals hack). It goes into P8.
 - **Suite:** 652 passed.
+
+## 2026-10-06 (later): P8.1, per-instance scheduling (DS13 hazard fix)
+
+- **Choregrapher:**
+  - `add_process` keys functors by `Functor.family` (`module:class qualname`, the function's qualname minus its name; graph-system trampolines take `owner.__qualname__`);
+  - `schedule_of(cls)` merges the families along the MRO, a subclass's same-named step replacing its base's, categories included;
+  - `add_time_and_data` stores the instance's bound groups in `instance.__dict__["_choregraphy"]`;
+  - `__call__(instance=)` runs them. The `module_family=` call stays for the usage examples (it resolves a bare class name to the last bound family). The `inheriting` hack is removed.
+- **Tests:** the three schedule-introspection tests use `schedule_of` / the instance schedule. New `test_per_instance_scheduling.py` (4 tests): two instances in any order, subclass steps (inherited and redefined), same-named classes from two modules (built with `exec`), a function-local class. `EagerCounter` is a plain subclass again.
+- **Suite:** 656 passed.

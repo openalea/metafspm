@@ -59,7 +59,9 @@ class Choregrapher(Singleton):
 
     def add_time_and_data(self, instance, sub_time_step: int, data, compartment: str = "graph"):
         """
-        Bind the steps collected for the instance's class to the instance and its DataStructure.
+        Bind the steps of the instance's class, its own and those inherited from its bases (DS13), to the instance and
+        its DataStructure. The bound schedule is kept on the instance, so that several instances of one class run
+        their own steps on their own DataStructures.
 
         Args:
             instance: component instance whose class the steps were collected from
@@ -67,15 +69,13 @@ class Choregrapher(Singleton):
             data: the component's DataStructure
             compartment (str, optional): name under which the DataStructure is recorded
         """
-        module_family = instance.__class__.__name__
-        self.sub_time_step[module_family] = sub_time_step
+        family = family_of(type(instance))
+        self.sub_time_step[family] = sub_time_step
         self.data_structure[compartment] = data
-        self.build_schedule(module_family)
-        for k in self.scheduled_groups[module_family].keys():
-            for f in range(len(self.scheduled_groups[module_family][k])):
-                functor = self.scheduled_groups[module_family][k][f]
-                self.scheduled_groups[module_family][k][f] = partial(functor, instance, data)
-
+        groups = {priority: [partial(functor, instance, data) for functor in functors]
+                  for priority, functors in self.schedule_of(type(instance)).items()}
+        instance.__dict__["_choregraphy"] = (sub_time_step, groups)
+        self.scheduled_groups[family] = groups      # introspection: the last bound instance of the class
 
     def add_simulation_time_step(self, simulation_time_step: int):
         """
@@ -109,75 +109,60 @@ class Choregrapher(Singleton):
 
 
     def add_process(self, f, name):
-        module_family = f.class_name
+        """Register step functor *f* in category *name* for its class, identified by module and qualified name (DS13)."""
+        family = f.family
+        registered = getattr(self, name).setdefault(family, [])
+        for k, other in enumerate(registered):
+            if other.name == f.name:        # the class was defined again (e.g. reloaded): the latest definition wins
+                registered[k] = f
+                return
+        registered.append(f)
 
-        class_globals = f.fun.__globals__
-        if "inheriting" in class_globals:
-            parent_names = [cls.__name__ for cls in class_globals["inheriting"] if cls.__name__ not in ("object", "Model")]
-            # We check all step to transfer them to module familly instead of their base class
-            for step in self.universal_steps:
-                for parent in parent_names:
-                    if parent in getattr(self, step).keys():
-                        # In case this is the very first process
-                        if module_family not in getattr(self, step).keys():
-                            getattr(self, step)[module_family] = []
+    def _steps_of_family(self, family) -> dict:
+        """{step name: (functor, categories)} declared by one class."""
+        steps = {}
+        for category in self.universal_steps:
+            for functor in getattr(self, category).get(family, []):
+                steps.setdefault(functor.name, [functor, set()])[1].add(category)
+        return steps
 
-                        # Gather all the processes from the parent
-                        # NOTE : normally the bellow code would replace same names by children's process, as expected by inheritance
-                        for process in getattr(self, step)[parent]:
-                             getattr(self, step)[module_family].append(process)
-                        # Remove parents from the registered modules
-                        del getattr(self, step)[parent]
-
-        exists = False
-        if module_family not in getattr(self, name).keys():
-            getattr(self, name)[module_family] = []
-        else:
-            for k in range(len(getattr(self, name)[module_family])):
-                # If current function already has been flagged, it is replaced cause we suppose that execution order reflects inheritance from parent to children
-                # So override is the expected behavior
-                f_name = getattr(self, name)[module_family][k].name
-                if f_name == f.name:
-                    getattr(self, name)[module_family][k] = f
-                    exists = True
-        if not exists:
-            getattr(self, name)[module_family].append(f)
-        self.build_schedule(module_family=module_family)
-
+    def schedule_of(self, cls) -> dict:
+        """
+        Unbound schedule of class *cls*: {priority: [functors]}, sorted. A class runs its own steps and those of its
+        bases, a step redefined by a subclass replacing its base's (by name, with its own categories).
+        """
+        steps = {}
+        for klass in reversed(cls.__mro__):
+            steps.update(self._steps_of_family(family_of(klass)))
+        groups = {}
+        for name, (functor, categories) in steps.items():
+            priority = [0] * len(self.consensus_scheduling)
+            for row, schedule in enumerate(self.consensus_scheduling):
+                for process_type, category in enumerate(schedule):
+                    if category in categories:
+                        priority[row] = process_type + 1
+            groups.setdefault(str(priority), []).append(functor)
+        return {k: groups[k] for k in sorted(groups)}
 
     def build_schedule(self, module_family):
-        self.scheduled_groups[module_family] = {}
-        # As functors can belong two multiple categories, we store unique names to avoid duplicated instances
-        unique_functors = {}
-        for attribute in dir(self):
-            if not callable(getattr(self, attribute)) and "_" not in attribute:
-                if module_family in getattr(self, attribute).keys():
-                    for functor in getattr(self, attribute)[module_family]:
-                        if functor.name not in unique_functors.keys():
-                            unique_functors[functor.name] = functor
-        # Then, We go through these unique functors
-        for name, functor in unique_functors.items():
-            priority = [0 for k in range(len(self.consensus_scheduling))]
-            # We go through each row of the consensus scheduling, in order of priority
-            for schedule in range(len(self.consensus_scheduling)):
-                # We attribute a number in the functor's tuple to provided decorator.
-                for process_type in range(len(self.consensus_scheduling[schedule])):
-                    considered_step = getattr(self, self.consensus_scheduling[schedule][process_type])
-                    if module_family in considered_step.keys():
-                        if name in [f.name for f in considered_step[module_family]]:
-                            priority[schedule] = process_type + 1
-                            
-            # We append the priority tuple to she scheduled groups dictionnary
-            if str(priority) not in self.scheduled_groups[module_family].keys():
-                self.scheduled_groups[module_family][str(priority)] = []
-            self.scheduled_groups[module_family][str(priority)].append(functor)
+        """Former name-keyed schedule builder, kept for code calling it with a class (see schedule_of)."""
+        if isinstance(module_family, type):
+            self.scheduled_groups[family_of(module_family)] = self.schedule_of(module_family)
 
-        # Finally, we sort the dictionnary by key so that the call function can go through functor groups in the expected order
-        self.scheduled_groups[module_family] = {k: self.scheduled_groups[module_family][k] for k in sorted(self.scheduled_groups[module_family].keys())}
-
-
-    def __call__(self, module_family):
-        for increment in range(int(self.simulation_time_step/self.sub_time_step[module_family])):
-            for step in self.scheduled_groups[module_family].keys():
-                for functor in self.scheduled_groups[module_family][step]:
+    def __call__(self, module_family=None, instance=None):
+        """Run the bound schedule of *instance* (or, formerly, of the last bound instance of class *module_family*)."""
+        if instance is not None:
+            sub_time_step, groups = instance.__dict__["_choregraphy"]
+        else:
+            family = next((f for f in self.scheduled_groups if f == module_family or f.endswith(f":{module_family}")),
+                          module_family)
+            sub_time_step, groups = self.sub_time_step[family], self.scheduled_groups[family]
+        for increment in range(int(self.simulation_time_step / sub_time_step)):
+            for step in groups:
+                for functor in groups[step]:
                     functor()
+
+
+def family_of(cls) -> str:
+    """Key of a component class's steps: module and qualified name, so that same-named classes do not collide."""
+    return f"{cls.__module__}:{cls.__qualname__}"

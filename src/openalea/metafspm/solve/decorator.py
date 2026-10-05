@@ -1220,7 +1220,7 @@ class _GraphSystemDescriptor:
             _trampoline.__code__, mod_globals, name,
             _trampoline.__defaults__, _trampoline.__closure__,
         )
-        _trampoline.__qualname__ = f"{owner.__name__}.{name}"
+        _trampoline.__qualname__ = f"{owner.__qualname__}.{name}"
         Choregrapher().add_process(Functor(_trampoline),
                                    name=self._spec["schedule_as"])
 

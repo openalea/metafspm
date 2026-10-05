@@ -8,7 +8,10 @@ class Functor:
     def __init__(self, fun, iteraring: bool = False, total: bool = False):
         self.fun = fun
         self.name = self.fun.__name__[1:]
-        self.class_name = self.fun.__qualname__.split('.')[0]
+        # The class qualified name (the function's without its own name) and module identify the step's class (DS13)
+        self.class_qualname = self.fun.__qualname__.rsplit('.', 1)[0]
+        self.class_name = self.class_qualname.rsplit('.', 1)[-1]
+        self.family = f"{self.fun.__module__}:{self.class_qualname}"
         self.iterating = iteraring
         self.total = total
         self.input_names = self.inputs(self.fun)
