@@ -297,3 +297,23 @@ The per-process scene's overhead grows with the plants, because the soil worker 
 - **F3, writing back to the MTG.** 97 % of the rates-and-states time is `write_back_to_mtg`, which runs after every component call and copies each MTG-scale state variable into the MTG properties (0.44 s of 0.46 s); the arithmetic takes 13 ms. Two options: write back only before an MPG-style step reads the MTG and on export, or declare per variable which ones MPG-style code needs. Either would make rates and states about 30 times faster.
 - **F4, the incremental graph extension.** Each `update_topology` after growth spends 3.4 of its 5 s in `extend_graph`, almost all in `components_at_scale` (the openalea traversal of the whole MTG), plus 0.6 s in the owner maps. The cost is proportional to the population, not to the new segments. Restricting the extension to the vertices created since the last extension (`vid > last _id`, and their complexes) would make growth bookkeeping proportional to the growth.
 - **Estimate:** with F3 and F4, a step of 1000 plants of 2 000 segments would take about 2 s, of which about 1.7 s is graph systems. Those could later be split into pieces solved in parallel inside the Scene (`split="components"`, §9 S2).
+
+## 15. After F3 and F4 (2026-10-06)
+
+The same benchmark (`bench_population.py`), seconds per step:
+
+| plants | segments | step (before → after) | rates + states | graph system | growth | exchanges (bar. / overlap) |
+|---:|---:|---:|---:|---:|---:|---:|
+| 1 | 2·10³ | 0.009 → 0.006 | 0.0002 | 0.0007 | 0.0013 | 0.0002 / 0.0008 |
+| 10 | 2·10⁴ | 0.058 → 0.018 | 0.0003 | 0.0036 | 0.009 | 0.0009 / 0.007 |
+| 100 | 2·10⁵ | 0.69 → 0.16 | 0.0017 | 0.038 | 0.10 | 0.008 / 0.059 |
+| 1000 | 2·10⁶ | 6.7 → 3.3 | 0.03 | 0.5–0.7 | 1.6–2.2 | 0.16 / 0.96 |
+
+Anatomy mode at 8·10⁵ Compartments: rates and states 0.15 → 0.003 s, graph system 0.46 → 0.14 s.
+
+- **F3 (lazy MTG synchronisation):**
+  - rates and states are now the arithmetic only;
+  - an MPG-style step flushes the variables of its own component;
+  - write-back properties are ArrayDicts.
+- **F4:** the graph extension, the carry-over, the topology arrays and `edges()` are array work.
+- **F5 (open), growth at the largest sizes:** growth bookkeeping is still not linear: ×10 plants gives ×16–22 between 100 and 1000 plants. The cause is the remaining O(MTG) Python reads per growth event: `topology_arrays` reading the MTG's `_parent`, `_scale`, `_complex` and `edge_type` dicts (about 6·10⁶ vertices with the Compartments and Connections), and `_build_index_map`. Making those arrays incremental (extended for the vertices created since the last read, rebuilt on removals or relinking) would make growth proportional to the growth. That needs the MPG to record its structural edits (`add_child`, `insert_parent`, `remove_tree`), so it is left for later.

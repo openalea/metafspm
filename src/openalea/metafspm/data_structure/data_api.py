@@ -843,6 +843,87 @@ class VariableStoreMixin:
             summary["scalar"][name] = float(self.get(name))
         return summary
 
+    # ── Persistence (DS15): checkpoint and restore ───────────────────────────────
+
+    # DataStructure state kept by a checkpoint, besides the variables: metadata, links, masks, counters
+    _CHECKPOINT_STATE = ("_var_meta", "_aliases", "_derived", "_masks", "_writes", "_version", "_topology_version",
+                         "_stored_ids", "_mtg_tracked", "_mtg_synced")
+
+    def checkpoint(self, path: str, include_mtg: bool = True) -> None:
+        """
+        Write the DataStructure to the folder *path* (DS15): numeric variables in arrays.npz, a JSON manifest
+        (class, construction, variables with location and dtype, counters), and state.pkl with what JSON cannot hold
+        (object variables, derivation formulas, mask rules, metadata; the MPG itself when *include_mtg*).
+        restore() rebuilds an equal DataStructure: the next steps give the same values, bit for bit.
+        """
+        import json
+        import os
+        import pickle
+        if hasattr(self, "flush_mtg"):
+            self.flush_mtg()                       # the stored MTG holds the current values
+        os.makedirs(path, exist_ok=True)
+        arrays, objects, variables = {}, {}, {}
+        for location, store in self._var_stores().items():
+            for name, array in store.items():
+                key = f"{location}::{name}"
+                (objects if array.dtype == object else arrays)[key] = array
+                variables[name] = {"location": location, "dtype": str(array.dtype)}
+        for location in {info["location"] for info in variables.values()} - {"scalar"}:
+            arrays[f"_ids::{location}"] = np.asarray(self.entity_ids(location))
+        np.savez(os.path.join(path, "arrays.npz"), **arrays)
+        state = {name: self.__dict__[name] for name in self._CHECKPOINT_STATE + self._checkpoint_extra()
+                 if name in self.__dict__}
+        try:
+            payload = pickle.dumps({"objects": objects, "state": state,
+                                    "mtg": getattr(self, "_mtg", None) if include_mtg else None})
+        except (pickle.PicklingError, AttributeError, TypeError) as error:
+            raise TypeError(f"checkpoint: {error}. Derivation formulas and mask rules are kept by reference: define "
+                            "them as module-level functions (or picklable objects), not lambdas") from None
+        with open(os.path.join(path, "state.pkl"), "wb") as f:
+            f.write(payload)
+        with open(os.path.join(path, "manifest.json"), "w") as f:
+            json.dump({"format": 1, "class": type(self).__name__, "construction": self._construction(),
+                       "variables": variables, "version": self.version, "topology_version": self.topology_version},
+                      f, indent=1)
+
+    @classmethod
+    def restore(cls, path: str, **construction):
+        """The DataStructure checkpointed in folder *path* (see checkpoint(); *construction* overrides, e.g. mtg=)."""
+        import json
+        import os
+        import pickle
+        with open(os.path.join(path, "manifest.json")) as f:
+            manifest = json.load(f)
+        if manifest["class"] != cls.__name__:
+            raise TypeError(f"{path} holds a {manifest['class']}, not a {cls.__name__}")
+        with open(os.path.join(path, "state.pkl"), "rb") as f:
+            saved = pickle.load(f)
+        with np.load(os.path.join(path, "arrays.npz"), allow_pickle=False) as npz:
+            arrays = {key: npz[key] for key in npz.files}
+        ds = cls._from_construction(dict(manifest["construction"], **construction), saved)
+        for location in {info["location"] for info in manifest["variables"].values()} - {"scalar"}:
+            if not np.array_equal(np.asarray(ds.entity_ids(location)), arrays[f"_ids::{location}"]):
+                raise ValueError(f"{path}: the entities at {location} differ from the checkpointed ones (another MTG?)")
+        stores = ds._var_stores()
+        for store in stores.values():
+            store.clear()
+        for name, info in manifest["variables"].items():
+            key = f"{info['location']}::{name}"
+            values = saved["objects"][key] if key in saved["objects"] else arrays[key]
+            stores[info["location"]][name] = np.array(values, copy=True)
+        for name in ("_parameter_views", "_index_cache"):
+            ds.__dict__.pop(name, None)
+        ds.__dict__.update(saved["state"])
+        return ds
+
+    def _construction(self) -> dict:
+        """JSON arguments rebuilding an empty DataStructure of this class (restore)."""
+        raise NotImplementedError(f"{type(self).__name__} has no checkpoint support")
+
+    def _checkpoint_extra(self) -> tuple:
+        """Further attribute names kept by a checkpoint (class-specific state)."""
+        return ()
+
     def _set_or_register(self, name: str, values, location: str) -> None:
         """Legacy setters: in place when the variable exists at *location* with the same shape, else (re)register."""
         values = np.asarray(values, dtype=float)
@@ -1250,13 +1331,24 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
         """
         if self._mtg is None:
             return []
+        # Cached until the topology version or the MTG (vertex count, last vid) changes
+        signature = (self.topology_version, self._mtg.nb_vertices(), getattr(self._mtg, "_id", None))
+        cache = self.__dict__.get("_edges_cache")
+        if cache is not None and cache[0] == signature:
+            return list(cache[1])
         n_id_a = self._mtg.array_filtering(
             "n_id_a", filter_in={"scale": self._mtg.scales.Connection}
         )
         n_id_b = self._mtg.array_filtering(
             "n_id_b", filter_in={"scale": self._mtg.scales.Connection}
         )
-        return [(int(a), int(b)) for a, b in zip(n_id_a, n_id_b)]
+        edges = list(zip(np.asarray(n_id_a, dtype=np.int64).tolist(), np.asarray(n_id_b, dtype=np.int64).tolist()))
+        self.__dict__["_edges_cache"] = (signature, edges)
+        return list(edges)
+
+    def n_edges(self) -> int:
+        self.edges()
+        return len(self.__dict__["_edges_cache"][1]) if "_edges_cache" in self.__dict__ else 0
 
     # ── Traversal in local indices (design note structure_and_boundaries §2, DS2) ──────
 
@@ -1456,6 +1548,24 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
         limit = self._from_scale + 1 if getattr(self, "_anatomy", False) else node_scale
         return [name for name, value in vars(type(scales)).items()
                 if isinstance(value, int) and not name.startswith("_") and 0 < value < limit]
+
+    def _construction(self) -> dict:
+        return {"from_scale": int(self._from_scale) if self._from_scale is not None else None,
+                "nodes": "Compartment" if self._anatomy else None}
+
+    def _checkpoint_extra(self) -> tuple:
+        return ("_wiring", "_anatomy_signature", "last_extension")
+
+    @classmethod
+    def _from_construction(cls, construction: dict, saved: dict):
+        mtg = construction.pop("mtg", None) or saved["mtg"]
+        if mtg is None:
+            raise ValueError("the checkpoint holds no MTG (include_mtg=False): give restore(path, mtg=...)")
+        wiring = saved["state"].get("_wiring")
+        if mtg.junction_vids() or not wiring:
+            wiring = None                         # junctions already wired in the MTG
+        ds = cls(mtg, from_scale=construction["from_scale"], nodes=construction["nodes"], wiring=wiring)
+        return ds
 
     def _var_stores(self) -> dict:
         stores = {"node": self._node_data, "edge": self._edge_data, "scalar": self._scalar_data}
@@ -1678,11 +1788,19 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
             return a
         return (a + b) / 2.0
 
-    def _mtg_property_for_write(self, name: str):
+    def _mtg_property_for_write(self, name: str, numeric: bool = True):
+        """
+        MTG property *name* for a write, created if absent. Numeric properties are ArrayDicts (a plain dict, e.g. made
+        by MPG-style code, is converted once), so that later writes are array assignments.
+        """
         props = self._mtg.properties()
-        if name not in props:
-            props[name] = {}
-        return props[name]
+        prop = props.get(name)
+        if prop is None:
+            props[name] = prop = ArrayDict() if numeric else {}
+        elif numeric and type(prop) is dict and all(isinstance(v, (int, float, np.integer, np.floating))
+                                                    for v in prop.values()):
+            props[name] = prop = ArrayDict(dict(sorted(prop.items())))
+        return prop
 
     def write_node_to_mtg(self, name: str, arr: np.ndarray) -> None:
         """Write a node array to MTG property *name* at the node vids (created if absent).
@@ -1767,9 +1885,10 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
                     if isinstance(value, int) and not name.startswith("_") and value == scale)
 
     def _write_at(self, name: str, vids, values) -> None:
-        prop = self._mtg_property_for_write(name)
         values = np.asarray(values)
-        _scatter(prop, np.asarray(vids, dtype=np.int64), values, integer=np.issubdtype(values.dtype, np.integer))
+        integer = np.issubdtype(values.dtype, np.integer)
+        prop = self._mtg_property_for_write(name, numeric=not integer)     # integers stay Python ints in a dict
+        _scatter(prop, np.asarray(vids, dtype=np.int64), values, integer=integer)
 
     def read_mtg(self, spec):
         """
@@ -1852,7 +1971,7 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
             return
         values = self.get(spec.name)
         if values.dtype == object:
-            prop = self._mtg_property_for_write(spec.name)
+            prop = self._mtg_property_for_write(spec.name, numeric=False)
             for vid, value in zip(self._idx_to_vid, values):
                 prop[int(vid)] = value
             return
@@ -2027,6 +2146,20 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
             unknown = np.flatnonzero(~known)
             if policy["on_grow"] != "inherit" and out.dtype != object:    # objects (lists) are set one by one
                 out[unknown] = policy["default"]
+                return out
+            if policy["on_grow"] == "inherit" and not getattr(self, "_anatomy", False) and out.dtype != object:
+                # The nearest known ancestor, level by level for all the new entities at once
+                parent = self._mtg.topology_arrays()["parent"]
+                out[unknown] = policy["default"]
+                pending, ancestor = unknown, keys[unknown]
+                while pending.size:
+                    inside = (ancestor >= 0) & (ancestor < parent.size)
+                    ancestor = np.where(inside, parent[np.where(inside, ancestor, 0)], -1)
+                    alive = ancestor >= 0
+                    pending, ancestor = pending[alive], ancestor[alive]
+                    found, source = values_by_key.match(ancestor)
+                    out[pending[found]] = values_by_key.values[source[found]]
+                    pending, ancestor = pending[~found], ancestor[~found]
                 return out
         else:
             unknown = range(len(keys))
@@ -2273,6 +2406,15 @@ class ArrayDataStructure(VariableStoreMixin, FieldDataStructure):
     @property
     def axes(self) -> tuple:
         return ("x", "y", "z")[:len(self._shape)] if len(self._shape) <= 3 else tuple(f"a{d}" for d in range(len(self._shape)))
+
+    def _construction(self) -> dict:
+        return {"shape": list(self._shape), "dx": self._dx.tolist(), "origin": self._origin.tolist(),
+                "periodic": self._periodic.tolist()}
+
+    @classmethod
+    def _from_construction(cls, construction: dict, saved: dict):
+        return cls(shape=tuple(construction["shape"]), dx=np.asarray(construction["dx"]),
+                   origin=np.asarray(construction["origin"]), periodic=construction["periodic"])
 
     def _var_stores(self) -> dict:
         return {"cell": self._fields, "edge": self.__dict__.setdefault("_edge_fields", {}),

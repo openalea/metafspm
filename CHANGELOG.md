@@ -18,6 +18,17 @@ The flat modules used before the 2026 restructure have been removed. No compatib
 | `openalea.metafspm.component.Model`, `declare` | `openalea.metafspm.coupling.component.Component` / `FunctionalComponent`, `declare` |
 | `openalea.metafspm.specializer` | `openalea.metafspm.solve.specializer` |
 
+### Checkpoints (DS15, P8)
+
+- **`ds.checkpoint(path, include_mtg=True)` / `MPGDataStructure.restore(path, mtg=None)` / `ArrayDataStructure.restore(path)`:** a folder holding:
+  - `arrays.npz`: numeric variables, and the entity ids, checked at restore;
+  - `manifest.json`: class, construction, variables with location and dtype, counters;
+  - `state.pkl`: object variables, metadata, aliases, derivations, masks, write counters, the anatomy wiring state, and the MPG.
+
+  A restored DataStructure continues bit for bit; components are built again on it and keep its values.
+- Derivation formulas and mask rules are kept by reference: module-level functions or picklable objects. Lambdas are refused with that hint. The Scene's combined emergence mask is now a picklable `AllMasks`.
+- **`LabelsConfig` pickles** (its per-instance label groups are rebuilt on load), so MPGs can be pickled.
+
 ### Per-instance scheduling (DS13 hazard fix, P8)
 
 - Steps are registered per class, keyed by module and qualified name (`choregrapher.family_of`), and bound per instance at construction; `Component.__call__` runs its own instance's schedule. Several instances of one class run on their own DataStructures in any order, and same-named classes of different modules no longer collide.
@@ -32,6 +43,7 @@ The flat modules used before the 2026 restructure have been removed. No compatib
   - by `ds.flush_mtg()`.
 
   Code reading the MTG object itself calls `ds.flush_mtg()` first; `mtg_sync = "after_call"` restores the former behaviour. Rates and states no longer pay the MTG write after each call, which was 97 % of their time at 2·10⁵ segments.
+- **An MPG-style step flushes the variables its component declares** (states, inputs, parameters): it sees what it declares. Numeric MTG properties written by the DataStructure are `ArrayDict`s, so writes are array assignments (a plain dict made by MPG-style code is converted once); integer properties stay dicts. `MPGDataStructure.edges()` is cached until the topology or the MTG changes.
 - **Faster growth bookkeeping:** `extend_graph`, the variable carry-over of `update_topology` and `topology_arrays` work on property arrays instead of MTG traversals and per-vertex loops. Writes to MTG properties that are not keyed like the nodes are batched.
 - **Fix:** in anatomy mode, `update_topology` pairs the stored edge values with the ids they were built for. It used to rely on new Connections having the largest vids.
 

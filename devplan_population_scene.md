@@ -59,7 +59,7 @@ Each step has its design detail in a short note before code (complex steps), its
 | **P5** ✓ | Cross-DataStructure links: `CrossMapping` (incidence matrix from a locator: barycentre, or length overlap), recomputed on topology or geometry changes; translator links between DataStructures become mapped exchanges with D9 defaults; the light model as a component reading several DataStructures | generalises `Coupler`; Q1–Q3 |
 | **P6** ✓ (with Q5 emergence) | `Scene(CompositeModel)`: environment components and populations, `__call__` order (environment, then each population), one or several populations (intercropping), the Logger per population and per plant | Q7–Q9 |
 | **P7** ✓ | Benchmarks and decision: time per step for 1 to 1000 plants of about 2 000 segments, with and without anatomies, split by phase, against today's one-plant-per-process scene; then decide on `play_Orchestra` (Q10) | |
-| **P8** | DS13 (per-instance scheduling) if Q8 needs it; DS15 (persistence, agreed: npz + JSON) | |
+| **P8** ✓ | DS13 (per-instance scheduling) if Q8 needs it; DS15 (persistence, agreed: npz + JSON) | |
 
 Order: P1 → P2 → P3 → P4 → P5 → P6 → P7 → P8. P1 can go first because it is independent.
 

@@ -110,7 +110,8 @@ Declarations that cannot be written back raise when the component is created: a 
   - when the MTG is read through `ds.mtg` (or `component.mtg`);
   - by `ds.flush_mtg()`.
 
-  Code holding the MTG object itself (e.g. a Logger given `g`) calls `ds.flush_mtg()` first.
+  An MPG-style step sees the variables its component declares (states, inputs, parameters); it must declare the properties it reads. Code holding the MTG object itself (e.g. a Logger given `g`) calls `ds.flush_mtg()` first.
+- **Checkpoints:** `ds.checkpoint(path)` and `Class.restore(path)`. Derivation formulas and mask rules are module-level functions or picklable objects, not lambdas.
 - **`mtg_sync = "after_call"`** writes the state variables after every call (the former default); **`"never"`** leaves the MTG untouched.
 - MTG-backed parameters are re-read at the start of every call.
 - In graph systems, parameters and inputs are read-only.

@@ -210,6 +210,14 @@ class LabelsConfig:
                         group[attr] = val
                 setattr(self, name, type(name, (), group))
 
+    def __getstate__(self):
+        """Pickling (checkpoints, DS15): the per-instance label groups are rebuilt on load, not stored."""
+        return {key: value for key, value in self.__dict__.items() if not isinstance(value, type)}
+
+    def __setstate__(self, state):
+        self.__init__()                  # the same groups and integers (deterministic)
+        self.__dict__.update(state)
+
     def filter_as_unique_int(self, filter: str):
         if filter in self.filters.keys():
             integer = self.filters[filter]

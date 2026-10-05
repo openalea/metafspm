@@ -264,13 +264,13 @@ class MPG(MTG):
         compartment_of = dict(zip(vertex_of.tolist(), compartments.tolist()))
         incoming = dict(zip(heads.tolist(), connections.tolist()))
         valid = _SortedIds(self._valid_vids_at(from_scale, as_array=True))
-        present = np.unique(vertex_of)
-        added = np.setdiff1d(valid.ids, present).tolist()
+        present = _SortedIds(_sorted_unique(vertex_of))
+        added = valid.ids[~present.contains(valid.ids)].tolist()
         # Connections whose endpoint is no longer a vertex at from_scale (removed, e.g. pruned with remove_tree, which
         # also removes the vertex's Compartment), then the Compartments of removed vertices still present
         stale_mask = ~(valid.contains(tails) & valid.contains(heads))
         stale = connections[stale_mask].tolist()
-        gone = set(np.setdiff1d(present, valid.ids).tolist()) | set(heads[stale_mask & ~valid.contains(heads)].tolist())
+        gone = set(present.ids[~valid.contains(present.ids)].tolist()) | set(heads[stale_mask & ~valid.contains(heads)].tolist())
         removed = sorted(gone)
         stale_set = set(stale)
         self.remove_connections(stale)
@@ -429,7 +429,7 @@ class MPG(MTG):
         anchor_keys = isanchor_prop.order[:isanchor_prop.size][isanchor_prop.values_array() != 0]
         valid_keys  = valid_keys[~np.isin(valid_keys, anchor_keys, assume_unique=False)]
         if as_array:
-            return np.unique(np.asarray(valid_keys, dtype=np.int64))
+            return _sorted_unique(np.asarray(valid_keys, dtype=np.int64))
         return set(int(v) for v in valid_keys)
 
     def linked_parent(self, vid, from_scale, valid_vids=None):
@@ -718,9 +718,9 @@ class MPG(MTG):
             out = np.full(size, -1, dtype=np.int64)
             if mapping:
                 keys = np.fromiter(mapping.keys(), dtype=np.int64, count=len(mapping))
-                values = np.fromiter((-1 if x is None else x for x in mapping.values()), dtype=np.int64,
-                                     count=len(mapping))
-                out[keys] = values
+                values = np.array(list(mapping.values()), dtype=object)
+                values[np.equal(values, None)] = -1
+                out[keys] = values.astype(np.int64)
             return out
 
         parent, scale, complex_ = filled(self._parent), filled(self._scale), filled(self._complex)
@@ -738,8 +738,10 @@ class MPG(MTG):
         types = self.property('edge_type')
         if types:
             keys = np.fromiter(types.keys(), dtype=np.int64, count=len(types))
-            codes = np.fromiter((self._EDGE_TYPE_CODES.get(t, 0) for t in types.values()), dtype=np.int64,
-                                count=len(types))
+            names = np.array([t if isinstance(t, str) else "" for t in types.values()])
+            codes = np.zeros(len(types), dtype=np.int64)
+            for name, code in self._EDGE_TYPE_CODES.items():
+                codes[names == name] = code
             inside = keys < size
             edge_type[keys[inside]] = codes[inside]
         is_anchor = np.zeros(size, dtype=bool)
@@ -1038,3 +1040,11 @@ class _SortedIds:
 
     def __iter__(self):
         return iter(self.ids.tolist())
+
+
+def _sorted_unique(ids) -> np.ndarray:
+    """Sorted distinct ids (a sort and a neighbour comparison: cheaper than np.unique's hashing on large arrays)."""
+    ids = np.sort(np.asarray(ids, dtype=np.int64))
+    if ids.size == 0:
+        return ids
+    return ids[np.concatenate(([True], ids[1:] != ids[:-1]))]
