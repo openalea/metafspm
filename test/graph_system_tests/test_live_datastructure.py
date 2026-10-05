@@ -1,5 +1,5 @@
 """
-Live reading of DataStructure variables by components and the solver (devplan WD.2, design note §8).
+Live reading of DataStructure variables by components and the solver.
 
 Components no longer work on a props snapshot copied at construction: the solver snapshots the
 DataStructure at each solve, results are written to it in place, and Choregrapher steps are
@@ -17,12 +17,6 @@ from openalea.metafspm.solve.decorator import rate
 
 from test_uc1_nitrogen_transport import NitrogenAxialTransport, _make_ds, _setup_nitrogen_model
 
-
-@pytest.fixture(autouse=True)
-def _fresh_choregrapher_run_state():
-    Choregrapher().reset()
-    yield
-    Choregrapher().reset()
 
 
 def _model(rng_seed=42, K=0.07, dt=0.5):
@@ -131,7 +125,7 @@ def test_steps_are_vectorised_with_a_per_element_opt_in():
     assert model.scalar_calls == ds.n_nodes()
 
 
-# ---------------------------------------------------------------- previous state (Q21)
+# ---------------------------------------------------------------- previous state
 
 def test_previous_state_is_managed_by_the_framework():
     """previous(fn) is the state at the start of the current solve: consecutive solves advance c_old by themselves."""

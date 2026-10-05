@@ -1,5 +1,5 @@
 """
-DataStructure export for loggers (devplan WD.9, Q15): values, tables indexed by entity (and time), plant-scale sums
+DataStructure export for loggers: values, tables indexed by entity (and time), plant-scale sums
 and means, for MPGDataStructure and ArrayDataStructure alike.
 """
 import os

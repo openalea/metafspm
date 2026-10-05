@@ -1,6 +1,5 @@
 """
-A small synthetic anatomy per root segment, to test the anatomy mode of MPGDataStructure (design note
-structure_and_boundaries §7, step 2f). Not a plant anatomy: four Compartments per segment and a star of anatomy
+A small synthetic anatomy per root segment, to test the anatomy mode of MPGDataStructure. Not a plant anatomy: four Compartments per segment and a star of anatomy
 Connections around the cortex, enough to exercise the multiscale graph assembly.
 
 Per SubOrgan segment:

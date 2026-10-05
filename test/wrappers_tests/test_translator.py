@@ -1,5 +1,5 @@
 """
-Translator / Link objects (devplan WD.0, design note §4): Python-first coupling translators with live scale
+Translator / Link objects: Python-first coupling translators with live scale
 references and formulas, YAML files still loadable, factors parsed without eval.
 """
 import os
@@ -90,7 +90,7 @@ def test_yaml_unknown_scale_is_rejected(tmp_path):
 
 def _python_translator():
     return (Translator()
-            .link("RootNitrogen", "hexose", "RootCarbon", {"hexose": 1})                      # identity, written out (Q26)
+            .link("RootNitrogen", "hexose", "RootCarbon", {"hexose": 1})                      # identity, written out
             .link("RootNitrogen", "sugar", "RootCarbon", {"hexose": 1})                       # alias
             .link("SoilModel", "hexose_exudation_massic", "RootCarbon", {"hexose_exudation": 12 * 6}, aggregation="sum")
             .link("CNW_Grass", "Unloading_Sucrose_phloem", "RootCN", {"sucrose_root_to_shoot_phloem": -12 * 1e6 * 3600},

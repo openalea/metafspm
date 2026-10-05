@@ -88,7 +88,7 @@ class GrassBRIDGES(CompositeModel):
 
         # NOTE : Important that this type conversion occurs after initiation of the modules
         # AND BEFORE THE COUPLING FOR ALIASES TO REMAIN UNBROKEN!
-        # TODO(WD): the root MTG becomes an MPGDataStructure, which removes this conversion
+        # TODO: the root MTG becomes an MPGDataStructure, which removes this conversion
         MPG.convert_properties_to_arraydict(self.g_root, g=self.g_root, ignore=descriptors)
         
         # LINKING MODULES

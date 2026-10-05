@@ -1,7 +1,7 @@
 """
-State outside variables (devplan_porting PT7): a scene checkpointed and restored continues bit for bit, with the
-non-variable state of models kept by checkpoint_state() / restore_state() hooks (QPn); vector-valued variables
-(MIMICS-like pools per cell) in steps, growth, exchanges, outputs and checkpoints (QPo).
+State outside variables: a scene checkpointed and restored continues bit for bit, with the
+non-variable state of models kept by checkpoint_state() / restore_state() hooks; vector-valued variables
+(MIMICS-like pools per cell) in steps, growth, exchanges, outputs and checkpoints.
 """
 from dataclasses import dataclass
 
@@ -20,12 +20,6 @@ from openalea.metafspm.solve.decorator import rate
 from growth import DOC, RootGrowthProbe
 from test_scene import DT, RootPopulation, SceneGeometry, SceneSoil, Seedlings, _planting, _soil_translator
 
-
-@pytest.fixture(autouse=True)
-def _fresh_choregrapher():
-    Choregrapher().reset()
-    yield
-    Choregrapher().reset()
 
 
 class ExternalSolverSoil(SceneSoil):
@@ -109,7 +103,7 @@ def test_a_scene_restored_with_other_arguments_is_refused(tmp_path):
                       translator=_soil_translator("SceneExudation", "SeedlingExudation"), time_step=DT)
 
 
-# ---------------------------------------------------------------- vector-valued variables (QPo)
+# ---------------------------------------------------------------- vector-valued variables
 
 POOLS = 3
 

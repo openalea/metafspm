@@ -78,7 +78,7 @@ Each phase ends green and gets its own commit.
 
 ### Interface contract extracted from the examples
 
-**Translator YAML** (`example_translator.yaml`):
+**Translator YAML** (`test/inputs/wheatbridges_coupling_translator.yaml`):
 - Layout: `translator[receiver][provider][receiver_var] = {provider_var: factor}`.
 - `factor` is a number, or a string arithmetic expression such as `"12 * 6"` or `0.000001 / 3600` that gets `eval`'d.
 - `{}` means no link.
@@ -147,7 +147,7 @@ The messages:
 - [x] W1.3 Tiny root fixture (3–5 vertices) with `struct_mass`, `living_struct_mass`, `vertex_index` and `x1..z2` placed in known voxels. Build it as a plain MTG now; WD.6 retargets it to `MPGDataStructure`. Done: `make_root_mtg` gives 3 segments at depths 0.02/0.04/0.06 m, which fall in voxel layers 0/0/1.
 - [x] W1.4 Translator fixtures under `tmp_path`: Done: `translator_path` fixture. The trimmed WheatBRIDGES copy is left for W2.3.
   - one minimal file per case in W1.2;
-  - a trimmed copy of the current `example_translator.yaml`, which includes the `_massic` entries.
+  - a trimmed copy of the current `test/inputs/wheatbridges_coupling_translator.yaml`, which includes the `_massic` entries.
 - [x] W1.5 Scene doubles that follow the protocol exactly: Done. There is also a threaded `in_process_scene` fixture: one plant, with soil and light in threads.
   - `FakePlant(CompositeModel)`, the GrassBRIDGES shape without Adel/Caribu;
   - `FakeSoil(CompositeModel)`, the RhizoSoil shape: voxel grid, barycenter mapping, `np.add.at`, gather;
@@ -259,7 +259,7 @@ The messages:
 
 - [x] WD.0 **Implemented 2026-09-29** (`coupling/translator.py`: `Link`, `Translator`, `parse_factor`; the WheatBRIDGES gate is met, 98 links 66/10/4/18; `eval` removed from `CompositeModel`; `.py` translators accepted). **Translator schema** (Q4 / Q4b). **Updated after Q4b: Python-first.** You want live references such as `scales.SubOrgan` and free formulas. YAML can only hold strings, which would have to be resolved by name when loading: that works, but it is not a live reference and it is not checked when you refactor. The revised proposal: **Drafted in the design note §4:** `Link` / `Translator` objects, a Python-first builder with live `scales.*` references, a `formula=` callable, a YAML loader for the existing files, and a restricted arithmetic parser in place of `eval`. Link kinds are derived from the link, not declared.
   - The **primary format is a Python module** (for example `coupling_translator.py`) that builds `Link` objects. It uses real references (`scales.SubOrgan`, `LabelsConfig` members, aggregation functions) and allows arbitrary formulas, since links can take a callable (`sources={"hexose_exudation": 12 * 6}` or `formula=lambda ds: ...`).
-  - **YAML stays loadable** (the existing `example_translator.yaml`) through a loader that turns it into the same `Link` objects, with string factors parsed by a restricted arithmetic parser. It covers the plain factor/sum links, and scale names are looked up in `ScalesConfig` by name.
+  - **YAML stays loadable** (the existing `test/inputs/wheatbridges_coupling_translator.yaml`) through a loader that turns it into the same `Link` objects, with string factors parsed by a restricted arithmetic parser. It covers the plain factor/sum links, and scale names are looked up in `ScalesConfig` by name.
   - Keep the component-pair structure (`receiver → provider → variable`), so that `get_component_inputs_outputs` and the soil handshake derivation carry over.
   - The cost: a Python translator runs code when loaded (acceptable, since it is project code) and is harder to edit without a Python editor.
   - Settle this in the WD.1 design note.

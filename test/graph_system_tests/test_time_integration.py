@@ -1,5 +1,5 @@
 """
-Time integration of graph systems (design note time_and_data §2, step 4b, DS10, T1–T3): sub-steps and adaptive
+Time integration of graph systems: sub-steps and adaptive
 step doubling within the component's time step, self.dt, and the previous() levels.
 """
 from dataclasses import dataclass
@@ -19,12 +19,6 @@ DOC = dict(unit="", unit_comment="", description="", min_value=0., max_value=1.,
            DOI=[])
 SHAPE, DX, DT = (6, 1, 1), 0.1, 1.
 
-
-@pytest.fixture(autouse=True)
-def _fresh_choregrapher():
-    Choregrapher().reset()
-    yield
-    Choregrapher().reset()
 
 
 class _Diffusion:
@@ -125,7 +119,7 @@ def test_adaptive_step_doubling_is_closer_to_the_exact_solution():
 
 
 def test_slow_dynamics_need_fewer_adaptive_steps():
-    # One instance at a time: the Choregrapher binds a class's steps to its last instance (DS13, step 5)
+    # One instance at a time: the Choregrapher binds a class's steps to its last instance
     slow_model = Adaptive(data_structure=_grid(diffusivity=1e-5)[0])
     slow_model()
     fast_model = Adaptive(data_structure=_grid(diffusivity=5e-3)[0])

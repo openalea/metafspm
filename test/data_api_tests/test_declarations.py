@@ -1,6 +1,6 @@
 """
-Resolution of field declarations into DataStructure variables (design note datastructure_contract §2, step 1a):
-scale / location / mapping keys, legacy forms, the D9 default mappings, and declaration errors.
+Resolution of field declarations into DataStructure variables:
+scale / location / mapping keys, legacy forms, the default mappings by kind, and declaration errors.
 """
 import os
 import sys
@@ -9,7 +9,6 @@ from dataclasses import dataclass, fields
 import numpy as np
 import pytest
 
-from openalea.metafspm.coupling.choregrapher import Choregrapher
 from openalea.metafspm.coupling.component import FunctionalComponent, input_variable, parameter, state_variable
 from openalea.metafspm.coupling.declaration import DeclarationError, declared_specs, resolve_declaration
 from openalea.metafspm.data_structure.configs import ScalesConfig as scales
@@ -33,12 +32,6 @@ def par(**kwargs):
 def inp(**kwargs):
     return input_variable(**DOC, by="Probe", **kwargs)
 
-
-@pytest.fixture(autouse=True)
-def _fresh_choregrapher():
-    Choregrapher().reset()
-    yield
-    Choregrapher().reset()
 
 
 @pytest.fixture
@@ -110,7 +103,7 @@ def test_scale_names_are_locations_resolved_against_the_graph(seedling):
                                                               "by_coarse_name")] == ["node", "edge", "Organ"]
 
 
-# ---------------------------------------------------------------- default mappings (D9, option A)
+# ---------------------------------------------------------------- default mappings by kind
 
 @dataclass
 class Defaults:

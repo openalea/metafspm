@@ -1,6 +1,5 @@
 """
-Repartition of functional variables when the structure changes, and the active mask (design note
-structure_and_boundaries §4, step 2c, DS20, D14, D15). Expected values are computed by hand with the rules of
+Repartition of functional variables when the structure changes, and the active mask. Expected values are computed by hand with the rules of
 rhizodep's post_growth_updating.
 """
 from dataclasses import dataclass
@@ -8,19 +7,12 @@ from dataclasses import dataclass
 import numpy as np
 import pytest
 
-from openalea.metafspm.coupling.choregrapher import Choregrapher
 from openalea.metafspm.coupling.component import FunctionalComponent, StructuralComponent, state_variable
 from openalea.metafspm.data_structure.configs import PropsConfig, ScalesConfig as scales
 from openalea.metafspm.solve.decorator import actual, rate, segmentation
 
 from growth import DOC, CarbonProbe, RootGrowthProbe, make_chain
 
-
-@pytest.fixture(autouse=True)
-def _fresh_choregrapher():
-    Choregrapher().reset()
-    yield
-    Choregrapher().reset()
 
 
 @dataclass

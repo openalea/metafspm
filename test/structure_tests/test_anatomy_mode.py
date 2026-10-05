@@ -1,5 +1,5 @@
 """
-Anatomy mode of MPGDataStructure (design note structure_and_boundaries §7, step 2f, DS8, D11, D12): Compartments as
+Anatomy mode of MPGDataStructure: Compartments as
 nodes, anatomy Connections and junctions as edges, owners at every scale, junctions rewired incrementally on growth
 and differentiation, and graph systems solved on the assembled graph.
 """
@@ -8,7 +8,6 @@ from dataclasses import dataclass
 import numpy as np
 import pytest
 
-from openalea.metafspm.coupling.choregrapher import Choregrapher
 from openalea.metafspm.coupling.component import FunctionalComponent, parameter, state_variable
 from openalea.metafspm.data_structure.configs import ScalesConfig as scales
 from openalea.metafspm.data_structure.data_api import MPGDataStructure
@@ -17,12 +16,6 @@ from openalea.metafspm.solve.decorator import boundary_set, edge_law, graph_syst
 from anatomy import grow_segment, make_rooted_anatomy, wiring
 from growth import DOC
 
-
-@pytest.fixture(autouse=True)
-def _fresh_choregrapher():
-    Choregrapher().reset()
-    yield
-    Choregrapher().reset()
 
 
 def _plant(n_segments=3):

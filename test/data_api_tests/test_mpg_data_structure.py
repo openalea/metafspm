@@ -1,4 +1,4 @@
-"""Tests for the numpy-backed MPGDataStructure (Level 4b).
+"""Tests for the numpy-backed MPGDataStructure.
 
 MPGDataStructure stores node and edge data as numpy arrays rather than
 g.property() dicts.  The incidence matrix is sparse (CSR) and cached.

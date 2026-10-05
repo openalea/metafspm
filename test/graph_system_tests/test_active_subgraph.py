@@ -1,5 +1,5 @@
 """
-Graph systems on the active subgraph (design note structure_and_boundaries §5, step 2d, DS21, D16): where= restricts
+Graph systems on the active subgraph: where= restricts
 a solve to the nodes of a mask and the edges between them; inactive nodes are frozen, dropped edges carry no flux,
 and steady systems need an anchor in every connected piece.
 """
@@ -10,7 +10,6 @@ from dataclasses import dataclass
 import numpy as np
 import pytest
 
-from openalea.metafspm.coupling.choregrapher import Choregrapher
 from openalea.metafspm.coupling.component import FunctionalComponent, parameter, state_variable
 from openalea.metafspm.data_structure.configs import ScalesConfig as scales
 from openalea.metafspm.data_structure.data_api import BoundaryPort, MPGDataStructure
@@ -22,12 +21,6 @@ from simple_seedling import generate_simple_mpg_seedling
 DOC = dict(unit="", unit_comment="", description="", min_value=0., max_value=1., value_comment="", references="",
            DOI=[])
 
-
-@pytest.fixture(autouse=True)
-def _fresh_choregrapher():
-    Choregrapher().reset()
-    yield
-    Choregrapher().reset()
 
 
 def _diffusion(**options):

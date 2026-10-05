@@ -1,5 +1,5 @@
 """
-Per-instance scheduling (DS13 hazard fix, devplan_population_scene P8): steps are registered per class (module and
+Per-instance scheduling: steps are registered per class (module and
 qualified name), collected through the class's bases, and bound per instance, so that several instances of one class
 run on their own DataStructures in any order, same-named classes of different modules do not collide, and subclasses
 run their bases' steps.
@@ -20,11 +20,8 @@ DOC = dict(unit="", unit_comment="", description="", min_value=0., max_value=1.,
 
 
 @pytest.fixture(autouse=True)
-def _fresh_choregrapher():
-    Choregrapher().reset()
+def _simulation_time_step():
     Choregrapher().add_simulation_time_step(1)
-    yield
-    Choregrapher().reset()
 
 
 @dataclass

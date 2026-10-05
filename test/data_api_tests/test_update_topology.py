@@ -81,7 +81,7 @@ def test_mpg_update_topology_after_growth():
 
     A new root segment is appended as a child of the deepest root tip
     (root_segment6) at SubOrgan scale.  After update_topology() the
-    Compartment/Connection layer is rebuilt from scratch and the new node
+    graph is extended with a Compartment for the new segment, and the new node
     and its axial edge appear in n_nodes() / n_edges().
     """
     g, seedling, ds = _fresh_populated_ds()
@@ -125,8 +125,7 @@ def test_mpg_update_topology_second_growth_step():
 def test_mpg_update_topology_keeps_node_properties():
     """Property arrays registered before update_topology() are carried over to the new topology.
 
-    (They used to be cleared, so growth wiped the state; see devplan WD.P / B-e. Growth itself is covered in
-    test_datastructure_prerequisites.py.)
+    (Growth itself is covered in test_datastructure_prerequisites.py.)
     """
     g, _, ds = _fresh_populated_ds()
     ds.set_node_property("concentration", np.ones(ds.n_nodes()))

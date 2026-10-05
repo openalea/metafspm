@@ -1,7 +1,7 @@
 """
-Adaptive grids (devplan_porting PT10): cell-based octree refinement over a base grid, on the grid graph contract
+Adaptive grids: cell-based octree refinement over a base grid, on the grid graph contract
 (cells as nodes, faces as edges with face_area and face_distance), refined and coarsened between steps with a
-conservative carry-over (QPs, QPt).
+conservative carry-over.
 """
 import os
 import sys
@@ -24,11 +24,8 @@ DT, D = 0.5, 1e-3
 
 
 @pytest.fixture(autouse=True)
-def _fresh_choregrapher():
-    Choregrapher().reset()
+def _simulation_time_step():
     Choregrapher().add_simulation_time_step(DT)
-    yield
-    Choregrapher().reset()
 
 
 def _grid(**options):

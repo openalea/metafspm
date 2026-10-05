@@ -1,5 +1,5 @@
 """
-Persistence (DS15, devplan_population_scene P8): a DataStructure checkpointed and restored continues bit for bit;
+Persistence: a DataStructure checkpointed and restored continues bit for bit;
 arrays in npz, a JSON manifest, and a pickle for objects, formulas, mask rules and the MPG.
 """
 import json
@@ -20,12 +20,6 @@ from openalea.metafspm.solve.decorator import rate
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "structure_tests"))
 from growth import DOC, CarbonProbe, RootGrowthProbe
 
-
-@pytest.fixture(autouse=True)
-def _fresh_choregrapher():
-    Choregrapher().reset()
-    yield
-    Choregrapher().reset()
 
 
 def _population():

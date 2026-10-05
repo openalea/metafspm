@@ -1,7 +1,7 @@
 """
-Mappings for the environment (devplan_porting PT6): population variables reduced to, or broadcast from, an
-environment scalar over every plant of every population (QPk), and a 1-D column linked to a 3-D grid by layer
-overlaps (QPl).
+Mappings for the environment: population variables reduced to, or broadcast from, an
+environment scalar over every plant of every population, and a 1-D column linked to a 3-D grid by layer
+overlaps.
 """
 from dataclasses import dataclass
 
@@ -9,7 +9,6 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from openalea.metafspm.coupling.choregrapher import Choregrapher
 from openalea.metafspm.coupling.component import FunctionalComponent, input_variable, state_variable
 from openalea.metafspm.coupling.cross import Exchanges, LayerMapping
 from openalea.metafspm.coupling.translator import Translator
@@ -19,12 +18,6 @@ from openalea.metafspm.scene.population import build_population
 
 from growth import DOC, RootGrowthProbe
 
-
-@pytest.fixture(autouse=True)
-def _fresh_choregrapher():
-    Choregrapher().reset()
-    yield
-    Choregrapher().reset()
 
 
 def _population(sizes):

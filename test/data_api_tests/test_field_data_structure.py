@@ -1,9 +1,9 @@
 """Tests for FieldDataStructure and ArrayDataStructure.
 
-FieldDataStructure (Level 2b) is the abstract base for spatially-discretised
-environment models.  ArrayDataStructure (Level 3b) backs a 1-D or 3-D numpy
+FieldDataStructure is the abstract base for spatially-discretised
+environment models.  ArrayDataStructure backs a 1-D or 3-D numpy
 grid with a second-order finite-difference Laplacian and Neumann boundary
-conditions. (MultiGridDataStructure was removed in PT10: adaptive refinement is AdaptiveGridDataStructure.)
+conditions.
 
 Three concerns are tested:
   1. FieldDataStructure abstract contract (ABC enforcement, n_dof, extract/inject)

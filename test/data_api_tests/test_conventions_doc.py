@@ -1,5 +1,5 @@
 """
-docs/conventions.md is checked against the code (design note datastructure_contract §7, step 1f): its tables of
+docs/conventions.md is checked against the code: its tables of
 locations, mappings and default mappings must name exactly what the declaration resolver implements.
 """
 import os

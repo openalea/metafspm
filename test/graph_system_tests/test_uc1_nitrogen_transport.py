@@ -45,13 +45,6 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'mpg_tests'))
 from simple_seedling import generate_simple_mpg_seedling
 
 
-@pytest.fixture(autouse=True)
-def _fresh_choregrapher_run_state():
-    """The Choregrapher singleton is shared by the whole session: start and leave each test with a clean run state."""
-    Choregrapher().reset()
-    yield
-    Choregrapher().reset()
-
 
 # ══════════════════════════════════════════════════════════════════════════════
 # Component definition
@@ -648,7 +641,7 @@ def test_uc1_stepinit_and_graph_system_via_choregrapher():
     n, e = ds.n_nodes(), ds.n_edges()
     c0   = 0.3
     ds.set_node_property("concentration", np.full(n, c0))
-    ds.set_node_property("is_root", np.zeros(n))   # explicit: a missing filter variable raises (DS11)
+    ds.set_node_property("is_root", np.zeros(n))   # explicit: a missing filter variable raises
 
     model          = NitrogenAxialTransport(data_structure=ds)
     model.k_radial = 0.2

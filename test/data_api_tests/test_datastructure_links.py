@@ -1,5 +1,5 @@
 """
-Links on DataStructures (devplan WD.3, design note §5.3 and §6): derived variables, scale operators,
+Links on DataStructures: derived variables, scale operators,
 scalar store, carried over topology growth.
 """
 import os

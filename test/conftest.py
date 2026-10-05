@@ -11,3 +11,15 @@ for _folder in ("", "mpg_tests", "solver_tests", "wrappers_tests", "graph_system
     _path = os.path.join(_HERE, _folder)
     if _path not in sys.path:
         sys.path.insert(0, _path)
+
+import pytest
+
+from openalea.metafspm.coupling.choregrapher import Choregrapher
+
+
+@pytest.fixture(autouse=True)
+def _fresh_choregrapher():
+    """Each test starts with the Choregrapher's run state cleared (bound schedules, time steps, DataStructures)."""
+    Choregrapher().reset()
+    yield
+    Choregrapher().reset()

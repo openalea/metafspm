@@ -1,6 +1,6 @@
 """
-DataStructure prerequisites of the coupling refactor (devplan WD.P, design note
-docs/design/coupling_through_datastructures.md §2 bugs B-a ... B-h and §5.1-5.2 accessors).
+DataStructure behaviours components rely on: growth carrying variables over, the structure's version, aliases,
+derived variables and the accessors.
 """
 import os
 import sys

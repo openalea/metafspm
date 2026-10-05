@@ -1,15 +1,13 @@
 """
-Scene services (devplan_porting PT5): a forcing table shared by every model, models run every n steps or when a
-condition holds (their outputs kept on the other steps, QPm), spin-up before the first step, events and stop
+Scene services: a forcing table shared by every model, models run every n steps or when a
+condition holds (their outputs kept on the other steps), spin-up before the first step, events and stop
 conditions.
 """
 from dataclasses import dataclass
 
 import numpy as np
 import pandas as pd
-import pytest
 
-from openalea.metafspm.coupling.choregrapher import Choregrapher
 from openalea.metafspm.coupling.component import FunctionalComponent, state_variable
 from openalea.metafspm.data_structure.configs import ScalesConfig as scales
 from openalea.metafspm.scene.scene import Scene
@@ -18,12 +16,6 @@ from openalea.metafspm.solve.decorator import rate
 from growth import DOC, RootGrowthProbe
 from test_scene import DT, SceneGeometry, SceneSoil, _planting, _soil_translator
 
-
-@pytest.fixture(autouse=True)
-def _fresh_choregrapher():
-    Choregrapher().reset()
-    yield
-    Choregrapher().reset()
 
 
 @dataclass

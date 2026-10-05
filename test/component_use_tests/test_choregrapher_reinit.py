@@ -1,7 +1,6 @@
 from dataclasses import dataclass
 
 import numpy as np
-import pytest
 
 from openalea.metafspm.coupling.choregrapher import Choregrapher
 from openalea.metafspm.coupling.component import FunctionalComponent, declare
@@ -19,12 +18,6 @@ class ReinitProbe(FunctionalComponent):
     def _x(self, x):
         return x + 1.
 
-
-@pytest.fixture(autouse=True)
-def _fresh_choregrapher_run_state():
-    Choregrapher().reset()
-    yield
-    Choregrapher().reset()
 
 
 def test_reset_keeps_instance_and_registered_processes():

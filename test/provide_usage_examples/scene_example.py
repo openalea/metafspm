@@ -1,5 +1,5 @@
 """
-Target usage of the population scene (devplan_population_scene.md §10), replacing play_Orchestra. The downstream
+Target usage of the population scene, replacing play_Orchestra. The downstream
 models (GrassBRIDGES, RhizoSoil, the light model) must first follow the population contracts:
 
   plant model        Model(data_structure, time_step, **scenario), class attribute initiators

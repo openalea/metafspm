@@ -1,7 +1,7 @@
 """
-Graph-system extensions (devplan_porting PT4): pool unknowns at a coarse scale solved with the graph (QPh: a shoot
-pool per plant exchanging with its collar), boundary kinds chosen per node at each solve (QPi), and forcings read at
-the end of each (sub-)step (QPj).
+Graph-system extensions: pool unknowns at a coarse scale solved with the graph (a shoot
+pool per plant exchanging with its collar), boundary kinds chosen per node at each solve, and forcings read at
+the end of each (sub-)step.
 """
 import os
 import sys
@@ -26,11 +26,8 @@ DT, K, EXCHANGE = 2., 0.3, 0.8
 
 
 @pytest.fixture(autouse=True)
-def _fresh_choregrapher():
-    Choregrapher().reset()
+def _simulation_time_step():
     Choregrapher().add_simulation_time_step(DT)
-    yield
-    Choregrapher().reset()
 
 
 def _population(sizes=(3, 5)):
