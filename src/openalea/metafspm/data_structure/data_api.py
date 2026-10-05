@@ -1409,11 +1409,59 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
         """Nodes without children."""
         return self._traversal()["tips"]
 
-    def order(self, kind: str = "pre") -> np.ndarray:
-        """Node permutation: "pre" lists every parent before its children, "post" every child before its parent."""
+    def order(self, kind: str = "pre", convention: str = None) -> np.ndarray:
+        """
+        Node permutation: "pre" lists every parent before its children, "post" every child before its parent.
+        convention="openalea": the post order of openalea.mtg.traversal.post_order2 (children taken from the MTG, the
+        successor '<' subtree first, then the branches in reverse insertion order), the visiting order of models
+        written with it, e.g. rhizodep (S1). Segment mode only.
+        """
         if kind not in ("pre", "post"):
             raise ValueError(f"order must be 'pre' or 'post', got '{kind}'")
-        return self._traversal()[kind]
+        if convention is None:
+            return self._traversal()[kind]
+        if convention != "openalea" or kind != "post":
+            raise ValueError("convention='openalea' is available for kind='post' only")
+        return self._openalea_post_order()
+
+    def _openalea_post_order(self) -> np.ndarray:
+        if getattr(self, "_anatomy", False):
+            raise ValueError("the openalea post order is defined on segments (segment mode)")
+        key = (self.topology_version, self.n_nodes(), self.n_edges())
+        cache = self.__dict__.get("_openalea_post")
+        if cache is not None and cache[0] == key:
+            return cache[1]
+        g = self._mtg
+        vids = self.entity_ids("node").tolist()
+        local = {v: i for i, v in enumerate(vids)}
+        edge_type = g.property("edge_type")
+        parents = self.parents()
+
+        def visiting(v):
+            plus, successor = [], []
+            for c in g._children.get(v, ()):
+                if c in local and parents[local[c]] == local[v]:
+                    (successor if edge_type.get(c) == '<' else plus).append(c)
+            return list(reversed(plus + successor))
+
+        post = []
+        for root in self.roots().tolist():
+            stack = [(vids[root], iter(visiting(vids[root])))]
+            while stack:
+                v, children = stack[-1]
+                child = next(children, None)
+                if child is None:
+                    post.append(local[v])
+                    stack.pop()
+                else:
+                    stack.append((child, iter(visiting(child))))
+        if len(post) != len(vids):
+            # Nodes linked across complexes (multiscale branching): their MTG parent is not their graph parent
+            seen = set(post)
+            post += [i for i in self.order("post").tolist() if i not in seen]
+        order = np.array(post, dtype=np.int64)
+        self.__dict__["_openalea_post"] = (key, order)
+        return order
 
     # ── Tree kernels (design note population_and_performance §3, §9, §12; plan P3) ─────
 
@@ -1488,6 +1536,25 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
         """Sums of *values* over each node's ancestors until *extent* reaches its *budget* (tree_kernels.path_window)."""
         from openalea.metafspm.data_structure import tree_kernels
         return tree_kernels.path_window(self.parents(), budget, extent, values, where=where, include=include)
+
+    def path_contributions(self, budget, extent, values, where=None, include=None, order: str = "openalea") -> tuple:
+        """
+        Each supply window of path_window element by element, (owner, supplier, contribution) in local indices, emitted
+        in visiting order: the nodes of *where* in the post order of *order* ("openalea", as rhizodep's post_order2;
+        None, the graph's), their suppliers in walking order (S1). scatter_contributions then shares amounts bit for bit
+        as rhizodep's loops do.
+        """
+        from openalea.metafspm.data_structure import tree_kernels
+        visit = self.order("post", convention=order) if order is not None else self.order("post")
+        if where is not None:
+            visit = visit[np.asarray(where, dtype=bool)[visit]]
+        return tree_kernels.path_contributions(self.parents(), budget, extent, values, visit, include=include)
+
+    def scatter_contributions(self, contributions: tuple, amount, total, out=None) -> np.ndarray:
+        """out[supplier] += amount[owner] * contribution / total[owner], in emission order (tree_kernels)."""
+        from openalea.metafspm.data_structure import tree_kernels
+        owner, supplier, contribution = contributions
+        return tree_kernels.scatter_contributions(self.n_nodes(), owner, supplier, contribution, amount, total, out=out)
 
     def path_compose(self, transforms) -> np.ndarray:
         """Composed 4x4 transform of each node from its root (e.g. a turtle's frames)."""

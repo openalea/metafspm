@@ -18,6 +18,12 @@ The flat modules used before the 2026 restructure have been removed. No compatib
 | `openalea.metafspm.component.Model`, `declare` | `openalea.metafspm.coupling.component.Component` / `FunctionalComponent`, `declare` |
 | `openalea.metafspm.specializer` | `openalea.metafspm.solve.specializer` |
 
+### Consumption shared in visiting order (S1)
+
+- `tree_kernels.path_contributions` / `ds.path_contributions(budget, extent, values, where=, include=)` give each supply window of `path_window` element by element as (owner, supplier, contribution), emitted in visiting order. `tree_kernels.scatter_contributions` / `ds.scatter_contributions` then add `amount[owner] · contribution / total[owner]` onto the suppliers one after the other.
+- Bit for bit equal to rhizodep's sharing of each apex's consumption between its supplying segments (tested with partial and maximal window overlap). Accumulating in array order differs in the last bits.
+- `ds.order("post", convention="openalea")`: the post order of openalea's `post_order2` (the successor subtree first, then the branches in reverse insertion order), the visiting order of models written with it.
+
 ### Checkpoints (DS15, P8)
 
 - **`ds.checkpoint(path, include_mtg=True)` / `MPGDataStructure.restore(path, mtg=None)` / `ArrayDataStructure.restore(path)`:** a folder holding:

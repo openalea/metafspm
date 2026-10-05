@@ -238,6 +238,84 @@ def path_window(parents, budget, extent, values, where=None, include=None) -> np
     return out if vector else out[:, 0]
 
 
+@njit(cache=True)
+def _count_window(targets, parents, budget, extent, include):
+    counts = np.zeros(targets.size, dtype=np.int64)
+    for t in range(targets.size):
+        remaining, current, count = budget[targets[t]], targets[t], 0
+        while remaining > 0:
+            if remaining > extent[current]:
+                if include[current]:
+                    count += 1
+                    remaining = remaining - extent[current]
+                current = parents[current]
+                if current < 0:
+                    break
+            else:
+                count += 1
+                remaining = 0.
+        counts[t] = count
+    return counts
+
+
+@njit(cache=True)
+def _window_contributions(targets, parents, budget, extent, values, include, offsets, supplier, contribution):
+    for t in prange(targets.size):
+        remaining, current, k = budget[targets[t]], targets[t], offsets[t]
+        while remaining > 0:
+            if remaining > extent[current]:
+                if include[current]:
+                    supplier[k] = current
+                    contribution[k] = values[current]
+                    k += 1
+                    remaining = remaining - extent[current]
+                current = parents[current]
+                if current < 0:
+                    break
+            else:
+                supplier[k] = current
+                contribution[k] = values[current] * remaining / extent[current]
+                k += 1
+                remaining = 0.
+
+
+def path_contributions(parents, budget, extent, values, targets, include=None) -> tuple:
+    """
+    The supply windows of path_window, element by element: (owner, supplier, contribution) for each node of
+    *targets* (local indices, in the order given), its suppliers in walking order and the value each provides (the last
+    one its fraction). Emitted in the visiting order of the targets, so that scatter_contributions accumulates in
+    rhizodep's order (S1).
+    """
+    values = np.ascontiguousarray(np.asarray(values, dtype=np.float64))
+    n = values.shape[0]
+    targets = np.asarray(targets, dtype=np.int64)
+    parents = np.asarray(parents, dtype=np.int64)
+    budget = np.broadcast_to(np.asarray(budget, float), (n,)).copy()
+    extent = np.asarray(extent, dtype=np.float64)
+    include = np.ones(n, dtype=np.bool_) if include is None else np.asarray(include, dtype=np.bool_)
+    counts = _count_window(targets, parents, budget, extent, include)
+    offsets = np.zeros(targets.size, dtype=np.int64)
+    np.cumsum(counts[:-1], out=offsets[1:])
+    supplier, contribution = np.empty(int(counts.sum()), dtype=np.int64), np.empty(int(counts.sum()))
+    _window_contributions(targets, parents, budget, extent, values, include, offsets, supplier, contribution)
+    return np.repeat(targets, counts), supplier, contribution
+
+
+def scatter_contributions(n, owner, supplier, contribution, amount, total, out=None) -> np.ndarray:
+    """
+    out[supplier] += amount[owner] * contribution / total[owner], one addition after the other in emission order
+    (np.add.at is sequential): rhizodep's sharing of each apex's consumption between its supplying segments, bit for
+    bit when the contributions come from path_contributions in its visiting order (S1). Owners with a zero total add
+    nothing.
+    """
+    out = np.zeros(n) if out is None else out
+    amount, total = np.asarray(amount, dtype=np.float64), np.asarray(total, dtype=np.float64)
+    shared = total[owner] != 0.
+    owner, supplier, contribution = owner[shared], supplier[shared], contribution[shared]
+    np.add.at(out, supplier, amount[owner] * contribution / total[owner])
+    return out
+
+
 def _as_columns(values):
     array = np.asarray(values, dtype=np.float64)
     if array.ndim == 1:
