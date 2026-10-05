@@ -57,6 +57,14 @@ def _scale(value) -> Optional[int]:
     return scale
 
 
+def _scale_name(scale: int) -> str:
+    """ScalesConfig name of a scale integer."""
+    for name, value in vars(ScalesConfig).items():
+        if not name.startswith("_") and value == scale and isinstance(value, int):
+            return name
+    raise ValueError(f"Scale {scale} has no ScalesConfig name")
+
+
 @dataclass(frozen=True)
 class Link:
     """
@@ -121,6 +129,16 @@ class Link:
         detail = self.detail
         return detail if detail in ("identity", "alias") else "derived"
 
+    @property
+    def mapped_detail(self) -> str:
+        """
+        detail of the link once its scales are checked: scale and source_scale alone only state where the
+        variables are, so such a link is the identity, alias, factor, ... of its sources.
+        """
+        if self.detail != "scale_change" or self.aggregation is not None or self.target is not None:
+            return self.detail
+        return Link(self.receiver, self.variable, self.provider, self.raw_factors).detail
+
 
 @dataclass
 class Translator:
@@ -166,14 +184,26 @@ class Translator:
     # ── conversions ───────────────────────────────────────────────────────────
 
     def to_nested(self) -> dict:
-        """Historical nested format {receiver: {provider: {variable: {source: factor}}}}, every pair present."""
+        """
+        Nested format {receiver: {provider: {variable: {source: factor}}}}, every pair present. A link with a
+        scale, aggregation, weight or target is written in its long form {"sources": {...}, "scale": name, ...},
+        which from_dict() reads; formulas cannot be written.
+        """
         names = self.components
         nested = {receiver: {provider: {} for provider in names} for receiver in names}
         for link in self.links:
-            if link.formula is not None or link.detail == "scale_change":
-                raise ValueError(f"Link {link.receiver}.{link.variable} uses a formula or a scale change, "
+            if link.formula is not None or callable(link.aggregation):
+                raise ValueError(f"Link {link.receiver}.{link.variable} uses a formula or a callable aggregation, "
                                  "which the nested format cannot express")
-            nested[link.receiver][link.provider][link.variable] = dict(link.sources)
+            spec = dict(link.sources)
+            options = {key: getattr(link, key) for key in ("scale", "source_scale", "aggregation", "weight", "target")
+                       if getattr(link, key) is not None}
+            if options:
+                for key in ("scale", "source_scale"):
+                    if key in options:
+                        options[key] = _scale_name(options[key])
+                spec = {"sources": spec, **options}
+            nested[link.receiver][link.provider][link.variable] = spec
         return nested
 
     @classmethod

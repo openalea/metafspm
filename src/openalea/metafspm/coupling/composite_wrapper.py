@@ -99,17 +99,18 @@ class CompositeModel:
                                           "DataStructures goes through the Scene (coupling.cross.Exchanges)")
             self._check_link_kinds(link, receiver, provider)
             self._check_link_scales(link, ds)
-            if link.kind == "identity":
+            detail = link.mapped_detail
+            if detail == "identity":
                 continue
-            crosses_locations = (link.kind == "alias" and ds.has(link.variable)
+            crosses_locations = (detail == "alias" and ds.has(link.variable)
                                  and ds.location(link.variable) != ds.location(next(iter(link.sources))))
-            if link.kind == "alias" and not crosses_locations:
+            if detail == "alias" and not crosses_locations:
                 (source,) = link.sources
                 if ds.has(link.variable) and link.variable not in ds.aliases():
                     ds.unregister(link.variable)
                 ds.alias(link.variable, source)
                 continue
-            if link.detail == "same_name_factor":
+            if detail == "same_name_factor":
                 raise ValueError(f"{link.receiver}.{link.variable} is linked to {link.provider}.{link.variable} with "
                                  f"factor {link.sources[link.variable]}: a same-name link within one data structure "
                                  "must have a factor of 1, rename the receiving variable")

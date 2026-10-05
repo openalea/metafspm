@@ -554,7 +554,10 @@ class FunctionalComponent(DataStructureComponent):
         return start + offset + step
 
     def forcing(self, name: str):
-        """Forcing *name* at forcing_time(), linearly interpolated in its table."""
+        """
+        Forcing *name* at forcing_time(): a callable of the time, or a table linearly interpolated, as a Series
+        indexed by time or a (times, values) pair.
+        """
         table = (self.forcings or {}).get(name)
         shared = self.__dict__.get("_scene_forcings")
         if table is None and shared is not None and name in shared:
@@ -564,7 +567,7 @@ class FunctionalComponent(DataStructureComponent):
         t = self.forcing_time()
         if callable(table):
             return table(t)
-        if hasattr(table, "index"):
+        if not isinstance(table, (tuple, list)) and hasattr(table, "index"):     # a Series indexed by time
             times, values = np.asarray(table.index, dtype=np.float64), np.asarray(table, dtype=np.float64)
         else:
             times, values = (np.asarray(x, dtype=np.float64) for x in table)
