@@ -32,8 +32,8 @@ def _by_vid(ds, name):
 def test_structural_steps_run_in_the_growth_rows():
     Choregrapher().reset()
     _, ds, _ = make_chain()
-    RootGrowthProbe(data_structure=ds)
-    rows = [[f.func.name for f in group] for group in Choregrapher().scheduled_groups["RootGrowthProbe"].values()]
+    model = RootGrowthProbe(data_structure=ds)
+    rows = [[f.func.name for f in group] for group in model.__dict__["_choregraphy"][1].values()]
     assert rows == [["potential_growth"], ["actual_growth", "radius"], ["segmentation"], ["distance_from_tip"]]
 
 

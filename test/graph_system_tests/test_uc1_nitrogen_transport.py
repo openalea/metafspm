@@ -655,8 +655,7 @@ def test_uc1_stepinit_and_graph_system_via_choregrapher():
     model.c_ext    = 1.0
     model.time_step        = 0.5
 
-    order = [[f.func.name for f in group]
-             for group in Choregrapher().scheduled_groups["NitrogenAxialTransport"].values()]
+    order = [[f.name for f in group] for group in Choregrapher().schedule_of(NitrogenAxialTransport).values()]
     assert order == [
         ["transport_solve_node_explicit", "transport_solve_dirichlet", "transport_solve_neumann"],   # axial
         ["radial_solute_input"],                                                                     # rate

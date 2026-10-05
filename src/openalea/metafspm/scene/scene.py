@@ -132,8 +132,8 @@ class Scene(CompositeModel):
         names = [type(c).__name__ for c in self.components]
         duplicated = sorted({name for name in names if names.count(name) > 1})
         if duplicated:
-            raise ValueError(f"component classes {duplicated} appear in several models of the scene: the translator and "
-                             "the scheduler identify components by class name (one population per model, Q8)")
+            raise ValueError(f"component classes {duplicated} appear in several models of the scene: "
+                             "the scene translator identifies components by class name (one population per model, Q8)")
 
         self.translator = load_translator(translator)
         self.mapping_method, self.periodic, self.flip_z = mapping_method, periodic, flip_z

@@ -184,7 +184,7 @@ leaves = boundary_set(select=is_leaf, kind="robin", value="air_water_potential",
 
 ## Scenes
 
-- A **plant model** is a population model: `Model(data_structure, time_step, **scenario)` with `initiators`, and component classes of its own (they are identified by class name in the scene).
+- A **plant model** is a population model: `Model(data_structure, time_step, **scenario)` with `initiators`, and component classes of its own (the scene translator identifies components by class name). Steps are scheduled per instance, and subclasses run their bases' steps (DS13).
 - An **environment model** receives the populations and builds its DataStructures.
 - **MPG-style steps** loop over `self.active_ids()`.
 

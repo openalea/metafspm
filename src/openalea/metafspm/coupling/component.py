@@ -200,7 +200,7 @@ class Component:
 
     def __call__(self, *args):
         self.pull_available_inputs()
-        self.choregrapher(module_family=self.__class__.__name__, *args)
+        self.choregrapher(instance=self)
         # State variables reach the MTG after every call with mtg_sync = "after_call"; by default ("lazy") the
         # DataStructure writes them when the MTG is read (QF3)
         if hasattr(self, "mtg_sync"):

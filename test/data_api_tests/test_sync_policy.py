@@ -116,13 +116,8 @@ class Counter(FunctionalComponent):
 
 
 @dataclass
-class EagerCounter(FunctionalComponent):            # not a subclass: inherited steps are not scheduled (DS13, P8)
-    count: float = state_variable(**DOC, initialize=0., scale=scales.SubOrgan)
+class EagerCounter(Counter):
     mtg_sync = "after_call"
-
-    @rate
-    def _count(self, count):
-        return count + 1.
 
 
 def _mtg_values(g, ds, name):
