@@ -72,12 +72,10 @@ class _LinearGraph(GraphDataStructure):
             return self._k.copy()
         raise KeyError(name)
 
-    def set_node_property(self, name, values):
+    def set(self, name, values):
         if name == 'p':
             self._p = np.asarray(values, dtype=float)
-
-    def set_edge_property(self, name, values):
-        if name == 'k':
+        elif name == 'k':
             self._k = np.asarray(values, dtype=float)
 
     def available_vars(self):

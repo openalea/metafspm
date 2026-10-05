@@ -6,11 +6,9 @@ g.property() dicts.  The incidence matrix is sparse (CSR) and cached.
 Three concerns are tested:
   1. Property storage and retrieval (node_data / edge_data)
   2. Sparse incidence matrix — structure, caching, invalidation
-  3. from_legacy() — migration path from LegacyMPGDataStructure
-  4. Integration with MPG: wrap a populate_graph result, check topology
+  3. Integration with MPG: wrap a populate_graph result, check topology
 
-The fixture is the same 3-vertex linear MPG used in test_legacy_mpg.py.
-The seedling MPG is used for the integration test (section 4).
+The fixture is a 3-vertex linear MPG; the seedling MPG is used for the integration tests (section 3).
 """
 
 import sys
@@ -23,10 +21,7 @@ from scipy.sparse import issparse
 
 from openalea.metafspm.data_structure.mpg import MPG
 from openalea.metafspm.data_structure.configs import PropsConfig
-from openalea.metafspm.data_structure.data_api import (
-    LegacyMPGDataStructure,
-    MPGDataStructure,
-)
+from openalea.metafspm.data_structure.data_api import MPGDataStructure
 
 
 # ── Fixture ───────────────────────────────────────────────────────────────────
@@ -55,23 +50,23 @@ def test_set_get_node_property_roundtrip():
     g, sc, v1, v2, v3 = _make_linear_mpg()
     ds = MPGDataStructure(g)   # 3 nodes (anchors are excluded)
     vals = np.array([1.0, 2.0, 3.0])
-    ds.set_node_property('potential', vals)
+    ds.register('potential', vals, location="node")
     np.testing.assert_array_equal(ds.node_property('potential'), vals)
 
 
-def test_set_node_property_checks_length():
+def test_register_checks_node_length():
     """A node array must have one value per node (a 4-value array used to be accepted on 3 nodes)."""
     g, sc, v1, v2, v3 = _make_linear_mpg()
     ds = MPGDataStructure(g)
     with pytest.raises(ValueError, match="potential"):
-        ds.set_node_property('potential', np.array([1.0, 2.0, 3.0, 0.0]))
+        ds.register('potential', np.array([1.0, 2.0, 3.0, 0.0]), location="node")
 
 
 def test_set_get_edge_property_roundtrip():
     g, sc, v1, v2, v3 = _make_linear_mpg()
     ds = MPGDataStructure(g)   # 2 edges
     vals = np.array([5.0, 8.0])
-    ds.set_edge_property('conductance', vals)
+    ds.register('conductance', vals, location="edge")
     np.testing.assert_array_equal(ds.edge_property('conductance'), vals)
 
 
@@ -92,8 +87,8 @@ def test_edge_property_missing_raises_key_error():
 def test_available_vars_covers_node_and_edge():
     g, sc, v1, v2, v3 = _make_linear_mpg()
     ds = MPGDataStructure(g)
-    ds.set_node_property('potential',  np.zeros(3))
-    ds.set_edge_property('conductance', np.zeros(2))
+    ds.register('potential', np.zeros(3), location="node")
+    ds.register('conductance', np.zeros(2), location="edge")
     avail = ds.available_vars()
     assert 'potential'   in avail
     assert 'conductance' in avail
@@ -152,43 +147,7 @@ def test_invalidate_topology_rebuilds_index_map():
     assert ds.n_nodes() == 3 # same — no structural change
 
 
-# ── 3. from_legacy migration ──────────────────────────────────────────────────
-
-def test_from_legacy_copies_node_properties():
-    """Values are carried by vertex: MPG local order (post-order) differs from the legacy sorted order."""
-    g, sc, v1, v2, v3 = _make_linear_mpg()
-    wp = g.property('water_potential')
-    wp.update({v1: -0.5, v2: -1.0, v3: -1.5})
-
-    legacy = LegacyMPGDataStructure(g, sc)
-    sparse = MPGDataStructure.from_legacy(legacy, ['water_potential'])
-
-    by_vid = dict(zip(sparse.entity_ids("node"), sparse.node_property('water_potential')))
-    assert by_vid == {v1: -0.5, v2: -1.0, v3: -1.5}
-    assert sparse.node_property('water_potential').shape == (sparse.n_nodes(),)
-
-
-def test_from_legacy_at_another_scale_raises():
-    """A legacy structure at another scale has no value for the MPG nodes (it used to copy a length-1 array)."""
-    g, sc, v1, v2, v3 = _make_linear_mpg()
-    g.property('water_potential').update({v1: -0.5, v2: -1.0, v3: -1.5})
-    with pytest.raises(ValueError, match="water_potential"):
-        MPGDataStructure.from_legacy(LegacyMPGDataStructure(g), ['water_potential'])
-
-
-def test_from_legacy_does_not_share_array():
-    """Mutation of the sparse copy must not affect the original dict."""
-    g, sc, v1, v2, v3 = _make_linear_mpg()
-    g.property('water_potential').update({v1: -1.0, v2: -2.0, v3: -3.0})
-
-    legacy = LegacyMPGDataStructure(g, sc)
-    sparse = MPGDataStructure.from_legacy(legacy, ['water_potential'])
-
-    sparse.set('water_potential', 999.0)
-    assert g.property('water_potential').get(v1) == pytest.approx(-1.0)
-
-
-# ── 4. Integration: wrap a populate_graph result ──────────────────────────────
+# ── 3. Integration: wrap a populate_graph result ──────────────────────────────
 
 def test_mpg_data_structure_wraps_suborgan_scale():
     """MPGDataStructure wraps a populated MPG at Compartment/Connection scales.
@@ -224,7 +183,7 @@ def test_extract_inject_state_with_suborgan_data():
     ds   = MPGDataStructure(g)
     n    = ds.n_nodes()
     vals = np.arange(n, dtype=float)
-    ds.set_node_property('potential', vals)
+    ds.register('potential', vals, location="node")
 
     x  = ds.extract_state(['potential'])
     np.testing.assert_array_equal(x, vals)

@@ -88,7 +88,7 @@ def test_derived_variables_are_read_only():
         ds.set("status_alias", 0.)
 
 
-def test_graph_setters_cannot_write_a_derived_variable():
+def test_set_cannot_write_a_derived_variable():
     import os
     import sys
     sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'mpg_tests'))
@@ -101,7 +101,7 @@ def test_graph_setters_cannot_write_a_derived_variable():
     ds.register("x", 1., location="node")
     ds.derive("y", {"x": 2.})
     with pytest.raises(ValueError, match="write its sources instead"):
-        ds.set_node_property("y", np.zeros(ds.n_nodes()))
+        ds.set("y", np.zeros(ds.n_nodes()))
 
 
 def test_writes_through_a_view_need_mark_written():

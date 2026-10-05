@@ -6,8 +6,7 @@ DataStructures: where components' variables live, by name and location, with the
     DataStructure (abstract)                  storage, topology, state I/O
       ├── GraphDataStructure (abstract)       nodes, edges, incidence matrix
       │     └── MTGDataStructure (abstract)   an OpenAlea MTG plant graph
-      │           ├── MPGDataStructure        variables as arrays, segments or anatomy Compartments as nodes
-      │           └── LegacyMPGDataStructure  variables in the MTG's property dicts
+      │           └── MPGDataStructure        variables as arrays, segments or anatomy Compartments as nodes
       └── FieldDataStructure (abstract)       spatial grids
             └── ArrayDataStructure            regular 1-D or 3-D grids (cells as nodes, faces as edges)
 
@@ -45,16 +44,6 @@ except ImportError:
 # ═══════════════════════════════════════════════════════════════════════════════
 # Internal helper
 # ═══════════════════════════════════════════════════════════════════════════════
-
-def _array_at_scale(g, name: str, scale: int) -> np.ndarray:
-    """Return one MTG property aligned on the requested scale."""
-    if hasattr(g, "array_at_scale"):
-        return np.asarray(g.array_at_scale(name, scale=scale))
-    prop = g.property(name)
-    ids_at_scale = g.components_at_scale(g.root, scale=scale)
-    idx = prop.indices_of(ids_at_scale)
-    return np.asarray(prop.values_array()[idx])
-
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # Solver-facing graph primitives  (formerly in graph_system.py)
@@ -94,74 +83,6 @@ class GraphView:
     boundary_names    : tuple[str, ...]
     node_data         : dict[str, np.ndarray] = field(default_factory=dict)
     edge_data         : dict[str, np.ndarray] = field(default_factory=dict)
-
-    # ── Construction ──────────────────────────────────────────────────────────
-
-    @classmethod
-    def from_mtg_subset(
-        cls,
-        g,
-        node_scale    : int,
-        node_ids      : np.ndarray,
-        edge_scale    : int,
-        edge_ids      : np.ndarray,
-        boundary_ports: tuple[BoundaryPort, ...] = (),
-        node_properties: tuple[str, ...] = (),
-        edge_properties: tuple[str, ...] = (),
-    ) -> "GraphView":
-        node_ids = np.asarray(node_ids, dtype=np.int64)
-        edge_ids = np.asarray(edge_ids, dtype=np.int64)
-
-        all_node_ids = _array_at_scale(g, "vertex_id", scale=node_scale).astype(np.int64, copy=False)
-        all_edge_ids = _array_at_scale(g, "vertex_id", scale=edge_scale).astype(np.int64, copy=False)
-
-        node_lookup = {int(vid): idx for idx, vid in enumerate(all_node_ids)}
-        edge_lookup = {int(vid): idx for idx, vid in enumerate(all_edge_ids)}
-
-        node_ids = np.sort(node_ids)
-        edge_ids = np.sort(edge_ids)
-        node_idx = np.asarray([node_lookup[int(v)] for v in node_ids], dtype=np.int64)
-        edge_idx = np.asarray([edge_lookup[int(v)] for v in edge_ids], dtype=np.int64)
-        node_local = {int(vid): local for local, vid in enumerate(node_ids)}
-
-        edge_node_a = _array_at_scale(g, "n_id_a", scale=edge_scale).astype(np.int64, copy=False)[edge_idx]
-        edge_node_b = _array_at_scale(g, "n_id_b", scale=edge_scale).astype(np.int64, copy=False)[edge_idx]
-        tail = np.asarray([node_local[int(v)] for v in edge_node_a], dtype=np.int64)
-        head = np.asarray([node_local[int(v)] for v in edge_node_b], dtype=np.int64)
-
-        ec = np.arange(edge_ids.size, dtype=np.int64)
-        incidence = coo_matrix(
-            (np.r_[np.ones(edge_ids.size), -np.ones(edge_ids.size)],
-             (np.r_[tail, head], np.r_[ec, ec])),
-            shape=(node_ids.size, edge_ids.size),
-        ).tocsc()
-
-        if boundary_ports:
-            brows = np.asarray([node_local[int(p.node_id)] for p in boundary_ports], dtype=np.int64)
-            bcols = np.arange(len(boundary_ports), dtype=np.int64)
-            bdata = np.asarray([p.orientation for p in boundary_ports], dtype=np.float64)
-            boundary_incidence = coo_matrix(
-                (bdata, (brows, bcols)),
-                shape=(node_ids.size, len(boundary_ports)),
-            ).tocsc()
-            boundary_names = tuple(p.name for p in boundary_ports)
-        else:
-            boundary_incidence = csc_matrix((node_ids.size, 0), dtype=np.float64)
-            boundary_names = ()
-
-        node_data = {name: np.asarray(_array_at_scale(g, name, scale=node_scale)[node_idx])
-                     for name in node_properties}
-        edge_data = {name: np.asarray(_array_at_scale(g, name, scale=edge_scale)[edge_idx])
-                     for name in edge_properties}
-
-        return cls(
-            node_ids=node_ids, edge_ids=edge_ids,
-            tail=tail, head=head,
-            incidence=incidence,
-            boundary_incidence=boundary_incidence,
-            boundary_names=boundary_names,
-            node_data=node_data, edge_data=edge_data,
-        )
 
     # ── Properties ────────────────────────────────────────────────────────────
 
@@ -233,11 +154,9 @@ class DataStructure(ABC):
         StructuralComponent (growth, pruning, grafting) has modified the
         geometry.  Each concrete subclass encapsulates its own rebuild logic:
 
-          - MPGDataStructure        clear Compartment/Connection nodes, re-run
-                                    populate_graph(from_scale) +
-                                    convert_properties_to_arraydict(),
-                                    then rebuild index map and incidence cache.
-          - LegacyMPGDataStructure  rebuild the vertex index map only.
+          - MPGDataStructure        extend the graph (new segments' Compartments and Connections, or the
+                                    anatomies' junctions), rebuild the index maps and incidence, and carry
+                                    the variables over.
           - ArrayDataStructure      clear the cached Laplacian matrix.
 
         Contract
@@ -976,20 +895,6 @@ class VariableStoreMixin:
         """Further attribute names kept by a checkpoint (class-specific state)."""
         return ()
 
-    def _set_or_register(self, name: str, values, location: str) -> None:
-        """Legacy setters: in place when the variable exists at *location* with the same shape, else (re)register."""
-        values = np.asarray(values, dtype=float)
-        if self.has(name):
-            existing_location, store, target = self._find(name)
-            if existing_location == location and store[target].shape == values.shape:
-                if target in self.__dict__.get("_derived", {}):
-                    raise ValueError(f"'{name}' is derived and recomputed when read: write its sources instead")
-                self._write(store, target, values, name)
-                return
-        meta = self._variable_meta().get(name, {})
-        self.register(name, values, location=location, default=meta.get("default", 0.),
-                      on_grow=meta.get("on_grow", "default"))
-
 
 class DataStructurePropsView(Mapping):
     """
@@ -1065,10 +970,8 @@ class GraphDataStructure(DataStructure):
     def edge_property(self, name: str) -> np.ndarray: ...
 
     @abstractmethod
-    def set_node_property(self, name: str, values: np.ndarray) -> None: ...
-
-    @abstractmethod
-    def set_edge_property(self, name: str, values: np.ndarray) -> None: ...
+    def set(self, name: str, values) -> None:
+        """Write the values of the registered variable *name* (node or edge)."""
 
     @property
     def n_dof(self) -> int:
@@ -1080,7 +983,7 @@ class GraphDataStructure(DataStructure):
     def inject_state(self, x: np.ndarray, var_names: list[str]) -> None:
         n = self.n_nodes()
         for i, name in enumerate(var_names):
-            self.set_node_property(name, x[i * n : (i + 1) * n])
+            self.set(name, x[i * n : (i + 1) * n])
 
     def extract_algebraic(self, var_names: list[str]) -> np.ndarray:
         return np.concatenate([self.edge_property(n) for n in var_names])
@@ -1088,7 +991,7 @@ class GraphDataStructure(DataStructure):
     def inject_algebraic(self, y: np.ndarray, var_names: list[str]) -> None:
         m = self.n_edges()
         for i, name in enumerate(var_names):
-            self.set_edge_property(name, y[i * m : (i + 1) * m])
+            self.set(name, y[i * m : (i + 1) * m])
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1161,52 +1064,9 @@ class MTGDataStructure(GraphDataStructure):
             raise ValueError(f"No vertices at scale {self._scale}.")
 
     def update_topology(self) -> None:
-        """Rebuild the vertex index map after structural changes to the MTG.
-
-        For MTGDataStructure subclasses that do not use a separate Compartment/
-        Connection layer (e.g. LegacyMPGDataStructure), this is a lightweight
-        rebuild of _idx_to_vid / _vid_to_idx from the current MTG state.
-        """
+        """Rebuild the vertex index map after structural changes to the MTG."""
         self._build_index_map()
 
-
-# ─────────────────────────────────────────────────────────────────────────────
-
-class LegacyMPGDataStructure(MTGDataStructure):
-    """
-    MTG with properties in g.property() dicts.
-
-    Legacy OpenAlea format:
-        mtg.property('water_potential')  →  {vid: value, ...}
-
-    Use when working with existing MTG models unchanged.
-    Migrate to Sparse when property access becomes a bottleneck.
-    """
-
-    def available_vars(self) -> list[str]:
-        return list(self._mtg.properties().keys())
-
-    def node_property(self, name: str) -> np.ndarray:
-        prop = self._mtg.property(name)
-        return np.array([prop.get(vid, 0.0) for vid in self._idx_to_vid])
-
-    def set_node_property(self, name: str, values: np.ndarray) -> None:
-        prop = self._mtg.property(name)
-        for i, vid in enumerate(self._idx_to_vid):
-            prop[vid] = float(values[i])
-
-    def edge_property(self, name: str) -> np.ndarray:
-        """Edges stored as (src_vid, tgt_vid) → value in the property dict."""
-        prop = self._mtg.property(name)
-        return np.array([prop.get(edge, 0.0) for edge in self.edges()])
-
-    def set_edge_property(self, name: str, values: np.ndarray) -> None:
-        prop = self._mtg.property(name)
-        for i, edge in enumerate(self.edges()):
-            prop[edge] = float(values[i])
-
-
-# ─────────────────────────────────────────────────────────────────────────────
 
 # Edge mapping names of declarations (child / parent) and of the MTG edge readers and writers
 _EDGE_CONVENTIONS = {"child": "proximal", "parent": "distal"}
@@ -1713,27 +1573,6 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
             )
         self.validate_variables(strict=strict)
 
-    # ── Migration ─────────────────────────────────────────────────────────────
-
-    @classmethod
-    def from_legacy(cls, legacy: LegacyMPGDataStructure,
-                    property_names: list[str]) -> "MPGDataStructure":
-        """Migrate dict-based node properties to numpy arrays.
-
-        The MTG wrapped by *legacy* must have been populated (populate_graph +
-        convert_properties_to_arraydict) so Compartment nodes exist.
-        """
-        sparse = cls(legacy.mtg)
-        for name in property_names:
-            # Carry values by vertex: the legacy order is sorted vids, the MPG order is Compartment post-order
-            by_vid = dict(zip(legacy._idx_to_vid, legacy.node_property(name)))
-            missing = [vid for vid in sparse._idx_to_vid if vid not in by_vid]
-            if missing:
-                raise ValueError(f"from_legacy('{name}'): the legacy structure (scale {legacy.scale}) has no value for "
-                                 f"the MPG nodes {missing[:10]}; build it at the MPG node scale")
-            sparse.register(name, [by_vid[vid] for vid in sparse._idx_to_vid], location="node")
-        return sparse
-
     # ── Property storage ──────────────────────────────────────────────────────
 
     _default_location = "node"
@@ -1913,17 +1752,11 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
         raise KeyError(f"Node property '{name}' not registered. "
                        f"Available: {list(self._node_data)}.")
 
-    def set_node_property(self, name: str, values: np.ndarray) -> None:
-        self._set_or_register(name, values, "node")
-
     def edge_property(self, name: str) -> np.ndarray:
         if self.has(name) and self.location(name) == "edge":
             return self.get(name)
         raise KeyError(f"Edge property '{name}' not registered. "
                        f"Available: {list(self._edge_data)}.")
-
-    def set_edge_property(self, name: str, values: np.ndarray) -> None:
-        self._set_or_register(name, values, "edge")
 
     # ── Biological scale → Compartment/Connection auto-mapping ───────────────
 
@@ -2557,22 +2390,24 @@ class FieldDataStructure(DataStructure):
     def laplacian(self): ...
 
     @abstractmethod
-    def _get_field(self, name: str) -> np.ndarray: ...
+    def get(self, name: str) -> np.ndarray:
+        """Values of the registered variable *name*, in the grid's shape."""
 
     @abstractmethod
-    def _set_field(self, name: str, values: np.ndarray) -> None: ...
+    def set(self, name: str, values) -> None:
+        """Write the values of the registered variable *name*."""
 
     def update_topology(self) -> None:
         """No-op for static grids.  Override for adaptive/growing meshes."""
         pass
 
     def extract_state(self, var_names: list[str]) -> np.ndarray:
-        return np.concatenate([self._get_field(n).ravel() for n in var_names])
+        return np.concatenate([np.asarray(self.get(n)).ravel() for n in var_names])
 
     def inject_state(self, x: np.ndarray, var_names: list[str]) -> None:
         n = self.n_dof
         for i, name in enumerate(var_names):
-            self._set_field(name, x[i * n : (i + 1) * n].reshape(self.shape))
+            self.set(name, x[i * n : (i + 1) * n].reshape(self.shape))
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -2731,9 +2566,6 @@ class ArrayDataStructure(VariableStoreMixin, FieldDataStructure):
             return np.full(self._shape, float(values))
         return super()._map(values, from_location, to_location, aggregation, weights)
 
-    def add_field(self, name: str, values: np.ndarray = None) -> None:
-        self.register(name, values)
-
     def available_vars(self) -> list[str]:
         return list(self._fields.keys())
 
@@ -2825,10 +2657,3 @@ class ArrayDataStructure(VariableStoreMixin, FieldDataStructure):
         """
         self._L = None
 
-    def _get_field(self, name: str) -> np.ndarray:
-        if not self.has(name):
-            raise KeyError(f"Field '{name}' not registered. Call add_field() first.")
-        return self.get(name)
-
-    def _set_field(self, name: str, values: np.ndarray) -> None:
-        self._set_or_register(name, values, "cell")

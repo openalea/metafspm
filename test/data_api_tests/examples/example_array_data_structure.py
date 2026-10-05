@@ -80,11 +80,11 @@ ds = ArrayDataStructure(shape=(n_z,), dx=dz, origin=np.array([0.0]))
 # Initial moisture: wetting front at 0.3 m  (smooth step)
 z = ds.coordinates()[:, 0]
 theta0 = 0.35 - 0.25 * (1 + np.tanh((z - 0.30) / 0.04)) / 2
-ds.add_field('moisture', theta0)
+ds.register('moisture', theta0)
 
 # Initial temperature: warm surface, cool at depth
 temp0  = 22.0 - 8.0 * z / 1.0
-ds.add_field('temperature', temp0)
+ds.register('temperature', temp0)
 
 print(f"n_dof  = {ds.n_dof}")                                          # abstract API
 print(f"shape  = {ds.shape}")

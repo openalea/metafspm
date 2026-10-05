@@ -439,10 +439,10 @@ def _setup_nitrogen_model(
     Any field with a declared scale not set here receives its default value
     automatically via FunctionalComponent._auto_declare_on_ds().
     """
-    ds.set_node_property("concentration",      np.asarray(c_old,        dtype=np.float64))
-    ds.set_node_property("radial_solute_input", np.asarray(J_radial,     dtype=np.float64))
-    ds.set_edge_property("axial_flux",          np.zeros(ds.n_edges()))
-    ds.set_edge_property("K_axial",             np.asarray(K_axial_vals, dtype=np.float64))
+    ds.register("concentration", np.asarray(c_old,        dtype=np.float64), location="node")
+    ds.register("radial_solute_input", np.asarray(J_radial,     dtype=np.float64), location="node")
+    ds.register("axial_flux", np.zeros(ds.n_edges()), location="edge")
+    ds.register("K_axial", np.asarray(K_axial_vals, dtype=np.float64), location="edge")
 
     model                  = NitrogenAxialTransport(data_structure=ds)
     model.time_step        = dt
@@ -543,7 +543,7 @@ def test_uc1_auto_declaration_fills_defaults():
     """
     ds = _make_ds()
     n, e = ds.n_nodes(), ds.n_edges()
-    ds.set_node_property("concentration", np.full(n, 0.3))
+    ds.register("concentration", np.full(n, 0.3), location="node")
 
     model = NitrogenAxialTransport(data_structure=ds)
 
@@ -562,14 +562,14 @@ def test_uc1_K_axial_preset_overrides_default():
     K_axial is a per-edge parameter (scale=Connection) whose uniform default
     array is registered by _auto_declare_on_ds() at construction.  When a
     caller needs a non-default conductance the correct pattern is to call
-    ds.set_edge_property("K_axial", ...) BEFORE constructing the component.
+    ds.register("K_axial", ..., location="edge") BEFORE constructing the component.
     The component honours the pre-set value and does not overwrite it.
     """
     ds   = _make_ds()
     n, e = ds.n_nodes(), ds.n_edges()
     K_val = 0.07
 
-    ds.set_edge_property("K_axial", np.full(e, K_val))
+    ds.register("K_axial", np.full(e, K_val), location="edge")
     model = NitrogenAxialTransport(data_structure=ds)
 
     np.testing.assert_allclose(
@@ -592,7 +592,7 @@ def test_uc1_mtg_props_auto_mapped():
     K_axial (scale=Connection) is mapped via arithmetic mean of endpoints:
         edge_array[j] = (K_axial[n_id_a[j]] + K_axial[n_id_b[j]]) / 2
 
-    No manual set_node_property / set_edge_property is needed — the scale=
+    No manual register() is needed — the scale=
     declaration triggers this bridge automatically in _auto_declare_on_ds().
     """
     g, _ = generate_simple_mpg_seedling()
@@ -644,8 +644,8 @@ def test_uc1_stepinit_and_graph_system_via_choregrapher():
     ds   = _make_ds()
     n, e = ds.n_nodes(), ds.n_edges()
     c0   = 0.3
-    ds.set_node_property("concentration", np.full(n, c0))
-    ds.set_node_property("is_root", np.zeros(n))   # explicit: a missing filter variable raises
+    ds.register("concentration", np.full(n, c0), location="node")
+    ds.register("is_root", np.zeros(n), location="node")   # explicit: a missing filter variable raises
 
     model          = NitrogenAxialTransport(data_structure=ds)
     model.k_radial = 0.2
@@ -816,7 +816,7 @@ def _make_ds_with_root_flag() -> tuple:
     root = _find_root_local_idx(ds)
     is_root = np.zeros(ds.n_nodes())
     is_root[root] = 1
-    ds.set_node_property("is_root", is_root)
+    ds.register("is_root", is_root, location="node")
     return ds, root
 
 

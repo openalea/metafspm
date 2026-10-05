@@ -13,9 +13,6 @@ MPGDataStructure
   - AttributeError when from_scale was not set at construction.
   - to_graph_view() incidence matrix reflects the post-growth topology.
 
-LegacyMPGDataStructure
-  - Index-map rebuild after a SubOrgan vertex is added directly.
-
 ArrayDataStructure
   - Cached Laplacian is cleared; rebuilt lazily on next laplacian() call.
 """
@@ -30,7 +27,6 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'mpg_tests'))
 from openalea.metafspm.data_structure.mpg import MPG
 from openalea.metafspm.data_structure.configs import PropsConfig
 from openalea.metafspm.data_structure.data_api import (
-    LegacyMPGDataStructure,
     MPGDataStructure,
     ArrayDataStructure,
 )
@@ -45,22 +41,6 @@ def _fresh_populated_ds():
     g.populate_graph(g.scales.SubOrgan)
     g.convert_properties_to_arraydict()
     return g, seedling, MPGDataStructure(g, from_scale=g.scales.SubOrgan)
-
-
-def _make_3node_legacy():
-    """Return (g, sc, v1, v2, v3, legacy_ds) — 3-vertex SubOrgan chain."""
-    g   = MPG()
-    sc  = g.scales.SubOrgan
-    anc = g.scales.anchors[sc]
-    v1 = g.add_system_root_at_scale(sc, label=g.labels.SubOrgan.StemElement)
-    v2 = g.add_component_with_topo(
-        anc, v1, **PropsConfig(scale=sc, edge_type='<',
-                               label=g.labels.SubOrgan.StemElement))
-    v3 = g.add_component_with_topo(
-        anc, v2, **PropsConfig(scale=sc, edge_type='<',
-                               label=g.labels.SubOrgan.StemElement))
-    ds = LegacyMPGDataStructure(g, sc)
-    return g, sc, anc, v1, v2, v3, ds
 
 
 # ── MPGDataStructure ──────────────────────────────────────────────────────────
@@ -128,7 +108,7 @@ def test_mpg_update_topology_keeps_node_properties():
     (Growth itself is covered in test_datastructure_prerequisites.py.)
     """
     g, _, ds = _fresh_populated_ds()
-    ds.set_node_property("concentration", np.ones(ds.n_nodes()))
+    ds.register("concentration", np.ones(ds.n_nodes()), location="node")
     assert "concentration" in ds.available_vars()
 
     ds.update_topology()
@@ -139,7 +119,7 @@ def test_mpg_update_topology_keeps_node_properties():
 def test_mpg_update_topology_keeps_edge_properties():
     """Edge property arrays are also carried over."""
     g, _, ds = _fresh_populated_ds()
-    ds.set_edge_property("K_axial", np.ones(ds.n_edges()))
+    ds.register("K_axial", np.ones(ds.n_edges()), location="edge")
     assert "K_axial" in ds.available_vars()
 
     ds.update_topology()
@@ -207,39 +187,6 @@ def test_mpg_update_topology_invalidates_incidence_cache():
     ds.update_topology()
     B2 = ds.incidence_matrix()
     assert B1 is not B2
-
-
-# ── LegacyMPGDataStructure ────────────────────────────────────────────────────
-
-def test_legacy_mpg_update_topology_rebuilds_index():
-    """update_topology() makes a newly added SubOrgan vertex visible.
-
-    LegacyMPGDataStructure.update_topology() calls _build_index_map(), which
-    re-reads g.vertices(scale=sc).  g.vertices() includes the SubOrgan anchor,
-    so the initial count is 4 (anchor + 3 real segments).  A vertex added after
-    construction is invisible until update_topology() is called.
-    """
-    g, sc, anc, v1, v2, v3, ds = _make_3node_legacy()
-    n_initial = ds.n_nodes()   # anchor + 3 real = 4
-
-    # Grow: append one new SubOrgan segment
-    g.add_component_with_topo(
-        anc, v3,
-        **PropsConfig(scale=sc, edge_type='<',
-                      label=g.labels.SubOrgan.StemElement),
-    )
-    assert ds.n_nodes() == n_initial  # not yet visible
-
-    ds.update_topology()
-    assert ds.n_nodes() == n_initial + 1
-
-
-def test_legacy_mpg_update_topology_idempotent():
-    """Calling update_topology() without structural change is a no-op."""
-    _, _, _, _, _, _, ds = _make_3node_legacy()
-    n_before = ds.n_nodes()
-    ds.update_topology()
-    assert ds.n_nodes() == n_before
 
 
 # ── ArrayDataStructure ────────────────────────────────────────────────────────
