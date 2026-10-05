@@ -1329,13 +1329,16 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
         consistent: ascending Connection vertex ID.  Connection anchor is
         excluded because it has no n_id_a entry.
         """
+        return list(self._edges_cached())
+
+    def _edges_cached(self) -> list:
+        """edges(), cached until the topology version or the MTG (vertex count, last vid) changes; not to be modified."""
         if self._mtg is None:
             return []
-        # Cached until the topology version or the MTG (vertex count, last vid) changes
         signature = (self.topology_version, self._mtg.nb_vertices(), getattr(self._mtg, "_id", None))
         cache = self.__dict__.get("_edges_cache")
         if cache is not None and cache[0] == signature:
-            return list(cache[1])
+            return cache[1]
         n_id_a = self._mtg.array_filtering(
             "n_id_a", filter_in={"scale": self._mtg.scales.Connection}
         )
@@ -1344,11 +1347,10 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
         )
         edges = list(zip(np.asarray(n_id_a, dtype=np.int64).tolist(), np.asarray(n_id_b, dtype=np.int64).tolist()))
         self.__dict__["_edges_cache"] = (signature, edges)
-        return list(edges)
+        return edges
 
     def n_edges(self) -> int:
-        self.edges()
-        return len(self.__dict__["_edges_cache"][1]) if "_edges_cache" in self.__dict__ else 0
+        return len(self._edges_cached())
 
     # ── Traversal in local indices (design note structure_and_boundaries §2, DS2) ──────
 
