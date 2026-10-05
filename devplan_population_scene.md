@@ -58,7 +58,7 @@ Each step has its design detail in a short note before code (complex steps), its
 | **P4** ✓ (emergence moved to P6) | Population builder and planting: a planting table from `stand_initialization`; one MPG per sub-population (Plant vertices; initial structures placed by position and rotation; Plant-scale `x, y, z, rotation`); per-plant parameters from the table or from distributions | Q4–Q6 |
 | **P5** ✓ | Cross-DataStructure links: `CrossMapping` (incidence matrix from a locator: barycentre, or length overlap), recomputed on topology or geometry changes; translator links between DataStructures become mapped exchanges with D9 defaults; the light model as a component reading several DataStructures | generalises `Coupler`; Q1–Q3 |
 | **P6** ✓ (with Q5 emergence) | `Scene(CompositeModel)`: environment components and populations, `__call__` order (environment, then each population), one or several populations (intercropping), the Logger per population and per plant | Q7–Q9 |
-| **P7** | Benchmarks and decision: time per step for 1 to 1000 plants of about 2 000 segments, with and without anatomies, split by phase, against today's one-plant-per-process scene; then decide on `play_Orchestra` (Q10) | |
+| **P7** ✓ | Benchmarks and decision: time per step for 1 to 1000 plants of about 2 000 segments, with and without anatomies, split by phase, against today's one-plant-per-process scene; then decide on `play_Orchestra` (Q10) | |
 | **P8** | DS13 (per-instance scheduling) if Q8 needs it; DS15 (persistence, agreed: npz + JSON) | |
 
 Order: P1 → P2 → P3 → P4 → P5 → P6 → P7 → P8. P1 can go first because it is independent.
@@ -334,6 +334,24 @@ All of these are tested on in-repo doubles: the growth helper as a plant model, 
 ### Questions
 
 - **QP7a, the models benchmarked.** The real models (rhizodep, Root-CyNAPS, cnwgrass, GRANAP) are not yet ported to the population contract and live outside this repo, so the benchmark can only use in-repo doubles that reproduce their cost structure (vectorised rates, graph systems, growth with tree kernels). Is that enough for the decision, or do you want to port one model first (outside this repo, by you) and run the benchmark on it? **Recommendation:** the doubles now, to time the framework's own overhead (exchanges, growth bookkeeping, the solver per piece); you can rerun the same script on a ported model later.
-  → answer:
+  → answer: yes.
 - **QP7b, removal regardless of the results.** Q10 says remove after P7. If the benchmark showed that one process is too slow for 1000 plants (e.g. graph systems limited to one core), should the removal still go ahead, with the parallelisation then done inside the Scene (blocks of plants or connected pieces over threads or processes, `split="components"`, §9 S2)? **Recommendation:** yes. Parallelism inside the Scene does not need the per-plant workers or `Transport`.
+  → answer: yes, if runtime without vectorised step's optimization becomes an issue, we'll consider it then, but I consider the current play_Orchestra parallelisation is not right and does not fit to all the developments we just made to build populations and cleanly couple them to environment datastructures
+
+### P7 results and follow-up questions (2026-10-06)
+
+The benchmarks are in `docs/design/population_and_performance.md` §14.
+- **Scale:** a step of 1000 plants of 2 000 segments takes 6.7 s in one process, and every phase scales linearly.
+- **Overhead:** the Scene's per-step overhead is flat (about 0.3 ms), while `play_Orchestra`'s grew to 6.6 ms for 12 toy plants.
+- **Removal:** `play_Orchestra`, `Transport`, `Coupler` and the soil members of `CompositeModel` are removed (QP7b).
+
+Two framework costs dominate. They are not model costs, and fixing them changes no API except possibly F3's:
+
+- **QF3, writing back to the MTG.** `write_back_to_mtg` runs after every component call and costs 97 % of the rates-and-states time. Options:
+  - **(a)** write back lazily: only before an MPG-style step (`_run_mpg_step` already writes the variables it reads), before a structural change, and on export / `mtg` access;
+  - **(b)** a declaration per variable (`mtg=True`) listing the variables kept in the MTG at each step.
+
+  **Recommendation:** (a). The MTG is then a view brought up to date when someone reads it; the DataStructure is the reference.
+  → answer:
+- **QF4, the incremental graph extension.** `extend_graph` traverses the whole MTG (`components_at_scale`) at each growth event. **Recommendation:** restrict it to the vertices created since the last extension (their ids are above the last one seen) and their complexes, so that the cost follows the growth, not the population. This is internal, with no API change; I can do it without waiting, as part of P8 or before it.
   → answer:

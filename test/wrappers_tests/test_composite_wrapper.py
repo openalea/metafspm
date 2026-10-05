@@ -92,32 +92,6 @@ def test_translator_expressions_are_not_evaluated_as_code(tmp_path):
         _coupled_plant(tmp_path, translator)
 
 
-# ---------------------------------------------------------------- soil exchange queries
-
-def _wheatbridges():
-    with open(WHEATBRIDGES_TRANSLATOR) as f:
-        return yaml.safe_load(f)
-
-
-def test_wheatbridges_soil_inputs_outputs():
-    inputs, outputs = CompositeModel().get_component_inputs_outputs(
-        translator=_wheatbridges(), components_names=WHEATBRIDGES_PLANT_COMPONENTS, target_name="SoilModel", names_for_others=False)
-
-    assert sorted(outputs) == ['C_amino_acids_soil', 'C_hexose_soil', 'C_mineralN_soil', 'Cs_cells_soil', 'Cs_mucilage_soil',
-                               'Cv_solutes_soil', 'microbial_C', 'microbial_N', 'soil_temperature', 'water_potential_soil']
-    assert len(inputs) == 18
-    assert {"hexose_exudation_massic", "mineralN_uptake", "water_uptake"} <= set(inputs)
-
-
-def test_soil_inputs_outputs_names_for_others():
-    inputs, outputs = CompositeModel().get_component_inputs_outputs(
-        translator=doubles.TRANSLATOR, components_names=["RootCarbon", "RootNitrogen"], target_name="SoilModel")
-
-    # names_for_others=True: plant-side names on both sides
-    assert sorted(outputs) == ["C_hexose_soil", "soil_temperature"]
-    assert sorted(inputs) == ["amino_acids_exudation", "hexose_exudation"]
-
-
 def test_props_based_components_are_rejected(tmp_path):
     path = doubles.write_translator(tmp_path / "translator.yaml", doubles_ds.translator())
     with pytest.raises(TypeError, match="DataStructure"):

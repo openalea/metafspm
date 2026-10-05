@@ -11,7 +11,6 @@ import pytest
 
 from openalea.metafspm.coupling.choregrapher import Choregrapher
 from openalea.metafspm.coupling.component import FunctionalComponent, input_variable, parameter, state_variable
-from openalea.metafspm.coupling.coupler import VoxelLocator
 from openalea.metafspm.coupling.cross import (CrossMapping, Exchanges, UnionDataStructure, UnionMapping,
                                               cross_default_mapping)
 from openalea.metafspm.coupling.declaration import DeclarationError
@@ -95,7 +94,9 @@ def test_barycentre_is_the_reference_soil_map():
     plants, soil = _population([0.1, 0.5, 0.9]), _grid()
     RootGeometry(data_structure=plants)
     mapping = CrossMapping(plants, soil)
-    np.testing.assert_array_equal(mapping.cells, VoxelLocator(soil).cells(plants))
+    middle = np.stack([0.5 * (plants.get("x1") + plants.get("x2")), 0.5 * (plants.get("y1") + plants.get("y2")),
+                       -0.5 * (plants.get("z1") + plants.get("z2"))], axis=1)
+    np.testing.assert_array_equal(mapping.cells, soil.locate(middle, periodic=(True, True, False), clip=True))
     np.testing.assert_array_equal(_dense(mapping).sum(axis=1), 1.)
 
 

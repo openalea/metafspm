@@ -2,7 +2,6 @@
 Sanity checks of the wrapper test infrastructure. Behavioural wrapper tests live in the other files.
 """
 import numpy as np
-import pytest
 
 import doubles
 import doubles_ds
@@ -43,35 +42,3 @@ def test_grid_soil_layout():
     doubles_ds.GridSoil(data_structure=grid)
     assert grid.axes == ("x", "y", "z") and grid.get("DOC").shape == (2, 2, 2)
     assert (grid.get("soil_temperature") == 10.).all()
-
-
-def test_logger_records_calls(tmp_path):
-    class _Instance:
-        data_structures = {}
-        runs = 0
-
-        def run(self):
-            self.runs += 1
-
-    instance = _Instance()
-    logger = doubles.FakeLogger(model_instance=instance, components=[], outputs_dirpath=str(tmp_path / "log"))
-    logger()
-    logger.run_and_monitor_model_step()
-    logger.stop()
-
-    assert doubles.read_logger_calls(str(tmp_path / "log")) == ["init", "call", "run_and_monitor_model_step", "stop"]
-    assert instance.runs == 1
-
-
-@pytest.mark.parametrize("with_light", [True, False])
-def test_in_process_scene_runs(ds_in_process_scene, with_light):
-    scene = ds_in_process_scene(with_light=with_light)
-    scene.start()
-    scene.step()
-    scene.step()
-
-    assert scene.plant.run_count == 2 and scene.soil.run_count == 2
-    assert scene.soil.grid.get("DOC").sum() > 0
-    if with_light:
-        assert scene.light.run_count == 2
-        assert set(scene.plant.shoot_props["PARa"]) == {1, 2}

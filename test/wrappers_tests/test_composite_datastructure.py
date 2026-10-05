@@ -34,17 +34,12 @@ def test_links_become_aliases_and_derived_variables(tmp_path):
     assert model.components == [carbon, nitrogen]
 
 
-def test_soil_exchange_bookkeeping_is_kept(tmp_path):
-    model, carbon, nitrogen, ds = _coupled(tmp_path)
-    assert sorted(model.soil_outputs) == ["C_hexose_soil", "soil_temperature"]
-    for name in model.soil_outputs:
-        assert (ds.get(name) == 0.).all()
-
-
 def test_link_values_seen_by_receivers(tmp_path):
     """Same numbers as the props-based coupling contract."""
     model, carbon, nitrogen, ds = _coupled(tmp_path)
     Choregrapher().add_simulation_time_step(1)
+    for name in ("soil_temperature", "C_hexose_soil"):   # the soil values of that contract, given by the scene
+        ds.set(name, 0.)
 
     carbon()
     np.testing.assert_allclose(ds.get("nitrogen_status"), 4.)
@@ -95,21 +90,3 @@ def test_functional_components_run_once_per_simulation_step(tmp_path):
     ds.set("soil_temperature", 0.)
     carbon()
     np.testing.assert_allclose(ds.get("hexose"), 1. - 0.1)        # one step, not 3600
-
-
-def test_soil_component_name_is_configurable(tmp_path):
-    class GridPlant(CompositeModel):
-        soil_name = "GridSoil"
-
-    translator = doubles_ds.translator()
-    translator = {("GridSoil" if r == "SoilModel" else r): {("GridSoil" if p == "SoilModel" else p): links
-                                                               for p, links in providers.items()}
-                  for r, providers in translator.items()}
-    path = str(tmp_path / "grid_translator.yaml")
-    import doubles
-    doubles.write_translator(path, translator)
-    ds = doubles_ds.make_plant_ds()
-    model = GridPlant()
-    model.declare_data_and_couple_components(root=ds, translator_path=path, components=(
-        doubles_ds.PlantCarbon(data_structure=ds), doubles_ds.PlantNitrogen(data_structure=ds)))
-    assert sorted(model.soil_outputs) == ["C_hexose_soil", "soil_temperature"]

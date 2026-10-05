@@ -70,7 +70,7 @@ def _couple(links, before=None):
     if before is not None:
         before(g, ds)
     model = CompositeModel()
-    model.components, model.soil_outputs = list(components), []
+    model.components = list(components)
     model._couple_on_data_structures(links)
     return g, ds
 

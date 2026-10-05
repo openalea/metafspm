@@ -11,9 +11,6 @@ def _live_data_structure(component):
 
 class CompositeModel:
 
-    # Name of the soil component in the translator; subclasses coupled with another soil model override it
-    soil_name = "SoilModel"
-
     def get_documentation(self, filters: dict, models: list):
         """
         Documentation of the declared variables of each model, one column per metadata key.
@@ -71,9 +68,8 @@ class CompositeModel:
         """
         Couple the DataStructure-backed components *args* through the translator at *translator_path*
         (YAML or Python module): links between them become aliases and derived variables on their
-        DataStructure (see _couple_on_data_structures). Links with the soil component (``soil_name``) are
-        exchanged by the scene (coupler.Transport / Coupler); ``soil_outputs`` lists the soil variables read
-        by the plant components.
+        DataStructure (see _couple_on_data_structures). Links with components on other DataStructures (the
+        environment) are exchanged by the Scene (coupling.cross.Exchanges).
         """
         self.components = [component for component in args]
         for component in self.components:
@@ -82,9 +78,6 @@ class CompositeModel:
                                 "removed, see docs/design/downstream_migration.md")
 
         translator = self.open_or_create_translator(translator_path)
-        self.soil_inputs, self.soil_outputs = self.get_component_inputs_outputs(
-            translator=translator, components_names=[c.__class__.__name__ for c in self.components],
-            target_name=self.soil_name, names_for_others=False)
         self._couple_on_data_structures(translator)
 
     def _couple_on_data_structures(self, translator: dict) -> None:
@@ -92,17 +85,9 @@ class CompositeModel:
         Coupling of DataStructure-backed components (design note §5): links between components sharing a
         DataStructure become name-level aliases or derived variables refreshed by the receiver before its step;
         identities need nothing. Links with components outside this composite (e.g. the soil) are exchanged
-        by the scene, not here. Soil outputs are registered on the plant DataStructure, initialised to 0.
+        by the Scene, not here.
         """
         by_name = {component.__class__.__name__: component for component in self.components}
-        for component in self.components:
-            ds = component.data_structure
-            for name in self.soil_outputs:
-                if ds.has(name):
-                    ds.set(name, 0.)
-                else:
-                    ds.register(name, location="node")
-
         for link in Translator.from_dict(translator).links:
             if link.receiver not in by_name or link.provider not in by_name or link.receiver == link.provider:
                 continue
@@ -110,7 +95,7 @@ class CompositeModel:
             ds = receiver.data_structure
             if provider.data_structure is not ds:
                 raise NotImplementedError(f"{link.receiver}.{link.variable} <- {link.provider}: coupling across "
-                                          "DataStructures needs a Coupler (devplan WD.5)")
+                                          "DataStructures goes through the Scene (coupling.cross.Exchanges)")
             self._check_link_kinds(link, receiver, provider)
             self._check_link_scales(link, ds)
             if link.kind == "identity":
@@ -290,35 +275,3 @@ class CompositeModel:
                         raise TypeError("Unknown data structure to apply input data to")
                     # The table value applies to the whole variable
                     to[model].data_structure.set(var, tables[var][when])
-
-
-    def get_component_inputs_outputs(self, translator, components_names, target_name, names_for_others=True):
-        expected_inputs = []
-        expected_outputs = []
-
-        target_component = translator[target_name]
-
-        for component in components_names:
-            if component != target_name:
-                # Get outputs from all others
-                input_components = translator[component]
-                for provider, source_variables in input_components.items():
-                    # Among inputs if the target is found
-                    if provider == target_name:
-                        if names_for_others:
-                            expected_outputs += list(source_variables.keys())
-                        else:
-                            for _, translation in source_variables.items():
-                                expected_outputs += list(translation.keys())
-            
-                # Get inputs from all for target component
-                if names_for_others:
-                    for _, translation in target_component[component].items():
-                                expected_inputs += list(translation.keys())
-                else:
-                    expected_inputs += list(target_component[component].keys())
-
-        expected_inputs = list(set(expected_inputs))
-        expected_outputs = list(set(expected_outputs))
-
-        return expected_inputs, expected_outputs
