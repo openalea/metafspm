@@ -169,6 +169,11 @@ class SoilDiffusion(FunctionalComponent):
   set of nodes (a mask rule, a variable, a callable), with values and weights read at each solve. `kinds="variable"`
   reads each node's kind from a node variable (`boundary_set.CODES`: 1 Dirichlet, 2 Neumann, 3 Robin, otherwise
   none), e.g. a collar switching between a pressure and a flux. `kind=None` is a selection only.
+- **Boundary conditions as equations.** When the condition is an expression rather than a variable,
+  `@boundary_condition("node", "dirichlet" | "neumann", field=..., select=...)` tags a method that takes its
+  arguments by name like the balances: unknowns and DataStructure variables (e.g. coupled ones), sliced to the
+  selected nodes. A Dirichlet method returns the residual (`p - collar_pressure`), a Neumann one the inflow
+  (`uptake_rate * (soil_concentration - concentration)`), with the same sign as a `boundary_set`'s value.
 - **Pool unknowns.** `pool_unknowns={"shoot_sugar": {"location": "Plant", "exchange": "collar"}}` adds one unknown
   per plant, solved with the graph; its residual is a `@pool_balance(field=...)`, and equations exchange with it
   through `self.pool_exchange(name)` (a sparse node × pool map). Newton solvers only.

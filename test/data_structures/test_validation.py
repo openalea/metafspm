@@ -96,9 +96,13 @@ def test_edge_boundary_conditions_are_rejected_until_boundary_sets():
         boundary_condition("cell", "dirichlet", field="flux")
 
 
-def test_boundary_condition_is_deprecated_for_boundary_sets():
-    with pytest.warns(DeprecationWarning, match="use a boundary_set"):
-        boundary_condition("node", "dirichlet", field="flux")
+def test_boundary_condition_arguments_are_checked():
+    with pytest.raises(ValueError, match="kind must be 'dirichlet' or 'neumann'"):
+        boundary_condition("node", "robin", field="flux")
+    with pytest.raises(ValueError, match="select= or filters=, not both"):
+        boundary_condition("node", "dirichlet", field="flux", select="collar", filters={"is_collar": [1]})
+    with pytest.raises(TypeError, match="select must be"):
+        boundary_condition("node", "dirichlet", field="flux", select=3)
 
 
 # ---------------------------------------------------------------- couplability with a DataStructure
