@@ -17,7 +17,7 @@ processes, around the Multiscale Tree Graph (MTG) of OpenAlea.
 
 User guide <user>
 Conventions <conventions>
-Migrating a model <design/downstream_migration>
+Migrating a model <migration>
 API reference <ref>
 ```
 

@@ -30,7 +30,7 @@ The flat modules used before the 2026 restructure have been removed. No compatib
 | `openalea.metafspm.scene_wrapper.play_Orchestra` | `openalea.metafspm.scene.scene_wrapper.play_Orchestra` |
 | `openalea.metafspm.component_factory.Choregrapher` | `openalea.metafspm.coupling.choregrapher.Choregrapher` |
 | `openalea.metafspm.component_factory` step decorators (`rate`, `state`, `actual`, `potential`, …) | `openalea.metafspm.solve.decorator` |
-| `openalea.metafspm.component_factory.Functor` | `openalea.metafspm.solve.legacy_functor.Functor` |
+| `openalea.metafspm.component_factory.Functor` | `openalea.metafspm.solve.functor.Functor` |
 | `openalea.metafspm.component.Model`, `declare` | `openalea.metafspm.coupling.component.Component` / `FunctionalComponent`, `declare` |
 | `openalea.metafspm.specializer` | `openalea.metafspm.solve.specializer` |
 
@@ -576,7 +576,7 @@ The flat modules used before the 2026 restructure have been removed. No compatib
 
 ### Breaking: legacy props path removed
 
-Components are coupled only through DataStructures; the props-based path of the former downstream models is gone. See `docs/design/downstream_migration.md`.
+Components are coupled only through DataStructures; the props-based path of the former downstream models is gone. See `docs/migration.md`.
 
 - **Components:**
   - `FunctionalComponent` requires a DataStructure with a variable store (`MPGDataStructure`, `ArrayDataStructure`).

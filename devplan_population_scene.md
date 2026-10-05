@@ -1,6 +1,6 @@
 # Plan: a scene of plant populations in one process
 
-Your questions of 2026-10-04 (1–3) are answered in §1. Questions for you are in §4, with answer lines; edit freely. This plan continues step 5 of `devplan_datastructures.md`, and replaces sub-steps 5c to 5e of `docs/design/population_and_performance.md`. 5a is done (`bb36bd4`); 5b (tree kernels) is unchanged and becomes P3 below.
+Your questions of 2026-10-04 (1–3) are answered in §1. Questions for you are in §4, with answer lines; edit freely. This plan continues step 5 of `devplan_datastructures.md`, and replaces sub-steps 5c to 5e of `dev/design/population_and_performance.md`. 5a is done (`bb36bd4`); 5b (tree kernels) is unchanged and becomes P3 below.
 
 ## 1. Answers to your questions
 
@@ -308,7 +308,7 @@ All of these are tested on in-repo doubles: the growth helper as a plant model, 
 
 ## 11. P7 design: benchmarks, then the removal of `play_Orchestra` (draft, 2026-10-06)
 
-**Benchmark** (a script under `test/benchmarks/`, not part of the suite, with results in `docs/design/population_and_performance.md` §14):
+**Benchmark** (a script under `test/benchmarks/`, not part of the suite, with results in `dev/design/population_and_performance.md` §14):
 - **Population sizes:** 1, 10, 100 and 1000 plants of about 2 000 segments each, grown up to that size before timing.
 - **Phases timed per step:**
   - vectorised steps (rate/state);
@@ -340,7 +340,7 @@ All of these are tested on in-repo doubles: the growth helper as a plant model, 
 
 ### P7 results and follow-up questions (2026-10-06)
 
-The benchmarks are in `docs/design/population_and_performance.md` §14.
+The benchmarks are in `dev/design/population_and_performance.md` §14.
 - **Scale:** a step of 1000 plants of 2 000 segments takes 6.7 s in one process, and every phase scales linearly.
 - **Overhead:** the Scene's per-step overhead is flat (about 0.3 ms), while `play_Orchestra`'s grew to 6.6 ms for 12 toy plants.
 - **Removal:** `play_Orchestra`, `Transport`, `Coupler` and the soil members of `CompositeModel` are removed (QP7b).

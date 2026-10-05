@@ -362,31 +362,90 @@ Not planned in metafspm: G13 (a masked loop in a step), G14 (until stratificatio
   - `CompositeModel.declare_data`, `Translator.inputs_outputs`, the `props` view, the `_last_graph_system` shim.
 
   **Recommendation:** remove them now, before the models are ported (nothing ported depends on them yet). Keep only the `props` view if the logger needs it.
-  → answer:
+  → answer: agree with Recommendation
 - **QPx — the solver layer below graph systems.** Make the following internal (no longer public API, tests through components only), or keep them public?
   - the `GraphSystem` shim, `ODESystemSpec`, the `solve(t_span)` time loop and `SolverResult`;
   - `BoundaryConditions`, the linear-assembly mode with `LinearDirectSolver`.
 
   **Recommendation:** make them internal. Keep the solver unit tests, but drop them from the API reference.
-  → answer:
+  → answer: yes to Recommendation
 - **QPy — time-term convention.** Make one convention: equations write their own time terms. Then `implicit_euler` stops adding its own, and becomes Newton with a transient check. `explicit_euler` and `scipy_ivp_*` would take an explicit `rate` form (du/dt given by the equations), declared separately from the residual form. **Recommendation:** yes. UC1's solver comparisons are rewritten to the convention.
-  → answer:
+  → answer: explain in more details.
 - **QPz — `@boundary_condition`.** Deprecate it in favour of `boundary_set`? It has the opposite Neumann sign and less selection. **Recommendation:** yes. Port UC4 to `boundary_set`, and keep the decorator one release with a warning.
-  → answer:
+  → answer: yes to Recommendation
 - **QPα — old-protocol files in `test/provide_usage_examples`:**
   - rewrite `composite_wrapper_example` and `rhizosoil_component_example` as current-API sketches;
   - move `rhizosoil_core_model` and `logger_api_reference` (which no longer runs) to `test/provide_usage_examples/legacy/`;
   - delete `light_component_example` (`test_light_component` covers it).
 
   **Recommendation:** as listed.
-  → answer:
-- **QPβ — `docs/design/*`.** The development notes there are full of step numbers. Move them out of `docs/`, e.g. to `dev/design/`, keeping the migration guide in `docs/`? **Recommendation:** yes.
-  → answer:
+  → answer: as listed
+- **QPβ — `dev/design/*`.** The development notes there are full of step numbers. Move them out of `docs/`, e.g. to `dev/design/`, keeping the migration guide in `docs/`? **Recommendation:** yes.
+  → answer: yes
 - **QPγ — the `data_api_tests/examples` scripts.** Turn them into pytest smoke tests writing their images to `tmp_path`, so they cannot rot again? **Recommendation:** yes, for the ones on the current API (array, MPG). The legacy ones follow QPw.
-  → answer:
+  → answer: yes
 - **QPδ — test layout.** Reorganise the test files by feature (data structures, components, graph systems, coupling, scenes), e.g. split `test_datastructure_prerequisites` and merge the two `test_composite_*` files? **Recommendation:** yes, as one commit of file moves only, after QPw.
-  → answer:
+  → answer: yes
 - **QPε — UC1, UC1-organ and UC3.** They still use the `props` view and solver internals. UC3's hand-built ports also duplicate `test_anatomy_mode`. Rewrite them on the public API (components, `boundary_set`, `previous`) after QPy? **Recommendation:** yes.
-  → answer:
+  → answer: yes
 - **QPζ — `legacy_functor.py`.** It is the current step wrapper, not a legacy one: rename it `functor.py`? **Recommendation:** yes.
+  → answer: yes
+
+## 14. QPy in more detail: one time-term convention (2026-10-05)
+
+**What a graph system's equations mean today, solver by solver.** Take a diffusion of `c` on nodes, with fluxes `q` on edges:
+
+```python
+@node_balance(field="c")
+def _balance(self, c, q):
+    return (c - self.previous("c")) / self.dt + B @ q / volume - source      # residual form, time term written
+
+@edge_law(field="q")
+def _fick(self, c, q, K):
+    return q - K * B.T @ c
+```
+
+| solver | what it solves with these equations | correct? |
+|---|---|---|
+| `newton`, `newton_fd`, `scipy_krylov/anderson/hybr` | R(c, q) = 0 as written: backward Euler, since the time term is in R | yes |
+| the same with `integrate="substeps"` / `"adaptive"` | the framework splits the step and moves `previous` / `dt` with each sub-step | yes |
+| `implicit_euler` | R + (u − u_prev)/h = 0 for **every** unknown: the time term twice on c, and a spurious `(q − q_prev)/h` on the fluxes | no |
+| `explicit_euler` | c_new = c + dt · (−R): it reads −R as dc/dt, and R already holds (c − c_prev)/dt | no |
+| `scipy_ivp_bdf/radau` | dc/dt = −R(c, q) integrated by solve_ivp: same misreading | no |
+
+Today `implicit_euler`, `explicit_euler` and the IVP solvers are only correct if the node balance leaves out its time term and is written as −dc/dt, i.e. `B @ q / volume - source`. UC1's ImplicitEuler tests rely on this, and they assert the spurious edge term `q(1 + 1/dt) = K Bᵀ c`. So the same equations mean different physics depending on the solver chosen. Switching solvers silently changes the model, and nothing warns about it.
+
+**Proposal.** Two ways of writing a node balance, each with one meaning whatever the solver:
+
+1. **Residual form**, `@node_balance(field)`, as today with the Newton family. The method returns the residual at the end of the (sub-)step, time term included. It suits implicit solves, algebraic constraints and steady systems.
+   - Solved by the Newton family, with `integrate="step" | "substeps" | "adaptive"` for time-step control. `explicit=True` keeps its meaning: the method returns the new value, and R = u − value.
+   - `implicit_euler` stops adding anything. It becomes an alias of `newton` with `transient=True`, deprecated.
+   - The explicit and IVP solvers refuse residual-form systems, with an error naming the rate form.
+2. **Rate form**, a new `@node_rate(field)`. The method returns dc/dt (for the example, `-(B @ q) / volume + source`), with no time term.
+   - The framework adds the time term for an implicit solver: R = (c − previous(c))/dt − rate.
+   - `explicit_euler` steps c += dt · rate, and the IVP solvers integrate dc/dt = rate.
+   - One rate-form system can thus be solved by any solver. Comparing implicit, explicit and BDF solutions of the same model becomes a solver switch.
+   - Capacities (volume, mass) are the method's business: it returns dc/dt, so it divides by them itself (no mass matrix).
+3. **Edge unknowns** are always algebraic (`@edge_law`, residual form). No solver adds a time term to them, so the `(q − q_prev)/h` artefact disappears.
+4. **In one graph system**, all node unknowns use the same form, and mixing them raises. Forcings are read at the evaluation time in IVP solves, as today, through `forcing_time()`.
+
+**Effects:**
+- UC1's `implicit_euler` and edge time-term tests are rewritten. Each becomes one rate-form model solved by `newton` (backward Euler), `explicit_euler` (small dt) and `scipy_ivp_bdf`, compared to each other and to the analytic solution (QPε).
+- `test_active_subgraph` and `test_pools_and_kinds` use `implicit_euler` only as "a transient solver": they switch to `newton, transient=True`.
+- The solver unit tests on specs stay. They test the internal layer (QPx), where `ImplicitEulerSolver` keeps its mathematical definition on an `ODESystemSpec`.
+- Downstream models today write residual forms with Newton (rhizodep-style), so nothing changes for them. The rate form is new, for models wanting explicit or adaptive ODE integration (e.g. a soil or microbial pool model with scipy BDF).
+
+**Alternative (not recommended):** keep only the residual form and make `explicit_euler` / IVP derive the rate as −(R − time term). The framework cannot separate the user's time term from the rest of R, so this relies on the user writing it in one exact way.
+
+- **QPy (restated):** adopt the two forms above (residual form for the Newton family, `@node_rate` for every solver), with `implicit_euler` deprecated as an alias of `newton, transient=True`? **Recommendation:** yes.
   → answer:
+
+**Meanwhile**, the decided items go in this order (QPε waits for QPy):
+1. QPζ: rename `legacy_functor.py`.
+2. QPβ: move `dev/design/*` to `dev/design/`.
+3. QPα: the old example files.
+4. QPz: deprecate `@boundary_condition`; port UC4.
+5. QPw: remove the legacy APIs.
+6. QPx: internal solver layer.
+7. QPγ: smoke tests for the example scripts.
+8. QPδ: test layout, as file moves only.

@@ -165,4 +165,4 @@ class Functor:
             self._call_on_data_structure(instance, data)
         else:
             raise TypeError(f"Step {self.class_name}.{self.name} needs a DataStructure (got {type(data).__name__}); "
-                            "props-based components were removed, see docs/design/downstream_migration.md")
+                            "props-based components were removed, see docs/migration.md")

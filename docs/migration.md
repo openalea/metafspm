@@ -23,7 +23,7 @@ Replace the flat modules, following the table in `CHANGELOG.md`:
 |---|---|
 | `metafspm.utils` | `data_structure.arraydict` |
 | `composite_wrapper` | `coupling.composite_wrapper` |
-| `component_factory` | `coupling.choregrapher`, `solve.decorator`, `solve.legacy_functor` |
+| `component_factory` | `coupling.choregrapher`, `solve.decorator`, `solve.functor` |
 | `component.Model` | `coupling.component.FunctionalComponent` |
 
 ## 2. Components → `FunctionalComponent`

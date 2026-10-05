@@ -81,7 +81,7 @@ Coupled equations (transport, diffusion) are declared as `@graph_system`s and so
 coupled within a DataStructure by a `CompositeModel` and its translator, and across DataStructures (plants and soil
 grids, light, environment) by mappings; a `Scene` builds populations from a planting table and runs them with their
 environment. See the documentation in `docs/`: the user guide (`docs/user.md`), the declaration conventions
-(`docs/conventions.md`) and the guide for porting an existing model (`docs/design/downstream_migration.md`).
+(`docs/conventions.md`) and the guide for porting an existing model (`docs/migration.md`).
 
 For a model built on MetaFSPM, see [Root_CyNAPS](https://github.com/GeraultTr/Root_CyNAPS).
 

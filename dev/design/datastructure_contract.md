@@ -21,7 +21,7 @@ Decisions this note builds on: D2 (split `scale=` into location / scale / mappin
 - **Derived variables** are recomputed only by `refresh()`, which `pull_available_inputs` calls at the start of the receiver's `__call__` (`component.py:150`). Between two refreshes they can be stale.
 - **Output locations are guessed by size:**
   - graph outputs: `location="node" if arr.size == n else "edge"` (`decorator.py:750`);
-  - undeclared step outputs take the location of the step's first input (`legacy_functor.py:~62`);
+  - undeclared step outputs take the location of the step's first input (`functor.py:~62`);
   - filtered evaluators slice every argument whose `shape[0] == entity_size` (`decorator.py:466`).
 
   All three are wrong when `n == m`, or when the first input is a scalar.

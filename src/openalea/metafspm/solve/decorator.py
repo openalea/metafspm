@@ -60,7 +60,7 @@ _SCALE_INT_TO_LOC: dict = {
 
 # ── Choregrapher (unchanged) ──────────────────────────────────────────────────
 from openalea.metafspm.coupling.choregrapher import Choregrapher
-from openalea.metafspm.solve.legacy_functor import Functor
+from openalea.metafspm.solve.functor import Functor
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -321,7 +321,7 @@ def _live_ds(instance):
     ds = getattr(instance, "data_structure", None)
     if ds is None or not (hasattr(ds, "register") and hasattr(ds, "get")):
         raise TypeError(f"{type(instance).__name__}: graph systems need a DataStructure with a variable store "
-                        "(props-based components were removed, see docs/design/downstream_migration.md)")
+                        "(props-based components were removed, see docs/migration.md)")
     return ds
 
 
