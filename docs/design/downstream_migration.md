@@ -121,6 +121,7 @@ class GrassBRIDGES(CompositeModel):
   - The grid gives `cell_centers()`, `cell_volume()` and `locate(points, periodic=, clip=)`.
 - **Composite (RhizoSoil):** see `DSFakeSoil`.
   - At init, for each plant message: `Transport.from_rows(message["handshake"], message["capacity"], to_soil=, to_plant=)`, taking the links from the soil's translator for the plant's `carried_components`.
+  - **Population scene (P5–P6):** in a population scene, the plant ↔ soil links go through `coupling.cross.Exchanges` with one `CrossMapping` per population. Maps rebuild themselves, and no zeroing is needed. The per-process `Coupler` below is removed after P7.
   - Each step, for each plant: `Coupler(transport.plant_view(buffer), soil_ds, VoxelLocator(soil_ds))`, `update_map()`, then:
     1. one `zero_soil_inputs()`;
     2. `push()` for all plants;

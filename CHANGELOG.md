@@ -18,6 +18,20 @@ The flat modules used before the 2026 restructure have been removed. No compatib
 | `openalea.metafspm.component.Model`, `declare` | `openalea.metafspm.coupling.component.Component` / `FunctionalComponent`, `declare` |
 | `openalea.metafspm.specializer` | `openalea.metafspm.solve.specializer` |
 
+### Links between DataStructures (P5)
+
+- **New `coupling/cross.py`:**
+  - `CrossMapping(plants, grid, method="barycentre" | "overlap")`: plant segments to grid cells. Barycentre is the reference soil map; overlap weights each cell by the segment's length fraction in it. The map rebuilds itself after growth or a coordinate write.
+  - `Exchanges(translator, components, mappings)`: translator links between components on different DataStructures, run by `exchange(into=ds)` at the scene's fixed points.
+- **Defaults** follow the variables' kinds:
+  - extensive plant → cell: `sum`;
+  - intensive plant → cell: `weighted_mean`, `weight=` required;
+  - intensive cell → plant: `broadcast` (the overlap-weighted cell values);
+  - extensive cell → plant: `split` by `weight=`.
+- **Several populations** feeding one grid variable are pooled in one write: sums add up, means pool their weights, and splits share each cell among every receiving population. `zero_soil_inputs()` is no longer needed.
+- **`UnionDataStructure` and `UnionMapping`:** the nodes of several populations, one after the other, so that one component (a CARIBU-like light model) sees every population. A component declared at the populations' node scale runs on a union unchanged. Values follow the parts' growth, kept by (part, entity id).
+- **`Coupler`** now uses `CrossMapping` (same map); it and `Transport` stay until P7.
+
 ### Plant populations and per-plant parameters (P4)
 
 - **Parameters per plant.** A numeric `parameter(...)` declared without a scale is stored per plant (`"Plant"` location) on plant DataStructures, and at `"scalar"` on grids. String, boolean and object parameters stay plain attributes.

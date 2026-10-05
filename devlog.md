@@ -1622,3 +1622,37 @@ Per-file counts:
 
 - **P4 committed** (`4f097f5`): CHANGELOG, conventions (Parameters section), migration guide (parameters as arguments), plan ✓.
 - **P5 design note** drafted in `devplan_population_scene.md` §9, with questions QP5a–c. Waiting for the answers before any code, since they decide the default mappings and the light-over-populations design.
+
+## 2026-10-06 (later): QP5a–c agreed; P5 implemented (links between DataStructures)
+
+- **Answers:** all three recommendations agreed. Any kind of variable must be exchangeable, even though in practice only extensive plant → soil and intensive soil → plant values are passed.
+- **`coupling/cross.py`:**
+  - **`CrossMapping`:** a (rows, columns, weights) incidence, rebuilt when the source's `topology_version` or a coordinate's write count changes.
+    - *Barycentre*: the same cells as `VoxelLocator`, bit for bit.
+    - *Overlap*: a numba traversal cuts each segment at the cell faces (piece middles located with `grid.locate`, so periodic and clipped axes behave as in barycentre); weights are length fractions, and zero-length pieces are dropped.
+    - Up: `sum`, `mean`, `weighted_mean`, returned as a numerator and denominator so populations pool. Down: `broadcast`, and `split` with cell totals over every receiving population.
+  - **`Exchanges`:**
+    - resolves the cross links (kinds checked with `kinds_agree`);
+    - defaults from `cross_default_mapping` (QP5a: intensive up requires `weight=` or an explicit `mean`; QP5c: extensive down requires `weight=`);
+    - formula links are evaluated on the provider;
+    - `exchange(into=ds)` pools every provider of a variable into one `set()`; a cell mean with no plant gets the receiver's default.
+  - **`UnionDataStructure`:** node and scalar stores; `element_scale` is the parts' node scale.
+    - The resolver accepts that scale, or `location="node"`, on it. Before this, a CARIBU-like component declared with `scale=SubOrgan` silently had no declared variables there.
+    - `update_topology()` carries values over by (part, id).
+  - **`UnionMapping`:** one-to-one exchanges with the parts.
+- **`Coupler`** builds its map through `VoxelLocator.mapping()` (a `CrossMapping`); its behaviour (explicit `update_map()`, `zero_soil_inputs`) is unchanged until P7. The Coupler and Transport tests pass unchanged.
+- **Timing:** incidence builds take 0.11 s (barycentre) and 0.66 s (overlap) on 2·10⁶ segments; an up exchange takes about 10 ms. With overlap, the incidence is rebuilt each time the coordinates are written (e.g. at every growth step).
+- **New `test/structure_tests/test_cross_datastructures.py`**, 13 tests:
+  - barycentre equals `VoxelLocator`;
+  - hand-computed overlap fractions (vertical and oblique segments);
+  - the map follows growth and moves;
+  - two populations into one soil in one write;
+  - gathering by overlap;
+  - intensive pooled weighted mean, and the default in empty cells;
+  - split between populations (conservation, and a dense reference);
+  - link checks;
+  - formula links;
+  - CARIBU-like light over two populations through a union, shaded by both;
+  - the union following growth;
+  - RATP-like light on a grid.
+- **Suite:** 718 passed.

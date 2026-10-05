@@ -6,6 +6,10 @@ A Coupler maps every plant node to the soil cell containing its segment barycent
   pull(): gathers the soil state (intensive) of each node's cell into plant variables, in place.
 Several plants push into one soil after a single zero_soil_inputs(). The map is rebuilt with update_map(),
 at least whenever the plant topology changed.
+
+The map is a coupling.cross.CrossMapping (P5), which generalises this module: exchanges between any DataStructures
+(coupling.cross.Exchanges), overlap weights, and maps rebuilt by themselves. Coupler and Transport serve the
+one-plant-per-process scene until P7 removes them (Q10).
 """
 from typing import Mapping
 
@@ -33,8 +37,14 @@ class VoxelLocator:
         z = 0.5 * (z1 + z2)
         return np.stack([0.5 * (x1 + x2), 0.5 * (y1 + y2), -z if self.flip_z else z], axis=1)
 
+    def mapping(self, plant_ds):
+        """The CrossMapping (barycentre) of *plant_ds* to the grid (P5)."""
+        from openalea.metafspm.coupling.cross import CrossMapping
+        return CrossMapping(plant_ds, self.grid, coordinates=self.coordinates, periodic=self.periodic,
+                            flip_z=self.flip_z)
+
     def cells(self, plant_ds) -> np.ndarray:
-        return self.grid.locate(self.barycenters(plant_ds), periodic=self.periodic, clip=True)
+        return self.mapping(plant_ds).cells
 
 
 class Coupler:
@@ -88,7 +98,10 @@ class Coupler:
     # ── exchange ──────────────────────────────────────────────────────────────
 
     def update_map(self) -> None:
-        self.cells = self.locator.cells(self.plant_ds)
+        if getattr(self, "_mapping", None) is None or self._mapping.source is not self.plant_ds:
+            self._mapping = self.locator.mapping(self.plant_ds)
+        self._mapping.refresh()
+        self.cells = self._mapping.cells
         self._map_topology = self.plant_ds.topology_version
 
     def _check_map(self) -> None:

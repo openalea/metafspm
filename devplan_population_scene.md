@@ -56,7 +56,7 @@ Each step has its design detail in a short note before code (complex steps), its
 | **P2** ✓ | Population at scale (F2, agreed): incremental `update_topology()` in segment mode (only new segments get Compartments and Connections; vids and edge values kept), and bulk vertex creation in the MPG (one batched `ArrayDict` assignment per property) | measured on 2·10⁶ segments |
 | **P3** ✓ | Tree kernels (5b, agreed): `chain_scan`, `accumulate`, `path_window`, `chain_shift` / `chain_write`, vector-valued values, minimal `path_compose`; reference loops from rhizodep, cnwgrass, adel and GRANAP rules | needed by growth at population scale |
 | **P4** ✓ (emergence moved to P6) | Population builder and planting: a planting table from `stand_initialization`; one MPG per sub-population (Plant vertices; initial structures placed by position and rotation; Plant-scale `x, y, z, rotation`); per-plant parameters from the table or from distributions | Q4–Q6 |
-| **P5** | Cross-DataStructure links: `CrossMapping` (incidence matrix from a locator: barycentre, or length overlap), recomputed on topology or geometry changes; translator links between DataStructures become mapped exchanges with D9 defaults; the light model as a component reading several DataStructures | generalises `Coupler`; Q1–Q3 |
+| **P5** ✓ | Cross-DataStructure links: `CrossMapping` (incidence matrix from a locator: barycentre, or length overlap), recomputed on topology or geometry changes; translator links between DataStructures become mapped exchanges with D9 defaults; the light model as a component reading several DataStructures | generalises `Coupler`; Q1–Q3 |
 | **P6** | `Scene(CompositeModel)`: environment components and populations, `__call__` order (environment, then each population), one or several populations (intercropping), the Logger per population and per plant | Q7–Q9 |
 | **P7** | Benchmarks and decision: time per step for 1 to 1000 plants of about 2 000 segments, with and without anatomies, split by phase, against today's one-plant-per-process scene; then decide on `play_Orchestra` (Q10) | |
 | **P8** | DS13 (per-instance scheduling) if Q8 needs it; DS15 (persistence, agreed: npz + JSON) | |
@@ -230,13 +230,13 @@ It is plant ↔ soil only. The map is rebuilt by hand (`update_map()`), the soil
 ### Questions
 
 - **QP5a, intensive plant → cell.** When a plant variable that is intensive is sent to a cell (e.g. root surface temperature, read by a soil model), is a weighted mean with a required `weight=` right? The alternative is to refuse such links, the soil model receiving extensive variables only. **Recommendation:** weighted mean with a required `weight=`, as D9 does upward within one DataStructure.
-  → answer:
+  → answer: In practice, only extensive will be passed, but it is better to plan for any type of variable yes.
 - **QP5b, light over several populations.** A CARIBU-like light component on an MPG sees only its own DataStructure. With two populations of different models (Q8: intercropping), it would not see the shading of the other population. Options:
   - **(a)** a component declared on several DataStructures (reads and writes each);
   - **(b)** a **union mapping**: the light component runs on its own flat DataStructure of scene elements, i.e. the concatenation of the populations' elements. It reads geometry and writes interception through one-to-one exchanges (rows = elements of each population, in order), so components keep one DataStructure each.
   - **(c)** for now, one light component per population, with no shading between populations.
 
   **Recommendation:** (b). It needs no change to the component base and fits Q3 ("only the DataStructure coupling gives the correspondence"). With one population, the light component simply runs on the population's MPG.
-  → answer:
+  → answer: go for (b)
 - **QP5c, cell → plant for extensive variables.** For example, a soil supply given per cell and shared among the segments in it. Is splitting by a required `weight=` (e.g. root length or surface in the cell) the right default? Or should the cell's amount be shared in proportion to the plants' demand, which is a model process and not a mapping? **Recommendation:** split by `weight=`, with demand-based sharing left to the models (computed as an intensive rate per cell, then gathered).
-  → answer:
+  → answer:ok for recommandation, even if in practice only intensive variables will be passed, but better to plan for any variable type.
