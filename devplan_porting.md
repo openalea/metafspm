@@ -60,7 +60,7 @@ Each step gets a short design note, tests against a reference loop taken from th
 | **PT3** ✓ (templating: QPg) | Structure edits: tests and fixes for adel-like edits (inserting elements in a chain, removing with relinking, rebuilding elements each step) and the repartition after them; disabling inherited steps (`steps_removed`), and templated components | G11, §1 |
 | **PT4** ✓ | Graph systems: extra unknowns outside the graph, coupled to nodes (a pool with its own balance); boundary sets whose kind is chosen per call; `self.forcing(name, t)` interpolating input tables inside solves | G4, G5 |
 | **PT5** | Scene services: one forcing table; `every=` / `when=` scheduling; spin-up hooks; events and stop conditions | G8, G9 |
-| **PT6** | Mappings: population → environment scalars (a reduction over the plants of every population); column ↔ grid (layer mean and broadcast) | G7 |
+| **PT6** ✓ | Mappings: population → environment scalars (a reduction over the plants of every population); column ↔ grid (layer mean and broadcast) | G7 |
 | **PT7** | Non-variable state: component state saved by checkpoints (a `__checkpoint__` hook); vector-valued variables `(n, k)` | G10 |
 | **PT8** | Shoot geometry: per-element triangles (store and transforms), optical classes, a light-component skeleton on a `UnionDataStructure`, tested with a toy radiosity, and a Caribu adapter kept downstream | G6 |
 | **PT9** | Anatomy library, after your answers on GRANAP | G12 |
@@ -208,13 +208,13 @@ Not planned in metafspm: G13 (a masked loop in a step), G14 (until stratificatio
 ### Questions
 
 - **QPk, scalars (PT6.1).** Should exchanges between a population and an environment scalar reduce over every plant of every population (sums for extensive values, means for intensive ones), with no mapping to declare? **Recommendation:** yes, by kind, as the other exchanges.
-  → answer:
+  → answer: yes
 - **QPl, column ↔ grid (PT6.2).** Should the mapping be given explicitly to the Scene, weighted by layer overlaps? **Recommendation:** yes.
-  → answer:
+  → answer: yes
 - **QPm, skipped steps (PT5.2).** On steps a model does not run, should its outputs keep their last values, and the exchanges into it be skipped? **Recommendation:** yes. Rescaling, as Caribu's Erel × PARi does, stays in the model.
-  → answer:
+  → answer: yes
 - **QPn, checkpoint hooks (PT7.1).** Should models and components save their non-variable state through `checkpoint_state()` / `restore_state()` hooks? **Recommendation:** yes. The DataStructures already restore bit for bit, and only opaque external solvers need the hooks.
-  → answer:
+  → answer: yes
 - **QPo, vector variables (PT7.2).** Are `(n, k)` variables enough for MIMICS' pools (steps, mappings, checkpoints, recorder; not graph-system unknowns)? Or should they also be graph-system unknowns (k coupled fields per node)? **Recommendation:** the former now; graph-system unknowns of shape `(n, k)` when a model needs them (e.g. a vectorised multi-solute transport).
-  → answer:
+  → answer: keep it the former way yes because these wrapping CMF and MIMICS-CN will all tend to be replaced by Component compliant models in the future to be considered a proper metafspm component.
 

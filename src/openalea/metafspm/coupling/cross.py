@@ -212,6 +212,98 @@ class CrossMapping:
         return np.bincount(rows, weights=share * values[columns], minlength=n)
 
 
+# ── Populations <-> environment scalars, and columns <-> grids (PT6) ─────────────────
+
+class ScalarMapping:
+    """
+    Between the entities of a population's variable (*location*: nodes, a coarse scale) and one scalar of an
+    environment model (QPk): "up" reduces over every entity (pooled over populations by Exchanges), "down" broadcasts
+    or splits the scalar. Created by Exchanges when a link's receiver or sources are stored at "scalar".
+    """
+
+    def __init__(self, source, location: str):
+        self.source, self.location = source, location
+
+    def _size(self) -> int:
+        return int(np.prod(self.source._location_shape(self.location)))
+
+    def covered(self):
+        return None
+
+    def up(self, values, aggregation: str = "sum", weights=None) -> tuple:
+        values = np.asarray(values, dtype=float).reshape(-1)
+        if aggregation == "sum":
+            return np.array([values.sum()]), None
+        if aggregation == "mean":
+            return np.array([values.sum()]), np.array([float(values.size)])
+        if aggregation == "weighted_mean":
+            weights = np.asarray(weights, dtype=float).reshape(-1)
+            return np.array([(values * weights).sum()]), np.array([weights.sum()])
+        raise ValueError(f"unknown aggregation '{aggregation}' towards a scalar, expected one of {UP}")
+
+    def weight_totals(self, weights) -> np.ndarray:
+        return np.array([np.asarray(weights, dtype=float).sum()])
+
+    def down(self, values, aggregation: str = "broadcast", weights=None, totals=None) -> np.ndarray:
+        value = float(np.asarray(values, dtype=float).reshape(-1)[0])
+        if aggregation == "broadcast":
+            return np.full(self._size(), value)
+        if aggregation != "split":
+            raise ValueError(f"unknown aggregation '{aggregation}' from a scalar, expected one of {DOWN}")
+        weights = np.asarray(weights, dtype=float).reshape(-1)
+        total = (self.weight_totals(weights) if totals is None else totals)[0]
+        return np.zeros(weights.size) if total == 0. else value * weights / total
+
+
+class LayerMapping:
+    """
+    Between a 1-D column (e.g. a soil temperature model's layers) and the layers of a 3-D grid along *axis* (QPl),
+    weighted by the overlaps of the layer intervals, so that thicknesses may differ:
+      grid -> column: "mean" (intensive: each column layer the overlap-weighted mean of the grid layers' means over
+                      the other axes) or "sum" (extensive: the overlapping fractions of the grid layers' totals);
+      column -> grid: "mean" (intensive: broadcast over the other axes) or "sum" (extensive: shared over the cells
+                      of each grid layer by overlap fraction).
+    """
+
+    def __init__(self, column, grid, axis: str = "z"):
+        if len(column.shape) != 1:
+            raise ValueError("LayerMapping: the column must be a 1-D grid")
+        self.column, self.grid, self.axis = column, grid, grid.axes.index(axis)
+        a = self.axis
+        column_edges = column._origin[0] + column._dx[0] * np.arange(column.shape[0] + 1)
+        grid_edges = grid._origin[a] + grid._dx[a] * np.arange(grid.shape[a] + 1)
+        low = np.maximum(column_edges[:-1, None], grid_edges[None, :-1])
+        high = np.minimum(column_edges[1:, None], grid_edges[None, 1:])
+        self.overlap = np.clip(high - low, 0., None)        # (column layers, grid layers)
+
+    def _layer_reduce(self, values, op):
+        moved = np.moveaxis(np.asarray(values, dtype=float).reshape(self.grid.shape), self.axis, -1)
+        flat = moved.reshape(-1, moved.shape[-1])
+        return flat.mean(axis=0) if op == "mean" else flat.sum(axis=0)
+
+    def transfer(self, values, from_column: bool, aggregation: str) -> np.ndarray:
+        if aggregation not in ("mean", "sum"):
+            raise ValueError(f"LayerMapping: aggregation must be 'mean' or 'sum', got '{aggregation}'")
+        w = self.overlap
+        if not from_column:
+            layers = self._layer_reduce(values, aggregation)
+            if aggregation == "mean":
+                covered = w.sum(axis=1)
+                return np.divide(w @ layers, covered, out=np.zeros(w.shape[0]), where=covered > 0)
+            thickness = self.grid._dx[self.axis]
+            return (w / thickness) @ layers
+        column = np.asarray(values, dtype=float).reshape(-1)
+        if aggregation == "mean":
+            covered = w.sum(axis=0)
+            per_layer = np.divide(w.T @ column, covered, out=np.zeros(w.shape[1]), where=covered > 0)
+        else:
+            per_layer = (w / self.column._dx[0]).T @ column
+            per_layer = per_layer / (self.grid.n_nodes() / self.grid.shape[self.axis])   # shared over the layer's cells
+        shape = [1] * len(self.grid.shape)
+        shape[self.axis] = self.grid.shape[self.axis]
+        return np.broadcast_to(per_layer.reshape(shape), self.grid.shape).reshape(-1).copy()
+
+
 # ── The nodes of several DataStructures, one after the other (QP5b) ────────────────
 
 class UnionDataStructure(VariableStoreMixin, DataStructure):
@@ -416,7 +508,17 @@ class Exchanges:
                 if not kinds_agree(received, provided):
                     raise ValueError(f"{name}.{source}: the kinds do not agree ({received} <- {provided})")
             aggregation = link.aggregation
-            if direction in ("into_union", "from_union"):
+            if direction == "layer":
+                if aggregation is None:
+                    kind = received if received is not None else next(iter(
+                        {_declared_kind(provider, source) for source in link.sources}), None)
+                    if kind in EXTENSIVE_KINDS:
+                        aggregation = "sum"
+                    elif kind in INTENSIVE_KINDS or kind in MASSIC_KINDS:
+                        aggregation = "mean"
+                    else:
+                        raise DeclarationError(f"{name}: a column <-> grid link needs a kind or aggregation=")
+            elif direction in ("into_union", "from_union"):
                 if aggregation not in (None, "identity"):
                     raise ValueError(f"{name}: a union exchanges values one to one, aggregation '{aggregation}' "
                                      "does not apply")
@@ -427,7 +529,11 @@ class Exchanges:
                     if kind is None and link.formula is None:
                         kinds = {_declared_kind(provider, source) for source in link.sources}
                         kind = kinds.pop() if len(kinds) == 1 else None
-                    aggregation = cross_default_mapping(kind, direction, name, weight=link.weight)
+                    if (isinstance(mapping, ScalarMapping) and direction == "up" and link.weight is None
+                            and (kind in INTENSIVE_KINDS or kind in MASSIC_KINDS)):
+                        aggregation = "mean"              # an environment scalar: the plain mean (QPk)
+                    else:
+                        aggregation = cross_default_mapping(kind, direction, name, weight=link.weight)
                 allowed = UP if direction == "up" else DOWN
                 if aggregation not in allowed:
                     raise ValueError(f"{name}: aggregation '{aggregation}' does not go {direction}, expected one of "
@@ -437,7 +543,20 @@ class Exchanges:
             self.links.append(_CrossLink(link, receiver, provider, mapping, direction, aggregation, part))
 
     def _mapping_between(self, link, provider_ds, receiver_ds) -> tuple:
+        # An environment scalar: reduced over, or broadcast to, every entity of the population (PT6, QPk)
+        if receiver_ds.has(link.variable) and receiver_ds.location(link.variable) == "scalar" \
+                and link.formula is None and all(provider_ds.has(source) for source in link.sources):
+            (location,) = {provider_ds.location(source) for source in link.sources}
+            if location != "scalar":
+                return ScalarMapping(provider_ds, location), "up", None
+        if link.formula is None and all(provider_ds.has(source) and provider_ds.location(source) == "scalar"
+                                        for source in link.sources) and receiver_ds.has(link.variable) \
+                and receiver_ds.location(link.variable) != "scalar":
+            return ScalarMapping(receiver_ds, receiver_ds.location(link.variable)), "down", None
         for mapping in self.mappings:
+            if isinstance(mapping, LayerMapping) and {id(provider_ds), id(receiver_ds)} == {id(mapping.column),
+                                                                                           id(mapping.grid)}:
+                return mapping, "layer", None
             if isinstance(mapping, CrossMapping):
                 if mapping.source is provider_ds and mapping.target is receiver_ds:
                     return mapping, "up", None
@@ -483,6 +602,10 @@ class Exchanges:
                 covered = cross.mapping.covered()
                 if covered is not None:                 # entities left out keep their values
                     keep.setdefault(variable, covered)
+            elif cross.direction == "layer":
+                numerator = cross.mapping.transfer(values, cross.provider_ds is cross.mapping.column,
+                                                   cross.aggregation)
+                denominator = None
             elif cross.direction == "into_union":
                 numerator, denominator = np.zeros(ds.n_nodes()), None
                 numerator[ds.part_slice(cross.part)] = np.asarray(values, dtype=float).reshape(-1)
