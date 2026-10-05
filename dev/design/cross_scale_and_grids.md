@@ -27,7 +27,7 @@ It builds on decisions D1 (grid faces as edges, with a geometric factor as an ed
 **Grids (DS1).**
 - `ArrayDataStructure(shape, dx, origin)` has the `"cell"` (shape `(nx, ny, nz)`) and `"scalar"` locations, and a finite-difference `laplacian()` (Neumann boundaries).
 - It has no `to_graph_view`, so `FunctionalComponent._graph_view` is `None` on grids and `@graph_system` cannot run there. Soil transport is written by hand, or delegated to cmf in the reference model.
-- **Reference soil model** (`provide_usage_examples/rhizosoil_core_model.py:503`): lateral neighbours wrap around in x and y when the scene is symmetric (`symetry`). The bottom layer has either no flux (pot) or a fixed groundwater moisture (field), and water and solute uptake are Neumann sources per cell.
+- **Reference soil model** (`test/provide_usage_examples/legacy/rhizosoil_core_model.py:503`): lateral neighbours wrap around in x and y when the scene is symmetric (`symetry`). The bottom layer has either no flux (pot) or a fixed groundwater moisture (field), and water and solute uptake are Neumann sources per cell.
 
 ## 2. Cross-scale links (DS18), sub-steps 3a–3b
 
