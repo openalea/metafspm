@@ -18,6 +18,10 @@ The flat modules used before the 2026 restructure have been removed. No compatib
 | `openalea.metafspm.component.Model`, `declare` | `openalea.metafspm.coupling.component.Component` / `FunctionalComponent`, `declare` |
 | `openalea.metafspm.specializer` | `openalea.metafspm.solve.specializer` |
 
+### A light model triangulating the populations itself (PT8)
+
+- **Test only, no new API:** a CARIBU-like toy component on the union of two populations of different models. It builds its own triangles from each element's geometry, shades by Beer's law, writes the absorbed light back to every population, and runs every 4 steps with its outputs kept (QPd).
+
 ### State outside variables (PT7)
 
 - **`Scene.checkpoint(path)` / `Scene.restore(path, *scene arguments)`:**

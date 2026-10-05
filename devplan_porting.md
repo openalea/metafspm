@@ -62,7 +62,7 @@ Each step gets a short design note, tests against a reference loop taken from th
 | **PT5** ✓ | Scene services: one forcing table; `every=` / `when=` scheduling; spin-up hooks; events and stop conditions | G8, G9 |
 | **PT6** ✓ | Mappings: population → environment scalars (a reduction over the plants of every population); column ↔ grid (layer mean and broadcast) | G7 |
 | **PT7** ✓ | Non-variable state: component state saved by checkpoints (a `__checkpoint__` hook); vector-valued variables `(n, k)` | G10 |
-| **PT8** | Shoot geometry: per-element triangles (store and transforms), optical classes, a light-component skeleton on a `UnionDataStructure`, tested with a toy radiosity, and a Caribu adapter kept downstream | G6 |
+| **PT8** ✓ (as reduced by QPd) | Shoot geometry: per-element triangles (store and transforms), optical classes, a light-component skeleton on a `UnionDataStructure`, tested with a toy radiosity, and a Caribu adapter kept downstream | G6 |
 | **PT9** | Anatomy library, after your answers on GRANAP | G12 |
 
 Not planned in metafspm: G13 (a masked loop in a step), G14 (until stratification is needed), G15 (downstream, with the guide's §6).
@@ -217,4 +217,32 @@ Not planned in metafspm: G13 (a masked loop in a step), G14 (until stratificatio
   → answer: yes
 - **QPo, vector variables (PT7.2).** Are `(n, k)` variables enough for MIMICS' pools (steps, mappings, checkpoints, recorder; not graph-system unknowns)? Or should they also be graph-system unknowns (k coupled fields per node)? **Recommendation:** the former now; graph-system unknowns of shape `(n, k)` when a model needs them (e.g. a vectorised multi-solute transport).
   → answer: keep it the former way yes because these wrapping CMF and MIMICS-CN will all tend to be replaced by Component compliant models in the future to be considered a proper metafspm component.
+
+## 9. Status after PT1–PT8 (2026-10-06): what is left before porting
+
+**Done, each with tests against reference loops or hand computations:**
+- **PT1 tree kernels:** `fold`, `chain_gather`, `chain_recurrence`.
+- **PT2:** reproducible random streams.
+- **PT3:** structure edits mid-chain and removals with relinking (an openalea `replace_parent` bug worked around); disabling inherited steps.
+- **PT4:** pool unknowns per plant, per-node boundary kinds, forcings in solves.
+- **PT5 scene services:** shared forcings, `run_every` / `run_when`, spin-up, events, stops.
+- **PT6:** scalars over populations, column ↔ grid.
+- **PT7:** scene checkpoints with state hooks, vector-valued variables.
+- **PT8:** a light model on the union of populations that triangulates the MPG's elements itself and runs every 4 steps. It checks that a CARIBU-like component needs nothing more from the API.
+
+**Left in metafspm:**
+- **PT9, the anatomy library (GRANAP):** waits for your guidelines, as agreed (QPf). The answers to Q-A4 and the GRANAP questions are in §5.
+- **Not planned, by decision:**
+  - G13: fixed-point loops stay in steps;
+  - G14: non-uniform layers, when stratification comes;
+  - G15: the Logger and images (downstream);
+  - templated components (QPg: duplication).
+
+**Limits to know when porting:**
+- pool unknowns need a Newton solver and finite-difference Jacobians;
+- vector variables are not graph-system unknowns;
+- `split="components"` is not parallel;
+- an MPG-style step sees only the MTG properties its component declares.
+
+**Port order (QPf):** GRANAP first, after its guidelines; then rhizodep, Root-CyNAPS, RhizoSoil (with cmf and MIMICS wrapped as opaque solvers), and the shoot (cnwgrass and WheatFspm on MTG scales). The light model triangulates by itself.
 
