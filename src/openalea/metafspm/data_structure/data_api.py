@@ -1559,8 +1559,14 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
         return tree_kernels.depth(self.parents())
 
     def levels(self) -> list:
+        """Node indices grouped by depth from the roots, cached per topology version."""
         from openalea.metafspm.data_structure import tree_kernels
-        return tree_kernels.levels(self.parents())
+        key = (self.topology_version, self.n_nodes(), self.n_edges())
+        cache = self.__dict__.get("_levels_cache")
+        if cache is None or cache[0] != key:
+            cache = (key, tree_kernels.levels(self.parents()))
+            self.__dict__["_levels_cache"] = cache
+        return cache[1]
 
     def accumulate(self, values, direction: str = "up", op: str = "sum") -> np.ndarray:
         """Subtree (direction="up") or root path (direction="down") sum or max of node values (n,) or (n, k)."""
@@ -1571,6 +1577,58 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
         """Sums of *values* over each node's ancestors until *extent* reaches its *budget* (tree_kernels.path_window)."""
         from openalea.metafspm.data_structure import tree_kernels
         return tree_kernels.path_window(self.parents(), budget, extent, values, where=where, include=include)
+
+    def _edge_codes(self):
+        """Edge type code of each node (the MTG edge_type of its vid), None in anatomy mode."""
+        if getattr(self, "_anatomy", False):
+            return None
+        return self._mtg.topology_arrays()["edge_type"][np.asarray(self._idx_to_vid, dtype=np.int64)]
+
+    def fold(self, update, values, direction: str = "up") -> np.ndarray:
+        """Level-by-level fold with a custom vectorised *update* (tree_kernels.fold, PT1)."""
+        from openalea.metafspm.data_structure import tree_kernels
+        return tree_kernels.fold(update, values, self.parents(), self.children(), direction=direction,
+                                 edge_codes=self._edge_codes(), groups=self.levels())
+
+    def chain_gather(self, values, rank, chain: str = "axis", source=None, fill=np.nan) -> np.ndarray:
+        """
+        Per node, the value of the node at rank *rank* on the chain given by *source* (tree_kernels.chain_gather, PT1).
+        Chains by group and rank: *source* is a group value and *rank* a rank value. Edge-type chains: *source* is a
+        vid of the chain and *rank* a 0-based position.
+        """
+        from openalea.metafspm.data_structure import tree_kernels
+        chains = self.chain(chain)
+        spec = self.__dict__["_chain_specs"][chain]
+        n = self.n_nodes()
+        source = np.broadcast_to(np.asarray(source), (n,))
+        rank = np.broadcast_to(np.asarray(rank, dtype=np.float64), (n,))
+        order, offsets = chains["order"], chains["offsets"]
+        if spec["group"] is None:
+            source_chain = chains["chain"][self.index_of(np.asarray(source, dtype=np.int64))]
+            return tree_kernels.chain_gather(values, chains, source_chain, rank.astype(np.int64), fill=fill)
+        groups = np.asarray(self.get(spec["group"]))[order]
+        ranks = np.asarray(self.get(spec["rank"]), dtype=np.float64)[order]
+        if not np.array_equal(ranks, np.round(ranks)) or not np.array_equal(rank, np.round(rank)):
+            raise ValueError("chain_gather: ranks must be integers")
+        chain_groups = groups[offsets[:-1]]
+        source_chain = np.searchsorted(chain_groups, source).clip(0, max(chain_groups.size - 1, 0))
+        known = chain_groups[source_chain] == source if chain_groups.size else np.zeros(n, dtype=bool)
+        # One sorted search on (chain, rank) keys: chains are sorted by group, and ranks within each chain
+        position = np.full(n, -1, dtype=np.int64)
+        if ranks.size:
+            low = min(ranks.min(), rank.min())
+            span = max(ranks.max(), rank.max()) - low + 1.
+            keys = np.repeat(np.arange(offsets.size - 1), np.diff(offsets)) * span + (ranks - low)
+            query = source_chain * span + (rank - low)
+            at = np.searchsorted(keys, query).clip(0, keys.size - 1)
+            found = known & (keys[at] == query)
+            position[found] = at[found] - offsets[source_chain[found]]
+        return tree_kernels.chain_gather(values, chains, np.where(known, source_chain, -1), position, fill=fill)
+
+    def chain_recurrence(self, update, values, chain: str = "axis") -> np.ndarray:
+        """Recurrence along chains, position by position (tree_kernels.chain_recurrence, PT1)."""
+        from openalea.metafspm.data_structure import tree_kernels
+        return tree_kernels.chain_recurrence(update, values, self.chain(chain))
 
     def path_contributions(self, budget, extent, values, where=None, include=None, order: str = "openalea") -> tuple:
         """

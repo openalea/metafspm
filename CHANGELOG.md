@@ -18,6 +18,13 @@ The flat modules used before the 2026 restructure have been removed. No compatib
 | `openalea.metafspm.component.Model`, `declare` | `openalea.metafspm.coupling.component.Component` / `FunctionalComponent`, `declare` |
 | `openalea.metafspm.specializer` | `openalea.metafspm.solve.specializer` |
 
+### Tree kernels, round 2 (PT1)
+
+- **`ds.fold(update, values, direction="up" | "down")`:** a level-by-level fold with a custom vectorised function. Each `FoldLevel` gives its nodes, their edge types, `children(values, op, edge=, where=, fill=)` (sum, max, min, all, any, count) and `parent(values)`. It is for nonlinear pipe models, death propagation, filtered maxima over laterals and turtle-like frames; tested exactly against rhizodep's and Root-CyNAPS' loops.
+- **`ds.chain_gather(values, rank, chain=, source=)`:** read the value at a rank of another chain (a tiller's metamer reading the main stem's at `cohort + n − 1`).
+- **`ds.chain_recurrence(update, values, chain=)`:** non-associative recurrences along chains, vectorised across chains.
+- `ds.levels()` is cached per topology.
+
 ### Growth bookkeeping proportional to the growth (F5)
 
 - `MPG.topology_arrays()` is extended for the vertices created since the last read (rebuilt only after removals). The vid → index dict is built lazily, graph builders look vids up in bulk, and the carry-over matches ids once per location.
