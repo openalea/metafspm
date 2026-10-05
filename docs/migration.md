@@ -3,7 +3,7 @@
 This guide applies to rootbridges, rootcynaps, cnwgrass, rhizosoil, grassbridges and the `openalea.fspm` Logger.
 The design is in `coupling_through_datastructures.md`, and the full list of API changes is in `CHANGELOG.md`.
 
-Every step below has a **working, tested reference** in `test/wrappers_tests/doubles_ds.py`, whose contract tests reproduce the numbers of the props-based coupling:
+Every step below has a **working, tested reference** in `test/helpers/doubles_ds.py`, whose contract tests reproduce the numbers of the props-based coupling:
 
 | Downstream role | Reference double |
 |---|---|
@@ -70,7 +70,7 @@ The rules:
 - **Step functions receive arrays**. Make the bodies numpy-compatible, e.g. with `np.where` instead of `if`, or mark the step `vectorized=False`.
 - **Previous state:** inside graph-system equations, use `self.previous("concentration")` instead of a user-managed `_previous_fields`.
 - **Growth:** declare `on_grow="inherit"` for variables that new segments should take from their parent. The default is the declared value. The growth model may still overwrite new entities, e.g. from parent concentrations or split extensive quantities.
-- **Growth models** become `StructuralComponent`s on the plant DataStructure (the reference is `test/structure_tests/growth.py`):
+- **Growth models** become `StructuralComponent`s on the plant DataStructure (the reference is `test/helpers/growth.py`):
   - their steps without arguments edit `self.mtg` as before (`add_child`, property writes);
   - the framework writes the declared variables to the MPG before each such step, and calls `ds.update_topology()` after it when vertices were added or removed;
   - declared state variables (length, radius, `struct_mass`, …) are re-read from the MPG after each such step;
@@ -78,7 +78,7 @@ The rules:
 
   Registered variables are carried over, and FunctionalComponents rebuild their graph views.
 - **Segment geometry:** the growth model registers `x1, x2, y1, y2, z1, z2` as node variables. The soil coupling needs them.
-- **`self.props`** is a read-only view kept for one release. Replace reads with `self.data_structure.get(name)`, and writes with `ds.set(name, values)`. Translator-derived inputs are read-only.
+- **`self.props` is gone.** Replace reads with `self.data_structure.get(name)` (or take the variable as a step argument), and writes with `ds.set(name, values)`. Translator-derived inputs are read-only.
 - **Boundary conditions on sets of nodes** (leaves, root surfaces, the collar) become `boundary_set(...)` in the graph system, with value and weight as DataStructure variables. Hand-set `_boundary_ports`, and Robin terms assembled in the balance and the Jacobian by hand, are deprecated (`test_uc5_leaf_transpiration.py` is the reference).
 - **Undeclared outputs** give their location: `@graph_output(name, location=...)`, `@rate(location=...)`.
 - **Missing variables raise:** a graph-system argument or a filter variable must be registered (declared, or set before the solve). Missing values are no longer read as zeros.
@@ -175,6 +175,6 @@ class GrassBRIDGES(CompositeModel):
 2. Each component is a `FunctionalComponent`, with `scale` on its coupled and solved fields, vectorised steps (or the explicit opt-in), `previous()` and `on_grow`.
 3. `assert_component_couplable` passes for each component against the shipped translator, with `data_structure=` the plant (or soil) DataStructure, so that declarations are resolved and the DataStructure validated.
 4. The plant model follows the population contract, and the environment models follow §4.
-5. A short `Scene` run gives the expected outputs for a fixed seed and a few steps, the way `test/wrappers_tests/test_scene_contract.py` does for the doubles.
+5. A short `Scene` run gives the expected outputs for a fixed seed and a few steps, the way `test/scenes/test_scene_contract.py` does for the doubles.
 
 The legacy props path (the props branches of `CompositeModel`, the Functor and `FunctionalComponent`) and the per-process scene (`play_Orchestra`, `Transport`, `Coupler`) are already removed from metafspm. Migrated packages must target the current API.

@@ -4,7 +4,7 @@ import numpy as np
 
 from openalea.metafspm.solve.decorator import *
 from openalea.metafspm.data_structure.mpg import MPG
-from openalea.metafspm.data_structure.data_api import DataStructure, MPGDataStructure, GraphDataStructure, DataStructurePropsView
+from openalea.metafspm.data_structure.data_api import DataStructure, MPGDataStructure, GraphDataStructure
 from openalea.metafspm.data_structure.configs import ScalesConfig as _ScalesConfig
 from openalea.metafspm.coupling.declaration import declared_specs, DeclarationError
 
@@ -316,9 +316,7 @@ class DataStructureComponent(Component):
             self.choregrapher.add_simulation_time_step(1)
         # One iteration per simulation step unless the component declares its own sub time step
         sub_time_step = getattr(self, "sub_time_step", None) or self.choregrapher.simulation_time_step
-        # Live reading: steps and solves read and write the DataStructure arrays;
-        # props is a read-only compatibility view.
-        self.props = DataStructurePropsView(ds)
+        # Live reading: steps and solves read and write the DataStructure arrays
         self.choregrapher.add_time_and_data(self, sub_time_step, ds, compartment="graph")
 
     def pull_available_inputs(self):
@@ -483,7 +481,7 @@ class FunctionalComponent(DataStructureComponent):
     Every subclass must be initialized with a DataStructure instance that
     provides the topology and initial field values.  The DataStructure is the
     single source of truth: steps and graph-system solves read and write its
-    arrays live; self.props is a read-only compatibility view of it.
+    arrays live.
 
     Auto-registration
     -----------------
