@@ -10,7 +10,6 @@ DataStructure (abstract)                 storage, topology, state I/O
   │           └── MPGDataStructure  properties as numpy arrays + index map
   └── FieldDataStructure (abstract)       spatial grid (env models)
         ├── ArrayDataStructure            1-D or 3-D numpy grid
-        └── MultiGridDataStructure        hierarchy of ArrayDataStructures
 
 GraphView and BoundaryPort (formerly in graph_system.py) are also defined here —
 they are the "compiled" solver-facing view of a graph, produced by
@@ -241,7 +240,6 @@ class DataStructure(ABC):
                                     then rebuild index map and incidence cache.
           - LegacyMPGDataStructure  rebuild the vertex index map only.
           - ArrayDataStructure      clear the cached Laplacian matrix.
-          - MultiGridDataStructure  propagate to every grid level.
 
         Contract
         --------
@@ -2842,113 +2840,3 @@ class ArrayDataStructure(VariableStoreMixin, FieldDataStructure):
 
     def _set_field(self, name: str, values: np.ndarray) -> None:
         self._set_or_register(name, values, "cell")
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-
-@dataclass
-class GridLevel:
-    """One level in the multigrid hierarchy."""
-    grid         : ArrayDataStructure
-    level        : int
-    restriction  : Optional[np.ndarray]   # R : fine → coarse
-    prolongation : Optional[np.ndarray]   # P : coarse → fine
-
-
-class MultiGridDataStructure(FieldDataStructure):
-    """
-    Level 3c — Hierarchy of grids at multiple spatial resolutions.
-
-    The finest grid (level 0) is the reference — solver state lives there.
-    Coarser levels are available for preconditioning or homogenization.
-
-    R : fine → coarse  (volume averaging)
-    P : coarse → fine  (linear interpolation)
-    """
-
-    def __init__(self, levels: list[GridLevel]):
-        if not levels:
-            raise ValueError("At least one grid level required.")
-        self._levels = sorted(levels, key=lambda l: l.level)
-
-    @classmethod
-    def from_coarsening(cls, fine: ArrayDataStructure,
-                        n_levels: int, factor: int = 2) -> "MultiGridDataStructure":
-        levels  = [GridLevel(grid=fine, level=0, restriction=None, prolongation=None)]
-        current = fine
-        for lvl in range(1, n_levels):
-            coarse_shape = tuple(max(1, s // factor) for s in current.shape)
-            coarse = ArrayDataStructure(coarse_shape, dx=current._dx * factor,
-                                        origin=current._origin)
-            R = cls._build_restriction(current.n_dof, coarse.n_dof, factor)
-            P = cls._build_prolongation(current.n_dof, coarse.n_dof)
-            levels.append(GridLevel(grid=coarse, level=lvl, restriction=R, prolongation=P))
-            current = coarse
-        return cls(levels)
-
-    @property
-    def fine(self) -> ArrayDataStructure:
-        return self._levels[0].grid
-
-    @property
-    def n_levels(self) -> int:
-        return len(self._levels)
-
-    @property
-    def shape(self) -> tuple:
-        return self.fine.shape
-
-    def coordinates(self) -> np.ndarray:
-        return self.fine.coordinates()
-
-    def laplacian(self):
-        return self.fine.laplacian()
-
-    def available_vars(self) -> list[str]:
-        return self.fine.available_vars()
-
-    def _get_field(self, name: str) -> np.ndarray:
-        return self.fine._get_field(name)
-
-    def _set_field(self, name: str, values: np.ndarray) -> None:
-        self.fine._set_field(name, values)
-
-    def update_topology(self) -> None:
-        """Propagate topology update to every grid level.
-
-        Clears Laplacian caches on all levels so they are rebuilt lazily on
-        the next laplacian() call.  Also rebuilds restriction/prolongation
-        operators if subclasses override _build_restriction / _build_prolongation.
-        """
-        for lvl in self._levels:
-            lvl.grid.update_topology()
-
-    def restrict(self, x: np.ndarray, from_level: int = 0) -> np.ndarray:
-        return self._levels[from_level + 1].restriction @ x
-
-    def prolongate(self, x: np.ndarray, to_level: int = 0) -> np.ndarray:
-        return self._levels[to_level + 1].prolongation @ x
-
-    @staticmethod
-    def _build_restriction(n_fine: int, n_coarse: int, factor: int) -> np.ndarray:
-        R = np.zeros((n_coarse, n_fine))
-        for i in range(n_coarse):
-            c = i * factor
-            for offset, w in [(-1, 0.25), (0, 0.5), (1, 0.25)]:
-                j = c + offset
-                if 0 <= j < n_fine:
-                    R[i, j] += w
-        return R
-
-    @staticmethod
-    def _build_prolongation(n_fine: int, n_coarse: int) -> np.ndarray:
-        factor = n_fine / n_coarse
-        P = np.zeros((n_fine, n_coarse))
-        for i in range(n_fine):
-            j = i / factor
-            j_lo = int(np.floor(j))
-            j_hi = min(j_lo + 1, n_coarse - 1)
-            alpha = j - j_lo
-            P[i, j_lo] += 1.0 - alpha
-            P[i, j_hi] += alpha
-        return P

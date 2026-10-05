@@ -189,6 +189,13 @@ leaves = boundary_set(select=is_leaf, kind="robin", value="air_water_potential",
 - An **environment model** receives the populations and builds its DataStructures.
 - **MPG-style steps** loop over `self.active_ids()`.
 
+## Grids
+
+- **Regular grids:** `ArrayDataStructure`.
+- **Adaptive grids:** `AdaptiveGridDataStructure` (an octree over a base grid), with the same contract: location `"cell"`, faces as edges with `face_area` and `face_distance`, `cell_volume()` per cell, `locate`, `layer_mask(axis=0 | -1)`.
+- **Refinement:** refine and coarsen between steps with a criterion of the grid; values are carried over conservatively.
+- **Equations** written with `cell_volume()`, `face_area` and `face_distance` run on both.
+
 ## Random draws
 
 - **Reproducible draws per entity:** `self.random(stream, distribution="uniform", ids=None, **parameters)` in a component, or `ds.random(...)` with an explicit `step`. A draw depends on (seed, stream, step, entity id) only, not on the visiting order (PT2).

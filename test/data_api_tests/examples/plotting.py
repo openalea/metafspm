@@ -6,11 +6,10 @@ Every public function accepts an abstract-base-class instance and uses
 
     GraphDataStructure  →  node_ids(), edges(), node_property(), incidence_matrix()
     FieldDataStructure  →  coordinates(), extract_state(), n_dof
-    MultiGridDataStructure  →  the above + restrict(), n_levels, _levels[l].grid
 
 This is the same insulation the solver and GraphSystemBuilder will use:
 the consumer never cares whether it receives a LegacyMPGDataStructure, an
-MPGDataStructure, an ArrayDataStructure, or a MultiGridDataStructure.
+MPGDataStructure or an ArrayDataStructure.
 """
 
 from __future__ import annotations
@@ -25,7 +24,6 @@ from matplotlib.colors import Normalize
 from openalea.metafspm.data_structure.data_api import (
     GraphDataStructure,
     FieldDataStructure,
-    MultiGridDataStructure,
 )
 
 
@@ -208,42 +206,3 @@ def plot_1d_profile(
     ax.set_title(title or f"{ds.__class__.__name__} — {var_name}")
     if label:
         ax.legend(fontsize=8)
-
-
-def plot_multigrid_levels(
-    mg: MultiGridDataStructure,
-    var_name: str,
-    *,
-    title: str = "",
-    ax=None,
-) -> None:
-    """
-    Overlay the field restricted to every grid level on a single axes.
-
-    Abstract API consumed:
-        mg.coordinates(), mg.extract_state([var_name]),
-        mg.restrict(x, from_level), mg.n_levels
-    Level-internal access (not abstract): mg._levels[l].grid.coordinates()
-    """
-    if ax is None:
-        ax = plt.gca()
-
-    fine_coords = mg.coordinates()[:, 0]          # abstract API
-    x_cur       = mg.extract_state([var_name])    # abstract API
-
-    colors = plt.cm.viridis(np.linspace(0.0, 0.85, mg.n_levels))
-    ax.plot(fine_coords, x_cur, linewidth=2.0, color=colors[0],
-            label=f'level 0  (n={mg.n_dof})')
-
-    for lvl in range(1, mg.n_levels):
-        x_cur        = mg.restrict(x_cur, from_level=lvl - 1)   # abstract API
-        coarse_grid  = mg._levels[lvl].grid
-        coarse_coord = coarse_grid.coordinates()[:, 0]
-        ax.plot(coarse_coord, x_cur, 'o--', color=colors[lvl],
-                linewidth=1.5, markersize=5,
-                label=f'level {lvl}  (n={coarse_grid.n_dof})')
-
-    ax.set_xlabel('coordinate')
-    ax.set_ylabel(var_name)
-    ax.set_title(title)
-    ax.legend(fontsize=8)
