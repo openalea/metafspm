@@ -174,3 +174,27 @@ def test_targets_in_python_translators_and_unknown_masks():
     assert translator.links[0].target == "roots" and translator.links[0].kind == "derived"
     with pytest.raises(KeyError, match="target mask 'roots' is not defined"):
         _couple(_link("SegmentInputs", "Organs", "segment_temperature", "organ_temperature", target="roots"))
+
+
+def test_python_translators_keep_link_options_through_the_composite(tmp_path):
+    """A .py translator with aggregation, weight and formula links, through the public entry point."""
+    module = tmp_path / "translator.py"
+    module.write_text(
+        "from openalea.metafspm.coupling.translator import Translator\n"
+        "from openalea.metafspm.data_structure.configs import ScalesConfig as scales\n"
+        "translator = (Translator()\n"
+        "    .link('Organs', 'organ_uptake', 'Segments', {'uptake': 1.}, scale=scales.Organ)\n"
+        "    .link('Organs', 'organ_concentration', 'Segments', {'concentration': 1.}, aggregation='weighted_mean',\n"
+        "          weight='mass')\n"
+        "    .link('Organs', 'organ_tag', 'Segments', ('uptake', 'mass'), formula=lambda u, m: u * m, scale=scales.Organ,\n"
+        "          aggregation='sum'))\n")
+    g, _ = generate_simple_mpg_seedling()
+    g.populate_graph(g.scales.SubOrgan)
+    g.convert_properties_to_arraydict()
+    ds = MPGDataStructure(g, from_scale=g.scales.SubOrgan)
+    components = (Segments(data_structure=ds), Organs(data_structure=ds))
+    CompositeModel().declare_data_and_couple_components(root=ds, translator_path=str(module), components=components)
+    per_organ = _per_organ(g, ds, np.ones(ds.n_nodes()))
+    np.testing.assert_allclose(ds.get("organ_uptake"), [len(per_organ[o]) for o in ds.entity_ids("Organ")])
+    np.testing.assert_allclose(ds.get("organ_concentration"), 3.)
+    np.testing.assert_allclose(ds.get("organ_tag"), 0.5 * ds.get("organ_uptake"))

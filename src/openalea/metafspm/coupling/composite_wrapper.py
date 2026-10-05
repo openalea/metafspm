@@ -88,7 +88,8 @@ class CompositeModel:
         by the Scene, not here.
         """
         by_name = {component.__class__.__name__: component for component in self.components}
-        for link in Translator.from_dict(translator).links:
+        links = translator.links if isinstance(translator, Translator) else Translator.from_dict(translator).links
+        for link in links:
             if link.receiver not in by_name or link.provider not in by_name or link.receiver == link.provider:
                 continue
             receiver, provider = by_name[link.receiver], by_name[link.provider]
@@ -188,12 +189,13 @@ class CompositeModel:
 
     def open_or_create_translator(self, translator_path):
         """
-        Translator from a YAML file, or from a Python module defining ``translator = Translator(...)`` (.py),
-        in the nested {receiver: {provider: {variable: {source: factor}}}} format. A missing YAML file is built
-        interactively and written.
+        Translator from a YAML file, in the nested {receiver: {provider: {variable: {source: factor}}}} format, or
+        from a Python module defining ``translator = Translator(...)`` (.py), kept as a Translator so that its links'
+        options (aggregation, weight, target, formula, scales) are kept. A missing YAML file is built interactively
+        and written.
         """
         if str(translator_path).endswith(".py"):
-            return Translator.from_module(str(translator_path)).to_nested()
+            return Translator.from_module(str(translator_path))
         try:
             with open(translator_path, "r") as f:
                 translator = yaml.safe_load(f)
