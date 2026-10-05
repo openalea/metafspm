@@ -18,6 +18,15 @@ The flat modules used before the 2026 restructure have been removed. No compatib
 | `openalea.metafspm.component.Model`, `declare` | `openalea.metafspm.coupling.component.Component` / `FunctionalComponent`, `declare` |
 | `openalea.metafspm.specializer` | `openalea.metafspm.solve.specializer` |
 
+### Mappings for the environment (PT6)
+
+- **Environment scalars:** a link between a population variable (at nodes or a coarse scale) and an environment variable stored at `"scalar"` is exchanged over every plant of every population. Extensive values are summed, intensive values averaged (weighted with `weight=`), and a scalar is broadcast, or split by weight for extensive values (`ScalarMapping`, created by `Exchanges`).
+- **Column ↔ grid:** `LayerMapping(column, grid, axis="z")` links a 1-D column to the layers of a 3-D grid by the overlaps of the layer intervals, so thicknesses may differ:
+  - grid → column: overlap-weighted layer means, or totals shared by fraction;
+  - column → grid: broadcast over x and y, or totals shared over each layer's cells.
+
+  Pass it to `Scene(mappings=[...])` (or a callable building it from the scene).
+
 ### Graph-system extensions (PT4)
 
 - **Pool unknowns at a coarse scale:** `@graph_system(pool_unknowns={"shoot_sugar": {"location": "Plant", "exchange": "collar"}})` adds one unknown per entity (e.g. the shoot phloem pool of each plant), solved with the graph by Newton.

@@ -115,6 +115,8 @@ class Scene(CompositeModel):
     scene_xrange, _yrange: the stand's size (default: the planting table's, from planting_table).
     output_dirpath:        where the SceneRecorder writes (None: no recording); log_plants: the plants (names of the
                            planting table) whose per-segment state is written every heavy_log_period steps (Q7).
+    mappings:              further mappings between DataStructures (e.g. a LayerMapping between a column model and
+                           the soil grid), or a callable scene -> mappings, called once the models are built (PT6).
     logger_class:          optional, called as logger_class(scene=self, outputs_dirpath=..., **log_settings), then
                            logger() after each step and logger.stop() at the end (QP6d hook).
     """
@@ -123,7 +125,7 @@ class Scene(CompositeModel):
                  time_step: float = 3600., mapping_method: str = "barycentre", periodic=(True, True, False),
                  flip_z: bool = True, scene_xrange: float = None, scene_yrange: float = None,
                  output_dirpath: str = None, log_plants=(), heavy_log_period: int = 24, logger_class=None,
-                 log_settings: dict = None):
+                 log_settings: dict = None, mappings=()):
         Choregrapher().add_simulation_time_step(time_step)
         self.time_step, self.time, self.iteration = time_step, 0., 0
         self.scene_xrange = scene_xrange if scene_xrange is not None else planting.attrs.get("xrange")
@@ -150,7 +152,8 @@ class Scene(CompositeModel):
 
         self.translator = load_translator(translator)
         self.mapping_method, self.periodic, self.flip_z = mapping_method, periodic, flip_z
-        self.mappings = self._infer_mappings()
+        # Inferred population <-> grid / union mappings, plus explicit ones (e.g. a LayerMapping column <-> grid)
+        self.mappings = self._infer_mappings() + list(mappings(self) if callable(mappings) else mappings)
         self.exchanges = Exchanges(self.translator, self.components, self.mappings)
         self._update_emergence()
 

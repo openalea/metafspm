@@ -1862,3 +1862,10 @@ Per-file counts:
   - the Newton-only check.
 - **Suite:** 692 passed.
 - **PT6 / PT5 / PT7 designs and questions QPk–QPo** written in `devplan_porting.md` §8. Stopped for the answers.
+
+## 2026-10-06 (later): QPk–QPo answered (all as recommended; QPo: the cmf / MIMICS wrappers are to be replaced by native components later); PT6
+
+- **`ScalarMapping`:** made per link by `Exchanges._mapping_between` when the receiver is stored at `"scalar"` (up) or all sources are (down), checked before the explicit mappings. Up: sum, mean, or weighted mean as a numerator and denominator, pooled over populations; down: broadcast, or split with totals over every receiving population. The default for an intensive value going up without a weight is the plain mean (QPk).
+- **`LayerMapping`:** overlap matrix of the column and grid layer intervals; `transfer(values, from_column, aggregation)`, with "mean" / "sum" by kind; Exchanges direction "layer". `Scene(mappings=)` appends explicit mappings, or a callable of the scene.
+- **Tests** (`test_environment_mappings.py`, 4): sums, pooled means, weighted means and Plant-scale totals to scalars; broadcast and a mass-weighted split of a scalar over two populations; column ← grid means and conserved totals with 0.25 m against 0.2 m layers; grid ← column broadcast and conservation.
+- **Suite:** 696 passed.
