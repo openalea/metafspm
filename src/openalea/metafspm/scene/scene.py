@@ -115,6 +115,13 @@ class Scene(CompositeModel):
     scene_xrange, _yrange: the stand's size (default: the planting table's, from planting_table).
     output_dirpath:        where the SceneRecorder writes (None: no recording); log_plants: the plants (names of the
                            planting table) whose per-segment state is written every heavy_log_period steps (Q7).
+    forcings:              a table shared by every model (a DataFrame indexed by time in s): a component's
+                           forcing(name) reads its column when the component has no forcing of that name (PT5).
+    events:                (time, action) pairs: action(scene) runs at the start of the first step at or after time.
+    stop_when:             a condition(scene), checked after each step: simulate() stops when it holds.
+    Models may set run_every (steps) and run_when(scene) -> bool: on the other steps they and the exchanges into
+    them are skipped, their outputs keeping their values (QPm); an environment model's spin_up(scene) runs once,
+    after the scene is built.
     mappings:              further mappings between DataStructures (e.g. a LayerMapping between a column model and
                            the soil grid), or a callable scene -> mappings, called once the models are built (PT6).
     logger_class:          optional, called as logger_class(scene=self, outputs_dirpath=..., **log_settings), then
@@ -125,7 +132,7 @@ class Scene(CompositeModel):
                  time_step: float = 3600., mapping_method: str = "barycentre", periodic=(True, True, False),
                  flip_z: bool = True, scene_xrange: float = None, scene_yrange: float = None,
                  output_dirpath: str = None, log_plants=(), heavy_log_period: int = 24, logger_class=None,
-                 log_settings: dict = None, mappings=()):
+                 log_settings: dict = None, mappings=(), forcings=None, events=(), stop_when=None):
         Choregrapher().add_simulation_time_step(time_step)
         self.time_step, self.time, self.iteration = time_step, 0., 0
         self.scene_xrange = scene_xrange if scene_xrange is not None else planting.attrs.get("xrange")
@@ -156,6 +163,14 @@ class Scene(CompositeModel):
         self.mappings = self._infer_mappings() + list(mappings(self) if callable(mappings) else mappings)
         self.exchanges = Exchanges(self.translator, self.components, self.mappings)
         self._update_emergence()
+        self.forcings = forcings
+        for component in self.components:
+            component.__dict__["_scene_forcings"] = forcings
+        self.events = sorted(list(events), key=lambda event: event[0])
+        self.stop_when, self.stopped = stop_when, False
+        for model in self.environment + [population.instance for population in self.populations]:
+            if hasattr(model, "spin_up"):
+                model.spin_up(self)
 
         self.recorder = (SceneRecorder(output_dirpath, log_plants=log_plants, heavy_log_period=heavy_log_period)
                          if output_dirpath is not None else None)
@@ -261,14 +276,21 @@ class Scene(CompositeModel):
 
     def run(self) -> None:
         """One scene step: the environment, then the populations, each after the exchanges into it."""
+        while self.events and self.events[0][0] <= self.time:
+            _, action = self.events.pop(0)
+            action(self)
         self._update_emergence()
         for component in self.components:
             component.__dict__["_clock"] = self.time        # forcings read at the scene time (PT4)
         for model in self.environment:
+            if not self._due(model):
+                continue
             for ds in self._data_structures(model):
                 self.exchanges.exchange(into=ds)
             model.run()
         for population in self.populations:
+            if not self._due(population.instance):
+                continue
             self.exchanges.exchange(into=population.data_structure)
             population.instance.run()
         self.time += self.time_step
@@ -280,10 +302,21 @@ class Scene(CompositeModel):
 
     __call__ = run
 
+    def _due(self, model) -> bool:
+        """Whether *model* runs at this step (run_every, run_when; PT5)."""
+        every = getattr(model, "run_every", None)
+        if every is not None and self.iteration % int(every) != 0:
+            return False
+        when = getattr(model, "run_when", None)
+        return when is None or bool(when(self))
+
     def simulate(self, n_iterations: int) -> None:
         try:
             for _ in range(n_iterations):
                 self.run()
+                if self.stop_when is not None and self.stop_when(self):
+                    self.stopped = True
+                    break
         finally:
             self.stop()
 

@@ -551,8 +551,11 @@ class FunctionalComponent(DataStructureComponent):
     def forcing(self, name: str):
         """Forcing *name* at forcing_time(), linearly interpolated in its table."""
         table = (self.forcings or {}).get(name)
+        shared = self.__dict__.get("_scene_forcings")
+        if table is None and shared is not None and name in shared:
+            table = shared[name]                          # the scene's shared table (PT5)
         if table is None:
-            raise KeyError(f"{type(self).__name__} has no forcing '{name}' (set self.forcings)")
+            raise KeyError(f"{type(self).__name__} has no forcing '{name}' (set self.forcings, or the scene's)")
         t = self.forcing_time()
         if callable(table):
             return table(t)

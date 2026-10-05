@@ -1869,3 +1869,5 @@ Per-file counts:
 - **`LayerMapping`:** overlap matrix of the column and grid layer intervals; `transfer(values, from_column, aggregation)`, with "mean" / "sum" by kind; Exchanges direction "layer". `Scene(mappings=)` appends explicit mappings, or a callable of the scene.
 - **Tests** (`test_environment_mappings.py`, 4): sums, pooled means, weighted means and Plant-scale totals to scalars; broadcast and a mass-weighted split of a scalar over two populations; column ← grid means and conserved totals with 0.25 m against 0.2 m layers; grid ← column broadcast and conservation.
 - **Suite:** 696 passed.
+- **PT5:** `Scene(forcings=, events=, stop_when=)`; `_due(model)` with `run_every` (on the iteration) and `run_when`; `spin_up(scene)` called after the exchanges are built; events popped in time order at the step start; `forcing()` falls back on the scene table set on every component as `_scene_forcings`. Tests (`test_scene_services.py`, 4): shared forcings read at each step end, a soil run every 2 steps with a single spin-up, a population run only after a time, a fertilisation event and a stop condition.
+- **Suite:** 700 passed.

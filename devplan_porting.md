@@ -59,7 +59,7 @@ Each step gets a short design note, tests against a reference loop taken from th
 | **PT2** ✓ | Reproducible random draws: `ds.rng(entities, seed)`, one stream per (plant seed, vid, step), vectorised; documented MPG-style patterns for chained creation | G3 |
 | **PT3** ✓ (templating: QPg) | Structure edits: tests and fixes for adel-like edits (inserting elements in a chain, removing with relinking, rebuilding elements each step) and the repartition after them; disabling inherited steps (`steps_removed`), and templated components | G11, §1 |
 | **PT4** ✓ | Graph systems: extra unknowns outside the graph, coupled to nodes (a pool with its own balance); boundary sets whose kind is chosen per call; `self.forcing(name, t)` interpolating input tables inside solves | G4, G5 |
-| **PT5** | Scene services: one forcing table; `every=` / `when=` scheduling; spin-up hooks; events and stop conditions | G8, G9 |
+| **PT5** ✓ | Scene services: one forcing table; `every=` / `when=` scheduling; spin-up hooks; events and stop conditions | G8, G9 |
 | **PT6** ✓ | Mappings: population → environment scalars (a reduction over the plants of every population); column ↔ grid (layer mean and broadcast) | G7 |
 | **PT7** | Non-variable state: component state saved by checkpoints (a `__checkpoint__` hook); vector-valued variables `(n, k)` | G10 |
 | **PT8** | Shoot geometry: per-element triangles (store and transforms), optical classes, a light-component skeleton on a `UnionDataStructure`, tested with a toy radiosity, and a Caribu adapter kept downstream | G6 |
