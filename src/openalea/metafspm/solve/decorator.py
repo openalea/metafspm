@@ -42,7 +42,7 @@ from openalea.metafspm.solve.system_specs   import (
     SolverResult,
 )
 from openalea.metafspm.solve.solver         import (
-    SolverConfig, SolverSpec, make_solver, SOLVER_REGISTRY, ImplicitEulerSolver, ExplicitEulerSolver, ScipyIVPSolver,
+    SolverConfig, SolverSpec, make_solver, SOLVER_REGISTRY, ImplicitEulerSolver, ExplicitEulerSolver, ScipyIVPSolver, NewtonSolver,
 )
 
 # Canonical method string for each concrete solver class (first key in SOLVER_REGISTRY wins).
@@ -131,6 +131,25 @@ def node_balance(field=None, filters=None, explicit=False):
             "kind": "node_balance", "field": field,
             "filters": filters, "explicit": explicit,
         }
+        return func
+    return decorator
+
+
+def node_rate(field=None, filters=None):
+    """
+    Tag a method as the rate form of a node unknown's balance: it returns du/dt (sources minus the divergence of the
+    fluxes, divided by the capacities), with no time term. The framework writes the time term for the solver
+    chosen: (u - previous(u)) / dt - rate with the Newton family (backward Euler, also with integrate="substeps" or
+    "adaptive"), u += dt * rate with explicit_euler, du/dt = rate with the scipy IVP solvers. The node unknowns of
+    one graph system all use one form: @node_rate, or @node_balance (the residual form, Newton family only).
+
+    Parameters
+    ----------
+    field   : node unknown the rate is of.
+    filters : node filter, as for node_balance: the rate applies on the selected nodes (zero elsewhere).
+    """
+    def decorator(func):
+        func.__graph_tag__ = {"kind": "node_rate", "field": field, "filters": filters}
         return func
     return decorator
 
@@ -651,10 +670,10 @@ class GraphSystemBuilder:
                     continue
                 bound = obj.__get__(instance, type(instance))
                 kind  = tag["kind"]
-                if kind == "node_balance":
+                if kind in ("node_balance", "node_rate"):
                     node_balance_items.append((
                         tag["field"], tag.get("filters"), attr_name, bound, obj,
-                        tag.get("explicit", False)
+                        "rate" if kind == "node_rate" else tag.get("explicit", False)
                     ))
                 elif kind == "edge_law":
                     edge_law_items.append((
@@ -681,6 +700,24 @@ class GraphSystemBuilder:
         # Sort node blocks to match node_unknowns order
         field_order = {f: i for i, f in enumerate(node_unknowns)}
         node_balance_items.sort(key=lambda x: field_order.get(x[0], len(node_unknowns)))
+
+        # One form of node balance per graph system; explicit and IVP solvers need the rate form
+        system_name = f"{type(instance).__name__}.{inner_cls.__name__}"
+        rate_form = any(ex == "rate" for *_, ex in node_balance_items)
+        if rate_form and any(ex != "rate" for *_, ex in node_balance_items):
+            raise ValueError(f"{system_name}: its node unknowns mix @node_rate and @node_balance; use one form")
+        rate_solver = spec_def.get("rate_solver", False)
+        if rate_solver and node_balance_items and not rate_form:
+            raise ValueError(f"{system_name}: {spec_def['method']} integrates du/dt, which a residual cannot give: "
+                             "write the balance as @node_rate (du/dt, without time term)")
+        if rate_form and jacobian_raw is not None:
+            raise ValueError(f"{system_name}: @graph_jacobian is the Jacobian of residuals, not of @node_rate")
+        if rate_solver:
+            dirichlet = [an for _, _, bk, an, _, _, _ in bc_items if bk == "dirichlet"]
+            dirichlet += [b.name for b in boundary_sets if b.kind in ("dirichlet", "per_node")]
+            if dirichlet:
+                raise ValueError(f"{system_name}: Dirichlet conditions ({dirichlet}) fix a value, which {spec_def['method']} "
+                                 "cannot integrate: use a Newton solver, or a Robin condition")
 
         for f, _, an, _, _, _, _ in edge_law_items:
             if f is None:
@@ -769,7 +806,7 @@ class GraphSystemBuilder:
             set_terms[field].append((bset.kind, idx, read(bset.value), read(bset.weight) if bset.kind == "robin"
                                      else None))
 
-        if instance.__dict__.get("_restriction") is not None and not spec_def.get("transient", False):
+        if instance.__dict__.get("_restriction") is not None and not (spec_def.get("transient", False) or rate_form):
             anchored = np.zeros(n, dtype=bool)
             for _, tf, bc_kind, _, _, _, _ in bc_items:
                 if bc_kind == "dirichlet":
@@ -966,10 +1003,19 @@ class GraphSystemBuilder:
             if not grp and not bc_grp and not set_terms.get(field_name):
                 continue
             bulk_wrapped = []
-            any_explicit = any(ex for _, _, _, ex in grp)
+            any_explicit = any(ex is True for _, _, _, ex in grp)
             for tf, b, r, ex in grp:
                 inner = make_evaluator(r, b, tf, "node")
-                if ex:
+                if ex == "rate" and rate_solver:
+                    # explicit and IVP solvers read du/dt as -R
+                    bulk_wrapped.append(lambda ctx, _e=inner: -_e(ctx))
+                elif ex == "rate":
+                    # backward Euler: (u - previous(u)) / dt - du/dt
+                    bulk_wrapped.append(
+                        lambda ctx, _f=field_name, _e=inner:
+                            (ctx.node_unknowns[_f] - instance.previous(_f)) / instance.dt - _e(ctx)
+                    )
+                elif ex:
                     bulk_wrapped.append(
                         lambda ctx, _f=field_name, _e=inner:
                             ctx.node_unknowns[_f] - _e(ctx)
@@ -1626,7 +1672,14 @@ def graph_system(
             f"DAESolver subclass, got {type(solver).__name__!r}."
         )
 
-    if pools and issubclass(solver_cls, (ExplicitEulerSolver, ImplicitEulerSolver, ScipyIVPSolver)):
+    if issubclass(solver_cls, ImplicitEulerSolver):
+        warnings.warn("solver='implicit_euler' is deprecated: it is solver='newton' with transient=True, the "
+                      "equations writing their time terms (or given as @node_rate)", DeprecationWarning, stacklevel=2)
+        solver_cls, method_str = NewtonSolver, "newton"
+        transient = True if transient is None else transient
+    rate_solver = issubclass(solver_cls, (ExplicitEulerSolver, ScipyIVPSolver))
+
+    if pools and rate_solver:
         raise ValueError("graph_system: pool unknowns need a Newton solver (write their time terms in @pool_balance)")
 
     spec = {
@@ -1649,8 +1702,8 @@ def graph_system(
         "max_step"      : max_step,
         "split"         : split,
         "pool_unknowns" : pools,
-        "transient"     : (issubclass(solver_cls, (ExplicitEulerSolver, ImplicitEulerSolver, ScipyIVPSolver))
-                           if transient is None else bool(transient)),
+        "transient"     : rate_solver if transient is None else bool(transient),
+        "rate_solver"   : rate_solver,
     }
 
     def decorator(cls):

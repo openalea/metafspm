@@ -194,4 +194,4 @@ def test_forcings_are_read_at_the_end_of_each_substep():
 
 def test_pools_need_a_newton_solver():
     with pytest.raises(ValueError, match="need a Newton solver"):
-        graph_system(node_unknowns=["sugar"], solver="implicit_euler", pool_unknowns={"shoot": "Plant"})
+        graph_system(node_unknowns=["sugar"], solver="explicit_euler", pool_unknowns={"shoot": "Plant"})

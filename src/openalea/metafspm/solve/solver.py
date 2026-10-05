@@ -644,11 +644,8 @@ class ExplicitEulerSolver(DAESolver):
         x_{n+1} = x_n + h · f(x_n, y_n, p)
 
     without any linear solve for the node update — just one function
-    evaluation per step.  This is the explicit DAE path::
-
-      1. _integrate_step  — recovers y_n algebraically, evaluates the explicit
-                            RHS, steps x forward.
-      2. _recover_algebraic — Newton on edge sub-system at the new x_{n+1}.
+    evaluation per step: the edge unknowns are first recovered algebraically at x_n, and are left at those
+    values (the fluxes of the step, which moved the amounts from x_n to x_{n+1}).
 
     The explicit RHS is obtained from::
 
@@ -682,7 +679,10 @@ class ExplicitEulerSolver(DAESolver):
                 spec.rhs_evaluator(ctx), dtype=np.float64
             ).reshape(-1)[:n_node_dof]
         else:
-            # Proxy: ẋ ≈ −R_spatial(x, y)  (assumes unit mass matrix)
+            # ẋ = −R(x, y(x)): the edge unknowns are recovered at the current node state first (forward Euler
+            # evaluates the fluxes at x_n, not those left by the previous step)
+            if spec.unknowns.edge_fields:
+                x = _recover_edges(spec, x, tol=self.config.tol * 0.1, max_iter=self.config.max_iter)
             R        = spec.residual(x, prev_fields, None)
             rhs_node = -R[:n_node_dof]
 
