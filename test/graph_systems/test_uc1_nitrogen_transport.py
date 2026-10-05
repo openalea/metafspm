@@ -21,11 +21,6 @@ Tests:
 
 import numpy as np
 import pytest
-
-import warnings
-
-# UC1 keeps @boundary_condition (decorated at import) until its rewrite on the public API
-warnings.filterwarnings("ignore", message="@boundary_condition is deprecated", category=DeprecationWarning)
 from openalea.metafspm.coupling.choregrapher import Choregrapher
 from dataclasses import dataclass
 from typing import Type
@@ -308,7 +303,7 @@ class NitrogenAxialTransport(FunctionalComponent):
     class _transport_solve_dirichlet:
         """_transport_solve_node_explicit + Dirichlet BC at nodes where is_root=1.
 
-        The Dirichlet BC pins concentration to self.c_dirichlet at those nodes,
+        The Dirichlet BC pins concentration to c_dirichlet at those nodes,
         replacing their node-balance residual with R = c - c_dirichlet = 0.
         Uses explicit=True on both the node balance and the BC so the intent
         is readable: the balance returns the free-interior target value; the BC
@@ -328,8 +323,8 @@ class NitrogenAxialTransport(FunctionalComponent):
         @boundary_condition(location="node", kind="dirichlet",
                             field="concentration", filters={"is_root": [1]},
                             explicit=True)
-        def _root_dirichlet(self) -> np.ndarray:
-            return np.array([self.c_dirichlet])
+        def _root_dirichlet(self, c_dirichlet) -> np.ndarray:
+            return c_dirichlet               # a parameter of the DataStructure, per selected node
 
         @edge_law(field="axial_flux", explicit=False, integrate=False)
         def _axial_transport_law(
@@ -348,10 +343,10 @@ class NitrogenAxialTransport(FunctionalComponent):
     class _transport_solve_neumann:
         """_transport_solve_node_explicit + Neumann BC at nodes where is_root=1.
 
-        The Neumann BC adds self.q_boundary to the node-balance residual at
-        those nodes: R_root += q_boundary.  This is equivalent to subtracting
-        q_boundary from the effective radial source at the boundary:
-            J_eff_root = radial_solute_input_root - q_boundary
+        The Neumann BC is an inflow q_boundary at those nodes, subtracted from the
+        node-balance residual: R_root -= q_boundary.  This is equivalent to adding
+        q_boundary to the effective radial source at the boundary:
+            J_eff_root = radial_solute_input_root + q_boundary
         Verified by comparing against a run with modified J_radial, no BC.
         """
 
@@ -367,8 +362,8 @@ class NitrogenAxialTransport(FunctionalComponent):
 
         @boundary_condition(location="node", kind="neumann",
                             field="concentration", filters={"is_root": [1]})
-        def _root_neumann(self) -> np.ndarray:
-            return np.array([self.q_boundary])
+        def _root_neumann(self, q_boundary) -> np.ndarray:
+            return q_boundary                # an inflow
 
         @edge_law(field="axial_flux", explicit=False, integrate=False)
         def _axial_transport_law(
@@ -831,21 +826,22 @@ def test_uc1_dirichlet_bc_pins_concentration():
     model = _setup_nitrogen_model(
         ds, c_old=c0, J_radial=J_r, K_axial_vals=np.full(e, 0.07), dt=0.5,
     )
-    model.c_dirichlet = 2.0
+    ds = model.data_structure                       # the condition reads the DataStructure value
+    ds.set("c_dirichlet", np.full(ds.get("c_dirichlet").shape, 2.0))
 
     model._invoke_graph_system("_transport_solve_dirichlet")
     node_u, _ = model._last_graph_system.unpack_unknowns(model._last_graph_solution)
 
     np.testing.assert_allclose(
-        node_u["concentration"][root_idx], model.c_dirichlet, atol=1e-10,
+        node_u["concentration"][root_idx], 2.0, atol=1e-10,
         err_msg="Dirichlet BC must pin root concentration to c_dirichlet",
     )
 
 
 def test_uc1_neumann_bc_equivalent_to_modified_source():
-    """Neumann BC at root is equivalent to subtracting q_boundary from J_radial there.
+    """Neumann BC at root (an inflow) is equivalent to adding q_boundary to J_radial there.
 
-    R_root += q_boundary  ↔  effective J_root = J_radial_root − q_boundary.
+    R_root -= q_boundary  ↔  effective J_root = J_radial_root + q_boundary.
     This equivalence holds regardless of whether explicit=True or explicit=False
     is used on the node balance: the framework scales the Neumann value by dt
     when the node balance is explicit so that q_boundary always carries flux units.
@@ -863,15 +859,15 @@ def test_uc1_neumann_bc_equivalent_to_modified_source():
     m_bc = _setup_nitrogen_model(
         ds_bc, c_old=c0, J_radial=J_r, K_axial_vals=np.full(e, 0.07), dt=0.5,
     )
-    m_bc.q_boundary = q_bc
+    m_bc.data_structure.set("q_boundary", np.full(m_bc.data_structure.get("q_boundary").shape, q_bc))
     m_bc._invoke_graph_system("_transport_solve_neumann")
     node_bc, edge_bc = m_bc._last_graph_system.unpack_unknowns(m_bc._last_graph_solution)
 
-    # Run without BC but with J_radial reduced at root by q_boundary (flux units).
-    # The framework multiplies q_boundary by dt before adding to the
-    # concentration-unit residual, so the net effect is J_eff = J − q_boundary.
+    # Run without BC but with J_radial increased at root by q_boundary (flux units).
+    # The framework multiplies q_boundary by dt before subtracting it from the
+    # concentration-unit residual, so the net effect is J_eff = J + q_boundary.
     J_r_mod = J_r.copy()
-    J_r_mod[root_idx] -= q_bc
+    J_r_mod[root_idx] += q_bc
     ds_ref = _make_ds()
     m_ref = _setup_nitrogen_model(
         ds_ref, c_old=c0, J_radial=J_r_mod, K_axial_vals=np.full(e, 0.07), dt=0.5,

@@ -14,9 +14,12 @@
 - **Examples:** the legacy-to-MPG migration demos are removed.
 - **Internal solver layer:** `system_specs` (GraphSystem, GraphDAESpec, ODESystemSpec, BoundaryConditions), the `solve()` time loop, `SolverResult`, `LinearDirectSolver` and `make_solver` are internal. Graph systems choose their solver with `@graph_system(solver=...)`, as a class or a key.
 
-### Deprecated: `@boundary_condition`
+### Boundary conditions as equations: `@boundary_condition`
 
-- **`@boundary_condition` warns** (DeprecationWarning) and will be removed: use `boundary_set`, which selects nodes by variables, masks or callables, and supports Robin and per-node kinds. Mind the Neumann sign: a `boundary_set` value is an inflow, while `@boundary_condition` added its method's values to the residual (an inflow returned negative).
+- **The method form stays** for conditions given by an equation. A `@boundary_condition` method takes its arguments by name, like the balances: unknowns and DataStructure variables, read at each solve and sliced to the selected nodes. So coupled values reach it dynamically.
+- **`select=`** chooses the nodes as `boundary_set` does: a `{variable: values}` dict, a variable name (> 0), the name of a DataStructure mask, or a callable. `filters=` stays as the dict form. A `boundary_set` can also select by mask name now.
+- **Breaking, Neumann sign:** a Neumann method returns an **inflow**, subtracted from the residual, as a `boundary_set`'s value is. It used to be added to the residual. Flip the sign of existing Neumann methods.
+- **Errors:** kinds other than dirichlet / neumann, and `select=` with `filters=`, are refused.
 - **Module rename:** `solve/legacy_functor.py` is now `solve/functor.py` (the step wrapper).
 
 ### Fixes found by the test audit

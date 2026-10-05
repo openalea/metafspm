@@ -438,7 +438,7 @@ Today `implicit_euler`, `explicit_euler` and the IVP solvers are only correct if
 **Alternative (not recommended):** keep only the residual form and make `explicit_euler` / IVP derive the rate as −(R − time term). The framework cannot separate the user's time term from the rest of R, so this relies on the user writing it in one exact way.
 
 - **QPy (restated):** adopt the two forms above (residual form for the Newton family, `@node_rate` for every solver), with `implicit_euler` deprecated as an alias of `newton, transient=True`? **Recommendation:** yes.
-  → answer:
+  → answer: yes follow Recommendationm
 
 **Meanwhile**, the decided items go in this order (QPε waits for QPy):
 1. QPζ: rename `legacy_functor.py`.
@@ -461,3 +461,14 @@ Today `implicit_euler`, `explicit_euler` and the IVP solvers are only correct if
   - QPγ: smoke tests in `test/data_structures/test_examples.py`.
   - QPδ: `test/{data_structures,components,graph_systems,coupling,scenes,helpers}`.
 - **Waiting for QPy, done with QPε:** the `props` view and the `_last_graph_system` shim. UC1–UC3 and `test_live_datastructure` still read them, so they go when those tests are rewritten on the public API.
+
+## 15. QPz revised; QPy started (2026-10-05)
+
+- **QPz, revised by your answer (option 2):** `@boundary_condition` is no longer deprecated. It is the form for conditions given by an equation.
+  - Its method takes arguments by name, like the balances: unknowns and DataStructure variables (coupled ones included), read at each solve and sliced to the selected nodes. This was already so; no test showed it.
+  - Neumann values are now inflows (the sign of `boundary_set`).
+  - `select=` takes what `boundary_set` takes, plus a mask name.
+  - UC1's conditions read their values as arguments (`c_dirichlet`, `q_boundary`). Three tests cover the method form: a coupled inflow read at each solve, an exchange equation of the unknown checked against a hand solve, and a Dirichlet condition on a mask following a coupled value.
+- **Found while doing it, QPη:** a numeric parameter declared with a place (`scale=` / `location=`, e.g. UC1's `c_dirichlet` at `Organ`) is stored in the DataStructure. But `model.c_dirichlet = 2.0` only sets an instance attribute, and `self.c_dirichlet` reads it inside steps, so the two copies diverge. Only parameters without a place (stored per plant) go through the descriptor, where writing sets the DataStructure and reading inside equations raises.
+  - **QPη:** give placed numeric parameters the same descriptor? Writing would set every entity's value, and reading `self.<name>` inside a step or equation would raise, so the parameter becomes an argument. **Recommendation:** yes, so a parameter has one value, the DataStructure's. UC1 reads `self.k_radial` and `self.c_ext` in a step and is rewritten anyway (QPε).
+  → answer:

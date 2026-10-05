@@ -169,33 +169,47 @@ def edge_law(func=None, *, field=None, filters=None,
     return _decorate
 
 
-def boundary_condition(location, kind, field=None, filters=None, explicit=False):
+def boundary_condition(location, kind, field=None, filters=None, explicit=False, select=None):
     """
-    Deprecated, use boundary_set. Tag a method as a boundary condition that superimposes on the field's
-    node_balance: "dirichlet" replaces the selected nodes' residual by the method's values, "neumann" adds them to
-    it (so an inflow is returned negative, the opposite of boundary_set's value).
+    Tag a method as a boundary condition on a set of nodes, for conditions given by an equation: the method takes
+    its arguments by name, like node_balance (unknowns, and DataStructure variables, e.g. coupled ones, read at
+    each solve), node-located ones sliced to the selected nodes. For a condition given by a variable or a constant,
+    a boundary_set is enough::
+
+        @boundary_condition("node", "neumann", field="concentration", select="collar")
+        def _collar_uptake(self, concentration, soil_concentration, uptake_rate):
+            return uptake_rate * (soil_concentration - concentration)          # an inflow
 
     Parameters
     ----------
-    location : "node" | "edge"
-    kind     : "dirichlet" | "neumann"
-    field    : str   unknown field this BC applies to.
-    filters  : dict  entity-property filter selecting BC-active entities.
-    explicit : bool  accepted for API symmetry; BCs always return values.
+    location : "node"
+    kind     : "dirichlet": the selected nodes' residual rows become the method's values (a residual, e.g.
+               ``p - collar_pressure``; with explicit=True, the prescribed value itself);
+               "neumann": the method's values are an inflow, subtracted from the residual, as boundary_set's.
+    field    : the node unknown it applies to.
+    select   : the nodes, as in boundary_set: {variable: value or values}, a variable name (> 0), the name of a
+               mask of the DataStructure, or a callable ds -> boolean mask. Default: every node.
+    filters  : {variable: values}, the former form of select.
+    explicit : for dirichlet, the method returns the prescribed value instead of a residual.
     """
     if location == "edge":
         raise NotImplementedError("@boundary_condition(location='edge') is not supported yet: conditions are applied "
                                   "on nodes (use a boundary_set on the nodes)")
     if location != "node":
         raise ValueError(f"@boundary_condition: location must be 'node', got '{location}'")
-    warnings.warn("@boundary_condition is deprecated, use a boundary_set (whose Neumann value is an inflow, while "
-                  "@boundary_condition's values are added to the residual)", DeprecationWarning, stacklevel=2)
+    if kind not in ("dirichlet", "neumann"):
+        raise ValueError(f"@boundary_condition: kind must be 'dirichlet' or 'neumann', got '{kind}'")
+    if select is not None and filters is not None:
+        raise ValueError("@boundary_condition: give select= or filters=, not both")
+    if select is not None and not (callable(select) or isinstance(select, (dict, str))):
+        raise TypeError("@boundary_condition: select must be a {variable: values} dict, a variable or mask name, "
+                        "or a callable")
 
     def decorator(func):
         func.__graph_tag__ = {
             "kind": "boundary_condition",
             "location": location, "bc_kind": kind,
-            "field": field, "filters": filters, "explicit": explicit,
+            "field": field, "filters": filters, "select": select, "explicit": explicit,
         }
         return func
     return decorator
@@ -210,8 +224,9 @@ class boundary_set:
 
     Arguments::
 
-        select  {variable: value or values} | a variable name (selects where it is > 0) | a callable ds -> boolean
-                mask; membership follows the selecting variables and topology changes.
+        select  {variable: value or values} | a variable name (selects where it is > 0) | the name of a mask of the
+                DataStructure | a callable ds -> boolean mask; membership follows the selecting variables and
+                topology changes.
         kind    "robin":     + w * (x - v) in the field's residual (an outflow towards the external value v);
                 "dirichlet": the residual row becomes x - v;
                 "neumann":   - v in the residual (v is an inflow);
@@ -253,7 +268,9 @@ class boundary_set:
     def members(self, instance, ds, size, take) -> np.ndarray:
         """Indices, in the solved graph, of the nodes of the set."""
         mask_name = f"__boundary_set:{type(instance).__name__}.{self.name}"
-        if not ds.has_mask(mask_name):
+        if isinstance(self.select, str) and ds.has_mask(self.select):
+            mask_name = self.select                                  # a mask of the DataStructure
+        elif not ds.has_mask(mask_name):
             rule = self.select
             if isinstance(rule, str):
                 rule = {rule: ">0"}
@@ -645,8 +662,12 @@ class GraphSystemBuilder:
                         tag.get("explicit", False), tag.get("integrate", False)
                     ))
                 elif kind == "boundary_condition":
+                    selection = tag.get("filters")
+                    if tag.get("select") is not None:
+                        selection = boundary_set(select=tag["select"])
+                        selection.name = attr_name
                     bc_items.append((
-                        tag.get("field"), tag.get("filters"), tag.get("bc_kind"),
+                        tag.get("field"), selection, tag.get("bc_kind"),
                         attr_name, bound, obj, tag.get("explicit", False)
                     ))
                 elif kind == "pool_balance":
@@ -712,7 +733,7 @@ class GraphSystemBuilder:
             if tf:
                 required.update(tf.keys())
         for _, tf, _, _, _, _, _ in bc_items:
-            if tf:
+            if isinstance(tf, dict):
                 required.update(tf.keys())
         for bset in boundary_sets:
             required.update(bset.variables())
@@ -752,7 +773,10 @@ class GraphSystemBuilder:
             anchored = np.zeros(n, dtype=bool)
             for _, tf, bc_kind, _, _, _, _ in bc_items:
                 if bc_kind == "dirichlet":
-                    anchored |= _type_mask(tf, node_snap, n, ds) if tf else True
+                    if isinstance(tf, boundary_set):
+                        anchored[tf.members(instance, ds, n, _take(instance, "node"))] = True
+                    else:
+                        anchored |= _type_mask(tf, node_snap, n, ds) if tf else True
             for terms in set_terms.values():
                 for kind, idx, _, weight in terms:
                     if kind == "dirichlet":
@@ -882,7 +906,11 @@ class GraphSystemBuilder:
                             f"BC '{raw_func.__name__}': arg '{aname}' not found."
                         )
                 if type_filter:
-                    mask = _type_mask(type_filter, node_snap, n, ds)
+                    if isinstance(type_filter, boundary_set):
+                        mask = np.zeros(n, dtype=bool)
+                        mask[type_filter.members(instance, ds, n, _take(instance, "node"))] = True
+                    else:
+                        mask = _type_mask(type_filter, node_snap, n, ds)
                     idx  = np.where(mask)[0]
                     sub  = [a[mask] if cut else a for a, cut in zip(args, sliced)]
                     vals = np.asarray(_in_equation(instance, bound_method, sub), dtype=np.float64)
@@ -916,7 +944,7 @@ class GraphSystemBuilder:
                     if bkind == "dirichlet":
                         result[idx] = vals
                     else:
-                        result[idx] += vals * neumann_scale
+                        result[idx] -= vals * neumann_scale         # an inflow, as a boundary_set's value
                 for kind, idx, value, _ in terms:
                     if kind == "dirichlet":
                         result[idx] = x[idx] - value

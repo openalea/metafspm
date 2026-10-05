@@ -1,7 +1,8 @@
 """
 Graph-system options through components: the solver argument and its errors, solver keys giving the same steady
 solution, previous() at the start of the solve or of the sub-step, boundary_set variants (Neumann, Robin with a
-constant or per-node weight, per-node kinds, field= with several unknowns), pool unknowns given by their location
+constant or per-node weight, per-node kinds, field= with several unknowns), boundary conditions written as
+equations of coupled variables (@boundary_condition), pool unknowns given by their location
 only, forcings given as callables or (times, values) pairs, @graph_output write-back (location checks, active
 subgraphs), integrated edge amounts on an active subgraph, and filtered node balances.
 """
@@ -12,11 +13,11 @@ import pandas as pd
 import pytest
 
 from openalea.metafspm.coupling.choregrapher import Choregrapher
-from openalea.metafspm.coupling.component import FunctionalComponent, parameter, state_variable
+from openalea.metafspm.coupling.component import FunctionalComponent, input_variable, parameter, state_variable
 from openalea.metafspm.data_structure.configs import ScalesConfig as scales
 from openalea.metafspm.data_structure.data_api import MPGDataStructure
 from openalea.metafspm.scene.population import build_population
-from openalea.metafspm.solve.decorator import (boundary_set, edge_law, graph_output, graph_system, node_balance,
+from openalea.metafspm.solve.decorator import (boundary_condition, boundary_set, edge_law, graph_output, graph_system, node_balance,
                                                pool_balance)
 from openalea.metafspm.solve.solver import NewtonSolver
 from simple_seedling import generate_simple_mpg_seedling
@@ -276,6 +277,91 @@ def test_boundary_set_arguments_are_checked():
         boundary_set(select="is_collar", kind="flux")
     with pytest.raises(TypeError, match="select must be"):
         boundary_set(select=3, kind="dirichlet")
+
+
+
+# ---------------------------------------------------------------- boundary conditions written as equations
+
+@dataclass
+class CoupledInflow(FunctionalComponent):
+    """A Neumann condition given by an equation of a coupled variable, read from the DataStructure at each solve."""
+    u: float = state_variable(**DOC, initialize=1., scale=scales.SubOrgan)
+    supply: float = input_variable(**DOC, by="Other", initialize=0.25, scale=scales.SubOrgan)
+    time_step = DT
+
+    @graph_system(node_unknowns=["u"], transient=True)
+    class _solve:
+        _balance = node_balance(field="u")(_diffusion_residual)
+
+        @boundary_condition("node", "neumann", field="u", select="is_collar")
+        def _collar(self, supply):
+            return supply                                      # an inflow, sliced to the selected nodes
+
+
+def test_a_neumann_condition_is_an_inflow_read_from_the_data_structure_at_each_solve():
+    ds = _ds()
+    model = CoupledInflow(data_structure=ds)
+    total = ds.get("u").sum()
+    model()
+    assert ds.get("u").sum() == pytest.approx(total + 0.25 * DT)             # the same sign as a boundary_set
+    ds.set("supply", np.full(ds.n_nodes(), 0.5))                               # e.g. written by a coupled model
+    total = ds.get("u").sum()
+    model()
+    assert ds.get("u").sum() == pytest.approx(total + 0.5 * DT)
+
+
+@dataclass
+class UptakeEquation(FunctionalComponent):
+    """An exchange w (v - u) with an external value, written as an equation of the unknown and coupled variables."""
+    u: float = state_variable(**DOC, initialize=1., scale=scales.SubOrgan)
+    external: float = input_variable(**DOC, by="Soil", initialize=3., scale=scales.SubOrgan)
+    exchange_rate: float = input_variable(**DOC, by="Soil", initialize=0.4, scale=scales.SubOrgan)
+    time_step = DT
+
+    @graph_system(node_unknowns=["u"], transient=True)
+    class _solve:
+        _balance = node_balance(field="u")(_diffusion_residual)
+
+        @boundary_condition("node", "neumann", field="u", select=lambda ds: np.asarray(ds.get("is_collar")) > 0)
+        def _collar(self, u, external, exchange_rate):
+            return exchange_rate * (external - u)
+
+
+def test_a_condition_equation_of_the_unknown_is_solved_with_it():
+    ds = _ds()
+    model = UptakeEquation(data_structure=ds)
+    u0 = np.array(ds.get("u"))
+    model()
+    weight = 0.4 * np.asarray(ds.get("is_collar"))
+    np.testing.assert_allclose(ds.get("u"), _implicit_step(ds, u0, robin_weight=weight, robin_value=3.), rtol=1e-9)
+
+
+@dataclass
+class PrescribedCollar(FunctionalComponent):
+    """A Dirichlet condition on the nodes of a DataStructure mask, at a coupled value."""
+    u: float = state_variable(**DOC, initialize=1., scale=scales.SubOrgan)
+    collar_value: float = input_variable(**DOC, by="Shoot", initialize=-0.3, scale=scales.SubOrgan)
+    time_step = DT
+
+    @graph_system(node_unknowns=["u"], transient=True)
+    class _solve:
+        _balance = node_balance(field="u")(_diffusion_residual)
+
+        @boundary_condition("node", "dirichlet", field="u", select="collar")
+        def _collar(self, u, collar_value):
+            return u - collar_value
+
+
+def test_a_dirichlet_condition_on_a_mask_follows_the_coupled_value():
+    ds = _ds()
+    ds.define_mask("collar", {"is_collar": ">0"})
+    model = PrescribedCollar(data_structure=ds)
+    collar = np.flatnonzero(np.asarray(ds.get("is_collar")) > 0)
+    model()
+    np.testing.assert_allclose(np.asarray(ds.get("u"))[collar], -0.3)
+    ds.set("collar_value", np.full(ds.n_nodes(), -0.7))
+    model()
+    np.testing.assert_allclose(np.asarray(ds.get("u"))[collar], -0.7)
 
 
 # ---------------------------------------------------------------- pools given by their location

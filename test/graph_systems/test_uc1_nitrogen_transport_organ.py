@@ -25,11 +25,6 @@ Tests mirror the SubOrgan UC1 suite; topology-specific counts are (8, 7).
 
 import numpy as np
 import pytest
-
-import warnings
-
-# UC1 keeps @boundary_condition (decorated at import) until its rewrite on the public API
-warnings.filterwarnings("ignore", message="@boundary_condition is deprecated", category=DeprecationWarning)
 from dataclasses import dataclass
 from typing import Type
 
@@ -247,8 +242,8 @@ class NitrogenAxialTransportOrgan(FunctionalComponent):
         @boundary_condition(location="node", kind="dirichlet",
                             field="concentration", filters={"is_root": [1]},
                             explicit=True)
-        def _root_dirichlet(self) -> np.ndarray:
-            return np.array([self.c_dirichlet])
+        def _root_dirichlet(self, c_dirichlet) -> np.ndarray:
+            return c_dirichlet               # a parameter of the DataStructure, per selected node
 
         @edge_law(field="axial_flux", explicit=False, integrate=False)
         def _axial_transport_law(
@@ -277,8 +272,8 @@ class NitrogenAxialTransportOrgan(FunctionalComponent):
 
         @boundary_condition(location="node", kind="neumann",
                             field="concentration", filters={"is_root": [1]})
-        def _root_neumann(self) -> np.ndarray:
-            return np.array([self.q_boundary])
+        def _root_neumann(self, q_boundary) -> np.ndarray:
+            return q_boundary                # an inflow
 
         @edge_law(field="axial_flux", explicit=False, integrate=False)
         def _axial_transport_law(
@@ -658,19 +653,20 @@ def test_organ_dirichlet_bc_pins_concentration():
     model = _setup_nitrogen_model(
         ds, c_old=c0, J_radial=J_r, K_axial_vals=np.full(e, 0.07), dt=0.5,
     )
-    model.c_dirichlet = 2.0
+    ds = model.data_structure                       # the condition reads the DataStructure value
+    ds.set("c_dirichlet", np.full(ds.get("c_dirichlet").shape, 2.0))
 
     model._invoke_graph_system("_transport_solve_dirichlet")
     node_u, _ = model._last_graph_system.unpack_unknowns(model._last_graph_solution)
 
     np.testing.assert_allclose(
-        node_u["concentration"][root_idx], model.c_dirichlet, atol=1e-10,
+        node_u["concentration"][root_idx], 2.0, atol=1e-10,
         err_msg="Dirichlet BC must pin root concentration to c_dirichlet",
     )
 
 
 def test_organ_neumann_bc_equivalent_to_modified_source():
-    """Neumann BC at root is equivalent to subtracting q_boundary from J_radial.
+    """Neumann BC at root (an inflow) is equivalent to adding q_boundary to J_radial.
 
     The framework scales the Neumann value by dt for explicit node balances,
     so q_boundary always carries flux units regardless of explicit=True/False.
@@ -686,12 +682,12 @@ def test_organ_neumann_bc_equivalent_to_modified_source():
     m_bc = _setup_nitrogen_model(
         ds_bc, c_old=c0, J_radial=J_r, K_axial_vals=np.full(e, 0.07), dt=0.5,
     )
-    m_bc.q_boundary = q_bc
+    m_bc.data_structure.set("q_boundary", np.full(m_bc.data_structure.get("q_boundary").shape, q_bc))
     m_bc._invoke_graph_system("_transport_solve_neumann")
     node_bc, edge_bc = m_bc._last_graph_system.unpack_unknowns(m_bc._last_graph_solution)
 
     J_r_mod = J_r.copy()
-    J_r_mod[root_idx] -= q_bc
+    J_r_mod[root_idx] += q_bc
     ds_ref = _make_ds()
     m_ref  = _setup_nitrogen_model(
         ds_ref, c_old=c0, J_radial=J_r_mod, K_axial_vals=np.full(e, 0.07), dt=0.5,
