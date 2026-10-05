@@ -1726,3 +1726,14 @@ Per-file counts:
 - **`MPG.topology_arrays`:** bulk `fromiter` reads of the MTG dicts instead of per-element numpy writes.
 - **Result:** one growth step with an update at 100 plants (2·10⁵ segments) goes from 5.1 s to about 0.6 s. The remaining cost is O(population) numpy work (`unique`, `searchsorted`) and the `edges()` list.
 - **Suite:** 649 passed.
+- **F3 implemented: lazy MTG synchronisation.**
+  - `mtg_sync = "lazy"` is the default. Components track their MTG-backed state variables on the DataStructure (`track_mtg`).
+  - `flush_mtg(names=None)` writes those whose (write count, topology version) changed since their last synchronisation, through the existing `write_mtg`. It runs from:
+    - `MPGDataStructure.mtg` (now a flushing property; internal code uses `_mtg`);
+    - before MPG-style steps (with the running component's inputs and parameters tracked too);
+    - before parameters are re-read from the MTG, for those parameters only.
+  - Values read back after an MPG-style step are marked synchronised. `"after_call"` keeps the eager write; the policy is checked at declaration and at each call.
+  - Fallback MTG writes (properties not keyed like the nodes) are vectorised (`_scatter`).
+  - Tests: the scale-mapping tests read through `ds.mtg`; the parent-mapping write error now surfaces at the flush; 3 new tests cover lazy, only-changed and after_call.
+- **DS13 seen again:** a subclass without its own steps (`EagerCounter(Counter)`) silently ran nothing. Inherited steps are dropped unless the subclass defines steps (the `inheriting` globals hack). It goes into P8.
+- **Suite:** 652 passed.

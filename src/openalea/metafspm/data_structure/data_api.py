@@ -1699,8 +1699,7 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
                 and np.array_equal(prop.keys_array(), self._bio_vids_sorted)):
             prop.assign_at(self._bio_node_idx, arr)
         else:
-            for i, vid in enumerate(self._idx_to_vid):
-                prop[int(vid)] = float(arr[i])
+            _scatter(prop, np.asarray(self._idx_to_vid, dtype=np.int64), arr)
 
     def write_edge_to_mtg(self, name: str, arr: np.ndarray,
                            convention: str = "proximal") -> None:
@@ -1726,8 +1725,7 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
                 and np.array_equal(prop.keys_array(), self._bio_vids_sorted)):
             prop.assign_at(idx, arr)
         else:
-            for e, vid in enumerate(self._bio_vids_sorted[idx]):
-                prop[int(vid)] = float(arr[e])
+            _scatter(prop, np.asarray(self._bio_vids_sorted[idx], dtype=np.int64), arr)
 
     # ── Label names (design note time_and_data §5, T6) ─────────────────────────────
 
@@ -1771,8 +1769,7 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
     def _write_at(self, name: str, vids, values) -> None:
         prop = self._mtg_property_for_write(name)
         values = np.asarray(values)
-        for vid, value in zip(vids, values):
-            prop[int(vid)] = int(value) if np.issubdtype(values.dtype, np.integer) else float(value)
+        _scatter(prop, np.asarray(vids, dtype=np.int64), values, integer=np.issubdtype(values.dtype, np.integer))
 
     def read_mtg(self, spec):
         """
@@ -1805,6 +1802,42 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
                 raise ValueError(f"'{spec.name}' is aggregated with weight '{spec.weight}', which is not registered")
             weights = self.get(spec.weight)
         return self._map(values, "node", spec.location, spec.mapping, weights)
+
+    # ── Lazy MTG synchronisation (QF3): the DataStructure is the reference, the MTG a view kept up to date on read ──
+
+    @property
+    def mtg(self):
+        """The MPG, with every tracked variable written since its last synchronisation flushed to it first."""
+        self.flush_mtg()
+        return self._mtg
+
+    def track_mtg(self, spec) -> None:
+        """Keep MTG-backed variable *spec* in the MTG: written at the next flush_mtg(), then whenever it changed."""
+        if not spec.mtg_backed or self._mtg is None:
+            return
+        tracked = self.__dict__.setdefault("_mtg_tracked", {})
+        if spec.name not in tracked:
+            tracked[spec.name] = spec
+            self.__dict__.setdefault("_mtg_synced", {})[spec.name] = None
+
+    def flush_mtg(self, names=None) -> None:
+        """Write the tracked variables (or *names* among them) changed since their last synchronisation to the MTG."""
+        tracked = self.__dict__.get("_mtg_tracked")
+        if not tracked:
+            return
+        synced = self.__dict__["_mtg_synced"]
+        for name in (tracked if names is None else [n for n in names if n in tracked]):
+            if not self.has(name):
+                continue
+            count = self.write_count(name)
+            if synced.get(name) != (count, self.topology_version):
+                self.write_mtg(tracked[name])
+                synced[name] = (count, self.topology_version)
+
+    def mark_mtg_synced(self, name: str) -> None:
+        """Record that the MTG holds the current values of *name* (e.g. just read from it)."""
+        if name in self.__dict__.get("_mtg_tracked", {}):
+            self.__dict__["_mtg_synced"][name] = (self.write_count(name), self.topology_version)
 
     def write_mtg(self, spec) -> None:
         """
@@ -2110,6 +2143,20 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
 # ═══════════════════════════════════════════════════════════════════════════════
 # Field / grid branch
 # ═══════════════════════════════════════════════════════════════════════════════
+
+def _scatter(prop, vids: np.ndarray, values: np.ndarray, integer: bool = False) -> None:
+    """Write *values* at *vids* of MTG property *prop*: in place for the vids it has, one batched insert for the others."""
+    values = np.asarray(values)
+    if isinstance(prop, ArrayDict) and prop.size:
+        order = prop.order[:prop.size]
+        position = np.searchsorted(order, vids).clip(0, prop.size - 1)
+        found = order[position] == vids
+        prop.arr[position[found]] = values[found]
+        vids, values = vids[~found], values[~found]
+    if vids.size:
+        convert = int if integer else float
+        prop.update(dict(zip(vids.tolist(), (convert(v) for v in values.tolist()))))
+
 
 class _KeyedValues:
     """Values of a variable by entity id, as two sorted arrays: a read-only mapping matched in bulk (QF4)."""
