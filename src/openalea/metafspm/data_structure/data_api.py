@@ -1143,8 +1143,7 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
         """
         Build node index from Compartment scale, using biological VIDs (stored
         in vertex_id) as the canonical node identifiers.  Anchors are excluded
-        because they have no vertex_id entry.  Uses array_filtering — the same
-        MPG method that mpg.graph() relies on.
+        because they have no vertex_id entry.  Uses MPG.array_filtering.
 
         Also calls _build_bio_index_map() to precompute the integer index arrays
         that map Compartment/Connection entities to positions in biological-scale

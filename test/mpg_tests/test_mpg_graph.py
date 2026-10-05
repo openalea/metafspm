@@ -20,7 +20,6 @@ import sys
 import os
 sys.path.insert(0, os.path.dirname(__file__))
 
-import numpy as np
 from simple_seedling import generate_simple_mpg_seedling
 
 g, seedling = generate_simple_mpg_seedling()
@@ -115,35 +114,7 @@ def test_node_edge_population():
     )
 
 
-# ── Test 2: Laplacian matrix assembly ────────────────────────────────────────
-
-def test_graph_building():
-    """graph() returns COO arrays for a symmetric Laplacian with uniform conductances.
-
-    With 13 edges of conductance 1.0:
-    - 13 × 4 = 52 COO entries
-    - All diagonal entries positive, all off-diagonal entries negative
-    - Total diagonal sum = 2 × 13 = 26.0
-    """
-    conductance = g.property('conductance')
-    for ev in _edge_vids():
-        conductance[ev] = 1.0
-    g.convert_properties_to_arraydict()
-
-    rows, cols, data = g.graph('conductance')
-
-    assert len(rows) == len(cols) == len(data) == 52, \
-        f"13 edges × 4 COO entries = 52 expected, got {len(rows)}"
-
-    diag = rows == cols
-    assert np.all(data[diag]  > 0), "diagonal entries must be positive"
-    assert np.all(data[~diag] < 0), "off-diagonal entries must be negative"
-
-    assert np.isclose(np.sum(data[diag]),   26.0), "total diagonal  = 2 × 13 conductances"
-    assert np.isclose(np.sum(data[~diag]), -26.0), "total off-diag  = −2 × 13 conductances"
-
-
-# ── Test 3: text graph visualization ─────────────────────────────────────────
+# ── Test 2: text graph visualization ─────────────────────────────────────────
 
 def test_graph_visualization():
     """Print transport graph adjacency; assert key structural properties."""

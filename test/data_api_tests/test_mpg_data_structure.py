@@ -155,7 +155,7 @@ def test_mpg_data_structure_wraps_suborgan_scale():
     populate_graph(SubOrgan) creates 14 Compartment nodes and 13 Connection
     edges (one per SubOrgan segment / axial adjacency).  MPGDataStructure uses
     SubOrgan VIDs (from the vertex_id property of Compartment nodes) as the
-    canonical node identifiers, consistent with mpg.graph().
+    canonical node identifiers.
     """
     from simple_seedling import generate_simple_mpg_seedling
     g, seedling = generate_simple_mpg_seedling()
