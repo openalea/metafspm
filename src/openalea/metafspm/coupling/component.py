@@ -404,6 +404,22 @@ class DataStructureComponent(Component):
         """
         return self.data_structure.parameter_view(name, location)
 
+    # Seed of this component's random streams (PT2); a scenario may set it
+    random_seed = 0
+
+    def random(self, stream: str, distribution: str = "uniform", ids=None, location: str = "node",
+               **parameters) -> np.ndarray:
+        """
+        Reproducible draws per entity for stream *stream*: each call of a stream is a new step, so a model drawing in
+        the same order gets the same draws at every run, whatever the visiting order (ds.random, PT2).
+        """
+        name = f"{type(self).__name__}.{stream}"
+        counters = self.data_structure.__dict__.setdefault("_random_steps", {})   # kept by checkpoints
+        step = counters.get(name, 0)
+        counters[name] = step + 1
+        return self.data_structure.random(distribution, stream=name, step=step, ids=ids, location=location,
+                                          seed=int(self.random_seed), **parameters)
+
     def active_ids(self) -> np.ndarray:
         """
         Node ids selected by the DataStructure's "active" mask (every node without one), for MPG-style steps, which
