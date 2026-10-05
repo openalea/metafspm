@@ -1656,3 +1656,4 @@ Per-file counts:
   - the union following growth;
   - RATP-like light on a grid.
 - **Suite:** 718 passed.
+- **P6 design note** drafted in `devplan_population_scene.md` §10 (Scene contract, step order, logging, emergence), with questions QP6a–d. Stopped for the answers.
