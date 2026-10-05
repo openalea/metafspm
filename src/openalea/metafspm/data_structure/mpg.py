@@ -218,7 +218,7 @@ class MPG(MTG):
         """
         Create *count* components of *complex_id* at once, as add_component (or add_component_with_topo when
         *topo_parents* gives their same-scale parents) would one by one, with one batched write per property instead of
-        one insert per vertex and property (design note population_and_performance §13, F2). A property value is a
+        one insert per vertex and property. A property value is a
         sequence of *count* values, or one value for all. Returns the new vids, consecutive.
         """
         if count == 0:
@@ -246,7 +246,7 @@ class MPG(MTG):
 
     def extend_graph(self, from_scale) -> dict:
         """
-        Incremental counterpart of repopulate_graph() (F2): Compartments and Connections are created only for the new
+        Incremental counterpart of repopulate_graph(): Compartments and Connections are created only for the new
         vertices at *from_scale* and removed for the deleted ones; every other Compartment and Connection keeps its
         vid. A vertex whose linked parent changed (e.g. an inserted parent) gets its Connection rebuilt.
         Returns {"added": [...], "removed": [...], "relinked": [...]}, at from_scale ("repopulated": True when a new
@@ -254,7 +254,7 @@ class MPG(MTG):
         """
         node_anchor = self.scales.anchors[self.scales.Compartment]
         edge_anchor = self.scales.anchors[self.scales.Connection]
-        # Array reads of the properties, not traversals of the whole MTG: the cost follows the growth (QF4)
+        # Array reads of the properties, not traversals of the whole MTG: the cost follows the growth
         compartments, vertex_of = self._property_at("vertex_id", self._vertices_at_scale(self.scales.Compartment))
         connections, heads = self._property_at("n_id_b", self._vertices_at_scale(self.scales.Connection))
         connections, tails = self._property_at("n_id_a", connections) if connections.size else (connections, heads)
@@ -394,7 +394,7 @@ class MPG(MTG):
         """
         self.wire_junctions(from_scale, custom_connections, filter_in=filter_in, filter_out=filter_out)
 
-    # ── Junctions between the anatomies of adjacent vertices (design note structure_and_boundaries §7) ──
+    # ── Junctions between the anatomies of adjacent vertices ──
 
     def _vertices_at_scale(self, scale) -> np.ndarray:
         """Vertices whose "scale" property is *scale*, sorted (an array read, no traversal)."""
@@ -558,7 +558,7 @@ class MPG(MTG):
         prop = self.properties().get("is_junction", {})
         return [int(v) for v, flag in prop.items() if flag]
 
-    # ── Children at the vertex's own scale (B-i, QPq) ───────────────────────────
+    # ── Children at the vertex's own scale ───────────────────────────
     # populate_graph links each Compartment to its segment with a topological parent; openalea's traversals
     # (children, Sons, post_order2, pre_order2, ...) would then return Compartments among a segment's children.
     # These accessors return the children at the vertex's own scale, as on a plain MTG; the framework reads the raw
@@ -578,7 +578,7 @@ class MPG(MTG):
     def remove_vertex(self, vid, reparent_child=False):
         """
         MTG.remove_vertex, removing first the Compartments the vertex owns (its graph nodes), which openalea would
-        refuse to re-parent (PT3). The graph follows at the next update_topology (extend_graph).
+        refuse to re-parent. The graph follows at the next update_topology (extend_graph).
         """
         compartment = self.scales.Compartment         # linked to their segment as children (or components)
         owned = [c for c in list(self._children.get(vid, [])) + list(self._components.get(vid, []))
@@ -717,7 +717,7 @@ class MPG(MTG):
 
 
     # MULTISCALE TRAVERSALS (combining ordered scale and element iteration)
-    # ── Topology without recursion, and as arrays (design note population_and_performance §2, DS14b) ──
+    # ── Topology without recursion, and as arrays ──
 
     def components_iter(self, vid):
         """
@@ -754,7 +754,7 @@ class MPG(MTG):
         if cache is not None and cache[0] == signature:
             return cache[1]
         if cache is not None and cache[0][1] is not None and signature[1] is not None:
-            # Incremental (F5): vids are allocated in increasing order, so the vertices created since the last read
+            # Incremental: vids are allocated in increasing order, so the vertices created since the last read
             # are above the last vid seen; when none was removed, only they (and children they were inserted above)
             # are read from the MTG
             (count, last), arrays = cache
@@ -1118,7 +1118,7 @@ class MPG(MTG):
 
 
 class _SortedIds:
-    """A sorted id array with set-like membership, for vertex sets of a whole population (QF4)."""
+    """A sorted id array with set-like membership, for vertex sets of a whole population."""
 
     def __init__(self, ids):
         self.ids = np.asarray(ids, dtype=np.int64)

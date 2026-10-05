@@ -864,7 +864,7 @@ class ScipyIVPSolver(DAESolver):
 
         def rhs(_t, y_node):
             if time_hook is not None:
-                time_hook(_t - t)              # forcings read at the evaluation time (PT4, QPj)
+                time_hook(_t - t)              # forcings read at the evaluation time
             R = spec.residual(full_state(y_node), prev_fields, None)
             return -R[:n_node_dof]
 

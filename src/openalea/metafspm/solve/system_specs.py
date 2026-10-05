@@ -78,7 +78,7 @@ class UnknownLayout:
     """Ordered list of unknown fields in the current solve."""
     node_fields: tuple[str, ...]
     edge_fields: tuple[str, ...]
-    pool_fields: tuple[str, ...] = ()         # unknowns at a coarse scale, one per pool entity (PT4)
+    pool_fields: tuple[str, ...] = ()         # unknowns at a coarse scale, one per pool entity
 
 
 @dataclass(frozen=True)
@@ -289,7 +289,7 @@ class GraphDAESpec(BaseSystemSpec):
     rhs_evaluator        : Optional[Callable] = None
     boundary_conditions  : Optional[BoundaryConditions] = None
     parameters           : dict = field(default_factory=dict)
-    # Pool unknowns (PT4): their initial values, and their coupling to the nodes (sparse n_nodes x n_pools)
+    # Pool unknowns: their initial values, and their coupling to the nodes (sparse n_nodes x n_pools)
     pool_fields          : dict = field(default_factory=dict)
     pool_coupling        : dict = field(default_factory=dict)
 

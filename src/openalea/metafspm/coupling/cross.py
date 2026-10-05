@@ -1,16 +1,16 @@
 """
-Links between DataStructures (devplan_population_scene.md §9, P5).
+Links between DataStructures.
 
   CrossMapping(plants, soil, method="barycentre" | "overlap")   plant segments <-> grid cells, a sparse incidence
   UnionDataStructure([population_1, population_2])               the nodes of several DataStructures, one after the other
   UnionMapping(union)                                            one-to-one between a union and its parts
   Exchanges(translator, components, mappings)                    translator links across DataStructures, run at the
-                                                                 scene's fixed points by exchange(into=ds) (Q1)
+                                                                 scene's fixed points by exchange(into=ds)
 
 Mappings recompute themselves when their source's topology or coordinates changed, at the next exchange. Values go
 "up" from plant entities to cells (sum, mean, weighted_mean) and "down" from cells to plant entities (broadcast:
 the overlap-weighted cell values; split: the cell amount shared by weight). Defaults follow the variables' kinds
-(D9; QP5a, QP5c): extensive up "sum", down "split" (weight= required); intensive up "weighted_mean" (weight=
+: extensive up "sum", down "split" (weight= required); intensive up "weighted_mean" (weight=
 required), down "broadcast".
 """
 from typing import Mapping, Optional
@@ -77,13 +77,13 @@ class CrossMapping:
     entities), columns (cells) and weights, each row's weights summing to 1.
 
     method:      "barycentre", the cell of the segment's middle (weight 1, the reference soil model's map), or
-                 "overlap", the cells the segment crosses, weighted by its length fraction in each (Q2).
+                 "overlap", the cells the segment crosses, weighted by its length fraction in each.
     coordinates: the source's segment end variables, (x1, x2, y1, y2, z1, z2).
     periodic:    per grid axis, wrap positions into the grid (a periodic stand in x and y by default); the other
                  axes are clipped into the grid.
     flip_z:      plant z is negative below ground while the soil z axis points down (reference soil model).
     mask:        a node mask of the source: its other entities are left out (they neither push nor receive, e.g.
-                 plants before emergence, P6).
+                 plants before emergence).
 
     The incidence is rebuilt at the next use after the source's topology or a coordinate changed; refresh() forces
     it (coordinates written through a view without mark_written()).
@@ -212,12 +212,12 @@ class CrossMapping:
         return np.bincount(rows, weights=share * values[columns], minlength=n)
 
 
-# ── Populations <-> environment scalars, and columns <-> grids (PT6) ─────────────────
+# ── Populations <-> environment scalars, and columns <-> grids ─────────────────
 
 class ScalarMapping:
     """
     Between the entities of a population's variable (*location*: nodes, a coarse scale) and one scalar of an
-    environment model (QPk): "up" reduces over every entity (pooled over populations by Exchanges), "down" broadcasts
+    environment model: "up" reduces over every entity (pooled over populations by Exchanges), "down" broadcasts
     or splits the scalar. Created by Exchanges when a link's receiver or sources are stored at "scalar".
     """
 
@@ -257,7 +257,7 @@ class ScalarMapping:
 
 class LayerMapping:
     """
-    Between a 1-D column (e.g. a soil temperature model's layers) and the layers of a 3-D grid along *axis* (QPl),
+    Between a 1-D column (e.g. a soil temperature model's layers) and the layers of a 3-D grid along *axis*,
     weighted by the overlaps of the layer intervals, so that thicknesses may differ:
       grid -> column: "mean" (intensive: each column layer the overlap-weighted mean of the grid layers' means over
                       the other axes) or "sum" (extensive: the overlapping fractions of the grid layers' totals);
@@ -427,11 +427,11 @@ class UnionMapping:
         return next((i for i, part in enumerate(self.union.parts) if part is ds), None)
 
 
-# ── Translator links across DataStructures (fixed-point exchanges, Q1) ─────────────
+# ── Translator links across DataStructures (fixed-point exchanges) ─────────────────
 
 def cross_default_mapping(kind: Optional[str], direction: str, name: str, weight: Optional[str] = None) -> str:
     """
-    Mapping of a link between a plant DataStructure and a grid implied by its kind (D9 across DataStructures;
+    Mapping of a link between a plant DataStructure and a grid implied by its kind (
     QP5a, QP5c). direction: "up" (plant entities -> cells) or "down" (cells -> plant entities).
     """
     extensive, intensive = kind in EXTENSIVE_KINDS, kind in INTENSIVE_KINDS or kind in MASSIC_KINDS
@@ -481,7 +481,7 @@ class _CrossLink:
         return self.provider.data_structure
 
     def components(self) -> int:
-        """Components per entity of a vector-valued source (PT7), 0 for a plain variable."""
+        """Components per entity of a vector-valued source, 0 for a plain variable."""
         if self.link.formula is not None:
             return 0
         meta = self.provider_ds._variable_meta()
@@ -498,7 +498,7 @@ class _CrossLink:
 
 def _per_column(apply, values, components: int = 0, pair: bool = False):
     """
-    *apply* on each component of a vector-valued variable (PT7: *components* per entity), stacked as columns
+    *apply* on each component of a vector-valued variable (*components* per entity), stacked as columns
     (entities, components); directly on a plain variable. *pair*: apply returns (numerator, denominator), the
     denominator shared by the components.
     """
@@ -514,7 +514,7 @@ def _per_column(apply, values, components: int = 0, pair: bool = False):
 class Exchanges:
     """
     The translator links whose receiver and provider are on different DataStructures, through *mappings*
-    (CrossMapping, UnionMapping). The scene runs them at fixed points (Q1): exchange(into=plants) after the
+    (CrossMapping, UnionMapping). The scene runs them at fixed points: exchange(into=plants) after the
     environment components, exchange(into=environment) after the plants.
 
     Several providers of one receiving variable (populations into one soil) are pooled in one exchange and written
@@ -566,7 +566,7 @@ class Exchanges:
                         kind = kinds.pop() if len(kinds) == 1 else None
                     if (isinstance(mapping, ScalarMapping) and direction == "up" and link.weight is None
                             and (kind in INTENSIVE_KINDS or kind in MASSIC_KINDS)):
-                        aggregation = "mean"              # an environment scalar: the plain mean (QPk)
+                        aggregation = "mean"              # an environment scalar: the plain mean
                     else:
                         aggregation = cross_default_mapping(kind, direction, name, weight=link.weight)
                 allowed = UP if direction == "up" else DOWN
@@ -578,7 +578,7 @@ class Exchanges:
             self.links.append(_CrossLink(link, receiver, provider, mapping, direction, aggregation, part))
 
     def _mapping_between(self, link, provider_ds, receiver_ds) -> tuple:
-        # An environment scalar: reduced over, or broadcast to, every entity of the population (PT6, QPk)
+        # An environment scalar: reduced over, or broadcast to, every entity of the population
         if receiver_ds.has(link.variable) and receiver_ds.location(link.variable) == "scalar" \
                 and link.formula is None and all(provider_ds.has(source) for source in link.sources):
             (location,) = {provider_ds.location(source) for source in link.sources}

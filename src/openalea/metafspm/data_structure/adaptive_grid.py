@@ -1,5 +1,5 @@
 """
-Adaptive grids: cell-based (octree) refinement over a base grid (devplan_porting PT10, QPs-QPu).
+Adaptive grids: cell-based (octree) refinement over a base grid.
 
 Cells are the leaves of an octree (a quadtree in 2-D, a binary tree in 1-D) over a regular base grid: a cell at level
 l is one of the 2^d children of its level l-1 parent, down to max_level. Neighbouring leaves may differ by one level at
@@ -7,7 +7,7 @@ most (2:1 balance). As on ArrayDataStructure, cells are the graph's nodes and th
 face_area and face_distance: graph systems, boundary sets, masks, steps and the mappings to plants work unchanged.
 
     grid = AdaptiveGridDataStructure(shape=(10, 10, 20), dx=0.02, max_level=2, periodic=(True, True, False))
-    grid.refine(lambda g: g.get("root_length_density") > 1e3)      # between steps (QPt)
+    grid.refine(lambda g: g.get("root_length_density") > 1e3)      # between steps
     grid.coarsen(lambda g: g.get("root_length_density") < 1e2)
 
 Refining or coarsening is a topology change: registered variables are carried over by volume overlaps, extensive
@@ -142,7 +142,7 @@ class AdaptiveGridDataStructure(VariableStoreMixin, DataStructure):
     def face_axis(self) -> np.ndarray:
         return self._face_axis
 
-    # ── Refinement (QPt: at fixed points, between steps) ──────────────────────
+    # ── Refinement, at fixed points (between steps) ───────────────────────────
 
     def refine(self, criterion) -> int:
         """
@@ -230,7 +230,7 @@ class AdaptiveGridDataStructure(VariableStoreMixin, DataStructure):
         self._topology_version = self.topology_version + 1
 
     def _carry_over(self, previous: dict) -> None:
-        """Cell variables by volume overlaps between the old and new cells; edge variables reset (PT10)."""
+        """Cell variables by volume overlaps between the old and new cells; edge variables reset."""
         from openalea.metafspm.coupling.declaration import EXTENSIVE_KINDS
         old, new = previous["leaf_of"].reshape(-1), self._leaf_of.reshape(-1)
         pairs, overlap = np.unique(np.stack([new, old], axis=1), axis=0, return_counts=True)

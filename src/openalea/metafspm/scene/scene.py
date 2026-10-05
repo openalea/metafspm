@@ -1,5 +1,5 @@
 """
-A scene of plant populations and environment models in one process (devplan_population_scene.md §10, P6).
+A scene of plant populations and environment models in one process.
 
   scene = Scene(planting=planting_table(...), environment=[SoilModel, LightModel], environment_scenarios=[{}, {}],
                 translator="scene_translator.py", time_step=3600, output_dirpath="outputs", log_plants=["plant_0"])
@@ -7,7 +7,7 @@ A scene of plant populations and environment models in one process (devplan_popu
 
 Contracts (QP6a, QP6b):
   plant model        Model(data_structure, time_step, **scenario), built once per population (the plants of one model
-                     in the planting table, Q8) on an MPG holding all of them. Class attributes: initiators (the
+                     in the planting table) on an MPG holding all of them. Class attributes: initiators (the
                      StructuralComponent classes building each plant, StructuralComponent.initiate_plant), from_scale
                      (graph nodes, default "SubOrgan") and nodes (e.g. "Compartment" for anatomies). It exposes
                      components and run(). Numeric parameters come per plant from the planting table's scenarios.
@@ -15,12 +15,12 @@ Contracts (QP6a, QP6b):
                      (a grid, a UnionDataStructure of the populations, or works on a population's MPG) and exposes
                      components and run(); it applies its input tables itself, as today.
 
-A step (Q1, Q9): each environment model, after the exchanges into its DataStructures (the plants' last values); then
+A step: each environment model, after the exchanges into its DataStructures (the plants' last values); then
 each population, after the exchanges into it (the environment's new values). Exchanges between DataStructures go
 through coupling.cross (mappings inferred from the scene translator's links: a CrossMapping between a population and
 a grid, a UnionMapping for a union).
 
-Emergence (Q5, QP6c): an "emergence_time" column of the planting table (s, scene time) freezes each plant until then:
+Emergence: an "emergence_time" column of the planting table (s, scene time) freezes each plant until then:
 its nodes leave the "active" mask (steps skip them; MPG-style steps use active_ids()) and the mappings (no exchange).
 """
 import os
@@ -110,20 +110,20 @@ class Scene(CompositeModel):
     environment:           environment model classes, run in this order; environment_scenarios: one dict each.
     translator:            the links between the populations' and the environment's components (a Translator, a
                            nested dict, a .py or YAML path). Links within one DataStructure are the models' own.
-    mapping_method:        "barycentre" or "overlap" (Q2), for every population <-> grid mapping; periodic, flip_z as
+    mapping_method:        "barycentre" or "overlap", for every population <-> grid mapping; periodic, flip_z as
                            in CrossMapping.
     scene_xrange, _yrange: the stand's size (default: the planting table's, from planting_table).
     output_dirpath:        where the SceneRecorder writes (None: no recording); log_plants: the plants (names of the
-                           planting table) whose per-segment state is written every heavy_log_period steps (Q7).
+                           planting table) whose per-segment state is written every heavy_log_period steps.
     forcings:              a table shared by every model (a DataFrame indexed by time in s): a component's
-                           forcing(name) reads its column when the component has no forcing of that name (PT5).
+                           forcing(name) reads its column when the component has no forcing of that name.
     events:                (time, action) pairs: action(scene) runs at the start of the first step at or after time.
     stop_when:             a condition(scene), checked after each step: simulate() stops when it holds.
     Models may set run_every (steps) and run_when(scene) -> bool: on the other steps they and the exchanges into
-    them are skipped, their outputs keeping their values (QPm); an environment model's spin_up(scene) runs once,
+    them are skipped, their outputs keeping their values; an environment model's spin_up(scene) runs once,
     after the scene is built.
     mappings:              further mappings between DataStructures (e.g. a LayerMapping between a column model and
-                           the soil grid), or a callable scene -> mappings, called once the models are built (PT6).
+                           the soil grid), or a callable scene -> mappings, called once the models are built.
     logger_class:          optional, called as logger_class(scene=self, outputs_dirpath=..., **log_settings), then
                            logger() after each step and logger.stop() at the end (QP6d hook).
     """
@@ -155,7 +155,7 @@ class Scene(CompositeModel):
         duplicated = sorted({name for name in names if names.count(name) > 1})
         if duplicated:
             raise ValueError(f"component classes {duplicated} appear in several models of the scene: "
-                             "the scene translator identifies components by class name (one population per model, Q8)")
+                             "the scene translator identifies components by class name (one population per model)")
 
         self.translator = load_translator(translator)
         self.mapping_method, self.periodic, self.flip_z = mapping_method, periodic, flip_z
@@ -199,7 +199,7 @@ class Scene(CompositeModel):
     def _shared_scenario(model, rows: pd.DataFrame) -> dict:
         """
         The scenario the model is built with (its first plant's): only numeric parameters may differ between the
-        plants of one population, being stored per plant (Q6).
+        plants of one population, being stored per plant.
         """
         scenarios = [dict(s) if s is not None else {} for s in rows["scenario"]]
         first = scenarios[0]
@@ -281,7 +281,7 @@ class Scene(CompositeModel):
             action(self)
         self._update_emergence()
         for component in self.components:
-            component.__dict__["_clock"] = self.time        # forcings read at the scene time (PT4)
+            component.__dict__["_clock"] = self.time        # forcings read at the scene time
         for model in self.environment:
             if not self._due(model):
                 continue
@@ -303,7 +303,7 @@ class Scene(CompositeModel):
     __call__ = run
 
     def _due(self, model) -> bool:
-        """Whether *model* runs at this step (run_every, run_when; PT5)."""
+        """Whether *model* runs at this step (run_every, run_when)."""
         every = getattr(model, "run_every", None)
         if every is not None and self.iteration % int(every) != 0:
             return False
@@ -320,7 +320,7 @@ class Scene(CompositeModel):
         finally:
             self.stop()
 
-    # ── Checkpoints (PT7, QPn) ────────────────────────────────────────────────
+    # ── Checkpoints ────────────────────────────────────────────────
 
     def _all_data_structures(self) -> list:
         """Every DataStructure of the scene, in a fixed order: the populations', then each environment model's."""
@@ -339,7 +339,7 @@ class Scene(CompositeModel):
     def checkpoint(self, path: str) -> None:
         """
         Save the scene to folder *path*: every DataStructure (ds.checkpoint), the checkpoint_state() of the models
-        and components defining it (e.g. an external solver's state), and the scene's time and iteration (PT7).
+        and components defining it (e.g. an external solver's state), and the scene's time and iteration.
         """
         import json
         import pickle
@@ -398,7 +398,7 @@ class Scene(CompositeModel):
 
 class SceneRecorder:
     """
-    Scene outputs, one folder per population (Q7, QP6d):
+    Scene outputs, one folder per population:
       summaries.csv  every step, one row per plant: sums of the extensive and means of the intensive node state
                      variables, and the Plant-located state variables;
       segments.csv   every heavy_log_period steps, the node state variables of the log_plants only.
@@ -431,7 +431,7 @@ class SceneRecorder:
         table = {"t": time, "plant": [names.get(int(v), str(v)) for v in plants]}
         for name, kind in self._state_variables(population).items():
             location, stored = ds.location(name), np.asarray(ds.get(name), dtype=float)
-            columns = ({name: stored} if stored.ndim == 1 else            # vector variables: one column each (PT7)
+            columns = ({name: stored} if stored.ndim == 1 else            # vector variables: one column each
                        {f"{name}_{j}": stored[:, j] for j in range(stored.reshape(stored.shape[0], -1).shape[1])})
             for column, values in columns.items():
                 if location == "Plant":

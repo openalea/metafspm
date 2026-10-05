@@ -49,13 +49,13 @@ def declare(unit: str, unit_comment: str, description: str, min_value: float, ma
                                scale name (resolved against the graph). Default: the location of *scale*.
     :param mapping:            How values go between *scale* and *location* when they differ: "broadcast" (down),
                                "sum" / "mean" / "weighted_mean" (up, with *weight*), "child" / "parent" / "mean"
-                               (to edges). Default: implied by state_variable_type (design note D9).
+                               (to edges). Default: implied by state_variable_type.
     :param weight:             Weight variable of "weighted_mean".
     :param dtype:              "int" for labels, types and indices (kept as integers), "object" for lists and records
                                (not usable by graph systems, derivations or transport); default float.
     :param shape:              Per-entity shape of a vector-valued variable, e.g. (15,) for 15 pools per cell: an
                                (n, 15) array, used by steps, mappings, checkpoints and outputs; not an MTG property
-                               nor a graph-system unknown (PT7).
+                               nor a graph-system unknown.
     :param on_grow:            Value of entities created by topology growth: "default" (the declared
                                default) or "inherit" (the parent's value). The growth model may still
                                overwrite them, e.g. from parent states for concentrations.
@@ -159,7 +159,7 @@ def parameter(unit: str, unit_comment: str, description: str, min_value: float,
 
 class _PlantParameter:
     """
-    A numeric parameter stored per plant on the DataStructure (devplan_population_scene §7-8, QH2-QH3).
+    A numeric parameter stored per plant on the DataStructure.
       * inside a step or a graph-system equation, reading self.<name> raises: the parameter is an argument;
       * outside, reading gives the population value when every plant has the same, else the per-plant values;
       * writing (scenario setup, tests) sets every plant's value; before the DataStructure is bound, the value is
@@ -207,12 +207,12 @@ class Component:
         self.pull_available_inputs()
         self.choregrapher(instance=self)
         # State variables reach the MTG after every call with mtg_sync = "after_call"; by default ("lazy") the
-        # DataStructure writes them when the MTG is read (QF3)
+        # DataStructure writes them when the MTG is read
         if hasattr(self, "mtg_sync"):
             self._check_mtg_sync()
             if self.mtg_sync == "after_call":
                 self.write_back_to_mtg()
-        # The component's clock (forcings, PT4): the start of its next call
+        # The component's clock (forcings): the start of its next call
         self.__dict__["_clock"] = self.__dict__.get("_clock", 0.) + float(
             getattr(self.choregrapher, "simulation_time_step", 0.) or 0.)
 
@@ -291,7 +291,7 @@ class DataStructureComponent(Component):
 
     data_structure: Optional[DataStructure] = None
 
-    # MTG synchronisation policy (design note time_and_data §3, DS4; QF3): "lazy" (default) writes the state variables
+    # MTG synchronisation policy: "lazy" (default) writes the state variables
     # changed since the last synchronisation when the MTG is read (ds.mtg, MPG-style steps, ds.flush_mtg());
     # "after_call" writes them after every call; "never" leaves the MTG untouched.
     mtg_sync = "lazy"
@@ -316,15 +316,15 @@ class DataStructureComponent(Component):
             self.choregrapher.add_simulation_time_step(1)
         # One iteration per simulation step unless the component declares its own sub time step
         sub_time_step = getattr(self, "sub_time_step", None) or self.choregrapher.simulation_time_step
-        # Live reading (design note §8): steps and solves read and write the DataStructure arrays;
+        # Live reading: steps and solves read and write the DataStructure arrays;
         # props is a read-only compatibility view.
         self.props = DataStructurePropsView(ds)
         self.choregrapher.add_time_and_data(self, sub_time_step, ds, compartment="graph")
 
     def pull_available_inputs(self):
         """
-        Before the step: re-read the MTG-backed parameters (DS4), and bring the inputs derived by the coupling up
-        to date. Derived variables are recomputed when read (D10), so the latter only recomputes those whose sources
+        Before the step: re-read the MTG-backed parameters, and bring the inputs derived by the coupling up
+        to date. Derived variables are recomputed when read, so the latter only recomputes those whose sources
         changed; it is the hook of future sub-steps.
         """
         self._refresh_from_bio_scale()
@@ -334,7 +334,7 @@ class DataStructureComponent(Component):
 
     def _auto_declare_on_ds(self, ds: DataStructure) -> None:
         """
-        Register the declared variables that are not yet on *ds* (design note datastructure_contract §2).
+        Register the declared variables that are not yet on *ds*.
 
         Each field is resolved once by resolve_declaration into a VariableSpec (location, MTG scale, mapping),
         kept in self._variable_specs. A variable is registered at its location with the values of its MTG
@@ -381,7 +381,7 @@ class DataStructureComponent(Component):
 
     @classmethod
     def _plant_parameter_fields(cls) -> dict:
-        """{name: default} of the numeric parameters declared without a place, stored per plant (QH3)."""
+        """{name: default} of the numeric parameters declared without a place, stored per plant."""
         names = {}
         for f in fields(cls):
             meta = f.metadata
@@ -392,7 +392,7 @@ class DataStructureComponent(Component):
         return names
 
     def _install_plant_parameters(self) -> None:
-        """Replace, once per class, each per-plant parameter's attribute by a _PlantParameter descriptor (QH2)."""
+        """Replace, once per class, each per-plant parameter's attribute by a _PlantParameter descriptor."""
         cls = type(self)
         if "_plant_parameter_names" not in cls.__dict__:
             names = cls._plant_parameter_fields()
@@ -412,14 +412,14 @@ class DataStructureComponent(Component):
         """
         return self.data_structure.parameter_view(name, location)
 
-    # Seed of this component's random streams (PT2); a scenario may set it
+    # Seed of this component's random streams; a scenario may set it
     random_seed = 0
 
     def random(self, stream: str, distribution: str = "uniform", ids=None, location: str = "node",
                **parameters) -> np.ndarray:
         """
         Reproducible draws per entity for stream *stream*: each call of a stream is a new step, so a model drawing in
-        the same order gets the same draws at every run, whatever the visiting order (ds.random, PT2).
+        the same order gets the same draws at every run, whatever the visiting order (ds.random).
         """
         name = f"{type(self).__name__}.{stream}"
         counters = self.data_structure.__dict__.setdefault("_random_steps", {})   # kept by checkpoints
@@ -431,7 +431,7 @@ class DataStructureComponent(Component):
     def active_ids(self) -> np.ndarray:
         """
         Node ids selected by the DataStructure's "active" mask (every node without one), for MPG-style steps, which
-        loop over vertices themselves: e.g. plants before emergence are skipped (P6, QP6c).
+        loop over vertices themselves: e.g. plants before emergence are skipped.
         """
         ds = self.data_structure
         ids = np.asarray(ds.entity_ids("node"))
@@ -535,13 +535,13 @@ class FunctionalComponent(DataStructureComponent):
         self.__dict__["_graph_view_cache"] = view
         self.__dict__["_graph_view_version"] = getattr(self.data_structure, "topology_version", None)
 
-    # Forcings read inside steps and equations (PT4): {name: pandas Series indexed by time (s), (times, values),
+    # Forcings read inside steps and equations: {name: pandas Series indexed by time (s), (times, values),
     # or a callable t -> value}, interpolated linearly
     forcings = None
 
     def forcing_time(self) -> float:
         """
-        The time at which forcings are read (QPj): the end of the current (sub-)step for implicit solves and steps,
+        The time at which forcings are read: the end of the current (sub-)step for implicit solves and steps,
         the evaluation time inside an IVP solve; times count from the component's clock (the scene time).
         """
         start = self.__dict__.get("_clock", 0.)
@@ -558,7 +558,7 @@ class FunctionalComponent(DataStructureComponent):
         table = (self.forcings or {}).get(name)
         shared = self.__dict__.get("_scene_forcings")
         if table is None and shared is not None and name in shared:
-            table = shared[name]                          # the scene's shared table (PT5)
+            table = shared[name]                          # the scene's shared table
         if table is None:
             raise KeyError(f"{type(self).__name__} has no forcing '{name}' (set self.forcings, or the scene's)")
         t = self.forcing_time()
@@ -572,7 +572,7 @@ class FunctionalComponent(DataStructureComponent):
 
     def pool_exchange(self, name: str):
         """
-        During a graph-system solve with pool unknowns (PT4): the sparse (n_nodes, n_pools) map between the nodes of
+        During a graph-system solve with pool unknowns: the sparse (n_nodes, n_pools) map between the nodes of
         the pool's exchange set and the pool of their entity. P @ pool gives each node its pool's value; P.T @ flux
         sums node fluxes into their pools.
         """
@@ -583,12 +583,12 @@ class FunctionalComponent(DataStructureComponent):
 
     @property
     def dt(self) -> float:
-        """Length of the current (sub-)step of a graph-system solve; the time step outside sub-stepping (T1)."""
+        """Length of the current (sub-)step of a graph-system solve; the time step outside sub-stepping."""
         return self.__dict__.get("_current_dt", getattr(self, "time_step", None))
 
     def previous(self, name: str, at: str = "substep") -> np.ndarray:
         """
-        Value of unknown *name*, managed by the framework (design note time_and_data §2, T2):
+        Value of unknown *name*, managed by the framework:
           at="substep" (default): at the start of the current (sub-)step of the solve;
           at="solve":             at the start of this call's solve (the same with integrate="step");
           at="step":              at the start of the component's call, e.g. for operator splitting between
@@ -627,14 +627,13 @@ class FunctionalComponent(DataStructureComponent):
 @dataclass
 class StructuralComponent(DataStructureComponent):
     """
-    Component that edits the plant's structure (growth, segmentation, anatomy; design note structure_and_boundaries
-    §3, DS19). It shares the plant's DataStructure, and edits the MPG through ``self.mtg`` with the MPG's own
-    methods: the DataStructure does not re-expose them, the MPG is the source of truth for structure (D11).
+    Component that edits the plant's structure (growth, segmentation, anatomy). It shares the plant's DataStructure, and edits the MPG through ``self.mtg`` with the MPG's own
+    methods: the DataStructure does not re-expose them, the MPG is the source of truth for structure.
 
-    Two step styles coexist (Q17):
+    Two step styles coexist:
       * a step without arguments ("MPG-style") reads and edits the MPG. Around it, the framework writes the
         component's declared variables to the MPG before, and after it updates the DataStructure's topology if the
-        MPG's changed, then re-reads the declared state variables (the structural outputs) from the MPG (P1);
+        MPG's changed, then re-reads the declared state variables (the structural outputs) from the MPG;
       * a step with arguments ("array-style") is vectorised on DataStructure arrays, like a functional step; its
         outputs reach the MPG at the next MPG-style step or at the end of the call.
     """
@@ -647,20 +646,18 @@ class StructuralComponent(DataStructureComponent):
     def initiate_plant(cls, g, plant_vid: int, parameters: dict) -> None:
         """
         Build the initial structure of one plant under its Plant-scale vertex *plant_vid* in the population MPG *g*,
-        from that plant's scenario *parameters*, before any component is constructed (devplan_population_scene §8,
-        QP4a). Several structural components may each add their part, in order (e.g. roots, then anatomies). The
-        plant's position is in g.property("x"/"y"/"z"/"rotation")[plant_vid]; the component computes its elements'
-        coordinates from it (QP4b).
+        from that plant's scenario *parameters*, before any component is constructed. Several structural components
+        may each add their part, in order (e.g. roots, then anatomies). The plant's position is in
+        g.property("x"/"y"/"z"/"rotation")[plant_vid]; the component computes its elements' coordinates from it.
         """
         raise NotImplementedError(f"{cls.__name__} does not initiate plants")
 
     def _mpg_signature(self) -> tuple:
-        """Cheap topology signature of the MPG: vertex count and last allocated vertex id (P3)."""
+        """Cheap topology signature of the MPG: vertex count and last allocated vertex id."""
         g = self.mtg
         return g.nb_vertices(), getattr(g, "_id", None)
 
-    # Repartition of the other components' variables when the structure changes (design note
-    # structure_and_boundaries §4, DS20). partition_weight: a node variable name, or a callable ds -> array;
+    # Repartition of the other components' variables when the structure changes. partition_weight: a node variable name, or a callable ds -> array;
     # active: the rule of the DataStructure's "active" mask ({variable: condition} or a callable). Without a
     # partition weight, entities created by growth only get their on_grow values.
     partition_weight = None
@@ -688,7 +685,7 @@ class StructuralComponent(DataStructureComponent):
         specs = [spec for spec in getattr(self, "_variable_specs", {}).values() if spec.mtg_backed and ds.has(spec.name)]
         if hasattr(ds, "flush_mtg"):
             # The MPG-style code reads the MTG: the variables this component declares (its states, inputs and
-            # parameters) changed since their last synchronisation are written first (QF3). Others are not: a step
+            # parameters) changed since their last synchronisation are written first. Others are not: a step
             # reads what its component declares
             for spec in specs:
                 ds.track_mtg(spec)
@@ -719,7 +716,7 @@ class StructuralComponent(DataStructureComponent):
     def _repartition(self, weight_before: dict, active_before: dict) -> None:
         """
         Share the node variables of the other components between the entities of the new structure, by their
-        state_variable_type (the rules of rhizodep's post_growth_updating, D14):
+        state_variable_type (the rules of rhizodep's post_growth_updating):
 
           kind                      new active entity v, or one becoming active,    new inactive     existing, weight
                                     with its parent p and f = w_v / (w_v + w_p)     entity           changed

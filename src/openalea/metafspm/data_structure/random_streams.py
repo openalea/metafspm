@@ -1,5 +1,5 @@
 """
-Reproducible random draws, one stream per entity (devplan_porting PT2, QPa).
+Reproducible random draws, one stream per entity.
 
 A draw is a pure function of (seed, stream name, step, entity id): a counter-based generator (SplitMix64 mixing of
 the four keys), so draws do not depend on the order in which entities are visited, nor on which other entities exist.

@@ -8,7 +8,7 @@ class Functor:
     def __init__(self, fun, iteraring: bool = False, total: bool = False):
         self.fun = fun
         self.name = self.fun.__name__[1:]
-        # The class qualified name (the function's without its own name) and module identify the step's class (DS13)
+        # The class qualified name (the function's without its own name) and module identify the step's class
         self.class_qualname = self.fun.__qualname__.rsplit('.', 1)[0]
         self.class_name = self.class_qualname.rsplit('.', 1)[-1]
         self.family = f"{self.fun.__module__}:{self.class_qualname}"
@@ -44,22 +44,21 @@ class Functor:
 
     def _call_on_data_structure(self, instance, ds):
         """
-        Evaluate the step on DataStructure arrays and write the outputs in place (design note §8).
+        Evaluate the step on DataStructure arrays and write the outputs in place.
         Vectorised by default: one call with whole arrays; functions marked vectorized=False are called per element.
-        When the DataStructure defines the step's mask (default "active", design note structure_and_boundaries §4,
-        D15), arguments at the mask's location are restricted to the selected entities and outputs at that location
+        When the DataStructure defines the step's mask (default "active"), arguments at the mask's location are restricted to the selected entities and outputs at that location
         are written back on them only: the other entities keep their values.
         """
         args, locations = self._arguments(instance, ds)
         mask, mask_location = self._mask(instance, ds)
         if mask is not None:
             args = [a[mask] if location == mask_location else a for a, location in zip(args, locations)]
-        instance.__dict__["_in_equation"] = True        # self.<parameter> is refused inside steps (QH2)
+        instance.__dict__["_in_equation"] = True        # self.<parameter> is refused inside steps
         try:
             out = self._evaluate(instance, args)
         finally:
             instance.__dict__["_in_equation"] = False
-        if out is None:            # a step returning None writes nothing (e.g. an inherited step disabled, PT3)
+        if out is None:            # a step returning None writes nothing (e.g. an inherited step disabled)
             return
         self._write_outputs(instance, ds, out, args, mask, mask_location)
 
@@ -137,7 +136,7 @@ class Functor:
 
     def _output_location(self, instance, ds, name, values, declared):
         """
-        Location of an output that is not a registered variable (design note datastructure_contract §5): given by
+        Location of an output that is not a registered variable: given by
         the step decorator, "scalar" for total steps and 0-d values, else inferred from its shape when unambiguous.
         """
         if name in declared:

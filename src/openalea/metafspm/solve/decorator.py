@@ -89,7 +89,7 @@ def _step(name: str, *, total: bool = False, iterating: bool = False):
     Return a decorator that registers func as a Choregrapher step.
 
     Usable bare (``@rate``) or with options (``@rate(vectorized=False)``). On DataStructure-backed components,
-    step functions receive whole arrays (design note Q20); ``vectorized=False`` opts in to one call per element
+    step functions receive whole arrays; ``vectorized=False`` opts in to one call per element
     for functions written with scalar logic.
     """
     def decorator(func=None, *, vectorized: bool = True, location: str = None, locations: dict = None,
@@ -154,7 +154,7 @@ def node_balance(field=None, filters=None, explicit=False):
 
 def pool_balance(field):
     """
-    Tag a method as the residual of pool unknown *field* (PT4): it returns one value per pool entity (e.g. per plant),
+    Tag a method as the residual of pool unknown *field*: it returns one value per pool entity (e.g. per plant),
     and takes the pool's values as an argument named after it, like any unknown.
     """
     def decorator(func):
@@ -201,7 +201,7 @@ def boundary_condition(location, kind, field=None, filters=None, explicit=False)
     """
     if location == "edge":
         raise NotImplementedError("@boundary_condition(location='edge') is not supported yet: conditions are applied "
-                                  "on nodes (edge boundary sets come with devplan_datastructures DS6)")
+                                  "on nodes (use a boundary_set on the nodes)")
     if location != "node":
         raise ValueError(f"@boundary_condition: location must be 'node', got '{location}'")
 
@@ -217,8 +217,7 @@ def boundary_condition(location, kind, field=None, filters=None, explicit=False)
 
 class boundary_set:
     """
-    Boundary condition on a set of nodes, declared in a graph-system class and assembled by the framework (design
-    note structure_and_boundaries §6, DS6):
+    Boundary condition on a set of nodes, declared in a graph-system class and assembled by the framework:
 
         leaves = boundary_set(select={"label": [LEAF]}, kind="robin", value="air_water_potential",
                               weight="leaf_conductance")
@@ -231,14 +230,14 @@ class boundary_set:
     value, weight
             node variables of the DataStructure (read at each solve) or constants.
     field   the node unknown it applies to; default: the only node unknown.
-    kind=None: a selection only (no term), e.g. the nodes exchanging with a pool unknown (PT4).
+    kind=None: a selection only (no term), e.g. the nodes exchanging with a pool unknown.
     kinds=<node variable name>, instead of kind: each node's kind read at each solve from that variable, as boundary_set.CODES
             (1 dirichlet, 2 neumann, 3 robin, anything else no condition): e.g. a collar switching between a
-            pressure and a flux (QPi).
+            pressure and a flux.
     """
 
     KINDS = ("robin", "dirichlet", "neumann")
-    # Codes of a per-node kind variable (PT4, QPi); other values (e.g. 0) apply no condition
+    # Codes of a per-node kind variable; other values (e.g. 0) apply no condition
     CODES = {"dirichlet": 1, "neumann": 2, "robin": 3}
 
     def __init__(self, select, kind=None, value=0., weight=1.0, field=None, kinds: str = None):
@@ -289,7 +288,7 @@ def graph_jacobian(func):
 def graph_output(name, location: str = None):
     """
     Tag a method as a named post-solve output hook. *location* ("node" or "edge") is required when *name* is not a
-    declared field and its size does not identify a single location (design note datastructure_contract §5).
+    declared field and its size does not identify a single location.
     """
     if location not in (None, "node", "edge"):
         raise ValueError(f"@graph_output('{name}'): location must be 'node' or 'edge', got '{location}'")
@@ -343,9 +342,9 @@ def _live_ds(instance):
 
 def _read_array(ds, name, location, size, owner=None, take=None, read_only=False):
     """
-    Copy of variable *name* as a per-*location* array: scalars are broadcast; a missing name raises (DS11).
+    Copy of variable *name* as a per-*location* array: scalars are broadcast; a missing name raises.
     *take*: indices of the entities of an active subgraph (where=), the others being left out.
-    *read_only*: a read-only view instead of a copy when possible (parameters and inputs, DS9).
+    *read_only*: a read-only view instead of a copy when possible (parameters and inputs).
     """
     if not ds.has(name):
         raise KeyError(f"{owner + ': ' if owner else ''}'{name}' is used by a graph system but is not registered on "
@@ -372,7 +371,7 @@ def _entity_location(ds, location):
 
 
 def _in_equation(instance, method, args):
-    """Call an equation with the instance flagged, so that self.<parameter> is refused inside it (QH2)."""
+    """Call an equation with the instance flagged, so that self.<parameter> is refused inside it."""
     previous = instance.__dict__.get("_in_equation", False)
     instance.__dict__["_in_equation"] = True
     try:
@@ -391,8 +390,8 @@ def _take(instance, location):
 
 class _Restriction:
     """
-    Active subgraph of a graph system solved with where= (design note structure_and_boundaries §5, DS21), or one
-    connected piece of it (split="components", S2): the selected nodes, the edges with both ends selected, and the
+    Active subgraph of a graph system solved with where=, or one
+    connected piece of it (split="components"): the selected nodes, the edges with both ends selected, and the
     corresponding GraphView. A piece leaves the other edges alone (drops_edges=False).
     """
 
@@ -433,7 +432,7 @@ class _Restriction:
 def _pieces_of(instance, base) -> list:
     """
     The connected pieces of *base* (a _Restriction, or None for the whole graph) as piece restrictions, computed once
-    per topology and subgraph; each with its local GraphView built from its own edges (S2).
+    per topology and subgraph; each with its local GraphView built from its own edges.
     """
     from scipy.sparse.csgraph import connected_components
     ds = _live_ds(instance)
@@ -484,7 +483,7 @@ def _restriction_for(instance, where):
         raise ValueError(f"{type(instance).__name__}: where='{where}' needs a node (or grid cell) mask")
     if getattr(instance, "_boundary_ports", None):
         raise NotImplementedError(f"{type(instance).__name__}: boundary ports set by hand cannot follow an active "
-                                  "subgraph; use boundary sets (devplan_datastructures DS6)")
+                                  "subgraph; use boundary sets")
     key = (ds.topology_version, ds.mask_version(where))
     cache = instance.__dict__.setdefault("_restriction_cache", {})
     if where in cache and cache[where][0] == key:
@@ -509,7 +508,7 @@ def _restriction_for(instance, where):
 def _check_well_posed(instance, method_name, view, anchored):
     """
     Every connected piece of a steady subgraph needs an anchor (a Dirichlet node; Robin boundaries come with
-    boundary sets), otherwise its solution is defined up to a constant (design note §8, P4).
+    boundary sets), otherwise its solution is defined up to a constant.
     """
     from scipy.sparse.csgraph import connected_components
     n = view.n_nodes
@@ -536,7 +535,7 @@ def _snapshot(instance, required_names, node_vids_int, edge_vids_int,
         if (spec is not None and spec.variable_type == "parameter" and ds.has(name)
                 and ds.location(name) not in ("node", "edge", "cell")):
             # A parameter stored per plant (or as a scalar) is seen by node equations per node and by edge laws per
-            # edge, each edge taking its child's plant (devplan_population_scene §7)
+            # edge, each edge taking its child's plant
             on_nodes = np.asarray(ds.parameter_view(name, node_location)).reshape(-1)
             on_edges = np.asarray(ds.parameter_view(name, "edge")).reshape(-1)
             take_nodes, take_edges = _take(instance, "node"), _take(instance, "edge")
@@ -555,7 +554,7 @@ def _snapshot(instance, required_names, node_vids_int, edge_vids_int,
             raise ValueError(f"{type(instance).__name__}: '{name}' is stored at {loc}, graph equations take node "
                              f"or edge arrays: declare it with location='node' and mapping='broadcast'")
         size = len(node_vids_int) if loc == "node" else len(edge_vids_int)
-        # Parameters and inputs: read-only views, so that equations cannot overwrite them (DS9)
+        # Parameters and inputs: read-only views, so that equations cannot overwrite them
         (node_snap if loc == "node" else edge_snap)[name] = _read_array(ds, name, loc, size, type(instance).__name__,
                                                                         take=_take(instance, loc), read_only=True)
     return node_snap, edge_snap
@@ -628,8 +627,8 @@ class GraphSystemBuilder:
         bc_items           = []   # (field, types, bc_kind, attr_name, bound, raw, explicit)
         jacobian_raw       = None
         output_items       = []   # (out_name, bound, raw)
-        boundary_sets      = []   # boundary_set objects (DS6)
-        pool_items         = []   # (field, bound, raw): pool balances (PT4)
+        boundary_sets      = []   # boundary_set objects
+        pool_items         = []   # (field, bound, raw): pool balances
         pool_specs         = spec_def.get("pool_unknowns") or {}
         pool_names         = list(pool_specs)
         self.output_locations = {}   # out_name -> location given by @graph_output (or None)
@@ -690,7 +689,7 @@ class GraphSystemBuilder:
         dt_inst = float(instance.__dict__.get("_current_dt", getattr(instance, "time_step", None)) or 1.0)
 
         ds = _live_ds(instance)
-        # Framework-managed previous state (design note Q21): the unknowns at the start of this solve
+        # Framework-managed previous state: the unknowns at the start of this solve
         instance._previous_state = {fn: _read_array(ds, fn, location, n if location == "node" else m,
                                                     take=_take(instance, location))
                                     for location, names in (("node", node_unknowns), ("edge", edge_unknowns))
@@ -735,7 +734,7 @@ class GraphSystemBuilder:
             node_unknowns, edge_unknowns, declared_locs,
         )
 
-        # Boundary sets: members on the solved graph, values and weights read now (DS6)
+        # Boundary sets: members on the solved graph, values and weights read now
         set_terms = defaultdict(list)    # field -> [(kind, idx, value, weight)]
         for bset in boundary_sets:
             if bset.kind is None:
@@ -774,7 +773,7 @@ class GraphSystemBuilder:
                         anchored[idx[weight > 0]] = True
             _check_well_posed(instance, spec_def["inner_class"].__name__, gv, anchored)
 
-        # ── Pool unknowns (PT4): the pools of the solved nodes' entities, coupled to their exchange set ──
+        # ── Pool unknowns: the pools of the solved nodes' entities, coupled to their exchange set ──
         pool_fields_gs, pool_coupling, pool_targets = {}, {}, {}
         sets_by_name = {bset.name: bset for bset in boundary_sets}
         for pname, pspec in pool_specs.items():
@@ -1068,7 +1067,7 @@ class GraphSystemBuilder:
             pool_fields       = pool_fields_gs,
             pool_coupling     = pool_coupling,
         )
-        # IVP solvers report their evaluation time, at which equations read forcings (PT4, QPj)
+        # IVP solvers report their evaluation time, at which equations read forcings
         spec.parameters["time_hook"] = lambda t, _i=instance: _i.__dict__.__setitem__("_ivp_time", t)
         return spec, node_snap, edge_snap
 
@@ -1118,7 +1117,7 @@ class GraphSystemBuilder:
                     # Inactive nodes stay frozen; dropped edges carry no flux, their integrated amounts are kept
                     dropped = None if location == "node" or fn.endswith("_amount") else 0.
                     restriction.scatter(ds, fn, values, location, dropped=dropped)
-        for pname, values in spec.unpack_pools(packed).items():      # pools at their own scale (PT4)
+        for pname, values in spec.unpack_pools(packed).items():      # pools at their own scale
             stored = ds.get(pname)
             full = np.array(stored, dtype=np.float64).reshape(-1)
             full[self.pool_targets[pname]] = values
@@ -1150,7 +1149,7 @@ def _invoke_graph_system(self, method_name: str) -> None:
         return
     restriction = None
     if where is not None:
-        # Active subgraph (DS21): the equations see its GraphView through self._graph_view
+        # Active subgraph: the equations see its GraphView through self._graph_view
         restriction = _restriction_for(self, where)
         if restriction.node_idx.size == 0:
             ds = _live_ds(self)
@@ -1161,7 +1160,7 @@ def _invoke_graph_system(self, method_name: str) -> None:
     if not split:
         _solve_restricted(self, method_name, spec_def, restriction)
         return
-    # One solve per connected piece (S2); edges outside the active subgraph carry no flux, set once
+    # One solve per connected piece; edges outside the active subgraph carry no flux, set once
     if restriction is not None and restriction.dropped_edges.size:
         ds = _live_ds(self)
         for fn in spec_def["edge_unknowns"]:
@@ -1264,7 +1263,7 @@ def _shared_with_previous(self, key, array) -> bool:
 
 def _solve_graph_system(self, method_name: str, spec_def: dict) -> None:
     """
-    Integrate one graph system over the component's time step (design note time_and_data §2, DS10):
+    Integrate one graph system over the component's time step:
     "step" one solve of time_step; "substeps" n solves of time_step / n; "adaptive" step doubling. During each
     (sub-)step, self.dt is its length and self.previous(fn) the state at its start.
     """
@@ -1307,7 +1306,7 @@ def _solve_substep(self, method_name, spec_def, h) -> None:
 
 def _integrate_adaptive(self, method_name, spec_def, time_step, names) -> None:
     """
-    Step doubling (T3): a step of h is compared with two steps of h/2; accepted when the difference is within
+    Step doubling: a step of h is compared with two steps of h/2; accepted when the difference is within
     rtol * |x| + atol on the node unknowns, h being adapted after each trial. Raises when h falls below min_step.
     """
     ds = _live_ds(self)
@@ -1559,15 +1558,15 @@ def graph_system(
     integrate      : "step" | "substeps" | "adaptive"
         "step": one solve of the component's time_step (default); "substeps": n_substeps solves of
         time_step / n_substeps; "adaptive": step doubling with rtol / atol, min_step / max_step. Equations must
-        write their time terms with self.dt and self.previous() (design note time_and_data §2).
+        write their time terms with self.dt and self.previous().
     pool_unknowns  : {name: location} | {name: {"location": ..., "exchange": boundary set name}} | None
         Unknowns at a coarse scale, one per entity (e.g. the shoot phloem pool of each plant, location "Plant"),
-        solved with the node and edge unknowns (PT4). Their residual is a @pool_balance method; equations exchange
+        solved with the node and edge unknowns. Their residual is a @pool_balance method; equations exchange
         with them through self.pool_exchange(name), the sparse map between the nodes of the exchange set (default:
         every node) and the pool of their entity. Newton solvers only.
     split          : "whole" | "components"
         "components": each connected piece of the graph (of the active subgraph with where=), e.g. each plant of a
-        population, is solved on its own, with its own Newton convergence and integration steps (S2). "whole": one
+        population, is solved on its own, with its own Newton convergence and integration steps. "whole": one
         system (default).
     """
     # Backward-compat: honour deprecated method= kwarg.

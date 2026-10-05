@@ -82,7 +82,7 @@ class CompositeModel:
 
     def _couple_on_data_structures(self, translator: dict) -> None:
         """
-        Coupling of DataStructure-backed components (design note §5): links between components sharing a
+        Coupling of DataStructure-backed components: links between components sharing a
         DataStructure become name-level aliases or derived variables refreshed by the receiver before its step;
         identities need nothing. Links with components outside this composite (e.g. the soil) are exchanged
         by the Scene, not here.
@@ -135,7 +135,7 @@ class CompositeModel:
         return ds._variable_meta().get(name, {}).get("kind") if hasattr(ds, "_variable_meta") else None
 
     def _check_link_kinds(self, link, receiver, provider) -> None:
-        """A receiver declaring a state_variable_type must agree with its provider's (design note §2, step 3a)."""
+        """A receiver declaring a state_variable_type must agree with its provider's."""
         from openalea.metafspm.coupling.declaration import kinds_agree
         ds = receiver.data_structure
         received = getattr(receiver, "_variable_specs", {}).get(link.variable)
@@ -149,7 +149,7 @@ class CompositeModel:
 
     @staticmethod
     def _check_link_scales(link, ds) -> None:
-        """A link stating its scales must agree with the declared locations (R1: checks, declarations rule)."""
+        """A link stating its scales must agree with the declared locations (the declarations rule)."""
         from openalea.metafspm.coupling.declaration import location_of_scale
         checks = [(link.variable, link.scale)] + [(source, link.source_scale) for source in link.sources]
         for name, scale in checks:
@@ -164,7 +164,7 @@ class CompositeModel:
     def _default_link_mapping(ds, link, location):
         """
         Mapping of a link between two locations that gives no aggregation, from its sources' state_variable_type
-        (D9, option A; design note cross_scale_and_grids §2). None when the locations are the same.
+        None when the locations are the same.
         """
         from openalea.metafspm.coupling.declaration import DeclarationError, default_mapping, link_direction
         source_locations = {ds.location(source) for source in link.sources}
@@ -244,7 +244,7 @@ class CompositeModel:
         self.declare_data(shoot=shoot, root=root, atmosphere=atmosphere, soil=soil)
 
         self.couple_components(translator_path=translator_path, *components)
-        # The coupled DataStructures must be consistent (shapes, aliases, derivations; design note DS11)
+        # The coupled DataStructures must be consistent (shapes, aliases, derivations)
         checked = []
         for component in getattr(self, "components", ()):
             ds = getattr(component, "data_structure", None)

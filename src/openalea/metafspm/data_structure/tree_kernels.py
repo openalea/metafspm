@@ -1,6 +1,5 @@
 """
-Tree kernels: computations along a plant's topology, vectorised over every plant of a DataStructure (design note
-docs/design/population_and_performance.md §3, §9, §12; plan P3).
+Tree kernels: computations along a plant's topology, vectorised over every plant of a DataStructure.
 
 They work on local node indices: a parent array (-1 at roots) and, for chains, an ordering of the nodes into
 chains (axes, or ranks within a group). Models call them through MPGDataStructure (chain_scan, accumulate,
@@ -193,7 +192,7 @@ def path_compose(transforms: np.ndarray, parents: np.ndarray) -> np.ndarray:
     return out
 
 
-# ── Folds with a custom function (PT1) ──────────────────────────────────────────
+# ── Folds with a custom function ──────────────────────────────────────────
 
 EDGE_NAMES = np.array(["", "/", "<", "+"])
 _REDUCE_FILL = {"sum": 0., "max": -np.inf, "min": np.inf, "all": True, "any": False, "count": 0}
@@ -274,7 +273,7 @@ def fold(update, values, parents, children: tuple, direction: str = "up", edge_c
     """
     Level-by-level fold: "up" from the deepest level (children before parents), "down" from the roots. At each level,
     out[level.nodes] = update(level, out), with *update* any vectorised function of a FoldLevel and the current
-    values (PT1: nonlinear pipe models, death propagation, filtered maxima, turtle frames).
+    values: nonlinear pipe models, death propagation, filtered maxima, turtle frames.
     """
     if direction not in ("up", "down"):
         raise ValueError("fold: direction must be 'up' or 'down'")
@@ -288,7 +287,7 @@ def fold(update, values, parents, children: tuple, direction: str = "up", edge_c
     return out
 
 
-# ── Gathers and recurrences along chains (PT1) ──────────────────────────────────
+# ── Gathers and recurrences along chains ──────────────────────────────────
 
 def chain_gather(values, chains: dict, source_chain, position, fill=np.nan) -> np.ndarray:
     """Per node, the value of the node at *position* (0-based) on chain *source_chain*; *fill* when there is none."""
@@ -411,7 +410,7 @@ def path_contributions(parents, budget, extent, values, targets, include=None) -
     The supply windows of path_window, element by element: (owner, supplier, contribution) for each node of
     *targets* (local indices, in the order given), its suppliers in walking order and the value each provides (the last
     one its fraction). Emitted in the visiting order of the targets, so that scatter_contributions accumulates in
-    rhizodep's order (S1).
+    rhizodep's order.
     """
     values = np.ascontiguousarray(np.asarray(values, dtype=np.float64))
     n = values.shape[0]
@@ -432,7 +431,7 @@ def scatter_contributions(n, owner, supplier, contribution, amount, total, out=N
     """
     out[supplier] += amount[owner] * contribution / total[owner], one addition after the other in emission order
     (np.add.at is sequential): rhizodep's sharing of each apex's consumption between its supplying segments, bit for
-    bit when the contributions come from path_contributions in its visiting order (S1). Owners with a zero total add
+    bit when the contributions come from path_contributions in its visiting order. Owners with a zero total add
     nothing.
     """
     out = np.zeros(n) if out is None else out
