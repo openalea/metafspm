@@ -18,9 +18,6 @@ LegacyMPGDataStructure
 
 ArrayDataStructure
   - Cached Laplacian is cleared; rebuilt lazily on next laplacian() call.
-
-MultiGridDataStructure
-  - Propagated to every grid level (all Laplacian caches cleared).
 """
 
 import sys
@@ -36,7 +33,6 @@ from openalea.metafspm.data_structure.data_api import (
     LegacyMPGDataStructure,
     MPGDataStructure,
     ArrayDataStructure,
-    MultiGridDataStructure,
 )
 from simple_seedling import generate_simple_mpg_seedling
 
@@ -290,37 +286,3 @@ def test_array_update_topology_multiple_calls():
     L2 = ds.laplacian()
 
     assert L1 is not L2
-
-
-# ── MultiGridDataStructure ────────────────────────────────────────────────────
-
-def test_multigrid_update_topology_clears_all_levels():
-    """update_topology() propagates to every grid level.
-
-    All Laplacian caches are cleared so the next laplacian() call on any
-    level rebuilds from scratch.
-    """
-    fine = ArrayDataStructure((8,), dx=1.0)
-    mg = MultiGridDataStructure.from_coarsening(fine, n_levels=3)
-
-    # Warm up all Laplacian caches
-    for lvl in mg._levels:
-        _ = lvl.grid.laplacian()
-    L_before = [lvl.grid._L for lvl in mg._levels]
-    assert all(L is not None for L in L_before), "sanity: all caches built"
-
-    mg.update_topology()
-    L_after = [lvl.grid._L for lvl in mg._levels]
-    assert all(L is None for L in L_after), "all Laplacian caches must be cleared"
-
-
-def test_multigrid_update_topology_fine_grid_rebuilds():
-    """After update_topology(), fine-grid Laplacian is rebuilt on next call."""
-    fine = ArrayDataStructure((8,), dx=1.0)
-    mg = MultiGridDataStructure.from_coarsening(fine, n_levels=2)
-    L_before = mg.laplacian()
-
-    mg.update_topology()
-    L_after = mg.laplacian()
-
-    assert L_before is not L_after

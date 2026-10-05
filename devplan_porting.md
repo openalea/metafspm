@@ -304,11 +304,25 @@ Not planned in metafspm: G13 (a masked loop in a step), G14 (until stratificatio
 ### Questions
 
 - **QPs:** cell-based octree refinement as above (PT10)? **Recommendation:** yes. It keeps one graph contract for plants and soils, so the models do not change when the soil becomes adaptive.
-  → answer:
+  → answer: yes
 - **QPt:** refinement at fixed points (between steps, like growth) from a user criterion, with a maximum level and the 2:1 balance? Or within a step (re-solving after refinement)? **Recommendation:** between steps. The flux of the step that just ended decides the next step's mesh, which keeps solves on a fixed graph.
-  → answer:
+  → answer: yes to Recommendation
 - **QPu:** remove `MultiGridDataStructure` once PT10 exists? **Recommendation:** yes. It is unusable as is, and adaptive cells cover the need it was meant for.
-  → answer:
+  → answer: yes to Recommendation
 - **Before or after GRANAP?** PT10 concerns the soil, which GRANAP does not need. **Recommendation:** after GRANAP, unless you want the soil first.
+  → answer: now so overall DataStructure API st
+
+## 12. PT10 done (2026-10-06): adaptive grids; MultiGrid removed
+
+- **Done:**
+  - `AdaptiveGridDataStructure` (octree, 2:1 balance, faces from the finest lattice, conservative carry-over, checkpoints, `CrossMapping`), tested against `ArrayDataStructure`, with uniform-refinement equivalence and conservation;
+  - `MultiGridDataStructure` removed (QPu).
+- **Limits:**
+  - faces are found on the finest lattice (base cells × 2^(d·max_level)), which suits moderate depths (2–3 levels);
+  - `LayerMapping` works on regular grids only;
+  - `layer_mask` takes the boundary layers 0 and −1.
+- **Found, outside the suite:** `test/data_api_tests/examples/example_mpg_data_structure.py` (a legacy-to-MPG migration demo) fails, already before this step. It builds `MPGDataStructure` from an unpopulated MTG, and once populated, mixes legacy and MPG node counts.
+
+  **QPv:** rewrite it on the current API, or delete it (the migration guide covers the path)? **Recommendation:** delete it, with its image, since `LegacyMPGDataStructure` / `from_legacy` are only kept for that migration.
   → answer:
 

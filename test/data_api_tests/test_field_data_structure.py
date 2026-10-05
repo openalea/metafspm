@@ -1,16 +1,14 @@
-"""Tests for FieldDataStructure, ArrayDataStructure, and MultiGridDataStructure.
+"""Tests for FieldDataStructure and ArrayDataStructure.
 
 FieldDataStructure (Level 2b) is the abstract base for spatially-discretised
 environment models.  ArrayDataStructure (Level 3b) backs a 1-D or 3-D numpy
 grid with a second-order finite-difference Laplacian and Neumann boundary
-conditions.  MultiGridDataStructure (Level 3c) wraps a hierarchy of grids for
-multigrid preconditioning or homogenisation.
+conditions. (MultiGridDataStructure was removed in PT10: adaptive refinement is AdaptiveGridDataStructure.)
 
-Four concerns are tested:
+Three concerns are tested:
   1. FieldDataStructure abstract contract (ABC enforcement, n_dof, extract/inject)
   2. ArrayDataStructure: shape, add_field, coordinates, Laplacian, caching
   3. ArrayDataStructure extract_state / inject_state round-trips (1-D and 3-D)
-  4. MultiGridDataStructure: construction, field delegation, restrict/prolongate
 """
 
 import pytest
@@ -20,8 +18,6 @@ from scipy.sparse import issparse
 from openalea.metafspm.data_structure.data_api import (
     FieldDataStructure,
     ArrayDataStructure,
-    GridLevel,
-    MultiGridDataStructure,
 )
 
 
@@ -242,132 +238,3 @@ def test_array_extract_inject_roundtrip_3d():
     np.testing.assert_array_equal(ds._get_field('concentration'), vals * 2.0)
 
 
-# ── 4. MultiGridDataStructure: construction ───────────────────────────────────
-
-def test_multigrid_empty_raises():
-    with pytest.raises(ValueError, match="least one"):
-        MultiGridDataStructure([])
-
-
-def test_multigrid_from_coarsening_n_levels():
-    fine = ArrayDataStructure(shape=(8,), dx=1.0)
-    mg = MultiGridDataStructure.from_coarsening(fine, n_levels=3)
-    assert mg.n_levels == 3
-
-
-def test_multigrid_fine_is_level_0():
-    fine = ArrayDataStructure(shape=(8,), dx=1.0)
-    mg = MultiGridDataStructure.from_coarsening(fine, n_levels=2)
-    assert mg.fine is fine
-
-
-def test_multigrid_coarse_shape_halved():
-    fine = ArrayDataStructure(shape=(8,), dx=1.0)
-    mg = MultiGridDataStructure.from_coarsening(fine, n_levels=2, factor=2)
-    assert mg._levels[1].grid.shape == (4,)
-
-
-def test_multigrid_shape_delegates_to_fine():
-    fine = ArrayDataStructure(shape=(8,), dx=1.0)
-    mg = MultiGridDataStructure.from_coarsening(fine, n_levels=2)
-    assert mg.shape == (8,)
-
-
-def test_multigrid_n_dof_equals_fine_n_dof():
-    fine = ArrayDataStructure(shape=(8,), dx=1.0)
-    mg = MultiGridDataStructure.from_coarsening(fine, n_levels=3)
-    assert mg.n_dof == fine.n_dof == 8
-
-
-# ── MultiGridDataStructure: field delegation ─────────────────────────────────
-
-def test_multigrid_get_field_reads_fine():
-    fine = ArrayDataStructure(shape=(4,), dx=1.0)
-    fine.add_field('u', np.array([1.0, 2.0, 3.0, 4.0]))
-    mg = MultiGridDataStructure.from_coarsening(fine, n_levels=2)
-    np.testing.assert_array_equal(mg._get_field('u'), [1.0, 2.0, 3.0, 4.0])
-
-
-def test_multigrid_set_field_writes_to_fine():
-    fine = ArrayDataStructure(shape=(4,), dx=1.0)
-    fine.add_field('u')
-    mg = MultiGridDataStructure.from_coarsening(fine, n_levels=2)
-    mg._set_field('u', np.array([10.0, 20.0, 30.0, 40.0]))
-    np.testing.assert_array_equal(fine._get_field('u'), [10.0, 20.0, 30.0, 40.0])
-
-
-def test_multigrid_available_vars():
-    fine = ArrayDataStructure(shape=(4,), dx=1.0)
-    fine.add_field('u')
-    fine.add_field('v')
-    mg = MultiGridDataStructure.from_coarsening(fine, n_levels=2)
-    assert set(mg.available_vars()) == {'u', 'v'}
-
-
-def test_multigrid_extract_inject_roundtrip():
-    fine = ArrayDataStructure(shape=(4,), dx=1.0)
-    fine.add_field('u', np.array([1.0, 2.0, 3.0, 4.0]))
-    mg = MultiGridDataStructure.from_coarsening(fine, n_levels=2)
-    x = mg.extract_state(['u'])
-    mg.inject_state(x * 5.0, ['u'])
-    np.testing.assert_array_equal(fine._get_field('u'), [5.0, 10.0, 15.0, 20.0])
-
-
-def test_multigrid_laplacian_delegates_to_fine():
-    fine = ArrayDataStructure(shape=(6,), dx=0.5)
-    mg = MultiGridDataStructure.from_coarsening(fine, n_levels=2)
-    assert mg.laplacian() is fine.laplacian()
-
-
-def test_multigrid_coordinates_delegates_to_fine():
-    fine = ArrayDataStructure(shape=(5,), dx=2.0)
-    mg = MultiGridDataStructure.from_coarsening(fine, n_levels=2)
-    np.testing.assert_array_equal(mg.coordinates(), fine.coordinates())
-
-
-# ── MultiGridDataStructure: restriction and prolongation ─────────────────────
-
-def test_restriction_matrix_shape():
-    fine = ArrayDataStructure(shape=(8,), dx=1.0)
-    mg = MultiGridDataStructure.from_coarsening(fine, n_levels=2, factor=2)
-    R = mg._levels[1].restriction
-    assert R.shape == (4, 8)
-
-
-def test_prolongation_matrix_shape():
-    fine = ArrayDataStructure(shape=(8,), dx=1.0)
-    mg = MultiGridDataStructure.from_coarsening(fine, n_levels=2, factor=2)
-    P = mg._levels[1].prolongation
-    assert P.shape == (8, 4)
-
-
-def test_restrict_output_shape():
-    fine = ArrayDataStructure(shape=(8,), dx=1.0)
-    mg = MultiGridDataStructure.from_coarsening(fine, n_levels=2, factor=2)
-    xc = mg.restrict(np.ones(8), from_level=0)
-    assert xc.shape == (4,)
-
-
-def test_prolongate_output_shape():
-    fine = ArrayDataStructure(shape=(8,), dx=1.0)
-    mg = MultiGridDataStructure.from_coarsening(fine, n_levels=2, factor=2)
-    xf = mg.prolongate(np.ones(4), to_level=0)
-    assert xf.shape == (8,)
-
-
-def test_prolongation_preserves_constant_field():
-    """P rows each sum to 1: prolongating a constant coarse field is exact."""
-    fine = ArrayDataStructure(shape=(8,), dx=1.0)
-    mg = MultiGridDataStructure.from_coarsening(fine, n_levels=2, factor=2)
-    xf = mg.prolongate(np.full(4, 7.0), to_level=0)
-    np.testing.assert_allclose(xf, np.full(8, 7.0), atol=1e-12)
-
-
-def test_restriction_prolongation_approximate_identity():
-    """R @ P should be close to I_coarse (standard multigrid property)."""
-    fine = ArrayDataStructure(shape=(8,), dx=1.0)
-    mg = MultiGridDataStructure.from_coarsening(fine, n_levels=2, factor=2)
-    R = mg._levels[1].restriction
-    P = mg._levels[1].prolongation
-    RP = R @ P
-    np.testing.assert_allclose(np.diag(RP), np.ones(4), atol=0.5)

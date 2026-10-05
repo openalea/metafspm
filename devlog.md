@@ -1896,3 +1896,25 @@ Per-file counts:
   - **QPp:** answered with a question about adaptive discretisation. I proposed cell-based octree refinement on the grid graph contract (PT10), with QPs–QPu.
   - The "parallel pieces" deferred item is explained in the conversation.
 - **Suite:** 707 passed.
+
+## 2026-10-06 (later): QPs–QPu answered (PT10 now, so that the whole DataStructure API settles); PT10
+
+- **`AdaptiveGridDataStructure`** (new module):
+  - leaves as (level, index) arrays sorted by finest corner (C order when unrefined);
+  - a finest-lattice map `_leaf_of`; faces as unique (low, high) leaf pairs along each axis, with wrap faces on periodic axes (skipped when they would duplicate an internal face, as `ArrayDataStructure` does), areas from finest-face counts, distances from half sizes;
+  - `refine` (split, then rebalance until 2:1), and `coarsen` (complete families only, undone if it breaks the balance);
+  - carry-over through a sparse new × old overlap matrix (extensive: fractions of old cells; others: volume means), with edge variables reset;
+  - stable cell ids (finest corner and level); `locate` via the finest map; `_dx` is the finest spacing, so `CrossMapping` overlap cuts at every leaf face;
+  - checkpoints with `_level` / `_index`.
+- **Tests** (`test_adaptive_grid.py`, 6):
+  - balance and face closure;
+  - conservation through refine and coarsen, and exact return;
+  - a uniformly refined grid equals the regular fine grid in a diffusion solve (rtol 1e-10);
+  - locally refined diffusion conserves through refinement between steps;
+  - plants mapped onto refined cells (barycentre and overlap);
+  - checkpoint round trip.
+
+  Also checked by hand: unrefined adaptive and regular grids agree (cells, faces, areas, centres), periodic or not.
+- **`MultiGridDataStructure` removed:** the class, 20 tests, two example scripts with their images, and the plotting helper.
+- **Found:** `example_mpg_data_structure.py` was already broken before this step (QPv asked).
+- **Suite:** 693 passed.

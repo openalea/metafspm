@@ -83,7 +83,7 @@ def input_variable(unit: str, unit_comment: str, description: str, min_value: fl
     When the component is run in isolation (not coupled), the field keeps
     *initialize* as its uniform default everywhere.
 
-    :param scale:  "node" | "edge" (graph) or grid-level descriptor (multigrid).
+    :param scale:  "node" | "edge" (graph), a biological scale, or use location="cell" on grids.
     :param state_variable_type: optional kind of the input ("extensive", "intensive", ...): when given, it must
                    agree with the kind of the variable that provides it through the translator.
     """

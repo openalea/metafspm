@@ -18,6 +18,14 @@ The flat modules used before the 2026 restructure have been removed. No compatib
 | `openalea.metafspm.component.Model`, `declare` | `openalea.metafspm.coupling.component.Component` / `FunctionalComponent`, `declare` |
 | `openalea.metafspm.specializer` | `openalea.metafspm.solve.specializer` |
 
+### Adaptive grids (PT10); MultiGridDataStructure removed
+
+- **New `data_structure/adaptive_grid.py`, `AdaptiveGridDataStructure`:** cell-based octree refinement over a regular base grid (periodic axes, `max_level`, 2:1 balance between neighbours).
+  - **Graph:** cells are nodes and the faces between leaves are edges, with their real `face_area` and `face_distance`, so graph systems, boundary sets (`layer_mask(z=-1)`), masks, steps, `CrossMapping` (barycentre and overlap) and checkpoints work unchanged. `cell_volume()` gives one value per cell.
+  - **Refinement:** `refine(criterion)` / `coarsen(criterion)`, between steps (QPt). Values are carried by volume overlaps: extensive values split or summed, the others volume-averaged or copied; edge variables are reset.
+  - **Tested:** an unrefined grid equals `ArrayDataStructure`; a uniformly refined grid solves diffusion like the equivalent fine regular grid; locally refined solves conserve mass.
+- **Breaking:** `MultiGridDataStructure` and `GridLevel` are removed (QPu). They had no variable store, 1-D-only operators and no users. Their tests, example scripts and plotting helper go too.
+
 ### A light model triangulating the populations itself (PT8)
 
 - **Test only, no new API:** a CARIBU-like toy component on the union of two populations of different models. It builds its own triangles from each element's geometry, shades by Beer's law, writes the absorbed light back to every population, and runs every 4 steps with its outputs kept (QPd).
