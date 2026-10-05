@@ -1689,3 +1689,31 @@ Per-file counts:
 - **Found while testing:** a step named `_seedling_exudation` silently wrote a new `seedling_exudation` variable (only a DeprecationWarning). Step names must match their output.
 - **Suite:** 727 passed.
 - **P6 committed** (`0867486`). **P7 design note** drafted (§11: benchmark protocol and the list of what is removed), with questions QP7a–b. Stopped for the answers: the removal is breaking for downstream users.
+
+## 2026-10-06 (later): QP7a–b agreed; P7 done (benchmarks, removal of the per-process scene)
+
+- **QP7a:** the in-repo doubles are enough. **QP7b:** remove regardless; the user considers the per-process parallelisation unfit for populations, and runtime optimisation comes later if needed.
+- **`test/benchmarks/bench_population.py`:**
+  - doubles with the real models' cost structure: vectorised carbon, an implicit diffusion graph system, bulk segmentation (`add_components_bulk` with predicted consecutive vids for chains), a soil grid, the recorder;
+  - plants of 2 000 segments (a main axis of 1000 and 5 laterals of 200).
+- **Results:** 1 → 1000 plants is linear, 6.7 s per step for 2·10⁶ segments; anatomy mode reaches 0.6 s per step for 8·10⁵ Compartments.
+- **Profile at 100 plants:**
+  - `write_back_to_mtg` is 97 % of rates-and-states (F3);
+  - `extend_graph` traverses the whole MTG through openalea's `components_at_scale` at each growth (F4).
+
+  Both are recorded in §14 and asked as QF3 / QF4.
+- **Reference** (`bench_reference.py`, run, then deleted with `play_Orchestra`): `play_Orchestra` with `DSFakePlant` / `DSFakeSoil` against a Scene of the same toy plants, as (T(13) − T(3)) / 10 to cancel the start-up. Per step: 0.47 / 1.7 / 6.6 ms for 1 / 4 / 12 plants against a flat 0.3 ms.
+- **Pitfalls hit while writing the benchmark:**
+  - bulk creation needs `PropsConfig` (the `scale` property), or `populate_graph` silently skips the vertices;
+  - an MPG-style step must give new vertices every MTG-backed variable, or `read_mtg` raises.
+- **Removal:**
+  - `scene_wrapper.py` (with `stand_initialization` moved to `population.py`) and `coupler.py`;
+  - the soil members of `CompositeModel`;
+  - six test files (79 tests); the queue, logger and light doubles and fixtures; the `slow` marker; `scene_wrapper_example.py`, rewritten as `scene_example.py`.
+- **Test changes:**
+  - the composite contract test now sets the soil values that coupling used to zero;
+  - `test_translator`'s comparison with the removed method became fixed expectations;
+  - the CrossMapping barycentre test computes the reference map itself.
+- **New `test/wrappers_tests/test_scene_contract.py`:** the DS doubles in a Scene, with 3 plants feeding one soil without zeroing.
+- **Docs:** migration guide §3–§5 rewritten for the population contracts and the Scene.
+- **Suite:** 649 passed.

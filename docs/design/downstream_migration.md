@@ -84,65 +84,69 @@ The rules:
 - **Missing variables raise:** a graph-system argument or a filter variable must be registered (declared, or set before the solve). Missing values are no longer read as zeros.
 - **Non-float variables.** Labels and types are declared with `dtype="int"`. Lists such as `xylem_vessel_radii` are declared with `dtype="object"`: they are stored per entity and carried over by growth, but graph systems, derivations and transport reject them (Q22). Filters and masks accept label names (`{"label": ["RootSegment"]}`).
 
-## 3. Plant composite (GrassBRIDGES)
+## 3. Plant model (GrassBRIDGES): a population model
+
+A plant model is built once for all the plants of that model in a scene (devplan_population_scene §10, QP6a):
 
 ```python
 class GrassBRIDGES(CompositeModel):
-    soil_name = "SoilModel"                                # the soil component name used in the translator
-    def __init__(self, queues_soil_to_plants, queue_plants_to_soil, queues_light_to_plants, queue_plants_to_light,
-                 name, time_step, coordinates, rotation, translator_path, **scenario):
-        Choregrapher().add_simulation_time_step(time_step)     # before building the components
-        self.plant_ds = MPGDataStructure(g, from_scale=g.scales.SubOrgan)
-        self.components = (RootGrowth(data_structure=self.plant_ds), RootCNUnified(data_structure=self.plant_ds), ...)
-        self.declare_data_and_couple_components(root=self.plant_ds, translator_path=translator_path,
+    initiators = (RootGrowth, ShootGrowth)       # StructuralComponents: initiate_plant(g, plant, parameters) per plant
+    from_scale = "SubOrgan"                      # the graph nodes; nodes = "Compartment" for anatomies
+
+    def __init__(self, data_structure, time_step, translator_path=..., **scenario):
+        self.components = (RootGrowth(data_structure=data_structure), RootCNUnified(data_structure=data_structure), ...)
+        self.declare_data_and_couple_components(root=data_structure, translator_path=translator_path,
                                                 components=self.components)
-        self.transport = Transport.from_translator(Translator.load(translator_path), soil=self.soil_name,
-                                                   plant_components=[c.__class__.__name__ for c in self.components],
-                                                   capacity=capacity_from_the_shared_memory_size)
+
+    def run(self):
+        for component in self.components:
+            component()
 ```
 
+- **Plants:** each structural component builds a plant's initial structure in `initiate_plant(g, plant, parameters)`, from the Plant variables `x, y, z, rotation` (QP4a, QP4b). Several initiators run in order.
+- **Parameters:**
+  - numeric parameters are stored per plant and come from each plant's scenario;
+  - steps take them as arguments;
+  - other scenario entries are shared by the plants of one model.
 - **Coupling:**
-  - identity links need nothing;
-  - aliases and conversions become DataStructure aliases and derived variables. Derived variables are recomputed when read after a source changed, and are read-only;
+  - the model's translator couples its own components within the MPG: identity links need nothing; aliases and conversions become DataStructure aliases and derived variables. Derived variables are recomputed when read after a source changed, and are read-only;
+  - links with the environment are the scene translator's (§4);
   - `mtg_to_arraydict` and the "convert before coupling" ordering constraint are gone.
 - **Translator:** YAML files load unchanged. A Python translator (`translator = Translator().link(...)` in a `.py` module) adds live `scales.*` references, `aggregation=` / `weight=` for scale changes, and `formula=` (Q4b). Keep identity links written explicitly for readability (Q26). String factors are parsed arithmetic; `eval` is gone.
-- **Soil exchange:**
-  - each step, call `self.transport.write_plant(buffer, self.plant_ds)` before sending the status, and `self.transport.read_soil(buffer, self.plant_ds)` after the soil's `"finished"`;
-  - send `{"plant_id", "model_name", "handshake": self.transport.rows, "capacity": ...}`, adding `"carried_components"` at init;
-  - the `vertex_index >= 1` mask, `soil_handshake` and the fixed `(35, 20000)` shape are gone.
-- **Scene:** call `play_Orchestra(..., handshake_shape=Transport.from_translator(...).shape)` (Q27).
+- **Removed:** the queues, `name`, `coordinates`, `rotation`, `Transport` and `handshake_shape`. The scene does the exchanges.
+- **Initial values:** the soil inputs are no longer reset to 0 at coupling; they keep their declared `initialize` until the first exchange.
+- **MPG-style steps** loop over `self.active_ids()`, so that plants before emergence are skipped.
 - **Check:** in the package's own tests, add `openalea.metafspm.testing.assert_component_couplable(Component, translator)` for every component.
 
-## 4. Soil (rhizosoil)
+## 4. Environment models and the scene (RhizoSoil, the light model)
 
-- **Component:** `SoilModel` becomes a `FunctionalComponent` on `ArrayDataStructure(shape=(nx, ny, nz), dx=side)`.
+- **Soil component:** `SoilModel` becomes a `FunctionalComponent` on `ArrayDataStructure(shape=(nx, ny, nz), dx=side)`.
   - Axes are `(x, y, z)` (Q16b). Legacy `(ny, nz, nx)` voxel arrays convert with `legacy.transpose(2, 0, 1)`.
-  - Fields are declared with `scale="cell"`, or `"scalar"` for uniform drivers such as rain.
+  - Fields are declared with `location="cell"`, or `"scalar"` for uniform drivers such as rain.
   - The grid gives `cell_centers()`, `cell_volume()` and `locate(points, periodic=, clip=)`.
-- **Composite (RhizoSoil):** see `DSFakeSoil`.
-  - At init, for each plant message: `Transport.from_rows(message["handshake"], message["capacity"], to_soil=, to_plant=)`, taking the links from the soil's translator for the plant's `carried_components`.
-  - **Plant models in a population scene (P6, QP6a):**
-    - `Model(data_structure, time_step, **scenario)`, built once for all the plants of that model, with a class attribute `initiators` (the StructuralComponents whose `initiate_plant` builds each plant);
-    - steps take parameters as arguments;
-    - MPG-style steps loop over `self.active_ids()`, so that plants before emergence are skipped.
+- **Environment model:** `Model(populations, scene_xrange, scene_yrange, time_step, **scenario)` builds its DataStructures and exposes `components` and `run()`; it applies its input tables itself. Its DataStructure can be:
+  - a grid (soil, RATP-like light);
+  - a `UnionDataStructure(populations)` for a model that must see every population (CARIBU-like light);
+  - a population's MPG.
+- **Scene translator:** the links between the plant and environment components. Defaults follow the variables' kinds:
+  - extensive plant → cell: `sum`;
+  - intensive plant → cell: `weighted_mean`, which needs `weight=`;
+  - intensive cell → plant: `broadcast`;
+  - extensive cell → plant: `split`, which needs `weight=`;
+  - variables without a declared kind need an explicit `aggregation=`.
+- **The scene** (`openalea.metafspm.scene.scene.Scene`, see `test/provide_usage_examples/scene_example.py`):
+  - builds one population per plant model of the planting table (`planting_table(...)`), then the environment models;
+  - infers the mappings (barycentre by default, `mapping_method="overlap"` as an option) and runs one `Exchanges` at fixed points: each environment model after the exchanges into it, then each population after the exchanges into it;
+  - several plants feed one soil in one write, without zeroing.
+- **Replaced:** `compute_mtg_voxel_neighbors_fast`, `apply_to_voxel_fast` and `get_from_voxel_fast` by `CrossMapping`. `play_Orchestra`, `Transport`, `Coupler` and the queue protocol are removed (P7).
+- **Light model:** known bug to fix at the same time (B11): the first `run` crashes when there is no light at t=0 (`previous_Erel` is None).
 
-    Environment models: `Model(populations, scene_xrange, scene_yrange, time_step, **scenario)`, building their grid or union.
-  - **Population scene (P5–P6):** in a population scene, the plant ↔ soil links go through `coupling.cross.Exchanges` with one `CrossMapping` per population. Maps rebuild themselves, and no zeroing is needed. The per-process `Coupler` below is removed after P7.
-  - Each step, for each plant: `Coupler(transport.plant_view(buffer), soil_ds, VoxelLocator(soil_ds))`, `update_map()`, then:
-    1. one `zero_soil_inputs()`;
-    2. `push()` for all plants;
-    3. the soil step;
-    4. `pull()` for all plants;
-    5. reply `"finished"`.
-  - This replaces `compute_mtg_voxel_neighbors_fast`, `apply_to_voxel_fast` and `get_from_voxel_fast`, with identical sums (tested).
-- **Aggregation:** fluxes are always summed into voxels (extensive), and soil states are gathered (intensive), whatever `state_variable_type` says.
+## 5. Outputs
 
-## 5. Light model
-
-- The constructor receives the queues: `LightModel(queues_light_to_plants, queue_plants_to_light, scene_xrange, scene_yrange, meteo, **scenario)`.
-- It must **answer the plants' initialization messages in `__init__`**, as the soil does (Q17). Without this, every model runs `n_iterations - 1` steps.
-- `meteo` comes from `light_scenario["meteo"]`, a csv path or a DataFrame (Q8).
-- Known bug to fix at the same time (B11): the first `run` crashes when there is no light at t=0 (`previous_Erel` is None).
+- **Built-in recorder:** the scene's `SceneRecorder` writes, for each population:
+  - per-plant summaries every step;
+  - the selected plants' segments every `heavy_log_period` steps (`log_plants=`).
+- **fspm-utility Logger:** it plugs in through `logger_class(scene=..., outputs_dirpath=..., **log_settings)` once adapted (§6).
 
 ## 6. Logger (`openalea.fspm`): the xarray and csv writers only (Q15)
 
@@ -169,7 +173,7 @@ class GrassBRIDGES(CompositeModel):
 1. The imports are migrated (§1).
 2. Each component is a `FunctionalComponent`, with `scale` on its coupled and solved fields, vectorised steps (or the explicit opt-in), `previous()` and `on_grow`.
 3. `assert_component_couplable` passes for each component against the shipped translator, with `data_structure=` the plant (or soil) DataStructure, so that declarations are resolved and the DataStructure validated.
-4. The composite uses `Transport` and passes `handshake_shape`; the soil and light models follow §4–§5.
-5. A short scene run gives the same outputs as before the migration, for a fixed seed and a few steps, the way `test_ds_scene_contract.py` does for the doubles.
+4. The plant model follows the population contract (§3), and the environment models follow §4.
+5. A short `Scene` run gives the expected outputs for a fixed seed and a few steps, the way `test/wrappers_tests/test_scene_contract.py` does for the doubles.
 
-The legacy props path (the props branches of `CompositeModel`, the Functor and `FunctionalComponent`, and the `HANDSHAKE_SHAPE` default) is already removed from metafspm. Migrated packages must target the current API.
+The legacy props path (the props branches of `CompositeModel`, the Functor and `FunctionalComponent`) and the per-process scene (`play_Orchestra`, `Transport`, `Coupler`) are already removed from metafspm. Migrated packages must target the current API.

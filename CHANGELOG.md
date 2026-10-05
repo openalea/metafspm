@@ -18,6 +18,18 @@ The flat modules used before the 2026 restructure have been removed. No compatib
 | `openalea.metafspm.component.Model`, `declare` | `openalea.metafspm.coupling.component.Component` / `FunctionalComponent`, `declare` |
 | `openalea.metafspm.specializer` | `openalea.metafspm.solve.specializer` |
 
+### Breaking: the one-plant-per-process scene is removed (P7)
+
+- **Removed:**
+  - `openalea.metafspm.scene.scene_wrapper`: `play_Orchestra`, the plant, soil and light workers, the CPU-affinity helpers and the queues;
+  - `openalea.metafspm.coupling.coupler`: `Coupler`, `Transport`, `BufferPlantView`, `VoxelLocator`.
+
+  Use `openalea.metafspm.scene.scene.Scene`, which also takes the package-level import `from openalea.metafspm import Scene, planting_table`. The plant ↔ environment exchanges go through `coupling.cross` (`CrossMapping`, `Exchanges`).
+- **`stand_initialization`** moved to `scene/population.py`.
+- **`CompositeModel`:** `soil_name`, `soil_inputs`, `soil_outputs` and `get_component_inputs_outputs` are removed; the translator query is `Translator.inputs_outputs`. A plant composite no longer registers its soil inputs and resets them to 0 at coupling: they keep their declared `initialize` until the scene's first exchange.
+- **Tests:** the multiprocessing tests and their doubles are removed, with the `slow` marker. The plant / soil contract of the DataStructure doubles now runs in a `Scene` (`test/wrappers_tests/test_scene_contract.py`).
+- **Benchmarks:** `test/benchmarks/bench_population.py` (results in `docs/design/population_and_performance.md` §14). On toy plants, the Scene's per-step overhead is flat, while the per-process scene's grew with the plants (0.27 ms against 6.6 ms for 12 plants). 1000 plants of 2 000 segments take 6.7 s per step in one process; findings F3 and F4 there are about 4.5 s of it.
+
 ### The population scene (P6)
 
 - **New `scene/scene.py`, `Scene(CompositeModel)`:** the populations and the environment models of a stand, in one process.

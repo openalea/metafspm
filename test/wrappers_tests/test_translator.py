@@ -56,15 +56,18 @@ def test_yaml_round_trip_matches_the_legacy_nested_format():
                 assert nested[receiver][provider][variable] == {s: parse_factor(f) for s, f in sources.items()}
 
 
-def test_inputs_outputs_match_composite_model():
+def test_inputs_outputs_of_the_soil():
     translator = Translator.from_yaml(WHEATBRIDGES)
-    with open(WHEATBRIDGES) as f:
-        raw = yaml.safe_load(f)
-    for names_for_others in (True, False):
-        expected = CompositeModel().get_component_inputs_outputs(translator=raw, components_names=PLANT_COMPONENTS,
-                                                                 target_name="SoilModel", names_for_others=names_for_others)
-        got = translator.inputs_outputs(PLANT_COMPONENTS, target="SoilModel", names_for_others=names_for_others)
-        assert sorted(got[0]) == sorted(expected[0]) and sorted(got[1]) == sorted(expected[1])
+    inputs, outputs = translator.inputs_outputs(PLANT_COMPONENTS, target="SoilModel", names_for_others=False)
+    assert sorted(outputs) == ['C_amino_acids_soil', 'C_hexose_soil', 'C_mineralN_soil', 'Cs_cells_soil', 'Cs_mucilage_soil',
+                               'Cv_solutes_soil', 'microbial_C', 'microbial_N', 'soil_temperature', 'water_potential_soil']
+    assert len(inputs) == 18
+    assert {"hexose_exudation_massic", "mineralN_uptake", "water_uptake"} <= set(inputs)
+    # names_for_others=True: plant-side names on both sides
+    inputs, outputs = Translator.from_dict(doubles.TRANSLATOR).inputs_outputs(["RootCarbon", "RootNitrogen"],
+                                                                              target="SoilModel")
+    assert sorted(outputs) == ["C_hexose_soil", "soil_temperature"]
+    assert sorted(inputs) == ["amino_acids_exudation", "hexose_exudation"]
 
 
 def test_yaml_long_form_with_scale_and_aggregation(tmp_path):

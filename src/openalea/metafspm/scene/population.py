@@ -26,13 +26,11 @@ def planting_table(xrange: float, yrange: float, sowing_density: float, row_spac
                    per_plant_scenarios: list = None, exact: bool = False, seed: int = None,
                    emergence_times: list = None) -> pd.DataFrame:
     """
-    One row per plant (columns plant, model, x, y, z, rotation, scenario), with the layout of play_Orchestra's
-    stand_initialization: rows every row_spacing, plants per row from sowing_density, a model drawn per position
+    One row per plant (columns plant, model, x, y, z, rotation, scenario), with the layout of stand_initialization: rows every row_spacing, plants per row from sowing_density, a model drawn per position
     from plant_model_frequency. Each plant's scenario is its model's, or per_plant_scenarios[i] when given (Q6: one
     scenario per plant, the statistical repartition being built upstream). emergence_times (s, one per plant) adds
     the emergence_time column read by the Scene (Q5). The stand's size is kept in table.attrs (xrange, yrange).
     """
-    from openalea.metafspm.scene.scene_wrapper import stand_initialization
     if plant_model_frequency is None:
         plant_model_frequency = [1. / len(plant_models)] * len(plant_models)
     sowing_depth = list(sowing_depth) * (len(plant_models) if len(sowing_depth) == 1 else 1)
@@ -59,6 +57,53 @@ def planting_table(xrange: float, yrange: float, sowing_density: float, row_spac
         table["emergence_time"] = np.asarray(emergence_times, dtype=float)
     table.attrs.update(xrange=xrange, yrange=yrange)
     return table
+
+
+def stand_initialization(scene_name, xrange, yrange, sowing_density, sowing_depth, row_spacing,
+                            plant_models, plant_scenarios, plant_model_frequency, row_alternance=None, exact=False):
+    """
+    Planting positions of the former one-plant-per-process scene: rows every row_spacing along x, plants per row from
+    sowing_density, a model drawn per position from plant_model_frequency, a random rotation. Returns (actual xrange,
+    yrange, {plant name: dict(model, scenario, coordinates, rotation)}).
+    """
+    # TODO : In the current state, field orientation relative to south cannot be chosen
+    unique_plant_ID = 0
+    
+    n_rows = int(xrange / row_spacing)
+    actual_xrange = n_rows * row_spacing # Reccomputed to make sure the scene size is adapted to symetry
+    number_per_row = max(int(yrange * xrange * sowing_density / n_rows), 1)
+    intra_row_distance = yrange / number_per_row
+
+    print(f"\033[1m\033[32mLaunching scene '{scene_name}' with {n_rows} rows, {number_per_row} plant per rows, which represents {n_rows * number_per_row} plants\033[0m")
+    
+    current_model_index = -1
+    planting_sequence = {}
+    for x in range(n_rows):
+        if exact:
+            row_random_shear = lambda x: 0
+        else:
+            row_random_shear = lambda x: (random.random()-0.5) * x / 2.
+        for y in range(number_per_row):
+            model_picker = random.random()
+
+            # Pick the model whose cumulative frequency interval [low_bound, low_bound + frequency) contains the draw
+            low_bound = 0
+            for i, frequency in enumerate(plant_model_frequency):
+                if model_picker < low_bound + frequency:
+                    current_model_index = i
+                    break
+                low_bound += frequency
+            
+            plant_ID=f"{plant_models[current_model_index].__name__}_{unique_plant_ID}_{scene_name}"
+            planting_sequence[plant_ID] = dict( model=plant_models[current_model_index],
+                                                scenario=plant_scenarios[current_model_index],
+                                                coordinates=[(row_spacing / 2) + x * row_spacing,
+                                                             (intra_row_distance/2) + y * intra_row_distance + row_random_shear(intra_row_distance),
+                                                            - sowing_depth[current_model_index]],
+                                                rotation=random.uniform(0, 360))
+            unique_plant_ID += 1
+
+    return actual_xrange, yrange, planting_sequence
 
 
 def build_population(table: pd.DataFrame, initiators=()) -> tuple:

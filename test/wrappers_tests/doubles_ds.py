@@ -1,22 +1,17 @@
 """
 DataStructure-backed doubles of the downstream models (devplan WD.4-WD.6): plant components (PlantCarbon,
-PlantNitrogen) on an MPGDataStructure, the GridSoil component on an (x, y, z) ArrayDataStructure, and the scene
-composites DSFakePlant / DSFakeSoil exchanging through coupler.Transport and Coupler. Their contract tests
-reproduce the numbers of the former props-based coupling.
+PlantNitrogen) on an MPGDataStructure and the GridSoil component on an (x, y, z) ArrayDataStructure. Their contract
+tests reproduce the numbers of the former props-based coupling.
 """
 import copy
 import os
 import sys
 from dataclasses import dataclass
-from multiprocessing.shared_memory import SharedMemory
 
 import numpy as np
 
 from openalea.metafspm.coupling.choregrapher import Choregrapher
 from openalea.metafspm.coupling.component import FunctionalComponent, declare
-from openalea.metafspm.coupling.composite_wrapper import CompositeModel
-from openalea.metafspm.coupling.coupler import Coupler, Transport, VoxelLocator
-from openalea.metafspm.coupling.translator import Translator
 from openalea.metafspm.data_structure.configs import PropsConfig
 from openalea.metafspm.data_structure.data_api import ArrayDataStructure, MPGDataStructure
 from openalea.metafspm.data_structure.mpg import MPG
@@ -140,158 +135,3 @@ class GridSoil(FunctionalComponent):
     @state
     def _C_hexose_soil(self, DOC, voxel_volume):
         return DOC / voxel_volume
-
-
-def _shared_buffer(plant_id, rows):
-    shm = SharedMemory(name=plant_id)
-    capacity = shm.size // (8 * rows)
-    return shm, np.ndarray((rows, capacity), dtype=np.float64, buffer=shm.buf)
-
-
-class DSFakePlant(CompositeModel):
-    """GrassBRIDGES shape on DataStructures: plant components on an MPGDataStructure, soil exchange by Transport."""
-    soil_name = SOIL
-
-    def __init__(self, queues_soil_to_plants, queue_plants_to_soil, queues_light_to_plants, queue_plants_to_light,
-                 name: str = "Plant", time_step: int = doubles.TIME_STEP, coordinates: list = (0.025, 0.025, -0.01),
-                 rotation: float = 0, translator_path: str = "", **scenario):
-        self.name, self.coordinates, self.rotation = name, list(coordinates), rotation
-        Choregrapher().add_simulation_time_step(time_step)
-        self.time = 0
-        self.input_tables = scenario["input_tables"]
-        self.run_count = 0
-
-        self.plant_ds = make_chain_plant_ds(coordinates)
-        self.shoot_props = {"geometry": doubles.make_shoot_mtg().properties()["geometry"]}
-        self.carbon = PlantCarbon(data_structure=self.plant_ds)
-        self.nitrogen = PlantNitrogen(data_structure=self.plant_ds)
-        self.declare_data_and_couple_components(root=self.plant_ds, translator_path=translator_path,
-                                                components=(self.carbon, self.nitrogen))
-        shm = SharedMemory(name=name)
-        rows = len(Transport.from_translator(Translator.load(translator_path), soil=SOIL,
-                                              plant_components=PLANT_COMPONENTS).rows)
-        capacity = shm.size // (8 * rows)
-        shm.close()
-        self.transport = Transport.from_translator(Translator.load(translator_path), soil=SOIL,
-                                                   plant_components=PLANT_COMPONENTS, capacity=capacity)
-
-        self.queues_soil_to_plants, self.queue_plants_to_soil = queues_soil_to_plants, queue_plants_to_soil
-        self.queues_light_to_plants, self.queue_plants_to_light = queues_light_to_plants, queue_plants_to_light
-        self.model_name = self.__class__.__name__
-        self.carried_components = [c.__class__.__name__ for c in self.components]
-
-        self._write_buffer()
-        self.queue_plants_to_soil.put({"plant_id": self.name, "model_name": self.model_name,
-                                       "carried_components": self.carried_components,
-                                       "handshake": self.transport.rows, "capacity": self.transport.capacity})
-        self._send_light_inputs()
-        self.get_environment_boundaries()
-        self.send_plant_status_to_environment()
-
-    def run(self):
-        self.apply_input_tables(tables=self.input_tables, to=self.components, when=self.time)
-        self.get_environment_boundaries()
-        self.carbon()
-        self.nitrogen()
-        self.send_plant_status_to_environment()
-        self.time += 1
-        self.run_count += 1
-
-    def summary(self):
-        return {"run_count": self.run_count,
-                "PARa": {str(k): v for k, v in self.shoot_props.get("PARa", {}).items()},
-                "C_hexose_soil": [float(v) for v in self.plant_ds.get("C_hexose_soil")],
-                "affinity": doubles._affinity()}
-
-    def _write_buffer(self):
-        shm, buffer = _shared_buffer(self.name, len(self.transport.rows))
-        self.transport.write_plant(buffer, self.plant_ds)
-        del buffer
-        shm.close()
-
-    def get_environment_boundaries(self):
-        self.queues_soil_to_plants[self.name].get()
-        light = {} if self.queues_light_to_plants is None else self.queues_light_to_plants[self.name].get()
-        shm, buffer = _shared_buffer(self.name, len(self.transport.rows))
-        self.transport.read_soil(buffer, self.plant_ds)
-        del buffer
-        shm.close()
-        for variable, values in light.items():
-            self.shoot_props.setdefault(variable, {}).update(values)
-
-    def send_plant_status_to_environment(self):
-        self._write_buffer()
-        self.queue_plants_to_soil.put({"plant_id": self.name, "model_name": self.model_name,
-                                       "handshake": self.transport.rows, "capacity": self.transport.capacity})
-        self._send_light_inputs()
-
-    def _send_light_inputs(self):
-        if self.queue_plants_to_light is None:
-            return
-        geometry = self.shoot_props["geometry"]
-        self.queue_plants_to_light.put({"plant_id": self.name,
-                                        "data": {"coordinates": self.coordinates, "rotation": self.rotation,
-                                                 "scene": {vid: [list(t) for t in triangles] for vid, triangles in geometry.items()},
-                                                 "class_name": {vid: "LeafElement1" for vid in geometry}}})
-
-
-class DSFakeSoil(CompositeModel):
-    """RhizoSoil shape on DataStructures: soil component on an (x, y, z) grid, one Coupler per plant buffer."""
-
-    def __init__(self, queues_soil_to_plants, queue_plants_to_soil, time_step: int, scene_xrange: float,
-                 scene_yrange: float, translator_path: str, soil_depth: float = 0.1, **scenario):
-        Choregrapher().add_simulation_time_step(time_step)
-        self.time = 0
-        self.input_tables = scenario["input_tables"]
-        self.run_count = 0
-        side = doubles.SOIL_VOXEL_SIDE
-        self.grid = ArrayDataStructure(shape=(int(round(scene_xrange / side)), int(round(scene_yrange / side)),
-                                              int(round(soil_depth / side))), dx=side)
-        self.soil = GridSoil(data_structure=self.grid)
-        self.declare_data(soil=self.grid)
-        self.components = [self.soil]
-        self.translator = Translator.load(translator_path)
-        self.queues_soil_to_plants, self.queue_plants_to_soil = queues_soil_to_plants, queue_plants_to_soil
-        self.transports = {}
-
-        for message in [self.queue_plants_to_soil.get() for _ in range(len(self.queues_soil_to_plants))]:
-            spec = Transport.from_translator(self.translator, soil=SOIL, plant_components=message["carried_components"])
-            self.transports[message["plant_id"]] = Transport.from_rows(message["handshake"], message["capacity"],
-                                                                       to_soil=spec.to_soil, to_plant=spec.to_plant)
-            self._exchange([message], step=False)
-
-    def _exchange(self, messages, step=True):
-        opened = []
-        couplers = []
-        for message in messages:
-            transport = self.transports[message["plant_id"]]
-            shm, buffer = _shared_buffer(message["plant_id"], len(transport.rows))
-            opened.append((shm, buffer))
-            coupler = Coupler(transport.plant_view(buffer), self.grid, VoxelLocator(self.grid),
-                              to_soil=transport.to_soil, to_plant={name: name for name in transport.soil_variables})
-            coupler.update_map()
-            couplers.append(coupler)
-        if step and couplers:
-            couplers[0].zero_soil_inputs()
-        for coupler in couplers:
-            coupler.push()
-        if step:
-            self.soil()
-        for coupler in couplers:
-            coupler.pull()
-        del couplers
-        for shm, buffer in opened:
-            del buffer
-            shm.close()
-        opened.clear()
-        for message in messages:
-            self.queues_soil_to_plants[message["plant_id"]].put("finished")
-
-    def run(self):
-        self.apply_input_tables(tables=self.input_tables, to=self.components, when=self.time)
-        self._exchange([self.queue_plants_to_soil.get() for _ in range(len(self.queues_soil_to_plants))])
-        self.time += 1
-        self.run_count += 1
-
-    def summary(self):
-        return {"run_count": self.run_count, "DOC": float(self.grid.get("DOC").sum()), "affinity": doubles._affinity()}
