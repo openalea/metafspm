@@ -78,6 +78,7 @@ class UnknownLayout:
     """Ordered list of unknown fields in the current solve."""
     node_fields: tuple[str, ...]
     edge_fields: tuple[str, ...]
+    pool_fields: tuple[str, ...] = ()         # unknowns at a coarse scale, one per pool entity (PT4)
 
 
 @dataclass(frozen=True)
@@ -109,6 +110,7 @@ class EquationContext:
     previous_node_fields : Optional[dict[str, np.ndarray]]
     dt                   : Optional[float]
     parameters           : dict[str, Any]
+    pool_unknowns        : dict = field(default_factory=dict)
 
     def boundary_values(self, kind: str = None) -> np.ndarray:
         ports = self.boundary_ports
@@ -287,6 +289,9 @@ class GraphDAESpec(BaseSystemSpec):
     rhs_evaluator        : Optional[Callable] = None
     boundary_conditions  : Optional[BoundaryConditions] = None
     parameters           : dict = field(default_factory=dict)
+    # Pool unknowns (PT4): their initial values, and their coupling to the nodes (sparse n_nodes x n_pools)
+    pool_fields          : dict = field(default_factory=dict)
+    pool_coupling        : dict = field(default_factory=dict)
 
     def validate(self) -> None:
         if not self.equation_blocks and self.matrix_evaluator is None:
@@ -312,7 +317,21 @@ class GraphDAESpec(BaseSystemSpec):
                 np.asarray(eo.get(fn, self.edge_fields[fn].values),
                            dtype=np.float64).reshape(-1)
             )
+        for fn in self.unknowns.pool_fields:
+            blocks.append(np.asarray(self.pool_fields[fn].values, dtype=np.float64).reshape(-1))
         return np.concatenate(blocks) if blocks else np.zeros(0, dtype=np.float64)
+
+    def unpack_pools(self, packed: np.ndarray) -> dict:
+        """The pool unknowns of *packed* (after the node and edge blocks)."""
+        packed = np.asarray(packed, dtype=np.float64).reshape(-1)
+        cursor = (self.graph.n_nodes * len(self.unknowns.node_fields)
+                  + self.graph.n_edges * len(self.unknowns.edge_fields))
+        pools = {}
+        for fn in self.unknowns.pool_fields:
+            w = self.pool_fields[fn].values.size
+            pools[fn] = packed[cursor:cursor + w]
+            cursor += w
+        return pools
 
     def unpack_unknowns(self, packed: np.ndarray):
         """Inverse of pack_unknowns.  Returns (node_dict, edge_dict)."""
@@ -344,6 +363,7 @@ class GraphDAESpec(BaseSystemSpec):
             previous_node_fields = previous_node_fields,
             dt                   = dt,
             parameters           = self.parameters,
+            pool_unknowns        = self.unpack_pools(packed) if self.unknowns.pool_fields else {},
         )
 
     # ── Evaluation ────────────────────────────────────────────────────────────
@@ -416,6 +436,8 @@ class GraphDAESpec(BaseSystemSpec):
 
         if k_n == 0 and k_e == 0:
             return csr_matrix((0, 0), dtype=bool)
+        if self.unknowns.pool_fields:
+            return self._sparsity_with_pools()
 
         A_nn = (B @ B.T + eye(n, format="csc")).astype(bool).tocsr()
 
@@ -434,6 +456,47 @@ class GraphDAESpec(BaseSystemSpec):
         ne = kron(np.ones((k_n, k_e), dtype=bool), absB,   format="csr")
         en = kron(np.ones((k_e, k_n), dtype=bool), absB.T, format="csr")
         return sp_bmat([[nn, ne], [en, ee]], format="csr")
+
+    def _sparsity_with_pools(self) -> csr_matrix:
+        """
+        Sparsity with pool unknowns: nodes and edges as without them; each pool couples to the nodes it exchanges
+        with (pool_coupling), to the edges at those nodes, and to itself.
+        """
+        from scipy.sparse import bmat as sp_bmat
+        B = self.graph.incidence
+        n, m = self.graph.n_nodes, self.graph.n_edges
+        absB = B.astype(bool).tocsr()
+        node_blocks = [("node", fn) for fn in self.unknowns.node_fields]
+        edge_blocks = [("edge", fn) for fn in self.unknowns.edge_fields]
+        pool_blocks = [("pool", fn) for fn in self.unknowns.pool_fields]
+        blocks = node_blocks + edge_blocks + pool_blocks
+        A_nn = (B @ B.T + eye(n, format="csc")).astype(bool).tocsr()
+        A_ee = (B.T @ B + eye(m, format="csc")).astype(bool).tocsr()
+        coupling = {fn: csr_matrix(self.pool_coupling[fn], dtype=bool) for fn in self.unknowns.pool_fields}
+
+        def block(row, col):
+            (rk, rf), (ck, cf) = row, col
+            if rk == "node" and ck == "node":
+                return A_nn
+            if rk == "edge" and ck == "edge":
+                return A_ee
+            if rk == "node" and ck == "edge":
+                return absB
+            if rk == "edge" and ck == "node":
+                return absB.T.tocsr()
+            if rk == "node" and ck == "pool":
+                return coupling[cf]
+            if rk == "pool" and ck == "node":
+                return coupling[rf].T.tocsr()
+            if rk == "edge" and ck == "pool":
+                return (absB.T @ coupling[cf]).astype(bool).tocsr()
+            if rk == "pool" and ck == "edge":
+                return (absB.T @ coupling[rf]).astype(bool).T.tocsr()
+            size_r, size_c = coupling[rf].shape[1], coupling[cf].shape[1]
+            return eye(size_r, format="csr", dtype=bool) if size_r == size_c else csr_matrix((size_r, size_c),
+                                                                                              dtype=bool)
+
+        return sp_bmat([[block(r, c) for c in blocks] for r in blocks], format="csr").astype(bool)
 
     def finite_difference_jacobian(self, packed: np.ndarray,
                                    previous_node_fields=None, dt=None):

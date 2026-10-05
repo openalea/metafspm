@@ -853,7 +853,11 @@ class ScipyIVPSolver(DAESolver):
                 state[:] = _recover_edges(spec, state, tol=tol, max_iter=max_iter)
             return state
 
+        time_hook = getattr(spec, "parameters", {}).get("time_hook")
+
         def rhs(_t, y_node):
+            if time_hook is not None:
+                time_hook(_t - t)              # forcings read at the evaluation time (PT4, QPj)
             R = spec.residual(full_state(y_node), prev_fields, None)
             return -R[:n_node_dof]
 
