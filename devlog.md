@@ -1842,3 +1842,4 @@ Per-file counts:
   - **Tests** (`test_structure_edits.py`, 5): insertion mid-chain (edges, kept and inherited values), removal with relinking, a None-returning override, `steps_removed`, unknown names.
   - Templated components are not done; a question is asked (QPg).
 - **Suite:** 687 passed.
+- **PT4 design and questions QPg–QPj** written in `devplan_porting.md` §7. Stopped for the answers: they add API to graph systems and choose the templating mechanism.

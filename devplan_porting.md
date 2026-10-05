@@ -57,7 +57,7 @@ Each step gets a short design note, tests against a reference loop taken from th
 |---|---|---|
 | **PT1** ✓ | Tree kernels, round 2: `fold(values, direction, fn)`, a numba fold applied level by level for nonlinear and min/max/all reductions, with a children filter; `chain_gather`; `chain_recurrence` | G1, G2, G6 (turtle) |
 | **PT2** ✓ | Reproducible random draws: `ds.rng(entities, seed)`, one stream per (plant seed, vid, step), vectorised; documented MPG-style patterns for chained creation | G3 |
-| **PT3** | Structure edits: tests and fixes for adel-like edits (inserting elements in a chain, removing with relinking, rebuilding elements each step) and the repartition after them; disabling inherited steps (`steps_removed`), and templated components | G11, §1 |
+| **PT3** ✓ (templating: QPg) | Structure edits: tests and fixes for adel-like edits (inserting elements in a chain, removing with relinking, rebuilding elements each step) and the repartition after them; disabling inherited steps (`steps_removed`), and templated components | G11, §1 |
 | **PT4** | Graph systems: extra unknowns outside the graph, coupled to nodes (a pool with its own balance); boundary sets whose kind is chosen per call; `self.forcing(name, t)` interpolating input tables inside solves | G4, G5 |
 | **PT5** | Scene services: one forcing table; `every=` / `when=` scheduling; spin-up hooks; events and stop conditions | G8, G9 |
 | **PT6** | Mappings: population → environment scalars (a reduction over the plants of every population); column ↔ grid (layer mean and broadcast) | G7 |
@@ -128,4 +128,41 @@ Not planned in metafspm: G13 (a masked loop in a step), G14 (until stratificatio
   - Missing ranks give `fill`.
 - **`ds.chain_recurrence(update, values, chain=…)`:** a non-associative recurrence along chains, position by position, vectorised across chains: `update(position, nodes, previous, out)` returns the new values, `previous` being each node's predecessor on its chain (−1 at the start). For recurrences along rank chains that are not parent links (e.g. metamer ranks).
 - **Tests:** reference loops written after rhizodep's `potential_growth` (pipe model and death, with `edge_type`, emerged laterals and nodules excluded), Root-CyNAPS' barrier reopening, elongwheat's tiller cohort reads, and a turtle frame recurrence, all compared exactly.
+
+## 7. After PT1–PT3 (2026-10-06): PT3's open part and the PT4 design
+
+**Done:**
+- **PT1:** `fold`, `chain_gather` and `chain_recurrence`, exact against the models' loops.
+- **PT2:** per-entity random streams, kept by checkpoints.
+- **PT3:**
+  - insertion mid-chain;
+  - removal with relinking, after a fix: openalea's `replace_parent` made shared complexes their own parents;
+  - a step returning `None` writes nothing;
+  - `steps_removed`.
+
+**PT3's open part: templated components (G11).** Root-CyNAPS applies one generic transport code to a dict of solutes, each with its own variable names and conversions (`solute_configs`); Root_BRIDGES edits that dict per instance. Steps and graph-system equations take their variables by argument name, so generic equations cannot serve several solutes as they are.
+
+- **QPg, how to template.** Options:
+  - **(a) `component_template(Base, name, rename={...})`:** a subclass whose declared variables, step arguments, outputs and graph-system fields are renamed (e.g. `solute → C_sucrose_root`, `flux → hexose_diffusion_from_phloem`). One class per solute, generated, with the equations written once.
+  - **(b) Vector-valued unknowns** `(n, k)`: one system for k solutes as columns. It needs PT7's vector variables in graph systems too, and the solutes must share their equations' form.
+  - **(c) One class per solute** written by hand (duplication).
+
+  **Recommendation:** (a). It keeps one DataStructure name per solute, so the translator, logging and checkpoints are unchanged. Conversions per solute become parameters of the generated class.
+  → answer:
+
+**PT4 design: graph-system extensions (G4, G5).**
+1. **Pool unknowns at a coarse scale (QPc agreed):**
+   - `@graph_system(pool_unknowns={"sucrose_shoot": "Plant"})`: one unknown per entity of that scale (one per plant), solved together with the node and edge unknowns;
+   - `@pool_balance(field=...)` writes its residual per pool entity;
+   - equations exchange with the pool through `self.pool_exchange(name, boundary_set)`, a sparse map between the nodes of a boundary set (the collar) and the pool of their own plant, with sums one way and broadcasts the other;
+   - pools are stored at their scale on the DataStructure (Plant variables), so the shoot reads them as usual.
+2. **Boundary kinds chosen at run time:** a `boundary_set(kind=...)` may name a node variable holding each node's kind, as label codes ("dirichlet", "neumann", "robin"), read at each solve. The collar switches between a pressure and a flux when the shoot gives no value, or by the sign of the flux.
+3. **Forcings inside solves:** `self.forcing(name)` in an equation returns the forcing at the end of the current (sub-)step (implicit Euler's time), linearly interpolated in the time series given to the component or, after PT5, the scene's shared table. With adaptive steps each trial sees its own time.
+
+- **QPh, pools (1).** Pool unknowns at a coarse scale, as above? The alternative is virtual nodes appended to the graph, with an edge to the collar, as Root-CyNAPS does today. **Recommendation:** pools at a scale. One pool per plant comes from the population without bookkeeping, and the pool is an ordinary Plant variable outside the solve.
+  → answer:
+- **QPi, boundary kinds (2).** A per-node kind variable, read at each solve? **Recommendation:** yes. It also lets one set mix kinds (some tips Dirichlet, others Neumann) without one boundary set per kind.
+  → answer:
+- **QPj, forcings (3).** Is the end of the (sub-)step the right time? cnwheat's `solve_ivp` reads forcings continuously, which implicit Euler cannot do; IVP solvers would read them at each evaluation time. **Recommendation:** the end of the (sub-)step for implicit solvers, and the evaluation time for the IVP solver.
+  → answer:
 
