@@ -240,3 +240,68 @@ It is plant ↔ soil only. The map is rebuilt by hand (`update_map()`), the soil
   → answer: go for (b)
 - **QP5c, cell → plant for extensive variables.** For example, a soil supply given per cell and shared among the segments in it. Is splitting by a required `weight=` (e.g. root length or surface in the cell) the right default? Or should the cell's amount be shared in proportion to the plants' demand, which is a model process and not a mapping? **Recommendation:** split by `weight=`, with demand-based sharing left to the models (computed as an intensive rate per cell, then gathered).
   → answer:ok for recommandation, even if in practice only intensive variables will be passed, but better to plan for any variable type.
+
+## 10. P6 design: `Scene(CompositeModel)` (draft, 2026-10-06)
+
+**Today:** `play_Orchestra` gives each plant its own process. The plant model is a `CompositeModel` built per plant with `(name, time_step, coordinates, rotation, queues…, **scenario)`. Soil and light run in their own workers, and data goes through `Transport` buffers.
+
+**Proposal.**
+
+```python
+scene = Scene(planting=planting_table(...),            # or a user table, one scenario per plant (Q6)
+              environment=[SoilModel, LightModel], environment_scenarios=[...],
+              translator_path="scene_translator.py", time_step=3600, mapping_method="barycentre",
+              log_plants=["plant_0"], heavy_log_period=24)
+scene.run(n_iterations=2500)
+```
+
+1. **Populations.** The planting table is grouped by model: one population per model (Q8). For each population, the Scene:
+   - builds the MPG with `build_population(table, Model.initiators)`;
+   - constructs the model once, `Model(data_structure=ds, time_step=…, **shared_scenario)`. The model creates its components on `ds` and couples them within the DataStructure, as today;
+   - fills the per-plant parameters with `apply_plant_scenarios`.
+2. **Environment.** Each environment model is built with `(populations=[ds, …], scene_xrange, scene_yrange, time_step, **scenario)` and creates what it needs:
+   - a grid (soil, RATP-like light);
+   - a `UnionDataStructure` of the populations (CARIBU-like light, QP5b);
+   - or it works directly on the single population's MPG.
+3. **Coupling.** One `Exchanges` over all components, from the scene translator:
+   - one `CrossMapping(population, grid, method=mapping_method)` for each population and grid pair that a link joins;
+   - one `UnionMapping` per union.
+4. **Step (Q1, Q9: one time step):**
+   1. the environment models, in list order, each preceded by `exchange(into=its DataStructures)`;
+   2. `exchange(into=population)` for each population;
+   3. each population's `run()`, which grows its MPG;
+   4. the time is advanced.
+
+   An initial `exchange(into=environment)` at construction lets the environment see the plants at t = 0.
+5. **Input tables** (meteo, …) apply to the environment models, as today (`apply_input_tables`).
+6. **Logging (Q7):** at each step, per-plant summaries (sums and means at the `"Plant"` location) for every plant. Every `heavy_log_period` steps, the per-segment state of the `log_plants` only. One folder per population.
+7. **Staggered emergence (Q5):** an `emergence_time` column of the planting table becomes a Plant-scale variable, and a Plant-scale `"active"` mask (time ≥ emergence) is broadcast to the nodes.
+8. **`play_Orchestra` / `Transport` / `Coupler`** stay until P7 (Q10).
+
+**Sub-steps:**
+- 6.1: populations and the model contract (QP6a).
+- 6.2: environment models and automatic mappings (QP6b).
+- 6.3: the step order and the initial exchange.
+- 6.4: logging (QP6d).
+- 6.5: emergence (QP6c).
+
+All of these are tested on in-repo doubles: the growth helper as a plant model, a toy soil on a grid, and the toy light models of P5.
+
+### Questions
+
+- **QP6a, plant model contract.** A plant model becomes a population model: `Model(data_structure, time_step, **scenario)` with a class attribute `initiators` (the StructuralComponent classes that build each plant). It is built once for all its plants; its parameters per plant come from the planting table. The queue, coordinate and rotation arguments go away. Is this the contract for your ports (rhizodep, Root-CyNAPS, cnwgrass, GRANAP)? **Recommendation:** yes. The in-repo UC tests follow it, and the external models are ported outside this repo.
+  → answer:
+- **QP6b, who builds the environment's DataStructures.** The proposal lets each environment model receive the populations and build its own grid or union. The alternative is for the Scene to build them from options (`soil_grid=…`, `light="union" | "grid"`). **Recommendation:** the environment model builds them, as plant models build their MPG. The Scene only infers the mappings from the translator links and the DataStructure types.
+  → answer:
+- **QP6c, plants before emergence.** Options:
+  - **frozen**: no step runs on their entities; they are excluded from the mappings (they neither push to nor receive from the environment), and their values stay at their initial state;
+  - **seed-only processes**: some steps (e.g. seed reserve mobilisation) run before emergence, by components that do not honour the mask.
+
+  **Recommendation:** frozen by default, with a component able to opt out of the mask (it runs on all plants).
+  → answer:
+- **QP6d, the Logger.** The fspm-utility `Logger` (outside this repo) reads `model_instance.data_structures` and components per plant. Options:
+  - **(a)** a Scene-native recorder in metafspm (the summaries and selected plants of point 6, written as one table per population, e.g. parquet or netCDF), with a `logger_class` hook kept so that you can adapt fspm-utility's Logger later;
+  - **(b)** a per-plant view of the population, to plug today's Logger in unchanged.
+
+  **Recommendation:** (a). (b) would need per-plant MTG views that the vectorised populations no longer have.
+  → answer:
