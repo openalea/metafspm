@@ -26,7 +26,7 @@ class _DiffusionEquations:
     @node_balance(field="solute")
     def _balance(self, solute, solute_flux, uptake):
         volume = self.data_structure.cell_volume()
-        return (solute - self.previous("solute")) / self.time_step \
+        return (solute - self.previous("solute")) / self.dt \
             + np.asarray(self._graph_view.incidence @ solute_flux).reshape(-1) / volume - uptake
 
     @edge_law(field="solute_flux")

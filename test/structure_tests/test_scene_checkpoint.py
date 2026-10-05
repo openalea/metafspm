@@ -18,7 +18,7 @@ from openalea.metafspm.scene.scene import Scene
 from openalea.metafspm.solve.decorator import rate
 
 from growth import DOC, RootGrowthProbe
-from test_scene import DT, RootPopulation, SceneGeometry, SceneSoil, Seedlings, _planting, _soil_translator
+from scene_doubles import DT, RootPopulation, SceneGeometry, SceneSoil, Seedlings, planting, soil_translator
 
 
 
@@ -41,11 +41,16 @@ class ExternalSolverSoil(SceneSoil):
         self.solver = dict(state)
 
 
+def _scene_arguments(output_dirpath=None):
+    """The arguments of the checkpointed scene, given again to Scene.restore."""
+    table = planting([RootPopulation, Seedlings, RootPopulation, Seedlings], emergence_time=[0., 0., 2 * DT, 0.])
+    return dict(planting=table, environment=[ExternalSolverSoil],
+                translator=soil_translator("SceneExudation", "SeedlingExudation"), time_step=DT,
+                output_dirpath=output_dirpath, log_plants=["p0"], heavy_log_period=1)
+
+
 def _scene(output_dirpath=None):
-    table = _planting([RootPopulation, Seedlings, RootPopulation, Seedlings], emergence_time=[0., 0., 2 * DT, 0.])
-    return Scene(table, environment=[ExternalSolverSoil],
-                 translator=_soil_translator("SceneExudation", "SeedlingExudation"), time_step=DT,
-                 output_dirpath=output_dirpath, log_plants=["p0"], heavy_log_period=1)
+    return Scene(**_scene_arguments(output_dirpath))
 
 
 def _state(scene):
@@ -62,7 +67,7 @@ def test_a_restored_scene_continues_bit_for_bit(tmp_path):
     expected, expected_solver = _state(scene), dict(scene.environment[0].solver)
 
     Choregrapher().reset()
-    restored = Scene.restore(str(tmp_path / "checkpoint"), *_scene_arguments())
+    restored = Scene.restore(str(tmp_path / "checkpoint"), **_scene_arguments())
     assert restored.time == 2 * DT and restored.iteration == 2
     assert restored.environment[0].solver["steps"] == 2
     restored.run()
@@ -74,20 +79,12 @@ def test_a_restored_scene_continues_bit_for_bit(tmp_path):
     assert restored.environment[0].solver == expected_solver
 
 
-def _scene_arguments():
-    table = _planting([RootPopulation, Seedlings, RootPopulation, Seedlings], emergence_time=[0., 0., 2 * DT, 0.])
-    return (table, [ExternalSolverSoil], None, _soil_translator("SceneExudation", "SeedlingExudation"), DT)
-
-
 def test_the_recorder_appends_after_a_restore(tmp_path):
     scene = _scene(str(tmp_path / "out"))
     scene.run()
     scene.checkpoint(str(tmp_path / "c"))
     Choregrapher().reset()
-    table = _planting([RootPopulation, Seedlings, RootPopulation, Seedlings], emergence_time=[0., 0., 2 * DT, 0.])
-    restored = Scene.restore(str(tmp_path / "c"), table, environment=[ExternalSolverSoil],
-                             translator=_soil_translator("SceneExudation", "SeedlingExudation"), time_step=DT,
-                             output_dirpath=str(tmp_path / "out"), log_plants=["p0"], heavy_log_period=1)
+    restored = Scene.restore(str(tmp_path / "c"), **_scene_arguments(str(tmp_path / "out")))
     restored.run()
     summaries = pd.read_csv(tmp_path / "out" / "RootPopulation" / "summaries.csv")
     assert sorted(set(summaries["t"])) == [DT, 2 * DT] and len(summaries) == 4
@@ -97,10 +94,9 @@ def test_a_scene_restored_with_other_arguments_is_refused(tmp_path):
     scene = _scene()
     scene.checkpoint(str(tmp_path / "c"))
     Choregrapher().reset()
-    table = _planting([RootPopulation, RootPopulation])
+    other = dict(_scene_arguments(), planting=planting([RootPopulation, RootPopulation]))
     with pytest.raises(ValueError, match="build it with the same arguments"):
-        Scene.restore(str(tmp_path / "c"), table, environment=[ExternalSolverSoil],
-                      translator=_soil_translator("SceneExudation", "SeedlingExudation"), time_step=DT)
+        Scene.restore(str(tmp_path / "c"), **other)
 
 
 # ---------------------------------------------------------------- vector-valued variables
@@ -157,7 +153,7 @@ class MimicsSoil:
 
 def test_vector_variables_through_steps_growth_exchanges_and_outputs(tmp_path):
     translator = Translator().link("Mimics", "compounds", "VectorExudation", {"compounds": 1.})
-    scene = Scene(_planting([VectorPlants, VectorPlants]), environment=[MimicsSoil], translator=translator,
+    scene = Scene(planting([VectorPlants, VectorPlants]), environment=[MimicsSoil], translator=translator,
                   time_step=DT, output_dirpath=str(tmp_path / "out"))
     plants, grid = scene.populations[0].data_structure, scene.environment[0].grid
     assert plants.get("compounds").shape == (plants.n_nodes(), POOLS)
@@ -178,7 +174,7 @@ def test_vector_variables_through_steps_growth_exchanges_and_outputs(tmp_path):
 
 def test_vector_components_are_exchanged_one_by_one():
     translator = Translator().link("Mimics", "compounds", "VectorExudation", {"compounds": 1.})
-    scene = Scene(_planting([VectorPlants]), environment=[MimicsSoil], translator=translator, time_step=DT)
+    scene = Scene(planting([VectorPlants]), environment=[MimicsSoil], translator=translator, time_step=DT)
     plants, grid = scene.populations[0].data_structure, scene.environment[0].grid
     plants.set("compounds", np.arange(plants.n_nodes() * POOLS, dtype=float).reshape(-1, POOLS))
     scene.exchanges.exchange(into=grid)

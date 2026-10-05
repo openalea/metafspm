@@ -2,7 +2,6 @@
 Building the graph at population scale: bulk vertex
 creation, plants of one MPG kept disconnected, and incremental extension of the graph on growth.
 """
-import numpy as np
 from scipy.sparse.csgraph import connected_components
 
 from openalea.metafspm.data_structure.configs import PropsConfig

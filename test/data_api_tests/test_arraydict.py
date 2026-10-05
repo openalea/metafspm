@@ -1,4 +1,3 @@
-import numpy as np
 from openalea.metafspm.data_structure.arraydict import ArrayDict  # adjust import to your file name
 
 # This test checks the invariance of ArrayDict operations

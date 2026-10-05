@@ -10,10 +10,9 @@ from dataclasses import dataclass
 import numpy as np
 import pandas as pd
 import pytest
-from scipy.sparse import csr_matrix
 
 from openalea.metafspm.coupling.choregrapher import Choregrapher
-from openalea.metafspm.coupling.component import FunctionalComponent, parameter, state_variable
+from openalea.metafspm.coupling.component import FunctionalComponent, state_variable
 from openalea.metafspm.data_structure.configs import ScalesConfig as scales
 from openalea.metafspm.data_structure.data_api import MPGDataStructure
 from openalea.metafspm.scene.population import build_population

@@ -19,8 +19,7 @@ Concerns:
 import numpy as np
 import pytest
 
-from openalea.metafspm.solve.solver import ScipyRootSolver, SolverConfig, make_solver
-from solver_specs import build_spec_nonlinear_1node, build_spec_linear_2node
+from openalea.metafspm.solve.solver import make_solver
 
 
 # ── Tolerance used for root-finding assertions ────────────────────────────────

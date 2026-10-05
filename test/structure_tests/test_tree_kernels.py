@@ -6,7 +6,6 @@ maximum of ligule heights and forward writes, adel's frames). Scans and windows 
 import numpy as np
 import pytest
 
-from openalea.metafspm.data_structure.configs import PropsConfig
 from openalea.metafspm.data_structure.data_api import MPGDataStructure
 from test_topology_arrays import branched_root_system
 

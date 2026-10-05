@@ -39,7 +39,7 @@ from openalea.metafspm.solve.solver import (
     NewtonSolver, ImplicitEulerSolver, ScipyRootSolver, SolverConfig,
 )
 from openalea.metafspm.coupling.component import (
-    FunctionalComponent, state_variable, input_variable, parameter,
+    FunctionalComponent, state_variable, parameter,
 )
 from openalea.metafspm.data_structure.data_api import MPGDataStructure
 from openalea.metafspm.data_structure.configs import ScalesConfig as scales
@@ -135,7 +135,7 @@ class NitrogenAxialTransportOrgan(FunctionalComponent):
             c_old = self.previous("concentration")
             B     = self._graph_view.incidence
             return (
-                (concentration - c_old) / self.time_step
+                (concentration - c_old) / self.dt
                 + np.asarray(B @ axial_flux).reshape(-1)
                 - radial_solute_input
             )
@@ -162,7 +162,7 @@ class NitrogenAxialTransportOrgan(FunctionalComponent):
             c_old = self.previous("concentration")
             B     = self._graph_view.incidence
             return (
-                (concentration - c_old) / self.time_step
+                (concentration - c_old) / self.dt
                 + np.asarray(B @ axial_flux).reshape(-1)
                 - radial_solute_input
             )
@@ -189,7 +189,7 @@ class NitrogenAxialTransportOrgan(FunctionalComponent):
             c_old = self.previous("concentration")
             B     = self._graph_view.incidence
             return (
-                (concentration - c_old) / self.time_step
+                (concentration - c_old) / self.dt
                 + np.asarray(B @ axial_flux).reshape(-1)
                 - radial_solute_input
             )
@@ -215,7 +215,7 @@ class NitrogenAxialTransportOrgan(FunctionalComponent):
         ) -> np.ndarray:
             c_old = self.previous("concentration")
             B     = self._graph_view.incidence
-            return c_old - self.time_step * (
+            return c_old - self.dt * (
                 np.asarray(B @ axial_flux).reshape(-1) - radial_solute_input
             )
 
@@ -240,7 +240,7 @@ class NitrogenAxialTransportOrgan(FunctionalComponent):
         ) -> np.ndarray:
             c_old = self.previous("concentration")
             B     = self._graph_view.incidence
-            return c_old - self.time_step * (
+            return c_old - self.dt * (
                 np.asarray(B @ axial_flux).reshape(-1) - radial_solute_input
             )
 
@@ -271,7 +271,7 @@ class NitrogenAxialTransportOrgan(FunctionalComponent):
         ) -> np.ndarray:
             c_old = self.previous("concentration")
             B     = self._graph_view.incidence
-            return c_old - self.time_step * (
+            return c_old - self.dt * (
                 np.asarray(B @ axial_flux).reshape(-1) - radial_solute_input
             )
 
@@ -302,7 +302,7 @@ class NitrogenAxialTransportOrgan(FunctionalComponent):
             c_old = self.previous("concentration")
             B     = self._graph_view.incidence
             return (
-                (concentration - c_old) / self.time_step
+                (concentration - c_old) / self.dt
                 + np.asarray(B @ axial_flux).reshape(-1)
                 - radial_solute_input
             )

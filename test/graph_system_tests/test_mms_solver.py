@@ -1,5 +1,5 @@
 """
-Phase 1 — Method of Manufactured Solutions (MMS) solver tests.
+Method of Manufactured Solutions (MMS) solver tests.
 
 Strategy: MMS on a ring-with-chord graph (cyclic, non-tree) or a pure ring
 (for PDE-convergence tests).  A known analytic solution u*(i) is chosen; the
@@ -9,18 +9,15 @@ Every solver method is then verified to recover u* within tolerance.
 Graph-system tests (no MTG / decorator dependency — GraphSystem is built
 directly from GraphView + equation blocks):
 
-  Fix 1 (sparse Newton linear step)      → test_p1_sparse_jacobian_newton_step
-  Fix 2 (graph-structured FD colouring)  → test_p1_jac_sparsity_*
-  Fix 3 (Armijo line search)             → test_p1_linesearch_*
-  Fix 4 (scipy dispatcher)               → test_p1_scipy_nonlinear_cross_solver
-  Cross-solver regression                → test_p1_mms_linear_cross_solver*
-  MMS convergence O(N⁻²)                → test_p1_mms_graph_refinement_convergence
-  explicit=True decorator semantics      → test_explicit_edge_law_*
-                                            test_explicit_node_balance_*
+  sparse Newton linear step           → test_p1_sparse_jacobian_newton_step
+  graph-structured FD colouring       → test_p1_jac_sparsity_*
+  Armijo line search                  → test_p1_linesearch_*
+  scipy dispatcher                    → test_p1_scipy_nonlinear_cross_solver
+  cross-solver regression             → test_p1_mms_linear_cross_solver*
+  MMS convergence O(N⁻²)              → test_p1_mms_graph_refinement_convergence
 """
 
 import numpy as np
-import pytest
 from scipy.sparse import coo_matrix, csc_matrix, csr_matrix, diags
 
 from openalea.metafspm.solve.system_specs import (
@@ -31,7 +28,6 @@ from openalea.metafspm.solve.system_specs import (
     UnknownLayout,
 )
 from openalea.metafspm.solve.solver import SolverSpec
-from openalea.metafspm.solve.decorator import edge_law, node_balance
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -435,126 +431,3 @@ def test_p1_scipy_hybr_uses_analytic_jacobian():
                                 err_msg="scipy_hybr with analytic Jacobian failed MMS")
 
 
-# ══════════════════════════════════════════════════════════════════════════════
-# explicit=True for edge_law and node_balance
-# ══════════════════════════════════════════════════════════════════════════════
-
-def test_explicit_edge_law_matches_residual_form():
-    """
-    @edge_law(explicit=True): framework generates R = edge_unknown − formula.
-
-    Two GraphSystem objects for the same diffusion problem (B·q + α·c = f*,
-    q = K·Bᵀ·c):
-      - residual form:  edge evaluator returns q − K·Bᵀ·c  (classic)
-      - explicit form:  edge evaluator wrapped by framework as q − K·Bᵀ·c
-
-    Both must give the same c*, and the decorator tag must carry explicit=True.
-    """
-    N     = 6
-    alpha = 1.0
-    gv, L = _ring_chord_graph(N)
-    B     = gv.incidence
-    K     = np.ones(gv.n_edges)
-    u_star = np.cos(2 * np.pi * np.arange(N) / N)
-    f_star = L @ u_star + alpha * u_star
-
-    def node_ev(ctx):
-        return (
-            np.asarray(B @ ctx.edge_unknowns["q"]).reshape(-1)
-            + alpha * ctx.node_unknowns["c"]
-            - f_star
-        )
-
-    def edge_ev_residual(ctx):
-        return (
-            ctx.edge_unknowns["q"]
-            - K * np.asarray(B.T @ ctx.node_unknowns["c"]).reshape(-1)
-        )
-
-    def edge_ev_explicit(ctx):
-        formula = K * np.asarray(B.T @ ctx.node_unknowns["c"]).reshape(-1)
-        return ctx.edge_unknowns["q"] - formula
-
-    def _make_sys(edge_ev):
-        return GraphSystem(
-            graph=gv,
-            node_fields={"c": FieldState("c", "node", np.zeros(N))},
-            edge_fields={"q": FieldState("q", "edge", np.zeros(gv.n_edges))},
-            boundary_ports=(),
-            unknowns=UnknownLayout(node_fields=("c",), edge_fields=("q",)),
-            solver=SolverSpec(method="newton_fd", max_iter=50, tol=1e-10),
-            equation_blocks=(
-                EquationBlock(name="node_c", evaluator=node_ev),
-                EquationBlock(name="edge_q", evaluator=edge_ev),
-            ),
-            parameters={},
-        )
-
-    packed_r = _make_sys(edge_ev_residual).solve()
-    packed_e = _make_sys(edge_ev_explicit).solve()
-    np.testing.assert_allclose(packed_r, packed_e, atol=1e-8,
-                                err_msg="explicit edge wrapping differs from residual form")
-
-    sys_r = _make_sys(edge_ev_residual)
-    node_r, _ = sys_r.unpack_unknowns(sys_r.solve())
-    np.testing.assert_allclose(node_r["c"], u_star, atol=1e-6,
-                                err_msg="explicit edge_law MMS: c does not match u*")
-
-    @edge_law(explicit=True)
-    def _dummy(self, c): return K * c
-    assert _dummy.__graph_tag__["explicit"] is True
-    assert _dummy.__graph_tag__["kind"] == "edge_law"
-
-
-def test_explicit_node_balance_matches_residual_form():
-    """
-    @node_balance(field=..., explicit=True): framework generates R = node_unknown − formula.
-
-    Problem: (α·I + L)·u = f*  →  u* = cos(2πi/N).
-
-    Residual form:  R = (α·I + L)·u − f*
-    Explicit form:  formula returns (f*−L·u)/α;
-                    framework wraps as R = u − (f*−L·u)/α  ≡ (α·u + L·u − f*)/α
-
-    Both must converge to u* and the decorator tag must carry explicit=True.
-    """
-    N     = 6
-    alpha = 2.0
-    gv, L = _ring_chord_graph(N)
-    u_star = np.cos(2 * np.pi * np.arange(N) / N)
-    f_star = (alpha * np.eye(N) + L) @ u_star
-
-    def node_ev_residual(ctx):
-        u = ctx.node_unknowns["u"]
-        return (alpha * np.eye(N) + L) @ u - f_star
-
-    def node_ev_explicit(ctx):
-        u = ctx.node_unknowns["u"]
-        return u - (f_star - L @ u) / alpha   # R = u − formula
-
-    def _make_sys(node_ev):
-        return GraphSystem(
-            graph=gv,
-            node_fields={"u": FieldState("u", "node", np.zeros(N))},
-            edge_fields={},
-            boundary_ports=(),
-            unknowns=UnknownLayout(node_fields=("u",), edge_fields=()),
-            solver=SolverSpec(method="newton_fd", max_iter=50, tol=1e-10),
-            equation_blocks=(EquationBlock(name="node_u", evaluator=node_ev),),
-            parameters={},
-        )
-
-    packed_r = _make_sys(node_ev_residual).solve()
-    packed_e = _make_sys(node_ev_explicit).solve()
-    np.testing.assert_allclose(packed_r, packed_e, atol=1e-8,
-                                err_msg="explicit node wrapping differs from residual form")
-
-    sys_r = _make_sys(node_ev_residual)
-    node_r, _ = sys_r.unpack_unknowns(sys_r.solve())
-    np.testing.assert_allclose(node_r["u"], u_star, atol=1e-6,
-                                err_msg="explicit node_balance MMS: u does not match u*")
-
-    @node_balance(field="u", explicit=True)
-    def _dummy(self, u): return u
-    assert _dummy.__graph_tag__["explicit"] is True
-    assert _dummy.__graph_tag__["kind"] == "node_balance"

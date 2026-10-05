@@ -142,7 +142,8 @@ class BenchCarbon(FunctionalComponent):
 
 @dataclass
 class BenchPhloem(FunctionalComponent):
-    """One graph system: implicit axial diffusion of sucrose, solved per plant (connected piece)."""
+    """One graph system: implicit axial diffusion of sucrose, solved on the whole population at once (each plant a
+    connected piece of the graph)."""
     sucrose: float = _node("intensive", 1.)
     sucrose_flux: float = state_variable(**DOC, initialize=0., scale=scales.SubOrgan, location="edge",
                                          mapping="child", state_variable_type="extensive")
@@ -153,7 +154,7 @@ class BenchPhloem(FunctionalComponent):
     class _phloem:
         @node_balance(field="sucrose")
         def _balance(self, sucrose, sucrose_flux):
-            return (sucrose - self.previous("sucrose")) / self.time_step \
+            return (sucrose - self.previous("sucrose")) / self.dt \
                 + np.asarray(self._graph_view.incidence @ sucrose_flux).reshape(-1)
 
         @edge_law(field="sucrose_flux")

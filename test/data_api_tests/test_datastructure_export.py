@@ -6,7 +6,6 @@ import os
 import sys
 
 import numpy as np
-import pandas as pd
 import pytest
 
 from openalea.metafspm.data_structure.data_api import ArrayDataStructure, MPGDataStructure

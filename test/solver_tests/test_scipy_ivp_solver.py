@@ -21,7 +21,7 @@ Concerns:
 import numpy as np
 import pytest
 
-from openalea.metafspm.solve.solver import ScipyIVPSolver, SolverConfig, make_solver
+from openalea.metafspm.solve.solver import make_solver
 from solver_specs import build_spec_decay_1node
 
 

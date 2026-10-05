@@ -10,7 +10,6 @@ from scipy.linalg import expm
 from scipy.sparse import identity
 from scipy.sparse.linalg import spsolve
 
-from openalea.metafspm.coupling.choregrapher import Choregrapher
 from openalea.metafspm.coupling.component import FunctionalComponent, parameter, state_variable
 from openalea.metafspm.data_structure.data_api import ArrayDataStructure
 from openalea.metafspm.solve.decorator import edge_law, graph_system, node_balance

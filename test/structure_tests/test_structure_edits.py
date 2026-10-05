@@ -54,7 +54,8 @@ def _edges(ds):
 
 def test_a_vertex_inserted_in_a_chain_is_linked_and_its_values_set():
     g, ds, vids = make_chain(n_segments=5)
-    tissue, growth = Tissue(data_structure=ds), Emerging(data_structure=ds)
+    Tissue(data_structure=ds)                                  # registers concentration
+    growth = Emerging(data_structure=ds)
     ds.set("concentration", np.arange(5.) + 1.)
     before = dict(zip(ds.entity_ids("node").tolist(), ds.get("concentration").tolist()))
     growth.insert_above = vids[3]
