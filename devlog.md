@@ -1778,3 +1778,13 @@ Per-file counts:
   Growth (4 calls) at 400 plants: 5.7 → 2.9 s.
 - **Final benchmark:** 1000 plants of 2 000 segments take 3.3 s per step (6.7 s before F3 and F4); rates and states take 0.03 s (0.77 s before). Growth is still superlinear at 1000 plants (F5 in the design doc §15: O(MTG) dict reads per growth event); left open.
 - **Suite:** 662 passed. **P8 done:** P1–P8 of `devplan_population_scene.md` are complete.
+
+## 2026-10-06 (later): S1 and S2 asked; S1 implemented (bitwise consumption scatter)
+
+- **Request:** implement S1 and `split="components"`; the anatomy repartition waits for GRANAP, and simplified anatomies are fine meanwhile.
+- **S1:**
+  - `_count_window` / `_window_contributions` (numba) follow `path_window`'s walk, recording each supplier and its contribution (the fraction computed in rhizodep's order);
+  - `scatter_contributions` uses `np.add.at`, which is sequential in emission order, with terms `amount · contribution / total` (rhizodep's operand order);
+  - `ds.order("post", convention="openalea")` rebuilds `post_order2`'s order from the MTG children lists (`reversed(plus + successor)`), cached per topology. Nodes linked across complexes fall back to the graph order.
+- **Tests:** the reference is rhizodep's `actual_growth` sharing written as a loop over `post_order2`, equal bit for bit with partial and maximal overlap; the openalea order equals `post_order2`. Index order instead of visiting order differs on 6 of 110 segments (1.9e-16 relative), so the test is sensitive to the order.
+- **Suite:** 665 passed.

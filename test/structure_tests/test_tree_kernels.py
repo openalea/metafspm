@@ -171,3 +171,66 @@ def test_kernels_run_on_every_plant_of_a_population_at_once():
             chain.append(s)
         lengths = [dict(zip(ds.entity_ids("node").tolist(), length))[v] for v in chain]
         assert distance[root] == sum(reversed(lengths)) and totals[root] == pytest.approx(sum(lengths))
+
+
+# ---------------------------------------------------------------- S1: consumption shared in rhizodep's order
+
+@pytest.mark.parametrize("overlap", ["partial", "maximal"])
+def test_consumption_is_shared_bit_for_bit_as_rhizodeps_loop(plant, overlap):
+    from openalea.mtg.traversal import post_order2
+    g, ds, rng = plant
+    n = ds.n_nodes()
+    volume, hexose, mass = rng.random(n) * 1e-9, rng.random(n) * 1e-3, rng.random(n) * 1e-4
+    length = np.where(rng.random(n) < 0.1, 0., rng.random(n))
+    budget = rng.random(n) * (6e-9 if overlap == "partial" else 1.)          # maximal: every window to the base
+    consumption = rng.random(n) * 1e-6
+    vids = ds.entity_ids("node").tolist()
+    index = {v: i for i, v in enumerate(vids)}
+    apices = np.isin(vids, [v for v in vids if _successor(g, v) is None])
+
+    def walk(i):                                 # rhizodep's calculating_supply_for_elongation, the lists it keeps
+        suppliers, provided, total = [], [], 0.
+        remaining, current = budget[i], i
+        while remaining > 0:
+            if remaining > volume[current]:
+                if length[current] > 0.:
+                    contribution = hexose[current] * mass[current]
+                    total += contribution
+                    suppliers.append(current)
+                    provided.append(contribution)
+                    remaining = remaining - volume[current]
+                parent = g.parent(vids[current])
+                if parent is None:
+                    break
+                current = index[parent]
+            else:
+                contribution = hexose[current] * mass[current] * remaining / volume[current]
+                total += contribution
+                suppliers.append(current)
+                provided.append(contribution)
+                remaining = 0.
+        return suppliers, provided, total
+
+    reference = np.zeros(n)                      # actual_growth_and_corresponding_respiration, apices in post order
+    for root in ds.roots().tolist():
+        for vid in post_order2(g, vids[root]):
+            if vid in index and apices[index[vid]]:
+                suppliers, provided, total = walk(index[vid])
+                for supplier, contribution in zip(suppliers, provided):
+                    reference[supplier] += consumption[index[vid]] * contribution / total
+
+    contributions = ds.path_contributions(budget, volume, hexose * mass, where=apices, include=length > 0)
+    totals = ds.path_window(budget, volume, hexose * mass, where=apices, include=length > 0)
+    shared = ds.scatter_contributions(contributions, consumption, totals)
+    np.testing.assert_array_equal(shared, reference)                         # bit for bit
+    owners, suppliers, _ = contributions
+    if overlap == "maximal":
+        assert np.bincount(suppliers).max() > 5                              # segments shared by many apices
+
+
+def test_the_openalea_post_order_is_post_order2(plant):
+    from openalea.mtg.traversal import post_order2
+    g, ds, _ = plant
+    vids = ds.entity_ids("node").tolist()
+    expected = [v for root in ds.roots().tolist() for v in post_order2(g, vids[root]) if v in set(vids)]
+    assert [vids[i] for i in ds.order("post", convention="openalea")] == expected
