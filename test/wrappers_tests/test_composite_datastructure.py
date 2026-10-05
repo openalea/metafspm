@@ -2,7 +2,6 @@
 CompositeModel coupling DataStructure-backed components: translator links become aliases and derived
 variables on the shared DataStructure.
 """
-import copy
 
 import numpy as np
 import pytest
@@ -10,7 +9,6 @@ import pytest
 import doubles_ds
 from openalea.metafspm.coupling.choregrapher import Choregrapher
 from openalea.metafspm.coupling.composite_wrapper import CompositeModel
-from openalea.metafspm.coupling.translator import Translator
 
 
 def _coupled(tmp_path, translator=None):

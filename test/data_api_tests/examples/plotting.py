@@ -14,12 +14,9 @@ MPGDataStructure or an ArrayDataStructure.
 
 from __future__ import annotations
 
-from collections import defaultdict
 
 import numpy as np
 import matplotlib.pyplot as plt
-import matplotlib.cm as cm
-from matplotlib.colors import Normalize
 
 from openalea.metafspm.data_structure.data_api import (
     GraphDataStructure,

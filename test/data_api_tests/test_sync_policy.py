@@ -123,7 +123,7 @@ def test_lazy_states_reach_the_mtg_when_it_is_read(seedling):
     model = Counter(data_structure=ds)
     model()
     model()
-    assert np.isnan(_mtg_values(g, ds, "count")).all() or (_mtg_values(g, ds, "count") == 0.).all()   # not yet
+    assert np.isnan(_mtg_values(g, ds, "count")).all()                                              # not yet
     np.testing.assert_array_equal(_mtg_values(ds.mtg, ds, "count"), 2.)                               # on read
     model()
     ds.flush_mtg()

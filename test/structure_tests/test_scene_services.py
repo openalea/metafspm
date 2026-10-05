@@ -8,13 +8,13 @@ from dataclasses import dataclass
 import numpy as np
 import pandas as pd
 
-from openalea.metafspm.coupling.component import FunctionalComponent, state_variable
+from openalea.metafspm.coupling.component import state_variable
 from openalea.metafspm.data_structure.configs import ScalesConfig as scales
 from openalea.metafspm.scene.scene import Scene
 from openalea.metafspm.solve.decorator import rate
 
 from growth import DOC, RootGrowthProbe
-from test_scene import DT, SceneGeometry, SceneSoil, _planting, _soil_translator
+from scene_doubles import DT, SceneGeometry, SceneSoil, planting, soil_translator
 
 
 
@@ -59,9 +59,9 @@ class CountingSoil(SceneSoil):
 
 
 def _scene(**options):
-    table = _planting([LitPlants, LitPlants])
+    table = planting([LitPlants, LitPlants])
     forcings = pd.DataFrame({"PARi": [0., 10. * DT]}, index=[0., 10. * DT])      # PARi(t) = t
-    return Scene(table, environment=[CountingSoil], translator=_soil_translator("Lit"), time_step=DT,
+    return Scene(table, environment=[CountingSoil], translator=soil_translator("Lit"), time_step=DT,
                  forcings=forcings, **options)
 
 

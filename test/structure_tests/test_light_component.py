@@ -17,25 +17,29 @@ from openalea.metafspm.scene.scene import Scene
 from openalea.metafspm.solve.decorator import rate
 
 from growth import DOC, RootGrowthProbe
-from test_scene import DT, _planting
+from scene_doubles import DT, planting
 
 GEOMETRY = ("x1", "x2", "y1", "y2", "z1", "z2", "radius")
 
 
-def _coordinate():
-    return state_variable(**DOC, initialize=0., scale=scales.SubOrgan, state_variable_type="descriptor",
-                          on_grow="inherit")
+GEOMETRY_DOC = dict(**DOC, initialize=0., scale=scales.SubOrgan, state_variable_type="descriptor", on_grow="inherit")
 
 
-def _organs(name, light_by):
-    fields = {g: _coordinate() for g in GEOMETRY}
-    fields["absorbed"] = input_variable(**DOC, by=light_by, initialize=-1., scale=scales.SubOrgan)
-    namespace = {"__annotations__": {k: float for k in fields}, **fields}
-    return dataclass(type(name, (FunctionalComponent,), namespace))
+@dataclass
+class WheatOrgans(FunctionalComponent):
+    x1: float = state_variable(**GEOMETRY_DOC)
+    x2: float = state_variable(**GEOMETRY_DOC)
+    y1: float = state_variable(**GEOMETRY_DOC)
+    y2: float = state_variable(**GEOMETRY_DOC)
+    z1: float = state_variable(**GEOMETRY_DOC)
+    z2: float = state_variable(**GEOMETRY_DOC)
+    radius: float = state_variable(**GEOMETRY_DOC)
+    absorbed: float = input_variable(**DOC, by="ToyCaribu", initialize=-1., scale=scales.SubOrgan)
 
 
-WheatOrgans = _organs("WheatOrgans", "ToyCaribu")
-PeaOrgans = _organs("PeaOrgans", "ToyCaribu")
+@dataclass
+class PeaOrgans(WheatOrgans):
+    """The same declarations under another component name, for a second population."""
 
 
 def _plant_model(name, organs):
@@ -119,7 +123,7 @@ def _translator():
 
 
 def test_a_light_model_triangulates_the_populations_itself():
-    scene = Scene(_planting([Wheat, Pea, Wheat]), environment=[ToyCaribuModel], translator=_translator(),
+    scene = Scene(planting([Wheat, Pea, Wheat]), environment=[ToyCaribuModel], translator=_translator(),
                   time_step=DT)
     wheat, pea = (p.data_structure for p in scene.populations)
     for ds in (wheat, pea):                                             # leaning elements: a projected area

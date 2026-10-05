@@ -29,36 +29,21 @@ def _population(sizes):
     return MPGDataStructure(g, from_scale=g.scales.SubOrgan)
 
 
-def _plant_fields():
-    return dict(
-        leaf_area=state_variable(**DOC, initialize=1., scale=scales.SubOrgan, state_variable_type="extensive"),
-        temperature=state_variable(**DOC, initialize=20., scale=scales.SubOrgan, state_variable_type="intensive"),
-        mass=state_variable(**DOC, initialize=1., scale=scales.SubOrgan, state_variable_type="extensive"),
-        dry_matter=state_variable(**DOC, initialize=2., scale=scales.Plant, state_variable_type="extensive"),
-        air_temperature=input_variable(**DOC, by="Weather", initialize=0., scale=scales.SubOrgan,
-                                       state_variable_type="intensive"),
-        rain_share=input_variable(**DOC, by="Weather", initialize=0., scale=scales.SubOrgan,
-                                  state_variable_type="extensive"))
-
-
 @dataclass
 class Wheat(FunctionalComponent):
-    leaf_area: float = _plant_fields()["leaf_area"]
-    temperature: float = _plant_fields()["temperature"]
-    mass: float = _plant_fields()["mass"]
-    dry_matter: float = _plant_fields()["dry_matter"]
-    air_temperature: float = _plant_fields()["air_temperature"]
-    rain_share: float = _plant_fields()["rain_share"]
+    leaf_area: float = state_variable(**DOC, initialize=1., scale=scales.SubOrgan, state_variable_type="extensive")
+    temperature: float = state_variable(**DOC, initialize=20., scale=scales.SubOrgan, state_variable_type="intensive")
+    mass: float = state_variable(**DOC, initialize=1., scale=scales.SubOrgan, state_variable_type="extensive")
+    dry_matter: float = state_variable(**DOC, initialize=2., scale=scales.Plant, state_variable_type="extensive")
+    air_temperature: float = input_variable(**DOC, by="Weather", initialize=0., scale=scales.SubOrgan,
+                                            state_variable_type="intensive")
+    rain_share: float = input_variable(**DOC, by="Weather", initialize=0., scale=scales.SubOrgan,
+                                       state_variable_type="extensive")
 
 
 @dataclass
-class Pea(FunctionalComponent):
-    leaf_area: float = _plant_fields()["leaf_area"]
-    temperature: float = _plant_fields()["temperature"]
-    mass: float = _plant_fields()["mass"]
-    dry_matter: float = _plant_fields()["dry_matter"]
-    air_temperature: float = _plant_fields()["air_temperature"]
-    rain_share: float = _plant_fields()["rain_share"]
+class Pea(Wheat):
+    """The same declarations under another component name, for a second population."""
 
 
 def _scalar(**options):

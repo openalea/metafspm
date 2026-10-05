@@ -1,8 +1,7 @@
 """
-Test doubles shared by the wrapper tests, reproducing the interfaces of the downstream models shown in
-test/provide_usage_examples/:
-- TRANSLATOR: a coupling translator with one entry per link kind (DataStructure component names are applied by
-  doubles_ds.translator()).
+Test doubles shared by the wrapper tests:
+- TRANSLATOR: a coupling translator with one entry per link kind, under the names RootCarbon and RootNitrogen
+  (doubles_ds.translator() gives it with the DataStructure components' names, PlantCarbon and PlantNitrogen).
 The DataStructure-backed plant and soil doubles are in doubles_ds.py.
 """
 import yaml

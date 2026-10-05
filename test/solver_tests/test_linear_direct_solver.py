@@ -15,14 +15,13 @@ Concerns:
 """
 
 import numpy as np
-import pytest
-from scipy.sparse import csr_matrix, issparse
+from scipy.sparse import csr_matrix
 
 from openalea.metafspm.solve.solver import LinearDirectSolver, SolverConfig, make_solver
 from openalea.metafspm.solve.system_specs import (
     GraphDAESpec, FieldState, UnknownLayout, EquationBlock,
 )
-from solver_specs import _graph_view, build_spec_linear_2node
+from solver_specs import _graph_view
 
 
 # ── Helper: build a spec with both dense and sparse matrix paths ─────────────

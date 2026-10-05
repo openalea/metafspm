@@ -121,7 +121,7 @@ class WaterMunchTransport(FunctionalComponent):
     @graph_system(
         node_unknowns=["xylem_pressure", "phloem_pressure"],
         edge_unknowns=[],
-        method="newton",
+        solver="newton",
         max_iter=15,
         schedule_as="axial",
     )

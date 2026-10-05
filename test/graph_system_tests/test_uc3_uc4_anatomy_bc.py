@@ -114,7 +114,7 @@ class MechaAnatomyHydraulics(FunctionalComponent):
     @graph_system(
         node_unknowns=["water_potential"],
         edge_unknowns=[],
-        method="newton",
+        solver="newton",
         max_iter=5,
         schedule_as="axial",
     )
@@ -301,7 +301,7 @@ class LaplacianWithBC(FunctionalComponent):
     @graph_system(
         node_unknowns=["pressure"],
         edge_unknowns=[],
-        method="newton",
+        solver="newton",
         max_iter=50,
         tol=1e-12,
         schedule_as="axial",
@@ -319,7 +319,7 @@ class LaplacianWithBC(FunctionalComponent):
     @graph_system(
         node_unknowns=["pressure"],
         edge_unknowns=[],
-        method="newton",
+        solver="newton",
         max_iter=50,
         tol=1e-12,
         schedule_as="axial",

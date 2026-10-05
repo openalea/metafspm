@@ -30,7 +30,6 @@ _HERE = os.path.dirname(__file__)
 sys.path.insert(0, os.path.join(_HERE, '..', '..', 'mpg_tests'))
 sys.path.insert(0, _HERE)   # examples/plotting takes priority over mpg_tests/plotting
 
-import numpy as np
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt

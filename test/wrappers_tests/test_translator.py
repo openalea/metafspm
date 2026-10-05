@@ -8,7 +8,6 @@ import pytest
 import yaml
 
 import doubles
-from openalea.metafspm.coupling.composite_wrapper import CompositeModel
 from openalea.metafspm.coupling.translator import Link, Translator, parse_factor
 from openalea.metafspm.data_structure.configs import ScalesConfig as scales
 

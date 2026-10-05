@@ -29,7 +29,7 @@ def _diffusion(**options):
         @node_balance(field="concentration")
         def _balance(self, concentration, flux, source):
             B = self._graph_view.incidence
-            return (concentration - self.previous("concentration")) / self.time_step \
+            return (concentration - self.previous("concentration")) / self.dt \
                 + np.asarray(B @ flux).reshape(-1) - source
 
         @edge_law(field="flux")

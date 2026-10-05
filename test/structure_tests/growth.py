@@ -10,7 +10,6 @@ Steps, in the growth rows of the Choregrapher:
 """
 from dataclasses import dataclass
 
-import numpy as np
 
 from openalea.metafspm.coupling.component import (FunctionalComponent, StructuralComponent, input_variable,
                                                    parameter, state_variable)

@@ -10,10 +10,9 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from openalea.metafspm.coupling.choregrapher import Choregrapher
 from openalea.metafspm.coupling.component import FunctionalComponent, declare
 from openalea.metafspm.data_structure.configs import PropsConfig
-from openalea.metafspm.data_structure.data_api import ArrayDataStructure, MPGDataStructure
+from openalea.metafspm.data_structure.data_api import MPGDataStructure
 from openalea.metafspm.data_structure.mpg import MPG
 from openalea.metafspm.solve.decorator import rate, state
 
@@ -89,11 +88,10 @@ class PlantNitrogen(FunctionalComponent):
 # ---------------------------------------------------------------- scene doubles on DataStructures
 
 SOIL = "GridSoil"
-PLANT_COMPONENTS = ["PlantCarbon", "PlantNitrogen"]
 
 
 def make_chain_plant_ds(coordinates=(0.025, 0.025, -0.01), n_segments=3):
-    """Plant MPG DataStructure: a vertical chain of segments below *coordinates*, as doubles.make_root_mtg."""
+    """Plant MPG DataStructure: a vertical chain of segments below *coordinates*, with their segment ends."""
     g = MPG()
     scale = g.scales.SubOrgan
     anchor = g.scales.anchors[scale]
