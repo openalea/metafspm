@@ -1816,3 +1816,21 @@ Per-file counts:
   - results in the new `devplan_porting.md`: gaps G1–G15, steps PT1–PT9, questions QPa–QPf plus GRANAP's;
   - checked against the code, three reported gaps are already covered: multi-output steps (`-> tuple[...]`), weighted sums (a formula link plus `sum`), and per-vertex lists (`dtype=object`).
 - **Suite:** 670 passed.
+
+## 2026-10-06 (later): porting questions answered; PT1 (tree kernels, round 2)
+
+- **Answers recorded** in `devplan_porting.md` §5:
+  - QPa: per-vertex streams;
+  - QPb: MTG scales, so the shoot data model is no gap;
+  - QPc: an extra unknown in the solve, which extends graph systems without changing the API;
+  - QPd: the light model triangulates by itself from the MPG, so metafspm stores no triangles;
+  - QPe: cmf kept as an opaque solver;
+  - QPf: GRANAP first in practice, with its guidelines after the general gaps;
+  - GRANAP: per-segment copies; class by diameter, distance from tip and from the collar; replaced on class change; xylem and phloem axial junctions; all nodes Compartments; at most about 100 classes.
+- **PT1 design** (§6), then implementation:
+  - `tree_kernels.FoldLevel` / `fold`: CSR children of the level gathered with repeat and offsets; reductions with ufunc `.at`; edge filter from the MTG edge types (None in anatomy mode);
+  - `chain_gather`: group chains use one sorted search on (chain, rank) keys, edge chains take a source vid and a position;
+  - `chain_recurrence`: position by position.
+- **Tests** (`test_tree_kernels_round2.py`, 7), each exact against a reference loop written in the test: rhizodep's pipe model (post_order2, `<` successor, `+` emerged non-nodule laterals, 0.1 % threshold), death with the minimum time since death, Root-CyNAPS' filtered max, elongwheat's tiller cohort gather, a clamped whorl-like recurrence, a downward heading fold.
+- **Cost:** a fold takes 0.2 s on 2·10⁵ segments (about 1000 levels; per-level numpy overhead, independent of the number of plants).
+- **Suite:** 677 passed.

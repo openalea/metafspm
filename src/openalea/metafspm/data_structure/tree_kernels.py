@@ -193,6 +193,133 @@ def path_compose(transforms: np.ndarray, parents: np.ndarray) -> np.ndarray:
     return out
 
 
+# ── Folds with a custom function (PT1) ──────────────────────────────────────────
+
+EDGE_NAMES = np.array(["", "/", "<", "+"])
+_REDUCE_FILL = {"sum": 0., "max": -np.inf, "min": np.inf, "all": True, "any": False, "count": 0}
+
+
+class FoldLevel:
+    """
+    One level of a fold: its *nodes* (local indices) and their *edge* types ("<", "+", "/" or "" when unknown). For
+    an upward fold, children() reduces any array over each node's children; for a downward fold, parent() reads the
+    parents' values.
+    """
+
+    def __init__(self, nodes, parents, indptr, indices, edge_codes):
+        self.nodes = nodes
+        self._parents, self._indptr, self._indices = parents, indptr, indices
+        self._edge_codes = edge_codes
+        self._links = None
+
+    @property
+    def edge(self) -> np.ndarray:
+        if self._edge_codes is None:
+            return np.full(self.nodes.size, "")
+        return EDGE_NAMES[self._edge_codes[self.nodes]]
+
+    def _children_of_level(self):
+        if self._links is None:
+            starts = self._indptr[self.nodes]
+            counts = self._indptr[self.nodes + 1] - starts
+            group = np.repeat(np.arange(self.nodes.size), counts)
+            offsets = np.cumsum(counts) - counts
+            child = self._indices[starts[group] + (np.arange(group.size) - offsets[group])]
+            self._links = (group, child)
+        return self._links
+
+    def children(self, values, op: str = "sum", edge: str = None, where=None, fill=None) -> np.ndarray:
+        """
+        Per node of the level, *op* (sum, max, min, all, any, count) of *values* over its children, keeping only
+        the children reached by an *edge* of that type and where the mask *where* holds; *fill* for a node without
+        such children (default: the op's identity).
+        """
+        if op not in _REDUCE_FILL:
+            raise ValueError(f"children: op must be one of {list(_REDUCE_FILL)}, got '{op}'")
+        group, child = self._children_of_level()
+        keep = np.ones(child.size, dtype=bool)
+        if edge is not None:
+            if self._edge_codes is None:
+                raise ValueError("children(edge=): edge types are unknown on this graph (anatomy mode)")
+            code = int(np.flatnonzero(EDGE_NAMES == edge)[0])
+            keep &= self._edge_codes[child] == code
+        if where is not None:
+            keep &= np.asarray(where, dtype=bool)[child]
+        group, child = group[keep], child[keep]
+        n = self.nodes.size
+        count = np.bincount(group, minlength=n)
+        if op == "count":
+            return count
+        values = np.asarray(values)
+        picked = values[child]
+        shape = (n,) + values.shape[1:]
+        if op in ("all", "any"):
+            out = np.full(shape, op == "all", dtype=bool)
+            (np.logical_and if op == "all" else np.logical_or).at(out, group, picked.astype(bool))
+        else:
+            out = np.full(shape, _REDUCE_FILL[op], dtype=np.float64)
+            {"sum": np.add, "max": np.maximum, "min": np.minimum}[op].at(out, group, picked)
+        if fill is not None:
+            out[count == 0] = fill
+        return out
+
+    def parent(self, values) -> np.ndarray:
+        """The parents' values (for a downward fold; roots get their own)."""
+        parents = self._parents[self.nodes]
+        values = np.asarray(values)
+        return values[np.where(parents >= 0, parents, self.nodes)]
+
+
+def fold(update, values, parents, children: tuple, direction: str = "up", edge_codes=None, groups=None) -> np.ndarray:
+    """
+    Level-by-level fold: "up" from the deepest level (children before parents), "down" from the roots. At each level,
+    out[level.nodes] = update(level, out), with *update* any vectorised function of a FoldLevel and the current
+    values (PT1: nonlinear pipe models, death propagation, filtered maxima, turtle frames).
+    """
+    if direction not in ("up", "down"):
+        raise ValueError("fold: direction must be 'up' or 'down'")
+    out = np.array(values, copy=True)
+    parents = np.asarray(parents, dtype=np.int64)
+    indptr, indices = children
+    groups = levels(parents) if groups is None else groups
+    for nodes in (reversed(groups) if direction == "up" else groups):
+        level = FoldLevel(nodes, parents, indptr, indices, edge_codes)
+        out[nodes] = update(level, out)
+    return out
+
+
+# ── Gathers and recurrences along chains (PT1) ──────────────────────────────────
+
+def chain_gather(values, chains: dict, source_chain, position, fill=np.nan) -> np.ndarray:
+    """Per node, the value of the node at *position* (0-based) on chain *source_chain*; *fill* when there is none."""
+    array, vector = _as_columns(values)
+    order, offsets = chains["order"], chains["offsets"]
+    length = np.diff(offsets)
+    source_chain = np.asarray(source_chain, dtype=np.int64)
+    position = np.asarray(position, dtype=np.int64)
+    valid = (source_chain >= 0) & (source_chain < length.size) & (position >= 0)
+    valid[valid] &= position[valid] < length[source_chain[valid]]
+    out = np.full(array.shape, fill, dtype=np.float64)
+    out[valid] = array[order[offsets[source_chain[valid]] + position[valid]]]
+    return out if vector else out[:, 0]
+
+
+def chain_recurrence(update, values, chains: dict) -> np.ndarray:
+    """
+    Recurrence along chains, position by position and vectorised across chains: out[nodes] = update(position, nodes,
+    previous, out), *previous* being each node's predecessor on its chain (-1 at position 0).
+    """
+    out = np.array(values, copy=True)
+    order, offsets = chains["order"], chains["offsets"]
+    length = np.diff(offsets)
+    for k in range(int(length.max()) if length.size else 0):
+        alive = np.flatnonzero(length > k)
+        nodes = order[offsets[alive] + k]
+        previous = order[offsets[alive] + k - 1] if k > 0 else np.full(nodes.size, -1, dtype=np.int64)
+        out[nodes] = update(k, nodes, previous, out)
+    return out
+
+
 # ── Windows towards the base ───────────────────────────────────────────────────
 
 @njit(cache=True, parallel=True)

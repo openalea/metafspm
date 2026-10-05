@@ -1,6 +1,6 @@
 # Plan: what metafspm still needs before porting the existing models
 
-Status: **draft for your answers** (2026-10-06). It comes from a read-only audit of the downstream code, nothing in those repositories was edited:
+Status: **agreed** (2026-10-06, answers in §4, decisions in §5). It comes from a read-only audit of the downstream code, nothing in those repositories was edited:
 - **Roots:** rhizodep, Root-CyNAPS, Root_BRIDGES.
 - **Shoot:** cnwgrass, WheatFspm (cnwheat, elongwheat, growthwheat, senescwheat, farquharwheat) and adel.
 - **Environment and scene:** RhizoSoil, soiltemp, Wheat-BRIDGES (composite and Caribu light), and fspm-utility.
@@ -55,7 +55,7 @@ Each step gets a short design note, tests against a reference loop taken from th
 
 | Step | Content | Gaps |
 |---|---|---|
-| **PT1** | Tree kernels, round 2: `fold(values, direction, fn)`, a numba fold applied level by level for nonlinear and min/max/all reductions, with a children filter; `chain_gather`; `chain_recurrence` | G1, G2, G6 (turtle) |
+| **PT1** ✓ | Tree kernels, round 2: `fold(values, direction, fn)`, a numba fold applied level by level for nonlinear and min/max/all reductions, with a children filter; `chain_gather`; `chain_recurrence` | G1, G2, G6 (turtle) |
 | **PT2** | Reproducible random draws: `ds.rng(entities, seed)`, one stream per (plant seed, vid, step), vectorised; documented MPG-style patterns for chained creation | G3 |
 | **PT3** | Structure edits: tests and fixes for adel-like edits (inserting elements in a chain, removing with relinking, rebuilding elements each step) and the repartition after them; disabling inherited steps (`steps_removed`), and templated components | G11, §1 |
 | **PT4** | Graph systems: extra unknowns outside the graph, coupled to nodes (a pool with its own balance); boundary sets whose kind is chosen per call; `self.forcing(name, t)` interpolating input tables inside solves | G4, G5 |
@@ -76,17 +76,17 @@ Not planned in metafspm: G13 (a masked loop in a step), G14 (until stratificatio
 ## 4. Questions
 
 - **QPa, reproducibility.** rhizodep re-seeds the global generator with `random_choice · vid` and draws in visiting order, and nodule emergence is unseeded. Must the port be identical to the current runs, or are per-vertex streams with the same distributions acceptable (reproducible, but not the same draws)? **Recommendation:** per-vertex streams. Bitwise identity with the current runs would require keeping the global generator and the visiting order in an MPG-style step.
-  → answer:
+  → answer: agree with Recommendation
 - **QPb, the shoot's data model.** cnwheat, elongwheat and growthwheat keep dicts keyed by `(plant, axis, metamer, organ, element)` tuples, hidden zones as dicts on metamers, and adel rebuilds its elements each step. Should the port map them to MTG scales, with hidden zones as Phytomer-scale variables (or vertices) and elements as SubOrgan vertices kept from one step to the next? Or keep adel's rebuilt elements? **Recommendation:** MTG scales, with stable elements, so that variables are carried by the DataStructure and not copied back and forth by facades.
-  → answer:
+  → answer: MTG scales yes so this is not really a gad as is.
 - **QPc, the shoot phloem pool for the roots (G4).** Should it be an extra unknown of the root transport system (a node outside the MTG, as Root-CyNAPS does)? Or should it be a Plant-scale variable exchanged with the shoot component at fixed points? **Recommendation:** an extra unknown attached to the collar inside the solve (PT4), since the collar flux and the pool must be solved together for stability.
-  → answer:
+  → answer: yes to Recommendation, so it does not really change the API right?
 - **QPd, light (G6).** Keep Caribu as the engine, with metafspm providing per-element triangles, optical classes and a light component on the union of populations (the adapter downstream)? Or should metafspm also own the triangulation from organ dimensions (adel's leaf-shape database)? **Recommendation:** metafspm stores and transforms triangles; adel's geometry stays a structural component downstream that writes them.
-  → answer:
+  → answer: No, for now the light model must work from MPG DataStructure and handle triangulation by itself.
 - **QPe, soil water (G10).** Keep cmf as an opaque solver inside the soil component, with its state outside the DataStructure and saved by a checkpoint hook? Or reimplement Richards and solute transport as graph systems on the grid? **Recommendation:** keep cmf first (PT7); a graph-system version can follow and be compared against it.
-  → answer:
+  → answer: yes, reimplementation is for later.
 - **QPf, which model first?** **Recommendation:** rhizodep (PT1–PT3 cover it), then Root-CyNAPS (PT4), then RhizoSoil, then the shoot.
-  → answer:
+  → answer: yes to Recommendation, but in practice we will begin with GRANAP before all the others.
 - **GRANAP (G12, after Q-A4 in `devplan_datastructures.md`):**
   - **Q-A4:** is a template shared per class, or are Compartments copied per segment? Do state variables differ per segment within a class? (The audit finds that the solved graph needs per-segment Compartments in any case, since state variables differ; only the geometry would be shared.)
   - What defines a class: the diameter only, or diameter with age or distance from the tip?
@@ -94,4 +94,38 @@ Not planned in metafspm: G13 (a masked loop in a step), G14 (until stratificatio
   - Which cells get axial junctions: only xylem and sieve tubes (as MECHA's axial K does), or also the apoplast and the symplast?
   - Are walls and wall junctions Compartments, or are only cells nodes, with walls as edges?
   - How many classes and segments do you expect? An anatomy is about 5–30 k graph nodes (1.4–5 k cells), so the full per-cell graph of a root system may be out of reach without a reduction per class.
-  → answer:
+  → answer: first I agree, we share only to avoid geometry re-generation but it should indeed be copied, the most effitient way possible, yet copied so that each segment gets its state variables. Second, for now, diameter, distance from tip and distance from shoot-root junction. Third, replaced and content like cell solute concentrations is only an input provided by coarser metabolic components as root_carbon. Fourth, For now, only xylem and phloem. Fifth, the code says it explicitly, all nodes are Compartments and edges between nodes Connections. Sixth: Ideally not more than a hundred, since now for wheat first order to lateral diameter is a fixed parameter. When we will proceed to the port of GRANAP, I have precise guidelines I will tell you after resolving the general gaps.
+
+## 5. Decisions from your answers (2026-10-06)
+
+- **QPa:** per-vertex random streams, the same distributions, reproducible; draws are not identical to today's runs.
+- **QPb:** the shoot is ported onto MTG scales with stable elements, so adel's per-step rebuild is not a metafspm gap. PT3 keeps only insertions at emergence and removals with relinking, plus the inherited-step changes.
+- **QPc:** the shoot phloem pool is an extra unknown attached to the collar inside the root transport solve. To your question: it adds an option to `@graph_system` (extra unknowns outside the graph, with their own balance), and changes nothing in the existing API.
+- **QPd:** the light model works from an MPG DataStructure (or a union of populations) and triangulates by itself. metafspm stores no triangles, so G6 reduces to what the light component reads: organ dimensions, positions and frames (`path_compose`, `fold` downward for the turtle), and its per-element outputs. PT8 becomes a test light component that triangulates the MPG's elements itself, to check that the API is enough.
+- **QPe:** cmf stays an opaque solver inside the soil component (PT7); a graph-system Richards version comes later.
+- **QPf:** the order is rhizodep, Root-CyNAPS, RhizoSoil, then the shoot, but **GRANAP is ported first in practice**. Its precise guidelines will come after the general gaps are resolved.
+- **GRANAP:**
+  - templates are shared only to avoid regenerating geometry; each segment gets **its own copy** (its Compartments and state variables), made as efficiently as possible;
+  - a class is defined by diameter, distance from the tip and distance from the root–shoot junction;
+  - a segment changing class gets its anatomy **replaced**; cell contents (e.g. solute concentrations) are inputs from coarser metabolic components (root_carbon), so the repartition after a replacement only needs those inputs, broadcast to the new Compartments;
+  - axial junctions: xylem and phloem only;
+  - all nodes are Compartments, and all edges between them are Connections;
+  - at most about a hundred classes (for wheat, the diameter from the first order to the laterals is a fixed parameter).
+
+**Order:** the general gaps first (PT1–PT7, and PT8 as a check), then PT9 for GRANAP with your guidelines.
+
+## 6. PT1 design: tree kernels, round 2
+
+- **`ds.fold(update, values, direction="up" | "down")`:** a fold over the tree, level by level: from the deepest level for "up" (children before parents), from the roots for "down".
+  - At each level, `update(level, out)` returns the new values of the level's nodes; it is any vectorised function.
+  - `level` gives `nodes` (local indices) and `edge` (each node's edge type: `"<"` or `"+"`).
+  - For "up", `level.children(values, op, edge=None, where=None, fill=…)` reduces over each node's children: op is sum, max, min, all, any or count, optionally only children with that edge type or where a mask holds.
+  - For "down", `level.parent(values)` gives the parents' values.
+  - It covers the pipe model (successor section plus SGC times the sum of the emerged lateral sections, then the threshold), death (all children dead, the minimum time since death), the barrier reopening (filtered max over `+` children), and the turtle's frames (down, with the frame state of the parent).
+- **`ds.chain_gather(values, rank, chain=…, source=…)`:** each node reads the value of the node at rank `rank` on the chain given by `source`.
+  - For chains defined by a group and a rank variable, `source` is a group value and `rank` a rank value (e.g. a tiller's metamer n reads the main stem's metamer `cohort + n − 1`).
+  - For edge-type chains, `source` is any node vid of that chain and `rank` a 0-based position.
+  - Missing ranks give `fill`.
+- **`ds.chain_recurrence(update, values, chain=…)`:** a non-associative recurrence along chains, position by position, vectorised across chains: `update(position, nodes, previous, out)` returns the new values, `previous` being each node's predecessor on its chain (−1 at the start). For recurrences along rank chains that are not parent links (e.g. metamer ranks).
+- **Tests:** reference loops written after rhizodep's `potential_growth` (pipe model and death, with `edge_type`, emerged laterals and nodules excluded), Root-CyNAPS' barrier reopening, elongwheat's tiller cohort reads, and a turtle frame recurrence, all compared exactly.
+
