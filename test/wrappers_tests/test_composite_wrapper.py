@@ -54,7 +54,7 @@ def test_open_translator_from_python_module(tmp_path):
     module.write_text(
         "from openalea.metafspm.coupling.translator import Translator\n"
         f"translator = Translator.from_dict({doubles.TRANSLATOR!r})\n")
-    loaded = CompositeModel().open_or_create_translator(str(module))
+    loaded = CompositeModel().open_or_create_translator(str(module)).to_nested()   # kept as a Translator
     assert loaded["SoilModel"]["RootCarbon"] == {"hexose_exudation_massic": {"hexose_exudation": 72.}}
     assert loaded["RootNitrogen"]["RootCarbon"]["sugar"] == {"hexose": 1.}
 
