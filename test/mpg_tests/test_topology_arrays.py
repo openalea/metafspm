@@ -95,3 +95,32 @@ def test_populate_graph_gives_the_same_order_as_with_openalea_traversal(monkeypa
             patch.setattr(MPG, "components_iter", MTG.components_iter)
             reference = compartment_order(make)
         assert ours == reference
+
+
+def _same_as_full(g):
+    incremental, full = g.topology_arrays(), g._full_topology_arrays()
+    for name, values in full.items():
+        np.testing.assert_array_equal(incremental[name][:values.size], values, err_msg=name)
+        assert (incremental[name][values.size:] <= 0).all()                    # spare capacity: no vertex
+
+
+def test_topology_arrays_are_extended_incrementally_after_growth():
+    g = branched_root_system(n_axes=3, n_segments=10)
+    g.topology_arrays()
+    scale = g.scales.SubOrgan
+    segments = sorted(g.vertices(scale=scale))
+    tip = max(segments)
+    for _ in range(3):                                                          # elongation
+        tip = g.add_child(tip, **PropsConfig(scale=scale, edge_type='<', label=g.labels.SubOrgan.RootSegment))
+    _same_as_full(g)
+    lateral = g.add_child(segments[4], **PropsConfig(scale=scale, edge_type='+', label=g.labels.SubOrgan.RootSegment))
+    g.add_components_bulk(g.complex(lateral), 3, topo_parents=[lateral, lateral + 1, lateral + 2],
+                          **PropsConfig(scale=scale, edge_type='<', label=g.labels.SubOrgan.RootSegment))
+    _same_as_full(g)
+    inserted = g.insert_parent(segments[6], **PropsConfig(scale=scale, edge_type='<',
+                                                          label=g.labels.SubOrgan.RootSegment))
+    arrays = g.topology_arrays()
+    assert arrays["parent"][segments[6]] == inserted                         # the existing child is relinked
+    _same_as_full(g)
+    g.remove_tree(lateral)                                                    # removals: rebuilt in full
+    _same_as_full(g)

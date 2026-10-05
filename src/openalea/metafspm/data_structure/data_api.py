@@ -1266,10 +1266,42 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
             raw = self._mtg.array_filtering(
                 "vertex_id", filter_in={"scale": self._mtg.scales.Compartment}
             )
-            svids = [int(v) for v in raw]
+            svids = np.asarray(raw, dtype=np.int64).tolist()
         self._idx_to_vid = svids
-        self._vid_to_idx = {v: i for i, v in enumerate(svids)}
+        self._vid_to_idx = None            # built at first use (F5): array code uses _vid_index
         self._build_bio_index_map()
+
+    @property
+    def _vid_to_idx(self) -> dict:
+        """{node vid: local index}, built at first use after each topology change."""
+        mapping = self.__dict__.get("_vid_to_idx_dict")
+        if mapping is None:
+            mapping = {v: i for i, v in enumerate(self._idx_to_vid)}
+            self.__dict__["_vid_to_idx_dict"] = mapping
+        return mapping
+
+    @_vid_to_idx.setter
+    def _vid_to_idx(self, mapping) -> None:
+        self.__dict__["_vid_to_idx_dict"] = mapping
+
+    def _vid_index(self, vids) -> np.ndarray:
+        """Local indices of node *vids*, in bulk (sorted search); unknown vids raise KeyError."""
+        vids = np.asarray(vids, dtype=np.int64)
+        sorted_vids = self._bio_vids_sorted
+        if vids.size == 0:
+            return np.empty(0, dtype=np.int64)
+        if sorted_vids.size == 0:
+            raise KeyError(f"vids {vids[:5].tolist()} are not nodes")
+        inverse = self.__dict__.get("_sorted_to_local")
+        if inverse is None or inverse.size != sorted_vids.size:
+            inverse = np.empty(sorted_vids.size, dtype=np.int64)
+            inverse[self._bio_node_idx] = np.arange(sorted_vids.size)
+            self.__dict__["_sorted_to_local"] = inverse
+        position = np.searchsorted(sorted_vids, vids).clip(0, sorted_vids.size - 1)
+        found = sorted_vids[position] == vids
+        if not found.all():
+            raise KeyError(f"vids {vids[~found][:5].tolist()} are not nodes")
+        return inverse[position]
 
     def _build_bio_index_map(self) -> None:
         """Precompute per-topology index arrays for fast biological-scale lookups.
@@ -1306,6 +1338,7 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
         sorted_vids      = np.sort(vids)
         self._bio_vids_sorted = sorted_vids
         self._bio_node_idx    = np.searchsorted(sorted_vids, vids)
+        self.__dict__.pop("_sorted_to_local", None)
 
         n_id_a = np.asarray(
             self._mtg.array_filtering(
@@ -1711,8 +1744,7 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
         coarse = self._coarse_scale_names()
         if from_location == "node" and to_location == "edge":
             parents, children = self._connection_endpoints()
-            tail = np.array([self._vid_to_idx[int(v)] for v in parents], dtype=np.int64)
-            head = np.array([self._vid_to_idx[int(v)] for v in children], dtype=np.int64)
+            tail, head = self._vid_index(parents), self._vid_index(children)
             if aggregation in ("proximal", "child"):
                 return values[head]
             if aggregation in ("distal", "parent"):
@@ -2068,12 +2100,10 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
         n, m = self.n_nodes(), self.n_edges()
         if _HAS_SCIPY:
             from scipy.sparse import coo_matrix as _coo
-            rows, cols, data = [], [], []
-            for e, (src, tgt) in enumerate(self.edges()):
-                rows += [self._vid_to_idx[src], self._vid_to_idx[tgt]]
-                cols += [e, e]
-                data += [+1.0, -1.0]
-            self._B_cached = _coo((data, (rows, cols)), shape=(n, m)).tocsr()
+            pairs = np.array(self._edges_cached(), dtype=np.int64).reshape(-1, 2)
+            e = np.arange(m)
+            rows = np.r_[self._vid_index(pairs[:, 0]), self._vid_index(pairs[:, 1])]
+            self._B_cached = _coo((np.r_[np.ones(m), -np.ones(m)], (rows, np.r_[e, e])), shape=(n, m)).tocsr()
         else:
             self._B_cached = super().incidence_matrix()
         return self._B_cached
@@ -2136,9 +2166,11 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
         for location, (old_keys, variables) in old.items():
             keys = np.asarray(self.entity_ids(location), dtype=np.int64)
             order = np.argsort(old_keys, kind="stable")
+            matched = _KeyedValues(old_keys[order], None).match(keys)       # once per location, for every variable
             for name, array in variables.items():
                 policy = meta.get(name, {"default": 0., "on_grow": "default"})
-                values = self._carry_over(_KeyedValues(old_keys[order], array[order]), keys, policy)
+                values = self._carry_over(_KeyedValues(old_keys[order], array[order], matched=(keys, *matched)),
+                                          keys, policy)
                 self.register(name, values, location=location, default=policy["default"], on_grow=policy["on_grow"],
                               dtype=policy.get("dtype", float))
             stored_ids[location] = keys
@@ -2281,8 +2313,7 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
         m = len(n_id_a_arr)
 
         if m > 0:
-            tails = np.array([self._vid_to_idx[int(v)] for v in n_id_a_arr], dtype=np.int64)
-            heads = np.array([self._vid_to_idx[int(v)] for v in n_id_b_arr], dtype=np.int64)
+            tails, heads = self._vid_index(n_id_a_arr), self._vid_index(n_id_b_arr)
             ec    = np.arange(m, dtype=np.int64)
             inc   = coo_matrix(
                 (np.r_[np.ones(m), -np.ones(m)],
@@ -2363,11 +2394,14 @@ def _scatter(prop, vids: np.ndarray, values: np.ndarray, integer: bool = False) 
 class _KeyedValues:
     """Values of a variable by entity id, as two sorted arrays: a read-only mapping matched in bulk (QF4)."""
 
-    def __init__(self, keys: np.ndarray, values: np.ndarray):
+    def __init__(self, keys: np.ndarray, values: np.ndarray, matched: tuple = None):
         self.keys, self.values = keys, values
+        self._matched = matched            # (ids, known, position) computed once for several variables
 
     def match(self, ids) -> tuple:
         """(known mask, position of each known id in values)."""
+        if self._matched is not None and ids is self._matched[0]:
+            return self._matched[1], self._matched[2]
         ids = np.asarray(ids, dtype=np.int64)
         if self.keys.size == 0:
             return np.zeros(ids.shape, dtype=bool), np.zeros(ids.shape, dtype=np.int64)
