@@ -163,6 +163,8 @@ class LabelsConfig:
         Phloem: int = "Phloem"
         Cambium: int = "Cambium"
         Aerenchyma: int = "Aerenchyma"
+        Mesophyll: int = "Mesophyll"
+        StomatalCavity: int = "StomatalCavity"
 
     class Cell:
         scale = ScalesConfig.Cell

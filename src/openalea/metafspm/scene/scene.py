@@ -126,7 +126,9 @@ class Scene(CompositeModel):
         events:                (time, action) pairs: action(scene) runs at the start of the first step at or after time.
         stop_when:             a condition(scene), checked after each step: simulate() stops when it holds.
         mappings:              further mappings between DataStructures (e.g. a LayerMapping between a column model and
-                               the soil grid), or a callable scene -> mappings, called once the models are built.
+                               the soil grid), or a callable scene -> mappings, called once the models are built. A
+                               CrossMapping given here replaces the inferred one between its two DataStructures (e.g.
+                               to map only the root surface, mask=).
         logger_class:          optional, called as logger_class(scene=self, outputs_dirpath=..., **log_settings), then
                                logger() after each step and logger.stop() at the end.
 
@@ -166,8 +168,12 @@ class Scene(CompositeModel):
 
         self.translator = load_translator(translator)
         self.mapping_method, self.periodic, self.flip_z = mapping_method, periodic, flip_z
-        # Inferred population <-> grid / union mappings, plus explicit ones (e.g. a LayerMapping column <-> grid)
-        self.mappings = self._infer_mappings() + list(mappings(self) if callable(mappings) else mappings)
+        # Explicit mappings (e.g. a LayerMapping column <-> grid, or a CrossMapping with a mask), then the inferred
+        # population <-> grid / union ones for the pairs the explicit ones do not link
+        explicit = list(mappings(self) if callable(mappings) else mappings)
+        linked = {frozenset((id(m.source), id(m.target))) for m in explicit if isinstance(m, CrossMapping)}
+        self.mappings = explicit + [m for m in self._infer_mappings() if not isinstance(m, CrossMapping)
+                                    or frozenset((id(m.source), id(m.target))) not in linked]
         self.exchanges = Exchanges(self.translator, self.components, self.mappings)
         self._update_emergence()
         self.forcings = forcings

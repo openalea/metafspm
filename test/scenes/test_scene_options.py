@@ -12,7 +12,7 @@ import pytest
 from openalea.metafspm.coupling.choregrapher import Choregrapher
 from openalea.metafspm.coupling.component import (FunctionalComponent, StructuralComponent, input_variable,
                                                    state_variable)
-from openalea.metafspm.coupling.cross import LayerMapping
+from openalea.metafspm.coupling.cross import CrossMapping, LayerMapping
 from openalea.metafspm.coupling.translator import Translator
 from openalea.metafspm.data_structure.configs import PropsConfig, ScalesConfig as scales
 from openalea.metafspm.data_structure.data_api import ArrayDataStructure
@@ -117,10 +117,29 @@ def test_mappings_given_as_a_callable_are_built_once_the_models_are():
 
     scene = Scene(planting([Seedlings]), environment=[ColumnModel, GridModel], translator=LAYERS, time_step=DT,
                   mappings=mappings)
-    assert built == [scene] and isinstance(scene.mappings[-1], LayerMapping)
+    assert built == [scene] and isinstance(scene.mappings[0], LayerMapping)
     scene.run()
     np.testing.assert_allclose(_grid_layers(scene.environment[1].grid), [10., 12., 14., 16.])
 
+
+
+def test_a_cross_mapping_given_replaces_the_inferred_one():
+    """An explicit CrossMapping (here mapping only the first segment of each plant) replaces the inferred one."""
+    def mappings(scene):
+        ds = scene.populations[0].data_structure
+        first = np.zeros(ds.n_nodes())
+        first[ds.roots()] = 1.
+        ds.register("is_first", first, location="node")
+        ds.define_mask("first", {"is_first": ">0"})
+        return [CrossMapping(ds, scene.environment[0].grid, mask="first")]
+
+    scene = Scene(planting([RootPopulation]), environment=[SceneSoil],
+                  translator=soil_translator("SceneExudation"), time_step=DT, mappings=mappings)
+    crosses = [m for m in scene.mappings if isinstance(m, CrossMapping)]
+    assert len(crosses) == 1 and crosses[0].mask == "first"
+    scene.run()
+    scene.run()                                                          # the soil receives the first step's exudation
+    assert scene.environment[0].grid.get("exudation").sum() > 0
 
 # ---------------------------------------------------------------- environment scenarios and the stand's size
 
