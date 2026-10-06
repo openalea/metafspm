@@ -13,6 +13,10 @@ Contracts::
                      (graph nodes, default "SubOrgan"), nodes ("Compartment" for anatomies, which the initiators
                      build) and wiring (the junction rules between anatomies, or a callable g -> rules). It exposes
                      components and run(). Numeric parameters come per plant from the planting table's scenarios.
+  scenarios          {"parameters": {name: value}} and/or {name: value}: the parameters of the model's components,
+                     set by the Scene after the model is built (as constructor keywords would), per plant for the
+                     numeric ones of plant models. Keys the model names in __init__ are its own arguments; the keys
+                     initiators read are theirs. Any other key raises (a typo, a parameter no component declares).
   environment model  Model(populations, scene_xrange, scene_yrange, time_step, **scenario): builds its DataStructures
                      (a grid, a UnionDataStructure of the populations, or works on a population's MPG) and exposes
                      components and run(); it applies its input tables itself, as today.
@@ -37,7 +41,8 @@ from openalea.metafspm.coupling.cross import CrossMapping, Exchanges, UnionDataS
 from openalea.metafspm.coupling.declaration import EXTENSIVE_KINDS, INTENSIVE_KINDS, MASSIC_KINDS
 from openalea.metafspm.coupling.translator import Translator
 from openalea.metafspm.data_structure.data_api import MPGDataStructure
-from openalea.metafspm.scene.population import apply_plant_scenarios, build_population
+from openalea.metafspm.scene.population import (apply_model_scenario, apply_plant_scenarios, build_population,
+                                                model_keywords)
 
 
 class AllMasks:
@@ -155,8 +160,11 @@ class Scene(CompositeModel):
         if len(environment_scenarios) != len(environment):
             raise ValueError("environment_scenarios must give one scenario per environment model")
         self.environment = [model(populations=population_ds, scene_xrange=self.scene_xrange,
-                                  scene_yrange=self.scene_yrange, time_step=time_step, **scenario)
+                                  scene_yrange=self.scene_yrange, time_step=time_step,
+                                  **model_keywords(model, scenario))
                             for model, scenario in zip(environment, environment_scenarios)]
+        for model, instance, scenario in zip(environment, self.environment, environment_scenarios):
+            apply_model_scenario(model, instance, scenario)
 
         self.components = [c for p in self.populations for c in p.components]
         self.components += [c for model in self.environment for c in model.components]
@@ -196,7 +204,9 @@ class Scene(CompositeModel):
     def _build_population(self, model, rows: pd.DataFrame) -> Population:
         rows = rows.reset_index(drop=True)
         scenario = self._shared_scenario(model, rows)
-        g, plants = build_population(rows, initiators=getattr(model, "initiators", ()))
+        read_by_initiators = set()
+        g, plants = build_population(rows, initiators=getattr(model, "initiators", ()),
+                                     read_by_initiators=read_by_initiators)
         scale = getattr(model, "from_scale", None) or "SubOrgan"
         scale = getattr(g.scales, scale) if isinstance(scale, str) else scale
         nodes = getattr(model, "nodes", None)
@@ -206,8 +216,9 @@ class Scene(CompositeModel):
         wiring = getattr(model, "wiring", None)
         wiring = wiring(g) if callable(wiring) else wiring
         ds = MPGDataStructure(g, from_scale=scale, nodes=nodes, wiring=wiring)
-        instance = model(data_structure=ds, time_step=self.time_step, **scenario)
+        instance = model(data_structure=ds, time_step=self.time_step, **model_keywords(model, scenario))
         population = Population(model, rows, plants, ds, instance)
+        apply_model_scenario(model, instance, scenario, read_by_initiators)
         apply_plant_scenarios(ds, population.components, rows, plants)
         if population.emergence:
             self._setup_emergence(population)

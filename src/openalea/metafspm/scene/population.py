@@ -7,11 +7,17 @@ A plant population in one MPG.
   ds = MPGDataStructure(g, from_scale=g.scales.SubOrgan)
   components = (RootGrowth(data_structure=ds), Carbon(data_structure=ds))
   apply_plant_scenarios(ds, components, table, plants)
+  apply_model_scenario(Model, model, scenario, read_by_initiators)
 
 Each StructuralComponent of `initiators` builds every plant's initial structure (StructuralComponent.initiate_plant),
 in order, before any component is constructed; components are then built once for the whole population, and their
 per-plant parameters filled from each plant's scenario.
+
+A scenario's entries (its "parameters" dict, and its other keys) are the parameters of the model's components, set
+by the Scene after the model is built as a constructor keyword would (apply_model_scenario), except the keys the
+model names in its __init__ (its own arguments) and those the initiators read. Any other entry raises.
 """
+import inspect
 import random
 
 import numpy as np
@@ -106,11 +112,11 @@ def stand_initialization(scene_name, xrange, yrange, sowing_density, sowing_dept
     return actual_xrange, yrange, planting_sequence
 
 
-def build_population(table: pd.DataFrame, initiators=()) -> tuple:
+def build_population(table: pd.DataFrame, initiators=(), read_by_initiators: set = None) -> tuple:
     """
     A new MPG with one Plant-scale vertex per row of *table* (Plant properties x, y, z, rotation), each plant's
     initial structure built by every StructuralComponent class of *initiators*, in order. Returns (g, plant vids in
-    table order).
+    table order). The scenario keys the initiators read are added to *read_by_initiators* when given.
     """
     g = MPG()
     plants = []
@@ -121,8 +127,31 @@ def build_population(table: pd.DataFrame, initiators=()) -> tuple:
         plants.append(plant)
     for initiator in initiators:
         for plant, row in zip(plants, table.itertuples(index=False)):
-            initiator.initiate_plant(g, plant, dict(_parameters(row.scenario)))
+            parameters = _ReadParameters(_parameters(row.scenario))
+            initiator.initiate_plant(g, plant, parameters)
+            if read_by_initiators is not None:
+                read_by_initiators |= parameters.read
     return g, plants
+
+
+class _ReadParameters(dict):
+    """A plant's scenario parameters, recording the keys an initiator reads."""
+
+    def __init__(self, *args):
+        super().__init__(*args)
+        self.read = set()
+
+    def __getitem__(self, key):
+        self.read.add(key)
+        return super().__getitem__(key)
+
+    def get(self, key, default=None):
+        self.read.add(key)
+        return super().get(key, default)
+
+    def __contains__(self, key):
+        self.read.add(key)
+        return super().__contains__(key)
 
 
 def apply_plant_scenarios(ds, components, table: pd.DataFrame, plants: list) -> None:
@@ -135,13 +164,78 @@ def apply_plant_scenarios(ds, components, table: pd.DataFrame, plants: list) -> 
     missing = set(int(e) for e in entities) - set(by_plant)
     if missing:
         raise ValueError(f"Plant vertices {sorted(missing)[:5]} have no row in the planting table")
+    given = set().union(*by_plant.values()) if by_plant else set()
     for component in components:
         for name, spec in getattr(component, "_variable_specs", {}).items():
-            if spec.variable_type != "parameter" or ds.location(name) != "Plant":
+            if spec.variable_type != "parameter":
+                continue
+            if ds.location(name) != "Plant":
+                if name in given and not _same_for_all([by_plant[p].get(name) for p in by_plant]):
+                    raise ValueError(f"{type(component).__name__}.{name} differs between the plants' scenarios but "
+                                     f"is stored at '{ds.location(name)}', not per plant: give every plant the same "
+                                     "value")
                 continue
             current = np.asarray(ds.get(name), dtype=float)
             values = [by_plant[int(e)].get(name, current[i]) for i, e in enumerate(entities)]
             ds.set(name, values)
+
+
+def apply_model_scenario(model, instance, scenario: dict, read_by_initiators=()) -> None:
+    """
+    Set *scenario*'s entries on the components of *instance* (built from the class *model*), as constructor keywords
+    would: a numeric parameter is written to the DataStructure, another goes to the component's field. The entries are
+    the "parameters" dict and the other keys, except the keys *model*'s __init__ names (its own arguments). Parameters
+    stored per plant are left to apply_plant_scenarios (a plant without the entry keeps the default). An entry that is
+    no component parameter, no argument of the model and not read by its initiators raises.
+    """
+    named = model_arguments(model)
+    entries = {}
+    for key, value in (scenario or {}).items():
+        if key == "parameters":
+            entries.update(value or {})
+        elif key not in named:
+            entries[key] = value
+    components = list(getattr(instance, "components", ()))
+    unknown = []
+    for name, value in entries.items():
+        owners = [c for c in components if name in getattr(c, "parameters", ())]
+        if not owners:
+            if name not in named and name not in read_by_initiators:
+                unknown.append(name)
+            continue
+        for component in owners:
+            ds = getattr(component, "data_structure", None)
+            if ds is not None and ds.has(name) and ds.location(name) == "Plant":
+                continue                                    # per plant: apply_plant_scenarios
+            setattr(component, name, value)
+    if unknown:
+        known = sorted({name for c in components for name in getattr(c, "parameters", ())})
+        raise ValueError(f"{model.__name__}: scenario entries {sorted(unknown)} are neither parameters of its "
+                         f"components ({', '.join(known) or 'none'}), arguments of {model.__name__}, nor read by its "
+                         "initiators")
+
+
+def model_arguments(model) -> set:
+    """The keyword arguments *model*'s __init__ names (its own scenario keys)."""
+    signature = inspect.signature(model.__init__)
+    return {name for name, p in signature.parameters.items()
+            if name != "self" and p.kind not in (p.VAR_KEYWORD, p.VAR_POSITIONAL)}
+
+
+def model_keywords(model, scenario: dict) -> dict:
+    """The scenario keys *model* is built with: all of them when its __init__ takes **kwargs, else those it names."""
+    scenario = dict(scenario or {})
+    parameters = inspect.signature(model.__init__).parameters.values()
+    if any(p.kind == p.VAR_KEYWORD for p in parameters):
+        return scenario
+    named = model_arguments(model)
+    return {key: value for key, value in scenario.items() if key in named}
+
+
+def _same_for_all(values) -> bool:
+    first = values[0]
+    return all((v is None) == (first is None) and (v is None or bool(np.all(np.asarray(v) == np.asarray(first))))
+               for v in values)
 
 
 def _parameters(scenario) -> dict:

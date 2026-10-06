@@ -293,6 +293,13 @@ scene.simulate(n_iterations=2500)
   keeps a plant frozen until then.
 - **Environment models** are built as `Model(populations, scene_xrange, scene_yrange, time_step, **scenario)` and
   create their own DataStructures (a grid, a union of the populations).
+- **Scenarios** are applied by the Scene, so models do not forward them. A scenario's entries (its `"parameters"`
+  dict, and its other keys) are parameters of the model's components. They are set after the model is built, with
+  the same effect as constructor keywords: a numeric parameter is written to the DataStructure (per plant for
+  plant models, a plant without the entry keeping the default), and a non-numeric one goes to the component's
+  field. Keys the model names in its `__init__` are its own arguments (e.g. `Soil(..., topsoil_K=1.5)`), and keys
+  the initiators read (`parameters.get("n_segments")`) are theirs. Any other entry raises: a typo, or a parameter
+  no component declares. A parameter not stored per plant must be the same for every plant.
 - **A step** runs each environment model after the exchanges into it, then each population after the exchanges into
   it. Mappings between populations and grids or unions are inferred from the scene translator; others are given by
   `mappings=`.

@@ -33,6 +33,11 @@
 - **Sub-stepping by the time step:** a component whose `time_step` is shorter than the simulation step runs its schedule once per `time_step` within each simulation step (e.g. 4 times for 900 s in a 3600 s step). Its clock advances at each sub-step, so forcings are read at each sub-step's end. `sub_time_step` defaults to `time_step`.
 - **Breaking:** the time step must divide the simulation step a whole number of times; otherwise construction raises `ValueError` (a longer step, or 1000 s in 3600 s, used to be silently rounded).
 
+### Scenarios applied by the Scene
+
+- **The Scene sets each scenario's entries on the model's components** after building the model. The entries are the `"parameters"` dict and the other keys, and they act as constructor keywords would: numeric ones go to the DataStructure (per plant for plant models), the others to the components' fields. Before, only numeric plant parameters reached the components; non-numeric ones and every environment parameter were dropped unless the model forwarded them, and none did.
+- **Breaking:** an entry that is no component parameter, no argument named by the model's `__init__` and not read by its initiators raises `ValueError`. So does a parameter that differs between plants without being stored per plant. Models whose `__init__` takes no `**kwargs` receive only the keys they name.
+
 ### Breaking: one selection argument, `filters=`
 
 - **Every decorator selects its elements with `filters=`:** steps, `@node_balance`, `@node_rate`, `@edge_law`, `@boundary_condition`, `boundary_set`, `@graph_output` and `@graph_system`. It replaces `select=` (boundary sets, boundary conditions, outputs) and `where=` (steps, graph systems).
