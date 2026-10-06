@@ -24,7 +24,7 @@ class GrassBRIDGES(CompositeModel):
     initiators = (RootGrowthModelCoupled, CNW_Grass)        # each builds its part of every plant (initiate_plant)
     from_scale = "SubOrgan"                                  # graph nodes: the segments
 
-    def __init__(self, data_structure, time_step: int = 3600, **scenario):
+    def __init__(self, data_structure, time_step: int = 3600):
         self.input_tables = scenario.get("input_tables", {})
         self.time = 0
         # Numeric parameters come per plant from the planting table's scenarios (stored at the Plant scale)

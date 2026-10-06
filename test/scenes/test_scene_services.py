@@ -32,7 +32,7 @@ class Lit(SceneGeometry):
 class LitPlants:
     initiators = (RootGrowthProbe,)
 
-    def __init__(self, data_structure, time_step, **scenario):
+    def __init__(self, data_structure, time_step):
         self.lit = Lit(data_structure=data_structure)
         self.components = [self.lit]
 
@@ -44,8 +44,8 @@ class CountingSoil(SceneSoil):
     """Records its runs, the exudation it received each time, and its spin-up."""
     run_every = 2
 
-    def __init__(self, populations, scene_xrange, scene_yrange, time_step, **scenario):
-        super().__init__(populations, scene_xrange, scene_yrange, time_step, **scenario)
+    def __init__(self, populations, scene_xrange, scene_yrange, time_step):
+        super().__init__(populations, scene_xrange, scene_yrange, time_step)
         self.runs, self.received, self.spun_up = [], [], 0
 
     def spin_up(self, scene):

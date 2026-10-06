@@ -69,7 +69,7 @@ class GridHeat(FunctionalComponent):
 class ColumnModel:
     """A 1-D column model; its DataStructure is given by its scenario, or built."""
 
-    def __init__(self, populations, scene_xrange, scene_yrange, time_step, column=None, **scenario):
+    def __init__(self, populations, scene_xrange, scene_yrange, time_step, column=None):
         self.column = column if column is not None else ArrayDataStructure(shape=(4,), dx=0.4)
         self.heat = ColumnHeat(data_structure=self.column)
         self.column.set("temperature", [10., 12., 14., 16.])
@@ -82,7 +82,7 @@ class ColumnModel:
 class GridModel:
     """A grid model, with the four 0.4 m layers of the column along z."""
 
-    def __init__(self, populations, scene_xrange, scene_yrange, time_step, grid=None, **scenario):
+    def __init__(self, populations, scene_xrange, scene_yrange, time_step, grid=None):
         self.scene_xrange, self.scene_yrange = scene_xrange, scene_yrange
         self.grid = grid if grid is not None else ArrayDataStructure(shape=(2, 1, 4), dx=0.4)
         self.heat = GridHeat(data_structure=self.grid)
@@ -205,7 +205,7 @@ class AnatomyPopulation:
     initiators = (RootGrowthProbe, AnatomyInitiator)
     nodes = "Compartment"
 
-    def __init__(self, data_structure, time_step, **scenario):
+    def __init__(self, data_structure, time_step):
         self.water = CompartmentWater(data_structure=data_structure)
         self.components = [self.water]
 

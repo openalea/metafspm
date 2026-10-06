@@ -2,8 +2,8 @@
 Target usage of the population scene, replacing play_Orchestra. The downstream
 models (GrassBRIDGES, RhizoSoil, the light model) must first follow the population contracts:
 
-  plant model        Model(data_structure, time_step, **scenario), class attribute initiators
-  environment model  Model(populations, scene_xrange, scene_yrange, time_step, **scenario)
+  plant model        Model(data_structure, time_step, <its own arguments>), class attribute initiators
+  environment model  Model(populations, scene_xrange, scene_yrange, time_step, <its own arguments>)
 
 Not runnable here: the imported packages live outside metafspm.
 """

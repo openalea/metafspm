@@ -166,7 +166,7 @@ class BenchPlant:
     initiators = (BenchGrowth,)
     timings = {}
 
-    def __init__(self, data_structure, time_step, **scenario):
+    def __init__(self, data_structure, time_step):
         self.growth = BenchGrowth(data_structure=data_structure)
         self.carbon = BenchCarbon(data_structure=data_structure)
         self.phloem = BenchPhloem(data_structure=data_structure)
@@ -194,7 +194,7 @@ class BenchSoilNitrate(FunctionalComponent):
 
 
 class BenchSoil:
-    def __init__(self, populations, scene_xrange, scene_yrange, time_step, **scenario):
+    def __init__(self, populations, scene_xrange, scene_yrange, time_step):
         self.grid = ArrayDataStructure(shape=(20, 20, 50), dx=(scene_xrange / 20, scene_yrange / 20, 0.02))
         self.nitrate = BenchSoilNitrate(data_structure=self.grid)
         self.components = [self.nitrate]

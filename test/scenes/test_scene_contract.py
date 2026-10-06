@@ -45,7 +45,7 @@ class ContractPlant(CompositeModel):
     initiators = (ContractSeedling,)
     translator_path = None
 
-    def __init__(self, data_structure, time_step, **scenario):
+    def __init__(self, data_structure, time_step):
         ds, g = data_structure, data_structure.mtg
         for name in ("x1", "x2", "y1", "y2", "z1", "z2"):
             ds.register(name, [g.property(name)[v] for v in ds.entity_ids("node")], location="node")
@@ -60,7 +60,7 @@ class ContractPlant(CompositeModel):
 
 
 class ContractSoil:
-    def __init__(self, populations, scene_xrange, scene_yrange, time_step, **scenario):
+    def __init__(self, populations, scene_xrange, scene_yrange, time_step):
         self.grid = ArrayDataStructure(shape=(int(round(scene_xrange / SIDE)), int(round(scene_yrange / SIDE)), 2),
                                        dx=SIDE)
         self.soil = doubles_ds.GridSoil(data_structure=self.grid)

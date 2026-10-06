@@ -187,7 +187,7 @@ leaves = boundary_set(filters={"label": "LeafElement"}, kind="robin", value="air
 
 ## Scenes
 
-- A **plant model** is a population model: `Model(data_structure, time_step, **scenario)` with `initiators`, and component classes of its own (the scene translator identifies components by class name). Steps are scheduled per instance, and subclasses run their bases' steps.
+- A **plant model** is a population model: `Model(data_structure, time_step, <its own arguments>)` with `initiators`, and component classes of its own (the scene translator identifies components by class name). Steps are scheduled per instance, and subclasses run their bases' steps.
 - An **environment model** receives the populations and builds its DataStructures.
 - **Scenarios** are applied to the components by the Scene, not forwarded by the model. A model names in `__init__` only the scenario keys that are its own arguments; initiators read theirs from `parameters`.
 - **MPG-style steps** loop over `self.active_ids()`.

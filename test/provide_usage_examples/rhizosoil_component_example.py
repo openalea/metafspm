@@ -18,7 +18,7 @@ from openalea.metafspm.data_structure.data_api import ArrayDataStructure
 class RhizoSoil(CompositeModel):
     """The soil of the stand on a regular grid, periodic in x and y."""
 
-    def __init__(self, populations, scene_xrange: float, scene_yrange: float, time_step: int = 3600, **scenario):
+    def __init__(self, populations, scene_xrange: float, scene_yrange: float, time_step: int = 3600):
         parameters = scenario["parameters"]["soil_model"]["soil"]
         self.input_tables = scenario.get("input_tables", {})
         self.time = 0

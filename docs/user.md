@@ -287,11 +287,11 @@ scene.simulate(n_iterations=2500)
 ```
 
 - **Plant models** are built once per model of the planting table, on an MPG holding all its plants:
-  `Model(data_structure, time_step, **scenario)`, with a class attribute `initiators` (the structural components
+  `Model(data_structure, time_step, <its own arguments>)`, with a class attribute `initiators` (the structural components
   building each plant). In anatomy mode (`nodes = "Compartment"`) the initiators build the anatomies, and a `wiring`
   attribute gives the junction rules between them. Numeric parameters may differ per plant (one scenario per plant); an `emergence_time` column
   keeps a plant frozen until then.
-- **Environment models** are built as `Model(populations, scene_xrange, scene_yrange, time_step, **scenario)` and
+- **Environment models** are built as `Model(populations, scene_xrange, scene_yrange, time_step, <its own arguments>)` and
   create their own DataStructures (a grid, a union of the populations).
 - **Scenarios** are applied by the Scene, so models do not forward them. A scenario's entries (its `"parameters"`
   dict, and its other keys) are parameters of the model's components. They are set after the model is built, with
