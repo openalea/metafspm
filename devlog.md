@@ -2039,3 +2039,4 @@ Per-file counts:
   One bug of my own was caught: the functor read the mask dict before the first mask existed. Results unchanged; suite 763 passed.
 - **Example boundaries as decorators (your request):** the air exchange (plant and soil) and the water table are `@boundary_condition` equations instead of boundary sets. Results identical.
 - **Seedling generator externalised (your request):** the architecture, anatomies and junctions (and their codes) moved from `components.py` to `seedling.py`; `SeedlingStructure.initiate_plant` calls it. Results identical.
+- **Root architecture (your request):** three first-order roots emerging 15° below the horizontal at the collar and bending towards the vertical by a gravitropism coefficient (0.35 per segment), with a seeded tortuosity per plant; laterals with a weaker gravitropism. Converges as before (5 and 6 steps), with balances closed.
