@@ -22,7 +22,7 @@ import numpy as np
 from openalea.metafspm.coupling.component import (FunctionalComponent, StructuralComponent, input_variable, parameter,
                                                   state_variable)
 from openalea.metafspm.data_structure.configs import PropsConfig, ScalesConfig as scales
-from openalea.metafspm.solve.decorator import (boundary_condition, boundary_set, edge_law, graph_output, graph_system,
+from openalea.metafspm.solve.decorator import (boundary_condition, edge_law, graph_output, graph_system,
                                                node_balance, postsegmentation)
 
 R, WATER_MOLAR_VOLUME, PRESSURE = 8.314, 1.8e-5, 101325.          # J mol-1 K-1, m3 mol-1, Pa
@@ -131,9 +131,10 @@ class PlantWaterTransport(FunctionalComponent):
             """The flux through a Connection, j = k (Ψ_a - Ψ_b)."""
             return conductance * np.asarray(self._graph_view.incidence.T @ water_potential).reshape(-1)
 
-        # liquid to vapour at the stomatal cavities: k_vap (Ψ - Ψ_air) leaving them (Robin)
-        atmosphere = boundary_set(filters={"is_evaporating": ">0"}, kind="robin", value="air_water_potential",
-                                  weight="vapour_conductance")
+        @boundary_condition("node", "neumann", field="water_potential", filters={"is_evaporating": ">0"})
+        def _to_the_air(self, water_potential, air_water_potential, vapour_conductance):
+            """Liquid to vapour at the stomatal cavities: the inflow k_vap (Ψ_air - Ψ), negative (water leaves)."""
+            return vapour_conductance * (air_water_potential - water_potential)
 
         @boundary_condition("node", "neumann", field="water_potential", filters={"is_soil_contact": ">0"})
         def _from_the_soil(self, water_potential, soil_water_potential, soil_contact_conductance):
@@ -193,10 +194,15 @@ class SoilWaterTransport(FunctionalComponent):
             """The flux through a face, j = k (Ψ_low - Ψ_high)."""
             return conductance * np.asarray(self._graph_view.incidence.T @ water_potential).reshape(-1)
 
-        water_table = boundary_set(filters={"is_water_table": ">0"}, kind="dirichlet", value="water_table_potential")
-        # liquid to vapour at the surface: k_vap (Ψ - Ψ_air) leaving the surface cells (Robin)
-        atmosphere = boundary_set(filters={"is_evaporating": ">0"}, kind="robin", value="air_water_potential",
-                                  weight="vapour_conductance")
+        @boundary_condition("node", "dirichlet", field="water_potential", filters={"is_water_table": ">0"})
+        def _water_table(self, water_potential, water_table_potential):
+            """The bottom cells held at the water table's potential."""
+            return water_potential - water_table_potential
+
+        @boundary_condition("node", "neumann", field="water_potential", filters={"is_evaporating": ">0"})
+        def _to_the_air(self, water_potential, air_water_potential, vapour_conductance):
+            """Liquid to vapour at the surface: the inflow k_vap (Ψ_air - Ψ), negative (water leaves)."""
+            return vapour_conductance * (air_water_potential - water_potential)
 
         @boundary_condition("node", "neumann", field="water_potential")
         def _taken_by_the_plants(self, plant_uptake):
