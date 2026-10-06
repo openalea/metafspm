@@ -462,9 +462,6 @@ def _pieces_of(instance, base) -> list:
     from scipy.sparse.csgraph import connected_components
     ds = _live_ds(instance)
     full = instance._graph_view
-    if getattr(instance, "_boundary_ports", None):
-        raise NotImplementedError(f"{type(instance).__name__}: split='components' with boundary ports set by hand; "
-                                  "use boundary sets")
     key = (ds.topology_version, id(base))
     cache = instance.__dict__.get("_pieces_cache")
     if cache is not None and cache[0] == key:
@@ -506,9 +503,6 @@ def _restriction_for(instance, where):
                        "defines no such mask")
     if ds.__dict__["_masks"][where]["location"] not in ("node", "cell"):
         raise ValueError(f"{type(instance).__name__}: where='{where}' needs a node (or grid cell) mask")
-    if getattr(instance, "_boundary_ports", None):
-        raise NotImplementedError(f"{type(instance).__name__}: boundary ports set by hand cannot follow an active "
-                                  "subgraph; use boundary sets")
     key = (ds.topology_version, ds.mask_version(where))
     cache = instance.__dict__.setdefault("_restriction_cache", {})
     if where in cache and cache[where][0] == key:
@@ -1111,7 +1105,7 @@ class GraphSystemBuilder:
                             J[rows, rows] = 1.
                 return J.tocsr() if sparse else J
 
-        boundary_ports = tuple(getattr(instance, "_boundary_ports", None) or ())
+        boundary_ports = ()
 
         spec = GraphDAESpec(
             graph             = gv,

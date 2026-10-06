@@ -10,7 +10,7 @@ import pytest
 
 from openalea.metafspm.coupling.component import FunctionalComponent, parameter, state_variable
 from openalea.metafspm.data_structure.configs import ScalesConfig as scales
-from openalea.metafspm.data_structure.data_api import BoundaryPort, MPGDataStructure
+from openalea.metafspm.data_structure.data_api import MPGDataStructure
 from openalea.metafspm.solve.decorator import boundary_set, edge_law, graph_system, node_balance
 from simple_seedling import generate_simple_mpg_seedling
 
@@ -182,9 +182,3 @@ def test_transient_defaults_from_the_solver():
     assert _explicit._spec["transient"] is True
 
 
-def test_hand_set_boundary_ports_cannot_follow_an_active_subgraph():
-    _, ds = _ds()
-    model = ActiveDiffusion(data_structure=ds)
-    model._boundary_ports = (BoundaryPort(name="p", node_id=int(ds.entity_ids("node")[0]), kind="robin", value=0.),)
-    with pytest.raises(NotImplementedError, match="use boundary sets"):
-        model()

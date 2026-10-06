@@ -159,7 +159,8 @@ def parameter(unit: str, unit_comment: str, description: str, min_value: float,
 
 class _PlantParameter:
     """
-    A numeric parameter stored per plant on the DataStructure.
+    A numeric parameter stored on the DataStructure: per plant when declared without a place, else at its scale or
+    location (one value per entity).
       * inside a step or a graph-system equation, reading self.<name> raises: the parameter is an argument;
       * outside, reading gives the population value when every plant has the same, else the per-plant values;
       * writing (scenario setup, tests) sets every plant's value; before the DataStructure is bound, the value is
@@ -173,8 +174,9 @@ class _PlantParameter:
         if obj is None:
             return self.default
         if obj.__dict__.get("_in_equation"):
-            raise AttributeError(f"{type(obj).__name__}.{self.name} is a parameter stored per plant: take it as an "
-                                 f"argument of the step or equation ({self.name}) instead of reading self.{self.name}")
+            raise AttributeError(f"{type(obj).__name__}.{self.name} is a parameter stored on the DataStructure: take "
+                                 f"it as an argument of the step or equation ({self.name}) instead of reading "
+                                 f"self.{self.name}")
         if self.name not in obj.__dict__.get("_registered_parameters", ()):
             return obj.__dict__.get("_pending_parameters", {}).get(self.name, self.default)
         values = np.asarray(obj.data_structure.get(self.name))
@@ -379,18 +381,21 @@ class DataStructureComponent(Component):
 
     @classmethod
     def _plant_parameter_fields(cls) -> dict:
-        """{name: default} of the numeric parameters declared without a place, stored per plant."""
+        """
+        {name: default} of the numeric parameters, stored on the DataStructure: per plant when declared without a
+        place, else at their scale or location. They have one value, the DataStructure's.
+        """
         names = {}
         for f in fields(cls):
             meta = f.metadata
-            if (meta.get("variable_type") == "parameter" and meta.get("scale") is None and meta.get("location") is None
+            if (meta.get("variable_type") == "parameter"
                     and meta.get("dtype") in (None, float, int, "float", "int") and not isinstance(f.default, bool)
                     and isinstance(f.default, (int, float, np.integer, np.floating))):
                 names[f.name] = f.default
         return names
 
     def _install_plant_parameters(self) -> None:
-        """Replace, once per class, each per-plant parameter's attribute by a _PlantParameter descriptor."""
+        """Replace, once per class, each numeric parameter's attribute by a _PlantParameter descriptor."""
         cls = type(self)
         if "_plant_parameter_names" not in cls.__dict__:
             names = cls._plant_parameter_fields()
@@ -518,12 +523,7 @@ class FunctionalComponent(DataStructureComponent):
             return None
         version = getattr(ds, "topology_version", None)
         if "_graph_view_cache" not in self.__dict__ or self.__dict__.get("_graph_view_version") != version:
-            ports = getattr(self, "_boundary_ports", ())
-            if ports:
-                import warnings
-                warnings.warn(f"{type(self).__name__}: boundary ports set by hand are deprecated, declare boundary "
-                              "sets in the graph system (boundary_set)", DeprecationWarning, stacklevel=2)
-            self.__dict__["_graph_view_cache"] = ds.to_graph_view(boundary_ports=ports)
+            self.__dict__["_graph_view_cache"] = ds.to_graph_view()
             self.__dict__["_graph_view_version"] = version
         return self.__dict__["_graph_view_cache"]
 
