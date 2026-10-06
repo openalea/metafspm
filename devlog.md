@@ -2027,3 +2027,4 @@ Per-file counts:
 - **Found while building it:** Newton's absolute tolerance stopped the plant solve at the initial guess in m³ s⁻¹ units, silently. The example uses mm³, and E1 is asked.
 - **Other open points in the plan:** E2 (stomatal closure, so that the competition between plants shows in their fluxes), E3 (properties on wired junctions).
 - **Suite:** 751 passed.
+- **Atmosphere removed (your request):** the air is now a constant input, `air_water_potential` and `vapour_factor` as parameters defaulting to their values at 50 % RH and 20 °C. Results are unchanged; the smoke test and the figures were rerun.

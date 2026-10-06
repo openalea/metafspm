@@ -165,3 +165,4 @@ The user guide gets a short page pointing to it.
   → answer:
 - **E3 — `wiring=` and Connection properties.** The example builds its junctions in `initiate_plant`, because the Connections wiring creates have no properties (type, length) for the conductance step. Let wiring rules give properties to the junctions they create (constants, or a callable of the two segments)? **Recommendation:** yes, `properties=` in a rule. The example could then use `wiring=`.
   → answer:
+- **Changed (2026-10-06, your request):** the atmosphere component and model are removed. The air is a constant input: `air_water_potential` (a parameter of the transport, −93.9 MPa at 50 % RH and 20 °C) and `vapour_factor` (a parameter of the structures, at 20 °C), both computed once in `components.py`. The results are unchanged.

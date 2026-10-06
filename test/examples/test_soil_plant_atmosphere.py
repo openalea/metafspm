@@ -14,7 +14,7 @@ sys.path.insert(0, os.path.abspath(EXAMPLE))
 
 import one_plant                                                                     # noqa: E402
 import population                                                                    # noqa: E402
-from models import Atmosphere, Soil                                                  # noqa: E402
+from models import Soil                                                               # noqa: E402
 
 FIGURES = ("plant_segments.png", "plant_anatomy.png", "anatomy_types.png", "soil_slice.png", "top_view.png")
 
@@ -25,18 +25,16 @@ def _environment(scene, kind):
 
 def _check_balances(scene):
     plants = [p.data_structure for p in scene.populations]
-    soil, air = _environment(scene, Soil).grid, _environment(scene, Atmosphere).air
+    soil = _environment(scene, Soil).grid
     uptake = sum(float(ds.get("root_uptake").sum()) for ds in plants)
     transpiration = sum(float(ds.get("evaporation").sum()) for ds in plants)
     assert uptake > 0 and uptake == pytest.approx(transpiration, rel=1e-8)          # the plants: in = out
     assert float(soil.get("plant_uptake").sum()) == pytest.approx(uptake, rel=1e-8)  # the soil gives what they take
-    assert float(air.get("transpiration")) == pytest.approx(transpiration, rel=1e-6)
     # the soil: the water table feeds the plants' uptake and the soil evaporation
     outflow = np.asarray(soil.incidence_matrix() @ np.asarray(soil.get("water_flux"))).reshape(soil.shape)
     from_the_water_table = float(outflow[..., -1].sum())
     evaporation = float(soil.get("evaporation").sum())
     assert from_the_water_table == pytest.approx(uptake + evaporation, rel=1e-6)
-    assert float(air.get("soil_evaporation")) == pytest.approx(evaporation, rel=1e-6)
 
 
 @pytest.mark.parametrize("example", [one_plant, population], ids=["one_plant", "population"])

@@ -1,6 +1,6 @@
 """
-One seedling in a soil column under a dry atmosphere: the plant, the soil and the air exchange at each scene step
-until the water potentials stop changing (a lagged fixed point), then the plots.
+One seedling in a soil column under a dry air (a constant water potential): the plant and the soil exchange at each
+scene step until the water potentials stop changing (a lagged fixed point), then the plots.
 
     python one_plant.py [output folder]
 """
@@ -11,7 +11,7 @@ import pandas as pd
 
 from openalea.metafspm.scene.scene import Scene
 
-from models import Atmosphere, SCENE_TRANSLATOR, SeedlingWater, Soil, largest_change, root_surface_mappings
+from models import SCENE_TRANSLATOR, SeedlingWater, Soil, largest_change, root_surface_mappings
 import plotting
 
 
@@ -20,7 +20,7 @@ def scene(output_dirpath=None, tolerance=1e-6, soil_scenario=None):
                                scenario={"parameters": {}})])
     table.attrs.update(xrange=0.2, yrange=0.2)                     # the stand: a 0.2 m x 0.2 m column of soil
     stop = largest_change(tolerance)
-    built = Scene(table, environment=[Atmosphere, Soil], environment_scenarios=[{}, soil_scenario or {}],
+    built = Scene(table, environment=[Soil], environment_scenarios=[soil_scenario or {}],
                   translator=SCENE_TRANSLATOR, time_step=3600, mappings=root_surface_mappings, stop_when=stop,
                   output_dirpath=output_dirpath, log_plants=["seedling"], heavy_log_period=1)
     return built, stop
@@ -38,12 +38,12 @@ def plots(built, folder):
 
 
 def summary(built, stop):
-    air = next(model for model in built.environment if isinstance(model, Atmosphere)).air
     plant = built.populations[0].data_structure
+    soil = next(model for model in built.environment if isinstance(model, Soil)).grid
     print(f"converged in {built.iteration} steps; largest change of Ψ per step (MPa): "
           + ", ".join(f"{change:.1e}" for change in stop.history))
-    print(f"transpiration {float(air.get('transpiration')):.4f} mm3 s-1, root uptake "
-          f"{plant.get('root_uptake').sum():.4f} mm3 s-1, soil evaporation {float(air.get('soil_evaporation')):.4f} "
+    print(f"transpiration {plant.get('evaporation').sum():.4f} mm3 s-1, root uptake "
+          f"{plant.get('root_uptake').sum():.4f} mm3 s-1, soil evaporation {soil.get('evaporation').sum():.4f} "
           f"mm3 s-1; leaf Ψ down to {plant.get('water_potential').min():.2f} MPa")
 
 

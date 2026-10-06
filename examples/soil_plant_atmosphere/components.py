@@ -7,8 +7,8 @@ Components of the soil–plant–atmosphere water example.
     HydraulicStructure  the conductances k of the edges and the vapour conductances of the evaporating nodes, from
                         the structure: SeedlingStructure builds the plants (initiate_plant) and computes theirs,
                         SoilStructure those of the soil grid.
-    AtmosphereState     the air's water potential and the vapour factor, from a fixed relative humidity and
-                        temperature; it receives the transpiration and the soil evaporation.
+    The air is a constant input: its water potential at 50 % relative humidity and 20 °C, and the vapour factor at
+    20 °C (AIR_WATER_POTENTIAL, VAPOUR_FACTOR).
 
 Units: water potentials in MPa, volumes in mm3 (fluxes in mm3 s-1, conductances in mm3 s-1 MPa-1), lengths and
 areas in m and m2. Volumes in mm3 keep the residuals of the solves well above the solver's absolute tolerance.
@@ -21,10 +21,33 @@ from openalea.metafspm.coupling.component import (FunctionalComponent, Structura
                                                   state_variable)
 from openalea.metafspm.data_structure.configs import PropsConfig, ScalesConfig as scales
 from openalea.metafspm.solve.decorator import (boundary_condition, boundary_set, edge_law, graph_output, graph_system,
-                                               node_balance, postsegmentation, state)
+                                               node_balance, postsegmentation)
 
 R, WATER_MOLAR_VOLUME, PRESSURE = 8.314, 1.8e-5, 101325.          # J mol-1 K-1, m3 mol-1, Pa
 MM3 = 1e9                                                           # mm3 per m3
+
+
+def saturated_vapour_pressure(temperature):
+    """Pa, at temperature (°C) (Tetens)."""
+    return 610.78 * np.exp(17.27 * temperature / (temperature + 237.3))
+
+
+def air_water_potential(relative_humidity, temperature):
+    """MPa: Ψ_air = (R T / V_w) ln RH."""
+    return R * (temperature + 273.15) / WATER_MOLAR_VOLUME * np.log(relative_humidity) * 1e-6
+
+
+def vapour_factor(temperature):
+    """
+    e_sat V_w² / (R T P), in mm3 s-1 MPa-1 per (mol m-2 s-1 m2): it turns a vapour conductance (mol m-2 s-1) times a
+    surface into a liquid conductance, the vapour flux driven by the vapour pressure difference linearised in Ψ.
+    """
+    kelvin = temperature + 273.15
+    return saturated_vapour_pressure(temperature) * WATER_MOLAR_VOLUME ** 2 / (R * kelvin * PRESSURE) * 1e6 * MM3
+
+
+AIR_WATER_POTENTIAL = float(air_water_potential(0.5, 20.))          # about -93.9 MPa: a dry, realistic air
+VAPOUR_FACTOR = float(vapour_factor(20.))
 
 
 def _doc(unit, description, lower=-1e9, upper=1e9):
@@ -73,8 +96,8 @@ class WaterTransport(FunctionalComponent):
     conductance: float = input_variable(**_doc("mm3 s-1 MPa-1", "Hydraulic conductance of an edge."), by="structure",
                                         initialize=0., location="edge", state_variable_type="intensive")
     # the atmosphere: an exchange with the air, through a vapour conductance
-    air_water_potential: float = input_variable(**_doc("MPa", "Water potential of the air."), by="AtmosphereState",
-                                                initialize=-90., location="node", state_variable_type="intensive")
+    air_water_potential: float = parameter(**_doc("MPa", "Water potential of the air (a constant input)."),
+                                           by="WaterTransport", default=AIR_WATER_POTENTIAL, location="node")
     vapour_conductance: float = input_variable(**_doc("mm3 s-1 MPa-1", "Liquid-vapour conductance of an evaporating "
                                                       "node."), by="structure", initialize=0., location="node",
                                                state_variable_type="intensive")
@@ -163,10 +186,9 @@ class HydraulicStructure(StructuralComponent):
                               location="edge", state_variable_type="intensive")
     vapour_conductance: float = state_variable(**_doc("mm3 s-1 MPa-1", "Liquid-vapour conductance of a node."),
                                                initialize=0., location="node", state_variable_type="intensive")
-    vapour_factor: float = input_variable(**_doc("mm3 s-1 MPa-1 per (mol m-2 s-1 m2)",
-                                                 "e_sat V_w² / (R T P): from a vapour conductance to a liquid one."),
-                                          by="AtmosphereState", initialize=0., location="node",
-                                          state_variable_type="intensive")
+    vapour_factor: float = parameter(**_doc("mm3 s-1 MPa-1 per (mol m-2 s-1 m2)",
+                                            "e_sat V_w² / (R T P): from a vapour conductance to a liquid one."),
+                                     by="HydraulicStructure", default=VAPOUR_FACTOR, location="node")
     is_evaporating: float = state_variable(**_doc("-", "1 where water evaporates."), initialize=0., location="node",
                                            state_variable_type="descriptor")
     evaporating_area: float = state_variable(**_doc("m2", "Evaporating surface of a node."), initialize=0.,
@@ -413,42 +435,3 @@ class SoilStructure(HydraulicStructure):
     @postsegmentation
     def _vapour_conductance(self, evaporating_area, soil_surface_conductance, vapour_factor):
         return soil_surface_conductance * evaporating_area * vapour_factor
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# The atmosphere
-# ═══════════════════════════════════════════════════════════════════════════════
-
-def saturated_vapour_pressure(temperature):
-    """Pa, at temperature (°C) (Tetens)."""
-    return 610.78 * np.exp(17.27 * temperature / (temperature + 237.3))
-
-
-@dataclass
-class AtmosphereState(FunctionalComponent):
-    """
-    The air: its water potential Ψ_air = (R T / V_w) ln RH, and the vapour factor e_sat V_w² / (R T P), which turns
-    a vapour conductance (mol m-2 s-1) times a surface into a liquid conductance (m3 s-1 MPa-1): the flux driven by
-    the vapour pressure difference, linearised in Ψ. It receives the plants' transpiration and the soil evaporation.
-    """
-    relative_humidity: float = parameter(**_doc("-", "Relative humidity of the air."), by="AtmosphereState",
-                                         default=0.5, location="scalar")
-    air_temperature: float = parameter(**_doc("°C", "Air temperature."), by="AtmosphereState", default=20.,
-                                       location="scalar")
-    air_water_potential: float = state_variable(**_doc("MPa", "Water potential of the air."), initialize=-90.,
-                                                location="scalar", state_variable_type="intensive")
-    vapour_factor: float = state_variable(**_doc("mm3 s-1 MPa-1 per (mol m-2 s-1 m2)", "Vapour factor."),
-                                          initialize=0., location="scalar", state_variable_type="intensive")
-    transpiration: float = input_variable(**_doc("mm3 s-1", "Water lost by the plants."), by="PlantWaterTransport",
-                                          initialize=0., location="scalar", state_variable_type="extensive")
-    soil_evaporation: float = input_variable(**_doc("mm3 s-1", "Water lost by the soil."), by="SoilWaterTransport",
-                                             initialize=0., location="scalar", state_variable_type="extensive")
-
-    @state
-    def _air_water_potential(self, relative_humidity, air_temperature):
-        return R * (air_temperature + 273.15) / WATER_MOLAR_VOLUME * np.log(relative_humidity) * 1e-6
-
-    @state
-    def _vapour_factor(self, air_temperature):
-        kelvin = air_temperature + 273.15
-        return saturated_vapour_pressure(air_temperature) * WATER_MOLAR_VOLUME ** 2 / (R * kelvin * PRESSURE) * 1e6 * MM3
