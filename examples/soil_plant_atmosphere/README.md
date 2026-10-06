@@ -29,11 +29,16 @@ Volumes in mm³ keep the solves' residuals well above the solver's absolute tole
 
 The scene converges in seven steps (largest change of Ψ: 7.8e-01, 1.2e-02, 4.6e-04, 2.6e-05, 1.6e-06, 9.7e-08 MPa). Transpiration
 (0.076 mm³ s⁻¹) equals the root uptake and the water taken from the soil; the water table supplies it and the soil
-evaporation. The side views draw the soil's ΔΨ (Ψ minus its layer mean, red where drier) behind the plant, on a
-scale of its own, under the plot; the plant keeps its Ψ scale on the right.
+evaporation.
 
 ![plants at SubOrgan scale](figures/one_plant/plant_segments.png)
 ![the plant with its anatomies](figures/one_plant/plant_anatomy.png)
+
+The same views with the soil's ΔΨ (Ψ minus its layer mean, red where drier) behind the plant, on a scale of its own
+under the plot, the plant keeping its Ψ scale on the right:
+
+![plants at SubOrgan scale over the soil ΔΨ](figures/one_plant/plant_segments_soil.png)
+![the plant with its anatomies over the soil ΔΨ](figures/one_plant/plant_anatomy_soil.png)
 ![one anatomy per organ type](figures/one_plant/anatomy_types.png)
 ![soil slice](figures/one_plant/soil_slice.png)
 
@@ -61,6 +66,7 @@ potentials absorb the difference: the least conductive roots give the lowest lea
 The side views show the first planting row (four plants, seen along the row, in the y–z plane).
 
 ![plants](figures/population/plant_segments.png)
+![plants over the soil ΔΨ](figures/population/plant_segments_soil.png)
 ![soil slice](figures/population/soil_slice.png)
 ![soil slice, anomaly](figures/population/soil_slice_anomaly.png)
 ![top view](figures/population/top_view.png)

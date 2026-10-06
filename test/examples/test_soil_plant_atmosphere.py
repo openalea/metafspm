@@ -16,7 +16,8 @@ import one_plant                                                                
 import population                                                                    # noqa: E402
 from models import Soil                                                               # noqa: E402
 
-FIGURES = ("plant_segments.png", "plant_anatomy.png", "anatomy_types.png", "soil_slice.png", "soil_slice_anomaly.png",
+FIGURES = ("plant_segments.png", "plant_segments_soil.png", "plant_anatomy.png", "plant_anatomy_soil.png",
+           "anatomy_types.png", "soil_slice.png", "soil_slice_anomaly.png",
            "top_view.png", "upscaling.png")
 
 

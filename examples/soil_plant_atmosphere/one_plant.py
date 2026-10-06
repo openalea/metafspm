@@ -31,8 +31,10 @@ def plots(built, folder, row=None):
     os.makedirs(folder, exist_ok=True)
     plants = [population.data_structure for population in built.populations]
     soil = next(model for model in built.environment if isinstance(model, Soil)).grid
-    plotting.plant_segments(plants, os.path.join(folder, "plant_segments.png"), row=row, soil=soil)
-    plotting.plant_anatomy(plants[0], os.path.join(folder, "plant_anatomy.png"), row=row, soil=soil)
+    plotting.plant_segments(plants, os.path.join(folder, "plant_segments.png"), row=row)
+    plotting.plant_segments(plants, os.path.join(folder, "plant_segments_soil.png"), row=row, soil=soil)   # ΔΨ
+    plotting.plant_anatomy(plants[0], os.path.join(folder, "plant_anatomy.png"), row=row)
+    plotting.plant_anatomy(plants[0], os.path.join(folder, "plant_anatomy_soil.png"), row=row, soil=soil)
     plotting.anatomy_types(plants[0], os.path.join(folder, "anatomy_types.png"))
     plotting.soil_slice(soil, plants, os.path.join(folder, "soil_slice.png"), row=row)
     plotting.soil_slice(soil, plants, os.path.join(folder, "soil_slice_anomaly.png"), row=row, anomaly=True)
