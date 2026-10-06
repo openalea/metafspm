@@ -27,6 +27,11 @@
   - `solver="implicit_euler"` is a deprecated alias of `"newton"` with `transient=True`. It used to add `(u - u_prev)/h` to every unknown, edge fluxes included, so equations writing their own time term got it twice.
   - `explicit_euler` evaluates the edge unknowns at the current state before stepping (it used the previous step's fluxes), and leaves the step's fluxes in the DataStructure.
 
+### Declarations shared by plants and grids, and Connection properties
+
+- **`location="node"` on a grid is its cells** (the nodes of its graph), so one component class declared on nodes and edges runs on a plant MPG and on a soil grid.
+- **In anatomy mode, `scale=Connection`** declares the Connections' own MTG properties, read at registration and written back like node properties. The edges are the Connections themselves; before, such variables had no MTG property.
+
 ### Parameters: one value, the DataStructure's
 
 - **Breaking:** every numeric parameter now goes through the DataStructure, placed ones (`scale=` / `location=`) included, not only those stored per plant:

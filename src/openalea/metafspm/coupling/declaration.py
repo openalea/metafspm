@@ -247,7 +247,10 @@ def resolve_declaration(f, ds) -> Optional[VariableSpec]:
             raise DeclarationError(f"'{f.name}': scale='{raw_scale}' is a location, do not also give location=")
         location, raw_scale = raw_scale, None
     if not _is_graph(ds):
-        # Grids: only their own locations; biological scales have no meaning there
+        # Grids: only their own locations; biological scales have no meaning there. "node" is a grid's cells (the
+        # nodes of its graph), so that one component class runs on plant graphs and on grids.
+        if location == "node" and raw_scale is None and "cell" in getattr(ds, "_var_stores", dict)():
+            location = "cell"
         if location in ("cell", "scalar", "edge") and raw_scale is None and mapping is None:
             return VariableSpec(location=location, **common)
         element_scale = getattr(ds, "element_scale", None)
@@ -265,6 +268,11 @@ def resolve_declaration(f, ds) -> Optional[VariableSpec]:
     scales = _scales_of(ds)
     if scale == scales.Compartment and node_scale(ds) == scales.Compartment:
         pass    # anatomy mode: the Compartments are the MTG vertices behind the nodes, their properties are read
+    elif scale == scales.Connection and node_scale(ds) == scales.Compartment:
+        # anatomy mode: the edges are the Connections themselves, their properties are read and written
+        if location not in (None, "edge") or mapping is not None or legacy_edge is not None:
+            raise DeclarationError(f"'{f.name}': in anatomy mode, scale Connection is the edges themselves")
+        return VariableSpec(location="edge", scale=scale, **common)
     elif scale in (scales.Compartment, scales.Connection):
         # Solver entities themselves: no MTG property behind them
         if location is None:
