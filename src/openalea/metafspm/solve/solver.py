@@ -51,7 +51,7 @@ from dataclasses import dataclass, replace as _dc_replace
 from typing      import Optional
 
 import numpy as np
-from scipy.sparse import eye, issparse
+from scipy.sparse import diags, eye, issparse
 from scipy.sparse.linalg import spsolve
 
 
@@ -148,15 +148,23 @@ class AbstractSolver(ABC):
 
     # ── Shared numerics ────────────────────────────────────────────────────────
 
-    def _linear_step(self, jac, residual: np.ndarray) -> np.ndarray:
+    def _linear_step(self, jac, residual: np.ndarray, spec=None) -> np.ndarray:
         """
         Solve J δ = −R, sparse-aware.
 
-        Sparse J → spsolve (O(N log N)).
+        Sparse J → spsolve. When *spec* has edge unknowns whose block of J is diagonal (an edge law on each edge's
+        own flux, e.g. explicit laws j − k ΔΨ), they are eliminated exactly (Schur complement) and the node system is
+        solved alone: the full system's node rows hold only fluxes, a zero diagonal that makes the direct solver pivot
+        and fill in (25 s against 0.1 s on a 16 x 16 x 32 soil grid).
         Dense J  → numpy.linalg.solve (O(N³)).
         """
         if issparse(jac):
-            return np.asarray(spsolve(jac.tocsr(), -residual), dtype=np.float64)
+            edges = _edge_unknowns(spec, jac.shape[0])
+            if edges is not None:
+                delta = _solve_eliminating(jac.tocsr(), residual, edges)
+                if delta is not None:
+                    return delta
+            return np.asarray(spsolve(jac.tocsc(), -residual, permc_spec="MMD_AT_PLUS_A"), dtype=np.float64)
         return np.linalg.solve(np.asarray(jac, dtype=np.float64), -residual)
 
     def _armijo_linesearch(self, spec, packed: np.ndarray,
@@ -557,7 +565,7 @@ class NewtonSolver(DAESolver):
                    if force_fd else
                    spec.jacobian(packed, prev_fields, h))
 
-            delta = self._linear_step(jac, residual)
+            delta = self._linear_step(jac, residual, spec)
 
             if self.config.linesearch:
                 packed = self._armijo_linesearch(
@@ -625,7 +633,7 @@ class ImplicitEulerSolver(DAESolver):
                    if issparse(J_s) else
                    np.asarray(J_s, dtype=np.float64) + np.eye(N) / h)
 
-            packed = packed + self._linear_step(J, R)
+            packed = packed + self._linear_step(J, R, spec)
 
         raise AssertionError(
             f"ImplicitEuler Newton did not converge in {self.config.max_iter} "
@@ -948,3 +956,41 @@ def make_solver(method: str, config=None) -> AbstractSolver:
     else:
         raise TypeError(f"config must be a SolverConfig or a dict of its fields, got {type(config).__name__}")
     return cls(cfg)
+
+
+def _edge_unknowns(spec, size: int):
+    """Indices of the edge unknowns of a graph-system *spec* in the packed vector (nodes, edges, pools), or None."""
+    unknowns, graph = getattr(spec, "unknowns", None), getattr(spec, "graph", None)
+    if unknowns is None or graph is None or not getattr(unknowns, "edge_fields", None):
+        return None
+    start = graph.n_nodes * len(unknowns.node_fields)
+    stop = start + graph.n_edges * len(unknowns.edge_fields)
+    if stop > size or stop == start:
+        return None
+    return np.arange(start, stop)
+
+
+def _solve_eliminating(jac, residual: np.ndarray, eliminated: np.ndarray):
+    """
+    J δ = −R with the unknowns *eliminated* solved last, when their block D of J is diagonal and nonsingular:
+    (A − B D⁻¹ C) δ_k = −R_k + B D⁻¹ R_e, then δ_e = D⁻¹ (−R_e − C δ_k). None when D is not diagonal.
+    """
+    kept = np.setdiff1d(np.arange(jac.shape[0]), eliminated, assume_unique=True)
+    rows_e = jac[eliminated]
+    D = rows_e[:, eliminated]
+    d = D.diagonal()
+    if np.any(d == 0.) or (D - diags(d)).count_nonzero():
+        return None
+    rows_k = jac[kept]
+    A, B, C = rows_k[:, kept], rows_k[:, eliminated], rows_e[:, kept]
+    inverse = diags(1. / d)
+    schur = (A - B @ inverse @ C).tocsc()
+    residual = np.asarray(residual, dtype=np.float64)
+    r_k, r_e = residual[kept], residual[eliminated]
+    delta = np.empty_like(residual)
+    if kept.size:
+        delta[kept] = spsolve(schur, -(r_k - B @ (inverse @ r_e)), permc_spec="MMD_AT_PLUS_A")
+        delta[eliminated] = inverse @ (-r_e - C @ delta[kept])
+    else:
+        delta[eliminated] = -(inverse @ r_e)
+    return delta

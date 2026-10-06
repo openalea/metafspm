@@ -33,6 +33,10 @@
 - **Sub-stepping by the time step:** a component whose `time_step` is shorter than the simulation step runs its schedule once per `time_step` within each simulation step (e.g. 4 times for 900 s in a 3600 s step). Its clock advances at each sub-step, so forcings are read at each sub-step's end. `sub_time_step` defaults to `time_step`.
 - **Breaking:** the time step must divide the simulation step a whole number of times; otherwise construction raises `ValueError` (a longer step, or 1000 s in 3600 s, used to be silently rounded).
 
+### Faster Newton steps on graph systems with edge fluxes
+
+- **Edge unknowns are eliminated from the linear step** when their block of the Jacobian is diagonal, i.e. each edge law depends on its own flux only, as explicit laws do. The node system is then solved alone (an exact Schur complement). Before, the node rows, which hold only fluxes, had a zero diagonal, so the direct solver pivoted and filled in. On the SPAC soil at 1.25 cm voxels (8192 cells), one solve took 25 s and now takes 0.1 s, with the same results; the example now runs at 0.625 cm. Other systems use a symmetric fill-reducing ordering.
+
 ### Scenarios applied by the Scene
 
 - **The Scene sets each scenario's entries on the model's components** after building the model. The entries are the `"parameters"` dict and the other keys, and they act as constructor keywords would: numeric ones go to the DataStructure (per plant for plant models), the others to the components' fields. Before, only numeric plant parameters reached the components; non-numeric ones and every environment parameter were dropped unless the model forwarded them, and none did.
