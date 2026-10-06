@@ -110,7 +110,9 @@ carbon()                                  # one time step: every step, in the sc
 
 - **Time step.** `time_step=` (s) at construction is the `dt` of the component's equations. Its default is the
   class's `time_step` attribute when set, else the simulation time step (the scene's). Pass it explicitly, even
-  for a component that solves a steady state.
+  for a component that solves a steady state. A time step shorter than the simulation step makes the component
+  run once per time step within it (900 s in a 3600 s scene: four runs per scene step, forcings read at the end
+  of each). It must divide the simulation step a whole number of times.
 - **Declarations.** `scale=` places a variable at an MTG scale (its location follows from the graph), or
   `location=` gives it directly (`"cell"` on grids). `state_variable_type` (its kind: extensive, intensive,
   massic_concentration, descriptor) decides the default mappings and the repartition after growth. Variables are

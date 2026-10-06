@@ -130,14 +130,31 @@ class Choregrapher(Singleton):
         return {k: groups[k] for k in sorted(groups)}
 
     def __call__(self, instance):
-        """Run the bound schedule of component *instance*, over its sub time steps."""
+        """
+        Run the bound schedule of component *instance* once per sub time step of the simulation step (its own
+        time_step by default), its clock at the start of each sub-step.
+        """
         sub_time_step, groups = instance.__dict__["_choregraphy"]
-        for increment in range(int(self.simulation_time_step / sub_time_step)):
+        start = instance.__dict__.get("_clock", 0.)
+        for increment in range(sub_steps(self.simulation_time_step, sub_time_step, type(instance).__name__)):
+            instance.__dict__["_clock"] = start + increment * sub_time_step
             for step in groups:
                 for functor in groups[step]:
                     functor()
+        instance.__dict__["_clock"] = start
 
 
 def family_of(cls) -> str:
     """Key of a component class's steps: module and qualified name, so that same-named classes do not collide."""
     return f"{cls.__module__}:{cls.__qualname__}"
+
+
+def sub_steps(simulation_time_step: float, sub_time_step: float, owner: str = "component") -> int:
+    """Number of sub-steps of *sub_time_step* in a simulation step; refused unless a whole number of at least 1."""
+    ratio = float(simulation_time_step) / float(sub_time_step)
+    count = int(round(ratio))
+    if count < 1 or abs(ratio - count) > 1e-9 * max(ratio, 1.):
+        raise ValueError(f"{owner}: its time step ({sub_time_step} s) must divide the simulation time step "
+                         f"({simulation_time_step} s) a whole number of times")
+    return count
+

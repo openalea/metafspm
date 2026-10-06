@@ -30,6 +30,8 @@
 ### Components take their time step
 
 - **`time_step=`** is a constructor argument of every component, the `dt` of its equations. Its default is the class's `time_step` attribute when set, else the simulation time step. Before, a component without that attribute had `dt` = 1 whatever the scene's step.
+- **Sub-stepping by the time step:** a component whose `time_step` is shorter than the simulation step runs its schedule once per `time_step` within each simulation step (e.g. 4 times for 900 s in a 3600 s step). Its clock advances at each sub-step, so forcings are read at each sub-step's end. `sub_time_step` defaults to `time_step`.
+- **Breaking:** the time step must divide the simulation step a whole number of times; otherwise construction raises `ValueError` (a longer step, or 1000 s in 3600 s, used to be silently rounded).
 
 ### Breaking: one selection argument, `filters=`
 

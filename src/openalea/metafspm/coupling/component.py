@@ -292,8 +292,9 @@ class DataStructureComponent(Component):
     """
 
     data_structure: Optional[DataStructure] = None
-    # Time step of the component (s): the dt of its equations. Default: its class's time_step when it sets one, else
-    # the simulation time step (the scene's)
+    # Time step of the component (s): the dt of its equations, and its sub-step: it runs simulation_time_step /
+    # time_step times per simulation step. Default: its class's time_step when it sets one, else the simulation time
+    # step (the scene's)
     time_step: Optional[float] = None
 
     # MTG synchronisation policy: "lazy" (default) writes the state variables
@@ -322,8 +323,10 @@ class DataStructureComponent(Component):
         if self.time_step is None:
             declared = getattr(type(self), "time_step", None)                 # a class attribute of a subclass
             self.time_step = declared if declared is not None else self.choregrapher.simulation_time_step
-        # One iteration per simulation step unless the component declares its own sub time step
-        sub_time_step = getattr(self, "sub_time_step", None) or self.choregrapher.simulation_time_step
+        # The component runs once per time_step: simulation_time_step / time_step times per simulation step
+        sub_time_step = getattr(self, "sub_time_step", None) or self.time_step
+        from openalea.metafspm.coupling.choregrapher import sub_steps
+        sub_steps(self.choregrapher.simulation_time_step, sub_time_step, type(self).__name__)
         # Live reading: steps and solves read and write the DataStructure arrays
         self.choregrapher.add_time_and_data(self, sub_time_step, ds, compartment="graph")
 
@@ -553,8 +556,9 @@ class FunctionalComponent(DataStructureComponent):
         if "_ivp_time" in self.__dict__:
             return start + offset + self.__dict__["_ivp_time"]
         step = self.__dict__.get("_current_dt", None)
-        if step is None:
-            step = float(getattr(self.choregrapher, "simulation_time_step", 0.) or 0.)
+        if step is None:                                   # outside a solve: the end of the component's sub-step
+            step = float(getattr(self, "time_step", None) or getattr(self.choregrapher, "simulation_time_step", 0.)
+                         or 0.)
         return start + offset + step
 
     def forcing(self, name: str):

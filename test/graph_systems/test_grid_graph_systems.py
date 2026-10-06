@@ -19,6 +19,13 @@ DOC = dict(unit="", unit_comment="", description="", min_value=0., max_value=1.,
 SHAPE, DX, DT, D = (4, 3, 5), (0.1, 0.2, 0.05), 0.5, 1e-3
 
 
+@pytest.fixture(autouse=True)
+def _simulation_time_step():
+    """The scene's step is the components' (one solve per call)."""
+    from openalea.metafspm.coupling.choregrapher import Choregrapher
+    Choregrapher().add_simulation_time_step(DT)
+
+
 
 class _DiffusionEquations:
     """Fickian diffusion through the faces, implicit in time (the solve is one implicit Euler step)."""
