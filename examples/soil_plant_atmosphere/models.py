@@ -38,8 +38,8 @@ class SeedlingWater(CompositeModel):
     nodes = "Compartment"
 
     def __init__(self, data_structure, time_step, **scenario):
-        self.structure = SeedlingStructure(data_structure=data_structure)
-        self.transport = PlantWaterTransport(data_structure=data_structure)
+        self.structure = SeedlingStructure(data_structure=data_structure, time_step=time_step)
+        self.transport = PlantWaterTransport(data_structure=data_structure, time_step=time_step)
         self.declare_data_and_couple_components(translator_path=PLANT_TRANSLATOR,
                                                 components=(self.structure, self.transport))
 
@@ -59,8 +59,8 @@ class Soil(CompositeModel):
         shape = (max(1, round(scene_xrange / voxel)), max(1, round(scene_yrange / voxel)), max(1, round(depth / voxel)))
         self.grid = ArrayDataStructure(shape=shape, dx=(scene_xrange / shape[0], scene_yrange / shape[1],
                                                         depth / shape[2]), periodic=(True, True, False))
-        self.structure = SoilStructure(data_structure=self.grid)
-        self.transport = SoilWaterTransport(data_structure=self.grid)
+        self.structure = SoilStructure(data_structure=self.grid, time_step=time_step)
+        self.transport = SoilWaterTransport(data_structure=self.grid, time_step=time_step)
         self.declare_data_and_couple_components(translator_path=SOIL_TRANSLATOR,
                                                 components=(self.structure, self.transport))
         depths = self.grid.cell_centers()[:, 2].reshape(self.grid.shape)

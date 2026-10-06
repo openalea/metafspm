@@ -28,11 +28,11 @@ class GrassBRIDGES(CompositeModel):
         self.input_tables = scenario.get("input_tables", {})
         self.time = 0
         # Numeric parameters come per plant from the planting table's scenarios (stored at the Plant scale)
-        self.root_growth = RootGrowthModelCoupled(data_structure=data_structure)
-        self.root_anatomy = RootAnatomy(data_structure=data_structure)
-        self.root_water = RootWaterModel(data_structure=data_structure)
-        self.root_cn = RootCNUnified(data_structure=data_structure)
-        self.shoot = CNW_Grass(data_structure=data_structure)
+        self.root_growth = RootGrowthModelCoupled(data_structure=data_structure, time_step=time_step)
+        self.root_anatomy = RootAnatomy(data_structure=data_structure, time_step=time_step)
+        self.root_water = RootWaterModel(data_structure=data_structure, time_step=time_step)
+        self.root_cn = RootCNUnified(data_structure=data_structure, time_step=time_step)
+        self.shoot = CNW_Grass(data_structure=data_structure, time_step=time_step)
         self.components = [self.root_growth, self.root_anatomy, self.root_water, self.root_cn, self.shoot]
 
         # Links between these components (one DataStructure): aliases and derived variables

@@ -27,6 +27,10 @@
   - `solver="implicit_euler"` is a deprecated alias of `"newton"` with `transient=True`. It used to add `(u - u_prev)/h` to every unknown, edge fluxes included, so equations writing their own time term got it twice.
   - `explicit_euler` evaluates the edge unknowns at the current state before stepping (it used the previous step's fluxes), and leaves the step's fluxes in the DataStructure.
 
+### Components take their time step
+
+- **`time_step=`** is a constructor argument of every component, the `dt` of its equations. Its default is the class's `time_step` attribute when set, else the simulation time step. Before, a component without that attribute had `dt` = 1 whatever the scene's step.
+
 ### Breaking: one selection argument, `filters=`
 
 - **Every decorator selects its elements with `filters=`:** steps, `@node_balance`, `@node_rate`, `@edge_law`, `@boundary_condition`, `boundary_set`, `@graph_output` and `@graph_system`. It replaces `select=` (boundary sets, boundary conditions, outputs) and `where=` (steps, graph systems).

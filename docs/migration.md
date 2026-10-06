@@ -94,7 +94,8 @@ class GrassBRIDGES(CompositeModel):
     from_scale = "SubOrgan"                      # the graph nodes; nodes = "Compartment" for anatomies
 
     def __init__(self, data_structure, time_step, translator_path=..., **scenario):
-        self.components = (RootGrowth(data_structure=data_structure), RootCNUnified(data_structure=data_structure), ...)
+        self.components = (RootGrowth(data_structure=data_structure, time_step=time_step),
+                           RootCNUnified(data_structure=data_structure, time_step=time_step), ...)
         self.declare_data_and_couple_components(translator_path=translator_path,
                                                 components=self.components)
 

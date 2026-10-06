@@ -292,6 +292,9 @@ class DataStructureComponent(Component):
     """
 
     data_structure: Optional[DataStructure] = None
+    # Time step of the component (s): the dt of its equations. Default: its class's time_step when it sets one, else
+    # the simulation time step (the scene's)
+    time_step: Optional[float] = None
 
     # MTG synchronisation policy: "lazy" (default) writes the state variables
     # changed since the last synchronisation when the MTG is read (ds.mtg, MPG-style steps, ds.flush_mtg());
@@ -316,6 +319,9 @@ class DataStructureComponent(Component):
             self.pullable_inputs = {}
         if not hasattr(self.choregrapher, "simulation_time_step"):
             self.choregrapher.add_simulation_time_step(1)
+        if self.time_step is None:
+            declared = getattr(type(self), "time_step", None)                 # a class attribute of a subclass
+            self.time_step = declared if declared is not None else self.choregrapher.simulation_time_step
         # One iteration per simulation step unless the component declares its own sub time step
         sub_time_step = getattr(self, "sub_time_step", None) or self.choregrapher.simulation_time_step
         # Live reading: steps and solves read and write the DataStructure arrays
