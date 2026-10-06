@@ -2069,3 +2069,9 @@ Per-file counts:
   - F2: the Dirichlet water table sits at the bottom cells' centres, which shifts the profile, and leaf Ψ, with their size.
 
   The comparison figure shows the depletion error near the roots, not leaf Ψ. Suite 776 passed.
+- **F1 and F2 (your answers: both recommendations):**
+  - F1: `GraphView.edge_difference`, with a consistent operator on adaptive grids (the coarse value moved onto the fine cell's axis by a least-squares gradient; exact for linear fields, tested); sub-views slice it, and the Jacobian sparsity follows its stencil;
+  - F2: the water table is an inflow through the bottom face, K A/(h/2) (Ψ_table − Ψ);
+  - the metric is now the error against the reference averaged on each grid's cells (the earlier one charged coarse cells for their sub-cell variation);
+  - results: adaptive 0.0008 MPa near the roots (0.0062 with the two-point difference), against 0.0033 / 0.0017 for uniform 2.5 / 1.25 cm; leaf Ψ within 0.0023 MPa;
+  - `one_plant_adaptative.py` declares its own Scene (your request); your `solver=NewtonSolver` edit kept; the regular scenes' figures regenerated (7 and 10 steps).

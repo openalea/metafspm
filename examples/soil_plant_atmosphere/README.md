@@ -5,7 +5,7 @@ dry atmosphere. Every part shows a feature of metafspm:
 
 | file | what it shows |
 |---|---|
-| `components.py` | **`PlantWaterTransport`** and **`SoilWaterTransport`**, two `FunctionalComponent`s, each declaring its own variables and graph system: a node balance, an edge law given explicitly (j = k ΔΨ), and every boundary written as an equation (`@boundary_condition`): the exchange with the air, k_vap (Ψ_air − Ψ), each selecting its nodes with explicit `filters=` key / values. The plant's are at the Compartment and Connection scales, read from and written to the MTG; it adds the root–soil exchange, an equation of the coupled soil Ψ (`@boundary_condition`). The soil's are at cell and edge locations; it adds the water table (Dirichlet, Ψ − Ψ_table) and the plants' uptake. `@graph_output`s give the uptake and the evaporation. |
+| `components.py` | **`PlantWaterTransport`** and **`SoilWaterTransport`**, two `FunctionalComponent`s, each declaring its own variables and graph system: a node balance, an edge law given explicitly (j = k ΔΨ), and every boundary written as an equation (`@boundary_condition`): the exchange with the air, k_vap (Ψ_air − Ψ), each selecting its nodes with explicit `filters=` key / values. The plant's are at the Compartment and Connection scales, read from and written to the MTG; it adds the root–soil exchange, an equation of the coupled soil Ψ (`@boundary_condition`). The soil's are at cell and edge locations; it adds the water table at the grid's bottom face (the inflow k_table (Ψ_table − Ψ), k_table = K A / (h/2), so that its depth does not depend on the cells' size) and the plants' uptake. Its Darcy law uses the grid's `edge_difference`, consistent on adaptive grids. `@graph_output`s give the uptake and the evaporation. |
 | `seedling.py` | **The seedling generator**, standing for the structural models (growth, anatomy) a real simulation would couple: the architecture at every scale (three first-order roots from the collar: a nearly vertical pivot with two laterals on alternate sides, and two roots bending towards the vertical with a gravitropism coefficient, with one lateral each), the anatomies and the axial junctions, with the codes the components read. |
 | | **`SeedlingStructure`** (in `components.py`), a `StructuralComponent`: `initiate_plant` builds each seedling (with `seedling.py`) at every scale (Plant → Axis → GrowthUnit → Phytomer → Organ → SubOrgan) with an anatomy per segment (root: epidermis, cortex, endodermis, xylem; stem: epidermis, cortex, xylem; leaf: xylem, mesophyll, stomatal cavity) and the axial xylem junctions, then computes the conductances from the structure: k = k_s · L on radial edges, k = k_axial / L on axial ones. **`SoilStructure`** does the same for the soil grid (k = K · A / d on the faces, K varying between voxels). |
 | | **The air**, a constant input: Ψ_air = (RT/V_w) ln RH at 50 % and 20 °C (about −93.9 MPa), and the vapour factor that turns a vapour conductance into a liquid one where water evaporates (the liquid–vapour step, linearised). |
@@ -28,7 +28,7 @@ Volumes in mm³ keep the solves' residuals well above the solver's absolute tole
 
 ## One plant
 
-The scene converges in seven steps (largest change of Ψ: 7.8e-01, 1.2e-02, 4.6e-04, 2.6e-05, 1.6e-06, 9.7e-08 MPa). Transpiration
+The scene converges in seven steps (largest change of Ψ: 8.2e-01, 1.3e-02, 4.7e-04, 2.6e-05, 1.6e-06, 9.8e-08 MPa). Transpiration
 (0.076 mm³ s⁻¹) equals the root uptake and the water taken from the soil; the water table supplies it and the soil
 evaporation.
 
@@ -60,12 +60,12 @@ between them (an edge of the solver graph joining two entities), on one colour s
 
 ## One plant on an adaptive soil
 
-`one_plant_adaptative.py` runs the same scene on `AdaptiveSoil`: an `AdaptiveGridDataStructure` of 2.5 cm cells,
-split down to 0.625 cm (`max_level=2`) where the roots take up water. The components and translators are those of
-`Soil`; `SoilStructure` reads the layers and areas from any grid's geometry. After each solve, the model refines the
-cells whose **sink density** (uptake per volume) exceeds 5 % of its maximum and coarsens below 0.5 %; the lagged
-coupling then settles Ψ and the grid together (two adaptations, then 930, 678 and 592 cells at the three sizes, 2200
-in all against 65 536 for the finest uniform grid).
+`one_plant_adaptative.py` declares its own Scene, the same seedling on `AdaptiveSoil`: an `AdaptiveGridDataStructure`
+of 2.5 cm cells, split down to 0.625 cm (`max_level=2`) where the roots take up water. The components and
+translators are those of `Soil`; `SoilStructure` reads the layers and areas from any grid's geometry. After each
+solve, the model refines the cells whose **sink density** (uptake per volume) exceeds 5 % of its maximum and coarsens
+below 0.5 %; the lagged coupling then settles Ψ and the grid together (two adaptations, then 930, 678 and 592 cells
+at the three sizes: 2200 in all, against 65 536 for the finest uniform grid).
 
 **Why the sink density, not the flux.** A two-point flux is exact for a linear Ψ, whatever the cell size and the flux:
 the error comes from where the flux changes. In a steady flow the flux changes where water leaves, i.e. at the sinks.
@@ -75,12 +75,15 @@ The water-table column carries large fluxes in coarse cells, where Ψ is nearly 
 ![soil anomaly on the adaptive cells](figures/one_plant_adaptative/soil_anomaly.png)
 ![cell size against the sink and flux densities](figures/one_plant_adaptative/size_against_metrics.png)
 
-**Accuracy: not yet.** Against the uniform 0.625 cm grid, the depletion near the roots (Ψ minus the mean of its depth,
-within 2 cm of a sink) is no better on the adaptive grid than on the uniform 2.5 cm one (0.0074 MPa both). The flux
-through a face between cells of different sizes uses only the distance along the face's axis. Across a vertical
-interface, the coarse cell's centre is at another depth than its fine neighbours', and the strong vertical gradient
-(about 3.5 MPa m⁻¹) adds a spurious flux. A refined horizontal block, whose interfaces are horizontal, does reduce the
-error (0.0067 → 0.0004 MPa). See `devplan_adaptive_soil.md` for the fix under discussion.
+**Accuracy.** Against the uniform 0.625 cm grid, the soil Ψ error near the roots (the reference averaged over each
+grid's cells) is 0.0008 MPa on the adaptive grid, against 0.0033 on the uniform 2.5 cm one and 0.0017 on the uniform
+1.25 cm one (8192 cells); the lowest leaf Ψ is within 0.0023 MPa (0.015 and 0.0073). Two things make it so:
+
+- **the edge difference:** between a coarse cell and a fine one, the centres are also offset across the face. The
+  Darcy law uses the grid view's `edge_difference`, which moves the coarse value onto the fine cell's axis (from its
+  gradient), exact for linear Ψ. With the plain two-point difference, the error near the roots was 0.0062 MPa;
+- **the water table at the bottom face:** a Dirichlet value on the bottom cells' centres would put it h/2 above the
+  bottom, a depth that changes with the cells' size.
 
 ![uniform and adaptive grids](figures/one_plant_adaptative/discretisation_comparison.png)
 

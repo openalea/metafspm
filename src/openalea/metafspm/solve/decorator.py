@@ -529,11 +529,19 @@ def _pieces_of(instance, base) -> list:
                                shape=(members.size, k))
         piece_view = GraphView(node_ids=view.node_ids[members], edge_ids=view.edge_ids[links], tail=tail, head=head,
                                incidence=incidence,
-                               boundary_incidence=csc_matrix((members.size, 0), dtype=np.float64), boundary_names=())
+                               boundary_incidence=csc_matrix((members.size, 0), dtype=np.float64), boundary_names=(),
+                               difference=_sliced_difference(view, links, members))
         pieces.append(_Restriction(piece_view, nodes[members], edges[links], full.n_nodes, full.n_edges,
                                    drops_edges=False))
     instance.__dict__["_pieces_cache"] = (key, pieces)
     return pieces
+
+
+def _sliced_difference(view, edges, nodes):
+    """The edge difference operator of a sub-view (its edges and nodes), None when the view has the default one."""
+    if view.difference is None:
+        return None
+    return view.difference.tocsr()[edges][:, nodes].tocsr()
 
 
 def _restriction_for(instance, where):
@@ -559,6 +567,7 @@ def _restriction_for(instance, where):
         tail=local[full.tail[edge_idx]], head=local[full.head[edge_idx]],
         incidence=full.incidence[node_idx][:, edge_idx].tocsc(),
         boundary_incidence=csc_matrix((node_idx.size, 0), dtype=np.float64), boundary_names=(),
+        difference=_sliced_difference(full, edge_idx, node_idx),
     )
     restriction = _Restriction(view, node_idx, edge_idx, full.n_nodes, full.n_edges)
     cache[where] = (key, restriction)

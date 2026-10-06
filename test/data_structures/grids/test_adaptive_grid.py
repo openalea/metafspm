@@ -188,3 +188,23 @@ def test_a_mapping_follows_the_refinement_of_its_grid():
     assert columns.max() < grid.n_nodes() and columns.max() != before
     np.testing.assert_array_equal(columns, grid.locate(grid.cell_centers()[columns]))
     assert (grid.levels()[columns] > 0).all()                                     # the new, refined cells
+
+
+def test_the_edge_difference_is_exact_for_linear_fields_across_refinement_levels():
+    grid = AdaptiveGridDataStructure(shape=(4, 4, 6), dx=0.02, max_level=2, periodic=False)
+    for radius in (0.03, 0.015):                                                 # two levels of refinement
+        grid.refine(lambda g: np.linalg.norm(g.cell_centers() - [0.03, 0.05, 0.04], axis=1) < radius)
+    assert len(np.unique(grid.levels())) == 3
+    slope = np.array([0.7, -1.3, 3.5])
+    u = grid.cell_centers() @ slope
+    view = grid.to_graph_view()
+    axis, distance = grid.face_axis(), np.asarray(grid.get("face_distance"))
+    np.testing.assert_allclose(view.edge_difference @ u, -slope[axis] * distance, atol=1e-12)   # tail - head
+    two_point = view.incidence.T @ u
+    assert np.abs(two_point + slope[axis] * distance).max() > 1e-3                 # the two-point one is not exact
+
+
+def test_the_edge_difference_is_the_two_point_one_between_equal_cells():
+    grid = AdaptiveGridDataStructure(shape=(3, 3, 3), dx=0.1, max_level=1, periodic=(True, True, False))
+    view = grid.to_graph_view()
+    assert abs(view.edge_difference - view.incidence.T.tocsr()).max() == 0.

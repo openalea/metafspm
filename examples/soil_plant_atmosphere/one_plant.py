@@ -15,13 +15,12 @@ from models import SCENE_TRANSLATOR, SeedlingWater, Soil, largest_change, root_s
 import plotting
 
 
-def scene(output_dirpath=None, tolerance=1e-6, soil_scenario=None, soil=Soil):
-    """The scene and its stop condition; *soil*: the soil model class (Soil, or AdaptiveSoil)."""
+def scene(output_dirpath=None, tolerance=1e-6, soil_scenario=None):
     table = pd.DataFrame([dict(plant="seedling", model=SeedlingWater, x=0.1, y=0.1, z=0., rotation=0.,
                                scenario={"parameters": {}})])
     table.attrs.update(xrange=0.2, yrange=0.2)                     # the stand: a 0.2 m x 0.2 m column of soil
     stop = largest_change(tolerance)
-    built = Scene(table, environment=[soil], environment_scenarios=[soil_scenario or {}],
+    built = Scene(table, environment=[Soil], environment_scenarios=[soil_scenario or {}],
                   translator=SCENE_TRANSLATOR, time_step=3600, mappings=root_surface_mappings, stop_when=stop,
                   output_dirpath=output_dirpath, log_plants=["seedling"], heavy_log_period=1)
     return built, stop
@@ -45,7 +44,7 @@ def plots(built, folder, row=None):
 
 def summary(built, stop):
     plant = built.populations[0].data_structure
-    soil = built.environment[0].grid                                # Soil or AdaptiveSoil
+    soil = next(model for model in built.environment if isinstance(model, Soil)).grid
     print(f"converged in {built.iteration} steps; largest change of Ψ per step (MPa): "
           + ", ".join(f"{change:.1e}" for change in stop.history))
     print(f"transpiration {plant.get('evaporation').sum():.4f} mm3 s-1, root uptake "

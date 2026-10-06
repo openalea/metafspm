@@ -437,7 +437,9 @@ class GraphDAESpec(BaseSystemSpec):
         if self.unknowns.pool_fields:
             return self._sparsity_with_pools()
 
-        A_nn = (B @ B.T + eye(n, format="csc")).astype(bool).tocsr()
+        absB = B.astype(bool).tocsr()
+        stencil = self._edge_stencil(absB)                 # edges x nodes: the nodes each edge law reads
+        A_nn = (absB @ stencil + eye(n, format="csr")).astype(bool).tocsr()
 
         if k_n > 0 and k_e == 0:
             return kron(np.ones((k_n, k_n), dtype=bool), A_nn, format="csr")
@@ -448,12 +450,19 @@ class GraphDAESpec(BaseSystemSpec):
             return kron(np.ones((k_e, k_e), dtype=bool), A_ee, format="csr")
 
         from scipy.sparse import bmat as sp_bmat
-        absB = B.astype(bool).tocsr()
         nn = kron(np.ones((k_n, k_n), dtype=bool), A_nn,   format="csr")
         ee = kron(np.ones((k_e, k_e), dtype=bool), A_ee,   format="csr")
         ne = kron(np.ones((k_n, k_e), dtype=bool), absB,   format="csr")
-        en = kron(np.ones((k_e, k_n), dtype=bool), absB.T, format="csr")
+        en = kron(np.ones((k_e, k_n), dtype=bool), stencil, format="csr")
         return sp_bmat([[nn, ne], [en, ee]], format="csr")
+
+    def _edge_stencil(self, absB) -> csr_matrix:
+        """The nodes each edge reads: its two ends, and those of the graph's edge difference operator (adaptive grids)."""
+        stencil = absB.T.tocsr()
+        difference = getattr(self.graph, "difference", None)
+        if difference is not None:
+            stencil = (stencil + abs(difference).astype(bool)).astype(bool).tocsr()
+        return stencil
 
     def _sparsity_with_pools(self) -> csr_matrix:
         """
@@ -464,11 +473,12 @@ class GraphDAESpec(BaseSystemSpec):
         B = self.graph.incidence
         n, m = self.graph.n_nodes, self.graph.n_edges
         absB = B.astype(bool).tocsr()
+        stencil = self._edge_stencil(absB)
         node_blocks = [("node", fn) for fn in self.unknowns.node_fields]
         edge_blocks = [("edge", fn) for fn in self.unknowns.edge_fields]
         pool_blocks = [("pool", fn) for fn in self.unknowns.pool_fields]
         blocks = node_blocks + edge_blocks + pool_blocks
-        A_nn = (B @ B.T + eye(n, format="csc")).astype(bool).tocsr()
+        A_nn = (absB @ stencil + eye(n, format="csr")).astype(bool).tocsr()
         A_ee = (B.T @ B + eye(m, format="csc")).astype(bool).tocsr()
         coupling = {fn: csr_matrix(self.pool_coupling[fn], dtype=bool) for fn in self.unknowns.pool_fields}
 
@@ -481,7 +491,7 @@ class GraphDAESpec(BaseSystemSpec):
             if rk == "node" and ck == "edge":
                 return absB
             if rk == "edge" and ck == "node":
-                return absB.T.tocsr()
+                return stencil
             if rk == "node" and ck == "pool":
                 return coupling[cf]
             if rk == "pool" and ck == "node":

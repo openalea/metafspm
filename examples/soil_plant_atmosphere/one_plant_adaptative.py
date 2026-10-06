@@ -1,7 +1,7 @@
 """
 One seedling as in one_plant.py, its soil an adaptive grid (models.AdaptiveSoil): 2.5 cm cells refined down to
 0.625 cm where the roots take up water, the grid adapting at each scene step with the lagged coupling, until Ψ and the
-grid settle. Then the figures and a comparison with uniform grids of the coarsest and the finest size.
+grid settle. Then the figures and a comparison with uniform grids of 2.5, 1.25 and 0.625 cm (the reference).
 
     python one_plant_adaptative.py [output folder]
 """
@@ -9,17 +9,34 @@ import os
 import sys
 import time
 
-import numpy as np
+import pandas as pd
 
-from models import AdaptiveSoil, Soil
-import one_plant
+from openalea.metafspm.scene.scene import Scene
+
+from models import SCENE_TRANSLATOR, AdaptiveSoil, SeedlingWater, Soil, largest_change, root_surface_mappings
 import plotting
 
 
+def scene(soil=AdaptiveSoil, soil_scenario=None, output_dirpath=None, tolerance=1e-6):
+    """
+    The one-plant scene on the soil model *soil* (AdaptiveSoil; Soil for the uniform grids compared with it), and its
+    stop condition: the seedling at the centre of a 0.2 m x 0.2 m soil column, a lagged plant-soil coupling through
+    the root surface, stopped when the water potentials (and so the grid) no longer change.
+    """
+    table = pd.DataFrame([dict(plant="seedling", model=SeedlingWater, x=0.1, y=0.1, z=0., rotation=0.,
+                               scenario={"parameters": {}})])
+    table.attrs.update(xrange=0.2, yrange=0.2)
+    stop = largest_change(tolerance)
+    built = Scene(table, environment=[soil], environment_scenarios=[soil_scenario or {}],
+                  translator=SCENE_TRANSLATOR, time_step=3600, mappings=root_surface_mappings, stop_when=stop,
+                  output_dirpath=output_dirpath, log_plants=["seedling"] if output_dirpath else (),
+                  heavy_log_period=1)
+    return built, stop
+
+
 def run(soil=AdaptiveSoil, soil_scenario=None, output_dirpath=None, tolerance=1e-6, max_iterations=100):
-    """Build and run the one-plant scene on *soil*; returns (scene, stop condition, seconds)."""
-    built, stop = one_plant.scene(output_dirpath=output_dirpath, tolerance=tolerance, soil_scenario=soil_scenario,
-                                  soil=soil)
+    """Build and run the scene on *soil*; returns (scene, stop condition, seconds)."""
+    built, stop = scene(soil, soil_scenario, output_dirpath, tolerance)
     start = time.perf_counter()
     built.simulate(max_iterations)
     return built, stop, time.perf_counter() - start
@@ -43,7 +60,12 @@ def plots(built, folder):
 
 
 def summary(built, stop):
-    one_plant.summary(built, stop)
+    plant, soil = built.populations[0].data_structure, built.environment[0].grid
+    print(f"converged in {built.iteration} steps; largest change of Ψ per step (MPa): "
+          + ", ".join(f"{change:.1e}" for change in stop.history))
+    print(f"transpiration {plant.get('evaporation').sum():.4f} mm3 s-1, root uptake "
+          f"{plant.get('root_uptake').sum():.4f} mm3 s-1, soil evaporation {soil.get('evaporation').sum():.4f} "
+          f"mm3 s-1; leaf Ψ down to {plant.get('water_potential').min():.2f} MPa")
     for step, counts in enumerate(built.environment[0].history):
         print(f"  after step {step + 1}: cells per level (2.5, 1.25, 0.625 cm) {counts.tolist()}")
 
@@ -53,15 +75,19 @@ if __name__ == "__main__":
     built, stop, seconds = run(output_dirpath=folder)
     summary(built, stop)
     plots(built, folder)
-    grids = [("uniform 2.5 cm", *run(Soil)[::2]), ("adaptive\n2.5 → 0.625 cm", built, seconds),
-             ("uniform 0.625 cm", *run(Soil, soil_scenario={"voxel": 0.00625})[::2])]           # about 100 to 200 s
-    reference = grids[-1][1].environment[0].grid
+    grids = [("uniform\n2.5 cm", *run(Soil)[::2]),
+             ("uniform\n1.25 cm", *run(Soil, soil_scenario={"voxel": 0.0125})[::2]),
+             ("adaptive\n2.5 → 0.625\ncm", built, seconds),
+             ("uniform\n0.625 cm\n(reference)", *run(Soil, soil_scenario={"voxel": 0.00625})[::2])]   # minutes
+    reference = grids[-1][1]
     results = []
-    for name, scene, elapsed in grids:
-        results.append(outcome(name, scene, elapsed))
-        results[-1]["depletion_error"] = plotting.depletion_error(scene.environment[0].grid, reference)
+    for name, built_grid, elapsed in grids:
+        results.append(outcome(name, built_grid, elapsed))
+        results[-1]["field_error"] = plotting.field_error(built_grid.environment[0].grid,
+                                                          reference.environment[0].grid)
     for r in results:
+        r["leaf_error"] = abs(r["leaf_min"] - results[-1]["leaf_min"])
         print(f"  {r['name'].replace(chr(10), ' ')}: {r['cells']} cells, {r['steps']} steps, {r['seconds']:.1f} s, "
-              f"uptake {r['uptake']:.5f} mm3 s-1, lowest leaf Ψ {r['leaf_min']:.4f} MPa, depletion error near the "
-              f"roots {r['depletion_error']:.4f} MPa")
+              f"uptake {r['uptake']:.5f} mm3 s-1, lowest leaf Ψ {r['leaf_min']:.4f} MPa (error {r['leaf_error']:.4f}), "
+              f"soil Ψ error near the roots {r['field_error']:.4f} MPa")
     plotting.discretisation_comparison(results, os.path.join(folder, "discretisation_comparison.png"))
