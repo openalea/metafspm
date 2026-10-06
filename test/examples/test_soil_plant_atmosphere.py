@@ -17,8 +17,8 @@ import population                                                               
 from models import Soil                                                               # noqa: E402
 
 FIGURES = ("plant_segments.png", "plant_anatomy.png", "anatomy_types.png", "soil_slice.png", "top_view.png",
-           "upscale_1_compartment.png", "upscale_2_suborgan.png", "upscale_3_organ.png", "upscale_4_axis.png",
-           "upscale_5_plant.png")
+           "upscale_1_compartment.png", "upscale_2_suborgan.png", "upscale_3_organ.png", "upscale_4_phytomer.png",
+           "upscale_5_growthunit.png", "upscale_6_axis.png", "upscale_7_plant.png")
 
 
 def _environment(scene, kind):
@@ -44,7 +44,7 @@ def _check_upscaling(ds):
     from upscaling import upscale
     names = upscale(ds)
     below = "Compartment"
-    for scale in ("SubOrgan", "Organ", "Axis", "Plant"):
+    for scale in ("SubOrgan", "Organ", "Phytomer", "GrowthUnit", "Axis", "Plant"):
         owner = np.asarray(ds.owner(scale)) if below == "Compartment" else None
         values, lower = np.asarray(ds.get(names[scale])), np.asarray(ds.get(names[below]))
         if owner is not None:
