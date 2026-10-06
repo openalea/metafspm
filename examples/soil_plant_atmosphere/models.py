@@ -42,7 +42,6 @@ class SeedlingWater(CompositeModel):
         self.transport = PlantWaterTransport(data_structure=data_structure)
         self.declare_data_and_couple_components(translator_path=PLANT_TRANSLATOR,
                                                 components=(self.structure, self.transport))
-        data_structure.define_mask("root_surface", {"is_soil_contact": ">0"})
 
     def run(self):
         self.structure()

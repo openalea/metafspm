@@ -310,16 +310,26 @@ def graph_jacobian(func):
     return func
 
 
-def graph_output(name, location: str = None):
+def graph_output(name, location: str = None, select=None):
     """
     Tag a method as a named post-solve output hook. *location* ("node" or "edge") is required when *name* is not a
     declared field and its size does not identify a single location.
+
+    select: the nodes the output is computed on, as boundary_set's ({variable: values}, a variable name (> 0), a mask
+    name, or a callable); the method's node arguments are sliced to them, and the other nodes get 0. Node outputs
+    only.
     """
     if location not in (None, "node", "edge"):
         raise ValueError(f"@graph_output('{name}'): location must be 'node' or 'edge', got '{location}'")
+    if select is not None:
+        if location == "edge":
+            raise ValueError(f"@graph_output('{name}'): select= chooses nodes, not edges")
+        if not (callable(select) or isinstance(select, (dict, str))):
+            raise TypeError(f"@graph_output('{name}'): select must be a {{variable: values}} dict, a variable or mask "
+                            "name, or a callable")
 
     def decorator(func):
-        func.__graph_tag__ = {"kind": "graph_output", "name": name, "location": location}
+        func.__graph_tag__ = {"kind": "graph_output", "name": name, "location": location, "select": select}
         return func
     return decorator
 
@@ -645,7 +655,7 @@ class GraphSystemBuilder:
         edge_law_items     = []   # (field, types, attr_name, bound, raw, explicit, integrate)
         bc_items           = []   # (field, types, bc_kind, attr_name, bound, raw, explicit)
         jacobian_raw       = None
-        output_items       = []   # (out_name, bound, raw)
+        output_items       = []   # (out_name, bound, raw, selection or None)
         boundary_sets      = []   # boundary_set objects
         pool_items         = []   # (field, bound, raw): pool balances
         pool_specs         = spec_def.get("pool_unknowns") or {}
@@ -689,7 +699,11 @@ class GraphSystemBuilder:
                 elif kind == "graph_jacobian":
                     jacobian_raw = (bound, obj)
                 elif kind == "graph_output":
-                    output_items.append((tag["name"], bound, obj))
+                    selection = None
+                    if tag.get("select") is not None:
+                        selection = boundary_set(select=tag["select"])
+                        selection.name = attr_name
+                    output_items.append((tag["name"], bound, obj, selection))
                     self.output_locations[tag["name"]] = tag.get("location")
 
         # Sort node blocks to match node_unknowns order
@@ -750,7 +764,7 @@ class GraphSystemBuilder:
             + [r for _, _, _, _, r, _, _ in edge_law_items]
             + [r for _, _, _, _, _, r, _ in bc_items]
             + ([jacobian_raw[1]] if jacobian_raw else [])
-            + [r for _, _, r in output_items]
+            + [r for _, _, r, _ in output_items]
             + [r for _, _, r in pool_items]
         )
         required: set[str] = set()
@@ -903,7 +917,11 @@ class GraphSystemBuilder:
                             f"Edge: {list(edge_snap)}"
                         )
                 if type_filter:
-                    mask = _type_mask(type_filter, mask_snap, entity_size, ds)
+                    if isinstance(type_filter, boundary_set):
+                        mask = np.zeros(entity_size, dtype=bool)
+                        mask[type_filter.members(instance, ds, entity_size, _take(instance, "node"))] = True
+                    else:
+                        mask = _type_mask(type_filter, mask_snap, entity_size, ds)
                     sub  = [a[mask] if cut else a for a, cut in zip(args, sliced)]
                     result = np.asarray(_in_equation(instance, bound_method, sub), dtype=np.float64)
                     full   = np.zeros(entity_size, dtype=np.float64)
@@ -1076,9 +1094,9 @@ class GraphSystemBuilder:
         output_blocks = tuple(
             OutputBlock(
                 name      = oname,
-                evaluator = make_evaluator(raw, bound, None, "node"),
+                evaluator = make_evaluator(raw, bound, selection, "node"),
             )
-            for oname, bound, raw in output_items
+            for oname, bound, raw, selection in output_items
         )
 
         jac_evaluator = (
