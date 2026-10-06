@@ -12,7 +12,7 @@ import numpy as np
 from openalea.metafspm.scene.population import planting_table
 from openalea.metafspm.scene.scene import Scene
 
-from models import Atmosphere, SCENE_TRANSLATOR, SeedlingWater, Soil, largest_change, root_surface_mappings
+from models import SCENE_TRANSLATOR, SeedlingWater, Soil, largest_change, root_surface_mappings
 from one_plant import plots, summary
 
 
@@ -29,7 +29,7 @@ def scene(output_dirpath=None, tolerance=1e-6, root_radial_k=(0.2, 0.5, 1.0), so
     per_plant = [{"parameters": {"root_radial_k": root_radial_k[i % len(root_radial_k)]}} for i in range(n_plants)]
     table = planting_table(**layout, per_plant_scenarios=per_plant)
     stop = largest_change(tolerance)
-    built = Scene(table, environment=[Atmosphere, Soil], environment_scenarios=[{}, soil_scenario or {}],
+    built = Scene(table, environment=[Soil], environment_scenarios=[soil_scenario or {}],
                   translator=SCENE_TRANSLATOR, time_step=3600, mappings=root_surface_mappings, stop_when=stop,
                   output_dirpath=output_dirpath, log_plants=list(table["plant"][:1]), heavy_log_period=1)
     return built, stop

@@ -294,7 +294,6 @@ soil and seedlings to a dry atmosphere:
 - structural components building the seedlings at every scale, with their anatomies, and computing the conductances;
 - boundary sets and boundary equations;
 - translators within and across DataStructures, with a masked `CrossMapping` of the root surface;
-- environment scalars;
 - scenes with one plant and with a planted population;
 - plots of the converged water potentials.
 

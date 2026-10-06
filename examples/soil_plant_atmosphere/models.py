@@ -1,14 +1,12 @@
 """
-The models the scene runs: a plant population model (SeedlingWater) and two environment models (Soil, Atmosphere),
-and the translators linking their components.
+The models the scene runs: a plant population model (SeedlingWater) and an environment model (Soil), and the
+translators linking their components. The air is a constant input of the components (components.AIR_WATER_POTENTIAL).
 
     within the plants   PlantWaterTransport.conductance <- SeedlingStructure.k (and the variables of the same
                         name, identities on the shared DataStructure)
     within the soil     SoilWaterTransport.conductance <- SoilStructure.k
     plants <-> soil     the soil water potential, broadcast to the root epidermis; the plants' uptake, summed into
                         the soil cells (a CrossMapping of the root surface onto the grid)
-    the atmosphere      its water potential and vapour factor, broadcast to the plants and the soil; the
-                        transpiration and the soil evaporation, summed into it
 """
 import numpy as np
 
@@ -17,7 +15,7 @@ from openalea.metafspm.coupling.cross import CrossMapping
 from openalea.metafspm.coupling.translator import Translator
 from openalea.metafspm.data_structure.data_api import ArrayDataStructure
 
-from components import (AtmosphereState, PlantWaterTransport, SeedlingStructure, SoilStructure, SoilWaterTransport)
+from components import PlantWaterTransport, SeedlingStructure, SoilStructure, SoilWaterTransport
 
 
 PLANT_TRANSLATOR = Translator().link("PlantWaterTransport", "conductance", "SeedlingStructure", {"k": 1.})
@@ -27,12 +25,6 @@ SCENE_TRANSLATOR = (
     Translator()
     .link("PlantWaterTransport", "soil_water_potential", "SoilWaterTransport", {"water_potential": 1.})
     .link("SoilWaterTransport", "plant_uptake", "PlantWaterTransport", {"root_uptake": 1.})
-    .link("PlantWaterTransport", "air_water_potential", "AtmosphereState", {"air_water_potential": 1.})
-    .link("SoilWaterTransport", "air_water_potential", "AtmosphereState", {"air_water_potential": 1.})
-    .link("SeedlingStructure", "vapour_factor", "AtmosphereState", {"vapour_factor": 1.})
-    .link("SoilStructure", "vapour_factor", "AtmosphereState", {"vapour_factor": 1.})
-    .link("AtmosphereState", "transpiration", "PlantWaterTransport", {"evaporation": 1.})
-    .link("AtmosphereState", "soil_evaporation", "SoilWaterTransport", {"evaporation": 1.})
 )
 
 
@@ -78,24 +70,6 @@ class Soil(CompositeModel):
     def run(self):
         self.structure()
         self.transport()
-
-
-class Atmosphere(CompositeModel):
-    """The air, as environment scalars (fixed relative humidity and temperature)."""
-
-    def __init__(self, populations, scene_xrange, scene_yrange, time_step, relative_humidity=0.5,
-                 air_temperature=20., **scenario):
-        self.air = ArrayDataStructure(shape=(1,))
-        self.state = AtmosphereState(data_structure=self.air)
-        self.state.relative_humidity, self.state.air_temperature = relative_humidity, air_temperature
-        self.components = [self.state]
-
-    def spin_up(self, scene):
-        """Compute the air's state once the scene is built, so that the first plant and soil steps see it."""
-        self.state()
-
-    def run(self):
-        self.state()
 
 
 def root_surface_mappings(scene):

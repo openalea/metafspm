@@ -29,7 +29,7 @@
 
 ### Example: water in the soil–plant–atmosphere continuum
 
-- **`examples/soil_plant_atmosphere/`** (new): a seedling and a population on a soil grid under a dry atmosphere, steady water flow, with plots. A smoke test checks convergence and the water balances. The user guide and the example's README describe it.
+- **`examples/soil_plant_atmosphere/`** (new): a seedling and a population on a soil grid under a dry air (a constant water potential), steady water flow, with plots. A smoke test checks convergence and the water balances. The user guide and the example's README describe it.
 - **Framework changes it needed:**
   - `CompositeModel` takes a `Translator` (or a nested dict) directly;
   - grids expose their cell sizes (`dx`);
