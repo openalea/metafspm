@@ -2075,3 +2075,5 @@ Per-file counts:
   - the metric is now the error against the reference averaged on each grid's cells (the earlier one charged coarse cells for their sub-cell variation);
   - results: adaptive 0.0008 MPa near the roots (0.0062 with the two-point difference), against 0.0033 / 0.0017 for uniform 2.5 / 1.25 cm; leaf Ψ within 0.0023 MPa;
   - `one_plant_adaptative.py` declares its own Scene (your request); your `solver=NewtonSolver` edit kept; the regular scenes' figures regenerated (7 and 10 steps).
+- **Configurable refinement metric:** dropped (your call).
+- **Adaptive plots (your request):** the converged plant at SubOrgan and Compartment scales over the soil's ΔΨ and over its Ψ (`soil_quantity="psi"`, copper scale), each adaptive cell drawn at its own size; 4 new figures, README and smoke test updated.

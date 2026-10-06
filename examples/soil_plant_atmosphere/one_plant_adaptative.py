@@ -54,6 +54,12 @@ def plots(built, folder):
     plants = [population.data_structure for population in built.populations]
     soil = built.environment[0]
     plotting.plant_segments(plants, os.path.join(folder, "plant_segments.png"))
+    plotting.plant_anatomy(plants[0], os.path.join(folder, "plant_anatomy.png"))
+    for quantity, suffix in (("anomaly", "soil"), ("psi", "soil_psi")):        # the soil's ΔΨ, then its Ψ, behind
+        plotting.plant_segments(plants, os.path.join(folder, f"plant_segments_{suffix}.png"), soil=soil.grid,
+                                soil_quantity=quantity)
+        plotting.plant_anatomy(plants[0], os.path.join(folder, f"plant_anatomy_{suffix}.png"), soil=soil.grid,
+                               soil_quantity=quantity)
     plotting.adaptive_slice(soil.grid, plants, os.path.join(folder, "cell_size.png"), quantity="size")
     plotting.adaptive_slice(soil.grid, plants, os.path.join(folder, "soil_anomaly.png"), quantity="anomaly")
     plotting.size_against_metrics(soil.grid, soil.sink_density(), os.path.join(folder, "size_against_metrics.png"))
@@ -75,19 +81,21 @@ if __name__ == "__main__":
     built, stop, seconds = run(output_dirpath=folder)
     summary(built, stop)
     plots(built, folder)
-    grids = [("uniform\n2.5 cm", *run(Soil)[::2]),
-             ("uniform\n1.25 cm", *run(Soil, soil_scenario={"voxel": 0.0125})[::2]),
-             ("adaptive\n2.5 → 0.625\ncm", built, seconds),
-             ("uniform\n0.625 cm\n(reference)", *run(Soil, soil_scenario={"voxel": 0.00625})[::2])]   # minutes
-    reference = grids[-1][1]
-    results = []
-    for name, built_grid, elapsed in grids:
-        results.append(outcome(name, built_grid, elapsed))
-        results[-1]["field_error"] = plotting.field_error(built_grid.environment[0].grid,
-                                                          reference.environment[0].grid)
-    for r in results:
-        r["leaf_error"] = abs(r["leaf_min"] - results[-1]["leaf_min"])
-        print(f"  {r['name'].replace(chr(10), ' ')}: {r['cells']} cells, {r['steps']} steps, {r['seconds']:.1f} s, "
-              f"uptake {r['uptake']:.5f} mm3 s-1, lowest leaf Ψ {r['leaf_min']:.4f} MPa (error {r['leaf_error']:.4f}), "
-              f"soil Ψ error near the roots {r['field_error']:.4f} MPa")
-    plotting.discretisation_comparison(results, os.path.join(folder, "discretisation_comparison.png"))
+    discretization_comparisions = False
+    if discretization_comparisions:
+        grids = [("uniform\n2.5 cm", *run(Soil)[::2]),
+                ("uniform\n1.25 cm", *run(Soil, soil_scenario={"voxel": 0.0125})[::2]),
+                ("adaptive\n2.5 → 0.625\ncm", built, seconds),
+                ("uniform\n0.625 cm\n(reference)", *run(Soil, soil_scenario={"voxel": 0.00625})[::2])]   # minutes
+        reference = grids[-1][1]
+        results = []
+        for name, built_grid, elapsed in grids:
+            results.append(outcome(name, built_grid, elapsed))
+            results[-1]["field_error"] = plotting.field_error(built_grid.environment[0].grid,
+                                                            reference.environment[0].grid)
+        for r in results:
+            r["leaf_error"] = abs(r["leaf_min"] - results[-1]["leaf_min"])
+            print(f"  {r['name'].replace(chr(10), ' ')}: {r['cells']} cells, {r['steps']} steps, {r['seconds']:.1f} s, "
+                f"uptake {r['uptake']:.5f} mm3 s-1, lowest leaf Ψ {r['leaf_min']:.4f} MPa (error {r['leaf_error']:.4f}), "
+                f"soil Ψ error near the roots {r['field_error']:.4f} MPa")
+        plotting.discretisation_comparison(results, os.path.join(folder, "discretisation_comparison.png"))

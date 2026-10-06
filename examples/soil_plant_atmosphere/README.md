@@ -71,6 +71,13 @@ at the three sizes: 2200 in all, against 65 536 for the finest uniform grid).
 the error comes from where the flux changes. In a steady flow the flux changes where water leaves, i.e. at the sinks.
 The water-table column carries large fluxes in coarse cells, where Ψ is nearly linear.
 
+The converged plant at SubOrgan and Compartment scales, over the soil's ΔΨ (Ψ minus its layer mean) and over its Ψ,
+each on its own scale and each soil cell drawn at its own size:
+
+![SubOrgan over the soil ΔΨ](figures/one_plant_adaptative/plant_segments_soil.png)
+![Compartments over the soil ΔΨ](figures/one_plant_adaptative/plant_anatomy_soil.png)
+![SubOrgan over the soil Ψ](figures/one_plant_adaptative/plant_segments_soil_psi.png)
+![Compartments over the soil Ψ](figures/one_plant_adaptative/plant_anatomy_soil_psi.png)
 ![cell size](figures/one_plant_adaptative/cell_size.png)
 ![soil anomaly on the adaptive cells](figures/one_plant_adaptative/soil_anomaly.png)
 ![cell size against the sink and flux densities](figures/one_plant_adaptative/size_against_metrics.png)

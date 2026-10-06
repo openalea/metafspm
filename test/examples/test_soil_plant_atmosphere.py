@@ -81,5 +81,7 @@ def test_the_adaptive_soil_refines_where_the_roots_take_up_water(tmp_path):
     assert soil.grid.n_nodes() < 0.1 * np.prod(soil.grid.shape) * 8 ** soil.grid.max_level
     np.testing.assert_array_equal(soil.history[-1], soil.history[-2])           # the grid settled
     one_plant_adaptative.plots(scene, str(tmp_path / "figures"))
-    for name in ("plant_segments.png", "cell_size.png", "soil_anomaly.png", "size_against_metrics.png"):
+    for name in ("plant_segments.png", "plant_segments_soil.png", "plant_segments_soil_psi.png", "plant_anatomy.png",
+                 "plant_anatomy_soil.png", "plant_anatomy_soil_psi.png", "cell_size.png", "soil_anomaly.png",
+                 "size_against_metrics.png"):
         assert (tmp_path / "figures" / name).stat().st_size > 0

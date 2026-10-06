@@ -73,15 +73,16 @@ def _norm(*arrays):
     return Normalize(vmin=values.min(), vmax=values.max())
 
 
-def plant_segments(data_structures, path, row=None, soil=None, title="Xylem Ψ at SubOrgan scale"):
+def plant_segments(data_structures, path, row=None, soil=None, soil_quantity="anomaly",
+                   title="Xylem Ψ at SubOrgan scale"):
     """
     Side view of the plants of *data_structures*, each segment coloured by its xylem Ψ: every plant in (x, z), or
     the plants of planting row *row* in (y, z). With the *soil* grid, its ΔΨ (Ψ minus its layer mean) behind them,
-    in the plants' plane, on a diverging scale of its own.
+    in the plants' plane, on a diverging scale of its own; soil_quantity="psi": its Ψ instead (copper scale).
     """
     fig, ax = plt.subplots(figsize=(7, 6.6 if soil is not None else 6))
     if soil is not None:
-        _soil_colorbar(fig, ax, _soil_background(ax, soil, data_structures[0], row))
+        _soil_colorbar(fig, ax, _soil_background(ax, soil, data_structures[0], row, soil_quantity), soil_quantity)
     selections = [_row(ds, row) for ds in data_structures]
     values = [_xylem_values(ds)[kept] for ds, (kept, _) in zip(data_structures, selections)]
     norm = _norm(*values)
@@ -115,10 +116,10 @@ def _compartment_positions(ds, h=0, spread=0.004):
     return middle[owner][:, [h, 2]] + spread * depth[:, None] * normal[owner]
 
 
-def plant_anatomy(ds, path, row=None, soil=None, title="Ψ of every Compartment"):
+def plant_anatomy(ds, path, row=None, soil=None, soil_quantity="anomaly", title="Ψ of every Compartment"):
     """
     Every Compartment (side view, of planting row *row* when given) with its edges, coloured by Ψ; with the *soil*
-    grid, its ΔΨ behind them (as in plant_segments).
+    grid, its ΔΨ (or its Ψ, soil_quantity="psi") behind them (as in plant_segments).
     """
     kept_segments, h = _row(ds, row)
     kept = kept_segments[np.asarray(ds.owner("SubOrgan"))]
@@ -129,7 +130,7 @@ def plant_anatomy(ds, path, row=None, soil=None, title="Ψ of every Compartment"
     psi = np.asarray(ds.get("water_potential"))
     fig, ax = plt.subplots(figsize=(8, 7.6 if soil is not None else 7))
     if soil is not None:
-        _soil_colorbar(fig, ax, _soil_background(ax, soil, ds, row))
+        _soil_colorbar(fig, ax, _soil_background(ax, soil, ds, row, soil_quantity), soil_quantity)
     ax.add_collection(LineCollection(position[edges], colors="0.4" if soil is not None else "0.6", linewidths=0.6,
                                      zorder=2))
     points = ax.scatter(position[kept, 0], position[kept, 1], c=psi[kept], s=10, cmap="viridis", zorder=3)
@@ -203,20 +204,41 @@ def soil_anomaly(grid):
     return psi - psi.mean(axis=(0, 1), keepdims=True)
 
 
-def _soil_background(ax, grid, plant_ds, row=None):
-    """ΔΨ of the soil (soil_anomaly) behind a side view, in the plane of the plants, on its own diverging scale."""
-    collar_y = None if row is not None else float(plant_ds.mtg.property("y")[int(plant_ds.entity_ids("Plant")[0])])
-    psi = soil_anomaly(grid)
-    values, h, _, _, _ = _soil_plane(grid, plant_ds, psi, y=collar_y, row=row)
-    bound = float(np.abs(values).max()) or 1.
-    return ax.imshow(values.T, origin="upper", aspect="equal", cmap="RdBu", vmin=-bound, vmax=bound, zorder=0,
-                     extent=(0., values.shape[0] * grid.dx[h], -psi.shape[2] * grid.dx[2], 0.))
+SOIL_LABELS = {"anomaly": "soil ΔΨ: Ψ - layer mean (MPa)", "psi": "soil Ψ (MPa)"}
 
 
-def _soil_colorbar(fig, ax, image):
-    """The soil ΔΨ scale, horizontal under the side view (the plant's scale being on the right)."""
+def _soil_background(ax, grid, plant_ds, row=None, quantity="anomaly"):
+    """
+    The soil behind a side view, in the plane of the plants, on a scale of its own: its ΔΨ (Ψ minus its layer mean,
+    diverging RdBu centred on 0) or its Ψ (copper). On an adaptive grid each cell is drawn at its own size.
+    """
+    collar_y = float(plant_ds.mtg.property("y")[int(plant_ds.entity_ids("Plant")[0])])
+    adaptive = hasattr(grid, "levels")
+    if adaptive:
+        values = cell_anomaly(grid) if quantity == "anomaly" else np.asarray(grid.get("water_potential")).reshape(-1)
+        kept = _plane_cells(grid, collar_y)[0]
+        shown = values[kept]
+    else:
+        psi = soil_anomaly(grid) if quantity == "anomaly" else np.asarray(grid.get("water_potential"))
+        shown, h, _, _, _ = _soil_plane(grid, plant_ds, psi, y=None if row is not None else collar_y, row=row)
+    if quantity == "anomaly":
+        bound = float(np.abs(shown).max()) or 1.
+        colours = dict(cmap="RdBu", norm=Normalize(-bound, bound))
+    else:
+        colours = dict(cmap="copper", norm=Normalize(float(shown.min()), float(shown.max())))
+    if adaptive:
+        image = _draw_cells(ax, grid, values, collar_y, **colours)
+        image.set_zorder(0)
+        image.set_linewidth(0.15)
+        return image
+    return ax.imshow(shown.T, origin="upper", aspect="equal", zorder=0, **colours,
+                     extent=(0., shown.shape[0] * grid.dx[h], -psi.shape[2] * grid.dx[2], 0.))
+
+
+def _soil_colorbar(fig, ax, image, quantity="anomaly"):
+    """The soil scale, horizontal under the side view (the plant's scale being on the right)."""
     bar = fig.colorbar(image, cax=ax.inset_axes([0., -0.13, 1., 0.025]), orientation="horizontal")
-    bar.set_label("soil ΔΨ: Ψ - layer mean (MPa)")
+    bar.set_label(SOIL_LABELS[quantity])
 
 
 def soil_slice(grid, plant_data_structures, path, y=None, row=None, anomaly=False,
