@@ -2,9 +2,9 @@
 Components of the soil–plant–atmosphere water example.
 
     PlantWaterTransport, SoilWaterTransport
-                        the steady water flow in the plants' anatomies and in the soil grid, on the same equations
-                        (_WaterFlow: j = k ΔΨ on the edges, the balance of the nodes, the exchange with the air),
-                        each with its own boundaries (the root-soil exchange; the water table and the plants' uptake).
+                        the steady water flow in the plants' anatomies and in the soil grid: j = k ΔΨ on the edges,
+                        the balance of the nodes, the exchange with the air, and each one's other boundaries (the
+                        root-soil exchange; the water table and the plants' uptake).
     SeedlingStructure, SoilStructure
                         the conductances k of the edges and the vapour conductances of the evaporating nodes, from the
                         structure: SeedlingStructure builds the plants (initiate_plant) and computes theirs,
@@ -80,32 +80,8 @@ def _tissue_label(labels, tissue):
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# The water transport: the plants' and the soil's, on the same flow equations
+# The water transport: in the plants and in the soil
 # ═══════════════════════════════════════════════════════════════════════════════
-
-class _WaterFlow:
-    """
-    Steady water flow, shared by the plants and the soil: on each edge the flux j = k (Ψ_tail - Ψ_head) (given
-    explicitly, the framework writing its residual), on each node the outflows balancing the boundary inflows, and
-    the exchange with the air where water evaporates (liquid to vapour, through a vapour conductance).
-    """
-
-    @node_balance(field="water_potential")
-    def _balance(self, water_flux):
-        return np.asarray(self._graph_view.incidence @ water_flux).reshape(-1)               # the outflows
-
-    @edge_law(field="water_flux", explicit=True)
-    def _darcy(self, water_potential, conductance):
-        return conductance * np.asarray(self._graph_view.incidence.T @ water_potential).reshape(-1)
-
-    # an exchange k_vap (Ψ - Ψ_air) leaving the evaporating nodes (Robin)
-    atmosphere = boundary_set(select="is_evaporating", kind="robin", value="air_water_potential",
-                              weight="vapour_conductance")
-
-    @graph_output("evaporation", location="node", select="is_evaporating")
-    def _evaporation(self, water_potential, air_water_potential, vapour_conductance):
-        return vapour_conductance * (water_potential - air_water_potential)          # on the evaporating nodes
-
 
 @dataclass
 class PlantWaterTransport(FunctionalComponent):
@@ -143,15 +119,34 @@ class PlantWaterTransport(FunctionalComponent):
 
     @graph_system(node_unknowns=["water_potential"], edge_unknowns=["water_flux"], solver="newton", max_iter=20,
                   schedule_as="state")
-    class _flow(_WaterFlow):
-        @boundary_condition("node", "neumann", field="water_potential", select="is_soil_contact")
+    class _flow:
+        """Steady flow: the outflows of each Compartment balance its inflows from the soil and to the air."""
+
+        @node_balance(field="water_potential")
+        def _balance(self, water_flux):
+            return np.asarray(self._graph_view.incidence @ water_flux).reshape(-1)           # the outflows
+
+        @edge_law(field="water_flux", explicit=True)
+        def _darcy(self, water_potential, conductance):
+            """The flux through a Connection, j = k (Ψ_a - Ψ_b)."""
+            return conductance * np.asarray(self._graph_view.incidence.T @ water_potential).reshape(-1)
+
+        # liquid to vapour at the stomatal cavities: k_vap (Ψ - Ψ_air) leaving them (Robin)
+        atmosphere = boundary_set(filters={"is_evaporating": ">0"}, kind="robin", value="air_water_potential",
+                                  weight="vapour_conductance")
+
+        @boundary_condition("node", "neumann", field="water_potential", filters={"is_soil_contact": ">0"})
         def _from_the_soil(self, water_potential, soil_water_potential, soil_contact_conductance):
             """The inflow from the soil, an equation of the coupled soil water potential."""
             return soil_contact_conductance * (soil_water_potential - water_potential)
 
-        @graph_output("root_uptake", location="node", select="is_soil_contact")
+        @graph_output("root_uptake", location="node", filters={"is_soil_contact": ">0"})
         def _root_uptake(self, water_potential, soil_water_potential, soil_contact_conductance):
-            return soil_contact_conductance * (soil_water_potential - water_potential)   # on the root epidermis
+            return soil_contact_conductance * (soil_water_potential - water_potential)
+
+        @graph_output("evaporation", location="node", filters={"is_evaporating": ">0"})
+        def _evaporation(self, water_potential, air_water_potential, vapour_conductance):
+            return vapour_conductance * (water_potential - air_water_potential)
 
 
 @dataclass
@@ -186,12 +181,30 @@ class SoilWaterTransport(FunctionalComponent):
 
     @graph_system(node_unknowns=["water_potential"], edge_unknowns=["water_flux"], solver="newton", max_iter=20,
                   schedule_as="state")
-    class _flow(_WaterFlow):
-        water_table = boundary_set(select="is_water_table", kind="dirichlet", value="water_table_potential")
+    class _flow:
+        """Steady flow: the outflows of each cell balance the water table, the plants' uptake and the evaporation."""
+
+        @node_balance(field="water_potential")
+        def _balance(self, water_flux):
+            return np.asarray(self._graph_view.incidence @ water_flux).reshape(-1)           # the outflows
+
+        @edge_law(field="water_flux", explicit=True)
+        def _darcy(self, water_potential, conductance):
+            """The flux through a face, j = k (Ψ_low - Ψ_high)."""
+            return conductance * np.asarray(self._graph_view.incidence.T @ water_potential).reshape(-1)
+
+        water_table = boundary_set(filters={"is_water_table": ">0"}, kind="dirichlet", value="water_table_potential")
+        # liquid to vapour at the surface: k_vap (Ψ - Ψ_air) leaving the surface cells (Robin)
+        atmosphere = boundary_set(filters={"is_evaporating": ">0"}, kind="robin", value="air_water_potential",
+                                  weight="vapour_conductance")
 
         @boundary_condition("node", "neumann", field="water_potential")
         def _taken_by_the_plants(self, plant_uptake):
             return -plant_uptake
+
+        @graph_output("evaporation", location="node", filters={"is_evaporating": ">0"})
+        def _evaporation(self, water_potential, air_water_potential, vapour_conductance):
+            return vapour_conductance * (water_potential - air_water_potential)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -403,15 +416,14 @@ class SeedlingStructure(StructuralComponent):
 
     def __post_init__(self):
         super().__post_init__()
-        # the nodes of the exchanges with the soil and the air (also used by the steps below and the soil mapping)
+        # the root surface, as a mask of the DataStructure: the soil mapping maps it only (CrossMapping(mask=))
         self.data_structure.define_mask("root_surface", {"is_soil_contact": ">0"})
-        self.data_structure.define_mask("stomatal_cavities", {"is_evaporating": ">0"})
 
-    @postsegmentation(where="root_surface")
+    @postsegmentation(filters={"is_soil_contact": ">0"})
     def _soil_contact_conductance(self, contact_length, root_soil_k):
         return root_soil_k * contact_length
 
-    @postsegmentation(where="stomatal_cavities")
+    @postsegmentation(filters={"is_evaporating": ">0"})
     def _vapour_conductance(self, evaporating_area, stomatal_conductance, vapour_factor):
         return stomatal_conductance * evaporating_area * vapour_factor
 
@@ -454,7 +466,6 @@ class SoilStructure(StructuralComponent):
         area = np.zeros(ds.shape)
         area[..., 0] = ds.dx[0] * ds.dx[1]
         ds.set("evaporating_area", area)
-        ds.define_mask("surface", {"is_evaporating": ">0"}, location="cell")
 
     @postsegmentation
     def _k(self, K_sat, face_area, face_distance):
@@ -464,6 +475,6 @@ class SoilStructure(StructuralComponent):
         K_face = 2. * K[tail] * K[head] / np.maximum(K[tail] + K[head], 1e-30)
         return K_face * face_area / face_distance
 
-    @postsegmentation(where="surface")
+    @postsegmentation(filters={"is_evaporating": ">0"})
     def _vapour_conductance(self, evaporating_area, soil_surface_conductance, vapour_factor):
         return soil_surface_conductance * evaporating_area * vapour_factor

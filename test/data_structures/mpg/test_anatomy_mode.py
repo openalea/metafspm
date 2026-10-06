@@ -144,8 +144,8 @@ class AnatomyHydraulics(FunctionalComponent):
 
     @graph_system(node_unknowns=["water_potential"], edge_unknowns=["water_flux"], solver="newton")
     class _hydraulics:
-        soil = boundary_set(select=_is("Apoplastic"), kind="robin", value="soil_water_potential", weight=0.6)
-        collar = boundary_set(select=lambda ds: (ds.get("label") == ds.mtg.labels.Cell.MetaXylem)
+        soil = boundary_set(filters=_is("Apoplastic"), kind="robin", value="soil_water_potential", weight=0.6)
+        collar = boundary_set(filters=lambda ds: (ds.get("label") == ds.mtg.labels.Cell.MetaXylem)
                               & (ds.owner("SubOrgan") == 0), kind="dirichlet", value="xylem_water_potential")
 
         @node_balance(field="water_potential")

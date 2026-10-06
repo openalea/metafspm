@@ -13,7 +13,7 @@ coupled equations over a DataStructure's graph.
         @node_rate(field)                        a node du/dt (time term by the framework; any solver)
         @edge_law(field=, integrate=False)       an edge residual (or an integrated edge flux)
         @pool_balance(field)                     the residual of a pool unknown (pool_unknowns=)
-        name = boundary_set(select=, kind=, value=, weight=)   a boundary condition on a set of nodes
+        name = boundary_set(filters=, kind=, value=, weight=)  a boundary condition on a set of nodes
         @boundary_condition(location, kind)      a boundary condition written as a method
         @graph_jacobian                          an optional analytic Jacobian
         @graph_output(name, location=None)       a variable computed after the solve
@@ -77,16 +77,22 @@ def _step(name: str, *, total: bool = False, iterating: bool = False):
     for functions written with scalar logic.
     """
     def decorator(func=None, *, vectorized: bool = True, location: str = None, locations: dict = None,
-                  where="active"):
+                  filters=None, include_inactive: bool = False):
         """
         location:  of the step's output when it is not a declared field ("node", "edge", "scalar", "cell", or a
                    coarse scale name); locations: {output name: location} for the supplementary outputs.
-        where:     mask of the DataStructure restricting the step to its selected entities ("active" by default,
-                   applied only when the DataStructure defines it); None computes on every entity.
+        filters:   the entities the step computes on ({variable: condition}, a mask name or a callable, see
+                   Filters); the others keep their values.
+        include_inactive:
+                   the step also computes on the entities outside the DataStructure's "active" mask (emergence,
+                   dead tissues), which it skips by default.
         """
         if func is None:
-            return lambda f: decorator(f, vectorized=vectorized, location=location, locations=locations, where=where)
-        func.__where__ = where
+            return lambda f: decorator(f, vectorized=vectorized, location=location, locations=locations,
+                                       filters=filters, include_inactive=include_inactive)
+        check_filters(filters, f"@{name} {func.__name__}")
+        func.__filters__ = filters
+        func.__include_inactive__ = include_inactive
         func.__step_tag__ = {"name": name, "total": total, "iterating": iterating, "vectorized": vectorized}
         func.__vectorized__ = vectorized
         func.__output_locations__ = dict(locations or {})
@@ -123,7 +129,9 @@ def node_balance(field=None, filters=None, explicit=False):
     Parameters
     ----------
     field    : str   node-unknown field this block contributes to.
-    filters  : dict  node-property filter, e.g. {"tissue_type": ["cortex"]}.
+    filters  : the nodes the block applies on ({variable: condition}, a mask name or a callable, see Filters), e.g.
+               {"tissue": CORTEX}; the method's node arguments are sliced to them, and it contributes 0 elsewhere.
+               Values the method reads through self (self.previous(), self.data_structure) are not sliced.
     explicit : bool  when True the method returns the target value;
                      the framework generates R = unknown − value automatically.
     """
@@ -147,7 +155,7 @@ def node_rate(field=None, filters=None):
     Parameters
     ----------
     field   : node unknown the rate is of.
-    filters : node filter, as for node_balance: the rate applies on the selected nodes (zero elsewhere).
+    filters : the nodes, as for node_balance: the rate applies on the selected nodes (zero elsewhere).
     """
     def decorator(func):
         func.__graph_tag__ = {"kind": "node_rate", "field": field, "filters": filters}
@@ -174,7 +182,8 @@ def edge_law(func=None, *, field=None, filters=None,
     Parameters
     ----------
     field    : str   edge-unknown field this block contributes to.
-    filters  : dict  edge-property filter.
+    filters  : the edges the law applies on ({variable: condition} on edge variables, a mask name or a callable,
+               see Filters).
     explicit : bool  method returns the value; R = unknown − value generated.
     integrate: bool  add the integrated amount "{field}_amount" (Q_new = Q_old + q dt) as an edge unknown.
     """
@@ -189,14 +198,14 @@ def edge_law(func=None, *, field=None, filters=None,
     return _decorate
 
 
-def boundary_condition(location, kind, field=None, filters=None, explicit=False, select=None):
+def boundary_condition(location, kind, field=None, filters=None, explicit=False):
     """
     Tag a method as a boundary condition on a set of nodes, for conditions given by an equation: the method takes
     its arguments by name, like node_balance (unknowns, and DataStructure variables, e.g. coupled ones, read at
     each solve), node-located ones sliced to the selected nodes. For a condition given by a variable or a constant,
     a boundary_set is enough::
 
-        @boundary_condition("node", "neumann", field="concentration", select="collar")
+        @boundary_condition("node", "neumann", field="concentration", filters={"is_collar": ">0"})
         def _collar_uptake(self, concentration, soil_concentration, uptake_rate):
             return uptake_rate * (soil_concentration - concentration)          # an inflow
 
@@ -207,9 +216,7 @@ def boundary_condition(location, kind, field=None, filters=None, explicit=False,
                ``p - collar_pressure``; with explicit=True, the prescribed value itself);
                "neumann": the method's values are an inflow, subtracted from the residual, as boundary_set's.
     field    : the node unknown it applies to.
-    select   : the nodes, as in boundary_set: {variable: value or values}, a variable name (> 0), the name of a
-               mask of the DataStructure, or a callable ds -> boolean mask. Default: every node.
-    filters  : {variable: values}, the former form of select.
+    filters  : the nodes ({variable: condition}, a mask name or a callable, see Filters). Default: every node.
     explicit : for dirichlet, the method returns the prescribed value instead of a residual.
     """
     if location == "edge":
@@ -219,34 +226,75 @@ def boundary_condition(location, kind, field=None, filters=None, explicit=False,
         raise ValueError(f"@boundary_condition: location must be 'node', got '{location}'")
     if kind not in ("dirichlet", "neumann"):
         raise ValueError(f"@boundary_condition: kind must be 'dirichlet' or 'neumann', got '{kind}'")
-    if select is not None and filters is not None:
-        raise ValueError("@boundary_condition: give select= or filters=, not both")
-    if select is not None and not (callable(select) or isinstance(select, (dict, str))):
-        raise TypeError("@boundary_condition: select must be a {variable: values} dict, a variable or mask name, "
-                        "or a callable")
+    check_filters(filters, "@boundary_condition")
 
     def decorator(func):
         func.__graph_tag__ = {
             "kind": "boundary_condition",
             "location": location, "bc_kind": kind,
-            "field": field, "filters": filters, "select": select, "explicit": explicit,
+            "field": field, "filters": filters, "explicit": explicit,
         }
         return func
     return decorator
+
+
+def check_filters(filters, owner: str) -> None:
+    """Refuse a filters= that is not a {variable: condition} dict, a mask name or a callable."""
+    if filters is None or callable(filters) or isinstance(filters, str) or (isinstance(filters, dict) and filters):
+        return
+    raise TypeError(f"{owner}: filters must be a {{variable: condition}} dict, a mask name or a callable, "
+                    f"got {filters!r}")
+
+
+class Filters:
+    """
+    The elements a decorator operates on, from its filters= argument::
+
+        {variable: condition, ...}   every pair holding: a value, a list of values, or a comparison (">0", "<=0.03");
+                                     label names are resolved, and a variable of a coarser scale is read at each
+                                     element's entity of that scale
+        "mask name"                  a mask of the DataStructure (ds.define_mask), e.g. shared with a mapping
+        callable                     ds -> boolean array, e.g. a geometric selection
+
+    Resolved to a mask of the DataStructure (at the elements' location), recomputed when its variables are written
+    or the topology changes.
+    """
+
+    def __init__(self, rule, key: str, location: str = "node"):
+        check_filters(rule, key)
+        self.rule, self.key, self.location = rule, key, location
+
+    def mask_name(self, ds) -> str:
+        if isinstance(self.rule, str):
+            if not ds.has_mask(self.rule):
+                raise KeyError(f"{self.key}: filters='{self.rule}' names no mask of the DataStructure "
+                               f"(masks: {ds.masks()}); give {{variable: condition}} for a selection by variables")
+            return self.rule
+        name, location = f"__filters:{self.key}", _entity_location(ds, self.location)
+        spec = ds.__dict__.get("_masks", {}).get(name)
+        if spec is None or spec["rule"] is not self.rule or spec["location"] != location:
+            ds.define_mask(name, self.rule, location=location)
+        return name
+
+    def mask(self, ds, take=None) -> np.ndarray:
+        values = np.asarray(ds.mask(self.mask_name(ds)), dtype=bool).reshape(-1)
+        return values if take is None else values[take]
+
+    def members(self, ds, take=None) -> np.ndarray:
+        return np.flatnonzero(self.mask(ds, take))
 
 
 class boundary_set:
     """
     Boundary condition on a set of nodes, declared in a graph-system class and assembled by the framework::
 
-        leaves = boundary_set(select={"label": [LEAF]}, kind="robin", value="air_water_potential",
+        leaves = boundary_set(filters={"label": "LeafElement"}, kind="robin", value="air_water_potential",
                               weight="leaf_conductance")
 
     Arguments::
 
-        select  {variable: value or values} | a variable name (selects where it is > 0) | the name of a mask of the
-                DataStructure | a callable ds -> boolean mask; membership follows the selecting variables and
-                topology changes.
+        filters {variable: condition} | a mask name | a callable ds -> boolean mask (see Filters); membership
+                follows the selecting variables and topology changes.
         kind    "robin":     + w * (x - v) in the field's residual (an outflow towards the external value v);
                 "dirichlet": the residual row becomes x - v;
                 "neumann":   - v in the residual (v is an inflow);
@@ -263,7 +311,7 @@ class boundary_set:
     # Codes of a per-node kind variable; other values (e.g. 0) apply no condition
     CODES = {"dirichlet": 1, "neumann": 2, "robin": 3}
 
-    def __init__(self, select, kind=None, value=0., weight=1.0, field=None, kinds: str = None):
+    def __init__(self, filters, kind=None, value=0., weight=1.0, field=None, kinds: str = None):
         if kind is not None and kind not in self.KINDS:
             raise ValueError(f"boundary_set: kind must be one of {self.KINDS}, got '{kind}'")
         if kinds is not None:
@@ -271,9 +319,10 @@ class boundary_set:
                 raise ValueError("boundary_set: give kind= (one kind) or kinds= (a node variable), not both")
             kind = "per_node"
         self.kind_variable = kinds
-        if not (callable(select) or isinstance(select, (dict, str))):
-            raise TypeError("boundary_set: select must be a {variable: values} dict, a variable name or a callable")
-        self.select, self.kind, self.value, self.weight, self.field = select, kind, value, weight, field
+        if filters is None:
+            raise TypeError("boundary_set: filters= is required (the nodes of the set)")
+        check_filters(filters, "boundary_set")
+        self.filters, self.kind, self.value, self.weight, self.field = filters, kind, value, weight, field
         self.name = None
         self.__graph_tag__ = {"kind": "boundary_set"}
 
@@ -287,21 +336,7 @@ class boundary_set:
 
     def members(self, instance, ds, size, take) -> np.ndarray:
         """Indices, in the solved graph, of the nodes of the set."""
-        mask_name = f"__boundary_set:{type(instance).__name__}.{self.name}"
-        if isinstance(self.select, str) and ds.has_mask(self.select):
-            mask_name = self.select                                  # a mask of the DataStructure
-        elif not ds.has_mask(mask_name):
-            rule = self.select
-            if isinstance(rule, str):
-                rule = {rule: ">0"}
-            elif isinstance(rule, dict):
-                rule = {variable: (list(values) if isinstance(values, (list, tuple, set)) else values)
-                        for variable, values in rule.items()}
-            ds.define_mask(mask_name, rule, location="cell" if "cell" in ds._var_stores() else "node")
-        mask = np.asarray(ds.mask(mask_name), dtype=bool).reshape(-1)
-        if take is not None:
-            mask = mask[take]
-        return np.flatnonzero(mask)
+        return Filters(self.filters, f"{type(instance).__name__}.{self.name}").members(ds, take)
 
 
 def graph_jacobian(func):
@@ -310,26 +345,22 @@ def graph_jacobian(func):
     return func
 
 
-def graph_output(name, location: str = None, select=None):
+def graph_output(name, location: str = None, filters=None):
     """
     Tag a method as a named post-solve output hook. *location* ("node" or "edge") is required when *name* is not a
     declared field and its size does not identify a single location.
 
-    select: the nodes the output is computed on, as boundary_set's ({variable: values}, a variable name (> 0), a mask
-    name, or a callable); the method's node arguments are sliced to them, and the other nodes get 0. Node outputs
-    only.
+    filters: the nodes the output is computed on ({variable: condition}, a mask name or a callable, see Filters);
+    the method's node arguments are sliced to them, and the other nodes get 0. Node outputs only.
     """
     if location not in (None, "node", "edge"):
         raise ValueError(f"@graph_output('{name}'): location must be 'node' or 'edge', got '{location}'")
-    if select is not None:
-        if location == "edge":
-            raise ValueError(f"@graph_output('{name}'): select= chooses nodes, not edges")
-        if not (callable(select) or isinstance(select, (dict, str))):
-            raise TypeError(f"@graph_output('{name}'): select must be a {{variable: values}} dict, a variable or mask "
-                            "name, or a callable")
+    if filters is not None and location == "edge":
+        raise ValueError(f"@graph_output('{name}'): filters= chooses nodes, not edges")
+    check_filters(filters, f"@graph_output('{name}')")
 
     def decorator(func):
-        func.__graph_tag__ = {"kind": "graph_output", "name": name, "location": location, "select": select}
+        func.__graph_tag__ = {"kind": "graph_output", "name": name, "location": location, "filters": filters}
         return func
     return decorator
 
@@ -378,7 +409,7 @@ def _live_ds(instance):
 def _read_array(ds, name, location, size, owner=None, take=None, read_only=False):
     """
     Copy of variable *name* as a per-*location* array: scalars are broadcast; a missing name raises.
-    *take*: indices of the entities of an active subgraph (where=), the others being left out.
+    *take*: indices of the entities of an active subgraph (filters=), the others being left out.
     *read_only*: a read-only view instead of a copy when possible (parameters and inputs).
     """
     if not ds.has(name):
@@ -416,7 +447,7 @@ def _in_equation(instance, method, args):
 
 
 def _take(instance, location):
-    """Indices of the active subgraph's entities at *location* during a where= solve, else None."""
+    """Indices of the active subgraph's entities at *location* during a filtered solve, else None."""
     restriction = instance.__dict__.get("_restriction")
     if restriction is None:
         return None
@@ -425,7 +456,7 @@ def _take(instance, location):
 
 class _Restriction:
     """
-    Active subgraph of a graph system solved with where=, or one
+    Active subgraph of a graph system solved with filters=, or one
     connected piece of it (split="components"): the selected nodes, the edges with both ends selected, and the
     corresponding GraphView. A piece leaves the other edges alone (drops_edges=False).
     """
@@ -509,10 +540,10 @@ def _restriction_for(instance, where):
     """The _Restriction of mask *where*, rebuilt when the topology or the mask's values changed."""
     ds = _live_ds(instance)
     if not hasattr(ds, "has_mask") or not ds.has_mask(where):
-        raise KeyError(f"{type(instance).__name__}: graph system with where='{where}' but the DataStructure "
+        raise KeyError(f"{type(instance).__name__}: graph system filtered by mask '{where}' but the DataStructure "
                        "defines no such mask")
     if ds.__dict__["_masks"][where]["location"] not in ("node", "cell"):
-        raise ValueError(f"{type(instance).__name__}: where='{where}' needs a node (or grid cell) mask")
+        raise ValueError(f"{type(instance).__name__}: the filters of a graph system select nodes (or grid cells)")
     key = (ds.topology_version, ds.mask_version(where))
     cache = instance.__dict__.setdefault("_restriction_cache", {})
     if where in cache and cache[where][0] == key:
@@ -589,20 +620,6 @@ def _snapshot(instance, required_names, node_vids_int, edge_vids_int,
     return node_snap, edge_snap
 
 
-def _type_mask(type_filter, snap, size, ds=None):
-    """Boolean mask over *size* entities from {prop: [allowed]} filter; label names are resolved through *ds*."""
-    mask = np.ones(size, dtype=bool)
-    for prop_name, allowed in type_filter.items():
-        if ds is not None and hasattr(ds, "resolve_codes"):
-            allowed = ds.resolve_codes(prop_name, allowed if isinstance(allowed, (list, tuple, set)) else [allowed])
-        vals = snap.get(prop_name)
-        if vals is None:
-            raise KeyError(f"filter variable '{prop_name}' is not available at this location: a filter on a missing "
-                           "variable would select every entity")
-        mask &= np.isin(np.asarray(vals, dtype=float), np.asarray(list(allowed), dtype=float))
-    return mask
-
-
 # ═══════════════════════════════════════════════════════════════════════════════
 # GraphSystemBuilder
 # Replaces the inline assembly logic of _invoke_graph_system with a class
@@ -675,21 +692,21 @@ class GraphSystemBuilder:
                     continue
                 bound = obj.__get__(instance, type(instance))
                 kind  = tag["kind"]
+                key   = f"{type(instance).__name__}.{inner_cls.__name__}.{attr_name}"
+                selection = None
+                if tag.get("filters") is not None:
+                    selection = Filters(tag["filters"], key, "edge" if kind == "edge_law" else "node")
                 if kind in ("node_balance", "node_rate"):
                     node_balance_items.append((
-                        tag["field"], tag.get("filters"), attr_name, bound, obj,
+                        tag["field"], selection, attr_name, bound, obj,
                         "rate" if kind == "node_rate" else tag.get("explicit", False)
                     ))
                 elif kind == "edge_law":
                     edge_law_items.append((
-                        tag.get("field"), tag.get("filters"), attr_name, bound, obj,
+                        tag.get("field"), selection, attr_name, bound, obj,
                         tag.get("explicit", False), tag.get("integrate", False)
                     ))
                 elif kind == "boundary_condition":
-                    selection = tag.get("filters")
-                    if tag.get("select") is not None:
-                        selection = boundary_set(select=tag["select"])
-                        selection.name = attr_name
                     bc_items.append((
                         tag.get("field"), selection, tag.get("bc_kind"),
                         attr_name, bound, obj, tag.get("explicit", False)
@@ -699,10 +716,6 @@ class GraphSystemBuilder:
                 elif kind == "graph_jacobian":
                     jacobian_raw = (bound, obj)
                 elif kind == "graph_output":
-                    selection = None
-                    if tag.get("select") is not None:
-                        selection = boundary_set(select=tag["select"])
-                        selection.name = attr_name
                     output_items.append((tag["name"], bound, obj, selection))
                     self.output_locations[tag["name"]] = tag.get("location")
 
@@ -772,15 +785,6 @@ class GraphSystemBuilder:
             for aname in inspect.getfullargspec(raw)[0][1:]:
                 if aname not in node_unknowns and aname not in all_edge_unknowns and aname not in pool_names:
                     required.add(aname)
-        for _, tf, _, _, _, _ in node_balance_items:
-            if tf:
-                required.update(tf.keys())
-        for _, tf, _, _, _, _, _ in edge_law_items:
-            if tf:
-                required.update(tf.keys())
-        for _, tf, _, _, _, _, _ in bc_items:
-            if isinstance(tf, dict):
-                required.update(tf.keys())
         for bset in boundary_sets:
             required.update(bset.variables())
 
@@ -819,10 +823,7 @@ class GraphSystemBuilder:
             anchored = np.zeros(n, dtype=bool)
             for _, tf, bc_kind, _, _, _, _ in bc_items:
                 if bc_kind == "dirichlet":
-                    if isinstance(tf, boundary_set):
-                        anchored[tf.members(instance, ds, n, _take(instance, "node"))] = True
-                    else:
-                        anchored |= _type_mask(tf, node_snap, n, ds) if tf else True
+                    anchored |= tf.mask(ds, _take(instance, "node")) if tf is not None else True
             for terms in set_terms.values():
                 for kind, idx, _, weight in terms:
                     if kind == "dirichlet":
@@ -889,7 +890,6 @@ class GraphSystemBuilder:
         def make_evaluator(raw_func, bound_method, type_filter, entity):
             arg_names   = inspect.getfullargspec(raw_func)[0][1:]
             entity_size = n if entity == "node" else m
-            mask_snap   = node_snap if entity == "node" else edge_snap
             own_unknowns = node_unknowns if entity == "node" else all_edge_unknowns
             own = node_snap if entity == "node" else edge_snap
             sliced      = [aname in own_unknowns or (aname not in node_unknowns and aname not in all_edge_unknowns
@@ -916,12 +916,8 @@ class GraphSystemBuilder:
                             f"found in the DataStructure.  Node: {list(node_snap)}  "
                             f"Edge: {list(edge_snap)}"
                         )
-                if type_filter:
-                    if isinstance(type_filter, boundary_set):
-                        mask = np.zeros(entity_size, dtype=bool)
-                        mask[type_filter.members(instance, ds, entity_size, _take(instance, "node"))] = True
-                    else:
-                        mask = _type_mask(type_filter, mask_snap, entity_size, ds)
+                if type_filter is not None:
+                    mask = type_filter.mask(ds, _take(instance, entity))
                     sub  = [a[mask] if cut else a for a, cut in zip(args, sliced)]
                     result = np.asarray(_in_equation(instance, bound_method, sub), dtype=np.float64)
                     full   = np.zeros(entity_size, dtype=np.float64)
@@ -955,12 +951,8 @@ class GraphSystemBuilder:
                         raise KeyError(
                             f"BC '{raw_func.__name__}': arg '{aname}' not found."
                         )
-                if type_filter:
-                    if isinstance(type_filter, boundary_set):
-                        mask = np.zeros(n, dtype=bool)
-                        mask[type_filter.members(instance, ds, n, _take(instance, "node"))] = True
-                    else:
-                        mask = _type_mask(type_filter, node_snap, n, ds)
+                if type_filter is not None:
+                    mask = type_filter.mask(ds, _take(instance, "node"))
                     idx  = np.where(mask)[0]
                     sub  = [a[mask] if cut else a for a, cut in zip(args, sliced)]
                     vals = np.asarray(_in_equation(instance, bound_method, sub), dtype=np.float64)
@@ -1217,7 +1209,10 @@ def _invoke_graph_system(self, method_name: str) -> None:
     if hasattr(self, "_refresh_from_bio_scale"):
         self._refresh_from_bio_scale()
     spec_def = type(self)._graph_system_specs[method_name]
-    where = spec_def.get("where")
+    filters = spec_def.get("filters")
+    # The active subgraph: the DataStructure mask of the system's filters
+    where = (None if filters is None
+             else Filters(filters, f"{type(self).__name__}.{method_name}").mask_name(_live_ds(self)))
     split = spec_def.get("split", "whole") == "components"
     if where is None and not split:
         _solve_graph_system(self, method_name, spec_def)
@@ -1544,7 +1539,7 @@ def graph_system(
     prefer_sparse  = True,
     linesearch     = False,
     schedule_as    = "axial",
-    where          = None,
+    filters        = None,
     transient      = None,
     integrate      = "step",
     n_substeps     = 1,
@@ -1596,9 +1591,9 @@ def graph_system(
     prefer_sparse  : bool    use sparse linear solves when available.
     linesearch     : bool    Armijo backtracking in Newton loop.
     schedule_as    : str     Choregrapher step name.
-    where          : str | None
-        Mask of the DataStructure restricting the solve to its active subgraph (nodes selected by the mask and the
-        edges between them; inactive nodes are frozen, dropped edges carry no flux). None: the whole graph.
+    filters        : the nodes of the active subgraph the system is solved on ({variable: condition}, a mask name or
+        a callable, see Filters): the nodes it selects and the edges between them; the other nodes are frozen, and
+        dropped edges carry no flux. None: the whole graph.
     transient      : bool | None
         Whether the balance has a time derivative. Steady systems on an active subgraph need a Dirichlet anchor in
         every connected piece, which is checked. Default: True for the time-stepping solvers (explicit and implicit
@@ -1613,7 +1608,7 @@ def graph_system(
         with them through self.pool_exchange(name), the sparse map between the nodes of the exchange set (default:
         every node) and the pool of their entity. Newton solvers only.
     split          : "whole" | "components"
-        "components": each connected piece of the graph (of the active subgraph with where=), e.g. each plant of a
+        "components": each connected piece of the graph (of the active subgraph with filters=), e.g. each plant of a
         population, is solved on its own, with its own Newton convergence and integration steps. "whole": one
         system (default).
     """
@@ -1626,6 +1621,7 @@ def graph_system(
             )
         solver = method
 
+    check_filters(filters, "graph_system")
     pools = {}
     for pool_name, pool_spec in (pool_unknowns or {}).items():
         pool_spec = {"location": pool_spec} if isinstance(pool_spec, str) else dict(pool_spec)
@@ -1679,7 +1675,7 @@ def graph_system(
         "prefer_sparse" : prefer_sparse,
         "linesearch"    : linesearch,
         "schedule_as"   : schedule_as,
-        "where"         : where,
+        "filters"       : filters,
         "integrate"     : integrate,
         "n_substeps"    : n_substeps,
         "rtol"          : rtol,

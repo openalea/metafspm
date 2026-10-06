@@ -27,6 +27,18 @@
   - `solver="implicit_euler"` is a deprecated alias of `"newton"` with `transient=True`. It used to add `(u - u_prev)/h` to every unknown, edge fluxes included, so equations writing their own time term got it twice.
   - `explicit_euler` evaluates the edge unknowns at the current state before stepping (it used the previous step's fluxes), and leaves the step's fluxes in the DataStructure.
 
+### Breaking: one selection argument, `filters=`
+
+- **Every decorator selects its elements with `filters=`:** steps, `@node_balance`, `@node_rate`, `@edge_law`, `@boundary_condition`, `boundary_set`, `@graph_output` and `@graph_system`. It replaces `select=` (boundary sets, boundary conditions, outputs) and `where=` (steps, graph systems).
+- **Forms:**
+  - a `{variable: condition}` dict, every pair holding: a value, a list of values, a comparison string (`">0"`, `"<=0.03"`, `"!=2"`), label names; a key may name a variable at a coarser scale, read at each element's entity;
+  - a mask name;
+  - a callable `ds -> boolean array`.
+
+  A string is a mask name: write `{"is_collar": ">0"}` where `select="is_collar"` meant that variable.
+- **Steps** still skip the entities outside the `"active"` mask; `include_inactive=True` replaces `where=None`.
+- **Masks:** `define_mask` rules take any comparison threshold and variables of coarser scales.
+
 ### Example: water in the soil–plant–atmosphere continuum
 
 - **`examples/soil_plant_atmosphere/`** (new): a seedling and a population on a soil grid under a dry air (a constant water potential), steady water flow, with plots. A smoke test checks convergence and the water balances. The user guide and the example's README describe it.

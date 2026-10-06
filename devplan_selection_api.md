@@ -53,3 +53,14 @@ So I propose `filters=` takes the dict (the form used and documented everywhere)
 1. One selection resolver shared by every decorator: dict, mask name or callable → a boolean array at the element location, cached on the DataStructure's mask machinery so it follows variables and topology.
 2. The renames: `select=` and `where=` become `filters=`. Downstream models are not ported yet, so no aliases are kept.
 3. Tests per decorator, docs (user guide, conventions), the CHANGELOG, and the example rewritten on `filters=`.
+
+## 5. Done (2026-10-06)
+
+- **Your answers:** yes to every recommendation (Q1–Q4).
+- **One resolver**, `Filters` in `solve/decorator.py`: a dict, a mask name or a callable becomes a DataStructure mask at the elements' location (cached, following its variables and the topology). Mask rules now take any comparison threshold and variables of coarser scales.
+- **Every decorator takes `filters=`:** steps, `@node_balance`, `@node_rate`, `@edge_law`, `@boundary_condition`, `boundary_set`, `@graph_output`, `@graph_system`.
+  - `select=` and `where=` are gone; `include_inactive=True` replaces `where=None` on steps.
+  - A string is a mask name, so a variable is written `{"is_collar": ">0"}`.
+- **Tests:** `test/components/test_filters.py` (9). The tests and the example are migrated.
+- **Example:** the two transports declare their graph systems separately (no `_WaterFlow`). The structures' steps use dict filters; the `root_surface` mask stays, for the soil mapping. The results are unchanged.
+- **Found:** inside a filtered balance, values read through `self` (e.g. `self.previous()`) are not sliced to the selection. This was already the case, and is now documented. Slicing `previous()` too would need the framework to know which block calls it.

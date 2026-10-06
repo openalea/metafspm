@@ -104,7 +104,7 @@ class RateWithInflow(FunctionalComponent):
 
     @graph_system(node_unknowns=["u"], solver="explicit_euler")
     class _solve(_Rate):
-        collar = boundary_set(select="is_collar", kind="neumann", value=0.2)
+        collar = boundary_set(filters={"is_collar": ">0"}, kind="neumann", value=0.2)
 
 
 def test_a_neumann_inflow_adds_to_the_rate():
@@ -162,7 +162,7 @@ class DirichletWithExplicit(FunctionalComponent):
 
     @graph_system(node_unknowns=["u"], solver="explicit_euler")
     class _solve(_Rate):
-        @boundary_condition("node", "dirichlet", field="u", select="is_collar")
+        @boundary_condition("node", "dirichlet", field="u", filters={"is_collar": ">0"})
         def _collar(self, u):
             return u - 2.
 

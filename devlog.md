@@ -2030,3 +2030,10 @@ Per-file counts:
 - **Atmosphere removed (your request):** the air is now a constant input, `air_water_potential` and `vapour_factor` as parameters defaulting to their values at 50 % RH and 20 °C. Results are unchanged; the smoke test and the figures were rerun.
 - **Split declarations (your request):** plant and soil transports and structures each declare their own variables (plant at Compartment / Connection scales, MTG-backed; soil at cell / edge), on a shared flow-equations mixin. The edge law is explicit. The results are identical; the MTG write-back of the plant variables was checked.
 - **Selective computation (your question):** `@graph_output` gets `select=` (the boundary-set forms, zero elsewhere; tested). The example's evaporation and root uptake now use it instead of multiplying by a flag. Its structures define masks (root surface, stomatal cavities, soil surface), and the conductance steps run on them only (`where=`). The results are unchanged.
+- **`filters=` everywhere (devplan_selection_api.md, your answers: yes to all):**
+  - one `Filters` resolver on DataStructure masks (dict with any comparisons, label names and coarser-scale keys; mask name; callable);
+  - every decorator migrated, `select=` / `where=` removed, `include_inactive=` for steps;
+  - 9 new tests;
+  - the example's transports are declared separately, without the mixin.
+
+  One bug of my own was caught: the functor read the mask dict before the first mask existed. Results unchanged; suite 763 passed.

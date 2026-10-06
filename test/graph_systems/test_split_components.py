@@ -67,7 +67,7 @@ class ActiveSplitDiffusion(FunctionalComponent):
     conductance: float = parameter(**DOC, by="", default=0.05)
     time_step = DT
     _solve = graph_system(node_unknowns=["sugar"], edge_unknowns=["sugar_flux"], transient=True,
-                          where="active", split="components")(type("_solve", (_Diffusion,), {}))
+                          filters="active", split="components")(type("_solve", (_Diffusion,), {}))
 
 
 def _population(n_segments, conductances):
