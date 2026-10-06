@@ -83,8 +83,19 @@ class GraphView:
     boundary_names    : tuple[str, ...]
     node_data         : dict[str, np.ndarray] = field(default_factory=dict)
     edge_data         : dict[str, np.ndarray] = field(default_factory=dict)
+    difference        : Optional[csr_matrix] = None   # edges x nodes, see edge_difference
 
     # ── Properties ────────────────────────────────────────────────────────────
+
+    @property
+    def edge_difference(self) -> csr_matrix:
+        """
+        The operator D (edges x nodes) giving, per edge, its tail's value minus its head's: D @ u. On graphs and regular
+        grids it is incidence.T. Adaptive grids give a consistent one: between cells of different sizes, the coarse
+        cell's value is taken on the fine cell's axis (from its gradient), so that D @ u is exact for linear u. Edge
+        laws written with it (j = k D @ u) are then consistent on any grid; the solver's Jacobian pattern follows it.
+        """
+        return (self.difference if self.difference is not None else self.incidence.T).tocsr()
 
     @property
     def n_nodes(self) -> int:

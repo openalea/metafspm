@@ -24,6 +24,7 @@ from openalea.metafspm.coupling.component import (FunctionalComponent, Structura
 from openalea.metafspm.data_structure.configs import ScalesConfig as scales
 from openalea.metafspm.solve.decorator import (boundary_condition, edge_law, graph_output, graph_system,
                                                node_balance, postsegmentation)
+from openalea.metafspm.solve.solver import NewtonSolver
 
 from seedling import AXIAL, LEAF_RADIAL, ROOT_RADIAL, STEM_RADIAL, build_seedling
 
@@ -97,7 +98,7 @@ class PlantWaterTransport(FunctionalComponent):
     evaporation: float = state_variable(**_doc("mm3 s-1", "Water leaving a stomatal cavity to the air."),
                                         initialize=0., scale=scales.Compartment, state_variable_type="extensive")
 
-    @graph_system(node_unknowns=["water_potential"], edge_unknowns=["water_flux"], solver="newton", max_iter=20,
+    @graph_system(node_unknowns=["water_potential"], edge_unknowns=["water_flux"], solver=NewtonSolver, max_iter=20,
                   schedule_as="state")
     class _flow:
         """Steady flow: the outflows of each Compartment balance its inflows from the soil and to the air."""
@@ -134,7 +135,8 @@ class PlantWaterTransport(FunctionalComponent):
 class SoilWaterTransport(FunctionalComponent):
     """
     The water flow in the soil grid: the cells are the nodes, the faces between them the edges. Water comes from
-    the water table at the bottom, leaves at the surface to the air, and is taken up by the plants' roots.
+    the water table, through the grid's bottom face, leaves at the surface to the air, and is taken up by the
+    plants' roots.
     """
     water_potential: float = state_variable(**_doc("MPa", "Water potential of a cell."), initialize=-0.1,
                                             location="cell", state_variable_type="intensive")
@@ -154,13 +156,16 @@ class SoilWaterTransport(FunctionalComponent):
                                            location="cell", state_variable_type="descriptor")
     water_table_potential: float = parameter(**_doc("MPa", "Water potential at the water table."),
                                              by="SoilWaterTransport", default=0., location="cell")
+    water_table_conductance: float = input_variable(**_doc("mm3 s-1 MPa-1", "Conductance between a bottom cell's "
+                                                           "centre and the water table."), by="SoilStructure",
+                                                    initialize=0., location="cell", state_variable_type="intensive")
     plant_uptake: float = input_variable(**_doc("mm3 s-1", "Water taken up by the plants from a cell."),
                                          by="PlantWaterTransport", initialize=0., location="cell",
                                          state_variable_type="extensive")
     evaporation: float = state_variable(**_doc("mm3 s-1", "Water leaving a surface cell to the air."),
                                         initialize=0., location="cell", state_variable_type="extensive")
 
-    @graph_system(node_unknowns=["water_potential"], edge_unknowns=["water_flux"], solver="newton", max_iter=20,
+    @graph_system(node_unknowns=["water_potential"], edge_unknowns=["water_flux"], solver=NewtonSolver, max_iter=20,
                   schedule_as="state")
     class _flow:
         """Steady flow: the outflows of each cell balance the water table, the plants' uptake and the evaporation."""
@@ -171,13 +176,19 @@ class SoilWaterTransport(FunctionalComponent):
 
         @edge_law(field="water_flux", explicit=True)
         def _darcy(self, water_potential, conductance):
-            """The flux through a face, j = k (Ψ_low - Ψ_high)."""
-            return conductance * np.asarray(self._graph_view.incidence.T @ water_potential).reshape(-1)
+            """
+            The flux through a face, j = k (Ψ_low - Ψ_high). The grid's edge difference is consistent between cells of
+            different sizes (adaptive grids), and the two-point difference on regular ones.
+            """
+            return conductance * np.asarray(self._graph_view.edge_difference @ water_potential).reshape(-1)
 
-        @boundary_condition("node", "dirichlet", field="water_potential", explicit=True, filters={"is_water_table": ">0"})
-        def _water_table(self, water_table_potential):
-            """The bottom cells held at the water table's potential."""
-            return water_table_potential
+        @boundary_condition("node", "neumann", field="water_potential", filters={"is_water_table": ">0"})
+        def _water_table(self, water_potential, water_table_potential, water_table_conductance):
+            """
+            The water table at the bottom face of the bottom cells, held at its potential: the inflow through that
+            face, k_table (Ψ_table - Ψ), k_table = K A / (h/2). Its depth is the grid's, whatever the cells' size.
+            """
+            return water_table_conductance * (water_table_potential - water_potential)
 
         @boundary_condition("node", "neumann", field="water_potential", filters={"is_evaporating": ">0"})
         def _to_the_air(self, water_potential, air_water_potential, vapour_conductance):
@@ -299,7 +310,8 @@ class SoilStructure(StructuralComponent):
     """
     The soil grid's hydraulics: face conductances k = K · A / d, K the harmonic mean of the two voxels' K_sat (which
     vary between voxels, by layer); the surface layer evaporates (a soil-surface vapour conductance), the bottom
-    layer is the water table. Regular and adaptive grids alike (faces of unequal cells: their own A and d).
+    layer's bottom face is the water table (k_table = K A / (h/2)). Regular and adaptive grids alike (faces of unequal
+    cells: their own A and d).
     """
     k: float = state_variable(**_doc("mm3 s-1 MPa-1", "Hydraulic conductance of a face."), initialize=0.,
                               location="edge", state_variable_type="intensive")
@@ -310,6 +322,10 @@ class SoilStructure(StructuralComponent):
                                            state_variable_type="descriptor")
     evaporating_area: float = state_variable(**_doc("m2", "Evaporating surface of a cell."), initialize=0.,
                                              location="cell", state_variable_type="extensive")
+    water_table_area: float = state_variable(**_doc("m2", "Area of a bottom cell's face on the water table."),
+                                             initialize=0., location="cell", state_variable_type="extensive")
+    water_table_distance: float = state_variable(**_doc("m", "From a bottom cell's centre to the water table."),
+                                                 initialize=1., location="cell", state_variable_type="descriptor")
     K_sat: float = parameter(**_doc("mm3 m-1 s-1 MPa-1", "Hydraulic conductivity of a voxel."), by="SoilStructure",
                              default=5., location="cell")
     soil_surface_conductance: float = parameter(**_doc("mol m-2 s-1", "Vapour conductance of the soil surface."),
@@ -319,6 +335,9 @@ class SoilStructure(StructuralComponent):
                                      by="SoilStructure", default=VAPOUR_FACTOR)
     is_water_table: float = state_variable(**_doc("-", "1 at the water table."), initialize=0., location="cell",
                                            state_variable_type="descriptor")
+    water_table_conductance: float = state_variable(**_doc("mm3 s-1 MPa-1", "Conductance between a bottom cell's "
+                                                           "centre and the water table."), initialize=0.,
+                                                    location="cell", state_variable_type="intensive")
 
     def __post_init__(self):
         super().__post_init__()
@@ -336,6 +355,8 @@ class SoilStructure(StructuralComponent):
         ds.set("is_evaporating", surface.astype(float))
         ds.set("is_water_table", bottom.astype(float))
         ds.set("evaporating_area", np.where(surface, size[:, 0] * size[:, 1], 0.))
+        ds.set("water_table_area", np.where(bottom, size[:, 0] * size[:, 1], 0.))
+        ds.set("water_table_distance", np.where(bottom, size[:, 2] / 2., 1.))
 
     @postsegmentation
     def _k(self, K_sat, face_area, face_distance):
@@ -348,3 +369,8 @@ class SoilStructure(StructuralComponent):
     @postsegmentation(filters={"is_evaporating": ">0"})
     def _vapour_conductance(self, evaporating_area, soil_surface_conductance, vapour_factor):
         return soil_surface_conductance * evaporating_area * vapour_factor
+
+    @postsegmentation(filters={"is_water_table": ">0"})
+    def _water_table_conductance(self, K_sat, water_table_area, water_table_distance):
+        """K A / (h/2): from the bottom cells' centre to their bottom face."""
+        return K_sat * water_table_area / water_table_distance

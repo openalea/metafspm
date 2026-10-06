@@ -16,8 +16,8 @@ Plots of the example's DataStructures and of the converged water potentials on t
     adaptive_slice      a vertical slice, each cell at its own size, coloured by its size or by Ψ minus the mean of
                         its depth (cell_anomaly)
     size_against_metrics  per cell, the sink density (the refinement metric) and the flux density against its size
-    discretisation_comparison  cells, run time and depletion error near the roots (depletion_error) of uniform and
-                        adaptive grids, against the finest uniform one
+    discretisation_comparison  cells, run time, soil Ψ error near the roots (field_error) and leaf Ψ error of uniform
+                        and adaptive grids, against the finest uniform one
 """
 import numpy as np
 import matplotlib
@@ -494,31 +494,41 @@ def size_against_metrics(grid, sink_density, path):
     plt.close(fig)
 
 
-def depletion_error(grid, reference, radius=0.02):
+def field_error(grid, reference, radius=0.02):
     """
-    RMS difference of the depletion (cell_anomaly: Ψ minus the mean of its depth) between *grid* and the finer
-    *reference* grid, over the reference cells within *radius* of a cell with uptake (MPa), read on the reference's
-    cells. The depletion leaves out the vertical profile, which the bottom cells' size shifts on every grid.
+    The RMS difference of Ψ between *grid* and the finer *reference* grid averaged over each of *grid*'s cells (so
+    that a coarse cell is compared with the mean it stands for), weighted by volume, over the cells within *radius*
+    of a reference cell with uptake (MPa).
     """
     from scipy.spatial import cKDTree
     points = reference.cell_centers()
+    owner = np.asarray(grid.locate(points)).reshape(-1)
+    n = grid.n_nodes()
+    mean = (np.bincount(owner, weights=np.asarray(reference.get("water_potential")).reshape(-1), minlength=n)
+            / np.maximum(np.bincount(owner, minlength=n), 1))
     sinks = np.asarray(reference.get("plant_uptake")).reshape(-1) > 0.
-    near = cKDTree(points[sinks]).query(points)[0] < radius
-    error = cell_anomaly(grid)[grid.locate(points)] - cell_anomaly(reference)
-    return float(np.sqrt((error[near] ** 2).mean()))
+    near_points = cKDTree(points[sinks]).query(points)[0] < radius
+    near = np.bincount(owner, weights=near_points.astype(float), minlength=n) > 0
+    volume = np.broadcast_to(grid.cell_volume(), (n,))
+    error = np.asarray(grid.get("water_potential")).reshape(-1) - mean
+    return float(np.sqrt((volume[near] * error[near] ** 2).sum() / volume[near].sum()))
 
 
 def discretisation_comparison(results, path):
-    """The cells, the run time and the depletion error near the roots of each soil grid of *results* (dicts)."""
+    """
+    For each soil grid of *results* (dicts, the last the reference): its cells, its run time, its error on the soil Ψ
+    near the roots (field_error) and on the plant's lowest leaf Ψ, against the reference.
+    """
     names = [r["name"] for r in results]
-    fig, axes = plt.subplots(1, 3, figsize=(13, 3.8), layout="constrained")
+    fig, axes = plt.subplots(1, 4, figsize=(16, 3.8), layout="constrained")
     colours = ["0.6" if "uniform" in n else "teal" for n in names]
-    for ax, key, label, form in ((axes[0], "cells", "soil cells", "{:.0f}"), (axes[1], "seconds", "run time (s)",
-                                                                             "{:.1f}"),
-                                 (axes[2], "depletion_error", "depletion error near the roots (MPa)", "{:.4f}")):
+    panels = ((axes[0], "cells", "soil cells", "{:.0f}", True), (axes[1], "seconds", "run time (s)", "{:.1f}", True),
+              (axes[2], "field_error", "soil Ψ error near the roots (MPa)", "{:.4f}", False),
+              (axes[3], "leaf_error", "lowest leaf Ψ error (MPa)", "{:.4f}", False))
+    for ax, key, label, form, log in panels:
         values = [r[key] for r in results]
         ax.bar(names, values, color=colours)
-        if key != "depletion_error":
+        if log:
             ax.set_yscale("log")
         for i, v in enumerate(values):
             ax.annotate(form.format(v), (i, v), ha="center", va="bottom", fontsize=8)

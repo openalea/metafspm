@@ -36,6 +36,7 @@
 ### Adaptive grids in scenes
 
 - **`CrossMapping` follows the target grid's refinement:** the incidence is rebuilt when the grid's topology changes, not only the plants'. Before, after an `AdaptiveGridDataStructure.refine()` or `coarsen()`, the roots were mapped onto stale cells.
+- **Consistent fluxes between cells of different sizes:** `GraphView.edge_difference` (edges × nodes, tail − head, `incidence.T` by default). On adaptive grids, it moves the coarse cell's value onto the fine cell's axis through the face (`AdaptiveGridDataStructure.cell_gradient()`, a least-squares gradient), exact for linear fields. Edge laws written `k * (view.edge_difference @ u)` are consistent on any grid; with `incidence.T @ u`, the two centres' offset across a coarse/fine face lets the gradient along the face leak into its flux. Sub-views slice it, and the FD Jacobian's sparsity follows its stencil.
 - **`cell_sizes()`** on `ArrayDataStructure` and `AdaptiveGridDataStructure`: each cell's size along each axis, so that structures can be written once for both grids.
 - **Example:** `examples/soil_plant_atmosphere/one_plant_adaptative.py`, a soil refined where the roots take up water (`AdaptiveSoil`).
 

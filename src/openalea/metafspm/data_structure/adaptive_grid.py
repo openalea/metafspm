@@ -5,6 +5,8 @@ Cells are the leaves of an octree (a quadtree in 2-D, a binary tree in 1-D) over
 l is one of the 2^d children of its level l-1 parent, down to max_level. Neighbouring leaves may differ by one level at
 most (2:1 balance). As on ArrayDataStructure, cells are the graph's nodes and the faces between them its edges, with
 face_area and face_distance: graph systems, boundary sets, masks, steps and the mappings to plants work unchanged.
+Between cells of different sizes, the two centres are also offset across the face: edge laws written with the graph
+view's edge_difference (D @ u, consistent, exact for linear u) are accurate there, incidence.T @ u is not.
 
     grid = AdaptiveGridDataStructure(shape=(10, 10, 20), dx=0.02, max_level=2, periodic=(True, True, False))
     grid.refine(lambda g: g.get("root_length_density") > 1e3)      # between steps
@@ -19,7 +21,7 @@ Faces are found on the finest lattice (base cells x 2^max_level per axis): memor
 from typing import Optional
 
 import numpy as np
-from scipy.sparse import coo_matrix, csc_matrix
+from scipy.sparse import coo_matrix, csc_matrix, csr_matrix, diags
 
 from openalea.metafspm.data_structure.data_api import DataStructure, GraphView, VariableStoreMixin
 
@@ -313,7 +315,68 @@ class AdaptiveGridDataStructure(VariableStoreMixin, DataStructure):
         n = self.n_nodes()
         return GraphView(node_ids=self.cell_ids(), edge_ids=np.arange(self.n_edges(), dtype=np.int64),
                          tail=self._face_tail, head=self._face_head, incidence=self.incidence_matrix(),
-                         boundary_incidence=csc_matrix((n, 0), dtype=np.float64), boundary_names=())
+                         boundary_incidence=csc_matrix((n, 0), dtype=np.float64), boundary_names=(),
+                         difference=self.edge_difference())
+
+    def _offsets(self, a: np.ndarray, b: np.ndarray) -> np.ndarray:
+        """Centre of cells b minus centre of cells a, wrapped across the periodic axes."""
+        centre = self.cell_centers()
+        delta = centre[b] - centre[a]
+        length = np.asarray(self._base_shape) * self._base_dx
+        wrap = self._periodic[None, :]
+        return np.where(wrap, delta - length * np.round(delta / length), delta)
+
+    def cell_gradient(self) -> tuple:
+        """
+        Per axis, the operator (cells x cells) giving each cell's gradient component: a least-squares fit over its face
+        neighbours (centre offsets wrapped across periodic axes), exact for linear fields.
+        """
+        n, d = self.n_nodes(), len(self._base_shape)
+        cells = np.r_[self._face_tail, self._face_head]
+        others = np.r_[self._face_head, self._face_tail]
+        delta = self._offsets(cells, others)                               # one row per (cell, neighbour)
+        moment = np.zeros((n, d, d))
+        np.add.at(moment, cells, delta[:, :, None] * delta[:, None, :])
+        weights = np.einsum("kij,kj->ki", np.linalg.pinv(moment)[cells], delta)  # gradient = sum w (u_nbr - u)
+        operators = []
+        for axis in range(d):
+            w = weights[:, axis]
+            operators.append(coo_matrix((np.r_[w, -w], (np.r_[cells, cells], np.r_[others, cells])),
+                                        shape=(n, n)).tocsr())
+        return tuple(operators)
+
+    def edge_difference(self):
+        """
+        Per face, its tail's value minus its head's (faces x cells), consistent between cells of different sizes: the
+        coarse cell's value is moved onto the axis of the fine cell through the face, u_C + grad(u)_C . offset (the
+        offset across the face's axis), so that the difference is exact for linear fields. Between equal cells it is
+        the two-point difference (incidence.T). Cached per topology.
+        """
+        cache = self.__dict__.get("_edge_difference")
+        if cache is not None and cache[0] == self.topology_version:
+            return cache[1]
+        m, n = self.n_edges(), self.n_nodes()
+        tail, head, axis = self._face_tail, self._face_head, self._face_axis
+        faces = np.arange(m)
+        difference = coo_matrix((np.r_[np.ones(m), -np.ones(m)], (np.r_[faces, faces], np.r_[tail, head])),
+                                shape=(m, n)).tocsr()
+        level_t, level_h = self._level[tail], self._level[head]
+        hanging = np.flatnonzero(level_t != level_h)
+        if hanging.size:
+            gradient = self.cell_gradient()
+            coarse = np.where(level_t[hanging] < level_h[hanging], tail[hanging], head[hanging])
+            fine = np.where(level_t[hanging] < level_h[hanging], head[hanging], tail[hanging])
+            sign = np.where(coarse == tail[hanging], 1., -1.)             # the coarse cell's sign in the difference
+            offset = self._offsets(coarse, fine)
+            offset[np.arange(hanging.size), axis[hanging]] = 0.           # across the face's axis only
+            correction = csr_matrix((hanging.size, n))
+            for a, operator in enumerate(gradient):
+                correction = correction + diags(sign * offset[:, a]) @ operator[coarse]
+            rows = coo_matrix((np.ones(hanging.size), (hanging, np.arange(hanging.size))), shape=(m, hanging.size))
+            difference = (difference + rows @ correction).tocsr()
+        difference.eliminate_zeros()
+        self.__dict__["_edge_difference"] = (self.topology_version, difference)
+        return difference
 
     def topology(self, boundary_ports: tuple = ()) -> GraphView:
         return self.to_graph_view(boundary_ports=boundary_ports)

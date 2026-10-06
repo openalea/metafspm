@@ -195,7 +195,7 @@ leaves = boundary_set(filters={"label": "LeafElement"}, kind="robin", value="air
 ## Grids
 
 - **Regular grids:** `ArrayDataStructure`.
-- **Adaptive grids:** `AdaptiveGridDataStructure` (an octree over a base grid), with the same contract: location `"cell"`, faces as edges with `face_area` and `face_distance`, `cell_volume()` and `cell_sizes()` per cell, `locate`, `layer_mask(axis=0 | -1)`. Mappings to plants follow its refinements. The two-point flux between cells of different sizes is not consistent (see `devplan_adaptive_soil.md`, F1).
+- **Adaptive grids:** `AdaptiveGridDataStructure` (an octree over a base grid), with the same contract: location `"cell"`, faces as edges with `face_area` and `face_distance`, `cell_volume()` and `cell_sizes()` per cell, `locate`, `layer_mask(axis=0 | -1)`. Mappings to plants follow its refinements. Between cells of different sizes, write edge laws with the view's `edge_difference` (`k * (self._graph_view.edge_difference @ u)`), consistent there; `incidence.T @ u` is the two-point difference, exact only between equal cells.
 - **Refinement:** refine and coarsen between steps with a criterion of the grid; values are carried over conservatively.
 - **Equations** written with `cell_volume()`, `face_area` and `face_distance` run on both.
 

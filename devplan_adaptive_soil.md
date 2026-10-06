@@ -67,11 +67,31 @@ Your request (2026-10-07): add a soil model, wrapped as a CompositeModel alongsi
   - **Cause:** the two-point flux through a face uses the two centres' distance along the face's axis only (`face_distance` = half sizes). Across a vertical coarse/fine interface, the centres also differ in depth (by h/4), and the vertical gradient (about 3.5 MPa m⁻¹) leaks into the lateral flux. Refining one more ring of neighbours makes it worse: more such interfaces.
   - **Fix:** a consistent flux at coarse/fine faces. The coarse value is interpolated at the fine cell's position, i.e. the coarse centre value plus the coarse cell's gradient times the offset, the gradient from its coarse neighbours. The grid would expose it as a face gradient operator `G` (faces × cells, sparse): `G @ Ψ` is ΔΨ/d for every face, exact for linear Ψ. A model's edge law then writes `j = K A (G @ Ψ)` instead of `incidence.T @ Ψ / d`. On regular grids, and between equal cells, `G` is the two-point difference, so results do not change.
   - **Recommendation:** add `face_gradient()` to both grids, and use it in the example's Darcy law.
-  - → answer:
+  - → answer: yes (given in the conversation, 2026-10-07)
 - **F2 — the water table's depth depends on the bottom cells' size.**
   - **Cause:** the Dirichlet condition holds the bottom cells' *centres* at Ψ_table, i.e. h/2 above the true bottom (1.25 cm at 2.5 cm, 0.31 cm at 0.625 cm). This shifts the whole vertical profile between grids, and with it leaf Ψ.
   - **Options:**
     - (a) keep the Dirichlet, but at the bottom face: the water table becomes an inflow through the bottom face, k_table (Ψ_table − Ψ), with k_table = K A / (h/2). It is still a `@boundary_condition` (Neumann), and its position is exact on every grid.
     - (b) keep the cell-centre Dirichlet and refine the bottom layer to the finest size.
   - **Recommendation:** (a). You asked for a Dirichlet here earlier ("why not dirichlet?"), so this is your call: (a) gives the same physics, a potential held at the bottom face, written as the flux through it.
-  - → answer:
+  - → answer: (a), yes (given in the conversation, 2026-10-07)
+
+## 7. Done (2026-10-07, your answers: both recommendations)
+
+- **F1:**
+  - `GraphView.edge_difference`, the operator D (edges × nodes, tail − head), `incidence.T` by default;
+  - `AdaptiveGridDataStructure.edge_difference()` gives a consistent one: at faces between cells of different sizes, the coarse value is moved onto the fine cell's axis with its least-squares gradient (`cell_gradient()`), exact for linear fields (tested over three levels; equal to the two-point difference between equal cells);
+  - sub-views (pieces, filtered systems) slice it, and the Jacobian's sparsity follows its stencil;
+  - the example's Darcy law is `k · (edge_difference @ Ψ)`.
+- **F2:** the water table is the inflow through the bottom face, k_table (Ψ_table − Ψ) with k_table = K A / (h/2), computed by `SoilStructure`.
+- **Comparison metric:** the soil Ψ error near the roots, against the reference averaged over each grid's cells. The earlier metric sampled each grid at the reference's cell centres, which charged a coarse cell for the variation inside it.
+- **Results** (against uniform 0.625 cm):
+
+  | grid | cells | soil Ψ error near the roots | lowest leaf Ψ error |
+  |---|---|---|---|
+  | uniform 2.5 cm | 1024 | 0.0033 | 0.0150 |
+  | uniform 1.25 cm | 8192 | 0.0017 | 0.0073 |
+  | adaptive, two-point difference | 2200 | 0.0062 | 0.0049 |
+  | adaptive, edge difference | 2200 | 0.0008 | 0.0023 |
+
+- **`one_plant_adaptative.py` declares its own Scene** (your request); `one_plant.scene` is back to its own soil.
