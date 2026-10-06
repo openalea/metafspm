@@ -67,36 +67,36 @@ The user guide gets a short page pointing to it.
 ## 4. Questions
 
 - **Q1 — conductance and length.** You wrote k = k_s · L_e. A conductance usually decreases with the path length (Darcy, Poiseuille: k = k_s · A / L_e), so a longer segment carries less flow for the same ΔΨ. Should it be k = k_s / L_e (k_s in m³ s⁻¹ MPa⁻¹ · m, cross-section folded into k_s), and k = K_sat · A / d on soil faces? Or k = k_s · L_e as written (e.g. radial conductance per unit length of root, which does grow with L)? **Recommendation:** both, by edge type: radial edges k = k_s · L_e (the exchange surface grows with the segment length), axial edges and soil faces k = k_s / L_e (resp. K_sat · A / d).
-  → answer:
+  → answer: yes correct my conductance formula was messed up, conductances really should be defined from the lower anatomical scale radially, not radial length.
 - **Q2 — component kinds.** You called the conductance component structural. In metafspm, a `StructuralComponent` builds or edits the structure (`initiate_plant`, growth). I propose:
   - `SeedlingStructure`, a `StructuralComponent`, builds the plant (all scales, anatomies, lengths, coordinates);
   - `Conductance`, a `FunctionalComponent`, reads the edge types and lengths and writes k.
 
   Or should `Conductance` itself be the `StructuralComponent` that initiates the plant? **Recommendation:** the split above. Each class shows one role, and `Conductance` can then run unchanged on the soil grid, which has no plant to initiate.
-  → answer:
+  → answer: Finally make the conductance come out of SeedlingStructure the structural component. For the soil, use the same logic the difference is that the conductance equation will be different between voxels.
 - **Q3 — liquid to gas.** How should conductances be scaled where water evaporates (stomatal cavity → air, soil surface → air)?
   - (a) a constant factor f_vap ≪ 1 on the "gas" edges' k (a parameter, e.g. 1e-3);
   - (b) a physical vapour conductance: the flux driven by the vapour pressure difference, with Ψ ↔ relative humidity through Ψ = (RT/V_w) ln(RH), linearised, so k_gas = g_vap · e_sat(T) · V_w / (RT · P), with g_vap the stomatal / soil-surface conductance;
   - (c) (b) with the exact non-linear relation (Newton handles it).
 
   **Recommendation:** (b). It keeps a linear system and the physics of the phase change, and stays simple. (a) is not physical; (c) adds little for an example.
-  → answer:
+  → answer: (b)
 - **Q4 — the plant–soil fixed point.** The Scene exchanges once per step, so the coupled steady state is reached over steps (lagged). Should the example:
   - (a) run steps until the changes fall under a tolerance (`stop_when`), and show the convergence;
   - (b) iterate the plant and soil solves to convergence within each step (a coupled Picard loop in the scene)?
 
   **Recommendation:** (a). It uses the Scene as it is, `stop_when` shows the services, and the steady problem converges quickly.
-  → answer:
-- **Q5 — anatomies.** Root segments: epidermis, cortex, endodermis, xylem. Leaf elements: xylem, mesophyll, stomatal cavity. Stem elements: xylem only, so that the axial path is continuous. Is this right, or should stems have an anatomy too (e.g. xylem and a parenchyma)? **Recommendation:** as proposed. The stem only carries water up.
-  → answer:
-- **Q6 — the plant.** The test seedling (2 phytomers with 3 leaf elements each, and a root axis with a lateral) built by `SeedlingStructure.initiate_plant` under each Plant vertex, with lengths and coordinates (root down into the soil, leaves up)? Or a slightly larger plant (e.g. 3 root axes with laterals), so that the soil uptake pattern shows on the plots? **Recommendation:** a slightly larger one, about 30 segments, with parameters for the numbers of axes and segments. The figures then show the uptake spread over several cells.
-  → answer:
+  → answer: (a), cause I might want to show this convergence at several specific time points.
+- **Q5 — anatomies.** Root segments: epidermis, cortex, endodermis, xylem. Leaf elements: xylemsem, mesophyll, stomatal cavity. Stem elements: xylem only, so that the axial path is continuous. Is this right, or should stems have an anatomy too (e.g. xylem and a parenchyma)? **Recommendation:** as proposed. The stem only carries water up.
+  → answer: stem has anatomy too.
+- **Q6 — the plant.** The test segmentedling (2 phytomers with 3 leaf elements each, and a root axis with a lateral) built by `SeedlingStructure.initiate_plant` under each Plant vertex, with lengths and coordinates (root down into the soil, leaves up)? Or a slightly larger plant (e.g. 3 root axes with laterals), so that the soil uptake pattern shows on the plots? **Recommendation:** a slightly larger one, about 30 segments, with parameters for the numbers of axes and segments. The figures then show the uptake spread over several cells.
+  → answer: slightly larger yes, but small enough to be a seedling
 - **Q7 — the population scene.** For example 3 × 3 plants on a 0.3 m × 0.3 m stand over a 0.5 m deep soil, with the same soil model. Should the plants differ (e.g. per-plant `k_s` scenarios, or an emergence time for one row)? **Recommendation:** yes, per-plant root conductances from the planting table, so the plots show plants competing for water.
-  → answer:
+  → answer: yes, and use explicitly this paremeter variation as a varying value in the input per plant scenarios.
 - **Q8 — the atmosphere.** A constant Ψ_atm (e.g. from RH = 50 % at 20 °C, about −93 MPa), or a forcing table over a day (RH and temperature varying, steady states followed hour by hour)? **Recommendation:** a day of hourly steady states from a forcing table. It shows forcings and makes the plots more telling (transpiration following RH); the steady states are cheap.
-  → answer:
+  → answer: Fixed, this is just a simple convergence simulation for now.
 - **Q9 — location.** `examples/soil_plant_atmosphere/` at the repository root, with a smoke test in `test/examples/` and a user-guide page? **Recommendation:** yes.
-  → answer:
+  → answer: in examples yes.
 - **Q10 — plots.** I propose:
   - the plant graph laid out from its coordinates, each segment drawn with its anatomy as small radial markers, coloured by Ψ;
   - the soil grid as a vertical slice through each plant (Ψ coloured), with the roots drawn over it;
@@ -104,4 +104,38 @@ The user guide gets a short page pointing to it.
   - with Q8, a day plot of transpiration and soil evaporation.
 
   Anything to add or remove? (matplotlib only, PNG files.)
+  → answer: a simplified plant graph limiting at SubOrgan scale, a full one including anatomy, and a simplified one including only one anatomy per type (root, stem, leaf). Yes for soil grid, Yes to topview limiting at SubOrgan for the plot. No to the last plot.
+
+## 5. Decisions from your answers (2026-10-06)
+
+- **Conductances (Q1, Q2)** come from the structural components, computed in one of their steps from the structure.
+  - `HydraulicStructure` is a base class with the conductance step, specialised by `SeedlingStructure` (the plant, which also builds it in `initiate_plant`) and `SoilStructure` (the grid).
+  - `WaterTransport` is one class, used on both DataStructures, and reads k through the translator.
+  - **Plant, axial edges** (xylem junctions, and the stem's): k = k_s,axial / L_segment.
+  - **Plant, radial edges:** from the anatomy, the exchange surface of the tissue boundary they cross: k = k_s,tissue · 2π r_boundary · L_segment, with the tissue radii as anatomy parameters (C1).
+  - **Soil faces:** k = K_face · A_face / d_face, with K_sat varying between voxels (by layer), K_face the harmonic mean of the two voxels (C2).
+- **Liquid → gas (Q3, b):** linearised vapour conductance. The stomatal cavities' exchange with the air, and the top soil layer's, have weight k_gas = g_vap · A · e_sat(T) · V_w / (R T P), with Ψ_atm from RH and T (fixed).
+- **Coupling (Q4, a):** lagged, until `stop_when` (the largest Ψ change between steps under a tolerance). The recorder keeps every step, so that the convergence can be shown at chosen steps.
+- **Anatomies (Q5):**
+  - root: epidermis, cortex, endodermis, xylem;
+  - stem: epidermis, cortex, xylem (no gas exchange);
+  - leaf: xylem, mesophyll, stomatal cavity → air.
+- **Plant (Q6):** a seedling a little larger than the test one (about 20–30 segments). The numbers of root axes, laterals and segments are parameters.
+- **Population (Q7):** 3 × 3 plants. The root radial `k_s` varies per plant through the planting table's per-plant scenarios.
+- **Atmosphere (Q8):** fixed RH and T, as an environment scalar.
+- **Location (Q9):** `examples/soil_plant_atmosphere/`, with a smoke test.
+- **Plots (Q10):**
+  - the plant graph at SubOrgan scale;
+  - the full graph with the anatomies;
+  - a simplified graph with one anatomy per organ type (root, stem, leaf);
+  - the soil grid slice with the roots;
+  - a top view at SubOrgan scale.
+
+  All coloured by Ψ; no day plot.
+
+### To confirm
+
+- **C1 — radial conductances.** I read "from the lower anatomical scale radially" as: each radial edge between two tissues gets k_s of the tissue boundary times that boundary's surface along the segment (2π r · L). So outer tissues exchange over larger surfaces, and L enters as a surface, not as a path length. Right?
+  → answer:
+- **C2 — soil voxels.** I read "the conductance equation will be different between voxels" as: the soil's face conductance is its own equation (K · A / d), with K_sat varying between voxels (e.g. a denser lower layer) and averaged across each face. Or did you mean another equation per voxel type?
   → answer:
