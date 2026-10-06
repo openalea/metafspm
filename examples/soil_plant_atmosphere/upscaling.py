@@ -3,10 +3,10 @@ Upscaling the solved water potentials of the plants from their Compartments to t
 each scale is the average of the scale below it, a derived variable of the DataStructure (recomputed when the
 potentials change, e.g. at each scene step).
 
-    Compartment -> SubOrgan -> Organ -> Axis -> Plant
+    Compartment -> SubOrgan -> Organ -> Phytomer -> GrowthUnit -> Axis -> Plant
 """
 
-SCALES = ("SubOrgan", "Organ", "Axis", "Plant")
+SCALES = ("SubOrgan", "Organ", "Phytomer", "GrowthUnit", "Axis", "Plant")
 
 
 def upscale(ds, name="water_potential", scales=SCALES) -> dict:

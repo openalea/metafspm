@@ -12,7 +12,7 @@ dry atmosphere. Every part shows a feature of metafspm:
 | `models.py` | **Models and translators.** The plant population model (`SeedlingWater`: initiators, anatomy mode) and the soil environment model. Translators inside a DataStructure (k → conductance), and across DataStructures (soil Ψ → root epidermis, uptake → soil cells). A `CrossMapping` of the root surface only (`mask=`). A `stop_when` condition on the change of Ψ between steps. |
 | `one_plant.py` | **A Scene with one seedling**, run until the lagged plant–soil fixed point converges, with a `SceneRecorder`. |
 | `population.py` | **A Scene with a planted stand.** `planting_table` lays out the plants, and each plant's root radial conductance comes from its own scenario (`per_plant_scenarios`). |
-| `upscaling.py` | **Upscaling** the solved water potentials from the Compartments to the plants, scale by scale (SubOrgan, Organ, Axis, Plant), each the mean of the scale below: one derived variable per scale (`ds.derive(..., location=scale, aggregation="mean")`), recomputed when the potentials change. |
+| `upscaling.py` | **Upscaling** the solved water potentials from the Compartments to the plants, scale by scale (SubOrgan, Organ, Phytomer, GrowthUnit, Axis, Plant), each the mean of the scale below: one derived variable per scale (`ds.derive(..., location=scale, aggregation="mean")`), recomputed when the potentials change. |
 | `plotting.py` | **Plots** of the DataStructures and of the converged Ψ: the plants at SubOrgan scale, the full graph with the anatomies, one anatomy per organ type, a soil slice with the roots, a top view of the uptake. |
 
 Run, from this folder:
@@ -39,14 +39,17 @@ evaporation.
 
 ### Upscaling, step by step
 
-The solved potentials of the 164 Compartments are averaged into the 44 segments, then the 12 organs, the 4 axes and
-the plant (`upscaling.py`). Each step is one `derive`; every graph uses the same colour scale.
+The solved potentials of the 164 Compartments are averaged into the 44 segments, then the 12 organs, the 6
+phytomers, the 4 growth units, the 4 axes and the plant: every scale of the MPG (`upscaling.py`). Each step is one
+`derive`; every graph uses the same colour scale.
 
 ![1. Compartments](figures/one_plant/upscale_1_compartment.png)
 ![2. SubOrgan](figures/one_plant/upscale_2_suborgan.png)
 ![3. Organ](figures/one_plant/upscale_3_organ.png)
-![4. Axis](figures/one_plant/upscale_4_axis.png)
-![5. Plant](figures/one_plant/upscale_5_plant.png)
+![4. Phytomer](figures/one_plant/upscale_4_phytomer.png)
+![5. GrowthUnit](figures/one_plant/upscale_5_growthunit.png)
+![6. Axis](figures/one_plant/upscale_6_axis.png)
+![7. Plant](figures/one_plant/upscale_7_plant.png)
 
 ## A population
 
@@ -60,7 +63,7 @@ The side views show the first planting row (four plants, seen along the row, in 
 ![soil slice](figures/population/soil_slice.png)
 ![top view](figures/population/top_view.png)
 
-The upscaling series of the first row's plants: [Compartments](figures/population/upscale_1_compartment.png), [SubOrgan](figures/population/upscale_2_suborgan.png), [Organ](figures/population/upscale_3_organ.png), [Axis](figures/population/upscale_4_axis.png), [Plant](figures/population/upscale_5_plant.png).
+The upscaling series of the first row's plants: [Compartments](figures/population/upscale_1_compartment.png), [SubOrgan](figures/population/upscale_2_suborgan.png), [Organ](figures/population/upscale_3_organ.png), [Phytomer](figures/population/upscale_4_phytomer.png), [GrowthUnit](figures/population/upscale_5_growthunit.png), [Axis](figures/population/upscale_6_axis.png), [Plant](figures/population/upscale_7_plant.png).
 
 ## Notes
 

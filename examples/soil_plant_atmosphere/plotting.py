@@ -231,7 +231,8 @@ def _entity_of_segment(ds, scale):
 
 def upscaling_series(ds, folder, prefix="upscale", row=None):
     """
-    One graph per step of the upscaling of the water potential (Compartment, SubOrgan, Organ, Axis, Plant), every
+    One graph per step of the upscaling of the water potential (Compartment, SubOrgan, Organ, Phytomer, GrowthUnit,
+    Axis, Plant), every
     segment coloured by the value of its entity at that scale, on one colour scale; side views of planting row *row*
     when given. Returns the paths written.
     """
