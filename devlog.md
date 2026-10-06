@@ -2059,3 +2059,13 @@ Per-file counts:
 - **Soil ΔΨ behind the side views (your request):** `plant_segments` and `plant_anatomy` take `soil=`. The soil's Ψ minus its layer mean, in the plants' plane (the planting row, or the collar's y), is drawn behind the architecture on a diverging RdBu scale centred on 0 (colour bar under the plot), with the plant on viridis (right). The slice selection is shared with `soil_slice`. Figures and README regenerated; README counts (and the stale radial-k values) corrected.
 - **Separate figures (your request):** the side views exist alone (`plant_segments.png`, `plant_anatomy.png`) and over the soil ΔΨ (`*_soil.png`); README and smoke test updated. Your answer: the 2.5 cm default stays (restored by you); figures regenerated at 2.5 cm. No iterative solver yet.
 - **Adaptive soil (your request):** plan in `devplan_adaptive_soil.md`. Flux intensity is argued not to be the right refinement metric (FV resolves linear profiles exactly; error follows the curvature, i.e. the sink density); questions Q1–Q4. Found: `CrossMapping` does not rebuild after the target grid's topology changes.
+- **Adaptive soil (your answers: sink density, 2.5 → 0.625 cm, fractions, shared structure):**
+  - framework: `CrossMapping` now rebuilds on the target grid's refinement (it mapped roots onto stale cells; tested), and `cell_sizes()` on both grids;
+  - `SoilStructure.set_layers()`, shared by both grids; `AdaptiveSoil` refines after each solve; `one_plant_adaptative.py` with four figures; a smoke test;
+  - the grid settles at 2200 cells (vs 65 536 for the finest uniform grid), 8 steps, closed balances.
+
+  Found, and asked in the plan:
+  - F1: the two-point flux between cells of different sizes leaks the vertical gradient into lateral faces, so the adaptive grid is no more accurate near the roots than uniform 2.5 cm (0.0074 MPa; a horizontal block refinement: 0.0004);
+  - F2: the Dirichlet water table sits at the bottom cells' centres, which shifts the profile, and leaf Ψ, with their size.
+
+  The comparison figure shows the depletion error near the roots, not leaf Ψ. Suite 776 passed.

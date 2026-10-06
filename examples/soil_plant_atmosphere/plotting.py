@@ -11,6 +11,13 @@ Plots of the example's DataStructures and of the converged water potentials on t
     top_view            the stand from above: the water taken up per soil column, the segments drawn over it
     upscaling_series    the water potential upscaled from the Compartments to the plants (upscaling.py), the graph
                         of each scale in one plot, shifted by the same distance, on one colour scale
+
+  adaptive grids (one_plant_adaptative.py):
+    adaptive_slice      a vertical slice, each cell at its own size, coloured by its size or by Ψ minus the mean of
+                        its depth (cell_anomaly)
+    size_against_metrics  per cell, the sink density (the refinement metric) and the flux density against its size
+    discretisation_comparison  cells, run time and depletion error near the roots (depletion_error) of uniform and
+                        adaptive grids, against the finest uniform one
 """
 import numpy as np
 import matplotlib
@@ -355,5 +362,168 @@ def upscaling_series(ds, path, row=None):
                  fontsize=10)
     colour_bar = ax.inset_axes([1.01, 0., 0.012, 1.])                     # as tall as the plot
     fig.colorbar(plt.cm.ScalarMappable(norm=norm, cmap="viridis"), cax=colour_bar, label="Ψ (MPa)")
+    fig.savefig(path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+
+
+# ── Adaptive grids (one_plant_adaptative.py) ──────────────────────────────────
+
+def cell_anomaly(grid):
+    """
+    Ψ minus the mean of its depth, on cells of any size: the depth is cut into layers of the finest cell height, each
+    layer's mean weighted by the horizontal area of the cells crossing it, each cell compared with the mean of the
+    layers it spans.
+    """
+    psi = np.asarray(grid.get("water_potential"), dtype=float).reshape(-1)
+    centre, size = grid.cell_centers(), grid.cell_sizes()
+    dz = size[:, 2].min()
+    first = np.round((centre[:, 2] - size[:, 2] / 2.) / dz).astype(int)
+    count = np.round(size[:, 2] / dz).astype(int)
+    layers = int((first + count).max())
+    area = size[:, 0] * size[:, 1]
+    total, weight = np.zeros(layers), np.zeros(layers)
+    for offset in range(int(count.max())):                             # each cell adds to the layers it spans
+        spans = offset < count
+        np.add.at(total, first[spans] + offset, area[spans] * psi[spans])
+        np.add.at(weight, first[spans] + offset, area[spans])
+    mean = total / weight
+    reference = np.array([mean[f:f + c].mean() for f, c in zip(first, count)])
+    return psi - reference
+
+
+def _plane_cells(grid, y):
+    """The cells crossing the vertical plane at *y*: their mask and (x, z) rectangles (corner, width, height)."""
+    centre, size = grid.cell_centers(), grid.cell_sizes()
+    kept = (centre[:, 1] - size[:, 1] / 2. <= y) & (y < centre[:, 1] + size[:, 1] / 2.)
+    corner = np.c_[centre[kept, 0] - size[kept, 0] / 2., -(centre[kept, 2] + size[kept, 2] / 2.)]
+    return kept, corner, size[kept, 0], size[kept, 2]
+
+
+def _draw_cells(ax, grid, values, y, **colours):
+    from matplotlib.collections import PatchCollection
+    from matplotlib.patches import Rectangle
+    kept, corner, width, height = _plane_cells(grid, y)
+    cells = PatchCollection([Rectangle(c, w, h) for c, w, h in zip(corner, width, height)], edgecolor="0.35",
+                            linewidth=0.3, **colours)
+    cells.set_array(np.asarray(values)[kept])
+    ax.add_collection(cells)
+    return cells
+
+
+def _roots_side_view(ax, plant_data_structures, colour):
+    for ds in plant_data_structures:
+        start, end, owner = _segments(ds)
+        roots = np.array(sorted(set(owner[np.asarray(ds.get("organ")) == ROOT])), dtype=int)
+        ax.add_collection(LineCollection(np.stack([start[roots][:, [0, 2]], end[roots][:, [0, 2]]], axis=1),
+                                         colors=colour, linewidths=1.4, zorder=3))
+
+
+def adaptive_slice(grid, plant_data_structures, path, quantity="size", y=None):
+    """
+    The vertical (x, z) slice of an adaptive grid at *y* (default: the first plant's collar), each cell drawn at its
+    own size, coloured by its size (quantity="size") or by Ψ minus the mean of its depth ("anomaly"); the roots over
+    it, projected.
+    """
+    ds = plant_data_structures[0]
+    if y is None:
+        y = float(ds.mtg.property("y")[int(ds.entity_ids("Plant")[0])])
+    fig, ax = plt.subplots(figsize=(7, 6.4))
+    if quantity == "size":
+        size = grid.cell_sizes()[:, 0] * 100.
+        levels = np.unique(size)
+        from matplotlib.colors import BoundaryNorm, ListedColormap
+        cmap = ListedColormap(plt.cm.YlGnBu(np.linspace(0.85, 0.2, len(levels))))
+        edges = np.r_[levels[0] / 1.5, np.sqrt(levels[:-1] * levels[1:]), levels[-1] * 1.5]
+        cells = _draw_cells(ax, grid, size, y, cmap=cmap, norm=BoundaryNorm(edges, len(levels)))
+        bar = fig.colorbar(cells, ax=ax, ticks=levels, shrink=0.8)
+        bar.ax.set_yticklabels([f"{v:g}" for v in levels])
+        bar.set_label("cell size (cm)")
+        _roots_side_view(ax, plant_data_structures, "crimson")
+        title = "Adaptive soil: cell size"
+    else:
+        values = cell_anomaly(grid)
+        bound = float(np.abs(values).max()) or 1.
+        cells = _draw_cells(ax, grid, values, y, cmap="RdBu", norm=Normalize(-bound, bound))
+        fig.colorbar(cells, ax=ax, label="Ψ - mean of its depth (MPa)", shrink=0.8)
+        _roots_side_view(ax, plant_data_structures, "0.15")
+        title = "Adaptive soil: Ψ minus the mean of its depth"
+    ax.axhline(0., color="saddlebrown", linewidth=1)
+    ax.autoscale()
+    ax.set_aspect("equal")
+    ax.set_xlabel("x (m)")
+    ax.set_ylabel("z (m)")
+    ax.set_title(f"{title} (y = {y:.3f} m)")
+    fig.savefig(path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+
+
+def flux_density(grid):
+    """Per cell, the mean water flux density through its faces, |j| / A (mm3 s-1 m-2)."""
+    incidence = abs(grid.incidence_matrix())
+    density = np.abs(np.asarray(grid.get("water_flux"))) / np.asarray(grid.get("face_area"))
+    return (incidence @ density) / np.maximum(np.asarray(incidence.sum(axis=1)).reshape(-1), 1)
+
+
+def size_against_metrics(grid, sink_density, path):
+    """
+    Per cell, the sink density (the refinement metric) and the flux density, against the cell's size: the sink density
+    separates the sizes (the refined cells hold the sinks), the flux density does not (fluxes as large run through
+    coarse cells, where Ψ is nearly linear and a coarse cell exact).
+    """
+    size = grid.cell_sizes()[:, 0] * 100.
+    levels = np.unique(size)
+    position = {v: i for i, v in enumerate(levels[::-1])}
+    rng = np.random.default_rng(0)
+    x = np.array([position[v] for v in size]) + rng.uniform(-0.25, 0.25, size.size)
+    fig, axes = plt.subplots(1, 2, figsize=(11, 4.6))
+    for ax, values, label, colour in ((axes[0], sink_density, "sink density, uptake / volume (mm3 s-1 m-3)",
+                                       "crimson"),
+                                      (axes[1], flux_density(grid), "flux density |j| / A (mm3 s-1 m-2)", "teal")):
+        shown = values > 0.
+        ax.scatter(x[shown], values[shown], s=5, alpha=0.5, color=colour)
+        ax.set_yscale("log")
+        ax.set_xticks(range(len(levels)), [f"{v:g} cm" for v in levels[::-1]])
+        ax.set_xlabel("cell size")
+        ax.set_ylabel(label)
+        zero = int((~shown).sum())
+        if zero:
+            ax.text(0.02, 0.02, f"{zero} cells at 0 not shown", transform=ax.transAxes, fontsize=8)
+    axes[0].set_title("refined where the roots take up water")
+    axes[1].set_title("flux density: overlapping between sizes")
+    fig.savefig(path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+
+
+def depletion_error(grid, reference, radius=0.02):
+    """
+    RMS difference of the depletion (cell_anomaly: Ψ minus the mean of its depth) between *grid* and the finer
+    *reference* grid, over the reference cells within *radius* of a cell with uptake (MPa), read on the reference's
+    cells. The depletion leaves out the vertical profile, which the bottom cells' size shifts on every grid.
+    """
+    from scipy.spatial import cKDTree
+    points = reference.cell_centers()
+    sinks = np.asarray(reference.get("plant_uptake")).reshape(-1) > 0.
+    near = cKDTree(points[sinks]).query(points)[0] < radius
+    error = cell_anomaly(grid)[grid.locate(points)] - cell_anomaly(reference)
+    return float(np.sqrt((error[near] ** 2).mean()))
+
+
+def discretisation_comparison(results, path):
+    """The cells, the run time and the depletion error near the roots of each soil grid of *results* (dicts)."""
+    names = [r["name"] for r in results]
+    fig, axes = plt.subplots(1, 3, figsize=(13, 3.8), layout="constrained")
+    colours = ["0.6" if "uniform" in n else "teal" for n in names]
+    for ax, key, label, form in ((axes[0], "cells", "soil cells", "{:.0f}"), (axes[1], "seconds", "run time (s)",
+                                                                             "{:.1f}"),
+                                 (axes[2], "depletion_error", "depletion error near the roots (MPa)", "{:.4f}")):
+        values = [r[key] for r in results]
+        ax.bar(names, values, color=colours)
+        if key != "depletion_error":
+            ax.set_yscale("log")
+        for i, v in enumerate(values):
+            ax.annotate(form.format(v), (i, v), ha="center", va="bottom", fontsize=8)
+        ax.set_ylabel(label)
+        ax.tick_params(axis="x", labelsize=8)
+    fig.suptitle("Uniform and adaptive soil grids")
     fig.savefig(path, dpi=150, bbox_inches="tight")
     plt.close(fig)

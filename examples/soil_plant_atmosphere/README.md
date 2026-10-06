@@ -9,8 +9,9 @@ dry atmosphere. Every part shows a feature of metafspm:
 | `seedling.py` | **The seedling generator**, standing for the structural models (growth, anatomy) a real simulation would couple: the architecture at every scale (three first-order roots from the collar: a nearly vertical pivot with two laterals on alternate sides, and two roots bending towards the vertical with a gravitropism coefficient, with one lateral each), the anatomies and the axial junctions, with the codes the components read. |
 | | **`SeedlingStructure`** (in `components.py`), a `StructuralComponent`: `initiate_plant` builds each seedling (with `seedling.py`) at every scale (Plant → Axis → GrowthUnit → Phytomer → Organ → SubOrgan) with an anatomy per segment (root: epidermis, cortex, endodermis, xylem; stem: epidermis, cortex, xylem; leaf: xylem, mesophyll, stomatal cavity) and the axial xylem junctions, then computes the conductances from the structure: k = k_s · L on radial edges, k = k_axial / L on axial ones. **`SoilStructure`** does the same for the soil grid (k = K · A / d on the faces, K varying between voxels). |
 | | **The air**, a constant input: Ψ_air = (RT/V_w) ln RH at 50 % and 20 °C (about −93.9 MPa), and the vapour factor that turns a vapour conductance into a liquid one where water evaporates (the liquid–vapour step, linearised). |
-| `models.py` | **Models and translators.** The plant population model (`SeedlingWater`: initiators, anatomy mode) and the soil environment model. Translators inside a DataStructure (k → conductance), and across DataStructures (soil Ψ → root epidermis, uptake → soil cells). A `CrossMapping` of the root surface only (`mask=`). A `stop_when` condition on the change of Ψ between steps. |
+| `models.py` | **Models and translators.** The plant population model (`SeedlingWater`: initiators, anatomy mode) and the soil environment models: `Soil`, and `AdaptiveSoil`, the same components on an adaptive grid. Translators inside a DataStructure (k → conductance), and across DataStructures (soil Ψ → root epidermis, uptake → soil cells). A `CrossMapping` of the root surface only (`mask=`). A `stop_when` condition on the change of Ψ between steps. |
 | `one_plant.py` | **A Scene with one seedling**, run until the lagged plant–soil fixed point converges, with a `SceneRecorder`. |
+| `one_plant_adaptative.py` | **The same seedling on an adaptive soil** (`AdaptiveSoil`, an `AdaptiveGridDataStructure`), refined where the roots take up water, compared with uniform grids. |
 | `population.py` | **A Scene with a planted stand.** `planting_table` lays out the plants, and each plant's root radial conductance comes from its own scenario (`per_plant_scenarios`). |
 | `upscaling.py` | **Upscaling** the solved water potentials from the Compartments to the plants, scale by scale (SubOrgan, Organ, Phytomer, GrowthUnit, Axis, Plant), each the mean of the scale below: one derived variable per scale (`ds.derive(..., location=scale, aggregation="mean")`), recomputed when the potentials change. |
 | `plotting.py` | **Plots** of the DataStructures and of the converged Ψ: the plants at SubOrgan scale, the full graph with the anatomies, one anatomy per organ type, a soil slice with the roots, a top view of the uptake. |
@@ -56,6 +57,32 @@ phytomers, the 4 growth units, the 4 axes and the plant: every scale of the MPG 
 between them (an edge of the solver graph joining two entities), on one colour scale.
 
 ![upscaling](figures/one_plant/upscaling.png)
+
+## One plant on an adaptive soil
+
+`one_plant_adaptative.py` runs the same scene on `AdaptiveSoil`: an `AdaptiveGridDataStructure` of 2.5 cm cells,
+split down to 0.625 cm (`max_level=2`) where the roots take up water. The components and translators are those of
+`Soil`; `SoilStructure` reads the layers and areas from any grid's geometry. After each solve, the model refines the
+cells whose **sink density** (uptake per volume) exceeds 5 % of its maximum and coarsens below 0.5 %; the lagged
+coupling then settles Ψ and the grid together (two adaptations, then 930, 678 and 592 cells at the three sizes, 2200
+in all against 65 536 for the finest uniform grid).
+
+**Why the sink density, not the flux.** A two-point flux is exact for a linear Ψ, whatever the cell size and the flux:
+the error comes from where the flux changes. In a steady flow the flux changes where water leaves, i.e. at the sinks.
+The water-table column carries large fluxes in coarse cells, where Ψ is nearly linear.
+
+![cell size](figures/one_plant_adaptative/cell_size.png)
+![soil anomaly on the adaptive cells](figures/one_plant_adaptative/soil_anomaly.png)
+![cell size against the sink and flux densities](figures/one_plant_adaptative/size_against_metrics.png)
+
+**Accuracy: not yet.** Against the uniform 0.625 cm grid, the depletion near the roots (Ψ minus the mean of its depth,
+within 2 cm of a sink) is no better on the adaptive grid than on the uniform 2.5 cm one (0.0074 MPa both). The flux
+through a face between cells of different sizes uses only the distance along the face's axis. Across a vertical
+interface, the coarse cell's centre is at another depth than its fine neighbours', and the strong vertical gradient
+(about 3.5 MPa m⁻¹) adds a spurious flux. A refined horizontal block, whose interfaces are horizontal, does reduce the
+error (0.0067 → 0.0004 MPa). See `devplan_adaptive_soil.md` for the fix under discussion.
+
+![uniform and adaptive grids](figures/one_plant_adaptative/discretisation_comparison.png)
 
 ## A population
 

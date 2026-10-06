@@ -2596,6 +2596,10 @@ class ArrayDataStructure(VariableStoreMixin, FieldDataStructure):
     def cell_volume(self) -> float:
         return float(np.prod(self._dx))
 
+    def cell_sizes(self) -> np.ndarray:
+        """Size of each cell along each axis, one row per cell in flat order (as AdaptiveGridDataStructure)."""
+        return np.tile(self._dx, (self.n_dof, 1))
+
     def locate(self, points, periodic=None, clip: bool = True) -> np.ndarray:
         """
         Flat indices of the cells containing *points* (shape (n_points, n_dims), grid frame).
