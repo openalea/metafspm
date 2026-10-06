@@ -274,3 +274,21 @@ def test_graph_equations_reject_coarse_located_variables_with_a_hint(seedling):
     node_snap, _ = _snapshot(probe, {"organ_temperature", "total"}, ds.entity_ids("node"), [], [], [],
                              _declared_locations(probe))
     assert node_snap["total"].shape == (ds.n_nodes(),)   # scalars are broadcast, as before
+
+
+@dataclass
+class NodesAndEdges(FunctionalComponent):
+    potential: float = state_variable(**DOC, initialize=0.5, location="node")
+    conductance: float = parameter(**DOC, by="", default=2., location="edge")
+
+
+def test_one_component_declared_on_nodes_runs_on_a_plant_graph_and_on_a_grid():
+    """"node" is a grid's cells (the nodes of its graph), so the same declarations hold on both."""
+    g, _ = generate_simple_mpg_seedling()
+    g.populate_graph(g.scales.SubOrgan)
+    g.convert_properties_to_arraydict()
+    plant, grid = MPGDataStructure(g, from_scale=g.scales.SubOrgan), ArrayDataStructure(shape=(2, 2, 3), dx=0.1)
+    for ds, node_location in ((plant, "node"), (grid, "cell")):
+        NodesAndEdges(data_structure=ds)
+        assert ds.location("potential") == node_location and ds.location("conductance") == "edge"
+        assert ds.get("potential").size == ds.n_nodes() and ds.get("conductance").size == ds.n_edges()

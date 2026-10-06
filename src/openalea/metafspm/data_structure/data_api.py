@@ -1916,6 +1916,8 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
         if spec.location == "node":
             return self._mtg_to_node_array(spec.name, scale=spec.scale)
         if spec.location == "edge":
+            if self._anatomy and spec.scale == self._mtg.scales.Connection:
+                return self._mtg_values(spec.name, self.entity_ids("edge"))       # the Connections themselves
             return self._mtg_to_edge_array(spec.name, convention=spec.mapping, scale=spec.scale)
         if spec.mapping is None:
             # Stored at its own coarse scale: the values of the vertices of that scale
@@ -1993,7 +1995,10 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
             means = self._map(values, "node", coarse, "weighted_mean" if weights is not None else "mean", weights)
             self._write_at(spec.name, self.entity_ids(coarse), means)
         elif spec.location == "edge":
-            self.write_edge_to_mtg(spec.name, values, convention=spec.mapping)
+            if self._anatomy and spec.scale == self._mtg.scales.Connection:
+                self._write_at(spec.name, self.entity_ids("edge"), values)      # at the Connections themselves
+            else:
+                self.write_edge_to_mtg(spec.name, values, convention=spec.mapping)
         elif spec.mapping is None:
             self._write_at(spec.name, self.entity_ids(spec.location), values)
         else:

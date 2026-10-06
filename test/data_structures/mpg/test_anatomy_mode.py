@@ -171,3 +171,23 @@ def test_a_graph_system_solves_on_the_assembled_anatomy_graph():
     A[collar, collar] = 1.
     rhs[collar] = -1.
     np.testing.assert_allclose(ds.get("water_potential"), np.linalg.solve(A, rhs), rtol=1e-8, atol=1e-10)
+
+
+@dataclass
+class ConnectionProperties(FunctionalComponent):
+    conductance: float = state_variable(**DOC, initialize=0., scale=scales.Connection)
+    tissue: float = state_variable(**DOC, initialize=0., scale=scales.Compartment)
+
+
+def test_connection_scale_variables_are_the_connections_own_properties():
+    """In anatomy mode, a Connection-scale declaration reads and writes the Connections' own MTG properties."""
+    g, _, _, ds = _plant()
+    edges = ds.entity_ids("edge")
+    g.properties()["conductance"] = {int(v): float(v) for v in edges}
+    g.properties()["tissue"] = {int(v): 2. * v for v in ds.entity_ids("node")}
+    ConnectionProperties(data_structure=ds)
+    assert ds.location("conductance") == "edge"
+    np.testing.assert_array_equal(ds.get("conductance"), edges.astype(float))
+    np.testing.assert_array_equal(ds.get("tissue"), 2. * ds.entity_ids("node"))
+    ds.set("conductance", np.full(ds.n_edges(), 7.))
+    assert all(ds.mtg.property("conductance")[int(v)] == 7. for v in edges)       # written back at the Connections
