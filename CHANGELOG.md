@@ -32,6 +32,9 @@
 - **`location="node"` on a grid is its cells** (the nodes of its graph), so one component class declared on nodes and edges runs on a plant MPG and on a soil grid.
 - **In anatomy mode, `scale=Connection`** declares the Connections' own MTG properties, read at registration and written back like node properties. The edges are the Connections themselves; before, such variables had no MTG property.
 
+- **Scene `mappings=`:** a `CrossMapping` given there replaces the one the scene would infer between the same DataStructures, e.g. to map only a mask of the plant (`mask=`).
+- **Labels:** `Layer.Mesophyll` and `Layer.StomatalCavity` for leaf anatomies.
+
 ### Parameters: one value, the DataStructure's
 
 - **Breaking:** every numeric parameter now goes through the DataStructure, placed ones (`scale=` / `location=`) included, not only those stored per plant:
