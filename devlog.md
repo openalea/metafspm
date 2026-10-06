@@ -2037,3 +2037,4 @@ Per-file counts:
   - the example's transports are declared separately, without the mixin.
 
   One bug of my own was caught: the functor read the mask dict before the first mask existed. Results unchanged; suite 763 passed.
+- **Example boundaries as decorators (your request):** the air exchange (plant and soil) and the water table are `@boundary_condition` equations instead of boundary sets. Results identical.
