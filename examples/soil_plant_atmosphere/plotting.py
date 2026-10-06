@@ -14,7 +14,7 @@ import matplotlib.pyplot as plt
 from matplotlib.collections import LineCollection
 from matplotlib.colors import Normalize
 
-from components import ANATOMY, LEAF, ROOT, STEM, XYLEM
+from seedling import ANATOMY, LEAF, ROOT, STEM, XYLEM
 
 TISSUE_NAMES = {1: "epidermis", 2: "cortex", 3: "endodermis", 4: "xylem", 5: "mesophyll", 6: "stomatal cavity"}
 ORGAN_NAMES = {ROOT: "root", STEM: "stem", LEAF: "leaf"}

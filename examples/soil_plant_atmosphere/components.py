@@ -21,9 +21,11 @@ import numpy as np
 
 from openalea.metafspm.coupling.component import (FunctionalComponent, StructuralComponent, input_variable, parameter,
                                                   state_variable)
-from openalea.metafspm.data_structure.configs import PropsConfig, ScalesConfig as scales
+from openalea.metafspm.data_structure.configs import ScalesConfig as scales
 from openalea.metafspm.solve.decorator import (boundary_condition, edge_law, graph_output, graph_system,
                                                node_balance, postsegmentation)
+
+from seedling import AXIAL, LEAF_RADIAL, ROOT_RADIAL, STEM_RADIAL, build_seedling
 
 R, WATER_MOLAR_VOLUME, PRESSURE = 8.314, 1.8e-5, 101325.          # J mol-1 K-1, m3 mol-1, Pa
 MM3 = 1e9                                                           # mm3 per m3
@@ -55,28 +57,6 @@ VAPOUR_FACTOR = float(vapour_factor(20.))
 def _doc(unit, description, lower=-1e9, upper=1e9):
     return dict(unit=unit, unit_comment="", description=description, min_value=lower, max_value=upper,
                 value_comment="", references="", DOI=[])
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# Codes written on the plant structure
-# ═══════════════════════════════════════════════════════════════════════════════
-
-ROOT, STEM, LEAF = 1, 2, 3                                          # organ of a Compartment
-EPIDERMIS, CORTEX, ENDODERMIS, XYLEM, MESOPHYLL, STOMATAL_CAVITY = 1, 2, 3, 4, 5, 6   # tissue of a Compartment
-ROOT_RADIAL, STEM_RADIAL, LEAF_RADIAL, AXIAL = 1, 2, 3, 4           # hydraulic type of a Connection
-
-ANATOMY = {                                                         # tissues from the outside in (leaf: from xylem out)
-    ROOT: (EPIDERMIS, CORTEX, ENDODERMIS, XYLEM),
-    STEM: (EPIDERMIS, CORTEX, XYLEM),
-    LEAF: (XYLEM, MESOPHYLL, STOMATAL_CAVITY),
-}
-RADIAL_TYPE = {ROOT: ROOT_RADIAL, STEM: STEM_RADIAL, LEAF: LEAF_RADIAL}
-
-
-def _tissue_label(labels, tissue):
-    return {EPIDERMIS: labels.Layer.Epidermis, CORTEX: labels.Layer.CorticalParenchyma,
-            ENDODERMIS: labels.Layer.Endodermis, XYLEM: labels.Layer.MetaXylem, MESOPHYLL: labels.Layer.Mesophyll,
-            STOMATAL_CAVITY: labels.Layer.StomatalCavity}[tissue]
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -194,10 +174,10 @@ class SoilWaterTransport(FunctionalComponent):
             """The flux through a face, j = k (Ψ_low - Ψ_high)."""
             return conductance * np.asarray(self._graph_view.incidence.T @ water_potential).reshape(-1)
 
-        @boundary_condition("node", "dirichlet", field="water_potential", filters={"is_water_table": ">0"})
-        def _water_table(self, water_potential, water_table_potential):
+        @boundary_condition("node", "dirichlet", field="water_potential", explicit=True, filters={"is_water_table": ">0"})
+        def _water_table(self, water_table_potential):
             """The bottom cells held at the water table's potential."""
-            return water_potential - water_table_potential
+            return water_table_potential
 
         @boundary_condition("node", "neumann", field="water_potential", filters={"is_evaporating": ">0"})
         def _to_the_air(self, water_potential, air_water_potential, vapour_conductance):
@@ -220,9 +200,8 @@ class SoilWaterTransport(FunctionalComponent):
 @dataclass
 class SeedlingStructure(StructuralComponent):
     """
-    A seedling of every scale (Plant, Axis, GrowthUnit, Phytomer, Organ, SubOrgan) with an anatomy per segment
-    (root: epidermis, cortex, endodermis, xylem; stem: epidermis, cortex, xylem; leaf: xylem, mesophyll, stomatal
-    cavity) and the axial junctions between the xylems of linked segments, built by initiate_plant.
+    The plant's hydraulic structure: initiate_plant builds each seedling (seedling.py: every scale, an anatomy per
+    segment, the axial xylem junctions), and the steps compute its conductances from the structure.
 
     Conductances: radial edges k = k_s · L_segment (each anatomical edge, extrapolated in 3D along its segment), axial
     edges k = k_axial / L (L between the two segments' centres).
@@ -283,129 +262,10 @@ class SeedlingStructure(StructuralComponent):
                                             "e_sat V_w² / (R T P): from a vapour conductance to a liquid one."),
                                      by="SeedlingStructure", default=VAPOUR_FACTOR)
 
-    # ── building one plant ───────────────────────────────────────────────────
-
     @classmethod
     def initiate_plant(cls, g, plant, parameters):
-        """
-        The seedling of *plant*: a shoot of n_phytomers (a stem element and a leaf of n_leaf_elements each) and
-        n_root_axes seminal roots of n_root_segments with one lateral each, every segment with its anatomy.
-        """
-        p = dict(n_phytomers=3, n_leaf_elements=3, n_root_axes=3, n_root_segments=5, n_lateral_segments=2,
-                 stem_length=0.02, leaf_length=0.03, leaf_width=0.005, root_length=0.03, lateral_length=0.02)
-        p.update({key: value for key, value in parameters.items() if key in p})
-        s, labels = g.scales, g.labels
-        x0, y0, z0 = (float(g.property(name)[plant]) for name in ("x", "y", "z"))
-        rotation = float(g.property("rotation").get(plant, 0.))
-        segments = {}                                                # vid -> (organ, length, start, end)
-
-        def segment(vid, organ, length, start, direction):
-            end = np.asarray(start) + length * np.asarray(direction) / np.linalg.norm(direction)
-            segments[vid] = (organ, length, np.asarray(start, dtype=float), end)
-            return end
-
-        # shoot
-        shoot = g.add_component(plant, **PropsConfig(scale=s.Axis, edge_type='/', label=labels.Axis.Shoot))
-        unit = g.add_component(shoot, **PropsConfig(scale=s.GrowthUnit, edge_type='/', label=labels.GrowthUnit.Shoot))
-        top, phytomer, stem_element, collar = (x0, y0, z0), None, None, None
-        for rank in range(int(p["n_phytomers"])):
-            if phytomer is None:
-                phytomer = g.add_component(unit, **PropsConfig(scale=s.Phytomer, edge_type='/',
-                                                               label=labels.Phytomer.Shoot))
-            else:
-                phytomer = g.add_child(phytomer, **PropsConfig(scale=s.Phytomer, edge_type='<',
-                                                               label=labels.Phytomer.Shoot))
-            internode = g.add_component(phytomer, **PropsConfig(scale=s.Organ, edge_type='/',
-                                                                 label=labels.Organ.StemInternode))
-            props = PropsConfig(scale=s.SubOrgan, edge_type='<' if stem_element else '/',
-                                label=labels.SubOrgan.StemElement)
-            stem_element = (g.add_component_with_topo(internode, stem_element, **props) if stem_element
-                            else g.add_component(internode, **props))
-            collar = collar or stem_element
-            top = segment(stem_element, STEM, p["stem_length"], top, (0., 0., 1.))
-            leaf = g.add_child(internode, **PropsConfig(scale=s.Organ, edge_type='+', label=labels.Organ.Leaf))
-            azimuth = rotation + rank * 2. * np.pi / 3.
-            start, parent = top, stem_element
-            for element in range(int(p["n_leaf_elements"])):
-                props = PropsConfig(scale=s.SubOrgan, edge_type='+' if element == 0 else '<',
-                                    label=labels.SubOrgan.LeafElement)
-                vid = (g.add_component_with_topo(leaf, parent, **props) if element == 0
-                       else g.add_child(parent, **props))
-                start = segment(vid, LEAF, p["leaf_length"], start,
-                                (np.cos(azimuth), np.sin(azimuth), 0.6 - 0.4 * element))
-                parent = vid
-
-        # roots: seminal axes from the collar, each with one lateral
-        for axis_rank in range(int(p["n_root_axes"])):
-            axis = g.add_child(shoot, **PropsConfig(scale=s.Axis, edge_type='+', label=labels.Axis.Root))
-            unit_r = g.add_component(axis, **PropsConfig(scale=s.GrowthUnit, edge_type='/',
-                                                         label=labels.GrowthUnit.Root))
-            phytomer_r = g.add_component(unit_r, **PropsConfig(scale=s.Phytomer, edge_type='/',
-                                                               label=labels.Phytomer.Root))
-            organ = g.add_component(phytomer_r, **PropsConfig(scale=s.Organ, edge_type='/',
-                                                              label=labels.Organ.RootInternode))
-            azimuth = rotation + (axis_rank + 0.5) * 2. * np.pi / float(p["n_root_axes"])
-            direction = (0.5 * np.cos(azimuth), 0.5 * np.sin(azimuth), -1.)
-            start, parent, axis_segments = (x0, y0, z0), collar, []
-            for rank in range(int(p["n_root_segments"])):
-                props = PropsConfig(scale=s.SubOrgan, edge_type='+' if rank == 0 else '<',
-                                    label=labels.SubOrgan.RootSegment)
-                vid = (g.add_component_with_topo(organ, parent, **props) if rank == 0 else g.add_child(parent, **props))
-                start = segment(vid, ROOT, p["root_length"], start, direction)
-                parent = vid
-                axis_segments.append(vid)
-            bearer = axis_segments[min(1, len(axis_segments) - 1)]
-            lateral = g.add_child(organ, **PropsConfig(scale=s.Organ, edge_type='+', label=labels.Organ.RootInternode))
-            side = azimuth + np.pi / 2.
-            start, parent = segments[bearer][3], bearer
-            for rank in range(int(p["n_lateral_segments"])):
-                props = PropsConfig(scale=s.SubOrgan, edge_type='+' if rank == 0 else '<',
-                                    label=labels.SubOrgan.RootSegment)
-                vid = (g.add_component_with_topo(lateral, parent, **props) if rank == 0
-                       else g.add_child(parent, **props))
-                start = segment(vid, ROOT, p["lateral_length"], start, (np.cos(side), np.sin(side), -0.3))
-                parent = vid
-
-        # segment properties, anatomies and axial junctions
-        for name in ("length", "x1", "x2", "y1", "y2", "z1", "z2"):
-            g.properties().setdefault(name, {})
-        xylem = {}
-        for vid, (organ, length, start, end) in segments.items():
-            for name, value in (("length", length), ("x1", start[0]), ("x2", end[0]), ("y1", start[1]),
-                                ("y2", end[1]), ("z1", start[2]), ("z2", end[2])):
-                g.property(name)[vid] = float(value)
-            xylem[vid] = cls._anatomy(g, vid, organ, length, p["leaf_width"])
-        for vid in segments:
-            parent = g.parent(vid)
-            if parent in xylem:
-                cls._connect(g, vid, xylem[parent], xylem[vid], AXIAL,
-                             (segments[parent][1] + segments[vid][1]) / 2., junction=True)
-
-    @classmethod
-    def _anatomy(cls, g, segment, organ, length, leaf_width):
-        """The Compartments of *segment* and the radial Connections between them; returns its xylem."""
-        node_anchor = g.scales.anchors[g.scales.Compartment]
-        tissues = ANATOMY[organ]
-        compartments = []
-        for tissue in tissues:
-            evaporating = organ == LEAF and tissue == STOMATAL_CAVITY
-            contact = organ == ROOT and tissue == EPIDERMIS
-            compartments.append(g.add_component_with_topo(node_anchor, segment, **PropsConfig(
-                scale=g.scales.Compartment, edge_type='/', label=_tissue_label(g.labels, tissue),
-                tissue=float(tissue), organ=float(organ), is_evaporating=float(evaporating),
-                evaporating_area=leaf_width * length if evaporating else 0., is_soil_contact=float(contact),
-                contact_length=length if contact else 0.)))
-        for outer, inner in zip(compartments[:-1], compartments[1:]):
-            cls._connect(g, segment, outer, inner, RADIAL_TYPE[organ], length)
-        return compartments[tissues.index(XYLEM)]
-
-    @staticmethod
-    def _connect(g, segment, a, b, hydraulic_type, conductance_length, junction=False):
-        g.add_component_with_topo(g.scales.anchors[g.scales.Connection], segment, **PropsConfig(
-            scale=g.scales.Connection, edge_type='/',
-            label=g.labels.Connection.Apoplastic if junction else g.labels.Connection.Transmembrane,
-            n_id_a=a, n_id_b=b, is_junction=int(junction), hydraulic_type=float(hydraulic_type),
-            conductance_length=float(conductance_length)))
+        """Build the seedling of *plant* (its architecture, anatomies and junctions, see seedling.py)."""
+        build_seedling(g, plant, parameters)
 
     # ── conductances ─────────────────────────────────────────────────────────
 
