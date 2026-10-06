@@ -93,7 +93,7 @@ class GrassBRIDGES(CompositeModel):
     initiators = (RootGrowth, ShootGrowth)       # StructuralComponents: initiate_plant(g, plant, parameters) per plant
     from_scale = "SubOrgan"                      # the graph nodes; nodes = "Compartment" for anatomies
 
-    def __init__(self, data_structure, time_step, translator_path=..., **scenario):
+    def __init__(self, data_structure, time_step, translator_path=...):
         self.components = (RootGrowth(data_structure=data_structure, time_step=time_step),
                            RootCNUnified(data_structure=data_structure, time_step=time_step), ...)
         self.declare_data_and_couple_components(translator_path=translator_path,
@@ -126,7 +126,7 @@ class GrassBRIDGES(CompositeModel):
   - Axes are `(x, y, z)`. Legacy `(ny, nz, nx)` voxel arrays convert with `legacy.transpose(2, 0, 1)`.
   - Fields are declared with `location="cell"`, or `"scalar"` for uniform drivers such as rain.
   - The grid gives `cell_centers()`, `cell_volume()` and `locate(points, periodic=, clip=)`.
-- **Environment model:** `Model(populations, scene_xrange, scene_yrange, time_step, **scenario)` builds its DataStructures and exposes `components` and `run()`; it applies its input tables itself. Its DataStructure can be:
+- **Environment model:** `Model(populations, scene_xrange, scene_yrange, time_step, <its own arguments>)` builds its DataStructures and exposes `components` and `run()`; it applies its input tables itself. Its DataStructure can be:
   - a grid (soil, RATP-like light);
   - a `UnionDataStructure(populations)` for a model that must see every population (CARIBU-like light);
   - a population's MPG.

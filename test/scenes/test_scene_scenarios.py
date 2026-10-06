@@ -29,7 +29,7 @@ class Settings(FunctionalComponent):
 class Plants:
     initiators = (RootGrowthProbe,)                            # reads n_segments and apex_length
 
-    def __init__(self, data_structure, time_step, label="plants", **scenario):
+    def __init__(self, data_structure, time_step, label="plants"):
         self.label = label
         self.settings = Settings(data_structure=data_structure, time_step=time_step)
         self.components = [self.settings]
@@ -46,7 +46,7 @@ class SoilSettings(FunctionalComponent):
 
 
 class Ground:
-    def __init__(self, populations, scene_xrange, scene_yrange, time_step, depth=0.4, **scenario):
+    def __init__(self, populations, scene_xrange, scene_yrange, time_step, depth=0.4):
         self.depth = depth
         self.grid = ArrayDataStructure(shape=(2, 1, 2), dx=0.2)
         self.settings = SoilSettings(data_structure=self.grid, time_step=time_step)

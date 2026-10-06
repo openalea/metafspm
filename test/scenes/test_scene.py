@@ -132,7 +132,7 @@ class SceneLight(FunctionalComponent):
 class LeafPopulation:
     initiators = (RootGrowthProbe,)
 
-    def __init__(self, data_structure, time_step, **scenario):
+    def __init__(self, data_structure, time_step):
         self.leaves = SceneLeaves(data_structure=data_structure)
         self.components = [self.leaves]
 
@@ -141,7 +141,7 @@ class LeafPopulation:
 
 
 class SeedlingLeafPopulation(LeafPopulation):
-    def __init__(self, data_structure, time_step, **scenario):
+    def __init__(self, data_structure, time_step):
         self.leaves = SeedlingLeaves(data_structure=data_structure)
         self.components = [self.leaves]
 
@@ -149,7 +149,7 @@ class SeedlingLeafPopulation(LeafPopulation):
 class SceneLightModel:
     """A CARIBU-like environment model on the union of the populations."""
 
-    def __init__(self, populations, scene_xrange, scene_yrange, time_step, **scenario):
+    def __init__(self, populations, scene_xrange, scene_yrange, time_step):
         self.scene = UnionDataStructure(populations)
         self.light = SceneLight(data_structure=self.scene)
         self.components = [self.light]
@@ -181,7 +181,7 @@ def test_planting_table_keeps_the_stand_and_emergence():
 class ApexOnlyLeaves(LeafPopulation):
     """A model defining its own "active" mask (its apices)."""
 
-    def __init__(self, data_structure, time_step, **scenario):
+    def __init__(self, data_structure, time_step):
         self.leaves = ApexLeaves(data_structure=data_structure)
         data_structure.define_mask("active", {"is_apex": ">0"})
         self.components = [self.leaves]

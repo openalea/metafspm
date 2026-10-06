@@ -7,7 +7,7 @@ A scene of plant populations and environment models in one process::
 
 Contracts::
 
-  plant model        Model(data_structure, time_step, **scenario), built once per population (the plants of one model
+  plant model        Model(data_structure, time_step, <its own arguments>), built once per population (the plants of one model
                      in the planting table) on an MPG holding all of them. Class attributes: initiators (the
                      StructuralComponent classes building each plant, StructuralComponent.initiate_plant), from_scale
                      (graph nodes, default "SubOrgan"), nodes ("Compartment" for anatomies, which the initiators
@@ -17,7 +17,7 @@ Contracts::
                      set by the Scene after the model is built (as constructor keywords would), per plant for the
                      numeric ones of plant models. Keys the model names in __init__ are its own arguments; the keys
                      initiators read are theirs. Any other key raises (a typo, a parameter no component declares).
-  environment model  Model(populations, scene_xrange, scene_yrange, time_step, **scenario): builds its DataStructures
+  environment model  Model(populations, scene_xrange, scene_yrange, time_step, <its own arguments>): builds its DataStructures
                      (a grid, a UnionDataStructure of the populations, or works on a population's MPG) and exposes
                      components and run(); it applies its input tables itself, as today.
 

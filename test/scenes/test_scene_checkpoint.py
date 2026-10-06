@@ -25,8 +25,8 @@ from scene_doubles import DT, RootPopulation, SceneGeometry, SceneSoil, Seedling
 class ExternalSolverSoil(SceneSoil):
     """A soil model wrapping an opaque solver whose state is not a DataStructure variable (e.g. a cmf project)."""
 
-    def __init__(self, populations, scene_xrange, scene_yrange, time_step, **scenario):
-        super().__init__(populations, scene_xrange, scene_yrange, time_step, **scenario)
+    def __init__(self, populations, scene_xrange, scene_yrange, time_step):
+        super().__init__(populations, scene_xrange, scene_yrange, time_step)
         self.solver = {"steps": 0, "storage": 1.}
 
     def run(self):
@@ -118,7 +118,7 @@ class VectorExudation(SceneGeometry):
 class VectorPlants:
     initiators = (RootGrowthProbe,)
 
-    def __init__(self, data_structure, time_step, **scenario):
+    def __init__(self, data_structure, time_step):
         self.growth = RootGrowthProbe(data_structure=data_structure)
         self.exudation = VectorExudation(data_structure=data_structure)
         self.components = [self.growth, self.exudation]
@@ -142,7 +142,7 @@ class Mimics(FunctionalComponent):
 
 
 class MimicsSoil:
-    def __init__(self, populations, scene_xrange, scene_yrange, time_step, **scenario):
+    def __init__(self, populations, scene_xrange, scene_yrange, time_step):
         self.grid = ArrayDataStructure(shape=(2, 1, 4), dx=0.4)
         self.mimics = Mimics(data_structure=self.grid)
         self.components = [self.mimics]

@@ -46,7 +46,7 @@ def _plant_model(name, organs):
     class Model:
         initiators = (RootGrowthProbe,)
 
-        def __init__(self, data_structure, time_step, **scenario):
+        def __init__(self, data_structure, time_step):
             data_structure.register("radius", 0.05 if organs is WheatOrgans else 0.1, location="node")
             self.organs = organs(data_structure=data_structure)
             self.components = [self.organs]
@@ -101,7 +101,7 @@ class ToyCaribuModel:
     """Runs every 4 steps (e.g. every 4 h); its outputs are kept in between."""
     run_every = 4
 
-    def __init__(self, populations, scene_xrange, scene_yrange, time_step, **scenario):
+    def __init__(self, populations, scene_xrange, scene_yrange, time_step):
         self.scene = UnionDataStructure(populations)
         self.light = ToyCaribu(data_structure=self.scene)
         self.components = [self.light]

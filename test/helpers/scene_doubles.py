@@ -62,7 +62,7 @@ class RootPopulation:
     """A plant model as a population model."""
     initiators = (RootGrowthProbe,)
 
-    def __init__(self, data_structure, time_step, parameters=None, **scenario):
+    def __init__(self, data_structure, time_step):
         self.growth = RootGrowthProbe(data_structure=data_structure)
         self.carbon = CarbonProbe(data_structure=data_structure)
         self.exudation = SceneExudation(data_structure=data_structure)
@@ -77,7 +77,7 @@ class RootPopulation:
 class Seedlings:
     initiators = (RootGrowthProbe,)          # its initial structure only: RootGrowthProbe is not instantiated
 
-    def __init__(self, data_structure, time_step, **scenario):
+    def __init__(self, data_structure, time_step):
         self.exudation = SeedlingExudation(data_structure=data_structure)
         self.components = [self.exudation]
 
@@ -99,7 +99,7 @@ class SceneSoilNitrate(FunctionalComponent):
 class SceneSoil:
     """An environment model building its grid."""
 
-    def __init__(self, populations, scene_xrange, scene_yrange, time_step, **scenario):
+    def __init__(self, populations, scene_xrange, scene_yrange, time_step):
         self.populations = populations
         self.grid = ArrayDataStructure(shape=(2, 1, 4), dx=0.4)
         self.nitrate = SceneSoilNitrate(data_structure=self.grid)
