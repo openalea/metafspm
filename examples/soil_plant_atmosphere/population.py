@@ -16,7 +16,7 @@ from models import SCENE_TRANSLATOR, SeedlingWater, Soil, largest_change, root_s
 from one_plant import plots, summary
 
 
-def scene(output_dirpath=None, tolerance=1e-6, root_radial_k=(0.2, 0.5, 1.0), soil_scenario=None):
+def scene(output_dirpath=None, tolerance=1e-6, root_radial_k=(0.4, 0.5, 0.6), soil_scenario=None):
     """
     A stand laid out by planting_table (rows every 0.1 m at 100 plants m-2, the stand's size adjusted to the rows and
     kept in the table, which sizes the soil grid); the root radial conductance of each

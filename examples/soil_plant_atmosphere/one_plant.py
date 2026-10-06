@@ -36,6 +36,7 @@ def plots(built, folder, row=None):
     plotting.anatomy_types(plants[0], os.path.join(folder, "anatomy_types.png"))
     plotting.soil_slice(soil, plants, os.path.join(folder, "soil_slice.png"), row=row)
     plotting.top_view(soil, plants, os.path.join(folder, "top_view.png"))
+    plotting.upscaling_series(plants[0], folder, row=row)          # Compartment -> SubOrgan -> Organ -> Axis -> Plant
 
 
 def summary(built, stop):
