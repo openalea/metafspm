@@ -26,14 +26,15 @@ def scene(output_dirpath=None, tolerance=1e-6, soil_scenario=None):
     return built, stop
 
 
-def plots(built, folder):
+def plots(built, folder, row=None):
+    """The figures; *row*: the side views show only that planting row (for a stand)."""
     os.makedirs(folder, exist_ok=True)
     plants = [population.data_structure for population in built.populations]
     soil = next(model for model in built.environment if isinstance(model, Soil)).grid
-    plotting.plant_segments(plants, os.path.join(folder, "plant_segments.png"))
-    plotting.plant_anatomy(plants[0], os.path.join(folder, "plant_anatomy.png"))
+    plotting.plant_segments(plants, os.path.join(folder, "plant_segments.png"), row=row)
+    plotting.plant_anatomy(plants[0], os.path.join(folder, "plant_anatomy.png"), row=row)
     plotting.anatomy_types(plants[0], os.path.join(folder, "anatomy_types.png"))
-    plotting.soil_slice(soil, plants, os.path.join(folder, "soil_slice.png"))
+    plotting.soil_slice(soil, plants, os.path.join(folder, "soil_slice.png"), row=row)
     plotting.top_view(soil, plants, os.path.join(folder, "top_view.png"))
 
 

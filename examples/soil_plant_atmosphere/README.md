@@ -42,6 +42,8 @@ The plants share the soil; their root radial conductances cycle through 0.2, 0.5
 (Ψ_air ≈ −94 MPa), the vapour step limits the flow, so transpiration varies little between plants. Their leaf water
 potentials absorb the difference: the least conductive roots give the lowest leaf Ψ.
 
+The side views show the first planting row (four plants, seen along the row, in the y–z plane).
+
 ![plants](figures/population/plant_segments.png)
 ![soil slice](figures/population/soil_slice.png)
 ![top view](figures/population/top_view.png)
