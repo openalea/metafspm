@@ -5,7 +5,7 @@ stay couplable with the translators it ships.
 from dataclasses import fields
 
 # Framework fields that are not model variables
-_FRAMEWORK_FIELDS = {"data_structure"}
+_FRAMEWORK_FIELDS = {"data_structure", "time_step"}
 
 
 def couplability_problems(component_cls, translator, name: str = None, data_structure=None) -> list:

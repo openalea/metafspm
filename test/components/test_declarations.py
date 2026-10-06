@@ -292,3 +292,22 @@ def test_one_component_declared_on_nodes_runs_on_a_plant_graph_and_on_a_grid():
         NodesAndEdges(data_structure=ds)
         assert ds.location("potential") == node_location and ds.location("conductance") == "edge"
         assert ds.get("potential").size == ds.n_nodes() and ds.get("conductance").size == ds.n_edges()
+
+
+@dataclass
+class Clocked(FunctionalComponent):
+    potential: float = state_variable(**DOC, initialize=0., location="node")
+
+
+@dataclass
+class ClockedByClass(Clocked):
+    time_step = 60.
+
+
+def test_a_component_takes_its_time_step_at_construction_or_from_the_simulation():
+    from openalea.metafspm.coupling.choregrapher import Choregrapher
+    Choregrapher().add_simulation_time_step(3600.)
+    grid = ArrayDataStructure(shape=(2,), dx=0.1)
+    assert Clocked(data_structure=grid).time_step == Clocked(data_structure=grid).dt == 3600.   # the simulation's
+    assert ClockedByClass(data_structure=grid).time_step == 60.                                 # its class's
+    assert Clocked(data_structure=grid, time_step=900.).dt == 900.                               # given explicitly

@@ -27,7 +27,7 @@ class RhizoSoil(CompositeModel):
                  max(1, round(depth / voxel_height)))
         self.grid = ArrayDataStructure(shape=shape, dx=(scene_xrange / shape[0], scene_yrange / shape[1], voxel_height),
                                        periodic=(True, True, False))
-        self.soil = SoilModel(data_structure=self.grid, **parameters)
+        self.soil = SoilModel(data_structure=self.grid, time_step=time_step, **parameters)
         self.components = [self.soil]
 
     def run(self):
