@@ -32,10 +32,12 @@ def _tissue_label(labels, tissue):
 def build_seedling(g, plant, parameters):
     """
     The seedling of *plant*: a shoot of n_phytomers (a stem element and a leaf of n_leaf_elements each) and
-    n_root_axes seminal roots of n_root_segments with one lateral each, every segment with its anatomy.
+    n_root_axes first-order roots of n_root_segments from the collar, bending from emergence_angle below the
+    horizontal towards the vertical (gravitropism, per segment), each with a lateral; every segment with its anatomy.
     """
-    p = dict(n_phytomers=3, n_leaf_elements=3, n_root_axes=3, n_root_segments=5, n_lateral_segments=2,
-             stem_length=0.02, leaf_length=0.03, leaf_width=0.005, root_length=0.03, lateral_length=0.02)
+    p = dict(n_phytomers=3, n_leaf_elements=3, n_root_axes=3, n_root_segments=6, n_lateral_segments=3,
+             stem_length=0.02, leaf_length=0.03, leaf_width=0.005, root_length=0.025, lateral_length=0.015,
+             emergence_angle=15., gravitropism=0.35, lateral_gravitropism=0.08, tortuosity=0.08)
     p.update({key: value for key, value in parameters.items() if key in p})
     s, labels = g.scales, g.labels
     x0, y0, z0 = (float(g.property(name)[plant]) for name in ("x", "y", "z"))
@@ -78,7 +80,15 @@ def build_seedling(g, plant, parameters):
                             (np.cos(azimuth), np.sin(azimuth), 0.6 - 0.4 * element))
             parent = vid
 
-    # roots: seminal axes from the collar, each with one lateral
+    # roots: three first-order (seminal) roots from the collar, each with one lateral. Each starts emergence_angle
+    # (degrees) below the horizontal and bends towards the vertical segment after segment, its direction pulled down
+    # by the gravitropism coefficient, with a small random tortuosity (reproducible per plant)
+    rng = np.random.default_rng(int(plant))
+
+    def tropism(direction, coefficient):
+        bent = np.asarray(direction) + coefficient * np.array([0., 0., -1.]) + rng.normal(0., p["tortuosity"], 3)
+        return bent / np.linalg.norm(bent)
+
     for axis_rank in range(int(p["n_root_axes"])):
         axis = g.add_child(shoot, **PropsConfig(scale=s.Axis, edge_type='+', label=labels.Axis.Root))
         unit_r = g.add_component(axis, **PropsConfig(scale=s.GrowthUnit, edge_type='/',
@@ -87,26 +97,31 @@ def build_seedling(g, plant, parameters):
                                                            label=labels.Phytomer.Root))
         organ = g.add_component(phytomer_r, **PropsConfig(scale=s.Organ, edge_type='/',
                                                           label=labels.Organ.RootInternode))
-        azimuth = rotation + (axis_rank + 0.5) * 2. * np.pi / float(p["n_root_axes"])
-        direction = (0.5 * np.cos(azimuth), 0.5 * np.sin(azimuth), -1.)
+        azimuth = rotation + (axis_rank + 0.5) * 2. * np.pi / float(p["n_root_axes"]) + rng.normal(0., 0.25)
+        dip = np.radians(p["emergence_angle"]) + rng.normal(0., 0.1)
+        direction = np.array([np.cos(azimuth) * np.cos(dip), np.sin(azimuth) * np.cos(dip), -np.sin(dip)])
         start, parent, axis_segments = (x0, y0, z0), collar, []
         for rank in range(int(p["n_root_segments"])):
             props = PropsConfig(scale=s.SubOrgan, edge_type='+' if rank == 0 else '<',
                                 label=labels.SubOrgan.RootSegment)
             vid = (g.add_component_with_topo(organ, parent, **props) if rank == 0 else g.add_child(parent, **props))
             start = segment(vid, ROOT, p["root_length"], start, direction)
+            direction = tropism(direction, p["gravitropism"])
             parent = vid
             axis_segments.append(vid)
-        bearer = axis_segments[min(1, len(axis_segments) - 1)]
+        bearer = axis_segments[min(2, len(axis_segments) - 1)]
         lateral = g.add_child(organ, **PropsConfig(scale=s.Organ, edge_type='+', label=labels.Organ.RootInternode))
-        side = azimuth + np.pi / 2.
+        side = azimuth + np.pi / 2. + rng.normal(0., 0.3)
+        direction = np.array([np.cos(side), np.sin(side), -0.2])
+        direction /= np.linalg.norm(direction)
         start, parent = segments[bearer][3], bearer
         for rank in range(int(p["n_lateral_segments"])):
             props = PropsConfig(scale=s.SubOrgan, edge_type='+' if rank == 0 else '<',
                                 label=labels.SubOrgan.RootSegment)
             vid = (g.add_component_with_topo(lateral, parent, **props) if rank == 0
                    else g.add_child(parent, **props))
-            start = segment(vid, ROOT, p["lateral_length"], start, (np.cos(side), np.sin(side), -0.3))
+            start = segment(vid, ROOT, p["lateral_length"], start, direction)
+            direction = tropism(direction, p["lateral_gravitropism"])
             parent = vid
 
     # segment properties, anatomies and axial junctions

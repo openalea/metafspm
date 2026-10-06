@@ -6,7 +6,7 @@ dry atmosphere. Every part shows a feature of metafspm:
 | file | what it shows |
 |---|---|
 | `components.py` | **`PlantWaterTransport`** and **`SoilWaterTransport`**, two `FunctionalComponent`s, each declaring its own variables and graph system: a node balance, an edge law given explicitly (j = k ΔΨ), and every boundary written as an equation (`@boundary_condition`): the exchange with the air, k_vap (Ψ_air − Ψ), each selecting its nodes with explicit `filters=` key / values. The plant's are at the Compartment and Connection scales, read from and written to the MTG; it adds the root–soil exchange, an equation of the coupled soil Ψ (`@boundary_condition`). The soil's are at cell and edge locations; it adds the water table (Dirichlet, Ψ − Ψ_table) and the plants' uptake. `@graph_output`s give the uptake and the evaporation. |
-| `seedling.py` | **The seedling generator**, standing for the structural models (growth, anatomy) a real simulation would couple: the architecture at every scale, the anatomies and the axial junctions, with the codes the components read. |
+| `seedling.py` | **The seedling generator**, standing for the structural models (growth, anatomy) a real simulation would couple: the architecture at every scale (three first-order roots bending from the collar towards the vertical with a gravitropism coefficient, each with a lateral), the anatomies and the axial junctions, with the codes the components read. |
 | | **`SeedlingStructure`** (in `components.py`), a `StructuralComponent`: `initiate_plant` builds each seedling (with `seedling.py`) at every scale (Plant → Axis → GrowthUnit → Phytomer → Organ → SubOrgan) with an anatomy per segment (root: epidermis, cortex, endodermis, xylem; stem: epidermis, cortex, xylem; leaf: xylem, mesophyll, stomatal cavity) and the axial xylem junctions, then computes the conductances from the structure: k = k_s · L on radial edges, k = k_axial / L on axial ones. **`SoilStructure`** does the same for the soil grid (k = K · A / d on the faces, K varying between voxels). |
 | | **The air**, a constant input: Ψ_air = (RT/V_w) ln RH at 50 % and 20 °C (about −93.9 MPa), and the vapour factor that turns a vapour conductance into a liquid one where water evaporates (the liquid–vapour step, linearised). |
 | `models.py` | **Models and translators.** The plant population model (`SeedlingWater`: initiators, anatomy mode) and the soil environment model. Translators inside a DataStructure (k → conductance), and across DataStructures (soil Ψ → root epidermis, uptake → soil cells). A `CrossMapping` of the root surface only (`mask=`). A `stop_when` condition on the change of Ψ between steps. |
@@ -26,7 +26,7 @@ Volumes in mm³ keep the solves' residuals well above the solver's absolute tole
 
 ## One plant
 
-The scene converges in five steps (largest change of Ψ: 2.5e-01, 9.6e-04, 7.1e-06, 7.9e-08 MPa). Transpiration
+The scene converges in five steps (largest change of Ψ: 2.5e-01, 9.0e-04, 5.7e-06, 5.9e-08 MPa). Transpiration
 (0.076 mm³ s⁻¹) equals the root uptake and the water taken from the soil; the water table supplies it and the soil
 evaporation.
 
