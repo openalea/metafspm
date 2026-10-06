@@ -7,8 +7,8 @@ Plots of the example's DataStructures and of the converged water potentials on t
     soil_slice          a vertical slice of the soil grid (or along a planting row), Ψ coloured, the roots over it;
                         anomaly=True: Ψ minus its layer mean, the roots' depletion without the vertical gradient
     top_view            the stand from above: the water taken up per soil column, the segments drawn over it
-    upscaling_series    the water potential upscaled from the Compartments to the plants (upscaling.py), one graph
-                        per scale, on one colour scale
+    upscaling_series    the water potential upscaled from the Compartments to the plants (upscaling.py), the graph
+                        of each scale side by side, on one colour scale
 """
 import numpy as np
 import matplotlib
@@ -240,49 +240,71 @@ def _entity_of_segment(ds, scale):
     return entity_of_segment
 
 
-def upscaling_series(ds, folder, prefix="upscale", row=None):
+def _scale_graph(ds, scale, name, node_kept, h):
     """
-    One graph per step of the upscaling of the water potential (Compartment, SubOrgan, Organ, Phytomer, GrowthUnit,
-    Axis, Plant), every
-    segment coloured by the value of its entity at that scale, on one colour scale; side views of planting row *row*
-    when given. Returns the paths written.
+    The graph of *scale*: its entities among the kept nodes (positions: the centroid of their segments' middles, in
+    the side-view plane), their edges (the pairs of entities joined by an edge of the solver graph) and values.
     """
-    import os
+    start, end, segment_of_node = _segments(ds)
+    middle = ((start + end) / 2.)[segment_of_node][:, [h, 2]]               # per node, its segment's middle
+    entity_of_node = np.asarray(ds.owner(scale))
+    entities = np.unique(entity_of_node[node_kept])
+    local = {int(e): i for i, e in enumerate(entities)}
+    position = np.zeros((len(entities), 2))
+    counts = np.zeros(len(entities))
+    for node in np.flatnonzero(node_kept):
+        i = local[int(entity_of_node[node])]
+        position[i] += middle[node]
+        counts[i] += 1.
+    position /= counts[:, None]
+    index = {int(v): i for i, v in enumerate(ds.entity_ids("node"))}
+    pairs = set()
+    for a, b in ds.edges():
+        ea, eb = entity_of_node[index[int(a)]], entity_of_node[index[int(b)]]
+        if ea != eb and int(ea) in local and int(eb) in local:
+            pairs.add((local[int(ea)], local[int(eb)]))
+    edges = np.array(sorted(pairs), dtype=int).reshape(-1, 2)
+    return position, edges, np.asarray(ds.get(name))[entities]
+
+
+def upscaling_series(ds, path, row=None):
+    """
+    The upscaling of the water potential (Compartment, SubOrgan, Organ, Phytomer, GrowthUnit, Axis, Plant) side by
+    side in one figure: the graph of each scale, its entities as nodes (at the centroid of their segments) coloured
+    by their value, and its edges, the links between entities (an edge of the solver graph joining two of them),
+    coloured by the mean of their two nodes. One colour scale for all; side views of planting row *row* when given.
+    """
     names = upscale(ds)
     kept, h = _row(ds, row)
+    node_kept = kept[np.asarray(ds.owner("SubOrgan"))]
     norm = Normalize(vmin=float(np.min(ds.get("water_potential"))), vmax=float(np.max(ds.get("water_potential"))))
-    start, end, _ = _segments(ds)
-    lines_xz = np.stack([start[kept][:, [h, 2]], end[kept][:, [h, 2]]], axis=1)
-    paths = []
-    for rank, (scale, name) in enumerate(names.items(), start=1):
-        fig, ax = plt.subplots(figsize=(7, 6))
+    fig, axes = plt.subplots(1, len(names), figsize=(3.2 * len(names), 4.2), sharex=True, sharey=True)
+    for rank, (ax, (scale, name)) in enumerate(zip(axes, names.items()), start=1):
         if scale == "Compartment":
-            node_kept = kept[np.asarray(ds.owner("SubOrgan"))]
             position = _compartment_positions(ds, h)
             index = {int(v): i for i, v in enumerate(ds.entity_ids("node"))}
             edges = np.array([[index[int(a)], index[int(b)]] for a, b in ds.edges()])
             edges = edges[node_kept[edges[:, 0]] & node_kept[edges[:, 1]]]
-            ax.add_collection(LineCollection(position[edges], colors="0.7", linewidths=0.5))
-            mappable = ax.scatter(position[node_kept, 0], position[node_kept, 1], s=9, cmap="viridis", norm=norm,
-                                  c=np.asarray(ds.get(name))[node_kept], zorder=3)
+            ax.add_collection(LineCollection(position[edges], colors="0.7", linewidths=0.4))
+            ax.scatter(position[node_kept, 0], position[node_kept, 1], s=4, cmap="viridis", norm=norm,
+                       c=np.asarray(ds.get(name))[node_kept], zorder=3)
             count = int(node_kept.sum())
         else:
-            entity = _entity_of_segment(ds, scale)[kept]
-            mappable = LineCollection(lines_xz, cmap="viridis", norm=norm, linewidths=3)
-            mappable.set_array(np.asarray(ds.get(name))[entity])
-            ax.add_collection(mappable)
-            ax.autoscale()
-            count = len(np.unique(entity))                         # the entities drawn
-        ax.axhline(0., color="saddlebrown", linewidth=1)
+            position, edges, values = _scale_graph(ds, scale, name, node_kept, h)
+            if len(edges):
+                edge_lines = LineCollection(position[edges], cmap="viridis", norm=norm, linewidths=2., zorder=2)
+                edge_lines.set_array(values[edges].mean(axis=1))             # an edge: the mean of its two nodes
+                ax.add_collection(edge_lines)
+            ax.scatter(position[:, 0], position[:, 1], c=values, cmap="viridis", norm=norm, s=30, edgecolors="k",
+                       linewidths=0.5, zorder=3)
+            count = len(values)
+        ax.axhline(0., color="saddlebrown", linewidth=0.8)
         ax.set_aspect("equal")
-        ax.set_xlabel("y (m)" if row is not None else "x (m)")
-        ax.set_ylabel("z (m)")
-        how = "solved" if scale == "Compartment" else "mean of the scale below"
-        ax.set_title(f"{rank}. Ψ at {scale} scale ({how}; {count} entities)")
-        fig.colorbar(mappable, ax=ax, label="Ψ (MPa)")
-        path = os.path.join(folder, f"{prefix}_{rank}_{scale.lower()}.png")
-        fig.savefig(path, dpi=150, bbox_inches="tight")
-        plt.close(fig)
-        paths.append(path)
-    return paths
-
+        ax.set_title(f"{rank}. {scale}\n{count} {'entity' if count == 1 else 'entities'}", fontsize=9)
+        ax.set_xlabel("y (m)" if row is not None else "x (m)", fontsize=8)
+        ax.tick_params(labelsize=7)
+    axes[0].set_ylabel("z (m)", fontsize=8)
+    fig.suptitle("Ψ upscaled from the Compartments (solved) to the plants, each scale the mean of the scale below")
+    fig.colorbar(plt.cm.ScalarMappable(norm=norm, cmap="viridis"), ax=axes, label="Ψ (MPa)", shrink=0.8, pad=0.01)
+    fig.savefig(path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
