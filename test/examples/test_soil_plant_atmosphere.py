@@ -17,9 +17,7 @@ import population                                                               
 from models import Soil                                                               # noqa: E402
 
 FIGURES = ("plant_segments.png", "plant_anatomy.png", "anatomy_types.png", "soil_slice.png", "soil_slice_anomaly.png",
-           "top_view.png",
-           "upscale_1_compartment.png", "upscale_2_suborgan.png", "upscale_3_organ.png", "upscale_4_phytomer.png",
-           "upscale_5_growthunit.png", "upscale_6_axis.png", "upscale_7_plant.png")
+           "top_view.png", "upscaling.png")
 
 
 def _environment(scene, kind):

@@ -37,7 +37,7 @@ def plots(built, folder, row=None):
     plotting.soil_slice(soil, plants, os.path.join(folder, "soil_slice.png"), row=row)
     plotting.soil_slice(soil, plants, os.path.join(folder, "soil_slice_anomaly.png"), row=row, anomaly=True)
     plotting.top_view(soil, plants, os.path.join(folder, "top_view.png"))
-    plotting.upscaling_series(plants[0], folder, row=row)          # Compartment -> SubOrgan -> ... -> Plant
+    plotting.upscaling_series(plants[0], os.path.join(folder, "upscaling.png"), row=row)   # Compartment -> ... -> Plant
 
 
 def summary(built, stop):

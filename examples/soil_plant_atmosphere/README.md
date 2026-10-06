@@ -46,15 +46,10 @@ mean shows where the roots deplete the soil:
 
 The solved potentials of the 164 Compartments are averaged into the 44 segments, then the 12 organs, the 6
 phytomers, the 4 growth units, the 4 axes and the plant: every scale of the MPG (`upscaling.py`). Each step is one
-`derive`; every graph uses the same colour scale.
+`derive`. Each panel draws the graph of its scale: its entities as nodes, coloured by their value, and the links
+between them (an edge of the solver graph joining two entities), on one colour scale.
 
-![1. Compartments](figures/one_plant/upscale_1_compartment.png)
-![2. SubOrgan](figures/one_plant/upscale_2_suborgan.png)
-![3. Organ](figures/one_plant/upscale_3_organ.png)
-![4. Phytomer](figures/one_plant/upscale_4_phytomer.png)
-![5. GrowthUnit](figures/one_plant/upscale_5_growthunit.png)
-![6. Axis](figures/one_plant/upscale_6_axis.png)
-![7. Plant](figures/one_plant/upscale_7_plant.png)
+![upscaling](figures/one_plant/upscaling.png)
 
 ## A population
 
@@ -69,7 +64,9 @@ The side views show the first planting row (four plants, seen along the row, in 
 ![soil slice, anomaly](figures/population/soil_slice_anomaly.png)
 ![top view](figures/population/top_view.png)
 
-The upscaling series of the first row's plants: [Compartments](figures/population/upscale_1_compartment.png), [SubOrgan](figures/population/upscale_2_suborgan.png), [Organ](figures/population/upscale_3_organ.png), [Phytomer](figures/population/upscale_4_phytomer.png), [GrowthUnit](figures/population/upscale_5_growthunit.png), [Axis](figures/population/upscale_6_axis.png), [Plant](figures/population/upscale_7_plant.png).
+The upscaling of the first row's plants:
+
+![upscaling](figures/population/upscaling.png)
 
 ## Notes
 
