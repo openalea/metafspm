@@ -36,8 +36,8 @@ def build_seedling(g, plant, parameters):
     from emergence_angle below the horizontal towards the vertical (gravitropism, per segment); every segment with
     its anatomy.
     """
-    p = dict(n_phytomers=3, n_leaf_elements=3, n_root_axes=3, n_root_segments=6, n_lateral_segments=3,
-             stem_length=0.02, leaf_length=0.03, leaf_width=0.005, root_length=0.025, lateral_length=0.015,
+    p = dict(n_phytomers=3, n_leaf_elements=3, n_root_axes=3, n_root_segments=6, n_lateral_segments=4,
+             stem_length=0.02, leaf_length=0.03, leaf_width=0.005, root_length=0.025, lateral_length=0.02,
              emergence_angle=15., gravitropism=0.35, lateral_gravitropism=0.08, tortuosity=0.08,
              pivot_emergence_angle=80., pivot_gravitropism=0.8, n_pivot_segments=8)
     p.update({key: value for key, value in parameters.items() if key in p})

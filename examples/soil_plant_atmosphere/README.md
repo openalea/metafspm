@@ -26,7 +26,7 @@ Volumes in mm³ keep the solves' residuals well above the solver's absolute tole
 
 ## One plant
 
-The scene converges in five steps (largest change of Ψ: 2.5e-01, 1.2e-03, 1.3e-05, 2.0e-07 MPa). Transpiration
+The scene converges in five steps (largest change of Ψ: 2.4e-01, 9.9e-04, 8.6e-06, 1.1e-07 MPa). Transpiration
 (0.076 mm³ s⁻¹) equals the root uptake and the water taken from the soil; the water table supplies it and the soil
 evaporation.
 
