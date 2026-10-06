@@ -93,7 +93,7 @@ Declarations that cannot be written back raise when the component is created: a 
 - Variables are floats by default.
 - `dtype="int"` keeps labels, types and indices as integers.
 - `dtype="object"` stores a list or record per entity, kept out of graph systems, derivations and transport.
-- **Label names** in masks, filters and boundary-set selects are resolved through `LabelsConfig`: `"RootSegment"` or `"SymplasticNode"` (label values, unique), or `"Symplastic"` within the variable's own scale group.
+- **Label names** in masks and filters are resolved through `LabelsConfig`: `"RootSegment"` or `"SymplasticNode"` (label values, unique), or `"Symplastic"` within the variable's own scale group.
 
 ## Outputs
 
@@ -159,7 +159,8 @@ Chains are `"axis"` ('<' successors) by default, or declared with `define_chain(
 ## Boundary sets
 
 ```python
-leaves = boundary_set(select=is_leaf, kind="robin", value="air_water_potential", weight="leaf_conductance")
+leaves = boundary_set(filters={"label": "LeafElement"}, kind="robin", value="air_water_potential",
+                      weight="leaf_conductance")
 ```
 
 - **Declared** in a graph-system class, and assembled by the framework in the field's residual:
@@ -171,7 +172,7 @@ leaves = boundary_set(select=is_leaf, kind="robin", value="air_water_potential",
   | `neumann` | `− v` (`v` is an inflow) |
 
   With a user Jacobian, the framework adds the sets' terms.
-- **`select`** is a `{variable: values}` dict, a variable name (selects where it is > 0), or a callable. Membership follows its variables and the topology.
+- **`filters`** is a `{variable: condition}` dict, a mask name, or a callable, as for every decorator. Membership follows its variables and the topology.
 - **Live values.** `value` and `weight` are read at each solve.
 - **Parameters of grown entities.** A parameter read from the MTG gets its value for new entities at the refresh before the next solve. Until then, masks built on it use its `on_grow` value.
 - **Hand-set boundary ports** (`_boundary_ports`) are deprecated.
@@ -219,10 +220,10 @@ leaves = boundary_set(select=is_leaf, kind="robin", value="air_water_potential",
 
 ## Masks
 
-- **Defining.** `ds.define_mask(name, rule)` takes a `{variable: condition}` rule (`">0"`, a value, a list of values) or a callable. `ds.mask(name)` is recomputed when its variables were written; `ds.mask_version(name)` changes with its values.
+- **Defining.** `ds.define_mask(name, rule)` takes a `{variable: condition}` rule (a comparison such as `">0"` or `"<=0.03"`, a value, a list of values, label names; a variable at a coarser scale is read at each entity's entity of that scale) or a callable. The decorators' `filters=` take the same rules, or a mask name. `ds.mask(name)` is recomputed when its variables were written; `ds.mask_version(name)` changes with its values.
 - **The active mask.** A structural component's `active = {...}` defines the mask `"active"`.
-- **Vectorised steps** compute on the entities of the `"active"` mask when the DataStructure defines it: arguments at its location are restricted, and outputs are written on them only. `@rate(where=None)` computes everywhere; `where="name"` chooses another mask. MPG-style steps always see every entity.
-- **Graph systems** solve on the whole graph unless `@graph_system(where="active")`. With it, they solve on the active nodes and the edges between them:
+- **Vectorised steps** compute on the entities of the `"active"` mask when the DataStructure defines it: arguments at its location are restricted, and outputs are written on them only. `@rate(include_inactive=True)` lifts it; `filters=` restricts a step further. MPG-style steps always see every entity.
+- **Graph systems** solve on the whole graph unless `@graph_system(filters=...)`, e.g. `filters="active"`. With it, they solve on the selected nodes and the edges between them:
   - inactive nodes are frozen, and dropped edges carry no flux;
   - a steady system (`transient=False`, the default for Newton and root solvers) needs a Dirichlet anchor in every connected piece.
 

@@ -164,7 +164,7 @@ class Neumann(FunctionalComponent):
 
     @graph_system(node_unknowns=["u"], transient=True)
     class _solve:
-        collar = boundary_set(select="is_collar", kind="neumann", value=0.25)
+        collar = boundary_set(filters={"is_collar": ">0"}, kind="neumann", value=0.25)
         _balance = node_balance(field="u")(_diffusion_residual)
 
 
@@ -183,7 +183,7 @@ class ConstantRobin(FunctionalComponent):
 
     @graph_system(node_unknowns=["u"], transient=True)
     class _solve:
-        collar = boundary_set(select="is_collar", kind="robin", value=0.5, weight=2.)
+        collar = boundary_set(filters={"is_collar": ">0"}, kind="robin", value=0.5, weight=2.)
         _balance = node_balance(field="u")(_diffusion_residual)
 
 
@@ -206,7 +206,7 @@ class RobinByCode(FunctionalComponent):
 
     @graph_system(node_unknowns=["u"], transient=True)
     class _solve:
-        tips = boundary_set(select=lambda ds: np.ones(ds.n_nodes(), dtype=bool), kinds="kind_code", value=3.,
+        tips = boundary_set(filters=lambda ds: np.ones(ds.n_nodes(), dtype=bool), kinds="kind_code", value=3.,
                             weight="conductance")
         _balance = node_balance(field="u")(_diffusion_residual)
 
@@ -235,7 +235,7 @@ class TwoUnknowns(FunctionalComponent):
 
     @graph_system(node_unknowns=["u", "w"], transient=True)
     class _solve:
-        collar = boundary_set(select="is_collar", kind="dirichlet", value=4., field="w")
+        collar = boundary_set(filters={"is_collar": ">0"}, kind="dirichlet", value=4., field="w")
         _u = node_balance(field="u")(_diffusion_residual)
 
         @node_balance(field="w")
@@ -252,7 +252,7 @@ class TwoUnknownsWithoutField(FunctionalComponent):
 
     @graph_system(node_unknowns=["u", "w"], transient=True)
     class _solve:
-        collar = boundary_set(select="is_collar", kind="dirichlet", value=4.)
+        collar = boundary_set(filters={"is_collar": ">0"}, kind="dirichlet", value=4.)
         _u = node_balance(field="u")(_diffusion_residual)
 
         @node_balance(field="w")
@@ -272,11 +272,11 @@ def test_field_chooses_the_unknown_of_a_set_and_is_required_with_several_unknown
 
 def test_boundary_set_arguments_are_checked():
     with pytest.raises(ValueError, match="not both"):
-        boundary_set(select="is_collar", kind="robin", kinds="kind_code")
+        boundary_set(filters={"is_collar": ">0"}, kind="robin", kinds="kind_code")
     with pytest.raises(ValueError, match="kind must be one of"):
-        boundary_set(select="is_collar", kind="flux")
-    with pytest.raises(TypeError, match="select must be"):
-        boundary_set(select=3, kind="dirichlet")
+        boundary_set(filters={"is_collar": ">0"}, kind="flux")
+    with pytest.raises(TypeError, match="filters must be"):
+        boundary_set(filters=3, kind="dirichlet")
 
 
 
@@ -293,7 +293,7 @@ class CoupledInflow(FunctionalComponent):
     class _solve:
         _balance = node_balance(field="u")(_diffusion_residual)
 
-        @boundary_condition("node", "neumann", field="u", select="is_collar")
+        @boundary_condition("node", "neumann", field="u", filters={"is_collar": ">0"})
         def _collar(self, supply):
             return supply                                      # an inflow, sliced to the selected nodes
 
@@ -322,7 +322,7 @@ class UptakeEquation(FunctionalComponent):
     class _solve:
         _balance = node_balance(field="u")(_diffusion_residual)
 
-        @boundary_condition("node", "neumann", field="u", select=lambda ds: np.asarray(ds.get("is_collar")) > 0)
+        @boundary_condition("node", "neumann", field="u", filters=lambda ds: np.asarray(ds.get("is_collar")) > 0)
         def _collar(self, u, external, exchange_rate):
             return exchange_rate * (external - u)
 
@@ -347,7 +347,7 @@ class PrescribedCollar(FunctionalComponent):
     class _solve:
         _balance = node_balance(field="u")(_diffusion_residual)
 
-        @boundary_condition("node", "dirichlet", field="u", select="collar")
+        @boundary_condition("node", "dirichlet", field="u", filters="collar")
         def _collar(self, u, collar_value):
             return u - collar_value
 
@@ -519,7 +519,7 @@ class ActiveOutputs(FunctionalComponent):
     doubled: float = state_variable(**DOC, initialize=-1., scale=scales.SubOrgan)
     time_step = DT
 
-    @graph_system(node_unknowns=["u"], edge_unknowns=["flux"], transient=True, where="active")
+    @graph_system(node_unknowns=["u"], edge_unknowns=["flux"], transient=True, filters="active")
     class _solve:
         @node_balance(field="u")
         def _balance(self, u, flux):
@@ -626,7 +626,7 @@ def test_a_filtered_balance_adds_its_terms_on_the_selected_nodes_only():
     model()
     A = np.eye(ds.n_nodes()) / DT + K * _laplacian(ds)
     np.testing.assert_allclose(ds.get("u"), np.linalg.solve(A, np.where(zone == 1, source, 0.)), rtol=1e-10)
-    with pytest.raises(KeyError, match="'nowhere' is used by a graph system but is not registered"):
+    with pytest.raises(KeyError, match="variable 'nowhere' is not registered"):
         FilterOnMissingVariable(data_structure=_ds())()
 
 
@@ -639,7 +639,7 @@ class SelectedOutput(FunctionalComponent):
     class _solve:
         _balance = node_balance(field="u")(_diffusion_residual)
 
-        @graph_output("collar_u", location="node", select="is_collar")
+        @graph_output("collar_u", location="node", filters={"is_collar": ">0"})
         def _collar_u(self, u):
             self.seen = len(u)                                           # the arguments are sliced to the selection
             return 2. * u
@@ -656,5 +656,5 @@ def test_a_selected_output_is_computed_on_its_nodes_only():
 
 
 def test_a_selected_output_is_on_nodes():
-    with pytest.raises(ValueError, match="select= chooses nodes"):
-        graph_output("flux", location="edge", select="is_collar")
+    with pytest.raises(ValueError, match="filters= chooses nodes"):
+        graph_output("flux", location="edge", filters={"is_collar": ">0"})

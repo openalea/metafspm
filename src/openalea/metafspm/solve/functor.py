@@ -123,16 +123,33 @@ class Functor:
             ds.set(name, values)
 
     def _mask(self, instance, ds):
-        """(mask, location) restricting this step, or (None, None): "active" by default, where=None opts out."""
-        where = getattr(self.fun, "__where__", "active")
-        if where is None or not hasattr(ds, "has_mask"):
+        """
+        (mask, location) restricting this step, or (None, None): the step's filters, and the DataStructure's "active"
+        mask unless include_inactive (both at the same location; an edge filter is not restricted by the active nodes).
+        """
+        if not hasattr(ds, "has_mask"):
             return None, None
-        if not ds.has_mask(where):
-            if where != "active":
-                raise KeyError(f"{type(instance).__name__}.{self.name}: mask '{where}' is not defined on the "
-                               "DataStructure")
-            return None, None
-        return ds.mask(where), ds.__dict__["_masks"][where]["location"]
+        masks = ds.__dict__.get("_masks", {})
+        active = None
+        if not getattr(self.fun, "__include_inactive__", False) and ds.has_mask("active"):
+            active = (ds.mask("active"), masks["active"]["location"])
+        rule = getattr(self.fun, "__filters__", None)
+        if rule is None:
+            return active if active is not None else (None, None)
+        from openalea.metafspm.solve.decorator import Filters
+        location = self._filters_location(ds, rule)
+        name = Filters(rule, f"{type(instance).__name__}.{self.name}", location).mask_name(ds)
+        mask, location = ds.mask(name), ds.__dict__["_masks"][name]["location"]
+        if active is not None and active[1] == location:
+            mask = mask & active[0]
+        return mask, location
+
+    @staticmethod
+    def _filters_location(ds, rule):
+        """The entities a step's filters select: edges when every key is an edge variable, else nodes (or cells)."""
+        if isinstance(rule, dict) and all(ds.has(key) and ds.location(key) == "edge" for key in rule):
+            return "edge"
+        return "node"
 
     def _output_location(self, instance, ds, name, values, declared):
         """

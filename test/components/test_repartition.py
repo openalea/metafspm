@@ -140,7 +140,7 @@ class Uptake(FunctionalComponent):
     def _root_uptake(self, struct_mass):
         return 2. * struct_mass
 
-    @rate(where=None)
+    @rate(include_inactive=True)
     def _everywhere(self, struct_mass):
         return np.ones_like(struct_mass)
 

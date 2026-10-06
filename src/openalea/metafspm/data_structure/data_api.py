@@ -22,6 +22,8 @@ from typing      import Optional, Union
 
 from openalea.metafspm.data_structure.arraydict import ArrayDict
 from types import MappingProxyType
+import re
+
 import numpy as np
 from scipy.sparse import coo_matrix, csc_matrix, csr_matrix, diags, eye, kron, issparse
 
@@ -593,7 +595,8 @@ class VariableStoreMixin:
         stamps = None if callable(rule) else (self.topology_version,
                                               tuple(self.write_count(variable) for variable in rule))
         if spec["values"] is None or stamps is None or stamps != spec["stamps"]:
-            values = np.asarray(rule(self), dtype=bool) if callable(rule) else self._evaluate_mask(name, rule)
+            values = (np.asarray(rule(self), dtype=bool) if callable(rule)
+                      else self._evaluate_mask(name, rule, spec["location"]))
             shape = tuple(self._location_shape(spec["location"]))
             if values.shape != shape:
                 raise ValueError(f"mask '{name}' has shape {values.shape}, its location '{spec['location']}' has {shape}")
@@ -607,27 +610,49 @@ class VariableStoreMixin:
         self.mask(name)
         return self.__dict__["_masks"][name]["version"]
 
-    def _evaluate_mask(self, name: str, rule: dict) -> np.ndarray:
+    _CONDITION = re.compile(r"^\s*(<=|>=|==|!=|<|>)\s*([-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?)\s*$")
+
+    def _evaluate_mask(self, name: str, rule: dict, location: str = "node") -> np.ndarray:
+        """
+        The entities at *location* where every {variable: condition} holds. A condition is a comparison string
+        (">0", "<=0.03", "!=2"), a value, or a list of values; label names are resolved to their codes. A variable
+        at a coarser scale (or a scalar) is read at each entity's entity of that scale.
+        """
         result = None
         for variable, condition in rule.items():
             if not self.has(variable):
                 raise KeyError(f"mask '{name}': variable '{variable}' is not registered")
             values = np.asarray(self.get(variable))
-            comparisons_names = (">0", "<0", ">=0", "<=0")
-            if hasattr(self, "resolve_codes") and not (isinstance(condition, str) and condition in comparisons_names):
-                condition = self.resolve_codes(variable, condition)     # label names -> codes
-            if isinstance(condition, str):
-                comparisons = {">0": values > 0, "<0": values < 0, ">=0": values >= 0, "<=0": values <= 0}
-                if condition not in comparisons:
-                    raise ValueError(f"mask '{name}': condition '{condition}' on '{variable}' is not one of "
-                                     f"{list(comparisons)}")
-                selected = comparisons[condition]
-            elif isinstance(condition, (list, tuple, set, np.ndarray)):
-                selected = np.isin(values, np.asarray(list(condition), dtype=float))
+            if self.location(variable) != location:
+                values = self._mask_values_at(name, variable, values, location)
+            comparison = self._CONDITION.match(condition) if isinstance(condition, str) else None
+            if comparison is not None:
+                operator, threshold = comparison.group(1), float(comparison.group(2))
+                selected = {"<": np.less, "<=": np.less_equal, ">": np.greater, ">=": np.greater_equal,
+                            "==": np.equal, "!=": np.not_equal}[operator](values, threshold)
             else:
-                selected = values == condition
+                if hasattr(self, "resolve_codes"):
+                    condition = self.resolve_codes(variable, condition)     # label names -> codes
+                if isinstance(condition, str):
+                    raise ValueError(f"mask '{name}': condition '{condition}' on '{variable}' is neither a comparison "
+                                     "(e.g. '>0', '<=0.03') nor a label name")
+                if isinstance(condition, (list, tuple, set, np.ndarray)):
+                    selected = np.isin(values, np.asarray(list(condition), dtype=float))
+                else:
+                    selected = values == condition
             result = selected if result is None else result & selected
         return result
+
+    def _mask_values_at(self, name: str, variable: str, values, location: str) -> np.ndarray:
+        """Values of *variable* seen by the entities at *location* (from a coarser scale or a scalar)."""
+        source = self.location(variable)
+        if source == "scalar":
+            return np.broadcast_to(values, tuple(self._location_shape(location)))
+        try:
+            return np.asarray(self._map(values, source, location, "broadcast"))
+        except (ValueError, KeyError, NotImplementedError):
+            raise ValueError(f"mask '{name}': '{variable}' is at {source}, which the entities at {location} cannot "
+                             "read (a coarser scale is needed)") from None
 
     def parents(self) -> np.ndarray:
         raise NotImplementedError(f"{type(self).__name__} has no graph traversal")

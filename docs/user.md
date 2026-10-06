@@ -120,8 +120,13 @@ carbon()                                  # one time step: every step, in the sc
   `@potential`, `@allocation`, `@actual`, `@segmentation`, `@postsegmentation`. They receive whole arrays; a step
   written with scalar logic opts out with `@rate(vectorized=False)`. A step returning `-> tuple[...]` gives several
   outputs, `(value, "other_name", other_value)`; a step returning `None` writes nothing.
-- **Masks.** When the DataStructure defines an `"active"` mask, steps compute on its entities only; `@rate(where=None)`
-  computes everywhere, `@rate(where="apices")` on another mask.
+- **Selections.** Every decorator takes `filters=`, the entities it operates on, written as explicit key / values
+  that must all hold: `@rate(filters={"label": "RootSegment", "length": ">0.01"})`. A value is matched, a list is
+  one of several values, a comparison string (`">0"`, `"<=0.03"`) is tested, and label names are resolved. A key
+  may name a variable at a coarser scale (e.g. a segment's label for its anatomy Compartments). A mask name
+  (`ds.define_mask`) or a callable `ds -> boolean array` select as well, for geometry or masks shared with mappings.
+  When the DataStructure defines an `"active"` mask (emergence, dead tissues), steps also compute on its entities
+  only; `include_inactive=True` lifts it.
 - **Inheritance.** A subclass runs its bases' steps, a redefined step replacing its base's; `steps_removed =
   ("name",)` removes inherited ones.
 - **Compiled steps.** A step may call a `numba.njit` function on its arrays; parameters reach it as arrays (zero-stride
@@ -148,7 +153,7 @@ class SoilDiffusion(FunctionalComponent):
 
     @graph_system(node_unknowns=["solute"], edge_unknowns=["solute_flux"], transient=True, integrate="adaptive")
     class _diffusion:
-        bottom = boundary_set(select=lambda ds: ds.layer_mask(z=-1), kind="dirichlet", value=0.)
+        bottom = boundary_set(filters=lambda ds: ds.layer_mask(z=-1), kind="dirichlet", value=0.)
 
         @node_balance(field="solute")
         def _balance(self, solute, solute_flux):
@@ -171,24 +176,26 @@ class SoilDiffusion(FunctionalComponent):
   Newton. The node unknowns of one system use one form. `integrate="substeps"` (with `n_substeps`) or `"adaptive"`
   (step doubling, `rtol` / `atol`) integrate over the component's time step. Edge unknowns are algebraic
   (`@edge_law`), whatever the solver.
-- **Boundary sets.** `boundary_set(select=..., kind="robin" | "dirichlet" | "neumann", value=..., weight=...)` on a
-  set of nodes (a mask rule, a variable, a callable), with values and weights read at each solve. `kinds="variable"`
+- **Boundary sets.** `boundary_set(filters=..., kind="robin" | "dirichlet" | "neumann", value=..., weight=...)` on a
+  set of nodes, with values and weights read at each solve. `kinds="variable"`
   reads each node's kind from a node variable (`boundary_set.CODES`: 1 Dirichlet, 2 Neumann, 3 Robin, otherwise
   none), e.g. a collar switching between a pressure and a flux. `kind=None` is a selection only.
 - **Boundary conditions as equations.** When the condition is an expression rather than a variable,
-  `@boundary_condition("node", "dirichlet" | "neumann", field=..., select=...)` tags a method that takes its
+  `@boundary_condition("node", "dirichlet" | "neumann", field=..., filters=...)` tags a method that takes its
   arguments by name like the balances: unknowns and DataStructure variables (e.g. coupled ones), sliced to the
   selected nodes. A Dirichlet method returns the residual (`p - collar_pressure`), a Neumann one the inflow
   (`uptake_rate * (soil_concentration - concentration)`), with the same sign as a `boundary_set`'s value.
-- **Selections.** Every part of a graph system can be restricted to some nodes:
-  - balances: `filters=`;
-  - boundary sets and conditions: `select=`;
-  - outputs: `@graph_output(..., select=)`, zero elsewhere;
-  - steps: `where=` (a mask), e.g. a step computing the root surface's conductances only.
+- **Selections** (`filters=`, as for steps). Outside them:
+  - a balance or an edge law contributes 0;
+  - a boundary has no term;
+  - `@graph_output(..., filters=)` gives 0.
+
+  The method's arguments are sliced to the selection; values read through `self` (e.g. `self.previous()`) are not.
 - **Pool unknowns.** `pool_unknowns={"shoot_sugar": {"location": "Plant", "exchange": "collar"}}` adds one unknown
   per plant, solved with the graph; its residual is a `@pool_balance(field=...)`, and equations exchange with it
   through `self.pool_exchange(name)` (a sparse node × pool map). Newton solvers only.
-- **Active subgraphs and pieces.** `where="active"` solves on the masked nodes (others frozen); `split="components"`
+- **Active subgraphs and pieces.** `@graph_system(filters=...)` solves on the subgraph of the selected nodes (the
+  others frozen, dropped edges without flux), e.g. `filters="active"`; `split="components"`
   solves each connected piece (each plant) on its own, with its own convergence and adaptive steps.
 - **Forcings.** `self.forcing(name)` interpolates a time series of `self.forcings` (or of the scene's table) at the
   end of the current (sub-)step, or at the evaluation time of an IVP solver.

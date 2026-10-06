@@ -37,7 +37,7 @@ def _population(sizes=(3, 5)):
 
 
 class _Equations:
-    collar = boundary_set(select="is_collar")                     # a selection: the nodes exchanging with the pool
+    collar = boundary_set(filters={"is_collar": ">0"})                     # a selection: the nodes exchanging with the pool
 
     @node_balance(field="sugar")
     def _balance(self, sugar, shoot_sugar):
@@ -135,7 +135,7 @@ class SwitchingCollar(FunctionalComponent):
 
     @graph_system(node_unknowns=["sugar"], transient=True)
     class _solve:
-        collar = boundary_set(select="is_collar", kinds="collar_kind", value="collar_value")
+        collar = boundary_set(filters={"is_collar": ">0"}, kinds="collar_kind", value="collar_value")
 
         @node_balance(field="sugar")
         def _balance(self, sugar):

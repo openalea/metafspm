@@ -11,7 +11,7 @@ from openalea.metafspm.coupling.component import FunctionalComponent, state_vari
 from openalea.metafspm.coupling.translator import Translator
 from openalea.metafspm.data_structure.configs import ScalesConfig as scales
 from openalea.metafspm.data_structure.data_api import ArrayDataStructure, MPGDataStructure
-from openalea.metafspm.solve.decorator import _read_array, _type_mask, boundary_condition
+from openalea.metafspm.solve.decorator import Filters, _read_array, boundary_condition
 from openalea.metafspm.testing import couplability_problems
 from simple_seedling import generate_simple_mpg_seedling
 
@@ -84,9 +84,20 @@ def test_a_missing_graph_variable_raises_instead_of_reading_zeros(ds):
         _read_array(ds, "K_axail", "edge", ds.n_edges(), owner="Probe")
 
 
-def test_a_missing_filter_variable_raises_instead_of_selecting_everything():
-    with pytest.raises(KeyError, match="filter variable 'is_root' is not available"):
-        _type_mask({"is_root": [1]}, {"concentration": np.zeros(3)}, 3)
+def test_a_missing_filter_variable_raises_instead_of_selecting_everything(seedling_ds_for_filters):
+    with pytest.raises(KeyError, match="variable 'is_root' is not registered"):
+        Filters({"is_root": [1]}, "test").mask(seedling_ds_for_filters)
+
+
+def test_a_filters_string_names_a_mask(seedling_ds_for_filters):
+    with pytest.raises(KeyError, match="names no mask"):
+        Filters("is_root", "test").mask(seedling_ds_for_filters)
+
+
+@pytest.fixture
+def seedling_ds_for_filters():
+    from plants import seedling_ds
+    return seedling_ds()[2]
 
 
 def test_edge_boundary_conditions_are_rejected_until_boundary_sets():
@@ -99,10 +110,8 @@ def test_edge_boundary_conditions_are_rejected_until_boundary_sets():
 def test_boundary_condition_arguments_are_checked():
     with pytest.raises(ValueError, match="kind must be 'dirichlet' or 'neumann'"):
         boundary_condition("node", "robin", field="flux")
-    with pytest.raises(ValueError, match="select= or filters=, not both"):
-        boundary_condition("node", "dirichlet", field="flux", select="collar", filters={"is_collar": [1]})
-    with pytest.raises(TypeError, match="select must be"):
-        boundary_condition("node", "dirichlet", field="flux", select=3)
+    with pytest.raises(TypeError, match="filters must be"):
+        boundary_condition("node", "dirichlet", field="flux", filters=3)
 
 
 # ---------------------------------------------------------------- couplability with a DataStructure

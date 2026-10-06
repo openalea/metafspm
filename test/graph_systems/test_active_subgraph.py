@@ -52,7 +52,7 @@ class WholeDiffusion(DiffusionFields):
 
 @dataclass
 class ActiveDiffusion(DiffusionFields):
-    _diffusion = _diffusion(where="active", transient=True)
+    _diffusion = _diffusion(filters="active", transient=True)
 
 
 def _ds(alive=None):
@@ -129,13 +129,13 @@ class SteadyPotential(FunctionalComponent):
     K: float = parameter(**DOC, by="", default=1., location="edge")
     is_collar: float = parameter(**DOC, by="", default=0., location="node")
 
-    @graph_system(node_unknowns=["potential"], edge_unknowns=["water_flux"], solver="newton", where="active")
+    @graph_system(node_unknowns=["potential"], edge_unknowns=["water_flux"], solver="newton", filters="active")
     class _steady:
         @node_balance(field="potential")
         def _balance(self, water_flux):
             return np.asarray(self._graph_view.incidence @ water_flux).reshape(-1)
 
-        collar = boundary_set(select={"is_collar": [1]}, kind="dirichlet", value=-0.1)
+        collar = boundary_set(filters={"is_collar": [1]}, kind="dirichlet", value=-0.1)
 
         @edge_law(field="water_flux")
         def _darcy(self, potential, water_flux, K):

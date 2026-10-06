@@ -46,8 +46,8 @@ class _Hydraulics:
         return np.asarray((B @ diags(K) @ B.T) @ water_potential).reshape(-1)
 
     # the exchanges, w (p - v), added to the balance by the framework (and to the analytic Jacobian)
-    soil = boundary_set(select="is_soil", kind="robin", value="soil_water_potential", weight=SOIL_WEIGHT)
-    collar = boundary_set(select="is_collar", kind="robin", value="xylem_water_potential", weight=XYLEM_WEIGHT)
+    soil = boundary_set(filters={"is_soil": ">0"}, kind="robin", value="soil_water_potential", weight=SOIL_WEIGHT)
+    collar = boundary_set(filters={"is_collar": ">0"}, kind="robin", value="xylem_water_potential", weight=XYLEM_WEIGHT)
 
     @graph_output(name="edge_water_flux", location="edge")
     def _edge_flux(self, water_potential, K_membrane, K_symplastic, K_apoplastic):
@@ -179,7 +179,7 @@ class ChainDirichlet(ChainFields):
     @graph_system(node_unknowns=["pressure"], solver="newton", max_iter=50, tol=1e-12)
     class _solve:
         _balance = node_balance(field="pressure")(_laplacian)
-        collar = boundary_set(select="is_collar", kind="dirichlet", value=2.0)
+        collar = boundary_set(filters={"is_collar": ">0"}, kind="dirichlet", value=2.0)
 
 
 @dataclass
@@ -190,7 +190,7 @@ class ChainNeumann(ChainFields):
         def _balance(self, pressure, K):
             return _laplacian(self, pressure, K) + 0.5 * pressure          # a leakage, so that the system is regular
 
-        collar = boundary_set(select="is_collar", kind="neumann", value=1.0)   # an inflow of 1.0
+        collar = boundary_set(filters={"is_collar": ">0"}, kind="neumann", value=1.0)   # an inflow of 1.0
 
 
 def _chain(component_class):
