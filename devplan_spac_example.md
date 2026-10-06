@@ -1,0 +1,107 @@
+# Plan: an example of metafspm, water in the soil–plant–atmosphere continuum
+
+Your request (2026-10-06): one simple example that shows every feature of metafspm on water flow from the soil through a plant to the atmosphere. It must contain:
+- a transport component, j = k ΔΨ, steady (hydrostatic), with axial and radial fluxes;
+- a conductance component computing k from the edge types and lengths, coupled to the transport through the DataStructure;
+- both components on a whole seedling with root and leaf anatomies, and on a soil grid;
+- plant ↔ soil coupling: soil Ψ is a boundary of the plant, and the plant's radial uptake is a Neumann sink of the soil;
+- the water table and the atmosphere as boundaries;
+- conductances scaled down where water turns to vapour;
+- two scenes: one plant, and a population;
+- plots of the DataStructures and of the converged potentials.
+
+Answer the questions in §4 on the `→ answer:` lines; §1–§3 follow my recommendations until then.
+
+## 1. What the example shows, feature by feature
+
+| feature | where in the example |
+|---|---|
+| a `FunctionalComponent` with declarations (scale / location, kinds, units) | `WaterTransport`, `Conductance` |
+| a graph system, residual form, Newton; an edge law; a `@graph_output` | `WaterTransport`: node balance Σ j = 0, edge law j = k ΔΨ, output of the radial uptake |
+| boundary sets (Dirichlet, Robin) and `@boundary_condition` as an equation | water table (Dirichlet), atmosphere (Robin, vapour conductance), soil ↔ root exchange (an equation of coupled variables) |
+| a `StructuralComponent` with `initiate_plant` | `SeedlingStructure` builds each plant (all scales, Plant → SubOrgan), with root and leaf anatomies and their geometry |
+| anatomy mode and junction wiring | `MPGDataStructure(nodes="Compartment", wiring=...)`: radial edges inside segments, axial xylem junctions between them |
+| coupling within one DataStructure (translator, an alias or a derived variable) | `Conductance.k` → `WaterTransport.conductance`, through the plant's translator |
+| one component class on two DataStructures | the same `WaterTransport` and `Conductance` on the plant MPG and on the soil `ArrayDataStructure` (cells as nodes, faces as edges) |
+| coupling across DataStructures | `CrossMapping` of the root epidermis onto the soil cells (`mask=`): soil Ψ broadcast down, radial uptake summed up |
+| a scalar environment | the atmosphere's Ψ, a `ScalarMapping` (or a forcing, Q8) |
+| scenes | `Scene` with one plant, then a planted population, the soil as an environment model, a `SceneRecorder` |
+| plots | the DataStructures (graph, anatomy, grid) and the converged Ψ on them |
+
+## 2. The model
+
+- **Plant** (one MPG, anatomy mode). The nodes are Compartments:
+  - **root segment:** epidermis → cortex → endodermis → xylem, a chain of radial edges;
+  - **leaf element:** xylem → mesophyll → stomatal cavity, radial edges;
+  - **stem element:** xylem only (Q5);
+  - **axial edges:** junctions between the xylems of adjacent segments.
+
+  Segment geometry (lengths, coordinates) comes from `SeedlingStructure.initiate_plant`, oriented in the soil and air at the plant's position. An edge's length L_e is the segment length for an axial edge, and a radial distance for a radial edge (a parameter per tissue).
+- **Edge types:** a `edge_type` variable on the edges, from the Connection labels (transmembrane, apoplastic, symplastic, junction), plus "gas" for the edges leaving to the air (stomatal cavity → atmosphere, soil surface → atmosphere). Each type has a specific conductance `k_s` (parameters).
+- **`Conductance`:** k = f(k_s[type], L_e) (Q1), written in a step at each call. It is a state variable, read by `WaterTransport` as an input through the translator. On a grid, the faces have type "soil": k = K_sat · face_area / face_distance.
+- **`WaterTransport`:** a steady balance per node, Σ_edges j = boundary terms, with j = k (Ψ_tail − Ψ_head). The transport is the same class on both DataStructures; boundary terms are declared as boundary sets, active where their selecting variable exists:
+  - **plant:** the stomatal cavities exchange with the atmosphere (Robin, weight = k_gas, value = Ψ_atm); the root epidermis exchanges with the soil, as an equation `k_root_soil * (Ψ_soil - Ψ_epidermis)` of the coupled Ψ_soil (Neumann, `@boundary_condition`);
+  - **soil:** the bottom layer is held at the water table (Dirichlet); the top layer exchanges with the atmosphere (Robin, gas-scaled); each cell receives minus the plants' uptake (Neumann value: the mapped uptake).
+- **Liquid → gas:** edges of type "gas" get k = k_s · L_e (or / L_e) times a factor f_vap (Q3), so that the vapour step limits the flow, as stomata and the soil surface do.
+- **Coupling plant ↔ soil:** a lagged fixed point. At each scene step, the soil solves with the uptake of the plants' last solve, then the plants solve with the soil's new Ψ. A steady state is reached when the step-to-step changes vanish (Q4).
+
+## 3. Code layout (proposed)
+
+```
+examples/soil_plant_atmosphere/
+  components.py   Conductance, WaterTransport, SeedlingStructure (initiate_plant), anatomy and wiring rules
+  models.py       PlantModel (population model: initiators, components, translator), SoilModel and Atmosphere
+                  (environment models)
+  translators.py  the plant translator (k → conductance) and the scene translator (soil ↔ plant links)
+  plotting.py     plant graph and anatomy, soil grid slices, potentials on both
+  one_plant.py    Scene with one plant: runs to steady state, plots
+  population.py   Scene with a planted population (e.g. 3 × 3), same soil: runs, plots
+  README.md       what each file shows, with the figures
+test/examples/test_soil_plant_atmosphere.py
+                  a smoke test of both scenes (few steps, small grid), checking mass balance (Σ uptake =
+                  transpiration, water table inflow = uptake + soil evaporation at steady state)
+```
+
+The user guide gets a short page pointing to it.
+
+## 4. Questions
+
+- **Q1 — conductance and length.** You wrote k = k_s · L_e. A conductance usually decreases with the path length (Darcy, Poiseuille: k = k_s · A / L_e), so a longer segment carries less flow for the same ΔΨ. Should it be k = k_s / L_e (k_s in m³ s⁻¹ MPa⁻¹ · m, cross-section folded into k_s), and k = K_sat · A / d on soil faces? Or k = k_s · L_e as written (e.g. radial conductance per unit length of root, which does grow with L)? **Recommendation:** both, by edge type: radial edges k = k_s · L_e (the exchange surface grows with the segment length), axial edges and soil faces k = k_s / L_e (resp. K_sat · A / d).
+  → answer:
+- **Q2 — component kinds.** You called the conductance component structural. In metafspm, a `StructuralComponent` builds or edits the structure (`initiate_plant`, growth). I propose:
+  - `SeedlingStructure`, a `StructuralComponent`, builds the plant (all scales, anatomies, lengths, coordinates);
+  - `Conductance`, a `FunctionalComponent`, reads the edge types and lengths and writes k.
+
+  Or should `Conductance` itself be the `StructuralComponent` that initiates the plant? **Recommendation:** the split above. Each class shows one role, and `Conductance` can then run unchanged on the soil grid, which has no plant to initiate.
+  → answer:
+- **Q3 — liquid to gas.** How should conductances be scaled where water evaporates (stomatal cavity → air, soil surface → air)?
+  - (a) a constant factor f_vap ≪ 1 on the "gas" edges' k (a parameter, e.g. 1e-3);
+  - (b) a physical vapour conductance: the flux driven by the vapour pressure difference, with Ψ ↔ relative humidity through Ψ = (RT/V_w) ln(RH), linearised, so k_gas = g_vap · e_sat(T) · V_w / (RT · P), with g_vap the stomatal / soil-surface conductance;
+  - (c) (b) with the exact non-linear relation (Newton handles it).
+
+  **Recommendation:** (b). It keeps a linear system and the physics of the phase change, and stays simple. (a) is not physical; (c) adds little for an example.
+  → answer:
+- **Q4 — the plant–soil fixed point.** The Scene exchanges once per step, so the coupled steady state is reached over steps (lagged). Should the example:
+  - (a) run steps until the changes fall under a tolerance (`stop_when`), and show the convergence;
+  - (b) iterate the plant and soil solves to convergence within each step (a coupled Picard loop in the scene)?
+
+  **Recommendation:** (a). It uses the Scene as it is, `stop_when` shows the services, and the steady problem converges quickly.
+  → answer:
+- **Q5 — anatomies.** Root segments: epidermis, cortex, endodermis, xylem. Leaf elements: xylem, mesophyll, stomatal cavity. Stem elements: xylem only, so that the axial path is continuous. Is this right, or should stems have an anatomy too (e.g. xylem and a parenchyma)? **Recommendation:** as proposed. The stem only carries water up.
+  → answer:
+- **Q6 — the plant.** The test seedling (2 phytomers with 3 leaf elements each, and a root axis with a lateral) built by `SeedlingStructure.initiate_plant` under each Plant vertex, with lengths and coordinates (root down into the soil, leaves up)? Or a slightly larger plant (e.g. 3 root axes with laterals), so that the soil uptake pattern shows on the plots? **Recommendation:** a slightly larger one, about 30 segments, with parameters for the numbers of axes and segments. The figures then show the uptake spread over several cells.
+  → answer:
+- **Q7 — the population scene.** For example 3 × 3 plants on a 0.3 m × 0.3 m stand over a 0.5 m deep soil, with the same soil model. Should the plants differ (e.g. per-plant `k_s` scenarios, or an emergence time for one row)? **Recommendation:** yes, per-plant root conductances from the planting table, so the plots show plants competing for water.
+  → answer:
+- **Q8 — the atmosphere.** A constant Ψ_atm (e.g. from RH = 50 % at 20 °C, about −93 MPa), or a forcing table over a day (RH and temperature varying, steady states followed hour by hour)? **Recommendation:** a day of hourly steady states from a forcing table. It shows forcings and makes the plots more telling (transpiration following RH); the steady states are cheap.
+  → answer:
+- **Q9 — location.** `examples/soil_plant_atmosphere/` at the repository root, with a smoke test in `test/examples/` and a user-guide page? **Recommendation:** yes.
+  → answer:
+- **Q10 — plots.** I propose:
+  - the plant graph laid out from its coordinates, each segment drawn with its anatomy as small radial markers, coloured by Ψ;
+  - the soil grid as a vertical slice through each plant (Ψ coloured), with the roots drawn over it;
+  - for the population, a top view of the uptake per column and the transpiration per plant;
+  - with Q8, a day plot of transpiration and soil evaporation.
+
+  Anything to add or remove? (matplotlib only, PNG files.)
+  → answer:

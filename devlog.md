@@ -1997,3 +1997,11 @@ Per-file counts:
 - **QPw finished:** `FunctionalComponent.props`, `DataStructurePropsView`, `_last_graph_system`, `_last_graph_solution` and `_make_compat_graph_system` are removed.
 - **Docs:** the user guide explains the two forms; the migration guide, conventions and API reference follow the new paths and API.
 - **Suite:** 743 passed, no warnings.
+
+## 2026-10-06: QPη and QPθ; the SPAC example designed
+
+- **QPη:** every numeric parameter now goes through the DataStructure, placed ones included. `model.k = v` writes every entity, and reading `self.k` in a step raises. One helper read `self.exudation_rate` in a step and now takes it as an argument.
+- **QPθ:** hand-set boundary ports are removed (component, decorator, and their test).
+- **The suite took 16 s instead of 9 s.** It was as slow at an older commit; it is the machine on battery, as you said.
+- **The example of water flow in the soil–plant–atmosphere continuum** is designed in `devplan_spac_example.md`: a feature map, the model, the code layout, and questions Q1–Q10 (conductance and length, component kinds, the liquid–gas scaling, the plant–soil fixed point, anatomies, plant size, population, atmosphere forcing, location, plots). Waiting for your answers.
+- **Suite:** 742 passed.
