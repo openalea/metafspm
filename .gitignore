@@ -106,3 +106,6 @@ CLAUDE.md
 */CLAUDE.md
 
 test/*.png
+
+# example outputs (records and figures written when running the examples)
+examples/**/outputs/

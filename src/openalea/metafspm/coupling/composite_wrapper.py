@@ -11,9 +11,6 @@ def _live_data_structure(component):
 
 class CompositeModel:
 
-    # Name of the soil component in the translator; subclasses coupled with another soil model override it
-    soil_name = "SoilModel"
-
     def get_documentation(self, filters: dict, models: list):
         """
         Documentation of the declared variables of each model, one column per metadata key.
@@ -56,92 +53,141 @@ class CompositeModel:
         return self.get_documentation(filters=dict(variable_type=["input"]), models=getattr(self, "components", []))
 
 
-    def declare_data(self, shoot=None, root=None, atmosphere=None, soil=None):
-        self.data_structures = {}
-        if shoot:
-            self.data_structures["shoot"] = shoot
-        if root:
-            self.data_structures["root"] = root
-        if atmosphere:
-            self.data_structures["atmosphere"] = atmosphere
-        if soil:
-            self.data_structures["soil"] = soil
-
     def couple_components(self, *args, translator_path: str = ""):
         """
         Couple the DataStructure-backed components *args* through the translator at *translator_path*
         (YAML or Python module): links between them become aliases and derived variables on their
-        DataStructure (see _couple_on_data_structures). Links with the soil component (``soil_name``) are
-        exchanged by the scene (coupler.Transport / Coupler); ``soil_outputs`` lists the soil variables read
-        by the plant components.
+        DataStructure (see _couple_on_data_structures). Links with components on other DataStructures (the
+        environment) are exchanged by the Scene (coupling.cross.Exchanges).
         """
         self.components = [component for component in args]
         for component in self.components:
             if _live_data_structure(component) is None:
                 raise TypeError(f"{type(component).__name__} is not DataStructure-backed: props-based components were "
-                                "removed, see docs/design/downstream_migration.md")
+                                "removed, see docs/migration.md")
 
         translator = self.open_or_create_translator(translator_path)
-        self.soil_inputs, self.soil_outputs = self.get_component_inputs_outputs(
-            translator=translator, components_names=[c.__class__.__name__ for c in self.components],
-            target_name=self.soil_name, names_for_others=False)
         self._couple_on_data_structures(translator)
 
     def _couple_on_data_structures(self, translator: dict) -> None:
         """
-        Coupling of DataStructure-backed components (design note §5): links between components sharing a
+        Coupling of DataStructure-backed components: links between components sharing a
         DataStructure become name-level aliases or derived variables refreshed by the receiver before its step;
         identities need nothing. Links with components outside this composite (e.g. the soil) are exchanged
-        by the scene, not here. Soil outputs are registered on the plant DataStructure, initialised to 0.
+        by the Scene, not here.
         """
         by_name = {component.__class__.__name__: component for component in self.components}
-        for component in self.components:
-            ds = component.data_structure
-            for name in self.soil_outputs:
-                if ds.has(name):
-                    ds.set(name, 0.)
-                else:
-                    ds.register(name, location="node")
-
-        for link in Translator.from_dict(translator).links:
+        links = translator.links if isinstance(translator, Translator) else Translator.from_dict(translator).links
+        for link in links:
             if link.receiver not in by_name or link.provider not in by_name or link.receiver == link.provider:
                 continue
             receiver, provider = by_name[link.receiver], by_name[link.provider]
             ds = receiver.data_structure
             if provider.data_structure is not ds:
                 raise NotImplementedError(f"{link.receiver}.{link.variable} <- {link.provider}: coupling across "
-                                          "DataStructures needs a Coupler (devplan WD.5)")
-            if link.kind == "identity":
+                                          "DataStructures goes through the Scene (coupling.cross.Exchanges)")
+            self._check_link_kinds(link, receiver, provider)
+            self._check_link_scales(link, ds)
+            detail = link.mapped_detail
+            if detail == "identity":
                 continue
-            if link.kind == "alias":
+            crosses_locations = (detail == "alias" and ds.has(link.variable)
+                                 and ds.location(link.variable) != ds.location(next(iter(link.sources))))
+            if detail == "alias" and not crosses_locations:
                 (source,) = link.sources
                 if ds.has(link.variable) and link.variable not in ds.aliases():
                     ds.unregister(link.variable)
                 ds.alias(link.variable, source)
                 continue
-            if link.detail == "same_name_factor":
+            if detail == "same_name_factor":
                 raise ValueError(f"{link.receiver}.{link.variable} is linked to {link.provider}.{link.variable} with "
                                  f"factor {link.sources[link.variable]}: a same-name link within one data structure "
                                  "must have a factor of 1, rename the receiving variable")
             location = ds.location(link.variable) if ds.has(link.variable) else None
+            aggregation = link.aggregation
+            if aggregation is None and location is not None:
+                aggregation = self._default_link_mapping(ds, link, location)
+            options = dict(location=location, aggregation=aggregation, weight=link.weight, target=link.target)
+            if link.target is not None and ds.has(link.variable):
+                options["default"] = ds._variable_meta().get(link.variable, {}).get("default", 0.)
             if link.formula is not None:
-                ds.derive(link.variable, link.sources, formula=link.formula, location=location,
-                          aggregation=link.aggregation, weight=link.weight)
+                ds.derive(link.variable, link.sources, formula=link.formula, **options)
             else:
-                ds.derive(link.variable, dict(link.sources), location=location,
-                          aggregation=link.aggregation, weight=link.weight)
+                ds.derive(link.variable, dict(link.sources), **options)
             derived_inputs = receiver.__dict__.setdefault("_derived_inputs", [])
             if link.variable not in derived_inputs:
                 derived_inputs.append(link.variable)
 
+    @staticmethod
+    def _declared_kind(component, ds, name):
+        spec = getattr(component, "_variable_specs", {}).get(name)
+        if spec is not None and spec.kind is not None:
+            return spec.kind
+        return ds._variable_meta().get(name, {}).get("kind") if hasattr(ds, "_variable_meta") else None
+
+    def _check_link_kinds(self, link, receiver, provider) -> None:
+        """A receiver declaring a state_variable_type must agree with its provider's."""
+        from openalea.metafspm.coupling.declaration import kinds_agree
+        ds = receiver.data_structure
+        received = getattr(receiver, "_variable_specs", {}).get(link.variable)
+        received = received.kind if received is not None else None
+        for source in link.sources:
+            provided = self._declared_kind(provider, ds, source)
+            if not kinds_agree(received, provided):
+                raise ValueError(f"{link.receiver}.{link.variable} ({received}) <- {link.provider}.{source} "
+                                 f"({provided}): the kinds do not agree (extensive with extensive, intensive or "
+                                 "massic with intensive or massic)")
+
+    @staticmethod
+    def _check_link_scales(link, ds) -> None:
+        """A link stating its scales must agree with the declared locations (the declarations rule)."""
+        from openalea.metafspm.coupling.declaration import location_of_scale
+        checks = [(link.variable, link.scale)] + [(source, link.source_scale) for source in link.sources]
+        for name, scale in checks:
+            if scale is None or not ds.has(name):
+                continue
+            expected, actual = location_of_scale(ds, scale), ds.location(name)
+            if expected != actual:
+                raise ValueError(f"{link.receiver}.{link.variable} <- {link.provider}: the link states that '{name}' "
+                                 f"is at scale {scale} ({expected}), but it is declared at {actual}")
+
+    @staticmethod
+    def _default_link_mapping(ds, link, location):
+        """
+        Mapping of a link between two locations that gives no aggregation, from its sources' state_variable_type
+        None when the locations are the same.
+        """
+        from openalea.metafspm.coupling.declaration import DeclarationError, default_mapping, link_direction
+        source_locations = {ds.location(source) for source in link.sources}
+        if len(source_locations) != 1 or location in source_locations:
+            return None
+        (source_location,) = source_locations
+        name = f"{link.receiver}.{link.variable} <- {link.provider}"
+        direction = link_direction(ds, source_location, location)
+        if direction is None:
+            raise DeclarationError(f"{name}: from {source_location} to {location} has no default mapping, give "
+                                   "aggregation=")
+        kinds = {ds._variable_meta().get(ds._resolve(source), {}).get("kind") for source in link.sources}
+        if len(kinds) != 1:
+            raise DeclarationError(f"{name}: its sources have different kinds {sorted(map(str, kinds))}, give "
+                                   "aggregation=")
+        (kind,) = kinds
+        try:
+            return default_mapping(kind, direction, name, weight=link.weight)
+        except DeclarationError as error:
+            raise DeclarationError(f"{error} (link from {source_location} to {location})") from None
+
     def open_or_create_translator(self, translator_path):
         """
-        Translator from a YAML file, or from a Python module defining ``translator = Translator(...)`` (.py),
-        in the nested {receiver: {provider: {variable: {source: factor}}}} format. A missing YAML file is built
-        interactively and written.
+        Translator from a YAML file, in the nested {receiver: {provider: {variable: {source: factor}}}} format, or
+        from a Python module defining ``translator = Translator(...)`` (.py), kept as a Translator so that its links'
+        options (aggregation, weight, target, formula, scales) are kept. A missing YAML file is built interactively
+        and written. A Translator or a nested dict given directly is used as is.
         """
+        if isinstance(translator_path, (Translator, dict)):
+            return translator_path
         if str(translator_path).endswith(".py"):
-            return Translator.from_module(str(translator_path)).to_nested()
+            return Translator.from_module(str(translator_path))
         try:
             with open(translator_path, "r") as f:
                 translator = yaml.safe_load(f)
@@ -188,10 +234,19 @@ class CompositeModel:
 
         return translator
 
-    def declare_data_and_couple_components(self, shoot=None, root=None, atmosphere=None, soil=None, translator_path: str = "", components: tuple = ()):
-        self.declare_data(shoot=shoot, root=root, atmosphere=atmosphere, soil=soil)
-
+    def declare_data_and_couple_components(self, translator_path: str = "", components: tuple = ()):
+        """
+        Couple *components* through the translator at *translator_path* (couple_components), then check that
+        their DataStructures are consistent (shapes, aliases, derivations).
+        """
         self.couple_components(translator_path=translator_path, *components)
+        # The coupled DataStructures must be consistent (shapes, aliases, derivations)
+        checked = []
+        for component in getattr(self, "components", ()):
+            ds = getattr(component, "data_structure", None)
+            if ds is not None and hasattr(ds, "validate_variables") and not any(ds is other for other in checked):
+                ds.validate_variables()
+                checked.append(ds)
 
 
     def apply_input_tables(self, tables: dict, to: tuple, when: float):
@@ -216,35 +271,3 @@ class CompositeModel:
                         raise TypeError("Unknown data structure to apply input data to")
                     # The table value applies to the whole variable
                     to[model].data_structure.set(var, tables[var][when])
-
-
-    def get_component_inputs_outputs(self, translator, components_names, target_name, names_for_others=True):
-        expected_inputs = []
-        expected_outputs = []
-
-        target_component = translator[target_name]
-
-        for component in components_names:
-            if component != target_name:
-                # Get outputs from all others
-                input_components = translator[component]
-                for provider, source_variables in input_components.items():
-                    # Among inputs if the target is found
-                    if provider == target_name:
-                        if names_for_others:
-                            expected_outputs += list(source_variables.keys())
-                        else:
-                            for _, translation in source_variables.items():
-                                expected_outputs += list(translation.keys())
-            
-                # Get inputs from all for target component
-                if names_for_others:
-                    for _, translation in target_component[component].items():
-                                expected_inputs += list(translation.keys())
-                else:
-                    expected_inputs += list(target_component[component].keys())
-
-        expected_inputs = list(set(expected_inputs))
-        expected_outputs = list(set(expected_outputs))
-
-        return expected_inputs, expected_outputs

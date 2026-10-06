@@ -98,9 +98,6 @@ skip_covered = true
 [tool.pytest.ini_options]
 testpaths = ["test"]
 pythonpath = ["test"]
-markers = [
-  "slow: multiprocessing end-to-end tests (deselect with -m 'not slow')",
-]
 
 [project.entry-points."wralea"]
 "metafspm" = "openalea.metafspm_wralea"

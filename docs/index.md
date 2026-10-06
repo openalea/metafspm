@@ -1,84 +1,34 @@
+# MetaFSPM
 
-.. _cnwheat:
+MetaFSPM gives Functional-Structural Plant Models (FSPM) a common way to declare, schedule, solve and couple their
+processes, around the Multiscale Tree Graph (MTG) of OpenAlea.
 
-.. module:: cnwheat
+- **Components** declare their variables (unit, scale, kind) and their processes as steps or as graph systems
+  (coupled equations on the plant's graph, solved by Newton or time integrators).
+- **DataStructures** hold the variables: a plant population on one MPG (an MTG with a solver graph), regular and
+  adaptive soil grids, and unions of populations. Steps receive their arrays, so the same model runs on one plant or
+  a thousand.
+- **Coupling** goes through translators: within a DataStructure by aliases and derived variables, across
+  DataStructures (plants and soil, light, environment scalars) by mappings exchanged at fixed points.
+- **Scenes** build plant populations from a planting table and run them with their environment models.
 
-CN-Wheat documentation
-######################
+```{toctree}
+:maxdepth: 2
 
-Module description
-==================
+User guide <user>
+Conventions <conventions>
+Migrating a model <migration>
+API reference <ref>
+```
 
-.. sidebar:: Summary
+## Contact and contributing
 
-    :Version: |version|
-    :Date: |today|
-    :Author: See `Authors`_ section
-    
-.. topic:: Overview
+Questions, bugs and feature ideas: open an issue on the project's repository.
 
-    CN-Wheat is a Functional-Structural Plant Model which simulates the distribution 
-    of carbon and nitrogen into wheat culms in relation to photosynthesis, 
-    N uptake, metabolite turnover, root exudation and tissue death. 
-    This model can therefore predict the temporal variations and the distribution of 
-    carbon and nitrogen into wheat culms.
-    
+## Authors
 
-Documentation
-=============
+Tristan Gérault and Christophe Pradal.
 
-.. toctree::
-    :maxdepth: 2
+## License
 
-    User Guide<user.rst>   
-    Reference Guide<ref.rst>
-
-
-Contact
-=======
-
-For any question, please submit to https://github.com/openalea-incubator/WheatFspm/issues.
-
-
-Versioning
-==========
-
-Sources are versioned on an Git repository hosted by platform GitHub: https://github.com/openalea-incubator/WheatFspm.
-If you want to make your own development of the model, please fork the repository.
-
-
-Authors
-=======
-
-.. include:: ../../AUTHORS
-
-
-License
-=======
-
-|cnwheat| is released under CeCILL-C License. See file :download:`LICENSE <../../LICENSE>` for details.
-
-
-Funding
-===============
-INRAE: salaries of permanent staff
-French Research National Agency: projects Breedwheat (ANR-10-BTBR-03) and Wheatamix (ANR-13-AGRO0008): postdoctoral research of R.Barillot
-itk company: funded the PhD thesis of M.Gauthier
-
-
-Contributing
-============
-
-check for open issues or open a new issue to start a discussion around a
-feature idea or a bug: https://github.com/openalea-incubator/WheatFspm/issues .
-
-Indices and tables
-==================
-
-* :ref:`genindex`
-* :ref:`modindex`
-* :ref:`search`
-
-
-.. |cnwheat| replace:: :mod:`cnwheat`
-
+MetaFSPM is released under the CeCILL-C license.

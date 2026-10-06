@@ -85,7 +85,7 @@ class MPG(MTG):
         The source MTG is never modified.  The returned MPG holds its own
         vertex structure (scale anchors + data vertices) and is typically used
         as a transient object: populate it with populate_graph() or
-        populate_graph_custom_connections(), pass it to GraphView.from_mtg_subset(),
+        populate_graph_custom_connections(), wrap it in an MPGDataStructure,
         then discard it.
 
         Parameters
@@ -139,16 +139,11 @@ class MPG(MTG):
 
         # Pass 1: one Compartment node per from_scale vertex.
         # seg_to_node preserves post_order insertion order, required by Pass 3 chaining.
-        seg_to_node = {}
-        for vid in self.post_order_mpg():
-            if vid in valid_vids:
-                nv = self.add_component_with_topo(node_anchor, vid, **PropsConfig(
-                    scale=self.scales.Compartment,
-                    label=self.labels.Compartment.Symplastic,
-                    edge_type='/',
-                ))
-                self.property("vertex_id")[nv] = vid
-                seg_to_node[vid] = nv
+        ordered = [vid for vid in self.post_order_mpg() if vid in valid_vids]
+        compartments = self.add_components_bulk(
+            node_anchor, len(ordered), topo_parents=ordered, vertex_id=ordered,
+            **PropsConfig(scale=self.scales.Compartment, label=self.labels.Compartment.Symplastic, edge_type='/'))
+        seg_to_node = dict(zip(ordered, compartments))
 
         def _tip_component(complex_v, exclude):
             candidates = [
@@ -167,6 +162,7 @@ class MPG(MTG):
 
         # Pass 2 — wire edges between adjacent from_scale vertices.
         has_parent = set()
+        tails, heads = [], []
         for vid in seg_to_node:
             parent_found = None
             p = self.parent(vid)
@@ -182,13 +178,10 @@ class MPG(MTG):
             if parent_found is None:
                 continue
             has_parent.add(vid)
-            ev = self.add_component(edge_anchor, **PropsConfig(
-                scale=self.scales.Connection,
-                label=self.labels.Connection.Symplastic,
-                edge_type='/',
-            ))
-            self.property("n_id_a")[ev] = parent_found
-            self.property("n_id_b")[ev] = vid
+            tails.append(parent_found)
+            heads.append(vid)
+        self.add_components_bulk(edge_anchor, len(heads), n_id_a=tails, n_id_b=heads, **PropsConfig(
+            scale=self.scales.Connection, label=self.labels.Connection.Symplastic, edge_type='/'))
 
         # Pass 3 — reconnect orphans from filtered branching nodes.
         orphans = [vid for vid in seg_to_node if vid not in has_parent]
@@ -206,7 +199,9 @@ class MPG(MTG):
 
         groups = defaultdict(list)
         for vid in orphans:
-            groups[_root_filtered_ancestor(vid)].append(vid)
+            # Orphans are chained within one plant only: the plants of a population stay disconnected
+            ancestor = _root_filtered_ancestor(vid)
+            groups[ancestor if ancestor is not None else ("plant", self.complex_at_scale(vid, self.scales.Plant))].append(vid)
 
         for group in groups.values():
             for i in range(1, len(group)):
@@ -218,6 +213,101 @@ class MPG(MTG):
                 self.property("n_id_a")[ev] = group[i - 1]
                 self.property("n_id_b")[ev] = group[i]
 
+
+    def add_components_bulk(self, complex_id, count: int, topo_parents=None, **properties) -> list:
+        """
+        Create *count* components of *complex_id* at once, as add_component (or add_component_with_topo when
+        *topo_parents* gives their same-scale parents) would one by one, with one batched write per property instead of
+        one insert per vertex and property. A property value is a
+        sequence of *count* values, or one value for all. Returns the new vids, consecutive.
+        """
+        if count == 0:
+            return []
+        vids = list(range(self._id + 1, self._id + 1 + count))
+        self._id += count
+        self._components.setdefault(complex_id, []).extend(vids)
+        scale = self._scale[complex_id] + 1
+        for v in vids:
+            self._complex[v] = complex_id
+            self._scale[v] = scale
+        if topo_parents is not None:
+            for v, p in zip(vids, topo_parents):
+                self._parent[v] = p
+                self._children.setdefault(p, []).append(v)
+        for name, values in properties.items():
+            if name not in self._properties:
+                self.add_property(name)
+            if isinstance(values, (list, tuple, np.ndarray)) and len(values) == count:
+                items = dict(zip(vids, values))
+            else:
+                items = dict.fromkeys(vids, values)
+            self._properties[name].update(items)
+        return vids
+
+    def extend_graph(self, from_scale) -> dict:
+        """
+        Incremental counterpart of repopulate_graph(): Compartments and Connections are created only for the new
+        vertices at *from_scale* and removed for the deleted ones; every other Compartment and Connection keeps its
+        vid. A vertex whose linked parent changed (e.g. an inserted parent) gets its Connection rebuilt.
+        Returns {"added": [...], "removed": [...], "relinked": [...]}, at from_scale ("repopulated": True when a new
+        root vertex required a full rebuild).
+        """
+        node_anchor = self.scales.anchors[self.scales.Compartment]
+        edge_anchor = self.scales.anchors[self.scales.Connection]
+        # Array reads of the properties, not traversals of the whole MTG: the cost follows the growth
+        compartments, vertex_of = self._property_at("vertex_id", self._vertices_at_scale(self.scales.Compartment))
+        connections, heads = self._property_at("n_id_b", self._vertices_at_scale(self.scales.Connection))
+        connections, tails = self._property_at("n_id_a", connections) if connections.size else (connections, heads)
+        if tails.size != heads.size:
+            raise ValueError("Connections without n_id_a")
+        vertex_of, heads, tails = (np.asarray(a, dtype=np.int64) for a in (vertex_of, heads, tails))
+        compartment_of = dict(zip(vertex_of.tolist(), compartments.tolist()))
+        incoming = dict(zip(heads.tolist(), connections.tolist()))
+        valid = _SortedIds(self._valid_vids_at(from_scale, as_array=True))
+        present = _SortedIds(_sorted_unique(vertex_of))
+        added = valid.ids[~present.contains(valid.ids)].tolist()
+        # Connections whose endpoint is no longer a vertex at from_scale (removed, e.g. pruned with remove_tree, which
+        # also removes the vertex's Compartment), then the Compartments of removed vertices still present
+        stale_mask = ~(valid.contains(tails) & valid.contains(heads))
+        stale = connections[stale_mask].tolist()
+        gone = set(present.ids[~valid.contains(present.ids)].tolist()) | set(heads[stale_mask & ~valid.contains(heads)].tolist())
+        removed = sorted(gone)
+        stale_set = set(stale)
+        self.remove_connections(stale)
+        self.remove_connections([compartment_of[v] for v in removed if v in compartment_of])
+        # Existing vertices whose linked parent changed: children of new vertices, or of removed ones
+        candidates = {c for v in added + removed for c in self._children.get(v, ()) if c in valid and c not in added}
+        # ... and the children of a removed vertex, re-linked by the removal (remove_vertex(reparent_child=True)):
+        # their incoming Connection went stale while they stay valid
+        candidates |= {c for c in heads[stale_mask & valid.contains(heads)].tolist() if c not in added}
+        relinked = []
+        for vid in sorted(candidates):
+            parent = self.linked_parent(vid, from_scale, valid)
+            ev = incoming.get(vid)
+            current = int(self.property("n_id_a")[ev]) if ev is not None and ev not in stale_set else None
+            if parent != current:
+                if ev is not None and ev not in stale_set:
+                    self.remove_connections([ev])
+                relinked.append(vid)
+        orphans = [vid for vid in added if self.linked_parent(vid, from_scale, valid) is None]
+        if orphans and valid.ids.size > len(orphans):
+            # A new vertex with no linked parent is chained to the other roots of its plant by populate_graph's
+            # pass 3, in traversal order: rebuild everything in that rare case (not met by segment growth)
+            self.repopulate_graph(from_scale)
+            return {"added": added, "removed": removed, "relinked": [], "repopulated": True}
+        self.add_components_bulk(node_anchor, len(added), topo_parents=added, vertex_id=added,
+                                 **PropsConfig(scale=self.scales.Compartment,
+                                               label=self.labels.Compartment.Symplastic, edge_type='/'))
+        tails, heads = [], []
+        for vid in added + relinked:
+            parent = self.linked_parent(vid, from_scale, valid)
+            if parent is not None:
+                tails.append(parent)
+                heads.append(vid)
+        self.add_components_bulk(edge_anchor, len(heads), n_id_a=tails, n_id_b=heads,
+                                 **PropsConfig(scale=self.scales.Connection,
+                                               label=self.labels.Connection.Symplastic, edge_type='/'))
+        return {"added": added, "removed": removed, "relinked": relinked}
 
     def repopulate_graph(self, from_scale, filter_in=None, filter_out=None):
         """Clear all Compartment/Connection nodes and rebuild from *from_scale*.
@@ -278,14 +368,15 @@ class MPG(MTG):
         vertex via add_component_with_topo(node_anchor, vid, ...).  The method
         discovers the same topology and creates one Connection edge per entry in
         *custom_connections* between matching compartments of adjacent from_scale
-        vertices (selected by label).
+        vertices (selected by label).  It is wire_junctions() on every vertex.
 
         Parameters
         ----------
         from_scale : int
             Scale whose vertices provide topology (e.g. g.scales.SubOrgan).
         custom_connections : list of dict
-            Each entry specifies one inter-organ link type:
+            Each entry specifies one inter-organ link type::
+
               node_label — label of the Compartment nodes to pair
               edge_label — label of the Connection edge to create
               ordering   — (optional) name of a numerical property stored on the
@@ -294,6 +385,8 @@ class MPG(MTG):
                            (greedy nearest-neighbour, each node used at most once).
                            When absent, all-to-all edges are created between the
                            two sets.
+
+            See wire_junctions() for the other matching modes and callable rules.
         filter_in, filter_out : dict, optional
             ``{property_name: value}`` — include / exclude from_scale vertices.
 
@@ -301,11 +394,34 @@ class MPG(MTG):
         -----
         Call convert_properties_to_arraydict() after this method.
         """
-        edge_anchor   = self.scales.anchors[self.scales.Connection]
+        self.wire_junctions(from_scale, custom_connections, filter_in=filter_in, filter_out=filter_out)
+
+    # ── Junctions between the anatomies of adjacent vertices ──
+
+    def _vertices_at_scale(self, scale) -> np.ndarray:
+        """Vertices whose "scale" property is *scale*, sorted (an array read, no traversal)."""
+        prop = self.property("scale")
+        if isinstance(prop, ArrayDict):
+            return prop.order[:prop.size][prop.values_array() == scale].copy()
+        return np.array(sorted(v for v, s in prop.items() if s == scale), dtype=np.int64)
+
+    def _property_at(self, name, vids) -> tuple:
+        """(the vertices of sorted *vids* having property *name*, their values)."""
+        prop, vids = self.property(name), np.asarray(vids, dtype=np.int64)
+        if isinstance(prop, ArrayDict):
+            order, values = prop.order[:prop.size], prop.values_array()
+            if order.size == 0 or vids.size == 0:
+                return vids[:0], values[:0]
+            position = np.searchsorted(order, vids).clip(0, order.size - 1)
+            found = order[position] == vids
+            return vids[found], values[position[found]]
+        found = np.array([v in prop for v in vids.tolist()], dtype=bool)
+        return vids[found], np.array([prop[v] for v in vids[found].tolist()])
+
+    def _valid_vids_at(self, from_scale, filter_in=None, filter_out=None, as_array=False):
+        """Non-anchor vertices at *from_scale* passing the filters (a set, or a sorted array)."""
         scale_prop    = self.property('scale')
         isanchor_prop = self.property('isanchor')
-
-        # Pre-filter — valid from_scale VIDs via numpy intersection; exclude anchors.
         valid_keys = scale_prop.order[:scale_prop.size][scale_prop.values_array() == from_scale]
         for fp_name, fp_val in (filter_in or {}).items():
             fp = self.property(fp_name)
@@ -317,25 +433,21 @@ class MPG(MTG):
             valid_keys = valid_keys[~np.isin(valid_keys, match, assume_unique=False)]
         anchor_keys = isanchor_prop.order[:isanchor_prop.size][isanchor_prop.values_array() != 0]
         valid_keys  = valid_keys[~np.isin(valid_keys, anchor_keys, assume_unique=False)]
-        valid_vids  = set(int(v) for v in valid_keys)
+        if as_array:
+            return _sorted_unique(np.asarray(valid_keys, dtype=np.int64))
+        return set(int(v) for v in valid_keys)
 
-        # Build {suborgan_vid → {label → [compartment_vid, ...]}}.
-        # Lists allow multiple nodes with the same label (e.g. several xylem vessels).
-        label_prop = self.property('label')
-        vid2comps  = {}
-        for nv in self.components_at_scale(self.root, scale=self.scales.Compartment):
-            if isanchor_prop.get(nv, False):
-                continue
-            src = self.parent(nv)
-            if src is None or scale_prop.get(src) != from_scale or src not in valid_vids:
-                continue
-            vid2comps.setdefault(src, {}).setdefault(label_prop.get(nv), []).append(nv)
+    def linked_parent(self, vid, from_scale, valid_vids=None):
+        """
+        The vertex at *from_scale* that *vid* is linked to, as populate_graph links them: its within-scale parent,
+        or, when it has none in *valid_vids*, the tip of its complex parent (multiscale branching). None at a root.
+        """
+        scale_prop = self.property('scale')
+        valid_vids = self._valid_vids_at(from_scale) if valid_vids is None else valid_vids
 
         def _tip_component(complex_v, exclude):
-            candidates = [
-                c for c in self.components_iter(complex_v)
-                if scale_prop.get(c) == from_scale and c in valid_vids and c != exclude
-            ]
+            candidates = [c for c in self.components_iter(complex_v)
+                          if scale_prop.get(c) == from_scale and c in valid_vids and c != exclude]
             if not candidates:
                 return None
             if len(candidates) == 1:
@@ -346,93 +458,159 @@ class MPG(MTG):
                     return c
             return candidates[0]
 
-        # Precompute ordering property lookups (once per unique ordering name).
-        ordering_props = {
-            conn['ordering']: self.property(conn['ordering'])
-            for conn in custom_connections if 'ordering' in conn
-        }
+        p = self.parent(vid)
+        while p is not None:
+            if p in valid_vids:
+                return p
+            tip = _tip_component(p, exclude=vid)
+            if tip is not None:
+                return tip
+            p = self.parent(p)
+        return None
 
-        # Pass 2 — wire edges between adjacent from_scale vertices.
-        for vid in sorted(valid_vids):
-            parent_found = None
-            p = self.parent(vid)
-            while p is not None:
-                if p in valid_vids:
-                    parent_found = p
-                    break
-                tip = _tip_component(p, exclude=vid)
-                if tip is not None:
-                    parent_found = tip
-                    break
-                p = self.parent(p)
-            if parent_found is None:
+    def compartments_by_owner(self, from_scale=None) -> dict:
+        """{owner vid: [Compartment vids]}: the Compartments created under each vertex (its anatomy)."""
+        isanchor_prop, scale_prop = self.property('isanchor'), self.property('scale')
+        owners = {}
+        for nv in self.components_at_scale(self.root, scale=self.scales.Compartment):
+            if isanchor_prop.get(nv, False):
                 continue
+            owner = self.parent(nv)
+            if owner is None or (from_scale is not None and scale_prop.get(owner) != from_scale):
+                continue
+            owners.setdefault(int(owner), []).append(int(nv))
+        return owners
 
-            parent_comps = vid2comps.get(parent_found, {})
-            child_comps  = vid2comps.get(vid, {})
-            for conn in custom_connections:
-                n_as = parent_comps.get(conn['node_label'], [])
-                n_bs = child_comps.get(conn['node_label'], [])
-                if not n_as or not n_bs:
-                    continue
-                ordering_name = conn.get('ordering')
-                if ordering_name is None:
-                    pairs = [(n_a, n_b) for n_a in n_as for n_b in n_bs]
-                else:
-                    ordering_p = ordering_props[ordering_name]
-                    def _val(nv, _p=ordering_p):
-                        v = _p.get(nv)
-                        return float(v) if v is not None else 0.0
-                    sorted_a = sorted(n_as, key=_val)
-                    sorted_b = sorted(n_bs, key=_val)
-                    used_b, pairs = set(), []
-                    for n_a in sorted_a:
-                        best_b, best_dist = None, float('inf')
-                        for n_b in sorted_b:
-                            if n_b in used_b:
-                                continue
-                            d = abs(_val(n_a) - _val(n_b))
-                            if d < best_dist:
-                                best_dist, best_b = d, n_b
-                        if best_b is not None:
-                            used_b.add(best_b)
-                            pairs.append((n_a, best_b))
+    def wire_junctions(self, from_scale, rules, children=None, filter_in=None, filter_out=None) -> list:
+        """
+        Create the junction Connections between the Compartments of linked vertices at *from_scale*, for each
+        vertex of *children* (default: every vertex) and its linked parent (linked_parent). Returns their vids.
+
+        rules: list of dict, one per link type::
+
+          {"node_label": L, "edge_label": E, "ordering": prop, "match": "nearest" | "equal" | "all"}
+              pairs the Compartments labelled L of both sides: "all" pairs every one with every one (the default
+              without ordering), "nearest" greedily matches the closest values of *ordering* (the default with
+              it), "equal" matches equal values of *ordering*;
+          {"rule": callable, "edge_label": E}
+              rule(g, parent_vid, child_vid, parent_compartments, child_compartments) -> [(a, b), ...].
+
+        Junctions get is_junction = 1 (anatomy Connections do not carry it); n_id_a is on the parent side, n_id_b on
+        the child side.
+        """
+        edge_anchor = self.scales.anchors[self.scales.Connection]
+        valid_vids = self._valid_vids_at(from_scale, filter_in, filter_out)
+        label_prop = self.property('label')
+        anatomy = {}
+        for owner, comps in self.compartments_by_owner(from_scale).items():
+            if owner in valid_vids:
+                for nv in comps:
+                    anatomy.setdefault(owner, {}).setdefault(label_prop.get(nv), []).append(nv)
+        created = []
+        for vid in sorted(valid_vids if children is None else set(children) & valid_vids):
+            parent = self.linked_parent(vid, from_scale, valid_vids)
+            if parent is None:
+                continue
+            for rule in rules:
+                pairs = self._junction_pairs(rule, parent, vid, anatomy.get(parent, {}), anatomy.get(vid, {}))
                 for n_a, n_b in pairs:
                     ev = self.add_component(edge_anchor, **PropsConfig(
-                        scale=self.scales.Connection,
-                        label=conn['edge_label'],
-                        edge_type='/',
-                    ))
+                        scale=self.scales.Connection, label=rule['edge_label'], edge_type='/'))
                     self.property("n_id_a")[ev] = n_a
                     self.property("n_id_b")[ev] = n_b
+                    self.property("is_junction")[ev] = 1.
+                    created.append(ev)
+        return created
 
+    def _junction_pairs(self, rule, parent, child, parent_anatomy, child_anatomy) -> list:
+        if "rule" in rule:
+            comps_a = [nv for comps in parent_anatomy.values() for nv in comps]
+            comps_b = [nv for comps in child_anatomy.values() for nv in comps]
+            return list(rule["rule"](self, parent, child, comps_a, comps_b))
+        n_as = parent_anatomy.get(rule['node_label'], [])
+        n_bs = child_anatomy.get(rule['node_label'], [])
+        if not n_as or not n_bs:
+            return []
+        ordering = rule.get('ordering')
+        match = rule.get('match', "nearest" if ordering else "all")
+        if match == "all":
+            return [(n_a, n_b) for n_a in n_as for n_b in n_bs]
+        if ordering is None:
+            raise ValueError(f"junction rule {rule}: match '{match}' needs an ordering property")
+        ordering_p = self.property(ordering)
 
-    def graph(self, property_name):
-        node_scale = self.scales.Compartment
-        edge_scale = self.scales.Connection
+        def _val(nv):
+            v = ordering_p.get(nv)
+            return float(v) if v is not None else 0.0
 
-        nids = np.asarray(
-            self.array_filtering("vertex_id", filter_in=dict(scale=node_scale)), dtype=np.int64
-        )
-        n_id_a = np.asarray(
-            self.array_filtering("n_id_a", filter_in=dict(scale=edge_scale)), dtype=np.int64
-        )
-        n_id_b = np.asarray(
-            self.array_filtering("n_id_b", filter_in=dict(scale=edge_scale)), dtype=np.int64
-        )
-        target_prop = np.asarray(
-            self.array_filtering(property_name, filter_in=dict(scale=edge_scale)), dtype=np.float64,
-        )
+        sorted_a, sorted_b = sorted(n_as, key=_val), sorted(n_bs, key=_val)
+        used_b, pairs = set(), []
+        for n_a in sorted_a:
+            candidates = [n_b for n_b in sorted_b if n_b not in used_b]
+            if match == "equal":
+                candidates = [n_b for n_b in candidates if _val(n_b) == _val(n_a)]
+            elif match != "nearest":
+                raise ValueError(f"junction rule {rule}: match must be 'all', 'nearest' or 'equal'")
+            if candidates:
+                best_b = min(candidates, key=lambda n_b: abs(_val(n_a) - _val(n_b)))
+                used_b.add(best_b)
+                pairs.append((n_a, best_b))
+        return pairs
 
-        nid_to_index = {vid: idx for idx, vid in enumerate(nids)}
-        idx_a = np.asarray([nid_to_index[vid] for vid in n_id_a], dtype=np.int64)
-        idx_b = np.asarray([nid_to_index[vid] for vid in n_id_b], dtype=np.int64)
+    def junction_vids(self) -> list:
+        """Vids of the junction Connections (created by wire_junctions)."""
+        prop = self.properties().get("is_junction", {})
+        return [int(v) for v, flag in prop.items() if flag]
 
-        rows = np.r_[idx_a, idx_b, idx_a, idx_b]
-        cols = np.r_[idx_a, idx_b, idx_b, idx_a]
-        data = np.r_[target_prop, target_prop, -target_prop, -target_prop]
-        return rows, cols, data
-   
+    # ── Children at the vertex's own scale ───────────────────────────
+    # populate_graph links each Compartment to its segment with a topological parent; openalea's traversals
+    # (children, Sons, post_order2, pre_order2, ...) would then return Compartments among a segment's children.
+    # These accessors return the children at the vertex's own scale, as on a plain MTG; the framework reads the raw
+    # links in _children where it needs them.
+
+    def children(self, vtx_id):
+        scale = self._scale.get(vtx_id)
+        return [c for c in self._children.get(vtx_id, ()) if self._scale.get(c) == scale]
+
+    def children_iter(self, vtx_id):
+        scale = self._scale.get(vtx_id)
+        return (c for c in self._children.get(vtx_id, ()) if self._scale.get(c) == scale)
+
+    def nb_children(self, vtx_id):
+        return len(self.children(vtx_id))
+
+    def remove_vertex(self, vid, reparent_child=False):
+        """
+        MTG.remove_vertex, removing first the Compartments the vertex owns (its graph nodes), which openalea would
+        refuse to re-parent. The graph follows at the next update_topology (extend_graph).
+        """
+        compartment = self.scales.Compartment         # linked to their segment as children (or components)
+        owned = [c for c in list(self._children.get(vid, [])) + list(self._components.get(vid, []))
+                 if self._scale.get(c) == compartment]
+        if owned:
+            self.remove_connections(owned)
+        if reparent_child:
+            # openalea's MTG.replace_parent also re-parents the child's complex to the new parent's complex, which
+            # makes a complex its own parent when both share it: re-link within a complex at the tree level only
+            new_parent = self.parent(vid)
+            for child in list(self.children_iter(vid)):
+                if new_parent is not None and self._complex.get(child) == self._complex.get(new_parent):
+                    super(MTG, self).replace_parent(child, new_parent)
+                else:
+                    self.replace_parent(child, new_parent)
+        return super().remove_vertex(vid, reparent_child=False)
+
+    def remove_connections(self, vids) -> None:
+        """Delete Connection vertices *vids* and their property entries (see repopulate_graph)."""
+        props = self.properties()
+        for v in vids:
+            for prop in props.values():
+                if v in prop:
+                    try:
+                        del prop[v]
+                    except (KeyError, TypeError):
+                        pass
+            self.remove_vertex(v)
 
     def array_filtering(self, name: str, filter_in: dict = None, filter_out: dict = None):
         """Return the values of property *name* for the subset of vertices that
@@ -516,6 +694,156 @@ class MPG(MTG):
 
 
     # MULTISCALE TRAVERSALS (combining ordered scale and element iteration)
+    # ── Topology without recursion, and as arrays ──
+
+    def components_iter(self, vid):
+        """
+        The components of *vid* in MTG.components_iter's order (each component root, then a pre-order visiting
+        '+' children before '<' successors), without recursion: openalea.mtg's recursive pre_order fails on long
+        chains (RecursionError on a 20 000-segment axis). A child belongs to *vid* when it has no complex of its own
+        (it inherits its parent's) or when its own complex is *vid*.
+        """
+        if vid not in self._components:
+            return
+        edge_type = self.property('edge_type')
+        own_complex = self._complex
+        children = self._children
+        for root in self.component_roots_iter(vid):
+            stack = [root]
+            while stack:
+                v = stack.pop()
+                yield v
+                inside = [c for c in children.get(v, ()) if own_complex.get(c, vid) == vid]
+                stack.extend(reversed([c for c in inside if edge_type.get(c) == '<']))
+                stack.extend(reversed([c for c in inside if edge_type.get(c) != '<']))
+
+    _EDGE_TYPE_CODES = {'/': 1, '<': 2, '+': 3}
+
+    def topology_arrays(self) -> dict:
+        """
+        Integer arrays indexed by vid, cached until the MPG changes (vertex count or last vertex id): parent (-1
+        for none), complex (-1 for none), scale, edge_type (0 none, 1 '/', 2 '<', 3 '+'), is_anchor.
+        complex is resolved for every vertex at once (pointer doubling up the parent chains), whereas MTG.complex
+        walks the chain of each vertex.
+        """
+        signature = (self.nb_vertices(), getattr(self, "_id", None))
+        cache = self.__dict__.get("_topology_arrays")
+        if cache is not None and cache[0] == signature:
+            return cache[1]
+        if cache is not None and cache[0][1] is not None and signature[1] is not None:
+            # Incremental: vids are allocated in increasing order, so the vertices created since the last read
+            # are above the last vid seen; when none was removed, only they (and children they were inserted above)
+            # are read from the MTG
+            (count, last), arrays = cache
+            new = [v for v in range(last + 1, signature[1] + 1) if v in self._scale]
+            if signature[0] == count + len(new):
+                arrays = self._extended_topology_arrays(arrays, new, signature[1] + 1)
+                self.__dict__["_topology_arrays"] = (signature, arrays)
+                return arrays
+        arrays = self._full_topology_arrays()
+        self.__dict__["_topology_arrays"] = (signature, arrays)
+        return arrays
+
+    def _extended_topology_arrays(self, arrays: dict, new: list, size: int) -> dict:
+        """*arrays* with the entries of the *new* vertices, and of the children they were inserted above."""
+        if arrays["parent"].size < size:            # capacity doubles, so that growth extends in amortised O(new)
+            capacity = max(size, 2 * arrays["parent"].size)
+            grown = {}
+            for name, values in arrays.items():
+                fill = False if values.dtype == bool else (0 if name == "edge_type" else -1)
+                extended = np.full(capacity, fill, dtype=values.dtype)
+                extended[:values.size] = values
+                grown[name] = extended
+            arrays = grown
+        if not new:
+            return arrays
+        parent, complex_, scale = arrays["parent"], arrays["complex"], arrays["scale"]
+        edge_type, is_anchor = arrays["edge_type"], arrays["is_anchor"]
+        types, anchors = self.property('edge_type'), self.property('isanchor')
+        codes = self._EDGE_TYPE_CODES
+        vids = np.array(new, dtype=np.int64)
+
+        def read(mapping):
+            return np.array([-1 if mapping.get(v) is None else mapping.get(v) for v in new], dtype=np.int64)
+
+        parent[vids], scale[vids], complex_[vids] = read(self._parent), read(self._scale), read(self._complex)
+        edge_type[vids] = [codes.get(types.get(v), 0) for v in new]
+        is_anchor[vids] = [bool(anchors.get(v, False)) for v in new]
+        fresh = set(new)
+        for v in new:                                  # an existing child below an inserted vertex
+            for child in self._children.get(v, ()):
+                if child not in fresh:
+                    parent[child] = v
+                    edge_type[child] = codes.get(types.get(child), 0)
+        missing = vids[(complex_[vids] < 0) & (parent[vids] >= 0)]
+        ancestor = parent[missing]
+        while missing.size:                            # new vertices without a complex: their nearest ancestor's
+            known = complex_[ancestor] >= 0
+            complex_[missing[known]] = complex_[ancestor[known]]
+            missing, ancestor = missing[~known], parent[ancestor[~known]]
+            keep = ancestor >= 0
+            missing, ancestor = missing[keep], ancestor[keep]
+        return arrays
+
+    def _full_topology_arrays(self) -> dict:
+        size = max(getattr(self, "_id", 0), max(self._scale.keys(), default=0), max(self._parent.keys(), default=0)) + 1
+        def filled(mapping):
+            """Array of *mapping* by vid, -1 for missing or None values (bulk reads of the MTG dicts)."""
+            out = np.full(size, -1, dtype=np.int64)
+            if mapping:
+                keys = np.fromiter(mapping.keys(), dtype=np.int64, count=len(mapping))
+                values = np.array(list(mapping.values()), dtype=object)
+                values[np.equal(values, None)] = -1
+                out[keys] = values.astype(np.int64)
+            return out
+
+        parent, scale, complex_ = filled(self._parent), filled(self._scale), filled(self._complex)
+        alive = scale >= 0
+        missing = np.flatnonzero(alive & (complex_ < 0) & (parent >= 0))
+        jump = parent.copy()
+        for _ in range(130):                           # pointer doubling: log2(depth) rounds without a cycle
+            if not missing.size:
+                break
+            above = jump[missing]
+            known = complex_[above] >= 0
+            complex_[missing[known]] = complex_[above[known]]
+            missing = missing[~known]
+            jump[missing] = np.where(jump[jump[missing]] >= 0, jump[jump[missing]], -1)
+            missing = missing[jump[missing] >= 0]
+        else:
+            raise ValueError(f"the MTG's parent links contain a cycle (vertices {missing[:5].tolist()})")
+        edge_type = np.zeros(size, dtype=np.int64)
+        types = self.property('edge_type')
+        if types:
+            keys = np.fromiter(types.keys(), dtype=np.int64, count=len(types))
+            names = np.array([t if isinstance(t, str) else "" for t in types.values()])
+            codes = np.zeros(len(types), dtype=np.int64)
+            for name, code in self._EDGE_TYPE_CODES.items():
+                codes[names == name] = code
+            inside = keys < size
+            edge_type[keys[inside]] = codes[inside]
+        is_anchor = np.zeros(size, dtype=bool)
+        anchors = self.property('isanchor')
+        if isinstance(anchors, ArrayDict):
+            keys, flags = anchors.order[:anchors.size], anchors.values_array() != 0
+        else:
+            keys = np.fromiter(anchors.keys(), dtype=np.int64, count=len(anchors))
+            flags = np.fromiter((bool(f) for f in anchors.values()), dtype=bool, count=len(anchors))
+        inside = keys < size
+        is_anchor[keys[inside & flags]] = True
+        return {"parent": parent, "complex": complex_, "scale": scale, "edge_type": edge_type, "is_anchor": is_anchor}
+
+    def complex_at_scale_array(self, vids, scale: int) -> np.ndarray:
+        """complex_at_scale for many vertices at once (from topology_arrays)."""
+        arrays = self.topology_arrays()
+        current = np.asarray(vids, dtype=np.int64).copy()
+        for _ in range(int(arrays["scale"].max()) + 1):
+            above = arrays["scale"][current] > scale
+            if not above.any():
+                break
+            current[above] = arrays["complex"][current[above]]
+        return current
+
     def _component_topo_preorder(self, comps):
         """Yield the vertices in `comps` in topological pre-order.
 
@@ -577,9 +905,10 @@ class MPG(MTG):
         """Pre-order multiscale traversal of an MPG.
 
         Yields each vertex *before* its descendants, combining two axes:
+
         • Scale axis  : a complex is yielded before its fine-scale components.
         • Topo axis   : within a complex's component set, a topological parent
-                        is yielded before its same-scale children.
+          is yielded before its same-scale children.
 
         Algorithm — iterative explicit stack (matches pre_order2 style):
         Pop v from the stack → yield v (if not an anchor) → compute v's
@@ -620,16 +949,19 @@ class MPG(MTG):
         """Post-order multiscale traversal of an MPG.
 
         Yields each vertex *after* all its descendants, combining two axes:
+
         • Scale axis  : fine-scale components are yielded before their complex.
         • Topo axis   : within a complex's component set, topological children
-                        are yielded before their same-scale parent.
+          are yielded before their same-scale parent.
 
-        Algorithm — iterative, "peek-don't-pop" (matches post_order2 style):
+        Algorithm — iterative, "peek-don't-pop" (matches post_order2 style).
         Each stack entry is (vertex, iterator-over-post-ordered-components).
+
         • Peek at the top: if the component iterator has a next component c,
-            push a new entry for c (with c's own component iterator) and continue.
+          push a new entry for c (with c's own component iterator) and continue.
         • When the iterator is exhausted, pop the entry and yield the vertex
-            (if not an anchor).
+          (if not an anchor).
+
         No Python recursion is used, so depth is limited only by the stack.
 
         Parameters
@@ -663,88 +995,6 @@ class MPG(MTG):
                     yield v
 
 
-    # UPSCALING METHODS
-    def integrate_at_scale(self, property_name, from_scale, target_scale):
-        """Sum property_name from from_scale into every ancestor at every coarser scale.
-
-        Writes the aggregated value at every scale in [target_scale, from_scale),
-        so all intermediate scales are populated in a single pass.
-
-        Parameters
-        ----------
-        g              : MPG
-        property_name  : str — read at from_scale, written at all coarser scales.
-                        Vertices missing an entry are treated as 0.
-        from_scale     : int — fine scale (larger number)
-        target_scale   : int — coarsest scale to write (smaller number, < from_scale)
-        """
-        assert from_scale > target_scale, "from_scale must be finer (larger) than target_scale"
-
-        scale_prop = self.property('scale')
-        props      = self.property(property_name)   # setdefault → always internal dict
-        accum      = {}
-
-        for v in self.post_order_mpg():
-            sv = scale_prop.get(v)
-            if sv is None or sv < target_scale or sv > from_scale:
-                continue
-
-            if sv == from_scale:
-                accum[v] = props.get(v, 0.0)
-            else:
-                total    = sum(accum.get(c, 0.0) for c in self.components_iter(v))
-                props[v] = total
-                accum[v] = total
-
-
-    def average_at_scale(self, property_name, from_scale, target_scale,
-                        normalization_property=None):
-        """Weighted-average property_name from from_scale up to every coarser scale.
-
-        Without normalization_property every source vertex has weight 1
-        (plain arithmetic mean over all from_scale descendants).
-
-        With normalization_property, weight = normalization_property[v] at
-        from_scale (mass- or volume-weighted mean).  Typical use: pass a
-        concentration and its associated mass/volume so that the aggregated value
-        is the correct bulk concentration at each scale.
-
-        Parameters
-        ----------
-        g                      : MPG
-        property_name          : str — property to average (read at from_scale, written elsewhere)
-        from_scale             : int — fine scale (larger number)
-        target_scale           : int — coarsest scale to write (smaller number, < from_scale)
-        normalization_property : str or None
-            If given, its value at from_scale is used as the weight.
-            Vertices missing an entry default to weight 0.
-        """
-        assert from_scale > target_scale, "from_scale must be finer (larger) than target_scale"
-
-        scale_prop = self.property('scale')
-        props      = self.property(property_name)
-        norm_props = self.property(normalization_property) if normalization_property else None
-
-        accum_sum = {}   # weighted sum: Σ (value × weight)
-        accum_wt  = {}   # total weight: Σ weight
-
-        for v in self.post_order_mpg():
-            sv = scale_prop.get(v)
-            if sv is None or sv < target_scale or sv > from_scale:
-                continue
-
-            if sv == from_scale:
-                w            = norm_props.get(v, 0.0) if norm_props else 1.0
-                accum_sum[v] = props.get(v, 0.0) * w
-                accum_wt[v]  = w
-            else:
-                S = sum(accum_sum.get(c, 0.0) for c in self.components_iter(v))
-                W = sum(accum_wt.get(c,  0.0) for c in self.components_iter(v))
-                props[v]     = S / W if W > 0 else 0.0
-                accum_sum[v] = S   # relay numerator
-                accum_wt[v]  = W   # relay denominator
-
-
     def convert_properties_to_arraydict(self, g = None, ignore: list = []):
         if g is not None:
             props = g.properties()
@@ -765,3 +1015,33 @@ class MPG(MTG):
                 stored = v.to_dict()
                 props[k] = ArrayDict(stored)
 
+
+class _SortedIds:
+    """A sorted id array with set-like membership, for vertex sets of a whole population."""
+
+    def __init__(self, ids):
+        self.ids = np.asarray(ids, dtype=np.int64)
+
+    def contains(self, values) -> np.ndarray:
+        values = np.asarray(values, dtype=np.int64)
+        if self.ids.size == 0:
+            return np.zeros(values.shape, dtype=bool)
+        position = np.searchsorted(self.ids, values).clip(0, self.ids.size - 1)
+        return self.ids[position] == values
+
+    def __contains__(self, value) -> bool:
+        return value is not None and bool(self.contains(np.asarray([value]))[0])
+
+    def __len__(self) -> int:
+        return int(self.ids.size)
+
+    def __iter__(self):
+        return iter(self.ids.tolist())
+
+
+def _sorted_unique(ids) -> np.ndarray:
+    """Sorted distinct ids (a sort and a neighbour comparison: cheaper than np.unique's hashing on large arrays)."""
+    ids = np.sort(np.asarray(ids, dtype=np.int64))
+    if ids.size == 0:
+        return ids
+    return ids[np.concatenate(([True], ids[1:] != ids[:-1]))]
