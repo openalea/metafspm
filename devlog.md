@@ -2044,3 +2044,4 @@ Per-file counts:
 - **Longer laterals (your request):** 4 segments of 2 cm (8 cm, from 4.5 cm). Converges in 5 and 6 steps.
 - **Population side views (your request):** the side plots (SubOrgan segments, anatomy graph, soil slice) show only one planting row (row=0), seen along the row in the y–z plane.
 - **Upscaling series (your request):** `upscaling.py` derives the water potential at SubOrgan, Organ, Axis and Plant, each the mean of the scale below (one `derive` per scale); `plotting.upscaling_series` draws one graph per scale on one colour scale (the first row for the population). The smoke test checks the means and the five figures.
+- **Top view (your request):** shoot segments drawn last and twice as thick as the roots (2.4 vs 1.2).
