@@ -136,6 +136,32 @@ The user guide gets a short page pointing to it.
 ### To confirm
 
 - **C1 — radial conductances.** I read "from the lower anatomical scale radially" as: each radial edge between two tissues gets k_s of the tissue boundary times that boundary's surface along the segment (2π r · L). So outer tissues exchange over larger surfaces, and L enters as a surface, not as a path length. Right?
+  → answer: No, just apply conductances at each anatomical edge and then just extrapolate 3D from SubOrgan length.
+- **C2 — soil voxels.** I read "the conductance equation will be different between voxels" as: the soil's face convergenceductance is its own equation (K · A / d), with K_sat varying between voxels (e.g. a denser lower layer) and averaged across each face. Or did you mean another equation per voxel type?
+  → answer: Yes this equation.
+
+## 6. Done (2026-10-06)
+
+- **`examples/soil_plant_atmosphere/`:**
+  - `components.py`, `models.py`, `plotting.py`, `one_plant.py`, `population.py`, a README with the figures (`figures/`);
+  - `test/examples/test_soil_plant_atmosphere.py` runs both scenes and checks the closed water balances: plant uptake = transpiration = water taken from the soil, and water-table inflow = uptake + soil evaporation. It also checks the records and the five figures.
+- **One plant** (33 segments, 120 Compartments): converges in 5 steps; leaf Ψ about −2 MPa, transpiration 0.076 mm³ s⁻¹.
+- **Population:** `planting_table` lays out 8 plants on 0.2 m × 0.3 m (its rows, not 3 × 3), with per-plant `root_radial_k` (0.2, 0.5, 1.0) from `per_plant_scenarios`. It converges in 6 steps.
+- **Framework changes the example needed:**
+  - `location="node"` is a grid's cells, so one component class runs on plants and soil;
+  - `scale=Connection` in anatomy mode reads and writes the Connections' properties;
+  - an explicit `CrossMapping` replaces the inferred one (for `mask=`);
+  - `CompositeModel` takes Translator objects;
+  - grids have `dx`;
+  - scalars accept one-value arrays;
+  - node outputs on grids;
+  - `Layer.Mesophyll` / `Layer.StomatalCavity` labels.
+
+### Open points
+
+- **E1 — the solver's tolerance is absolute** (`tol=1e-10` on the residual). In m³ s⁻¹ the residuals were about 1e-11, so Newton stopped at the initial guess without any warning; the example works in mm³. Add a relative criterion (the residual against its initial value, or per block against a scale), or a warning when the first residual is already under the tolerance? **Recommendation:** both — `rtol` on the residual relative to its initial norm (default on), and a warning when a solve converges in zero iterations from a non-trivial state.
   → answer:
-- **C2 — soil voxels.** I read "the conductance equation will be different between voxels" as: the soil's face conductance is its own equation (K · A / d), with K_sat varying between voxels (e.g. a denser lower layer) and averaged across each face. Or did you mean another equation per voxel type?
+- **E2 — plants competing for water.** With a dry air (Ψ_air ≈ −94 MPa) and a linear vapour exchange, the vapour step dominates: transpiration hardly depends on the roots, and the competition shows in leaf Ψ, not in fluxes. To make root differences change fluxes, should stomatal conductance close with leaf Ψ (a g_s(Ψ_leaf) law, non-linear, still solved by Newton)? **Recommendation:** yes, a simple sigmoid closure. It is one more equation of a coupled variable in `@boundary_condition` (then the atmosphere exchange is written as an equation instead of a boundary set).
+  → answer:
+- **E3 — `wiring=` and Connection properties.** The example builds its junctions in `initiate_plant`, because the Connections wiring creates have no properties (type, length) for the conductance step. Let wiring rules give properties to the junctions they create (constants, or a callable of the two segments)? **Recommendation:** yes, `properties=` in a rule. The example could then use `wiring=`.
   → answer:

@@ -2005,3 +2005,25 @@ Per-file counts:
 - **The suite took 16 s instead of 9 s.** It was as slow at an older commit; it is the machine on battery, as you said.
 - **The example of water flow in the soil–plant–atmosphere continuum** is designed in `devplan_spac_example.md`: a feature map, the model, the code layout, and questions Q1–Q10 (conductance and length, component kinds, the liquid–gas scaling, the plant–soil fixed point, anatomies, plant size, population, atmosphere forcing, location, plots). Waiting for your answers.
 - **Suite:** 742 passed.
+
+## 2026-10-06 (later): the SPAC example
+
+- **C1 and C2 answered:**
+  - radial conductance per anatomical edge is k_s · L_segment; axial conductance is k_axial / L;
+  - soil face conductance is K · A / d, with K varying between voxels (harmonic mean across a face).
+- **Framework changes, each with a test:**
+  - `"node"` on grids is the cells;
+  - Connection-scale variables in anatomy mode are the Connections' own properties;
+  - explicit CrossMappings replace the inferred ones;
+  - Translator objects in `CompositeModel`;
+  - grid `dx`;
+  - scalars from one-value arrays;
+  - `@graph_output("node")` on grids;
+  - leaf anatomy labels.
+- **The example:**
+  - `examples/soil_plant_atmosphere/` with one transport class on plants and soil, structural components computing the conductances (`SeedlingStructure` builds 33-segment seedlings with root, stem and leaf anatomies), an atmosphere of environment scalars (Ψ_air, the vapour factor), and two scenes;
+  - plots: SubOrgan graph, full anatomy graph, one anatomy per organ type, soil slice, top view;
+  - a smoke test checks convergence and closed water balances.
+- **Found while building it:** Newton's absolute tolerance stopped the plant solve at the initial guess in m³ s⁻¹ units, silently. The example uses mm³, and E1 is asked.
+- **Other open points in the plan:** E2 (stomatal closure, so that the competition between plants shows in their fluxes), E3 (properties on wired junctions).
+- **Suite:** 751 passed.
