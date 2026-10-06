@@ -8,7 +8,7 @@ Plots of the example's DataStructures and of the converged water potentials on t
                         anomaly=True: Ψ minus its layer mean, the roots' depletion without the vertical gradient
     top_view            the stand from above: the water taken up per soil column, the segments drawn over it
     upscaling_series    the water potential upscaled from the Compartments to the plants (upscaling.py), the graph
-                        of each scale side by side, on one colour scale
+                        of each scale in one plot, shifted by the same distance, on one colour scale
 """
 import numpy as np
 import matplotlib
@@ -269,42 +269,53 @@ def _scale_graph(ds, scale, name, node_kept, h):
 
 def upscaling_series(ds, path, row=None):
     """
-    The upscaling of the water potential (Compartment, SubOrgan, Organ, Phytomer, GrowthUnit, Axis, Plant) side by
-    side in one figure: the graph of each scale, its entities as nodes (at the centroid of their segments) coloured
-    by their value, and its edges, the links between entities (an edge of the solver graph joining two of them),
-    coloured by the mean of their two nodes. One colour scale for all; side views of planting row *row* when given.
+    The upscaling of the water potential (Compartment, SubOrgan, Organ, Phytomer, GrowthUnit, Axis, Plant) in one
+    plot, each scale shifted by the same horizontal distance: the graph of each scale, its entities as nodes (at the
+    centroid of their segments) coloured by their value, and its edges, the links between entities (an edge of the
+    solver graph joining two of them), coloured by the mean of their two nodes. One colour scale; side views of
+    planting row *row* when given.
     """
     names = upscale(ds)
     kept, h = _row(ds, row)
     node_kept = kept[np.asarray(ds.owner("SubOrgan"))]
     norm = Normalize(vmin=float(np.min(ds.get("water_potential"))), vmax=float(np.max(ds.get("water_potential"))))
-    fig, axes = plt.subplots(1, len(names), figsize=(3.2 * len(names), 4.2), sharex=True, sharey=True)
-    for rank, (ax, (scale, name)) in enumerate(zip(axes, names.items()), start=1):
+    compartments = _compartment_positions(ds, h)[node_kept]
+    low, high = compartments[:, 0].min(), compartments[:, 0].max()
+    shift = 1.25 * (high - low)                                        # the same distance between the scales
+    bottom = compartments[:, 1].min()
+    fig, ax = plt.subplots(figsize=(2.2 * len(names), 4.5))
+    for rank, (scale, name) in enumerate(names.items()):
+        offset = np.array([rank * shift, 0.])
         if scale == "Compartment":
-            position = _compartment_positions(ds, h)
             index = {int(v): i for i, v in enumerate(ds.entity_ids("node"))}
             edges = np.array([[index[int(a)], index[int(b)]] for a, b in ds.edges()])
             edges = edges[node_kept[edges[:, 0]] & node_kept[edges[:, 1]]]
-            ax.add_collection(LineCollection(position[edges], colors="0.7", linewidths=0.4))
-            ax.scatter(position[node_kept, 0], position[node_kept, 1], s=4, cmap="viridis", norm=norm,
+            position = _compartment_positions(ds, h)
+            ax.add_collection(LineCollection(position[edges] + offset, colors="0.7", linewidths=0.4))
+            ax.scatter(*(position[node_kept] + offset).T, s=4, cmap="viridis", norm=norm,
                        c=np.asarray(ds.get(name))[node_kept], zorder=3)
             count = int(node_kept.sum())
         else:
             position, edges, values = _scale_graph(ds, scale, name, node_kept, h)
+            position = position + offset
             if len(edges):
                 edge_lines = LineCollection(position[edges], cmap="viridis", norm=norm, linewidths=2., zorder=2)
                 edge_lines.set_array(values[edges].mean(axis=1))             # an edge: the mean of its two nodes
                 ax.add_collection(edge_lines)
-            ax.scatter(position[:, 0], position[:, 1], c=values, cmap="viridis", norm=norm, s=30, edgecolors="k",
-                       linewidths=0.5, zorder=3)
+            ax.scatter(*position.T, c=values, cmap="viridis", norm=norm, s=30, edgecolors="k", linewidths=0.5,
+                       zorder=3)
             count = len(values)
-        ax.axhline(0., color="saddlebrown", linewidth=0.8)
-        ax.set_aspect("equal")
-        ax.set_title(f"{rank}. {scale}\n{count} {'entity' if count == 1 else 'entities'}", fontsize=9)
-        ax.set_xlabel("y (m)" if row is not None else "x (m)", fontsize=8)
-        ax.tick_params(labelsize=7)
-    axes[0].set_ylabel("z (m)", fontsize=8)
-    fig.suptitle("Ψ upscaled from the Compartments (solved) to the plants, each scale the mean of the scale below")
-    fig.colorbar(plt.cm.ScalarMappable(norm=norm, cmap="viridis"), ax=axes, label="Ψ (MPa)", shrink=0.8, pad=0.01)
+        ax.text(rank * shift + (low + high) / 2., bottom - 0.015,
+                f"{scale}\n{count} {'entity' if count == 1 else 'entities'}", ha="center", va="top", fontsize=9)
+    ax.axhline(0., color="saddlebrown", linewidth=0.8)
+    ax.autoscale()
+    ax.set_ylim(bottom=bottom - 0.09)
+    ax.set_aspect("equal")
+    ax.set_xticks([])
+    ax.set_ylabel("z (m)")
+    ax.set_title("Ψ upscaled from the Compartments (solved) to the plants, each scale the mean of the scale below",
+                 fontsize=10)
+    colour_bar = ax.inset_axes([1.01, 0., 0.012, 1.])                     # as tall as the plot
+    fig.colorbar(plt.cm.ScalarMappable(norm=norm, cmap="viridis"), cax=colour_bar, label="Ψ (MPa)")
     fig.savefig(path, dpi=150, bbox_inches="tight")
     plt.close(fig)

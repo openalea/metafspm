@@ -46,7 +46,7 @@ mean shows where the roots deplete the soil:
 
 The solved potentials of the 164 Compartments are averaged into the 44 segments, then the 12 organs, the 6
 phytomers, the 4 growth units, the 4 axes and the plant: every scale of the MPG (`upscaling.py`). Each step is one
-`derive`. Each panel draws the graph of its scale: its entities as nodes, coloured by their value, and the links
+`derive`. The figure draws the graph of each scale, side by side at the same spacing: its entities as nodes, coloured by their value, and the links
 between them (an edge of the solver graph joining two entities), on one colour scale.
 
 ![upscaling](figures/one_plant/upscaling.png)
