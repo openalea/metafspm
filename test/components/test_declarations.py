@@ -11,6 +11,7 @@ from openalea.metafspm.coupling.component import FunctionalComponent, input_vari
 from openalea.metafspm.coupling.declaration import DeclarationError, declared_specs, resolve_declaration
 from openalea.metafspm.data_structure.configs import ScalesConfig as scales
 from openalea.metafspm.data_structure.data_api import ArrayDataStructure, MPGDataStructure
+from openalea.metafspm.solve.decorator import rate
 from simple_seedling import generate_simple_mpg_seedling
 
 DOC = dict(unit="", unit_comment="", description="", min_value=0., max_value=1., value_comment="", references="",
@@ -311,3 +312,39 @@ def test_a_component_takes_its_time_step_at_construction_or_from_the_simulation(
     assert Clocked(data_structure=grid).time_step == Clocked(data_structure=grid).dt == 3600.   # the simulation's
     assert ClockedByClass(data_structure=grid).time_step == 60.                                 # its class's
     assert Clocked(data_structure=grid, time_step=900.).dt == 900.                               # given explicitly
+
+
+@dataclass
+class Counted(FunctionalComponent):
+    count: float = state_variable(**DOC, initialize=0., location="node")
+    seen_at: float = state_variable(**DOC, initialize=-1., location="scalar")
+
+    @rate
+    def _count(self, count):
+        return count + 1.
+
+    @rate(location="scalar")
+    def _seen_at(self, seen_at):
+        return self.forcing_time()
+
+
+def test_a_component_runs_once_per_time_step_within_the_simulation_step():
+    from openalea.metafspm.coupling.choregrapher import Choregrapher
+    Choregrapher().add_simulation_time_step(3600.)
+    grid = ArrayDataStructure(shape=(2,), dx=0.1)
+    model = Counted(data_structure=grid, time_step=900.)
+    model()
+    np.testing.assert_array_equal(grid.get("count"), 4.)                # four sub-steps of 900 s
+    assert float(grid.get("seen_at")) == 3600.                           # the last sub-step ends at 3600 s
+    model()
+    np.testing.assert_array_equal(grid.get("count"), 8.)
+
+
+def test_a_time_step_must_divide_the_simulation_step():
+    from openalea.metafspm.coupling.choregrapher import Choregrapher
+    Choregrapher().add_simulation_time_step(3600.)
+    grid = ArrayDataStructure(shape=(2,), dx=0.1)
+    with pytest.raises(ValueError, match="must divide the simulation time step"):
+        Counted(data_structure=grid, time_step=1000.)
+    with pytest.raises(ValueError, match="must divide the simulation time step"):
+        Counted(data_structure=grid, time_step=7200.)
