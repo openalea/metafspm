@@ -102,9 +102,9 @@ class _WaterFlow:
     atmosphere = boundary_set(select="is_evaporating", kind="robin", value="air_water_potential",
                               weight="vapour_conductance")
 
-    @graph_output("evaporation", location="node")
-    def _evaporation(self, water_potential, air_water_potential, vapour_conductance, is_evaporating):
-        return is_evaporating * vapour_conductance * (water_potential - air_water_potential)
+    @graph_output("evaporation", location="node", select="is_evaporating")
+    def _evaporation(self, water_potential, air_water_potential, vapour_conductance):
+        return vapour_conductance * (water_potential - air_water_potential)          # on the evaporating nodes
 
 
 @dataclass
@@ -149,9 +149,9 @@ class PlantWaterTransport(FunctionalComponent):
             """The inflow from the soil, an equation of the coupled soil water potential."""
             return soil_contact_conductance * (soil_water_potential - water_potential)
 
-        @graph_output("root_uptake", location="node")
-        def _root_uptake(self, water_potential, soil_water_potential, soil_contact_conductance, is_soil_contact):
-            return is_soil_contact * soil_contact_conductance * (soil_water_potential - water_potential)
+        @graph_output("root_uptake", location="node", select="is_soil_contact")
+        def _root_uptake(self, water_potential, soil_water_potential, soil_contact_conductance):
+            return soil_contact_conductance * (soil_water_potential - water_potential)   # on the root epidermis
 
 
 @dataclass
@@ -401,11 +401,17 @@ class SeedlingStructure(StructuralComponent):
         k[chosen] = (np.broadcast_to(axial_k, k.shape) / np.maximum(conductance_length, 1e-12))[chosen]
         return k
 
-    @postsegmentation
+    def __post_init__(self):
+        super().__post_init__()
+        # the nodes of the exchanges with the soil and the air (also used by the steps below and the soil mapping)
+        self.data_structure.define_mask("root_surface", {"is_soil_contact": ">0"})
+        self.data_structure.define_mask("stomatal_cavities", {"is_evaporating": ">0"})
+
+    @postsegmentation(where="root_surface")
     def _soil_contact_conductance(self, contact_length, root_soil_k):
         return root_soil_k * contact_length
 
-    @postsegmentation
+    @postsegmentation(where="stomatal_cavities")
     def _vapour_conductance(self, evaporating_area, stomatal_conductance, vapour_factor):
         return stomatal_conductance * evaporating_area * vapour_factor
 
@@ -448,6 +454,7 @@ class SoilStructure(StructuralComponent):
         area = np.zeros(ds.shape)
         area[..., 0] = ds.dx[0] * ds.dx[1]
         ds.set("evaporating_area", area)
+        ds.define_mask("surface", {"is_evaporating": ">0"}, location="cell")
 
     @postsegmentation
     def _k(self, K_sat, face_area, face_distance):
@@ -457,6 +464,6 @@ class SoilStructure(StructuralComponent):
         K_face = 2. * K[tail] * K[head] / np.maximum(K[tail] + K[head], 1e-30)
         return K_face * face_area / face_distance
 
-    @postsegmentation
+    @postsegmentation(where="surface")
     def _vapour_conductance(self, evaporating_area, soil_surface_conductance, vapour_factor):
         return soil_surface_conductance * evaporating_area * vapour_factor

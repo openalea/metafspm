@@ -34,7 +34,8 @@
   - `CompositeModel` takes a `Translator` (or a nested dict) directly;
   - grids expose their cell sizes (`dx`);
   - a scalar variable accepts a one-value array (a step computed from one-value parameters);
-  - `@graph_output(location="node")` writes on a grid's cells.
+  - `@graph_output(location="node")` writes on a grid's cells;
+  - `@graph_output(select=...)` computes an output on selected nodes only (the boundary-set forms), zero elsewhere.
 
 ### Declarations shared by plants and grids, and Connection properties
 

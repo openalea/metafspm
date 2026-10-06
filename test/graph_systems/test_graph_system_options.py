@@ -628,3 +628,33 @@ def test_a_filtered_balance_adds_its_terms_on_the_selected_nodes_only():
     np.testing.assert_allclose(ds.get("u"), np.linalg.solve(A, np.where(zone == 1, source, 0.)), rtol=1e-10)
     with pytest.raises(KeyError, match="'nowhere' is used by a graph system but is not registered"):
         FilterOnMissingVariable(data_structure=_ds())()
+
+
+@dataclass
+class SelectedOutput(FunctionalComponent):
+    u: float = state_variable(**DOC, initialize=1., scale=scales.SubOrgan)
+    time_step = DT
+
+    @graph_system(node_unknowns=["u"], transient=True)
+    class _solve:
+        _balance = node_balance(field="u")(_diffusion_residual)
+
+        @graph_output("collar_u", location="node", select="is_collar")
+        def _collar_u(self, u):
+            self.seen = len(u)                                           # the arguments are sliced to the selection
+            return 2. * u
+
+
+def test_a_selected_output_is_computed_on_its_nodes_only():
+    ds = _ds()
+    model = SelectedOutput(data_structure=ds)
+    model()
+    collar = np.asarray(ds.get("is_collar")) > 0
+    np.testing.assert_allclose(np.asarray(ds.get("collar_u"))[collar], 2. * np.asarray(ds.get("u"))[collar])
+    np.testing.assert_array_equal(np.asarray(ds.get("collar_u"))[~collar], 0.)
+    assert model.seen == collar.sum() == 1
+
+
+def test_a_selected_output_is_on_nodes():
+    with pytest.raises(ValueError, match="select= chooses nodes"):
+        graph_output("flux", location="edge", select="is_collar")

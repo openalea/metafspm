@@ -180,6 +180,11 @@ class SoilDiffusion(FunctionalComponent):
   arguments by name like the balances: unknowns and DataStructure variables (e.g. coupled ones), sliced to the
   selected nodes. A Dirichlet method returns the residual (`p - collar_pressure`), a Neumann one the inflow
   (`uptake_rate * (soil_concentration - concentration)`), with the same sign as a `boundary_set`'s value.
+- **Selections.** Every part of a graph system can be restricted to some nodes:
+  - balances: `filters=`;
+  - boundary sets and conditions: `select=`;
+  - outputs: `@graph_output(..., select=)`, zero elsewhere;
+  - steps: `where=` (a mask), e.g. a step computing the root surface's conductances only.
 - **Pool unknowns.** `pool_unknowns={"shoot_sugar": {"location": "Plant", "exchange": "collar"}}` adds one unknown
   per plant, solved with the graph; its residual is a `@pool_balance(field=...)`, and equations exchange with it
   through `self.pool_exchange(name)` (a sparse node × pool map). Newton solvers only.
