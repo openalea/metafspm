@@ -2038,3 +2038,4 @@ Per-file counts:
 
   One bug of my own was caught: the functor read the mask dict before the first mask existed. Results unchanged; suite 763 passed.
 - **Example boundaries as decorators (your request):** the air exchange (plant and soil) and the water table are `@boundary_condition` equations instead of boundary sets. Results identical.
+- **Seedling generator externalised (your request):** the architecture, anatomies and junctions (and their codes) moved from `components.py` to `seedling.py`; `SeedlingStructure.initiate_plant` calls it. Results identical.
