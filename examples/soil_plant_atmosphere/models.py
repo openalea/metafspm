@@ -55,7 +55,7 @@ class Soil(CompositeModel):
     """
 
     def __init__(self, populations, scene_xrange, scene_yrange, time_step, depth=0.4, voxel=0.025,
-                 topsoil_K=5., subsoil_K=2., topsoil_depth=0.2, **scenario):
+                 topsoil_K=1.5, subsoil_K=0.6, topsoil_depth=0.2, **scenario):
         shape = (max(1, round(scene_xrange / voxel)), max(1, round(scene_yrange / voxel)), max(1, round(depth / voxel)))
         self.grid = ArrayDataStructure(shape=shape, dx=(scene_xrange / shape[0], scene_yrange / shape[1],
                                                         depth / shape[2]), periodic=(True, True, False))
