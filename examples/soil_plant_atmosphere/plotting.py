@@ -4,7 +4,8 @@ Plots of the example's DataStructures and of the converged water potentials on t
     plant_segments      the plants at SubOrgan scale (side view, or one planting row): segments coloured by xylem Ψ
     plant_anatomy       every Compartment of every segment (side view, or one planting row), coloured by Ψ
     anatomy_types       one anatomy per organ type (root, stem, leaf): its tissues, Ψ and the radial fluxes
-    soil_slice          a vertical slice of the soil grid (or along a planting row), Ψ coloured, the roots over it
+    soil_slice          a vertical slice of the soil grid (or along a planting row), Ψ coloured, the roots over it;
+                        anomaly=True: Ψ minus its layer mean, the roots' depletion without the vertical gradient
     top_view            the stand from above: the water taken up per soil column, the segments drawn over it
     upscaling_series    the water potential upscaled from the Compartments to the plants (upscaling.py), one graph
                         per scale, on one colour scale
@@ -164,12 +165,17 @@ def anatomy_types(ds, path, title="One anatomy per organ type"):
     plt.close(fig)
 
 
-def soil_slice(grid, plant_data_structures, path, y=None, row=None, title="Soil water potential, vertical slice"):
+def soil_slice(grid, plant_data_structures, path, y=None, row=None, anomaly=False,
+               title="Soil water potential, vertical slice"):
     """
     The soil's Ψ in a vertical slice, the roots near it drawn over it: the (x, z) slice at *y* (default: the middle),
-    or with *row*, the (y, z) slice through planting row *row*.
+    or with *row*, the (y, z) slice through planting row *row*. anomaly=True shows Ψ minus the mean of its layer
+    (over x and y), on a colour scale centred on 0: the depletion by the roots, without the vertical gradient.
     """
     psi = np.asarray(grid.get("water_potential"))
+    if anomaly:
+        psi = psi - psi.mean(axis=(0, 1), keepdims=True)
+        title = "Soil Ψ minus its layer mean"
     dx = grid.dx
     if row is not None:
         ds = plant_data_structures[0]
@@ -181,7 +187,12 @@ def soil_slice(grid, plant_data_structures, path, y=None, row=None, title="Soil 
         values, h, across, label, i = psi[:, j, :], 0, 1, None, j
         label = f"y cell {j}"
     fig, ax = plt.subplots(figsize=(7, 5))
-    image = ax.imshow(values.T, origin="upper", cmap="viridis", aspect="equal",
+    if anomaly:
+        bound = float(np.abs(values).max()) or 1.
+        colours = dict(cmap="RdBu", vmin=-bound, vmax=bound)               # red: drier than the layer
+    else:
+        colours = dict(cmap="viridis")
+    image = ax.imshow(values.T, origin="upper", aspect="equal", **colours,
                       extent=(0., values.shape[0] * dx[h], -psi.shape[2] * dx[2], 0.))
     low, high = i * dx[across], (i + 1) * dx[across]
     for ds in plant_data_structures:
@@ -190,11 +201,11 @@ def soil_slice(grid, plant_data_structures, path, y=None, row=None, title="Soil 
         middle = np.mod((start[roots, across] + end[roots, across]) / 2., psi.shape[across] * dx[across])
         roots = roots[(middle >= low - dx[across]) & (middle < high + dx[across])]   # the roots near the slice
         ax.add_collection(LineCollection(np.stack([start[roots][:, [h, 2]], end[roots][:, [h, 2]]], axis=1),
-                                         colors="white", linewidths=1.2))
+                                         colors="0.2" if anomaly else "white", linewidths=1.2))
     ax.set_xlabel("y (m)" if h == 1 else "x (m)")
     ax.set_ylabel("z (m)")
     ax.set_title(f"{title} ({label})")
-    fig.colorbar(image, ax=ax, label="Ψ soil (MPa)")
+    fig.colorbar(image, ax=ax, label="Ψ - layer mean (MPa)" if anomaly else "Ψ soil (MPa)")
     fig.savefig(path, dpi=150, bbox_inches="tight")
     plt.close(fig)
 

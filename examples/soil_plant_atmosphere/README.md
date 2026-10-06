@@ -35,6 +35,11 @@ evaporation.
 ![the plant with its anatomies](figures/one_plant/plant_anatomy.png)
 ![one anatomy per organ type](figures/one_plant/anatomy_types.png)
 ![soil slice](figures/one_plant/soil_slice.png)
+
+The plain slice is dominated by the vertical gradient, from the water table up to the roots. Ψ minus each layer's
+mean shows where the roots deplete the soil:
+
+![soil slice, anomaly](figures/one_plant/soil_slice_anomaly.png)
 ![top view](figures/one_plant/top_view.png)
 
 ### Upscaling, step by step
@@ -61,6 +66,7 @@ The side views show the first planting row (four plants, seen along the row, in 
 
 ![plants](figures/population/plant_segments.png)
 ![soil slice](figures/population/soil_slice.png)
+![soil slice, anomaly](figures/population/soil_slice_anomaly.png)
 ![top view](figures/population/top_view.png)
 
 The upscaling series of the first row's plants: [Compartments](figures/population/upscale_1_compartment.png), [SubOrgan](figures/population/upscale_2_suborgan.png), [Organ](figures/population/upscale_3_organ.png), [Phytomer](figures/population/upscale_4_phytomer.png), [GrowthUnit](figures/population/upscale_5_growthunit.png), [Axis](figures/population/upscale_6_axis.png), [Plant](figures/population/upscale_7_plant.png).

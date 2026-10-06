@@ -2047,3 +2047,4 @@ Per-file counts:
 - **Top view (your request):** shoot segments drawn last and twice as thick as the roots (2.4 vs 1.2).
 - **Upscaling over every MPG scale (your remark):** Phytomer and GrowthUnit added between Organ and Axis (7 graphs). Layer and Cell hold no entity in this generator (the Compartments are directly below the segments).
 - **Soil-limited uptake (your request, option 2):** soil conductivities divided by about 3.3 (topsoil 1.5, subsoil 0.6). The horizontal anomaly of soil Ψ grows about 3× (population 0.019 → 0.052 MPa), but the vertical gradient grows as much (surface −1.4 → −4.4 MPa), so the slices still look layered. Leaf Ψ min −2.7 (one plant) and −5.8 MPa (population); converges in 6 and 9 steps.
+- **Soil anomaly view (your request):** `soil_slice(anomaly=True)` shows Ψ minus its layer mean on a diverging scale centred on 0; written as `soil_slice_anomaly.png` by both scenes. Root depletion columns (to about 0.03 MPa) are now visible.
