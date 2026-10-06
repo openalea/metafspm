@@ -85,7 +85,8 @@ class CrossMapping:
         mask:        a node mask of the source: its other entities are left out (they neither push nor receive, e.g.
                      plants before emergence).
 
-    The incidence is rebuilt at the next use after the source's topology or a coordinate changed; refresh() forces
+    The incidence is rebuilt at the next use after the source's or the target's topology (an adaptive grid's
+    refinement) or a coordinate changed; refresh() forces
     it (coordinates written through a view without mark_written()).
     """
 
@@ -107,7 +108,7 @@ class CrossMapping:
         counts = (tuple(self.source.write_count(name) for name in self.coordinates)
                   if hasattr(self.source, "write_count") else ())
         masked = self.source.mask_version(self.mask) if self.mask is not None else None
-        return self.source.topology_version, counts, masked
+        return self.source.topology_version, getattr(self.target, "topology_version", None), counts, masked
 
     def refresh(self) -> None:
         self._stamp = None

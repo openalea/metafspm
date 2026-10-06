@@ -1,6 +1,6 @@
 """
-Smoke test of examples/soil_plant_atmosphere: both scenes (one plant, a population) converge to a steady state whose
-water balances close, and their plots are written.
+Smoke test of examples/soil_plant_atmosphere: the scenes (one plant, a population, one plant on an adaptive soil)
+converge to a steady state whose water balances close, and their plots are written.
 """
 import os
 import sys
@@ -13,8 +13,9 @@ EXAMPLE = os.path.join(os.path.dirname(__file__), "..", "..", "examples", "soil_
 sys.path.insert(0, os.path.abspath(EXAMPLE))
 
 import one_plant                                                                     # noqa: E402
+import one_plant_adaptative                                                          # noqa: E402
 import population                                                                    # noqa: E402
-from models import Soil                                                               # noqa: E402
+from models import AdaptiveSoil, Soil                                                 # noqa: E402
 
 FIGURES = ("plant_segments.png", "plant_segments_soil.png", "plant_anatomy.png", "plant_anatomy_soil.png",
            "anatomy_types.png", "soil_slice.png", "soil_slice_anomaly.png",
@@ -27,14 +28,14 @@ def _environment(scene, kind):
 
 def _check_balances(scene):
     plants = [p.data_structure for p in scene.populations]
-    soil = _environment(scene, Soil).grid
+    soil = _environment(scene, (Soil, AdaptiveSoil)).grid
     uptake = sum(float(ds.get("root_uptake").sum()) for ds in plants)
     transpiration = sum(float(ds.get("evaporation").sum()) for ds in plants)
     assert uptake > 0 and uptake == pytest.approx(transpiration, rel=1e-8)          # the plants: in = out
     assert float(soil.get("plant_uptake").sum()) == pytest.approx(uptake, rel=1e-8)  # the soil gives what they take
     # the soil: the water table feeds the plants' uptake and the soil evaporation
-    outflow = np.asarray(soil.incidence_matrix() @ np.asarray(soil.get("water_flux"))).reshape(soil.shape)
-    from_the_water_table = float(outflow[..., -1].sum())
+    outflow = np.asarray(soil.incidence_matrix() @ np.asarray(soil.get("water_flux"))).reshape(-1)
+    from_the_water_table = float(outflow[np.asarray(soil.get("is_water_table")).reshape(-1) > 0].sum())
     evaporation = float(soil.get("evaporation").sum())
     assert from_the_water_table == pytest.approx(uptake + evaporation, rel=1e-6)
 
@@ -67,4 +68,18 @@ def test_the_example_converges_with_closed_water_balances(example, tmp_path):
     assert os.path.exists(tmp_path / "records" / "SeedlingWater" / "summaries.csv")
     example.plots(scene, str(tmp_path / "figures"))
     for name in FIGURES:
+        assert (tmp_path / "figures" / name).stat().st_size > 0
+
+
+def test_the_adaptive_soil_refines_where_the_roots_take_up_water(tmp_path):
+    scene, stop, _ = one_plant_adaptative.run(output_dirpath=str(tmp_path / "records"), max_iterations=50)
+    assert scene.stopped and stop.history[-1] < 1e-6
+    _check_balances(scene)
+    soil = scene.environment[0]
+    levels, sinks = soil.grid.levels(), soil.sink_density() > soil.refine_fraction * soil.sink_density().max()
+    assert (levels[sinks] == soil.grid.max_level).all()                       # the sinks at the finest size
+    assert soil.grid.n_nodes() < 0.1 * np.prod(soil.grid.shape) * 8 ** soil.grid.max_level
+    np.testing.assert_array_equal(soil.history[-1], soil.history[-2])           # the grid settled
+    one_plant_adaptative.plots(scene, str(tmp_path / "figures"))
+    for name in ("plant_segments.png", "cell_size.png", "soil_anomaly.png", "size_against_metrics.png"):
         assert (tmp_path / "figures" / name).stat().st_size > 0

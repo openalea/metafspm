@@ -165,3 +165,26 @@ def test_a_refined_grid_is_checkpointed(tmp_path):
     np.testing.assert_array_equal(restored.levels(), grid.levels())
     np.testing.assert_array_equal(restored.get("solute"), grid.get("solute"))
     np.testing.assert_array_equal(restored.get("face_area"), grid.get("face_area"))
+
+
+def test_a_mapping_follows_the_refinement_of_its_grid():
+    from growth import RootGrowthProbe
+    from openalea.metafspm.data_structure.data_api import MPGDataStructure
+    from openalea.metafspm.scene.population import build_population
+    table = pd.DataFrame([dict(plant="p0", model=None, x=0.05, y=0.05, z=0., rotation=0.,
+                               scenario={"parameters": {"n_segments": 3}})])
+    g, _ = build_population(table, initiators=(RootGrowthProbe,))
+    g.populate_graph(g.scales.SubOrgan)
+    g.convert_properties_to_arraydict()
+    plants = MPGDataStructure(g, from_scale=g.scales.SubOrgan)
+    for name in ("x1", "x2", "y1", "y2", "z1", "z2"):
+        plants.register(name, [0.01 * g.property(name)[v] if name[0] == "z" else g.property(name)[v]
+                               for v in plants.entity_ids("node")], location="node")
+    grid = _grid()
+    mapping = CrossMapping(plants, grid, method="overlap")
+    before = mapping.incidence()[1].max()
+    grid.refine(lambda ds: ds.cell_centers()[:, 0] < 0.1)
+    rows, columns, weights = mapping.incidence()
+    assert columns.max() < grid.n_nodes() and columns.max() != before
+    np.testing.assert_array_equal(columns, grid.locate(grid.cell_centers()[columns]))
+    assert (grid.levels()[columns] > 0).all()                                     # the new, refined cells

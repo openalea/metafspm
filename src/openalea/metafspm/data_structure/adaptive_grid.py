@@ -93,9 +93,12 @@ class AdaptiveGridDataStructure(VariableStoreMixin, DataStructure):
         """Volume of each cell."""
         return np.prod(self._base_dx) / (2 ** len(self._base_shape)) ** self._level
 
+    def cell_sizes(self) -> np.ndarray:
+        """Size of each cell along each axis, one row per cell."""
+        return self._base_dx[None, :] / (2 ** self._level)[:, None]
+
     def cell_centers(self) -> np.ndarray:
-        size = self._base_dx[None, :] / (2 ** self._level)[:, None]
-        return self._origin + (self._index + 0.5) * size
+        return self._origin + (self._index + 0.5) * self.cell_sizes()
 
     def _build_faces(self) -> None:
         """Faces between neighbouring leaves, axis by axis, from the finest lattice (periodic axes wrap)."""

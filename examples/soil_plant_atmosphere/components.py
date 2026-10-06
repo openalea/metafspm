@@ -299,7 +299,7 @@ class SoilStructure(StructuralComponent):
     """
     The soil grid's hydraulics: face conductances k = K · A / d, K the harmonic mean of the two voxels' K_sat (which
     vary between voxels, by layer); the surface layer evaporates (a soil-surface vapour conductance), the bottom
-    layer is the water table.
+    layer is the water table. Regular and adaptive grids alike (faces of unequal cells: their own A and d).
     """
     k: float = state_variable(**_doc("mm3 s-1 MPa-1", "Hydraulic conductance of a face."), initialize=0.,
                               location="edge", state_variable_type="intensive")
@@ -322,16 +322,20 @@ class SoilStructure(StructuralComponent):
 
     def __post_init__(self):
         super().__post_init__()
+        self.set_layers()
+
+    def set_layers(self):
+        """
+        The surface (evaporating) and bottom (water table) cells, and each surface cell's area, from the grid's
+        geometry: a regular grid or an adaptive one, whose refinement calls it again (its cells change).
+        """
         ds = self.data_structure
-        layers = np.zeros(ds.shape)
-        layers[..., 0] = 1.                                                  # z points down: the surface first
-        bottom = np.zeros(ds.shape)
-        bottom[..., -1] = 1.
-        ds.set("is_evaporating", layers)
-        ds.set("is_water_table", bottom)
-        area = np.zeros(ds.shape)
-        area[..., 0] = ds.dx[0] * ds.dx[1]
-        ds.set("evaporating_area", area)
+        surface = np.asarray(ds.layer_mask(z=0)).reshape(-1)                 # z points down: the surface first
+        bottom = np.asarray(ds.layer_mask(z=-1)).reshape(-1)
+        size = ds.cell_sizes()
+        ds.set("is_evaporating", surface.astype(float))
+        ds.set("is_water_table", bottom.astype(float))
+        ds.set("evaporating_area", np.where(surface, size[:, 0] * size[:, 1], 0.))
 
     @postsegmentation
     def _k(self, K_sat, face_area, face_distance):
