@@ -196,6 +196,8 @@ def _converted(values, array: np.ndarray, name: str):
             out[i] = value
         return out.reshape(array.shape)
     values = np.asarray(values, dtype=float)
+    if array.shape == () and values.size == 1:
+        values = values.reshape(())                     # a scalar computed from one-value arrays
     if values.ndim == 1 and array.ndim > 1 and values.size == array.size:
         values = values.reshape(array.shape)      # a grid variable written from a flat graph solve (C order)
     try:
@@ -2423,6 +2425,11 @@ class ArrayDataStructure(VariableStoreMixin, FieldDataStructure):
     @property
     def shape(self) -> tuple:
         return self._shape
+
+    @property
+    def dx(self) -> np.ndarray:
+        """Cell sizes along each axis (a copy)."""
+        return self._dx.copy()
 
     @property
     def axes(self) -> tuple:

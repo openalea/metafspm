@@ -27,6 +27,15 @@
   - `solver="implicit_euler"` is a deprecated alias of `"newton"` with `transient=True`. It used to add `(u - u_prev)/h` to every unknown, edge fluxes included, so equations writing their own time term got it twice.
   - `explicit_euler` evaluates the edge unknowns at the current state before stepping (it used the previous step's fluxes), and leaves the step's fluxes in the DataStructure.
 
+### Example: water in the soil–plant–atmosphere continuum
+
+- **`examples/soil_plant_atmosphere/`** (new): a seedling and a population on a soil grid under a dry atmosphere, steady water flow, with plots. A smoke test checks convergence and the water balances. The user guide and the example's README describe it.
+- **Framework changes it needed:**
+  - `CompositeModel` takes a `Translator` (or a nested dict) directly;
+  - grids expose their cell sizes (`dx`);
+  - a scalar variable accepts a one-value array (a step computed from one-value parameters);
+  - `@graph_output(location="node")` writes on a grid's cells.
+
 ### Declarations shared by plants and grids, and Connection properties
 
 - **`location="node"` on a grid is its cells** (the nodes of its graph), so one component class declared on nodes and edges runs on a plant MPG and on a soil grid.

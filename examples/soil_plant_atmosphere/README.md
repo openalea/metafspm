@@ -1,0 +1,53 @@
+# Water in the soil–plant–atmosphere continuum
+
+A small, complete example of metafspm: steady water flow from a water table, through the soil and seedlings, out to a
+dry atmosphere. Every part shows a feature of metafspm:
+
+| file | what it shows |
+|---|---|
+| `components.py` | **`WaterTransport`**, one `FunctionalComponent` running on plant graphs and on soil grids: a graph system (node balance, edge law j = k ΔΨ), boundary sets (a Robin exchange with the air, a Dirichlet water table), boundary conditions written as equations of coupled variables (`@boundary_condition`: the root–soil exchange, the plants' uptake in the soil), `@graph_output`s (uptake, evaporation). |
+| | **`SeedlingStructure`**, a `StructuralComponent`: `initiate_plant` builds each seedling at every scale (Plant → Axis → GrowthUnit → Phytomer → Organ → SubOrgan) with an anatomy per segment (root: epidermis, cortex, endodermis, xylem; stem: epidermis, cortex, xylem; leaf: xylem, mesophyll, stomatal cavity) and the axial xylem junctions, then computes the conductances from the structure: k = k_s · L on radial edges, k = k_axial / L on axial ones. **`SoilStructure`** does the same for the soil grid (k = K · A / d on the faces, K varying between voxels). |
+| | **`AtmosphereState`**, environment scalars: Ψ_air = (RT/V_w) ln RH, and the vapour factor that turns a vapour conductance into a liquid one where water evaporates (the liquid–vapour step, linearised). |
+| `models.py` | **Models and translators.** The plant population model (`SeedlingWater`: initiators, anatomy mode), the soil and atmosphere environment models. Translators inside a DataStructure (k → conductance), and across DataStructures (soil Ψ → root epidermis, uptake → soil cells, air → plants and soil, transpiration → air). A `CrossMapping` of the root surface only (`mask=`). A `stop_when` condition on the change of Ψ between steps. |
+| `one_plant.py` | **A Scene with one seedling**, run until the lagged plant–soil fixed point converges, with a `SceneRecorder`. |
+| `population.py` | **A Scene with a planted stand.** `planting_table` lays out the plants, and each plant's root radial conductance comes from its own scenario (`per_plant_scenarios`). |
+| `plotting.py` | **Plots** of the DataStructures and of the converged Ψ: the plants at SubOrgan scale, the full graph with the anatomies, one anatomy per organ type, a soil slice with the roots, a top view of the uptake. |
+
+Run, from this folder:
+
+```
+python one_plant.py            # writes to outputs/one_plant
+python population.py           # writes to outputs/population
+```
+
+Units: water potentials in MPa, volumes in mm³ (fluxes in mm³ s⁻¹, conductances in mm³ s⁻¹ MPa⁻¹), lengths in m.
+Volumes in mm³ keep the solves' residuals well above the solver's absolute tolerance.
+
+## One plant
+
+The scene converges in five steps (largest change of Ψ: 2.5e-01, 9.6e-04, 7.1e-06, 7.9e-08 MPa). Transpiration
+(0.076 mm³ s⁻¹) equals the root uptake and the water taken from the soil; the water table supplies it and the soil
+evaporation.
+
+![plants at SubOrgan scale](figures/one_plant/plant_segments.png)
+![the plant with its anatomies](figures/one_plant/plant_anatomy.png)
+![one anatomy per organ type](figures/one_plant/anatomy_types.png)
+![soil slice](figures/one_plant/soil_slice.png)
+![top view](figures/one_plant/top_view.png)
+
+## A population
+
+The plants share the soil; their root radial conductances cycle through 0.2, 0.5 and 1.0. Under a dry air
+(Ψ_air ≈ −94 MPa), the vapour step limits the flow, so transpiration varies little between plants. Their leaf water
+potentials absorb the difference: the least conductive roots give the lowest leaf Ψ.
+
+![plants](figures/population/plant_segments.png)
+![soil slice](figures/population/soil_slice.png)
+![top view](figures/population/top_view.png)
+
+## Notes
+
+- The axial junctions are built by `initiate_plant` with their own properties (type, length). `MPGDataStructure(...,
+  wiring=rules)` can wire junctions too, but the Connections it creates carry no such properties.
+- The plant–soil coupling is lagged: each scene step solves the soil with the plants' last uptake, then the plants
+  with the soil's new Ψ, until `stop_when` holds.

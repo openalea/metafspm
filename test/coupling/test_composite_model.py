@@ -15,6 +15,7 @@ import doubles
 import doubles_ds
 from openalea.metafspm.coupling.choregrapher import Choregrapher
 from openalea.metafspm.coupling.composite_wrapper import CompositeModel
+from openalea.metafspm.coupling.translator import Translator
 
 WHEATBRIDGES_TRANSLATOR = os.path.join(os.path.dirname(__file__), "..", "inputs", "wheatbridges_coupling_translator.yaml")
 WHEATBRIDGES_PLANT_COMPONENTS = ["RootAnatomy", "RootCNUnified", "RootGrowthModelCoupled", "RootWaterModel", "CNW_Grass"]
@@ -229,3 +230,13 @@ def test_functional_components_run_once_per_simulation_step(tmp_path):
     ds.set("soil_temperature", 0.)
     carbon()
     np.testing.assert_allclose(ds.get("hexose"), 1. - 0.1)        # one step, not 3600
+
+
+def test_a_translator_object_is_used_as_given():
+    ds = doubles_ds.make_plant_ds()
+    carbon, nitrogen = doubles_ds.PlantCarbon(data_structure=ds), doubles_ds.PlantNitrogen(data_structure=ds)
+    translator = Translator.from_dict(doubles_ds.translator())
+    model = CompositeModel()
+    assert model.open_or_create_translator(translator) is translator
+    model.declare_data_and_couple_components(translator_path=translator, components=(carbon, nitrogen))
+    assert ds.aliases() == {"sugar": "hexose"}
