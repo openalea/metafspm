@@ -6,6 +6,8 @@ Plots of the example's DataStructures and of the converged water potentials on t
     anatomy_types       one anatomy per organ type (root, stem, leaf): its tissues, Ψ and the radial fluxes
     soil_slice          a vertical slice of the soil grid (or along a planting row), Ψ coloured, the roots over it
     top_view            the stand from above: the water taken up per soil column, the segments drawn over it
+    upscaling_series    the water potential upscaled from the Compartments to the plants (upscaling.py), one graph
+                        per scale, on one colour scale
 """
 import numpy as np
 import matplotlib
@@ -15,6 +17,7 @@ from matplotlib.collections import LineCollection
 from matplotlib.colors import Normalize
 
 from seedling import ANATOMY, LEAF, ROOT, STEM, XYLEM
+from upscaling import upscale
 
 TISSUE_NAMES = {1: "epidermis", 2: "cortex", 3: "endodermis", 4: "xylem", 5: "mesophyll", 6: "stomatal cavity"}
 ORGAN_NAMES = {ROOT: "root", STEM: "stem", LEAF: "leaf"}
@@ -215,3 +218,58 @@ def top_view(grid, plant_data_structures, path, title="Top view: water taken up 
     fig.colorbar(image, ax=ax, label="uptake (mm3 s-1)")
     fig.savefig(path, dpi=150, bbox_inches="tight")
     plt.close(fig)
+
+
+def _entity_of_segment(ds, scale):
+    """Per SubOrgan entity, the index of the entity of *scale* it belongs to."""
+    segment_of_node, entity_of_node = np.asarray(ds.owner("SubOrgan")), np.asarray(ds.owner(scale))
+    entity_of_segment = np.empty(len(ds.entity_ids("SubOrgan")), dtype=int)
+    entity_of_segment[segment_of_node] = entity_of_node
+    return entity_of_segment
+
+
+def upscaling_series(ds, folder, prefix="upscale", row=None):
+    """
+    One graph per step of the upscaling of the water potential (Compartment, SubOrgan, Organ, Axis, Plant), every
+    segment coloured by the value of its entity at that scale, on one colour scale; side views of planting row *row*
+    when given. Returns the paths written.
+    """
+    import os
+    names = upscale(ds)
+    kept, h = _row(ds, row)
+    norm = Normalize(vmin=float(np.min(ds.get("water_potential"))), vmax=float(np.max(ds.get("water_potential"))))
+    start, end, _ = _segments(ds)
+    lines_xz = np.stack([start[kept][:, [h, 2]], end[kept][:, [h, 2]]], axis=1)
+    paths = []
+    for rank, (scale, name) in enumerate(names.items(), start=1):
+        fig, ax = plt.subplots(figsize=(7, 6))
+        if scale == "Compartment":
+            node_kept = kept[np.asarray(ds.owner("SubOrgan"))]
+            position = _compartment_positions(ds, h)
+            index = {int(v): i for i, v in enumerate(ds.entity_ids("node"))}
+            edges = np.array([[index[int(a)], index[int(b)]] for a, b in ds.edges()])
+            edges = edges[node_kept[edges[:, 0]] & node_kept[edges[:, 1]]]
+            ax.add_collection(LineCollection(position[edges], colors="0.7", linewidths=0.5))
+            mappable = ax.scatter(position[node_kept, 0], position[node_kept, 1], s=9, cmap="viridis", norm=norm,
+                                  c=np.asarray(ds.get(name))[node_kept], zorder=3)
+            count = int(node_kept.sum())
+        else:
+            entity = _entity_of_segment(ds, scale)[kept]
+            mappable = LineCollection(lines_xz, cmap="viridis", norm=norm, linewidths=3)
+            mappable.set_array(np.asarray(ds.get(name))[entity])
+            ax.add_collection(mappable)
+            ax.autoscale()
+            count = len(np.unique(entity))                         # the entities drawn
+        ax.axhline(0., color="saddlebrown", linewidth=1)
+        ax.set_aspect("equal")
+        ax.set_xlabel("y (m)" if row is not None else "x (m)")
+        ax.set_ylabel("z (m)")
+        how = "solved" if scale == "Compartment" else "mean of the scale below"
+        ax.set_title(f"{rank}. Ψ at {scale} scale ({how}; {count} entities)")
+        fig.colorbar(mappable, ax=ax, label="Ψ (MPa)")
+        path = os.path.join(folder, f"{prefix}_{rank}_{scale.lower()}.png")
+        fig.savefig(path, dpi=150, bbox_inches="tight")
+        plt.close(fig)
+        paths.append(path)
+    return paths
+

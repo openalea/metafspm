@@ -16,7 +16,9 @@ import one_plant                                                                
 import population                                                                    # noqa: E402
 from models import Soil                                                               # noqa: E402
 
-FIGURES = ("plant_segments.png", "plant_anatomy.png", "anatomy_types.png", "soil_slice.png", "top_view.png")
+FIGURES = ("plant_segments.png", "plant_anatomy.png", "anatomy_types.png", "soil_slice.png", "top_view.png",
+           "upscale_1_compartment.png", "upscale_2_suborgan.png", "upscale_3_organ.png", "upscale_4_axis.png",
+           "upscale_5_plant.png")
 
 
 def _environment(scene, kind):
@@ -37,12 +39,29 @@ def _check_balances(scene):
     assert from_the_water_table == pytest.approx(uptake + evaporation, rel=1e-6)
 
 
+def _check_upscaling(ds):
+    """Each scale is the mean of the scale below it, down to one value per plant."""
+    from upscaling import upscale
+    names = upscale(ds)
+    below = "Compartment"
+    for scale in ("SubOrgan", "Organ", "Axis", "Plant"):
+        owner = np.asarray(ds.owner(scale)) if below == "Compartment" else None
+        values, lower = np.asarray(ds.get(names[scale])), np.asarray(ds.get(names[below]))
+        if owner is not None:
+            expected = np.bincount(owner, weights=lower) / np.bincount(owner)
+            np.testing.assert_allclose(values, expected, rtol=1e-12)
+        assert values.size == len(ds.entity_ids(scale))
+        below = scale
+    assert np.asarray(ds.get(names["Plant"])).size == len(ds.entity_ids("Plant"))
+
+
 @pytest.mark.parametrize("example", [one_plant, population], ids=["one_plant", "population"])
 def test_the_example_converges_with_closed_water_balances(example, tmp_path):
     scene, stop = example.scene(output_dirpath=str(tmp_path / "records"))
     scene.simulate(50)
     assert scene.stopped and stop.history[-1] < 1e-6 and scene.iteration < 50
     _check_balances(scene)
+    _check_upscaling(scene.populations[0].data_structure)
     leaves = scene.populations[0].data_structure
     assert -10. < float(leaves.get("water_potential").min()) < -1.                  # a transpiring, not wilted, plant
     assert os.path.exists(tmp_path / "records" / "SeedlingWater" / "summaries.csv")
