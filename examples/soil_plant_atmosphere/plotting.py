@@ -1,8 +1,10 @@
 """
 Plots of the example's DataStructures and of the converged water potentials on them (matplotlib, PNG files).
 
-    plant_segments      the plants at SubOrgan scale (side view, or one planting row): segments coloured by xylem Ψ
-    plant_anatomy       every Compartment of every segment (side view, or one planting row), coloured by Ψ
+    plant_segments      the plants at SubOrgan scale (side view, or one planting row): segments coloured by xylem Ψ,
+                        the soil's ΔΨ (Ψ minus its layer mean) behind them on a diverging scale of its own
+    plant_anatomy       every Compartment of every segment (side view, or one planting row), coloured by Ψ, the
+                        soil's ΔΨ behind them
     anatomy_types       one anatomy per organ type (root, stem, leaf): its tissues, Ψ and the radial fluxes
     soil_slice          a vertical slice of the soil grid (or along a planting row), Ψ coloured, the roots over it;
                         anomaly=True: Ψ minus its layer mean, the roots' depletion without the vertical gradient
@@ -64,19 +66,22 @@ def _norm(*arrays):
     return Normalize(vmin=values.min(), vmax=values.max())
 
 
-def plant_segments(data_structures, path, row=None, title="Xylem Ψ at SubOrgan scale"):
+def plant_segments(data_structures, path, row=None, soil=None, title="Xylem Ψ at SubOrgan scale"):
     """
     Side view of the plants of *data_structures*, each segment coloured by its xylem Ψ: every plant in (x, z), or
-    the plants of planting row *row* in (y, z).
+    the plants of planting row *row* in (y, z). With the *soil* grid, its ΔΨ (Ψ minus its layer mean) behind them,
+    in the plants' plane, on a diverging scale of its own.
     """
-    fig, ax = plt.subplots(figsize=(7, 6))
+    fig, ax = plt.subplots(figsize=(7, 6.6 if soil is not None else 6))
+    if soil is not None:
+        _soil_colorbar(fig, ax, _soil_background(ax, soil, data_structures[0], row))
     selections = [_row(ds, row) for ds in data_structures]
     values = [_xylem_values(ds)[kept] for ds, (kept, _) in zip(data_structures, selections)]
     norm = _norm(*values)
     for ds, value, (kept, h) in zip(data_structures, values, selections):
         start, end, _ = _segments(ds)
         lines = LineCollection(np.stack([start[kept][:, [h, 2]], end[kept][:, [h, 2]]], axis=1), cmap="viridis",
-                               norm=norm, linewidths=3)
+                               norm=norm, linewidths=3, zorder=2)
         lines.set_array(value)
         ax.add_collection(lines)
     ax.axhline(0., color="saddlebrown", linewidth=1)
@@ -103,8 +108,11 @@ def _compartment_positions(ds, h=0, spread=0.004):
     return middle[owner][:, [h, 2]] + spread * depth[:, None] * normal[owner]
 
 
-def plant_anatomy(ds, path, row=None, title="Ψ of every Compartment"):
-    """Every Compartment (side view, of planting row *row* when given) with its edges, coloured by Ψ."""
+def plant_anatomy(ds, path, row=None, soil=None, title="Ψ of every Compartment"):
+    """
+    Every Compartment (side view, of planting row *row* when given) with its edges, coloured by Ψ; with the *soil*
+    grid, its ΔΨ behind them (as in plant_segments).
+    """
     kept_segments, h = _row(ds, row)
     kept = kept_segments[np.asarray(ds.owner("SubOrgan"))]
     position = _compartment_positions(ds, h)
@@ -112,8 +120,11 @@ def plant_anatomy(ds, path, row=None, title="Ψ of every Compartment"):
     edges = np.array([[index[int(a)], index[int(b)]] for a, b in ds.edges()])
     edges = edges[kept[edges[:, 0]] & kept[edges[:, 1]]]
     psi = np.asarray(ds.get("water_potential"))
-    fig, ax = plt.subplots(figsize=(8, 7))
-    ax.add_collection(LineCollection(position[edges], colors="0.6", linewidths=0.6))
+    fig, ax = plt.subplots(figsize=(8, 7.6 if soil is not None else 7))
+    if soil is not None:
+        _soil_colorbar(fig, ax, _soil_background(ax, soil, ds, row))
+    ax.add_collection(LineCollection(position[edges], colors="0.4" if soil is not None else "0.6", linewidths=0.6,
+                                     zorder=2))
     points = ax.scatter(position[kept, 0], position[kept, 1], c=psi[kept], s=10, cmap="viridis", zorder=3)
     ax.axhline(0., color="saddlebrown", linewidth=1)
     ax.set_aspect("equal")
@@ -165,6 +176,42 @@ def anatomy_types(ds, path, title="One anatomy per organ type"):
     plt.close(fig)
 
 
+def _soil_plane(grid, plant_ds, psi, y=None, row=None):
+    """
+    The vertical soil slice of *psi* through the plants: along planting row *row* ((y, z), the row's x cell), else
+    the (x, z) slice at *y* (default: the middle). Returns (values (horizontal, depth), h, across, cell, label).
+    """
+    dx = grid.dx
+    if row is not None:
+        rows = np.unique(np.round([plant_ds.mtg.property("x")[int(p)] for p in plant_ds.entity_ids("Plant")], 6))
+        i = int(min(max(rows[row] // dx[0], 0), psi.shape[0] - 1))
+        return psi[i, :, :], 1, 0, i, f"planting row {row}, x cell {i}"
+    j = psi.shape[1] // 2 if y is None else int(min(max(y // dx[1], 0), psi.shape[1] - 1))
+    return psi[:, j, :], 0, 1, j, f"y cell {j}"
+
+
+def soil_anomaly(grid):
+    """The soil's Ψ minus the mean of its layer (over x and y): the roots' depletion, without the vertical gradient."""
+    psi = np.asarray(grid.get("water_potential"))
+    return psi - psi.mean(axis=(0, 1), keepdims=True)
+
+
+def _soil_background(ax, grid, plant_ds, row=None):
+    """ΔΨ of the soil (soil_anomaly) behind a side view, in the plane of the plants, on its own diverging scale."""
+    collar_y = None if row is not None else float(plant_ds.mtg.property("y")[int(plant_ds.entity_ids("Plant")[0])])
+    psi = soil_anomaly(grid)
+    values, h, _, _, _ = _soil_plane(grid, plant_ds, psi, y=collar_y, row=row)
+    bound = float(np.abs(values).max()) or 1.
+    return ax.imshow(values.T, origin="upper", aspect="equal", cmap="RdBu", vmin=-bound, vmax=bound, zorder=0,
+                     extent=(0., values.shape[0] * grid.dx[h], -psi.shape[2] * grid.dx[2], 0.))
+
+
+def _soil_colorbar(fig, ax, image):
+    """The soil ΔΨ scale, horizontal under the side view (the plant's scale being on the right)."""
+    bar = fig.colorbar(image, cax=ax.inset_axes([0., -0.13, 1., 0.025]), orientation="horizontal")
+    bar.set_label("soil ΔΨ: Ψ - layer mean (MPa)")
+
+
 def soil_slice(grid, plant_data_structures, path, y=None, row=None, anomaly=False,
                title="Soil water potential, vertical slice"):
     """
@@ -172,20 +219,11 @@ def soil_slice(grid, plant_data_structures, path, y=None, row=None, anomaly=Fals
     or with *row*, the (y, z) slice through planting row *row*. anomaly=True shows Ψ minus the mean of its layer
     (over x and y), on a colour scale centred on 0: the depletion by the roots, without the vertical gradient.
     """
-    psi = np.asarray(grid.get("water_potential"))
+    psi = soil_anomaly(grid) if anomaly else np.asarray(grid.get("water_potential"))
     if anomaly:
-        psi = psi - psi.mean(axis=(0, 1), keepdims=True)
         title = "Soil Ψ minus its layer mean"
     dx = grid.dx
-    if row is not None:
-        ds = plant_data_structures[0]
-        rows = np.unique(np.round([ds.mtg.property("x")[int(p)] for p in ds.entity_ids("Plant")], 6))
-        i = int(min(max(rows[row] // dx[0], 0), psi.shape[0] - 1))
-        values, h, across, label = psi[i, :, :], 1, 0, f"planting row {row}, x cell {i}"
-    else:
-        j = psi.shape[1] // 2 if y is None else int(min(max(y // dx[1], 0), psi.shape[1] - 1))
-        values, h, across, label, i = psi[:, j, :], 0, 1, None, j
-        label = f"y cell {j}"
+    values, h, across, i, label = _soil_plane(grid, plant_data_structures[0], psi, y=y, row=row)
     fig, ax = plt.subplots(figsize=(7, 5))
     if anomaly:
         bound = float(np.abs(values).max()) or 1.
