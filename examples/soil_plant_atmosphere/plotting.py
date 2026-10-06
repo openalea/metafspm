@@ -209,9 +209,10 @@ def top_view(grid, plant_data_structures, path, title="Top view: water taken up 
     for ds in plant_data_structures:
         start, end, owner = _segments(ds)
         organ = np.array([np.asarray(ds.get("organ"))[np.flatnonzero(owner == k)[0]] for k in range(len(start))])
-        colours = np.where(organ == ROOT, "saddlebrown", "green")
-        ax.add_collection(LineCollection(np.stack([start[:, :2], end[:, :2]], axis=1), colors=colours,
-                                         linewidths=1.2))
+        lines = np.stack([start[:, :2], end[:, :2]], axis=1)
+        ax.add_collection(LineCollection(lines[organ == ROOT], colors="saddlebrown", linewidths=1.2))
+        ax.add_collection(LineCollection(lines[organ != ROOT], colors="green", linewidths=2.4,   # the shoot,
+                                         zorder=3))                                              # last and thicker
     ax.set_xlabel("x (m)")
     ax.set_ylabel("y (m)")
     ax.set_title(title)
