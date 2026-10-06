@@ -471,7 +471,7 @@ Today `implicit_euler`, `explicit_euler` and the IVP solvers are only correct if
   - UC1's conditions read their values as arguments (`c_dirichlet`, `q_boundary`). Three tests cover the method form: a coupled inflow read at each solve, an exchange equation of the unknown checked against a hand solve, and a Dirichlet condition on a mask following a coupled value.
 - **Found while doing it, QPη:** a numeric parameter declared with a place (`scale=` / `location=`, e.g. UC1's `c_dirichlet` at `Organ`) is stored in the DataStructure. But `model.c_dirichlet = 2.0` only sets an instance attribute, and `self.c_dirichlet` reads it inside steps, so the two copies diverge. Only parameters without a place (stored per plant) go through the descriptor, where writing sets the DataStructure and reading inside equations raises.
   - **QPη:** give placed numeric parameters the same descriptor? Writing would set every entity's value, and reading `self.<name>` inside a step or equation would raise, so the parameter becomes an argument. **Recommendation:** yes, so a parameter has one value, the DataStructure's. UC1 reads `self.k_radial` and `self.c_ext` in a step and is rewritten anyway (QPε).
-  → answer:
+  → answer: yes to Recommendation
 
 **Progress (2026-10-05, later):**
 - **QPy done:**
@@ -488,4 +488,5 @@ Today `implicit_euler`, `explicit_euler` and the IVP solvers are only correct if
 - **Still open:**
   - QPη (§15).
   - Hand-set boundary ports (`component._boundary_ports`) still work, with a deprecation warning; no test or example uses them any more. **QPθ:** remove them now? **Recommendation:** yes, boundary sets and `@boundary_condition` cover them.
-  → answer:
+  → answer: yes remove them.
+- **QPη and QPθ done (2026-10-06):** placed numeric parameters go through the DataStructure, like per-plant ones; hand-set boundary ports are removed.

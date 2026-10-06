@@ -27,6 +27,16 @@
   - `solver="implicit_euler"` is a deprecated alias of `"newton"` with `transient=True`. It used to add `(u - u_prev)/h` to every unknown, edge fluxes included, so equations writing their own time term got it twice.
   - `explicit_euler` evaluates the edge unknowns at the current state before stepping (it used the previous step's fluxes), and leaves the step's fluxes in the DataStructure.
 
+### Parameters: one value, the DataStructure's
+
+- **Breaking:** every numeric parameter now goes through the DataStructure, placed ones (`scale=` / `location=`) included, not only those stored per plant:
+  - `model.k = value` writes it on every entity;
+  - reading `model.k` outside steps gives the uniform value, or the array;
+  - reading `self.k` inside a step or equation raises, so take `k` as an argument.
+
+  Placed parameters used to be plain attributes, diverging from their DataStructure copy.
+- **Breaking:** boundary ports set by hand (`component._boundary_ports`) are removed. Use `boundary_set`, or `@boundary_condition` for conditions given by equations.
+
 ### Breaking: compatibility views removed
 
 - **`FunctionalComponent.props`** (the read-only `DataStructurePropsView`) is removed. Use `data_structure.get(name)`, or take the variable as a step argument.

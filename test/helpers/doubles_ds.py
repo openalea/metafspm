@@ -53,8 +53,8 @@ class PlantCarbon(FunctionalComponent):
     exudation_rate: float = _var("parameter", default=0.1)
 
     @rate
-    def _hexose_exudation(self, hexose, soil_temperature):
-        return self.exudation_rate * hexose + 0.01 * soil_temperature
+    def _hexose_exudation(self, hexose, soil_temperature, exudation_rate):
+        return exudation_rate * hexose + 0.01 * soil_temperature
 
     @state
     def _hexose(self, hexose, hexose_exudation, nitrogen_status):
