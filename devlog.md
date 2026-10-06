@@ -2042,3 +2042,4 @@ Per-file counts:
 - **Root architecture (your request):** three first-order roots emerging 15° below the horizontal at the collar and bending towards the vertical by a gravitropism coefficient (0.35 per segment), with a seeded tortuosity per plant; laterals with a weaker gravitropism. Converges as before (5 and 6 steps), with balances closed.
 - **Pivot root (your request):** the first of the three first-order roots is a pivot (80° below the horizontal, gravitropism 0.8, 8 segments, down to about 20 cm); the two others spread along ±x and bend down. Converges in 5 and 6 steps.
 - **Longer laterals (your request):** 4 segments of 2 cm (8 cm, from 4.5 cm). Converges in 5 and 6 steps.
+- **Population side views (your request):** the side plots (SubOrgan segments, anatomy graph, soil slice) show only one planting row (row=0), seen along the row in the y–z plane.

@@ -50,4 +50,4 @@ if __name__ == "__main__":
     built.simulate(100)
     summary(built, stop)
     per_plant(built)
-    plots(built, folder)
+    plots(built, folder, row=0)                                 # the side views: the first planting row
