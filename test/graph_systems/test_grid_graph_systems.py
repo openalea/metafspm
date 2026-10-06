@@ -12,7 +12,7 @@ from scipy.sparse.linalg import spsolve
 
 from openalea.metafspm.coupling.component import FunctionalComponent, parameter, state_variable
 from openalea.metafspm.data_structure.data_api import ArrayDataStructure
-from openalea.metafspm.solve.decorator import boundary_set, edge_law, graph_system, node_balance
+from openalea.metafspm.solve.decorator import boundary_set, edge_law, graph_output, graph_system, node_balance
 
 DOC = dict(unit="", unit_comment="", description="", min_value=0., max_value=1., value_comment="", references="",
            DOI=[])
@@ -136,3 +136,20 @@ def test_periodic_lateral_faces_carry_flux():
     assert float(np.sum(grid.get("solute"))) == pytest.approx(before)   # wrap faces conserve mass
     wraps = (grid.face_axis() == 0) & (np.arange(grid.n_edges()) >= (SHAPE[0] - 1) * SHAPE[1] * SHAPE[2])
     assert np.abs(grid.get("solute_flux")[wraps]).max() > 0.
+
+
+@dataclass
+class DiffusionWithDivergence(SoilFields):
+    @graph_system(node_unknowns=["solute"], edge_unknowns=["solute_flux"], solver="newton", transient=True)
+    class _diffusion(_DiffusionEquations):
+        @graph_output("divergence", location="node")                     # "node": the grid's cells
+        def _divergence(self, solute_flux):
+            return np.asarray(self._graph_view.incidence @ solute_flux).reshape(-1)
+
+
+def test_a_node_output_on_a_grid_is_written_on_the_cells():
+    grid = _grid()
+    DiffusionWithDivergence(data_structure=grid)()
+    assert grid.location("divergence") == "cell" and grid.get("divergence").shape == SHAPE
+    expected = (grid.incidence_matrix() @ np.asarray(grid.get("solute_flux"))).reshape(SHAPE)
+    np.testing.assert_allclose(grid.get("divergence"), expected, atol=1e-14)

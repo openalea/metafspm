@@ -312,3 +312,17 @@ def test_labels_are_per_instance():
 def test_compartment_and_connection_labels_are_distinct():
     labels = MPG().labels
     assert labels.Compartment.Apoplastic != labels.Connection.Apoplastic
+
+
+def test_a_grid_gives_its_cell_sizes():
+    grid = ArrayDataStructure(shape=(2, 3, 4), dx=(0.1, 0.2, 0.05))
+    np.testing.assert_array_equal(grid.dx, [0.1, 0.2, 0.05])
+    grid.dx[0] = 9.                                                       # a copy
+    assert grid.dx[0] == 0.1
+
+
+def test_a_scalar_is_written_from_a_one_value_array():
+    grid = ArrayDataStructure(shape=(1,))
+    grid.register("air_temperature", 20., location="scalar")
+    grid.set("air_temperature", np.array([21.5]))                       # e.g. computed from one-value parameters
+    assert grid.get("air_temperature").shape == () and float(grid.get("air_temperature")) == 21.5

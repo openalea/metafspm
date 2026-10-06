@@ -182,8 +182,10 @@ class CompositeModel:
         Translator from a YAML file, in the nested {receiver: {provider: {variable: {source: factor}}}} format, or
         from a Python module defining ``translator = Translator(...)`` (.py), kept as a Translator so that its links'
         options (aggregation, weight, target, formula, scales) are kept. A missing YAML file is built interactively
-        and written.
+        and written. A Translator or a nested dict given directly is used as is.
         """
+        if isinstance(translator_path, (Translator, dict)):
+            return translator_path
         if str(translator_path).endswith(".py"):
             return Translator.from_module(str(translator_path))
         try:

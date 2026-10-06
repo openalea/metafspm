@@ -286,7 +286,21 @@ scene.simulate(n_iterations=2500)
   `Scene.restore(path, *arguments)` continue a run bit for bit; models keep non-variable state through
   `checkpoint_state()` / `restore_state(state)`.
 
-## 7. Performance notes
+## 7. A complete example
+
+`examples/soil_plant_atmosphere/` puts every feature above together, on water flow from a water table through the
+soil and seedlings to a dry atmosphere:
+- one transport component, used on the plants' anatomy graph and on the soil grid;
+- structural components building the seedlings at every scale, with their anatomies, and computing the conductances;
+- boundary sets and boundary equations;
+- translators within and across DataStructures, with a masked `CrossMapping` of the root surface;
+- environment scalars;
+- scenes with one plant and with a planted population;
+- plots of the converged water potentials.
+
+Its README describes each file and shows the figures.
+
+## 8. Performance notes
 
 - Steps, graph systems, tree kernels and exchanges work on whole-population arrays: a step of 1000 plants of 2 000
   segments takes about 2 s in one process.

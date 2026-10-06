@@ -1449,7 +1449,7 @@ def _solve_once(self, method_name: str, spec_def: dict) -> None:
         arr = np.asarray(arr, dtype=np.float64).reshape(-1)
         location = builder.output_locations.get(oname)
         if ds.has(oname):
-            if location is not None and ds.location(oname) != location:
+            if location is not None and ds.location(oname) != _entity_location(ds, location):
                 raise ValueError(f"{type(self).__name__}: @graph_output('{oname}', location='{location}') but "
                                  f"'{oname}' is registered at {ds.location(oname)}")
         else:
