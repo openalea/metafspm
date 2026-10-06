@@ -290,7 +290,7 @@ scene.simulate(n_iterations=2500)
 
 `examples/soil_plant_atmosphere/` puts every feature above together, on water flow from a water table through the
 soil and seedlings to a dry atmosphere:
-- one transport component, used on the plants' anatomy graph and on the soil grid;
+- transport components for the plants' anatomy graph and for the soil grid, on shared flow equations;
 - structural components building the seedlings at every scale, with their anatomies, and computing the conductances;
 - boundary sets and boundary equations;
 - translators within and across DataStructures, with a masked `CrossMapping` of the root surface;

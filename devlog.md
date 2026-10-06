@@ -2028,3 +2028,4 @@ Per-file counts:
 - **Other open points in the plan:** E2 (stomatal closure, so that the competition between plants shows in their fluxes), E3 (properties on wired junctions).
 - **Suite:** 751 passed.
 - **Atmosphere removed (your request):** the air is now a constant input, `air_water_potential` and `vapour_factor` as parameters defaulting to their values at 50 % RH and 20 °C. Results are unchanged; the smoke test and the figures were rerun.
+- **Split declarations (your request):** plant and soil transports and structures each declare their own variables (plant at Compartment / Connection scales, MTG-backed; soil at cell / edge), on a shared flow-equations mixin. The edge law is explicit. The results are identical; the MTG write-back of the plant variables was checked.
