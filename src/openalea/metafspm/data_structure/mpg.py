@@ -641,11 +641,23 @@ class MPG(MTG):
         MTG.remove_vertex, removing first the Compartments the vertex owns (its graph nodes), which openalea would
         refuse to re-parent. The graph follows at the next update_topology (extend_graph).
         """
-        compartment = self.scales.Compartment         # linked to their segment as children (or components)
-        owned = [c for c in list(self._children.get(vid, [])) + list(self._components.get(vid, []))
-                 if self._scale.get(c) == compartment]
-        if owned:
-            self.remove_connections(owned)
+        compartment, connection = self.scales.Compartment, self.scales.Connection
+        # Its decomposition (e.g. a segment's Layers, Cells and their protoplasts), deepest first, and the
+        # Compartments and Connections anchored to it (walls, junctions, anatomy edges): removed with their properties
+        decomposition, stack = [], list(self._components.get(vid, []))
+        while stack:
+            v = stack.pop()
+            decomposition.append(v)
+            stack.extend(self._components.get(v, []))
+        anchored = [c for c in list(self._children.get(vid, [])) if self._scale.get(c) in (compartment, connection)]
+        edges = [c for c in anchored if self._scale.get(c) == connection]
+        nodes = [c for c in anchored if self._scale.get(c) == compartment]
+        if edges:
+            self.remove_connections(edges)
+        if nodes:
+            self.remove_connections(nodes)
+        if decomposition:
+            self.remove_connections(sorted(decomposition, key=lambda v: -self._scale.get(v, 0)))
         if reparent_child:
             # openalea's MTG.replace_parent also re-parents the child's complex to the new parent's complex, which
             # makes a complex its own parent when both share it: re-link within a complex at the tree level only
