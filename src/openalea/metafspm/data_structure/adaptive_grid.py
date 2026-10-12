@@ -417,7 +417,8 @@ class AdaptiveGridDataStructure(VariableStoreMixin, DataStructure):
                 raise ValueError(f"points outside the grid along axis {self.axes[a]}")
         return self._leaf_of[tuple(idx.T)]
 
-    def _map(self, values, from_location: str, to_location: str, aggregation: str, weights=None) -> np.ndarray:
+    def _map(self, values, from_location: str, to_location: str, aggregation: str, weights=None,
+             fill=0.) -> np.ndarray:
         if from_location == "cell" and to_location == "scalar":
             return np.asarray(self._reduce(values, aggregation, weights))
         if from_location == "scalar" and to_location == "cell" and aggregation == "broadcast":

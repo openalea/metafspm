@@ -2077,3 +2077,15 @@ Per-file counts:
   - `one_plant_adaptative.py` declares its own Scene (your request); your `solver=NewtonSolver` edit kept; the regular scenes' figures regenerated (7 and 10 steps).
 - **Configurable refinement metric:** dropped (your call).
 - **Adaptive plots (your request):** the converged plant at SubOrgan and Compartment scales over the soil's ΔΨ and over its Ψ (`soil_quantity="psi"`, copper scale), each adaptive cell drawn at its own size; 4 new figures, README and smoke test updated.
+
+## 2026-10-07 (GRANAP port, planning)
+
+- **Audit of GRANAP (branch `to_metafspm`, read only):** data model, organ classes, writers and networks, tests (166 pass in 12.5 min in the `granap` env). Plan drafted in `GRANAP/devplan_metafspm.md` with questions Q1–Q14.
+- **Found on the metafspm side:** anatomy mode supports Compartments only directly under their SubOrgan; with Layer and Cell vertices in between, the DataStructure does not see the SubOrgan as a coarse location (Q5, prerequisite M1). The two conda envs differ (granap: py3.14 without openalea.mtg; metafspm: py3.13 without shapely), Q1.
+- **Your answers to Q1–Q14 (all recommendations).** Q1's condition failed: `openalea.mtg` needs `openalea.plantgl`, which has no Python 3.14 build, so metafspm cannot go into the `granap` env. Adding GRANAP's pinned stack to the `metafspm` env also fails (opencv's Qt build conflicts on icu). A fresh Python 3.13 env with both stacks is being dry-run solved.
+- **P0 plan:** `devplan_anatomy_scales.md` (Layer and Cell scales in anatomy mode; R1–R6, questions QA1–QA3).
+
+## 2026-10-12 (GRANAP P0: anatomy mode with Layer and Cell scales)
+
+- **Environment (GRANAP conda/environment.yaml, your requests):** the freeze came from the `defaults` channels of ~/miniconda3/.condarc (`nodefaults` added) and from opencv 4.13's icu 78 against plantgl's Qt 5 / icu 75 (opencv from pip, headless). Trimmed to the essential pins with flexible priority (dry-run solve 12 min → 5 min).
+- **P0 (devplan_anatomy_scales.md, answers QA1–QA3: recommendations):** Layers, Cells and protoplasts as true MTG components, walls and junctions anchored to the SubOrgan; vectorised ownership (`compartment_owners`, `owners_at_scale`); Layer and Cell as locations; walls skipped by aggregations and given defaults by broadcasts; rewiring and inheritance through the owner chain; bulk creation with one complex per component (0.17 s vs 1.0 s for a 45.7 k-vertex section). 11 tests and a benchmark; suite 789 passed. Found: `convert_properties_to_arraydict` (0.8 s) is now the largest construction cost.

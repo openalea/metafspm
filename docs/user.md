@@ -33,7 +33,9 @@ ds = MPGDataStructure(g, from_scale=g.scales.SubOrgan, nodes="Compartment", wiri
 ```
 
 - **Segment mode** (default): one node per segment. **Anatomy mode**: the Compartments inside each segment are the
-  nodes, wired to their neighbours' by junction rules.
+  nodes, wired to their neighbours' by junction rules. A segment's anatomy may have Layers and Cells
+  (SubOrgan → Layer → Cell → Compartment), with Compartments shared by several cells (walls) anchored to the
+  segment; `"Layer"` and `"Cell"` are then locations, and the walls, owned by no Cell, read the defaults there.
 - After the MTG's structure changes (growth, pruning), `ds.update_topology()` extends the graph incrementally and
   carries every variable over (by id; new entities get the default or their parent's value, `on_grow="inherit"`).
 - Each node belongs to coarser entities: `ds.owner("Plant")`, `ds.entity_ids("Plant")`, so the variables of a whole

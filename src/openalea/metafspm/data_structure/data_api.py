@@ -568,14 +568,21 @@ class VariableStoreMixin:
         elif values.size == 0 or np.all(values == values.flat[0]):
             view = np.broadcast_to(np.asarray(values.flat[0] if values.size else 0., dtype=float), shape)
         else:
-            view = np.ascontiguousarray(self._broadcast_to_entities(values, location, to))
+            view = np.ascontiguousarray(self._broadcast_to_entities(values, location, to, name))
         view = view.view()
         view.flags.writeable = False
         cache[key] = (stamp, view)
         return view
 
-    def _broadcast_to_entities(self, values, location: str, to: str) -> np.ndarray:
-        return self._map(values, location, to, "broadcast")
+    def _broadcast_to_entities(self, values, location: str, to: str, name: str = None) -> np.ndarray:
+        return self._map(values, location, to, "broadcast", fill=self._default_of(name))
+
+    def _default_of(self, name) -> float:
+        """The declared default of variable *name* (0 when unknown): what entities without an owner read."""
+        if name is None:
+            return 0.
+        default = self._variable_meta().get(self._resolve(name), {}).get("default", 0.)
+        return 0. if default is None else default
 
     # ── Named masks ─────────────────────
 
@@ -660,7 +667,7 @@ class VariableStoreMixin:
         if source == "scalar":
             return np.broadcast_to(values, tuple(self._location_shape(location)))
         try:
-            return np.asarray(self._map(values, source, location, "broadcast"))
+            return np.asarray(self._map(values, source, location, "broadcast", fill=self._default_of(variable)))
         except (ValueError, KeyError, NotImplementedError):
             raise ValueError(f"mask '{name}': '{variable}' is at {source}, which the entities at {location} cannot "
                              "read (a coarser scale is needed)") from None
@@ -743,7 +750,8 @@ class VariableStoreMixin:
             raise KeyError(f"'{name}' is not a derived variable")
         self._update_derived(None if name is None else [name], force=True)
 
-    def _map(self, values, from_location: str, to_location: str, aggregation: str, weights=None) -> np.ndarray:
+    def _map(self, values, from_location: str, to_location: str, aggregation: str, weights=None,
+             fill=0.) -> np.ndarray:
         raise ValueError(f"{type(self).__name__} cannot map {from_location} to {to_location} ({aggregation})")
 
     @staticmethod
@@ -1586,9 +1594,33 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
         if node_scale is None:
             return []
         scales = self._mtg.scales
-        limit = self._from_scale + 1 if getattr(self, "_anatomy", False) else node_scale
+        if getattr(self, "_anatomy", False):
+            # The scales up to from_scale, and those between it and the Compartments that own nodes (Layer, Cell)
+            finest = self._finest_owner_scale()
+            return [name for name, value in vars(type(scales)).items()
+                    if isinstance(value, int) and not name.startswith("_")
+                    and (0 < value <= self._from_scale or self._from_scale < value <= finest)]
         return [name for name, value in vars(type(scales)).items()
-                if isinstance(value, int) and not name.startswith("_") and 0 < value < limit]
+                if isinstance(value, int) and not name.startswith("_") and 0 < value < node_scale]
+
+    def _node_owners(self) -> np.ndarray:
+        """Anatomy mode: the owner vertex of each node (its Cell, or the segment it is anchored to), cached."""
+        key = (self.topology_version, len(self._idx_to_vid))
+        cache = self.__dict__.get("_node_owner_cache")
+        if cache is not None and cache[0] == key:
+            return cache[1]
+        vids, owners = self._mtg.compartment_owners()
+        nodes = np.asarray(self._idx_to_vid, dtype=np.int64)
+        result = owners[np.searchsorted(vids, nodes)] if nodes.size else np.empty(0, dtype=np.int64)
+        self.__dict__["_node_owner_cache"] = (key, result)
+        return result
+
+    def _finest_owner_scale(self) -> int:
+        """Anatomy mode: the finest scale owning nodes (e.g. Cell when protoplasts hang from Cells)."""
+        owners = self._node_owners()
+        if owners.size == 0:
+            return self._from_scale
+        return int(self._mtg.topology_arrays()["scale"][owners[owners >= 0]].max(initial=self._from_scale))
 
     def _construction(self) -> dict:
         return {"from_scale": int(self._from_scale) if self._from_scale is not None else None,
@@ -1648,24 +1680,28 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
         if scale_name not in cache:
             scale = getattr(self._mtg.scales, scale_name)
             vids = np.array(self._idx_to_vid, dtype=np.int64)
-            if hasattr(self._mtg, "complex_at_scale_array"):
-                if getattr(self, "_anatomy", False):
-                    vids = self._mtg.topology_arrays()["parent"][vids]       # the owning from_scale vertex
+            if getattr(self, "_anatomy", False):
+                # Through each node's owner (its Cell, or its segment), -1 where the owner is finer than the scale
+                owners = self._mtg.owners_at_scale(self._node_owners(), scale)
+            elif hasattr(self._mtg, "complex_at_scale_array"):
                 owners = self._mtg.complex_at_scale_array(vids, scale) if scale != self._node_scale_of(vids) else vids
             else:
                 owners = np.array([self._owner_at(int(v), scale) for v in self._idx_to_vid], dtype=np.int64)
-            entities = np.unique(owners)
-            cache[scale_name] = (entities, np.searchsorted(entities, owners))
+            entities = np.unique(owners[owners >= 0])
+            index = np.full(owners.size, -1, dtype=np.int64)
+            index[owners >= 0] = np.searchsorted(entities, owners[owners >= 0])
+            cache[scale_name] = (entities, index)
         return cache[scale_name]
 
     def _node_scale_of(self, vids) -> int:
         return int(self._mtg.scale(int(vids[0]))) if len(vids) else -1
 
     def _owner_at(self, vid: int, scale: int) -> int:
-        """Vertex at *scale* owning node *vid*: its complex, or in anatomy mode its MTG parent and then its complex."""
+        """Vertex at *scale* owning node *vid*: its complex, or in anatomy mode the one above its owner (-1: none)."""
         if getattr(self, "_anatomy", False):
-            owner = int(self._mtg.parent(vid))
-            return owner if scale == self._from_scale else int(self._mtg.complex_at_scale(owner, scale))
+            vids, owners = self._mtg.compartment_owners()
+            owner = owners[np.searchsorted(vids, vid)]
+            return int(self._mtg.owners_at_scale([owner], scale)[0])
         return int(self._mtg.complex_at_scale(vid, scale))
 
     def _connection_vids(self) -> np.ndarray:
@@ -1690,7 +1726,8 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
             return self._membership(location)[0]
         raise ValueError(f"'{location}' has no entity ids (locations: node, edge, scalar, {self._coarse_scale_names()})")
 
-    def _map(self, values, from_location: str, to_location: str, aggregation: str, weights=None) -> np.ndarray:
+    def _map(self, values, from_location: str, to_location: str, aggregation: str, weights=None,
+             fill=0.) -> np.ndarray:
         coarse = self._coarse_scale_names()
         if from_location == "node" and to_location == "edge":
             parents, children = self._connection_endpoints()
@@ -1703,6 +1740,10 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
                 return (values[tail] + values[head]) / 2.
         elif from_location == "node" and to_location in coarse:
             entities, owner = self._membership(to_location)
+            if (owner < 0).any():                       # nodes without an entity there (anatomy walls) are skipped
+                kept = owner >= 0
+                owner, values = owner[kept], np.asarray(values)[kept]
+                weights = None if weights is None else np.asarray(weights)[kept]
             if aggregation == "weighted_mean":
                 return (np.bincount(owner, weights=values * weights, minlength=entities.size)
                         / np.bincount(owner, weights=weights, minlength=entities.size))
@@ -1712,7 +1753,13 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
             if aggregation == "mean":
                 return total / np.bincount(owner, minlength=entities.size)
         elif from_location in coarse and to_location == "node" and aggregation == "broadcast":
-            return values[self._membership(from_location)[1]]
+            owner = self._membership(from_location)[1]
+            values = np.asarray(values)
+            if (owner >= 0).all():
+                return values[owner]
+            out = np.full((owner.size,) + values.shape[1:], fill, dtype=np.result_type(values, np.asarray(fill)))
+            out[owner >= 0] = values[owner[owner >= 0]]   # nodes without an entity there get *fill* (the default)
+            return out
         elif from_location in coarse and to_location in coarse:
             # Between two coarse scales, through the owner of each finer entity at the coarser scale
             from_scale, to_scale = (getattr(self._mtg.scales, name) for name in (from_location, to_location))
@@ -1741,9 +1788,13 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
             return np.full(self._location_shape(to_location), float(values))
         return super()._map(values, from_location, to_location, aggregation, weights)
 
-    def _broadcast_to_entities(self, values, location: str, to: str) -> np.ndarray:
-        """Owner values for nodes, and for edges the value of their child node (edges never join two plants)."""
-        on_nodes = self._map(values, location, "node", "broadcast") if location != "node" else values
+    def _broadcast_to_entities(self, values, location: str, to: str, name: str = None) -> np.ndarray:
+        """
+        Owner values for nodes, and for edges the value of their child node (edges never join two plants). Nodes
+        without an entity at *location* (anatomy walls and junctions at the Cell scale) read *name*'s default.
+        """
+        fill = self._default_of(name)
+        on_nodes = self._map(values, location, "node", "broadcast", fill=fill) if location != "node" else values
         if to == "edge":
             return on_nodes[self.index_of(self.entity_ids("edge"))] if not getattr(self, "_anatomy", False) \
                 else on_nodes[self.index_of(np.array([b for _, b in self.edges()], dtype=np.int64))]
@@ -2040,7 +2091,8 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
         elif spec.mapping is None:
             self._write_at(spec.name, self.entity_ids(spec.location), values)
         else:
-            self.write_node_to_mtg(spec.name, self._map(values, spec.location, "node", "broadcast"))
+            self.write_node_to_mtg(spec.name, self._map(values, spec.location, "node", "broadcast",
+                                                        fill=self._default_of(spec.name)))
 
     # ── Incidence matrix ──────────────────────────────────────────────────────
 
@@ -2145,6 +2197,17 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
             signatures[vid] = (g.linked_parent(vid, from_scale, valid), anatomy)
         return signatures
 
+    def _sections_of(self, vids) -> np.ndarray:
+        """Anatomy mode: the from_scale vertex (e.g. SubOrgan) of each Compartment vid, -1 for none or -1 vids."""
+        g = self._mtg
+        vids = np.asarray(vids, dtype=np.int64)
+        compartments, owners = g.compartment_owners()
+        out = np.full(vids.size, -1, dtype=np.int64)
+        position = np.searchsorted(compartments, vids).clip(0, max(compartments.size - 1, 0))
+        known = (vids >= 0) & (compartments.size > 0) & (compartments[position] == vids)
+        out[known] = g.owners_at_scale(owners[position[known]], self._from_scale)
+        return out
+
     def _rewire_junctions(self) -> None:
         """
         Rewire only the junctions that changed: those of a vertex that is new, has another linked parent, or whose
@@ -2161,9 +2224,11 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
                   or (parent is not None and anatomy(old, parent) != anatomy(new, parent))}
         alive = {nv for comps in g.compartments_by_owner(self._from_scale).values() for nv in comps}
         n_id_a, n_id_b = g.property("n_id_a"), g.property("n_id_b")
-        stale = [ev for ev in g.junction_vids()
-                 if int(n_id_a[ev]) not in alive or int(n_id_b[ev]) not in alive
-                 or int(g.parent(int(n_id_b[ev]))) in rewire]
+        junctions = g.junction_vids()
+        heads = [int(n_id_b[ev]) for ev in junctions]
+        sections = dict(zip(heads, self._sections_of([h if h in alive else -1 for h in heads]).tolist()))
+        stale = [ev for ev, head in zip(junctions, heads)
+                 if int(n_id_a[ev]) not in alive or head not in alive or sections[head] in rewire]
         g.remove_connections(stale)
         g.wire_junctions(self._from_scale, self._wiring, children=sorted(rewire))
         self._anatomy_signature = new
@@ -2179,7 +2244,10 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
             return None
         label = g.property("label").get(key)
         owners = g.compartments_by_owner(self._from_scale)
-        vertex = g.linked_parent(int(g.parent(key)), self._from_scale)
+        section = int(self._sections_of([key])[0])
+        if section < 0:
+            return None
+        vertex = g.linked_parent(section, self._from_scale)
         while vertex is not None:
             for nv in owners.get(vertex, []):
                 if nv in values_by_key and g.property("label").get(nv) == label:
@@ -2572,7 +2640,8 @@ class ArrayDataStructure(VariableStoreMixin, FieldDataStructure):
         """Variable store consistency (VariableStoreMixin.validate_variables)."""
         self.validate_variables(strict=strict)
 
-    def _map(self, values, from_location: str, to_location: str, aggregation: str, weights=None) -> np.ndarray:
+    def _map(self, values, from_location: str, to_location: str, aggregation: str, weights=None,
+             fill=0.) -> np.ndarray:
         if from_location == "cell" and to_location == "scalar":
             return np.asarray(self._reduce(values, aggregation, weights))
         if from_location == "scalar" and to_location == "cell" and aggregation == "broadcast":

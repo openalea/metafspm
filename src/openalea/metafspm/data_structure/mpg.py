@@ -217,19 +217,23 @@ class MPG(MTG):
     def add_components_bulk(self, complex_id, count: int, topo_parents=None, **properties) -> list:
         """
         Create *count* components of *complex_id* at once, as add_component (or add_component_with_topo when
-        *topo_parents* gives their same-scale parents) would one by one, with one batched write per property instead of
-        one insert per vertex and property. A property value is a
-        sequence of *count* values, or one value for all. Returns the new vids, consecutive.
+        *topo_parents* gives their parents) would one by one, with one batched write per property instead of one
+        insert per vertex and property. *complex_id* is one vertex, or one per new vertex (e.g. the protoplast of each
+        of many Cells). A property value is a sequence of *count* values, or one value for all. Returns the new vids,
+        consecutive.
         """
         if count == 0:
             return []
         vids = list(range(self._id + 1, self._id + 1 + count))
         self._id += count
-        self._components.setdefault(complex_id, []).extend(vids)
-        scale = self._scale[complex_id] + 1
-        for v in vids:
-            self._complex[v] = complex_id
-            self._scale[v] = scale
+        complexes = ([int(c) for c in complex_id] if isinstance(complex_id, (list, tuple, np.ndarray))
+                     else [complex_id] * count)
+        if len(complexes) != count:
+            raise ValueError(f"add_components_bulk: {len(complexes)} complexes for {count} components")
+        for v, c in zip(vids, complexes):
+            self._components.setdefault(c, []).append(v)
+            self._complex[v] = c
+            self._scale[v] = self._scale[c] + 1
         if topo_parents is not None:
             for v, p in zip(vids, topo_parents):
                 self._parent[v] = p
@@ -468,18 +472,51 @@ class MPG(MTG):
             p = self.parent(p)
         return None
 
+    def compartment_owners(self) -> tuple:
+        """
+        (Compartment vids, their owner vids), ascending vids, anchors excluded. A Compartment's owner is its complex
+        when it is a true component of a vertex (e.g. a Cell protoplast), else its topological parent (a Compartment
+        of the Compartment anchor linked to its segment, e.g. a wall or junction shared by several Cells). Owner -1:
+        none.
+        """
+        arrays = self.topology_arrays()
+        scale, complex_, parent, anchor = arrays["scale"], arrays["complex"], arrays["parent"], arrays["is_anchor"]
+        vids = np.flatnonzero((scale == self.scales.Compartment) & ~anchor)
+        complexes = complex_[vids]
+        anchored = (complexes < 0) | anchor[np.maximum(complexes, 0)]
+        return vids, np.where(anchored, parent[vids], complexes)
+
+    def owners_at_scale(self, owners, scale: int) -> np.ndarray:
+        """The vertex at *scale* above each owner vid (itself at its own scale), -1 when the owner is finer than the
+        scale reaches (e.g. a wall owned by its SubOrgan has no Cell) or absent."""
+        owners = np.asarray(owners, dtype=np.int64)
+        out = np.full(owners.size, -1, dtype=np.int64)
+        valid = owners >= 0
+        if not valid.any():
+            return out
+        own_scale = np.full(owners.size, -1, dtype=np.int64)
+        own_scale[valid] = self.topology_arrays()["scale"][owners[valid]]
+        same, coarser = valid & (own_scale == scale), valid & (own_scale > scale)
+        out[same] = owners[same]
+        if coarser.any():
+            out[coarser] = self.complex_at_scale_array(owners[coarser], scale)
+        return out
+
     def compartments_by_owner(self, from_scale=None) -> dict:
-        """{owner vid: [Compartment vids]}: the Compartments created under each vertex (its anatomy)."""
-        isanchor_prop, scale_prop = self.property('isanchor'), self.property('scale')
-        owners = {}
-        for nv in self.components_at_scale(self.root, scale=self.scales.Compartment):
-            if isanchor_prop.get(nv, False):
-                continue
-            owner = self.parent(nv)
-            if owner is None or (from_scale is not None and scale_prop.get(owner) != from_scale):
-                continue
-            owners.setdefault(int(owner), []).append(int(nv))
-        return owners
+        """
+        {owner vid: [Compartment vids]}: the Compartments of each vertex's anatomy, ascending. With *from_scale*, the
+        owners are the vertices of that scale (e.g. each SubOrgan with all its Compartments, under its Layers and
+        Cells or anchored to it); without, each Compartment's own owner (compartment_owners).
+        """
+        vids, owners = self.compartment_owners()
+        if from_scale is not None:
+            owners = self.owners_at_scale(owners, from_scale)
+        kept = owners >= 0
+        vids, owners = vids[kept], owners[kept]
+        grouped = {}
+        for owner, nv in zip(owners.tolist(), vids.tolist()):
+            grouped.setdefault(owner, []).append(nv)
+        return grouped
 
     def wire_junctions(self, from_scale, rules, children=None, filter_in=None, filter_out=None) -> list:
         """
