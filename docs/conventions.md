@@ -159,6 +159,7 @@ Chains are `"axis"` ('<' successors) by default, or declared with `define_chain(
   - Both are keyed by their own vids.
   - `add_components_bulk` creates many components in one call, taking one complex, or one per component (e.g. the protoplasts of many Cells).
 - **Locations.** `"SubOrgan"` and coarser scales are coarse locations, and so are `"Layer"` and `"Cell"` when they own Compartments. `scale=scales.Compartment` declarations read the Compartments' properties, and `scale=scales.Cell` declarations the Cells'.
+- **Inheritance at growth** (`on_grow="inherit"`): a new Compartment takes the value of the first same-label Compartment upstream, unless `ds.inheritance` gives another rule, a callable `(ds, new_vids, is_known) -> source vids` (−1: the default value).
 - **Nodes without a Layer or a Cell** (walls, junctions) have owner −1 there (`ds.owner("Cell")`). Sums and means over the scale skip them, and broadcasts from it (parameters, masks) give them the variable's default.
 - **Growth.** Only the junctions of changed SubOrgans are rewired. In segment mode too, growth only adds or removes the Compartments and Connections of new or pruned segments (prune with `remove_tree`, which also removes the segment's Compartment). A new Compartment inherits from the same-label Compartment upstream.
 

@@ -229,3 +229,24 @@ def test_cells_move_to_another_layer_with_their_protoplasts():
     assert layer == v["xylem"]                                           # its protoplast followed
     with pytest.raises(ValueError, match="components of"):
         g.move_components([v["c0"]], v["xylem"])                          # a Compartment is not a Layer's component
+
+
+def test_a_custom_inheritance_rule_gives_new_compartments_their_source_once_for_all_variables():
+    g, segments, sections, ds = _plant()
+    ds.register("water", np.arange(ds.n_nodes(), dtype=float), location="node", on_grow="inherit")
+    ds.register("solute", np.arange(ds.n_nodes(), dtype=float) * 10., location="node", on_grow="inherit")
+    parent = sections[segments[-1]]
+    calls = []
+
+    def same_name(ds, new_vids, is_known):          # each new Compartment from its namesake in the parent section
+        calls.append(len(new_vids))
+        by_vid = {v: k for k, v in new_section.items()}
+        return [parent[by_vid[int(v)]] if int(v) in by_vid and by_vid[int(v)] in parent else -1 for v in new_vids]
+
+    ds.inheritance = same_name
+    _, new_section = grow_layered_segment(g, segments[-1])
+    ds.update_topology()
+    assert len(calls) == 1                                                  # once, for both variables
+    for name in ("c1", "x0", "w2"):
+        new, old = _index(ds, [new_section[name]])[0], _index(ds, [parent[name]])[0]
+        assert ds.get("water")[new] == ds.get("water")[old] and ds.get("solute")[new] == ds.get("solute")[old]
