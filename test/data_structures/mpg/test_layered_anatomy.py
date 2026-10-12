@@ -250,3 +250,14 @@ def test_a_custom_inheritance_rule_gives_new_compartments_their_source_once_for_
     for name in ("c1", "x0", "w2"):
         new, old = _index(ds, [new_section[name]])[0], _index(ds, [parent[name]])[0]
         assert ds.get("water")[new] == ds.get("water")[old] and ds.get("solute")[new] == ds.get("solute")[old]
+
+
+def test_a_pruned_segment_takes_its_whole_anatomy_with_it():
+    g, segments, sections, ds = _plant(3)
+    gone = sections[segments[-1]]
+    g.remove_vertex(segments[-1])
+    assert not any(v in g._scale for v in gone.values())                  # Layers, Cells, protoplasts, walls
+    assert not any(v in g.property("kind") for v in gone.values())       # and their properties
+    ds.update_topology()
+    assert ds.n_nodes() == 2 * 10 and len(ds.entity_ids("Cell")) == 2 * 5
+    assert len(g.junction_vids()) == 2                                    # only the remaining link

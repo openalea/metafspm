@@ -1611,7 +1611,11 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
             return cache[1]
         vids, owners = self._mtg.compartment_owners()
         nodes = np.asarray(self._idx_to_vid, dtype=np.int64)
-        result = owners[np.searchsorted(vids, nodes)] if nodes.size else np.empty(0, dtype=np.int64)
+        result = np.full(nodes.size, -1, dtype=np.int64)
+        if nodes.size and vids.size:
+            position = np.searchsorted(vids, nodes).clip(0, vids.size - 1)
+            present = vids[position] == nodes                # nodes already gone from the MPG (pruned) own nothing
+            result[present] = owners[position[present]]
         self.__dict__["_node_owner_cache"] = (key, result)
         return result
 
