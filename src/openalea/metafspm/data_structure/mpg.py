@@ -616,6 +616,26 @@ class MPG(MTG):
     def nb_children(self, vtx_id):
         return len(self.children(vtx_id))
 
+    def move_components(self, vids, complex_id) -> None:
+        """
+        Make the vertices *vids* components of *complex_id*, at the same scale (e.g. Cells moving to the Layer of
+        their new tissue region), with their own components following them. Topological links are kept.
+        """
+        target_scale = self._scale[complex_id] + 1
+        for v in vids:
+            v = int(v)
+            if self._scale[v] != target_scale:
+                raise ValueError(f"move_components: vertex {v} is at scale {self._scale[v]}, components of "
+                                 f"{complex_id} are at scale {target_scale}")
+            old = self._complex.get(v)
+            if old == complex_id:
+                continue
+            if old is not None:
+                self._components[old].remove(v)
+            self._components.setdefault(complex_id, []).append(v)
+            self._complex[v] = complex_id
+        self.__dict__["_complex_edits"] = self.__dict__.get("_complex_edits", 0) + 1
+
     def remove_vertex(self, vid, reparent_child=False):
         """
         MTG.remove_vertex, removing first the Compartments the vertex owns (its graph nodes), which openalea would
@@ -763,15 +783,15 @@ class MPG(MTG):
         complex is resolved for every vertex at once (pointer doubling up the parent chains), whereas MTG.complex
         walks the chain of each vertex.
         """
-        signature = (self.nb_vertices(), getattr(self, "_id", None))
+        signature = (self.nb_vertices(), getattr(self, "_id", None), self.__dict__.get("_complex_edits", 0))
         cache = self.__dict__.get("_topology_arrays")
         if cache is not None and cache[0] == signature:
             return cache[1]
-        if cache is not None and cache[0][1] is not None and signature[1] is not None:
+        if cache is not None and cache[0][1] is not None and signature[1] is not None and cache[0][2] == signature[2]:
             # Incremental: vids are allocated in increasing order, so the vertices created since the last read
-            # are above the last vid seen; when none was removed, only they (and children they were inserted above)
-            # are read from the MTG
-            (count, last), arrays = cache
+            # are above the last vid seen; when none was removed or moved, only they (and children they were
+            # inserted above) are read from the MTG
+            (count, last, _), arrays = cache
             new = [v for v in range(last + 1, signature[1] + 1) if v in self._scale]
             if signature[0] == count + len(new):
                 arrays = self._extended_topology_arrays(arrays, new, signature[1] + 1)

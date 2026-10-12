@@ -214,3 +214,18 @@ def test_bulk_creation_takes_one_complex_per_component():
     assert [g.complex(v) for v in vids] == cells and all(g.scale(v) == g.scales.Compartment for v in vids)
     with pytest.raises(ValueError, match="2 complexes for 3 components"):
         g.add_components_bulk(cells, 3)
+
+
+def test_cells_move_to_another_layer_with_their_protoplasts():
+    g, segments, sections, ds = _plant()
+    v = sections[segments[0]]
+    before = g.topology_arrays()["complex"].copy()
+    g.move_components([v["cell_c2"]], v["xylem"])                      # c2 differentiates into the xylem Layer
+    assert g.complex(v["cell_c2"]) == v["xylem"] and v["cell_c2"] in g.components(v["xylem"])
+    assert v["cell_c2"] not in g.components(v["cortex"])
+    assert g.topology_arrays()["complex"][v["cell_c2"]] == v["xylem"] != before[v["cell_c2"]]   # cache refreshed
+    ds.update_topology()
+    layer = ds.entity_ids("Layer")[ds.owner("Layer")[_index(ds, [v["c2"]])][0]]
+    assert layer == v["xylem"]                                           # its protoplast followed
+    with pytest.raises(ValueError, match="components of"):
+        g.move_components([v["c0"]], v["xylem"])                          # a Compartment is not a Layer's component
