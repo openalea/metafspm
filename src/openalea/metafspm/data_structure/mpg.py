@@ -1075,12 +1075,11 @@ class MPG(MTG):
                 if len(assigned_values) > 0:
                     first_element = assigned_values[0]
                     if isinstance(first_element, float) or isinstance(first_element, int) or isinstance(first_element, np.int32) or isinstance(first_element, np.int64) or isinstance(first_element, np.float64):
-                        props[k] = ArrayDict(v)
-            
+                        props[k] = ArrayDict.from_items(list(v.keys()), list(v.values()))
+
             # If any was already existing, recreate it to make sure this is the right version with the invariant vid ordering # TODO remove after ArrayDict is stable
             elif isinstance(v, ArrayDict):
-                stored = v.to_dict()
-                props[k] = ArrayDict(stored)
+                props[k] = ArrayDict.from_items(v.keys_array(), v.values_array().copy())
 
 
 class _SortedIds:
