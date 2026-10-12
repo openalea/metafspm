@@ -39,6 +39,7 @@
 - **`"Layer"` and `"Cell"` are locations** when they own Compartments: `ds.owner("Cell")`, `entity_ids("Cell")`, `scale=scales.Cell` declarations, aggregations, masks and parameters.
 - **Nodes without an entity at a scale** (walls at the Cell and Layer scales) have owner −1. Aggregations skip them, and broadcasts give them the variable's default.
 - **Junction wiring, differentiation rewiring, growth inheritance and checkpoints** go through the owner chain.
+- **Bulk vertex removal:** `MPG.remove_connections` deletes the vertices' property entries with one compaction per array-backed property (`ArrayDict.delete_many`); per-key deletion rebuilt the index of the shifted suffix each time. Removing a 27 k-vertex network from a section: 301 s → 3.6 s.
 - **`MPG.move_components(vids, complex)`** moves vertices to another complex at the same scale, their components following (e.g. Cells changing Layer on differentiation); the topology arrays are refreshed.
 - **`add_components_bulk` takes one complex per component** (e.g. every protoplast of a section in one call). On a 45.7 k-vertex section, bulk creation takes 0.17 s against 1.0 s per vertex (`test/benchmarks/bench_layered_anatomy.py`).
 

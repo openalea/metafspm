@@ -90,6 +90,20 @@ class ArrayDict(MutableMapping):
             self.vid2idx[int(self.order[i])] = i
 
 
+    def delete_many(self, keys) -> int:
+        """Delete every key of *keys* present, in one compaction (del per key shifts the suffix each time)."""
+        doomed = np.fromiter((self.vid2idx.pop(int(k)) for k in keys if int(k) in self.vid2idx), dtype=np.int64)
+        if doomed.size == 0:
+            return 0
+        keep = np.ones(self.size, dtype=bool)
+        keep[doomed] = False
+        kept = int(keep.sum())
+        self.arr[:kept] = self.arr[:self.size][keep]
+        self.order[:kept] = self.order[:self.size][keep]
+        self.size = kept
+        self.vid2idx = {int(k): i for i, k in enumerate(self.order[:kept].tolist())}
+        return int(doomed.size)
+
     # --- handy array views ---------------------------------------------------
 
     def values_array(self) -> np.ndarray:

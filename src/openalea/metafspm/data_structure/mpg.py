@@ -658,15 +658,25 @@ class MPG(MTG):
         return super().remove_vertex(vid, reparent_child=False)
 
     def remove_connections(self, vids) -> None:
-        """Delete Connection vertices *vids* and their property entries (see repopulate_graph)."""
-        props = self.properties()
-        for v in vids:
-            for prop in props.values():
-                if v in prop:
+        """
+        Delete the vertices *vids* (Connections, or any vertex without components left) and their property
+        entries (see repopulate_graph). Properties are deleted in bulk, one compaction per array-backed property.
+        """
+        from openalea.metafspm.data_structure.arraydict import ArrayDict
+        vids = [int(v) for v in vids]
+        if not vids:
+            return
+        doomed = set(vids)
+        for prop in self.properties().values():
+            if isinstance(prop, ArrayDict):
+                prop.delete_many(vids)
+            else:
+                for v in doomed.intersection(prop):
                     try:
                         del prop[v]
                     except (KeyError, TypeError):
                         pass
+        for v in vids:
             self.remove_vertex(v)
 
     def array_filtering(self, name: str, filter_in: dict = None, filter_out: dict = None):
