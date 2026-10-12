@@ -2097,3 +2097,4 @@ Per-file counts:
 - **metafspm changes it needed:** `MPG.move_components` (Cells changing Layer), bulk vertex removal (`ArrayDict.delete_many`; removing a 27 k-vertex network 301 s → 3.6 s). Suite 790 passed.
 - **P3:** design and questions Q-P3a–d in GRANAP's plan (where pole/bundle ids come from, the matching rule, the default class → parameters for roots, geometry shared by template).
 - **GRANAP P3, initiation (in GRANAP, 4680eda):** GranapAnatomy structural component, library per class (shared geometry), vessel ids, junctions between sections, a root system's hydraulic graph solved by a metafspm graph system (5 capability tests, 10 s). Seedling benchmark: 48 segments, 886 k vertices; `convert_properties_to_arraydict` 14.6 s is the largest cost (F-P3b, asked).
+- **F-P3b (your answer: yes):** `convert_properties_to_arraydict` builds each property in one pass (`ArrayDict.from_items`); GRANAP's seedling benchmark 14.6 s → 3.6 s. Suite 792 passed.

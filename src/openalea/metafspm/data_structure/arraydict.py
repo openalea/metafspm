@@ -18,9 +18,28 @@ class ArrayDict(MutableMapping):
         self.size = 0
 
         if init:
-            # Insert via __setitem__ to preserve sorted invariant
-            for k, v in init.items():
-                self[k] = v
+            self._load(init.keys(), init.values())
+
+    @classmethod
+    def from_items(cls, keys, values, dtype=np.float64) -> "ArrayDict":
+        """An ArrayDict from parallel *keys* and *values*, sorted in one pass (vectorised, unlike inserting each)."""
+        out = cls(dtype=dtype, init_capacity=len(keys))
+        out._load(keys, values)
+        return out
+
+    def _load(self, keys, values) -> None:
+        """Replace the contents by *keys* -> *values* (a key repeated keeps its last value, as successive inserts)."""
+        keys = np.fromiter((int(k) for k in keys), dtype=np.int64)
+        values = np.asarray(list(values), dtype=self.arr.dtype)
+        if keys.size:
+            last = keys.size - 1 - np.unique(keys[::-1], return_index=True)[1]      # the last occurrence of each key
+            keys, values = keys[last], values[last]
+        order = np.argsort(keys, kind="stable")
+        self._ensure(keys.size)
+        self.order[:keys.size] = keys[order]
+        self.arr[:keys.size] = values[order]
+        self.size = int(keys.size)
+        self.vid2idx = dict(zip(self.order[:self.size].tolist(), range(self.size)))
 
     # --- capacity management -------------------------------------------------
 

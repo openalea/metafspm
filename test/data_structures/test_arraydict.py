@@ -32,3 +32,22 @@ def test_delete_many_equals_deleting_one_key_at_a_time():
     assert all(bulk[k] == single[k] for k in single)
     bulk[1] = 5.                                                # inserts still keep the order
     assert list(bulk)[:2] == [1, 3]
+
+
+def test_bulk_construction_equals_inserting_each_key():
+    import numpy as np
+    from openalea.metafspm.data_structure.arraydict import ArrayDict
+    rng = np.random.default_rng(0)
+    keys = rng.permutation(500)[:300].tolist() + [7, 7]          # unsorted, a key repeated (the last value wins)
+    values = rng.normal(size=len(keys)).tolist()
+    values[-1] = None                                           # None becomes NaN, as an insert makes it
+    inserted = ArrayDict()
+    for k, v in zip(keys, values):
+        inserted[k] = v
+    bulk = ArrayDict.from_items(keys, values)
+    assert list(bulk) == list(inserted) == sorted(set(keys))
+    np.testing.assert_array_equal(bulk.values_array(), inserted.values_array())
+    assert ArrayDict(dict(zip(keys, values))).keys_array().tolist() == bulk.keys_array().tolist()
+    bulk[1000] = 2.                                             # and it keeps working as an ArrayDict
+    del bulk[keys[0]]
+    assert bulk[1000] == 2. and keys[0] not in bulk
