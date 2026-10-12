@@ -33,6 +33,14 @@
 - **Sub-stepping by the time step:** a component whose `time_step` is shorter than the simulation step runs its schedule once per `time_step` within each simulation step (e.g. 4 times for 900 s in a 3600 s step). Its clock advances at each sub-step, so forcings are read at each sub-step's end. `sub_time_step` defaults to `time_step`.
 - **Breaking:** the time step must divide the simulation step a whole number of times; otherwise construction raises `ValueError` (a longer step, or 1000 s in 3600 s, used to be silently rounded).
 
+### Anatomy mode with Layer and Cell scales
+
+- **Anatomies may hold Layers and Cells:** SubOrgan → Layer → Cell → Compartment as true MTG components (a cell's protoplast under its Cell), alongside Compartments anchored to the SubOrgan (walls and junctions shared by several cells). A Compartment's owner is its Cell, or its SubOrgan when anchored, and its entity at each coarser scale is the one above its owner (`MPG.compartment_owners`, `owners_at_scale`; `compartments_by_owner(from_scale)` gives every Compartment of each SubOrgan).
+- **`"Layer"` and `"Cell"` are locations** when they own Compartments: `ds.owner("Cell")`, `entity_ids("Cell")`, `scale=scales.Cell` declarations, aggregations, masks and parameters.
+- **Nodes without an entity at a scale** (walls at the Cell and Layer scales) have owner −1. Aggregations skip them, and broadcasts give them the variable's default.
+- **Junction wiring, differentiation rewiring, growth inheritance and checkpoints** go through the owner chain.
+- **`add_components_bulk` takes one complex per component** (e.g. every protoplast of a section in one call). On a 45.7 k-vertex section, bulk creation takes 0.17 s against 1.0 s per vertex (`test/benchmarks/bench_layered_anatomy.py`).
+
 ### Adaptive grids in scenes
 
 - **`CrossMapping` follows the target grid's refinement:** the incidence is rebuilt when the grid's topology changes, not only the plants'. Before, after an `AdaptiveGridDataStructure.refine()` or `coarsen()`, the roots were mapped onto stale cells.

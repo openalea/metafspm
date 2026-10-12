@@ -151,10 +151,15 @@ Chains are `"axis"` ('<' successors) by default, or declared with `define_chain(
 ## Anatomy mode
 
 - **Construction.** `MPGDataStructure(g, from_scale=scales.SubOrgan, nodes="Compartment", wiring=rules)` solves on the anatomies.
-  - Nodes are the Compartments created under each SubOrgan (`add_component_with_topo(compartment_anchor, suborgan)`).
+  - Nodes are the Compartments of each SubOrgan's anatomy, created in either of two ways:
+    - under a Cell, as true MTG components: SubOrgan → Layer → Cell → Compartment, e.g. a cell's protoplast;
+    - anchored to the SubOrgan (`add_component_with_topo(compartment_anchor, suborgan)`), e.g. a wall or wall junction shared by several cells, or every Compartment when there are no Layers or Cells.
+  - A Compartment's owner is its Cell, or the SubOrgan it is anchored to. Its entity at a coarser scale is the one above its owner.
   - Edges are the anatomy Connections plus the junctions that `wiring` creates between linked SubOrgans.
   - Both are keyed by their own vids.
-- **Locations.** `"SubOrgan"` and coarser scales are coarse locations; `scale=scales.Compartment` declarations read the Compartments' properties.
+  - `add_components_bulk` creates many components in one call, taking one complex, or one per component (e.g. the protoplasts of many Cells).
+- **Locations.** `"SubOrgan"` and coarser scales are coarse locations, and so are `"Layer"` and `"Cell"` when they own Compartments. `scale=scales.Compartment` declarations read the Compartments' properties, and `scale=scales.Cell` declarations the Cells'.
+- **Nodes without a Layer or a Cell** (walls, junctions) have owner −1 there (`ds.owner("Cell")`). Sums and means over the scale skip them, and broadcasts from it (parameters, masks) give them the variable's default.
 - **Growth.** Only the junctions of changed SubOrgans are rewired. In segment mode too, growth only adds or removes the Compartments and Connections of new or pruned segments (prune with `remove_tree`, which also removes the segment's Compartment). A new Compartment inherits from the same-label Compartment upstream.
 
 ## Boundary sets

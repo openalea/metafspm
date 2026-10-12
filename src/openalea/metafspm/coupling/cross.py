@@ -411,7 +411,8 @@ class UnionDataStructure(VariableStoreMixin, DataStructure):
         for i, name in enumerate(var_names):
             self.set(name, x[i * n:(i + 1) * n])
 
-    def _map(self, values, from_location: str, to_location: str, aggregation: str, weights=None) -> np.ndarray:
+    def _map(self, values, from_location: str, to_location: str, aggregation: str, weights=None,
+             fill=0.) -> np.ndarray:
         if from_location == "node" and to_location == "scalar":
             return np.asarray(self._reduce(values, aggregation, weights))
         if from_location == "scalar" and to_location == "node" and aggregation == "broadcast":
