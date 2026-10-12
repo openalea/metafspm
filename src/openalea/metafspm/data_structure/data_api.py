@@ -2234,6 +2234,28 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
         self._anatomy_signature = new
         self.rewired = sorted(rewire)   # introspection: the vertices whose junctions were rebuilt
 
+    # Anatomy mode: the rule giving new Compartments their source, a callable (ds, new_vids, is_known) -> source vids
+    # (-1: none), where is_known(vids) tells which vids had values before the update. None: _inherited_compartment
+    # (the first same-label Compartment upstream). A model with its own anatomies sets it (e.g. GRANAP: the same
+    # cell of the same template upstream).
+    inheritance = None
+
+    def _inheritance_sources(self, new_keys, values_by_key) -> np.ndarray:
+        """The source of each new Compartment, computed once per topology update and new key set."""
+        new_keys = np.asarray(new_keys, dtype=np.int64)
+        stamp = (self.topology_version, new_keys.tobytes())
+        cache = self.__dict__.get("_inheritance_cache")
+        if cache is not None and cache[0] == stamp:
+            return cache[1]
+        if self.inheritance is not None:
+            sources = np.asarray(self.inheritance(self, new_keys, lambda vids: values_by_key.match(vids)[0]),
+                                 dtype=np.int64)
+        else:
+            sources = np.array([self._inherited_compartment(int(k), values_by_key) or -1 for k in new_keys],
+                               dtype=np.int64)
+        self.__dict__["_inheritance_cache"] = (stamp, sources)
+        return sources
+
     def _inherited_compartment(self, key: int, values_by_key: dict):
         """
         Anatomy mode: the Compartment a new Compartment inherits from, the first one with the same label in the
@@ -2269,6 +2291,14 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
             unknown = np.flatnonzero(~known)
             if policy["on_grow"] != "inherit" and out.dtype != object:    # objects (lists) are set one by one
                 out[unknown] = policy["default"]
+                return out
+            if policy["on_grow"] == "inherit" and getattr(self, "_anatomy", False):
+                # The sources of the new Compartments, found once per update for every variable (inheritance)
+                out[unknown] = policy["default"]
+                sources = self._inheritance_sources(keys[unknown], values_by_key)
+                found, position = values_by_key.match(np.maximum(sources, 0))
+                found &= sources >= 0
+                out[unknown[found]] = values_by_key.values[position[found]]
                 return out
             if policy["on_grow"] == "inherit" and not getattr(self, "_anatomy", False) and out.dtype != object:
                 # The nearest known ancestor, level by level for all the new entities at once
