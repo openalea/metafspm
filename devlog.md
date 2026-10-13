@@ -2116,3 +2116,7 @@ Per-file counts:
   - **B1:** the calibration from areas cannot be exact (the realized proportion is measured after fusion, re-simplification and carving). The best attempt is now kept instead of re-run (GRANAP 5252525).
   - **B2:** design in GRANAP's plan §34, questions Q-B1, Q-B2.
   - **B2a (GRANAP, your answers Q-B1/Q-B2: recommendations):** simplification and aerenchyma merge in bulk, exact. The merge is −45 %, the monocot root −10 %. Measured afterwards: the snap is 21 % of generation, more than what B2b–d can still give; question Q-B3 in GRANAP's plan.
+  - **compare_sections (GRANAP a085447):** all 14 organ kinds, with a panel of differences (outlines overlaid, differing area per tissue) for visual checks once exactness is relaxed. It found an N1 bug on sections without shared junctions (ROI), fixed.
+  - **B5 (GRANAP d8019dc, your answer Q-B3):** the snap converted, identical call by call (75 calls, 14 organs); −7 to −13 % generation.
+    - Found: Python ≥ 3.12's `sum()` of floats is compensated, so exact ports need a plain loop.
+    - Comparison folder 188 passed (13 min).
