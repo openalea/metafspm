@@ -2121,3 +2121,4 @@ Per-file counts:
     - Found: Python ≥ 3.12's `sum()` of floats is compensated, so exact ports need a plain loop.
     - Comparison folder 188 passed (13 min).
   - **B2b (GRANAP):** the aerenchyma fill order and areas computed once per calibration instead of once per attempt. Exact; −5 % on the dicot and monocot roots.
+  - **B2c (GRANAP):** the intercellular spaces' smoothing and carving in bulk. Exact (14 organs identical); −3 to −5 % on the roots.
