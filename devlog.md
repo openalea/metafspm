@@ -2123,3 +2123,7 @@ Per-file counts:
   - **B2b (GRANAP):** the aerenchyma fill order and areas computed once per calibration instead of once per attempt. Exact; −5 % on the dicot and monocot roots.
   - **B2c (GRANAP):** the intercellular spaces' smoothing and carving in bulk. Exact (14 organs identical); −3 to −5 % on the roots.
   - **B2d (GRANAP):** gap fusion with each union computed once and the properties in bulk. Exact; comparison folder 188 passed. From the start of the day: dicot root −33 %, monocot root −37 %, dicot leaf −25 % (all exact).
+  - **C1 (GRANAP 7b45549):** the network as numeric columns, read as DataStructure variables; the graph view rebuilt from them, exact. Q-C1a (junction values) open.
+  - **C2 (GRANAP 0c56843):** the converted pipeline asks the organ for its topology; no class method is replaced, except for the needle and CellSet organ-specific code (P5.6).
+  - **B3 (GRANAP 2c1600a):** the seed footprints in bulk, exact; −5 to −7 %.
+  - **Your request:** `example/mpg/monocot_root.py`, the simplest component example (instantiate, grow, plot).
