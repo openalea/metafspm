@@ -2120,3 +2120,4 @@ Per-file counts:
   - **B5 (GRANAP d8019dc, your answer Q-B3):** the snap converted, identical call by call (75 calls, 14 organs); −7 to −13 % generation.
     - Found: Python ≥ 3.12's `sum()` of floats is compensated, so exact ports need a plain loop.
     - Comparison folder 188 passed (13 min).
+  - **B2b (GRANAP):** the aerenchyma fill order and areas computed once per calibration instead of once per attempt. Exact; −5 % on the dicot and monocot roots.
