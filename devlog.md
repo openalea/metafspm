@@ -2134,3 +2134,11 @@ Per-file counts:
     - tests and examples run the port, with `comparison/` folders against legacy (skipped in CI with `--ignore=comparison`);
     - 201 passed;
     - optimisation candidates O1–O7 recorded in GRANAP's plan §50.
+
+## 2026-10-14 (GRANAP examples, O1–O4, declarations design)
+
+- **GRANAP's 36 other examples run on the port** (all run without error).
+- **Your answers:** O1 and O2 dropped (the solve belongs to the coming MECHA port in package/MECHA-dev, branch to_metafspm); O3 and O4 yes.
+- **O4 (metafspm 26bb644, DS14b):** topology arrays kept up to date at bulk creation, `replace_parent` rebuilding them, valid vertices cached, the anatomy signature in bulk. Exact (new test; GRANAP's growth reference identical). Seedling build 21 → 13.6 s, growth step 2.2 → 1.6 s. Suite 796 passed.
+- **O3 measured again without the profiler:** the snap is 6 % of a dicot root (cProfile had inflated it). Q-O3b proposes dropping it.
+- **Design (GRANAP plan §54):** declared i/o of the anatomy component (inputs, per-plant parameters, descriptor state variables at SubOrgan, Cell, Compartment and Connection), anticipating the MECHA coupling; questions Q-D1, Q-C1a, Q-D2.
