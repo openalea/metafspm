@@ -1170,8 +1170,7 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
             self._bio_edge_b_idx   = np.empty(0, dtype=np.int64)
             return
         if getattr(self, "_anatomy", False):
-            owners = self._mtg.compartments_by_owner(self._from_scale)
-            svids = sorted(nv for comps in owners.values() for nv in comps)
+            svids = self._mtg.owned_compartments(self._from_scale).tolist()
         else:
             raw = self._mtg.array_filtering(
                 "vertex_id", filter_in={"scale": self._mtg.scales.Compartment}
@@ -2188,18 +2187,39 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
     # ── Anatomy mode: incremental junction rewiring ──
 
     def _anatomy_signatures(self) -> dict:
-        """{from_scale vid: (linked parent, anatomy)}, anatomy = its Compartments with their rule properties."""
+        """
+        The anatomy of every from_scale vertex, to find what a topology update changed: each one's linked parent
+        ("parents"), and the table of the Compartments owned (ascending vids, their owner and rule properties).
+        """
         g, from_scale = self._mtg, self._from_scale
         valid = g._valid_vids_at(from_scale)
         owners = g.compartments_by_owner(from_scale)
         names = ["label"] + sorted({rule["ordering"] for rule in self._wiring
                                     if isinstance(rule, dict) and rule.get("ordering")})
-        props = [g.properties().get(name, {}) for name in names]
-        signatures = {}
-        for vid in valid:
-            anatomy = tuple(sorted((nv,) + tuple(prop.get(nv) for prop in props) for nv in owners.get(vid, [])))
-            signatures[vid] = (g.linked_parent(vid, from_scale, valid), anatomy)
-        return signatures
+        vids = g.owned_compartments(from_scale)
+        owner_of = np.empty(vids.size, dtype=np.int64)
+        for owner, comps in owners.items():
+            owner_of[np.searchsorted(vids, comps)] = owner
+        columns = []
+        for name in names:
+            prop = g.properties().get(name, {})
+            column = np.empty(vids.size, dtype=object)
+            column[:] = [prop.get(nv) for nv in vids.tolist()]
+            columns.append(column)
+        return {"parents": {vid: g.linked_parent(vid, from_scale, valid) for vid in valid},
+                "vids": vids, "owners": owner_of, "columns": columns}
+
+    @staticmethod
+    def _changed_anatomies(old: dict, new: dict) -> set:
+        """The vertices whose owned Compartments (vids or rule properties) differ between two signatures."""
+        in_new = np.isin(old["vids"], new["vids"], assume_unique=True)
+        in_old = np.isin(new["vids"], old["vids"], assume_unique=True)
+        changed = set(old["owners"][~in_new].tolist()) | set(new["owners"][~in_old].tolist())
+        a, b = np.flatnonzero(in_new), np.flatnonzero(in_old)            # the common vids, in the same order
+        differ = old["owners"][a] != new["owners"][b]
+        for old_column, new_column in zip(old["columns"], new["columns"]):
+            differ |= np.asarray(old_column[a] != new_column[b], dtype=bool)
+        return changed | set(old["owners"][a][differ].tolist()) | set(new["owners"][b][differ].tolist())
 
     def _sections_of(self, vids) -> np.ndarray:
         """Anatomy mode: the from_scale vertex (e.g. SubOrgan) of each Compartment vid, -1 for none or -1 vids."""
@@ -2219,21 +2239,20 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
         """
         g, old = self._mtg, self._anatomy_signature
         new = self._anatomy_signatures()
-
-        def anatomy(signatures, vid):
-            return signatures[vid][1] if vid in signatures else None
-
-        rewire = {vid for vid, (parent, own) in new.items()
-                  if vid not in old or old[vid][0] != parent or old[vid][1] != own
-                  or (parent is not None and anatomy(old, parent) != anatomy(new, parent))}
-        alive = {nv for comps in g.compartments_by_owner(self._from_scale).values() for nv in comps}
+        changed = self._changed_anatomies(old, new)
+        old_parents = old["parents"]
+        rewire = {vid for vid, parent in new["parents"].items()
+                  if vid not in old_parents or old_parents[vid] != parent or vid in changed
+                  or (parent is not None and (parent not in old_parents or parent in changed))}
+        alive = g.owned_compartments(self._from_scale)
         n_id_a, n_id_b = g.property("n_id_a"), g.property("n_id_b")
-        junctions = g.junction_vids()
-        heads = [int(n_id_b[ev]) for ev in junctions]
-        sections = dict(zip(heads, self._sections_of([h if h in alive else -1 for h in heads]).tolist()))
-        stale = [ev for ev, head in zip(junctions, heads)
-                 if int(n_id_a[ev]) not in alive or head not in alive or sections[head] in rewire]
-        g.remove_connections(stale)
+        junctions = np.asarray(g.junction_vids(), dtype=np.int64)
+        tails = np.array([int(n_id_a[ev]) for ev in junctions.tolist()], dtype=np.int64)
+        heads = np.array([int(n_id_b[ev]) for ev in junctions.tolist()], dtype=np.int64)
+        head_alive = np.isin(heads, alive)
+        sections = self._sections_of(np.where(head_alive, heads, -1))
+        stale = junctions[~np.isin(tails, alive) | ~head_alive | np.isin(sections, list(rewire))]
+        g.remove_connections(stale.tolist())
         g.wire_junctions(self._from_scale, self._wiring, children=sorted(rewire))
         self._anatomy_signature = new
         self.rewired = sorted(rewire)   # introspection: the vertices whose junctions were rebuilt

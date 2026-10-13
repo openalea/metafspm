@@ -506,17 +506,35 @@ class MPG(MTG):
         """
         {owner vid: [Compartment vids]}: the Compartments of each vertex's anatomy, ascending. With *from_scale*, the
         owners are the vertices of that scale (e.g. each SubOrgan with all its Compartments, under its Layers and
-        Cells or anchored to it); without, each Compartment's own owner (compartment_owners).
+        Cells or anchored to it); without, each Compartment's own owner (compartment_owners). Cached until the next
+        structural edit: the dict is shared, read it without modifying it.
         """
+        signature = self._structure_signature()
+        cache = self.__dict__.setdefault("_owner_maps", {})
+        hit = cache.get(from_scale)
+        if hit is not None and hit[0] == signature:
+            return hit[1]
         vids, owners = self.compartment_owners()
         if from_scale is not None:
             owners = self.owners_at_scale(owners, from_scale)
         kept = owners >= 0
         vids, owners = vids[kept], owners[kept]
-        grouped = {}
-        for owner, nv in zip(owners.tolist(), vids.tolist()):
-            grouped.setdefault(owner, []).append(nv)
+        order = np.argsort(owners, kind="stable")                  # ascending vids within each owner
+        keys, first, counts = np.unique(owners[order], return_index=True, return_counts=True)
+        chunks = np.split(vids[order], first[1:]) if keys.size else []
+        appearance = np.argsort(np.minimum.reduceat(vids[order], first), kind="stable") if keys.size else []
+        grouped = {int(keys[i]): chunks[i].tolist() for i in appearance}   # owners in order of their first vid
+        cache[from_scale] = (signature, grouped, np.sort(vids))
         return grouped
+
+    def owned_compartments(self, from_scale=None) -> np.ndarray:
+        """The Compartments having an owner (at *from_scale*), as a sorted array; cached as compartments_by_owner."""
+        self.compartments_by_owner(from_scale)
+        return self.__dict__["_owner_maps"][from_scale][2]
+
+    def _structure_signature(self) -> tuple:
+        """Changes with any structural edit: vertices added or removed, Compartments or Cells moved (complex edits)."""
+        return (self.nb_vertices(), getattr(self, "_id", None), self.__dict__.get("_complex_edits", 0))
 
     def wire_junctions(self, from_scale, rules, children=None, filter_in=None, filter_out=None) -> list:
         """
@@ -538,25 +556,26 @@ class MPG(MTG):
         edge_anchor = self.scales.anchors[self.scales.Connection]
         valid_vids = self._valid_vids_at(from_scale, filter_in, filter_out)
         label_prop = self.property('label')
-        anatomy = {}
-        for owner, comps in self.compartments_by_owner(from_scale).items():
-            if owner in valid_vids:
-                for nv in comps:
-                    anatomy.setdefault(owner, {}).setdefault(label_prop.get(nv), []).append(nv)
-        created = []
-        for vid in sorted(valid_vids if children is None else set(children) & valid_vids):
-            parent = self.linked_parent(vid, from_scale, valid_vids)
+        targets = sorted(valid_vids if children is None else set(children) & valid_vids)
+        parents = {vid: self.linked_parent(vid, from_scale, valid_vids) for vid in targets}
+        owners = self.compartments_by_owner(from_scale)
+        anatomy = {}                                        # only the vertices wired and their parents
+        for owner in set(targets) | {p for p in parents.values() if p is not None}:
+            for nv in owners.get(owner, []):
+                anatomy.setdefault(owner, {}).setdefault(label_prop.get(nv), []).append(nv)
+        tails, heads, labels = [], [], []
+        for vid in targets:
+            parent = parents[vid]
             if parent is None:
                 continue
             for rule in rules:
-                pairs = self._junction_pairs(rule, parent, vid, anatomy.get(parent, {}), anatomy.get(vid, {}))
-                for n_a, n_b in pairs:
-                    ev = self.add_component(edge_anchor, **PropsConfig(
-                        scale=self.scales.Connection, label=rule['edge_label'], edge_type='/'))
-                    self.property("n_id_a")[ev] = n_a
-                    self.property("n_id_b")[ev] = n_b
-                    self.property("is_junction")[ev] = 1.
-                    created.append(ev)
+                for n_a, n_b in self._junction_pairs(rule, parent, vid, anatomy.get(parent, {}), anatomy.get(vid, {})):
+                    tails.append(n_a)
+                    heads.append(n_b)
+                    labels.append(rule['edge_label'])
+        created = self.add_components_bulk(edge_anchor, len(tails), **dict(
+            PropsConfig(scale=self.scales.Connection, edge_type='/'), label=labels, n_id_a=tails, n_id_b=heads,
+            is_junction=1.))
         return created
 
     def _junction_pairs(self, rule, parent, child, parent_anatomy, child_anatomy) -> list:
@@ -674,10 +693,54 @@ class MPG(MTG):
         Delete the vertices *vids* (Connections, or any vertex without components left) and their property
         entries (see repopulate_graph). Properties are deleted in bulk, one compaction per array-backed property.
         """
-        from openalea.metafspm.data_structure.arraydict import ArrayDict
         vids = [int(v) for v in vids]
         if not vids:
             return
+        doomed = self._removal_closure(vids)
+        if doomed is None:                                 # a case remove_vertex refuses: vertex by vertex, as it does
+            self._delete_properties(vids)
+            for v in vids:
+                self.remove_vertex(v)
+            return
+        # In bulk: the vertices with what remove_vertex removes with each (its decomposition, the Compartments and
+        # Connections anchored to it), their properties deleted once, each list they are in filtered once
+        self._delete_properties(doomed)
+        gone = set(doomed)
+        for owner_lists, links in ((self._components, self._complex), (self._children, self._parent)):
+            for holder in {links[v] for v in doomed if v in links} - gone:
+                owner_lists[holder] = [v for v in owner_lists[holder] if v not in gone]
+            for v in doomed:
+                links.pop(v, None)
+                owner_lists.pop(v, None)
+        for v in doomed:
+            self._scale.pop(v, None)
+
+    def _removal_closure(self, vids):
+        """
+        *vids* and what remove_vertex removes with each, recursively: its components and its anchored Compartments
+        and Connections. None when remove_vertex would refuse one of them (an absent vertex, the root, a vertex with
+        topological children left).
+        """
+        compartment, connection = self.scales.Compartment, self.scales.Connection
+        order, seen, stack = [], set(), list(vids)
+        while stack:
+            v = stack.pop()
+            if v in seen:
+                continue
+            if v not in self._scale or v == self.root:
+                return None
+            seen.add(v)
+            order.append(v)
+            stack.extend(self._components.get(v, []))
+            stack.extend(c for c in self._children.get(v, []) if self._scale.get(c) in (compartment, connection))
+        for v in order:
+            if any(c not in seen for c in self._children.get(v, [])):
+                return None
+        return order
+
+    def _delete_properties(self, vids) -> None:
+        """Delete the property entries of *vids*, one compaction per array-backed property."""
+        from openalea.metafspm.data_structure.arraydict import ArrayDict
         doomed = set(vids)
         for prop in self.properties().values():
             if isinstance(prop, ArrayDict):
@@ -688,8 +751,6 @@ class MPG(MTG):
                         del prop[v]
                     except (KeyError, TypeError):
                         pass
-        for v in vids:
-            self.remove_vertex(v)
 
     def array_filtering(self, name: str, filter_in: dict = None, filter_out: dict = None):
         """Return the values of property *name* for the subset of vertices that
