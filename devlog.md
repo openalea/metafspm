@@ -2108,3 +2108,10 @@ Per-file counts:
 - **N2 (in GRANAP):** `generate_cells` converted, stages explicit, no GeoDataFrame during generation. Generation plus matrix −9 to −11 % (dicot root 5.71 → 5.22 s). Comparison folder 186 passed.
 - **metafspm (add82ba):** `ArrayDict.update` in bulk (all-new keys, appended index, merge as a stable sort); data structures 266 passed.
 - **Overview** of component-native steps (population: parallel and cached templates, junctions per template pair; generation: aerenchyma calibration on arrays; readability: network as variables, no process-wide patches) in GRANAP's plan §30, questions Q-N1–Q-N3.
+- **Later the same day (your answers: A1/A2 deferred, order kept):**
+  - **A3 (GRANAP 3faa1d9; metafspm 8f2ac32):** vessel pairs and inheritance per template pair. In metafspm: cached owner maps, anatomy signatures as arrays, junctions wired only for the changed sections.
+    - Found while measuring: a class change took 669 s on the seedling. `remove_connections` removed vertex by vertex; it now removes in one pass (7.9 s, mostly the new template).
+    - All identical to a reference growth run.
+  - **A4 (GRANAP ae49977; metafspm d49460c):** instantiation as array appends (`ArrayDict.extend`, `MPG.set_values`). Emergence step 5.3 → 2.2 s; metafspm suite 794 passed (29 → 17 s).
+  - **B1:** the calibration from areas cannot be exact (the realized proportion is measured after fusion, re-simplification and carving). The best attempt is now kept instead of re-run (GRANAP 5252525).
+  - **B2:** design in GRANAP's plan §34, questions Q-B1, Q-B2.
