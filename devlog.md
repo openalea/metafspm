@@ -2115,3 +2115,4 @@ Per-file counts:
   - **A4 (GRANAP ae49977; metafspm d49460c):** instantiation as array appends (`ArrayDict.extend`, `MPG.set_values`). Emergence step 5.3 → 2.2 s; metafspm suite 794 passed (29 → 17 s).
   - **B1:** the calibration from areas cannot be exact (the realized proportion is measured after fusion, re-simplification and carving). The best attempt is now kept instead of re-run (GRANAP 5252525).
   - **B2:** design in GRANAP's plan §34, questions Q-B1, Q-B2.
+  - **B2a (GRANAP, your answers Q-B1/Q-B2: recommendations):** simplification and aerenchyma merge in bulk, exact. The merge is −45 %, the monocot root −10 %. Measured afterwards: the snap is 21 % of generation, more than what B2b–d can still give; question Q-B3 in GRANAP's plan.
