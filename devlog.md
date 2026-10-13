@@ -2100,3 +2100,11 @@ Per-file counts:
 - **F-P3b (your answer: yes):** `convert_properties_to_arraydict` builds each property in one pass (`ArrayDict.from_items`); GRANAP's seedling benchmark 14.6 s → 3.6 s. Suite 792 passed.
 - **GRANAP Q12 (in GRANAP):** anatomies follow growth: emergence, replacement on a class change, pruning; inheritance by template node. metafspm: bulk inheritance with a model's rule (`MPGDataStructure.inheritance`), pruning removes a segment's whole anatomy. Suite 794 passed; GRANAP capability tests 9 passed.
 - **GRANAP P4 (in GRANAP):** exact topology cache (dicot root -12 %, monocot -14 %), comparison 176 passed; stopped at E1 (your answer). P5 plan written with questions Q-P5a-d; the Q8 bug fixes promised for P2 were not done, flagged in the plan.
+
+## 2026-10-13 (GRANAP P5, N1 and N2)
+
+- **GRANAP P5.1–P5.3 and Q8 (in GRANAP):** cells as views of the MPG, the exporter converted, the aerenchyma calibration on shallow copies; `create_from_input` takes a seed, `air_link_radius` keeps 1× (comment fixed); P5.4 dropped (your answer).
+- **N1 (in GRANAP, 358d1c1):** the stored network built in the MPG from its cells and rings with array operations, exact against the exporter on 10 organs (numpy's pairwise mean emulated); graph a lazy view, matrix from the Connections (0.21 → 0.02 s).
+- **N2 (in GRANAP):** `generate_cells` converted, stages explicit, no GeoDataFrame during generation. Generation plus matrix −9 to −11 % (dicot root 5.71 → 5.22 s). Comparison folder 186 passed.
+- **metafspm (add82ba):** `ArrayDict.update` in bulk (all-new keys, appended index, merge as a stable sort); data structures 266 passed.
+- **Overview** of component-native steps (population: parallel and cached templates, junctions per template pair; generation: aerenchyma calibration on arrays; readability: network as variables, no process-wide patches) in GRANAP's plan §30, questions Q-N1–Q-N3.
