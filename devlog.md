@@ -2122,3 +2122,4 @@ Per-file counts:
     - Comparison folder 188 passed (13 min).
   - **B2b (GRANAP):** the aerenchyma fill order and areas computed once per calibration instead of once per attempt. Exact; −5 % on the dicot and monocot roots.
   - **B2c (GRANAP):** the intercellular spaces' smoothing and carving in bulk. Exact (14 organs identical); −3 to −5 % on the roots.
+  - **B2d (GRANAP):** gap fusion with each union computed once and the properties in bulk. Exact; comparison folder 188 passed. From the start of the day: dicot root −33 %, monocot root −37 %, dicot leaf −25 % (all exact).
