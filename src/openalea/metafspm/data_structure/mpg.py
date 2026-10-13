@@ -241,12 +241,18 @@ class MPG(MTG):
         for name, values in properties.items():
             if name not in self._properties:
                 self.add_property(name)
-            if isinstance(values, (list, tuple, np.ndarray)) and len(values) == count:
-                items = dict(zip(vids, values))
-            else:
-                items = dict.fromkeys(vids, values)
-            self._properties[name].update(items)
+            per_vertex = isinstance(values, (list, tuple, np.ndarray)) and len(values) == count
+            self.set_values(name, vids, values if per_vertex else [values] * count)
         return vids
+
+    def set_values(self, name, vids, values) -> None:
+        """property(name)[v] = value for each of *vids* and *values*, in one append when the property is
+        array-backed and the vids are new and ascending (e.g. vertices just created)."""
+        prop = self._properties.setdefault(name, {})
+        if isinstance(prop, ArrayDict):
+            prop.extend(vids, values)
+        else:
+            prop.update(zip(vids, values))
 
     def extend_graph(self, from_scale) -> dict:
         """

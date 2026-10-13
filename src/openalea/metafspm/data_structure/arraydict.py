@@ -153,6 +153,26 @@ class ArrayDict(MutableMapping):
 
     # --- batch update that preserves sorting --------------------------------
 
+    def extend(self, keys, values) -> None:
+        """
+        update(dict(zip(keys, values))) for keys all new and ascending, in one copy (no dict, no per-key test);
+        *values* a sequence aligned with *keys*, or one value for all. Other keys go through update.
+        """
+        keys = np.asarray(keys, dtype=np.int64)
+        if keys.size == 0:
+            return
+        scalar = np.ndim(values) == 0 and not isinstance(values, (list, tuple))
+        if (self.size and keys[0] <= self.order[self.size - 1]) or (keys.size > 1 and not (keys[1:] > keys[:-1]).all()):
+            self.update(dict.fromkeys(keys.tolist(), values) if scalar else dict(zip(keys.tolist(), values)))
+            return
+        values = np.full(keys.size, values, dtype=self.arr.dtype) if scalar else np.asarray(values, dtype=self.arr.dtype)
+        self._ensure(self.size + keys.size)
+        start, end = self.size, self.size + keys.size
+        self.order[start:end] = keys
+        self.arr[start:end] = values
+        self.vid2idx.update(zip(keys.tolist(), range(start, end)))
+        self.size = end
+
     def update(self, d: dict):
         if not d:
             return
