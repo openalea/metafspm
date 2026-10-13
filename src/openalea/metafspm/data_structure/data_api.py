@@ -2204,7 +2204,13 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
         for name in names:
             prop = g.properties().get(name, {})
             column = np.empty(vids.size, dtype=object)
-            column[:] = [prop.get(nv) for nv in vids.tolist()]
+            if isinstance(prop, ArrayDict) and prop.size:                  # in bulk: None where there is no value
+                order, values = prop.order[:prop.size], prop.values_array()
+                position = np.searchsorted(order, vids).clip(0, prop.size - 1)
+                found = order[position] == vids
+                column[found] = values[position[found]].tolist()
+            else:
+                column[:] = [prop.get(nv) for nv in vids.tolist()]
             columns.append(column)
         return {"parents": {vid: g.linked_parent(vid, from_scale, valid) for vid in valid},
                 "vids": vids, "owners": owner_of, "columns": columns}

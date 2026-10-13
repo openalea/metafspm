@@ -238,6 +238,11 @@ class MPG(MTG):
             for v, p in zip(vids, topo_parents):
                 self._parent[v] = p
                 self._children.setdefault(p, []).append(v)
+        # The new vertices' links, for the incremental topology arrays (instead of reading the MTG dicts back)
+        self.__dict__.setdefault("_bulk_created", []).append((
+            vids[0], np.asarray(complexes, dtype=np.int64),
+            np.asarray([-1 if p is None else int(p) for p in topo_parents], dtype=np.int64) if topo_parents is not None
+            else np.full(count, -1, dtype=np.int64)))
         for name, values in properties.items():
             if name not in self._properties:
                 self.add_property(name)
@@ -429,7 +434,24 @@ class MPG(MTG):
         return vids[found], np.array([prop[v] for v in vids[found].tolist()])
 
     def _valid_vids_at(self, from_scale, filter_in=None, filter_out=None, as_array=False):
-        """Non-anchor vertices at *from_scale* passing the filters (a set, or a sorted array)."""
+        """Non-anchor vertices at *from_scale* passing the filters (a set, or a sorted array). Without filters, cached
+        until the next structural edit (the set is shared: read it without modifying it)."""
+        if not filter_in and not filter_out:
+            signature = self._structure_signature()
+            cache = self.__dict__.setdefault("_valid_vids", {})
+            hit = cache.get(from_scale)
+            if hit is None or hit[0] != signature:
+                keys = self._valid_vids_at_uncached(from_scale)
+                hit = cache[from_scale] = (signature, keys, None)
+            if as_array:
+                return _sorted_unique(np.asarray(hit[1], dtype=np.int64))
+            if hit[2] is None:
+                hit = cache[from_scale] = (hit[0], hit[1], set(int(v) for v in hit[1]))
+            return hit[2]
+        return self._valid_vids_at_uncached(from_scale, filter_in, filter_out, as_array)
+
+    def _valid_vids_at_uncached(self, from_scale, filter_in=None, filter_out=None, as_array=False):
+        """_valid_vids_at, computed (the valid keys as an array when no conversion is asked)."""
         scale_prop    = self.property('scale')
         isanchor_prop = self.property('isanchor')
         valid_keys = scale_prop.order[:scale_prop.size][scale_prop.values_array() == from_scale]
@@ -443,8 +465,8 @@ class MPG(MTG):
             valid_keys = valid_keys[~np.isin(valid_keys, match, assume_unique=False)]
         anchor_keys = isanchor_prop.order[:isanchor_prop.size][isanchor_prop.values_array() != 0]
         valid_keys  = valid_keys[~np.isin(valid_keys, anchor_keys, assume_unique=False)]
-        if as_array:
-            return _sorted_unique(np.asarray(valid_keys, dtype=np.int64))
+        if as_array or not (filter_in or filter_out):
+            return _sorted_unique(np.asarray(valid_keys, dtype=np.int64)) if as_array else valid_keys
         return set(int(v) for v in valid_keys)
 
     def linked_parent(self, vid, from_scale, valid_vids=None):
@@ -660,6 +682,12 @@ class MPG(MTG):
             self._components.setdefault(complex_id, []).append(v)
             self._complex[v] = complex_id
         self.__dict__["_complex_edits"] = self.__dict__.get("_complex_edits", 0) + 1
+
+    def replace_parent(self, vtx_id, new_parent_id, **properties):
+        """MTG.replace_parent, counted as a structural edit (the cached topology arrays are then rebuilt)."""
+        result = super().replace_parent(vtx_id, new_parent_id, **properties)
+        self.__dict__["_complex_edits"] = self.__dict__.get("_complex_edits", 0) + 1
+        return result
 
     def remove_vertex(self, vid, reparent_child=False):
         """
@@ -881,17 +909,34 @@ class MPG(MTG):
             # are above the last vid seen; when none was removed or moved, only they (and children they were
             # inserted above) are read from the MTG
             (count, last, _), arrays = cache
-            new = [v for v in range(last + 1, signature[1] + 1) if v in self._scale]
-            if signature[0] == count + len(new):
-                arrays = self._extended_topology_arrays(arrays, new, signature[1] + 1)
+            bulk = self._bulk_links(last, signature[1])
+            covered = set()
+            for vids, _, _ in bulk:
+                covered.update(range(int(vids[0]), int(vids[-1]) + 1))
+            others = [v for v in range(last + 1, signature[1] + 1) if v not in covered and v in self._scale]
+            if signature[0] == count + len(others) + len(covered):
+                arrays = self._extended_topology_arrays(arrays, others, signature[1] + 1, bulk)
                 self.__dict__["_topology_arrays"] = (signature, arrays)
                 return arrays
+        self.__dict__.pop("_bulk_created", None)
         arrays = self._full_topology_arrays()
         self.__dict__["_topology_arrays"] = (signature, arrays)
         return arrays
 
-    def _extended_topology_arrays(self, arrays: dict, new: list, size: int) -> dict:
-        """*arrays* with the entries of the *new* vertices, and of the children they were inserted above."""
+    def _bulk_links(self, last: int, upto: int) -> list:
+        """[(vids, parents, complexes)] of the vertices created in bulk after vid *last* (up to *upto*), from
+        add_components_bulk's records, which are consumed. A record stays valid while no structural edit happens (the
+        signature's edit count, checked by the caller, rebuilds everything otherwise)."""
+        out = []
+        for first, complexes, parents in self.__dict__.pop("_bulk_created", []):
+            vids = np.arange(first, first + complexes.size, dtype=np.int64)
+            if first > last and vids[-1] <= upto:
+                out.append((vids, parents, complexes))
+        return out
+
+    def _extended_topology_arrays(self, arrays: dict, new: list, size: int, bulk: list = ()) -> dict:
+        """*arrays* with the entries of the *new* vertices (read from the MTG) and of those created in bulk (*bulk*,
+        add_components_bulk's records), and of the children they were inserted above."""
         if arrays["parent"].size < size:            # capacity doubles, so that growth extends in amortised O(new)
             capacity = max(size, 2 * arrays["parent"].size)
             grown = {}
@@ -901,26 +946,37 @@ class MPG(MTG):
                 extended[:values.size] = values
                 grown[name] = extended
             arrays = grown
-        if not new:
-            return arrays
         parent, complex_, scale = arrays["parent"], arrays["complex"], arrays["scale"]
         edge_type, is_anchor = arrays["edge_type"], arrays["is_anchor"]
         types, anchors = self.property('edge_type'), self.property('isanchor')
         codes = self._EDGE_TYPE_CODES
+        bulk_vids = np.concatenate([b[0] for b in bulk]) if bulk else np.zeros(0, dtype=np.int64)
+        if not new and not bulk_vids.size:
+            return arrays
         vids = np.array(new, dtype=np.int64)
 
         def read(mapping):
             return np.array([-1 if mapping.get(v) is None else mapping.get(v) for v in new], dtype=np.int64)
 
-        parent[vids], scale[vids], complex_[vids] = read(self._parent), read(self._scale), read(self._complex)
-        edge_type[vids] = [codes.get(types.get(v), 0) for v in new]
-        is_anchor[vids] = [bool(anchors.get(v, False)) for v in new]
-        fresh = set(new)
-        for v in new:                                  # an existing child below an inserted vertex
-            for child in self._children.get(v, ()):
+        if new:                                        # the vertices created one by one: read from the MTG
+            parent[vids], scale[vids], complex_[vids] = read(self._parent), read(self._scale), read(self._complex)
+            edge_type[vids] = [codes.get(types.get(v), 0) for v in new]
+            is_anchor[vids] = [bool(anchors.get(v, False)) for v in new]
+        for b_vids, parents, complexes in bulk:        # in creation order: a complex's scale is set before its components
+            parent[b_vids], complex_[b_vids] = parents, complexes
+            scale[b_vids] = scale[complexes] + 1
+        if bulk_vids.size:
+            listed = bulk_vids.tolist()
+            edge_type[bulk_vids] = [codes.get(types.get(v), 0) for v in listed]
+            is_anchor[bulk_vids] = [bool(anchors.get(v, False)) for v in listed]
+        fresh = set(new) | set(bulk_vids.tolist())
+        children = self._children
+        for v in fresh:                                # an existing child below an inserted vertex
+            for child in children.get(v, ()):
                 if child not in fresh:
                     parent[child] = v
                     edge_type[child] = codes.get(types.get(child), 0)
+        vids = np.concatenate((vids, bulk_vids)) if bulk_vids.size else vids
         missing = vids[(complex_[vids] < 0) & (parent[vids] >= 0)]
         ancestor = parent[missing]
         while missing.size:                            # new vertices without a complex: their nearest ancestor's
