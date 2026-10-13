@@ -2127,3 +2127,5 @@ Per-file counts:
   - **C2 (GRANAP 0c56843):** the converted pipeline asks the organ for its topology; no class method is replaced, except for the needle and CellSet organ-specific code (P5.6).
   - **B3 (GRANAP 2c1600a):** the seed footprints in bulk, exact; −5 to −7 %.
   - **Your request:** `example/mpg/monocot_root.py`, the simplest component example (instantiate, grow, plot).
+  - **P5.6 (a) (GRANAP 53e939e, your answer):** the needle's and the CellSet organ's stages converted; no class method is patched on the converted pipeline; comparison folder 190 passed.
+  - **Your request — one source, the port as GRANAP and the original as legacy:** design in GRANAP's plan §48, questions Q-R1–R3. The port builds on about 20 original modules, so it is a merge, not a removal.
