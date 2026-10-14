@@ -30,7 +30,7 @@ from dataclasses import fields as dc_fields
 from typing      import Optional
 
 import numpy as np
-from scipy.sparse import coo_matrix, csc_matrix, csr_matrix
+from scipy.sparse import coo_matrix, csc_matrix, csr_matrix, issparse
 
 # ── New module hierarchy ──────────────────────────────────────────────────────
 from openalea.metafspm.data_structure.data_api import GraphView, BoundaryPort
@@ -932,7 +932,10 @@ class GraphSystemBuilder:
                     full   = np.zeros(entity_size, dtype=np.float64)
                     np.add.at(full, np.where(mask)[0], result)
                     return full
-                return np.asarray(_in_equation(instance, bound_method, args), dtype=np.float64)
+                result = _in_equation(instance, bound_method, args)
+                if issparse(result):                           # a sparse analytic Jacobian stays sparse
+                    return result.tocsr().astype(np.float64)
+                return np.asarray(result, dtype=np.float64)
 
             return evaluator
 
@@ -1109,10 +1112,26 @@ class GraphSystemBuilder:
             user_jacobian = jac_evaluator
 
             def jac_evaluator(ctx, _user=user_jacobian):
-                from scipy.sparse import issparse
+                from scipy.sparse import diags, issparse
                 J = _user(ctx)
-                sparse = issparse(J)
-                J = J.tolil() if sparse else np.array(J, dtype=np.float64)
+                if issparse(J):
+                    # robin: + w on the diagonal; dirichlet: the row becomes the identity's (whatever else it holds)
+                    J = J.tocsr()
+                    added, fixed = np.zeros(J.shape[0]), np.zeros(J.shape[0], dtype=bool)
+                    for field, terms in set_terms.items():
+                        offset = list(node_unknowns).index(field) * n
+                        for kind, idx, _, weight in terms:
+                            rows = offset + idx
+                            if kind == "robin":
+                                np.add.at(added, rows, np.broadcast_to(weight, rows.shape))
+                            elif kind == "dirichlet":
+                                fixed[rows] = True
+                    J = J + diags(added)
+                    if fixed.any():
+                        J = diags((~fixed).astype(np.float64)) @ J + diags(fixed.astype(np.float64))
+                    return J.tocsr()
+                J = np.array(J, dtype=np.float64)
+                sparse = False
                 for field, terms in set_terms.items():
                     offset = list(node_unknowns).index(field) * n
                     for kind, idx, _, weight in terms:

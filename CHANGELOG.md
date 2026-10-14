@@ -71,6 +71,11 @@
 - **`cell_sizes()`** on `ArrayDataStructure` and `AdaptiveGridDataStructure`: each cell's size along each axis, so that structures can be written once for both grids.
 - **Example:** `examples/soil_plant_atmosphere/one_plant_adaptative.py`, a soil refined where the roots take up water (`AdaptiveSoil`).
 
+### Sparse analytic Jacobians
+
+- **A `@graph_jacobian` may return a scipy sparse matrix**, kept sparse up to the Newton solve (`spsolve`). It used to be converted to a dense array, out of reach for anatomies of 10⁵ nodes.
+- **The boundary sets' terms are added to it sparse:** robin weights on the diagonal, Dirichlet rows replaced by the identity's. The previous sparse path failed on a robin set (fancy indexing of a LIL matrix).
+
 ### Faster Newton steps on graph systems with edge fluxes
 
 - **Edge unknowns are eliminated from the linear step** when their block of the Jacobian is diagonal, i.e. each edge law depends on its own flux only, as explicit laws do. The node system is then solved alone (an exact Schur complement). Before, the node rows, which hold only fluxes, had a zero diagonal, so the direct solver pivoted and filled in. On the SPAC soil at 1.25 cm voxels (8192 cells), one solve took 25 s and now takes 0.1 s, with the same results; the example now runs at 0.625 cm. Other systems use a symmetric fill-reducing ordering.
