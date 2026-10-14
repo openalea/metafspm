@@ -2189,3 +2189,9 @@ Per-file counts:
   - `openalea.mecha.plots`;
   - tutorial 03 (diffusion) waits for the solute component;
   - found: GRANAP's `CellSetOrgan` misreads GRANAR's XML output; legacy problem (o).
+- **GRANAP `CellSetOrgan` reads GRANAR's XML (your request):**
+  - first group name per id kept (GRANAR lists aliases after the tissue);
+  - the scale from the root element (`<granardata>` in mm);
+  - no stele regeneration for a `<granardata>` file (its stele is resolved);
+  - tests on GRANAR's `current_root.xml` and on a GRANAP export read back; 24 CellSet tests pass.
+- **MECHA tutorial 01 `granar`:** the legacy tutorial's own section through GRANAP; legacy and port equal (kr 9.115400e-5 and 3.550639e-5, Kx 1.028664). The legacy's native XML builder differs by 0.05 % on kr and 0.26 % on Kx (its approximated cell areas and wall positions).
