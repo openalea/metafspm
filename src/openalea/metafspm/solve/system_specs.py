@@ -407,7 +407,8 @@ class GraphDAESpec(BaseSystemSpec):
         """
         if self.jacobian_evaluator is not None:
             ctx = self.make_context(packed, previous_node_fields, dt)
-            return np.asarray(self.jacobian_evaluator(ctx), dtype=np.float64)
+            J = self.jacobian_evaluator(ctx)
+            return J if issparse(J) else np.asarray(J, dtype=np.float64)
 
         if self.matrix_evaluator is not None and self.rhs_evaluator is not None:
             mat = self._eval_matrix(packed, previous_node_fields, dt)

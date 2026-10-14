@@ -158,6 +158,29 @@ def test_uc3_the_analytic_jacobian_gives_the_solution_in_one_newton_step():
     np.testing.assert_allclose(one_step.get("water_potential"), fd.get("water_potential"), atol=1e-10)
 
 
+class _HydraulicsWithSparseJacobian(_Hydraulics):
+    @graph_jacobian
+    def _jacobian(self, K_membrane, K_symplastic, K_apoplastic):
+        B = self._graph_view.incidence
+        return (B @ diags(_total_conductance(K_membrane, K_symplastic, K_apoplastic)) @ B.T).tocsr()
+
+
+@dataclass
+class TissueHydraulicsSparse(TissueHydraulics):
+    """The analytic Jacobian as a sparse matrix (large anatomies): the boundary sets' terms added sparse."""
+    steps_removed = ("pressure_solve",)
+
+    @graph_system(node_unknowns=["water_potential"], solver="newton", max_iter=2)
+    class _pressure_solve_sparse(_HydraulicsWithSparseJacobian):
+        pass
+
+
+def test_uc3_a_sparse_analytic_jacobian_gives_the_same_solution():
+    sparse, _, _ = _anatomy(TissueHydraulicsSparse)
+    dense, _, _ = _anatomy(TissueHydraulicsOneStep)
+    np.testing.assert_allclose(sparse.get("water_potential"), dense.get("water_potential"), rtol=1e-13, atol=1e-14)
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 # UC4 — Dirichlet and Neumann boundary sets
 # ══════════════════════════════════════════════════════════════════════════════
@@ -226,3 +249,23 @@ def test_uc4_a_neumann_inflow_is_balanced_by_the_leakage():
     np.testing.assert_allclose(B @ (B.T @ p) + 0.5 * p - inflow, 0., atol=1e-10)
     assert p.sum() * 0.5 == pytest.approx(1.)                                   # the leakage carries the inflow out
     assert p[collar] == p.max()
+
+
+@dataclass
+class ChainDirichletSparse(ChainFields):
+    """A Dirichlet set with a sparse analytic Jacobian: its rows become the identity's."""
+    @graph_system(node_unknowns=["pressure"], solver="newton", max_iter=3, tol=1e-12)
+    class _solve:
+        _balance = node_balance(field="pressure")(_laplacian)
+        collar = boundary_set(filters={"is_collar": ">0"}, kind="dirichlet", value=2.0)
+
+        @graph_jacobian
+        def _jacobian(self, K):
+            B = self._graph_view.incidence
+            return (B @ diags(K) @ B.T).tocsr()
+
+
+def test_uc4_a_dirichlet_set_with_a_sparse_jacobian():
+    ds = _chain(ChainDirichletSparse)
+    np.testing.assert_allclose(ds.get("pressure"), 2.0, atol=1e-12)
+
