@@ -2146,3 +2146,6 @@ Per-file counts:
   - inputs by `Architecture`; state variables by kind; the 3D quantities recomputed in a `@state` step; the junctions' geometry through a new metafspm wiring hook (rule `properties`);
   - class inputs replace the fixed bins; per-plant `granap_overrides` from the scenario;
   - a MECHA-like coupling test reads GRANAP's outputs on every node and edge.
+- **MECHA port started (MECHA-dev, branch to_metafspm, 5dd125f):**
+  - environment for the port (GRANAP and metafspm installed from source, GRANAP's pinned geometry stack);
+  - review of MECHA (pipeline, inputs, tests, 13 problems found) and the design of its metafspm `FunctionalComponent` on the MPG DataStructure, in MECHA-dev's `devplan_metafspm.md`, questions Q-M1–Q-M7.
