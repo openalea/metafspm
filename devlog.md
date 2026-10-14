@@ -2156,3 +2156,15 @@ Per-file counts:
   - the legacy's junction rebuild only renumbers GRANAP's junctions, so the port uses them as they are;
   - a 14th problem recorded: the ghost-junction bookkeeping is dead.
 - **Design note for steps 2–4 (MECHA-dev 6dfb4c4, plan §8):** modules, steps, declared outputs, per-anatomy caching, exactness rules; decisions D1–D4.
+- **Your agreement on D1–D4** (MECHA plan §8); the port runs in your `mecha` env (opencv added by you).
+- **MECHA step 2 (MECHA-dev d59f254):** MECHA's geometry from the DataStructure. It is bit-exact against the legacy's `NetworkBuilder` (monocot and dicot roots), the legacy's summation orders included: networkx's neighbour order after `Graph.copy()`, and libm's `pow` for scalar `** 2`. 10 ms per anatomy (0.47 s for the legacy), cached per template. Component `MechaHydraulics` with `cell_rank` and `perimeter`.
+- **MECHA step 3 (bb271ba):**
+  - the conductances of every wall, membrane and plasmodesma, the soil and axial boundary terms, vectorised over all sections, per-plant parameters (flattened, 41 plasmodesmata frequencies);
+  - bit-exact edge by edge; the matrix to 4 ulp; ψ to 1e-12;
+  - visual comparison example (legacy | port | difference of K, ψ, Q).
+- **MECHA step 4 (934a356):**
+  - the standard problem per section (optional), with uptake, kr, Kx (Kx = 0 at barrier 0, D3) and flows;
+  - kr and the flows bit-exact on the legacy's solution, Kx bit-exact (the legacy's `sum` is numpy's, through `from pylab import *`);
+  - simple example `example/hydraulics/monocot_root.py`;
+  - 63 tests pass.
+- **For the later fixes:** `k_xyl` does not scale with the section's height, so kr depends on the height.
