@@ -578,6 +578,9 @@ class MPG(MTG):
           {"rule": callable, "edge_label": E}
               rule(g, parent_vid, child_vid, parent_compartments, child_compartments) -> [(a, b), ...].
 
+        A rule may also give "properties": properties(g, parent_vid, child_vid, pairs) -> {name: [one value per
+        pair]}, written on the junctions it creates (e.g. their geometry), so that they carry them from their creation.
+
         Junctions get is_junction = 1 (anatomy Connections do not carry it); n_id_a is on the parent side, n_id_b on
         the child side.
         """
@@ -591,19 +594,29 @@ class MPG(MTG):
         for owner in set(targets) | {p for p in parents.values() if p is not None}:
             for nv in owners.get(owner, []):
                 anatomy.setdefault(owner, {}).setdefault(label_prop.get(nv), []).append(nv)
-        tails, heads, labels = [], [], []
+        tails, heads, labels, extra = [], [], [], {}
         for vid in targets:
             parent = parents[vid]
             if parent is None:
                 continue
             for rule in rules:
-                for n_a, n_b in self._junction_pairs(rule, parent, vid, anatomy.get(parent, {}), anatomy.get(vid, {})):
+                pairs = self._junction_pairs(rule, parent, vid, anatomy.get(parent, {}), anatomy.get(vid, {}))
+                if not pairs:
+                    continue
+                at = len(tails)
+                for n_a, n_b in pairs:
                     tails.append(n_a)
                     heads.append(n_b)
                     labels.append(rule['edge_label'])
+                if "properties" in rule:
+                    for name, values in rule["properties"](self, parent, vid, pairs).items():
+                        extra.setdefault(name, []).append((at, list(values)))
         created = self.add_components_bulk(edge_anchor, len(tails), **dict(
             PropsConfig(scale=self.scales.Connection, edge_type='/'), label=labels, n_id_a=tails, n_id_b=heads,
             is_junction=1.))
+        for name, chunks in extra.items():                 # the rules' properties of their junctions
+            vids = [created[at + i] for at, values in chunks for i in range(len(values))]
+            self.set_values(name, vids, [v for _, values in chunks for v in values])
         return created
 
     def _junction_pairs(self, rule, parent, child, parent_anatomy, child_anatomy) -> list:
