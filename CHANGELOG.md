@@ -71,6 +71,11 @@
 - **`cell_sizes()`** on `ArrayDataStructure` and `AdaptiveGridDataStructure`: each cell's size along each axis, so that structures can be written once for both grids.
 - **Example:** `examples/soil_plant_atmosphere/one_plant_adaptative.py`, a soil refined where the roots take up water (`AdaptiveSoil`).
 
+### Anatomy-mode DataStructures: variables read in bulk
+
+- **Reading a coarse-scale MTG property onto the Compartments** (a component's construction registers its variables this way) mapped each Compartment to its owner one at a time, each through the whole owner map: quadratic in the number of Compartments. The owners are now found in one pass, and numeric ArrayDict properties are looked up by `searchsorted`. On GRANAP's seedling (212k Compartments), constructing the anatomy component took 477 s and now takes 0.6 s.
+- **The Connection vertices** (`entity_ids("edge")` in anatomy mode) are cached by topology, as `edges()` is: the anatomy component's call went from 10 s to 0.8 s on the same seedling.
+
 ### Sparse analytic Jacobians
 
 - **A `@graph_jacobian` may return a scipy sparse matrix**, kept sparse up to the Newton solve (`spsolve`). It used to be converted to a dense array, out of reach for anatomies of 10⁵ nodes.

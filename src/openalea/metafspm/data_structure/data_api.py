@@ -1708,7 +1708,17 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
         return int(self._mtg.complex_at_scale(vid, scale))
 
     def _connection_vids(self) -> np.ndarray:
-        """Connection vertices carrying endpoints, ascending (the order of edges())."""
+        """Connection vertices carrying endpoints, ascending (the order of edges()); cached as edges() is."""
+        signature = (self.topology_version, self._mtg.nb_vertices(), getattr(self._mtg, "_id", None))
+        cache = self.__dict__.get("_connection_vids_cache")
+        if cache is not None and cache[0] == signature:
+            return cache[1]
+        vids = self._connection_vids_uncached()
+        vids.setflags(write=False)
+        self.__dict__["_connection_vids_cache"] = (signature, vids)
+        return vids
+
+    def _connection_vids_uncached(self) -> np.ndarray:
         scale_prop, n_id_a = self._mtg.property("scale"), self._mtg.property("n_id_a")
         connections = scale_prop.order[:scale_prop.size][scale_prop.values_array() == self._mtg.scales.Connection]
         keys = n_id_a.keys_array() if hasattr(n_id_a, "keys_array") else np.array(sorted(n_id_a), dtype=np.int64)
@@ -1832,7 +1842,15 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
         if scale > self._node_scale():
             raise ValueError(f"A property at scale {scale} is finer than the nodes (scale {self._node_scale()}): "
                              "downscaling needs an explicit scale operator.")
-        return [self._owner_at(int(v), scale) for v in vids]
+        return self._owners_at(vids, scale).tolist()
+
+    def _owners_at(self, vids, scale: int) -> np.ndarray:
+        """_owner_at of every vid of *vids*, in bulk (one owner map, then one lift to *scale*)."""
+        vids = np.asarray(vids, dtype=np.int64)
+        if getattr(self, "_anatomy", False):
+            compartments, owners = self._mtg.compartment_owners()
+            return self._mtg.owners_at_scale(owners[np.searchsorted(compartments, vids)], scale)
+        return np.asarray(self._mtg.complex_at_scale_array(vids, scale), dtype=np.int64)
 
     def _mtg_values(self, name: str, vids, scale=None, fast_idx=None):
         """
@@ -1846,6 +1864,17 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
         if ((scale is None or scale == self._node_scale()) and fast_idx is not None and isinstance(prop, ArrayDict)
                 and prop.size == len(self._bio_vids_sorted) and np.array_equal(prop.keys_array(), self._bio_vids_sorted)):
             return prop.values_array()[fast_idx].astype(np.float64, copy=True)
+        if isinstance(prop, ArrayDict) and prop.arr.dtype.kind in "fiub":       # numeric: looked up in bulk
+            keys = (np.asarray(vids, dtype=np.int64) if scale is None or scale == self._node_scale()
+                    else self._owners_at(vids, scale))
+            stored = prop.order[:prop.size]
+            at = np.minimum(np.searchsorted(stored, keys), max(prop.size - 1, 0))
+            found = (prop.size > 0) & (stored[at] == keys) if prop.size else np.zeros(keys.size, dtype=bool)
+            if not found.all():
+                missing = keys[~found]
+                raise ValueError(f"MTG property '{name}' has no value for vertices {sorted(set(missing.tolist()))[:10]} "
+                                 f"({np.unique(missing).size} missing).")
+            return prop.values_array()[at].astype(np.float64, copy=True)
         keys = self._keys_at_scale(vids, scale)
         missing = [k for k in keys if k not in prop]
         if missing:
