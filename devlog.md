@@ -2149,3 +2149,10 @@ Per-file counts:
 - **MECHA port started (MECHA-dev, branch to_metafspm, 5dd125f):**
   - environment for the port (GRANAP and metafspm installed from source, GRANAP's pinned geometry stack);
   - review of MECHA (pipeline, inputs, tests, 13 problems found) and the design of its metafspm `FunctionalComponent` on the MPG DataStructure, in MECHA-dev's `devplan_metafspm.md`, questions Q-M1–Q-M7.
+- **Your answers Q-M1–Q-M7, and your requests:** visual examples (conductances, potentials, flows) beside the quantitative checks, and a GRANAP seedling SPAC example (with the plant-wide solve).
+- **MECHA step 1 (MECHA-dev d62d9c1):**
+  - the source frozen as `openalea.mecha.legacy`; the original tests and tutorials in `test/legacy` and `example/legacy`, skipped in CI with `comparison`;
+  - the harness `test/comparison/legacy_run.py`. The legacy on GRANAP's monocot root takes 2.8 s, kr 1.03e-4 and 3.98e-5 at barriers 1 and 3;
+  - the legacy's junction rebuild only renumbers GRANAP's junctions, so the port uses them as they are;
+  - a 14th problem recorded: the ghost-junction bookkeeping is dead.
+- **Design note for steps 2–4 (MECHA-dev 6dfb4c4, plan §8):** modules, steps, declared outputs, per-anatomy caching, exactness rules; decisions D1–D4.
