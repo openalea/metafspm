@@ -2168,3 +2168,13 @@ Per-file counts:
   - simple example `example/hydraulics/monocot_root.py`;
   - 63 tests pass.
 - **For the later fixes:** `k_xyl` does not scale with the section's height, so kr depends on the height.
+- **Your answers Q-G1–Q-G4, Q-E1–Q-E2 (MECHA plan §13, §15).**
+- **MECHA step 5 (MECHA-dev f207211):**
+  - xylem and phloem junction conductances (filtered steps);
+  - the standard and plant problems as `@graph_system`s, with sparse analytic Jacobians;
+  - collar condition; effective kr; root axis example.
+- **metafspm 71340de:** sparse analytic Jacobians kept sparse; boundary sets added sparse.
+- **metafspm 4051fba:** anatomy-mode variables read in bulk (constructing GRANAP's component on its seedling: 477 s → 0.6 s; its call 10 s → 0.8 s). 798 metafspm and 207 GRANAP tests pass.
+- **MECHA step 5e:**
+  - shoot sections (E1, E3);
+  - the seedling SPAC example: GRANAP anatomies, MECHA hydraulics, metafspm's soil, 524k Compartments, converged in 6 steps, transpiration = uptake.
