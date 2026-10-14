@@ -2178,3 +2178,14 @@ Per-file counts:
 - **MECHA step 5e:**
   - shoot sections (E1, E3);
   - the seedling SPAC example: GRANAP anatomies, MECHA hydraulics, metafspm's soil, 524k Compartments, converged in 6 steps, transpiration = uptake.
+- **Seedling SPAC example, your requests:**
+  - the leaf's drop is at its stomatal pores (now drawn), ψ per tissue printed;
+  - chains of connected sections (root apex, shoot–root junction, leaf);
+  - the multiscale upscaling of ψ (Compartment to Plant);
+  - figures at 400 dpi.
+- **MECHA step 6:**
+  - tutorials 01 and 02 ported, each with a comparison example against the legacy (equal kr and Kx; ψ, uptake and kr to 1e-11–1e-12);
+  - the flow condition at the xylem;
+  - `openalea.mecha.plots`;
+  - tutorial 03 (diffusion) waits for the solute component;
+  - found: GRANAP's `CellSetOrgan` misreads GRANAR's XML output; legacy problem (o).
