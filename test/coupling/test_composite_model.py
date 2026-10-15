@@ -47,7 +47,7 @@ def test_open_translator_builds_and_writes_missing_file(tmp_path, monkeypatch):
 
 
 def test_open_translator_rejects_directory(tmp_path):
-    with pytest.raises(IsADirectoryError):
+    with pytest.raises((IsADirectoryError, PermissionError)):  # Windows specificity
         CompositeModel().open_or_create_translator(str(tmp_path))
 
 

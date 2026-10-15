@@ -14,33 +14,36 @@ This package is intended to provide minimal tools to assist Functionnal Structur
 ## Installation
 
 Prerequisites to installation :
-- miniconda (https://docs.anaconda.com/free/miniconda/miniconda-install/) 
+- miniforge (https://conda-forge.org/download/) 
 - git (https://git-scm.com/downloads)
 
-In a terminal, optionally install mamba for faster installation
+### User installation
+In your folder current model, just use
 ```
-conda install -y -c conda-forge mamba
+mamba install -c conda-forge -c openalea3 openalea.metafspm
 ```
+or simply add openalea.metafspm to your environment requirements.
 
-- From terminal, clone this package and then , then run the command :
+
+### Developer installation
+From terminal, clone this package and then , then run the command :
 ```
-git clone https://github.com/GeraultTr/metafspm.git
+git clone https://github.com/openalea/metafspm.git
 ```
 
 - Create an environment dedicated to your model with the necessary requirements and install MetaFSPM in it
 ```
-mamba create -n your_model_env -c conda-forge -c openalea3 --strict-channel-priority --file conda/environment.yaml
-mamba activate your_model_env
-pip install .
+mamba create -f ./conda/environment.yaml
+mamba activate metafspm
+pip install -e .
 ```
 
-
-### Second option TODO : when package is released, just create in:
-```
-mamba install -c conda-forge -c openalea3 metafspm
-```
 
 ## Example use
+
+A full example is available in example/soil_plant_atmosphere/*.ipynb files for a real functional example.
+
+Bellow is a short presentation of basic usage of Components.
 
 A component is a dataclass deriving from `FunctionalComponent`, built on a DataStructure (here a plant population
 in one MPG). Its fields declare its variables, and its steps are methods named after the variable they write:
