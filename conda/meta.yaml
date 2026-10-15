@@ -52,6 +52,8 @@ test:
 
   source_files:
     - test/**
+    - docs/**
+    - examples/**
 
 
   commands:
