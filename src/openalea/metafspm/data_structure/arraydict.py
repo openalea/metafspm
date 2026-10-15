@@ -18,9 +18,28 @@ class ArrayDict(MutableMapping):
         self.size = 0
 
         if init:
-            # Insert via __setitem__ to preserve sorted invariant
-            for k, v in init.items():
-                self[k] = v
+            self._load(init.keys(), init.values())
+
+    @classmethod
+    def from_items(cls, keys, values, dtype=np.float64) -> "ArrayDict":
+        """An ArrayDict from parallel *keys* and *values*, sorted in one pass (vectorised, unlike inserting each)."""
+        out = cls(dtype=dtype, init_capacity=len(keys))
+        out._load(keys, values)
+        return out
+
+    def _load(self, keys, values) -> None:
+        """Replace the contents by *keys* -> *values* (a key repeated keeps its last value, as successive inserts)."""
+        keys = np.fromiter((int(k) for k in keys), dtype=np.int64)
+        values = np.asarray(list(values), dtype=self.arr.dtype)
+        if keys.size:
+            last = keys.size - 1 - np.unique(keys[::-1], return_index=True)[1]      # the last occurrence of each key
+            keys, values = keys[last], values[last]
+        order = np.argsort(keys, kind="stable")
+        self._ensure(keys.size)
+        self.order[:keys.size] = keys[order]
+        self.arr[:keys.size] = values[order]
+        self.size = int(keys.size)
+        self.vid2idx = dict(zip(self.order[:self.size].tolist(), range(self.size)))
 
     # --- capacity management -------------------------------------------------
 
@@ -90,6 +109,20 @@ class ArrayDict(MutableMapping):
             self.vid2idx[int(self.order[i])] = i
 
 
+    def delete_many(self, keys) -> int:
+        """Delete every key of *keys* present, in one compaction (del per key shifts the suffix each time)."""
+        doomed = np.fromiter((self.vid2idx.pop(int(k)) for k in keys if int(k) in self.vid2idx), dtype=np.int64)
+        if doomed.size == 0:
+            return 0
+        keep = np.ones(self.size, dtype=bool)
+        keep[doomed] = False
+        kept = int(keep.sum())
+        self.arr[:kept] = self.arr[:self.size][keep]
+        self.order[:kept] = self.order[:self.size][keep]
+        self.size = kept
+        self.vid2idx = {int(k): i for i, k in enumerate(self.order[:kept].tolist())}
+        return int(doomed.size)
+
     # --- handy array views ---------------------------------------------------
 
     def values_array(self) -> np.ndarray:
@@ -120,14 +153,38 @@ class ArrayDict(MutableMapping):
 
     # --- batch update that preserves sorting --------------------------------
 
+    def extend(self, keys, values) -> None:
+        """
+        update(dict(zip(keys, values))) for keys all new and ascending, in one copy (no dict, no per-key test);
+        *values* a sequence aligned with *keys*, or one value for all. Other keys go through update.
+        """
+        keys = np.asarray(keys, dtype=np.int64)
+        if keys.size == 0:
+            return
+        scalar = np.ndim(values) == 0 and not isinstance(values, (list, tuple))
+        if (self.size and keys[0] <= self.order[self.size - 1]) or (keys.size > 1 and not (keys[1:] > keys[:-1]).all()):
+            self.update(dict.fromkeys(keys.tolist(), values) if scalar else dict(zip(keys.tolist(), values)))
+            return
+        values = np.full(keys.size, values, dtype=self.arr.dtype) if scalar else np.asarray(values, dtype=self.arr.dtype)
+        self._ensure(self.size + keys.size)
+        start, end = self.size, self.size + keys.size
+        self.order[start:end] = keys
+        self.arr[start:end] = values
+        self.vid2idx.update(zip(keys.tolist(), range(start, end)))
+        self.size = end
+
     def update(self, d: dict):
         if not d:
             return
 
-        has = self.vid2idx.__contains__
-        existing, new_items = [], []
-        for k, v in d.items():
-            (existing if has(k) else new_items).append((k, v))
+        keys = np.fromiter(d.keys(), dtype=np.int64, count=len(d))
+        if self.size == 0 or keys.min() > int(self.order[self.size - 1]):
+            existing, new_items = [], list(d.items())       # every key above the last: all new
+        else:
+            has = self.vid2idx.__contains__
+            existing, new_items = [], []
+            for k, v in d.items():
+                (existing if has(k) else new_items).append((k, v))
 
         # 1) existing keys -> scatter in place
         if existing:
@@ -137,9 +194,11 @@ class ArrayDict(MutableMapping):
         if not new_items:
             return
 
-        new_items.sort(key=lambda kv: kv[0])  # sort by key
         nk = np.fromiter((k for k, _ in new_items), dtype=np.int64, count=len(new_items))
         nv = np.asarray([v for _, v in new_items], dtype=self.arr.dtype)
+        if nk.size > 1 and not (nk[1:] >= nk[:-1]).all():  # sort by key (stable, as list.sort)
+            p = np.argsort(nk, kind="stable")
+            nk, nv = nk[p], nv[p]
 
         # fast append if monotone extension
         if self.size == 0 or nk[0] >= int(self.order[self.size - 1]):
@@ -147,38 +206,23 @@ class ArrayDict(MutableMapping):
             start, end = self.size, self.size + nk.size
             self.order[start:end] = nk
             self.arr[start:end]   = nv
-            for i in range(start, end):  # rebuild mapping for appended
-                self.vid2idx[int(self.order[i])] = i
+            self.vid2idx.update(zip(nk.tolist(), range(start, end)))  # mapping for the appended
             self.size = end
             return
 
-        # otherwise do a full merge
+        # otherwise merge, the existing key first on ties (a stable sort of the existing then the new keys)
         ok = self.order[:self.size].copy()
         ov = self.arr[:self.size].copy()
 
         total = ok.size + nk.size
         self._ensure(total)
-
-        i = j = t = 0
-        while i < ok.size and j < nk.size:
-            if ok[i] <= nk[j]:
-                self.order[t] = ok[i]; self.arr[t] = ov[i]; i += 1
-            else:
-                self.order[t] = nk[j]; self.arr[t] = nv[j]; j += 1
-            t += 1
-
-        if i < ok.size:
-            r = ok.size - i
-            self.order[t:t+r] = ok[i:]; self.arr[t:t+r] = ov[i:]; t += r
-        if j < nk.size:
-            r = nk.size - j
-            self.order[t:t+r] = nk[j:]; self.arr[t:t+r] = nv[j:]; t += r
-
-        self.size = t
+        keys = np.concatenate((ok, nk))
+        p = np.argsort(keys, kind="stable")
+        self.order[:total] = keys[p]
+        self.arr[:total] = np.concatenate((ov, nv))[p]
+        self.size = total
         # rebuild full mapping
-        self.vid2idx.clear()
-        for i in range(self.size):
-            self.vid2idx[int(self.order[i])] = i
+        self.vid2idx = dict(zip(self.order[:total].tolist(), range(total)))
 
 
 

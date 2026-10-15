@@ -17,10 +17,12 @@ Each phase ends green and gets its own commit.
 2. ~~W1 infrastructure~~ **done 2026-09-29** (`409a0e9`).
 3. ~~W2–W4 `[contract]` tests + xfail-first fixes~~ **done 2026-09-29** (`1f6a416`). Coverage: composite_wrapper 96.5 %, scene_wrapper 92.6 %.
 4. ~~W5 end-to-end `play_Orchestra`~~ **done 2026-09-29** (`062c61c`). Three scene protocol bugs fixed; 9 slow tests; 0 failures in 30 runs under full CPU load.
-5. ~~WD.0 translator schema + WD.1 design note~~ **accepted 2026-09-29** (`docs/design/coupling_through_datastructures.md`, Q20–Q26 decided).
+5. ~~WD.0 translator schema + WD.1 design note~~ **accepted 2026-09-29** (`dev/design/coupling_through_datastructures.md`, Q20–Q26 decided).
 6. ~~WD.P prerequisites~~ **done 2026-09-29** (`42e00eb`). B-a…B-h are fixed. B-i is deferred to WD.3, where the scale operators must exclude anchors and Compartments.
 7. **WD.2–WD.6 implementation** (WD.3 done `b671415`, WD.2 done `d7546f3`, WD.0 implemented). WD.4 done (`ee7bbc4`), WD.5a done (`26433fc`). Epic WD complete: the legacy path is removed (`b3c11c8`), the UC tests are migrated (`8f6f055`), and the backlog is closed except B11 (downstream, out of scope). live DataStructure reading, links on the DataStructure, a Coupler across DataStructures, and a scene transport sized from the handshake. Retarget the W doubles to MPG and 3-D grid and re-run the `[contract]` suite unchanged.
 8. **WD.7–WD.9 downstream migration**: guide, Logger adapter, `assert_component_couplable` (W6.2).
+
+**See also `devplan_datastructures.md`:** the DataStructure API stabilisation plan (DS1–DS21, decisions D1–D16), with its step 1 design note `dev/design/datastructure_contract.md`.
 
 ## Decisions log
 
@@ -45,7 +47,7 @@ Each phase ends green and gets its own commit.
 | 2026-09-29 | Q17 | **The light model sends an initial reply in `__init__`, like the soil does** (W5.0). |
 | 2026-09-29 | Q18 | A worker failure makes `clean_exit` False: plant and soil workers exit with code 1, and the orchestrator checks the exit codes (`a3a9877`). |
 | 2026-09-29 | Q19 | `plant_model_frequency` is an argument of `play_Orchestra`, uniform by default, so it is implicit for one model (`a3a9877`). |
-| 2026-09-29 | WD.0/WD.1 | **Design note accepted:** `docs/design/coupling_through_datastructures.md`, strategy and §11 recommendations. |
+| 2026-09-29 | WD.0/WD.1 | **Design note accepted:** `dev/design/coupling_through_datastructures.md`, strategy and §11 recommendations. |
 | 2026-09-29 | Q20 | Step functions receive arrays; a per-element loop only by opt-in (`vectorized=False`). |
 | 2026-09-29 | Q21 | A framework-managed `self.previous(fn)` replaces the user-managed `_previous_fields`, with a one-release deprecation. |
 | 2026-09-29 | Q22 | Non-float variables go in an object store on the DS, couplable by identity or alias only. |
@@ -76,7 +78,7 @@ Each phase ends green and gets its own commit.
 
 ### Interface contract extracted from the examples
 
-**Translator YAML** (`example_translator.yaml`):
+**Translator YAML** (`test/inputs/wheatbridges_coupling_translator.yaml`):
 - Layout: `translator[receiver][provider][receiver_var] = {provider_var: factor}`.
 - `factor` is a number, or a string arithmetic expression such as `"12 * 6"` or `0.000001 / 3600` that gets `eval`'d.
 - `{}` means no link.
@@ -145,7 +147,7 @@ The messages:
 - [x] W1.3 Tiny root fixture (3–5 vertices) with `struct_mass`, `living_struct_mass`, `vertex_index` and `x1..z2` placed in known voxels. Build it as a plain MTG now; WD.6 retargets it to `MPGDataStructure`. Done: `make_root_mtg` gives 3 segments at depths 0.02/0.04/0.06 m, which fall in voxel layers 0/0/1.
 - [x] W1.4 Translator fixtures under `tmp_path`: Done: `translator_path` fixture. The trimmed WheatBRIDGES copy is left for W2.3.
   - one minimal file per case in W1.2;
-  - a trimmed copy of the current `example_translator.yaml`, which includes the `_massic` entries.
+  - a trimmed copy of the current `test/inputs/wheatbridges_coupling_translator.yaml`, which includes the `_massic` entries.
 - [x] W1.5 Scene doubles that follow the protocol exactly: Done. There is also a threaded `in_process_scene` fixture: one plant, with soil and light in threads.
   - `FakePlant(CompositeModel)`, the GrassBRIDGES shape without Adel/Caribu;
   - `FakeSoil(CompositeModel)`, the RhizoSoil shape: voxel grid, barycenter mapping, `np.add.at`, gather;
@@ -177,7 +179,7 @@ The messages:
   Also xfail-first (Q5): the stale `models_data_required` cache. The fix is to compute the selection at coupling time, or key it on the `to` components.
 - [x] W2.10 xfail-first: `get_documentation`, `documentation` and `inputs` crash on any current component (`None.__format__`, `KeyError 'variable_type'`, a column chosen by position). Fix them. Done in `1f6a416`.
 - [x] W2.11 Remove `recursive_reload` (Q6). Point `test/utils.py::deep_reload_package` users at W1.6 (see B3). Done in `1f6a416`.
-- [~] W2.12 xfail-first **handshake capacity**: the real translator fills exactly the hard-coded 35 rows (25 plant-side + 10 soil outputs), and the column count is capped at 20000 vertices. The interim fix is a height derived from `len(handshake)` and passed in the first message. The full fix is WD.5. **Partly done (`1f6a416`):** `scene_wrapper.HANDSHAKE_SHAPE` is the single constant (the doubles import it), `CompositeModel.soil_handshake_inputs()` was extracted, and a test pins that the WheatBRIDGES translator fills all 35 rows. Dynamic sizing is left to WD.5.
+- [-] W2.12 (dropped 2026-10-06: the per-process scene and its handshake were removed in P7) xfail-first **handshake capacity**: the real translator fills exactly the hard-coded 35 rows (25 plant-side + 10 soil outputs), and the column count is capped at 20000 vertices. The interim fix is a height derived from `len(handshake)` and passed in the first message. The full fix is WD.5. **Partly done (`1f6a416`):** `scene_wrapper.HANDSHAKE_SHAPE` is the single constant (the doubles import it), `CompositeModel.soil_handshake_inputs()` was extracted, and a test pins that the WheatBRIDGES translator fills all 35 rows. Dynamic sizing is left to WD.5.
 
 ### W3: Composite contract test, in-process
 
@@ -238,7 +240,7 @@ The messages:
   - soil and light were pinned (W4.7).
 - [x] W5.4 Deleting `Delete_to_Stop` mid-run gives `clean_exit is False`, and every process joins. Done in `062c61c` (the plant deletes the stop file after 2 runs).
 - [x] W5.5 A plant whose `run()` raises sets `stop_event`, and the scene exits. Hangs caused by blocking queues are out of scope (Q12): the fake soil and light must not block when this scenario runs. Done in `062c61c`. The scene ends and cleans up, `clean_exit` is False since `a3a9877` (Q18).
-- [~] W5.6 The doubles must be importable under `spawn` when tests run from `test/`. Run the suite once with `mp.set_start_method("spawn")`. **Partly done (`062c61c`):** fork, spawn and forkserver run on Linux; fork is skipped on macOS. **Skipped on Windows:** a Windows shared memory block is destroyed when its last handle closes, and `play_Orchestra` closes its creation handle before the plants open theirs. Keep the handle open until the join for Windows support.
+- [-] W5.6 (dropped 2026-10-06: no multiprocessing scene since P7) The doubles must be importable under `spawn` when tests run from `test/`. Run the suite once with `mp.set_start_method("spawn")`. **Partly done (`062c61c`):** fork, spawn and forkserver run on Linux; fork is skipped on macOS. **Skipped on Windows:** a Windows shared memory block is destroyed when its last handle closes, and `play_Orchestra` closes its creation handle before the plants open theirs. Keep the handle open until the join for Windows support.
 
 ### W6: Keep the real packages coupled (optional)
 
@@ -257,7 +259,7 @@ The messages:
 
 - [x] WD.0 **Implemented 2026-09-29** (`coupling/translator.py`: `Link`, `Translator`, `parse_factor`; the WheatBRIDGES gate is met, 98 links 66/10/4/18; `eval` removed from `CompositeModel`; `.py` translators accepted). **Translator schema** (Q4 / Q4b). **Updated after Q4b: Python-first.** You want live references such as `scales.SubOrgan` and free formulas. YAML can only hold strings, which would have to be resolved by name when loading: that works, but it is not a live reference and it is not checked when you refactor. The revised proposal: **Drafted in the design note §4:** `Link` / `Translator` objects, a Python-first builder with live `scales.*` references, a `formula=` callable, a YAML loader for the existing files, and a restricted arithmetic parser in place of `eval`. Link kinds are derived from the link, not declared.
   - The **primary format is a Python module** (for example `coupling_translator.py`) that builds `Link` objects. It uses real references (`scales.SubOrgan`, `LabelsConfig` members, aggregation functions) and allows arbitrary formulas, since links can take a callable (`sources={"hexose_exudation": 12 * 6}` or `formula=lambda ds: ...`).
-  - **YAML stays loadable** (the existing `example_translator.yaml`) through a loader that turns it into the same `Link` objects, with string factors parsed by a restricted arithmetic parser. It covers the plain factor/sum links, and scale names are looked up in `ScalesConfig` by name.
+  - **YAML stays loadable** (the existing `test/inputs/wheatbridges_coupling_translator.yaml`) through a loader that turns it into the same `Link` objects, with string factors parsed by a restricted arithmetic parser. It covers the plain factor/sum links, and scale names are looked up in `ScalesConfig` by name.
   - Keep the component-pair structure (`receiver → provider → variable`), so that `get_component_inputs_outputs` and the soil handshake derivation carry over.
   - The cost: a Python translator runs code when loaded (acceptable, since it is project code) and is harder to edit without a Python editor.
   - Settle this in the WD.1 design note.
@@ -269,7 +271,7 @@ The messages:
   - Anything that needs real code is referenced **by name** from a Python registry (`@register_aggregation("my_fn")`), not embedded in the file.
   - Accept a Python `dict` or `Link` list as an alternative input for programmatic use. It loads into the same objects.
   - The short form `name: {src: factor}` stays valid, with the defaults "same scale" and `sum`.
-- [x] WD.1 **Design note** in `docs/`, for your review before any code: **Drafted:** `docs/design/coupling_through_datastructures.md`, covering the current state, the blocking bugs B-a…B-i, requirements R1–R12, DS `get` / `set` / `register` in place, aliases, derived variables, scale operators and a scalar store, the Coupler / VoxelLocator / Transport, live reading in Functor and decorator, the Logger export, and a gated migration sequence.
+- [x] WD.1 **Design note** in `docs/`, for your review before any code: **Drafted:** `dev/design/coupling_through_datastructures.md`, covering the current state, the blocking bugs B-a…B-i, requirements R1–R12, DS `get` / `set` / `register` in place, aliases, derived variables, scale operators and a scalar store, the Coupler / VoxelLocator / Transport, live reading in Functor and decorator, the Logger export, and a gated migration sequence.
   - **Links**: identity is a no-op; an alias is a name-level alias table on the DS; a derived link is a vectorised `ds[r] = Σ fᵢ · A(ds[sᵢ])`, with `A` the scale mapping or aggregation from WD.0, evaluated before the receiver's step.
   - **Across DataStructures**, a `Coupler(ds_a, ds_b, mapping)`:
     - MPG ↔ 3-D grid: vertex → voxel index arrays built from the barycenters, recomputed after `update_topology`;
@@ -312,7 +314,7 @@ The messages:
   - a configurable `play_Orchestra` buffer shape;
   - DataStructure-backed scene doubles, with contract tests reproducing the regression-anchor numbers.
 - [x] WD.6 Retarget the W1 doubles and fixtures to `MPGDataStructure` / the 3-D grid, then re-run all of W2–W5 unchanged. **Done, following Q28:** the DataStructure doubles `doubles_ds.py` (PlantCarbon / PlantNitrogen, GridSoil, DSFakePlant, DSFakeSoil) have their own contract tests that **reproduce the props-based regression anchor exactly**, in process and with real processes. The legacy doubles and tests stay as the legacy contract until the legacy path is removed at the end of WD.7.
-- [x] WD.7 Migration guide for downstream packages (RootGrowth, RootAnatomy, RootWater, RootCN, CNW_Grass, and SoilModel, which is still on the legacy `openalea.metafspm.component.Model` + `component_factory`). **Guide written 2026-09-29:** `docs/design/downstream_migration.md`. It gives per-role steps pointing to the tested DS doubles, plus a checklist. The actual migration happens in the downstream repositories, followed by the removal of the legacy path (Q28). **Scope set (your 2026-09-29 rule):** the downstream packages are not edited from this repo. The in-repo UC tests are migrated (B9), and the legacy path is removed (`b3c11c8`).
+- [x] WD.7 Migration guide for downstream packages (RootGrowth, RootAnatomy, RootWater, RootCN, CNW_Grass, and SoilModel, which is still on the legacy `openalea.metafspm.component.Model` + `component_factory`). **Guide written 2026-09-29:** `docs/migration.md`. It gives per-role steps pointing to the tested DS doubles, plus a checklist. The actual migration happens in the downstream repositories, followed by the removal of the legacy path (Q28). **Scope set (your 2026-09-29 rule):** the downstream packages are not edited from this repo. The in-repo UC tests are migrated (B9), and the legacy path is removed (`b3c11c8`).
 - [x] WD.8 `assert_component_couplable` (W6.2), updated for DS-backed components and the WD.0 schema. **Done (`3c85536`):** `openalea.metafspm.testing.couplability_problems` / `assert_component_couplable`.
 - [x] WD.9 **Logger compatibility (scope reduced by Q15).** Add read-only export helpers in metafspm (`DataStructure.available_vars()` plus a per-variable array with coordinates and ids) and adapt only the Logger's xarray (`mtg_to_dataset` / `recording_raw_MTG_properties_in_xarray`) and csv (`recording_summed_MTG_properties_to_csv`) writers onto them. Test them on `MPGDataStructure` and `ArrayDataStructure`. The remaining Logger features stay as they are. Original analysis: `openalea.fspm` `Logger` only accepts an exact `openalea.mtg.MTG` or a `dict` in `model_instance.data_structures`, and reads `props["root"]` / `props["soil"]`. MPG and grid DataStructures will be rejected. Option (a): metafspm provides a small read-only export API on `DataStructure` (`available_vars()`, `to_dataset()` / `variable(name)` with coordinates and ids) and the Logger is migrated onto it. Option (b): an adapter lives in metafspm. See Q15. **metafspm side done (`3c85536`):** `export`, `to_dataframe` (entity and time index, cell centres, `.to_xarray()` ready) and `summarize`. The Logger's two writers are adapted downstream, following the guide §6.
 
@@ -341,7 +343,7 @@ The messages:
   - (b) keep it, and plan its reuse on the vectorised DataStructure step path (a numba-compiled `fun(*arrays)`).
 
   Recommendation: (a) now. Vectorised numpy steps have most of the speed-up, and a DS-path specialiser would be written against the new Functor anyway.
-  → answer:
+  → answer (2026-10-06): remove it if it is not needed for numba vectorisation. It is not: steps call `@njit` functions on the arrays they receive (`test_population.py::test_numba_steps_take_homogeneous_and_heterogeneous_parameters`). Deleted.
 
 ### Answered 2026-09-29 (kept verbatim; decisions are in the log above)
 

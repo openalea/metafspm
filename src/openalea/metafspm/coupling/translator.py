@@ -1,5 +1,5 @@
 """
-Coupling translators as Python objects (design note docs/design/coupling_through_datastructures.md §4).
+Coupling translators as Python objects.
 
 A translator is a list of Links: ``receiver.variable <- Σ factor * provider.source`` (or a formula), optionally
 changing scale with an aggregation. Python translators can use live references (``scales.SubOrgan``) and
@@ -57,16 +57,30 @@ def _scale(value) -> Optional[int]:
     return scale
 
 
+def _scale_name(scale: int) -> str:
+    """ScalesConfig name of a scale integer."""
+    for name, value in vars(ScalesConfig).items():
+        if not name.startswith("_") and value == scale and isinstance(value, int):
+            return name
+    raise ValueError(f"Scale {scale} has no ScalesConfig name")
+
+
 @dataclass(frozen=True)
 class Link:
     """
-    ``receiver.variable`` is provided by ``provider``.
+    ``receiver.variable`` is provided by ``provider``::
 
-    sources:     {provider variable: factor} (weighted sum; factors may be arithmetic strings), or the provider
-                 variable names passed to *formula*.
-    scale:       receiver-side scale when the link changes scale (live ScalesConfig reference or name).
-    aggregation: how values are mapped across locations ("sum", "mean", "weighted_mean", "broadcast",
-                 "proximal", "distal", ...), with *weight* for "weighted_mean".
+        sources:     {provider variable: factor} (weighted sum; factors may be arithmetic strings), or the provider
+                     variable names passed to *formula*.
+        aggregation: how values are mapped across locations ("sum", "mean", "weighted_mean", "broadcast",
+                     "child", "parent", ...), with *weight* for "weighted_mean". Without it, a link between two
+                     locations is mapped from its provider's state_variable_type.
+        scale, source_scale:
+                     the receiver-side (and sources') scale when the link changes scale (a ScalesConfig reference
+                     or name); when given, the receiver's (and the sources') declared location must be that
+                     scale's.
+        target:      a mask of the DataStructure: the mapped values go to its entities only, the others getting the
+                     receiver's default (e.g. a segment concentration broadcast to its symplastic Compartments).
     """
     receiver: str
     variable: str
@@ -76,6 +90,7 @@ class Link:
     source_scale: Optional[int] = None
     aggregation: Optional[Union[str, Callable]] = None
     weight: Optional[str] = None
+    target: Optional[str] = None
     formula: Optional[Callable] = None
     raw_factors: Mapping = field(default_factory=dict, compare=False, repr=False)
 
@@ -96,7 +111,8 @@ class Link:
         """identity | alias | factor | expression | multi_source | same_name_factor | formula | scale_change."""
         if self.formula is not None:
             return "formula"
-        if self.scale is not None or self.source_scale is not None or self.aggregation is not None:
+        if (self.scale is not None or self.source_scale is not None or self.aggregation is not None
+                or self.target is not None):
             return "scale_change"
         if len(self.sources) > 1:
             return "multi_source"
@@ -112,6 +128,16 @@ class Link:
         """identity (no link needed on one DataStructure) | alias (name-level) | derived (computed)."""
         detail = self.detail
         return detail if detail in ("identity", "alias") else "derived"
+
+    @property
+    def mapped_detail(self) -> str:
+        """
+        detail of the link once its scales are checked: scale and source_scale alone only state where the
+        variables are, so such a link is the identity, alias, factor, ... of its sources.
+        """
+        if self.detail != "scale_change" or self.aggregation is not None or self.target is not None:
+            return self.detail
+        return Link(self.receiver, self.variable, self.provider, self.raw_factors).detail
 
 
 @dataclass
@@ -137,35 +163,29 @@ class Translator:
                     names.append(name)
         return names
 
-    # ── queries ───────────────────────────────────────────────────────────────
-
-    def inputs_outputs(self, components, target: str, names_for_others: bool = True) -> tuple:
-        """
-        Variables exchanged between *target* and *components* (same semantics as
-        CompositeModel.get_component_inputs_outputs): outputs of *target* read by the components and inputs of
-        *target* from them, named on the components' side (names_for_others=True) or on the target's side.
-        """
-        inputs, outputs = set(), set()
-        for component in components:
-            if component == target:
-                continue
-            for link in self.links_of(component, provider=target):
-                outputs.update([link.variable] if names_for_others else list(link.sources))
-            for link in self.links_of(target, provider=component):
-                inputs.update(list(link.sources) if names_for_others else [link.variable])
-        return list(inputs), list(outputs)
-
     # ── conversions ───────────────────────────────────────────────────────────
 
     def to_nested(self) -> dict:
-        """Historical nested format {receiver: {provider: {variable: {source: factor}}}}, every pair present."""
+        """
+        Nested format {receiver: {provider: {variable: {source: factor}}}}, every pair present. A link with a
+        scale, aggregation, weight or target is written in its long form {"sources": {...}, "scale": name, ...},
+        which from_dict() reads; formulas cannot be written.
+        """
         names = self.components
         nested = {receiver: {provider: {} for provider in names} for receiver in names}
         for link in self.links:
-            if link.formula is not None or link.detail == "scale_change":
-                raise ValueError(f"Link {link.receiver}.{link.variable} uses a formula or a scale change, "
+            if link.formula is not None or callable(link.aggregation):
+                raise ValueError(f"Link {link.receiver}.{link.variable} uses a formula or a callable aggregation, "
                                  "which the nested format cannot express")
-            nested[link.receiver][link.provider][link.variable] = dict(link.sources)
+            spec = dict(link.sources)
+            options = {key: getattr(link, key) for key in ("scale", "source_scale", "aggregation", "weight", "target")
+                       if getattr(link, key) is not None}
+            if options:
+                for key in ("scale", "source_scale"):
+                    if key in options:
+                        options[key] = _scale_name(options[key])
+                spec = {"sources": spec, **options}
+            nested[link.receiver][link.provider][link.variable] = spec
         return nested
 
     @classmethod
@@ -175,7 +195,8 @@ class Translator:
             for provider, links in (providers or {}).items():
                 for variable, spec in (links or {}).items():
                     if isinstance(spec, Mapping) and "sources" in spec:
-                        options = {key: spec[key] for key in ("scale", "source_scale", "aggregation", "weight") if key in spec}
+                        options = {key: spec[key] for key in ("scale", "source_scale", "aggregation", "weight", "target")
+                                   if key in spec}
                         translator.link(receiver, variable, provider, dict(spec["sources"]), **options)
                     else:
                         translator.link(receiver, variable, provider, dict(spec))

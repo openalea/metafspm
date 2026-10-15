@@ -1,41 +1,47 @@
 
 """
-solver.py
-─────────
-Solver hierarchy for metafspm graph models.
+Solvers of graph systems, selected by ``@graph_system(solver=...)``: a solver class or one of the keys "newton",
+"newton_fd", "explicit_euler", "scipy_krylov", "scipy_anderson", "scipy_hybr", "scipy_ivp_bdf",
+"scipy_ivp_radau" ("implicit_euler" is a deprecated alias of "newton" with transient=True). The Newton family
+solves residuals (time terms written by the equations, or by the framework from a @node_rate); explicit_euler and
+the IVP solvers integrate the du/dt of a @node_rate. The rest of this module (the solve() time loop, SolverResult,
+linear assembly with LinearDirectSolver, ODE specifications, make_solver) is internal and may change without notice.
 
-SolverConfig / SolverSpec       numerical settings
+::
 
-AbstractSolver (abstract)       step_once() interface + shared numerics
-  └── ODESolver (abstract)      adaptive time loop, _integrate_step abstract
-        └── DAESolver (abstract) BC injection, algebraic recovery, _recover_algebraic abstract
-              ├── NewtonSolver              quasi-static  (method="newton"/"newton_fd")
-              ├── ImplicitEulerSolver       backward-Euler (method="implicit_euler")
-              ├── LinearDirectSolver        Ax=b           (method="linear_direct")
-              ├── ScipyRootSolver           scipy.root     (method="scipy_krylov/anderson/hybr")
-              └── ScipyIVPSolver            solve_ivp      (method="scipy_ivp_bdf/radau")
+    SolverConfig / SolverSpec       numerical settings
 
-Design rationale
-────────────────
-AbstractSolver   — pure interface, shared numerics (_linear_step, _armijo_linesearch).
-ODESolver        — adds the adaptive time loop (solve → SolverResult) and the
-                   step-size control utilities.  _integrate_step is abstract so
-                   subclasses supply the actual numerical method.
-DAESolver        — extends ODESolver for DAE systems (GraphDAESpec):
-                   • _update_p   injects BoundaryConditions into p before every f/g call.
-                   • _recover_algebraic  recovers y from g(x,y,p)=0 after each accepted step.
-                     For solvers that handle x and y jointly in one Newton loop
-                     (implicit path), _recover_algebraic is a no-op.
-                   • step_once   per-tick Choregrapher interface; calls _integrate_step
-                     with the previous-field state for time-derivative terms.
-                   • solve       overrides ODESolver.solve() to thread prev_fields
-                     through the loop and call _recover_algebraic after each step.
-NewtonSolver     — _integrate_step = Newton on R(x,y)=0 (quasi-static, ignores h as dt).
-ImplicitEulerSolver — _integrate_step = backward-Euler Newton; h IS the dt.
-LinearDirectSolver  — _integrate_step = direct sparse A x = b.
-ScipyRootSolver     — _integrate_step = scipy.optimize.root.
-ScipyIVPSolver      — _integrate_step = one solve_ivp step from t to t+h;
-                      _recover_algebraic = inner Newton for edge algebraics (explicit path).
+    AbstractSolver (abstract)       step_once() interface + shared numerics
+      └── ODESolver (abstract)      adaptive time loop, _integrate_step abstract
+            └── DAESolver (abstract) BC injection, algebraic recovery, _recover_algebraic abstract
+                  ├── ExplicitEulerSolver       forward Euler  (solver="explicit_euler")
+                  ├── NewtonSolver              quasi-static  (solver="newton"/"newton_fd")
+                  ├── ImplicitEulerSolver       backward-Euler (solver="implicit_euler")
+                  ├── LinearDirectSolver        Ax=b           (solver="linear_direct")
+                  ├── ScipyRootSolver           scipy.root     (solver="scipy_krylov/anderson/hybr")
+                  └── ScipyIVPSolver            solve_ivp      (solver="scipy_ivp_bdf/radau")
+
+Design rationale::
+
+    AbstractSolver   — pure interface, shared numerics (_linear_step, _armijo_linesearch).
+    ODESolver        — adds the adaptive time loop (solve → SolverResult) and the
+                       step-size control utilities.  _integrate_step is abstract so
+                       subclasses supply the actual numerical method.
+    DAESolver        — extends ODESolver for DAE systems (GraphDAESpec):
+                       • _update_p   injects BoundaryConditions into p before every f/g call.
+                       • _recover_algebraic  recovers y from g(x,y,p)=0 after each accepted step.
+                         For solvers that handle x and y jointly in one Newton loop
+                         (implicit path), _recover_algebraic is a no-op.
+                       • step_once   per-tick Choregrapher interface; calls _integrate_step
+                         with the previous-field state for time-derivative terms.
+                       • solve       overrides ODESolver.solve() to thread prev_fields
+                         through the loop and call _recover_algebraic after each step.
+    NewtonSolver     — _integrate_step = Newton on R(x,y)=0 (quasi-static, ignores h as dt).
+    ImplicitEulerSolver — _integrate_step = backward-Euler Newton; h IS the dt.
+    LinearDirectSolver  — _integrate_step = direct sparse A x = b.
+    ScipyRootSolver     — _integrate_step = scipy.optimize.root.
+    ScipyIVPSolver      — _integrate_step = one solve_ivp step from t to t+h;
+                          _recover_algebraic = inner Newton for edge algebraics (explicit path).
 """
 
 from __future__ import annotations
@@ -45,7 +51,7 @@ from dataclasses import dataclass, replace as _dc_replace
 from typing      import Optional
 
 import numpy as np
-from scipy.sparse import eye, issparse
+from scipy.sparse import diags, eye, issparse
 from scipy.sparse.linalg import spsolve
 
 
@@ -142,15 +148,23 @@ class AbstractSolver(ABC):
 
     # ── Shared numerics ────────────────────────────────────────────────────────
 
-    def _linear_step(self, jac, residual: np.ndarray) -> np.ndarray:
+    def _linear_step(self, jac, residual: np.ndarray, spec=None) -> np.ndarray:
         """
         Solve J δ = −R, sparse-aware.
 
-        Sparse J → spsolve (O(N log N)).
+        Sparse J → spsolve. When *spec* has edge unknowns whose block of J is diagonal (an edge law on each edge's
+        own flux, e.g. explicit laws j − k ΔΨ), they are eliminated exactly (Schur complement) and the node system is
+        solved alone: the full system's node rows hold only fluxes, a zero diagonal that makes the direct solver pivot
+        and fill in (25 s against 0.1 s on a 16 x 16 x 32 soil grid).
         Dense J  → numpy.linalg.solve (O(N³)).
         """
         if issparse(jac):
-            return np.asarray(spsolve(jac.tocsr(), -residual), dtype=np.float64)
+            edges = _edge_unknowns(spec, jac.shape[0])
+            if edges is not None:
+                delta = _solve_eliminating(jac.tocsr(), residual, edges)
+                if delta is not None:
+                    return delta
+            return np.asarray(spsolve(jac.tocsc(), -residual, permc_spec="MMD_AT_PLUS_A"), dtype=np.float64)
         return np.linalg.solve(np.asarray(jac, dtype=np.float64), -residual)
 
     def _armijo_linesearch(self, spec, packed: np.ndarray,
@@ -530,8 +544,8 @@ class NewtonSolver(DAESolver):
     at the current parameter state p.  When called from the Choregrapher
     per tick, p carries the updated BoundaryConditions for that tick.
 
-    method="newton"    — analytic Jacobian if available, FD otherwise.
-    method="newton_fd" — always finite-difference Jacobian.
+    solver="newton"    — analytic Jacobian if available, FD otherwise.
+    solver="newton_fd" — always finite-difference Jacobian.
     """
 
     @property
@@ -551,7 +565,7 @@ class NewtonSolver(DAESolver):
                    if force_fd else
                    spec.jacobian(packed, prev_fields, h))
 
-            delta = self._linear_step(jac, residual)
+            delta = self._linear_step(jac, residual, spec)
 
             if self.config.linesearch:
                 packed = self._armijo_linesearch(
@@ -584,7 +598,7 @@ class ImplicitEulerSolver(DAESolver):
     On the first call (prev_fields=None) falls back to NewtonSolver so the
     initial state is the quasi-static equilibrium.
 
-    method="implicit_euler".
+    solver="implicit_euler".
     """
 
     @property
@@ -619,7 +633,7 @@ class ImplicitEulerSolver(DAESolver):
                    if issparse(J_s) else
                    np.asarray(J_s, dtype=np.float64) + np.eye(N) / h)
 
-            packed = packed + self._linear_step(J, R)
+            packed = packed + self._linear_step(J, R, spec)
 
         raise AssertionError(
             f"ImplicitEuler Newton did not converge in {self.config.max_iter} "
@@ -640,17 +654,15 @@ class ExplicitEulerSolver(DAESolver):
         x_{n+1} = x_n + h · f(x_n, y_n, p)
 
     without any linear solve for the node update — just one function
-    evaluation per step.  This is the explicit DAE path:
+    evaluation per step: the edge unknowns are first recovered algebraically at x_n, and are left at those
+    values (the fluxes of the step, which moved the amounts from x_n to x_{n+1}).
 
-      1. _integrate_step  — recovers y_n algebraically, evaluates the explicit
-                            RHS, steps x forward.
-      2. _recover_algebraic — Newton on edge sub-system at the new x_{n+1}.
+    The explicit RHS is obtained from::
 
-    The explicit RHS is obtained from:
-      ``spec.rhs_evaluator``   if set — user-provided ẋ = f(x, p) callable.
-      ``-spec.residual[:n_node]``  otherwise — quasi-static proxy that assumes
-           the node balance is ``C·ẋ + R_spatial(x,y) = 0`` with C = I.
-           Supply ``rhs_evaluator`` (via ``@graph_output`` or equivalent) for
+      spec.rhs_evaluator   if set — user-provided ẋ = f(x, p) callable.
+      -spec.residual[:n_node]  otherwise — quasi-static proxy that assumes
+           the node balance is C·ẋ + R_spatial(x,y) = 0 with C = I.
+           Supply rhs_evaluator (via @graph_output or equivalent) for
            correct scaling when C ≠ I.
 
     The error estimate returned is **zero** — ``DAESolver.solve()`` always
@@ -660,7 +672,7 @@ class ExplicitEulerSolver(DAESolver):
     Not suitable for stiff systems (e.g. coupled fast hydraulics + slow growth).
     Use ``ImplicitEulerSolver`` or ``ScipyIVPSolver`` for stiff problems.
 
-    method="explicit_euler"
+    solver="explicit_euler"
     """
 
     @property
@@ -677,7 +689,10 @@ class ExplicitEulerSolver(DAESolver):
                 spec.rhs_evaluator(ctx), dtype=np.float64
             ).reshape(-1)[:n_node_dof]
         else:
-            # Proxy: ẋ ≈ −R_spatial(x, y)  (assumes unit mass matrix)
+            # ẋ = −R(x, y(x)): the edge unknowns are recovered at the current node state first (forward Euler
+            # evaluates the fluxes at x_n, not those left by the previous step)
+            if spec.unknowns.edge_fields:
+                x = _recover_edges(spec, x, tol=self.config.tol * 0.1, max_iter=self.config.max_iter)
             R        = spec.residual(x, prev_fields, None)
             rhs_node = -R[:n_node_dof]
 
@@ -707,7 +722,7 @@ class LinearDirectSolver(DAESolver):
     One-shot direct sparse/dense solve for linear DAE systems: A x = b.
 
     Requires spec.matrix_evaluator and spec.rhs_evaluator to be set.
-    method="linear_direct".
+    solver="linear_direct".
     """
 
     @property
@@ -739,9 +754,9 @@ class ScipyRootSolver(DAESolver):
     """
     scipy.optimize.root wrappers for quasi-static DAE.
 
-    method="scipy_krylov"   — Newton-GMRES (matrix-free, best for large N)
-    method="scipy_anderson" — Anderson acceleration (weakly coupled systems)
-    method="scipy_hybr"     — MINPACK hybrd trust-region Newton
+    solver="scipy_krylov"   — Newton-GMRES (matrix-free, best for large N)
+    solver="scipy_anderson" — Anderson acceleration (weakly coupled systems)
+    solver="scipy_hybr"     — MINPACK hybrd trust-region Newton
     """
 
     @property
@@ -767,14 +782,21 @@ class ScipyRootSolver(DAESolver):
             if scipy_method == "hybr"
             else {"maxiter": self.config.max_iter}
         )
-        result = scipy_root(
-            fun    = lambda xv: spec.residual(xv, prev_fields, h),
-            x0     = packed0,
-            method = scipy_method,
-            jac    = jac_fn,
-            tol    = self.config.tol,
-            options= options,
-        )
+        import warnings
+        from scipy.linalg import LinAlgWarning
+        with warnings.catch_warnings():
+            if scipy_method == "anderson":
+                # Anderson's history matrix becomes singular as the residual vanishes (e.g. a linear system solved in
+                # a few iterations): scipy warns although the iterate converged, which is checked below
+                warnings.simplefilter("ignore", LinAlgWarning)
+            result = scipy_root(
+                fun    = lambda xv: spec.residual(xv, prev_fields, h),
+                x0     = packed0,
+                method = scipy_method,
+                jac    = jac_fn,
+                tol    = self.config.tol,
+                options= options,
+            )
         if not result.success:
             actual = np.linalg.norm(
                 spec.residual(result.x, prev_fields, h), ord=np.inf
@@ -799,23 +821,19 @@ class ScipyIVPSolver(DAESolver):
     Inherits solve() from DAESolver (which overrides ODESolver.solve() to
     thread prev_fields and call _recover_algebraic).
 
-    _integrate_step
-    ───────────────
-    Delegates one step [t, t+h] to solve_ivp (BDF or Radau).
+    _integrate_step delegates one step [t, t+h] to solve_ivp (BDF or Radau)::
 
-    For ODESystemSpec: calls f(x, p) directly.
-    For GraphDAESpec:  constructs the ODE rhs by recovering edge algebraics
-                       at each evaluation (explicit DAE path):
-                         ẏ_node = −R_spatial(y_node, q)  with M = I assumed.
+      For ODESystemSpec: calls f(x, p) directly.
+      For GraphDAESpec:  constructs the ODE rhs by recovering edge algebraics
+                         at each evaluation (explicit DAE path):
+                           ẏ_node = −R_spatial(y_node, q)  with M = I assumed.
 
-    _recover_algebraic
-    ──────────────────
-    For GraphDAESpec with edge unknowns: runs an inner Newton solve on the
+    _recover_algebraic: for GraphDAESpec with edge unknowns: runs an inner Newton solve on the
     edge algebraic sub-system after each accepted node step.
     For ODESystemSpec or node-only specs: returns empty array (no-op).
 
-    method="scipy_ivp_bdf"   — stiff BDF, recommended for FSPM.
-    method="scipy_ivp_radau" — stiff Radau, higher order.
+    solver="scipy_ivp_bdf" (stiff BDF, recommended for FSPM) or solver="scipy_ivp_radau" (stiff Radau, higher
+    order).
     """
 
     @property
@@ -853,7 +871,11 @@ class ScipyIVPSolver(DAESolver):
                 state[:] = _recover_edges(spec, state, tol=tol, max_iter=max_iter)
             return state
 
+        time_hook = getattr(spec, "parameters", {}).get("time_hook")
+
         def rhs(_t, y_node):
+            if time_hook is not None:
+                time_hook(_t - t)              # forcings read at the evaluation time
             R = spec.residual(full_state(y_node), prev_fields, None)
             return -R[:n_node_dof]
 
@@ -934,3 +956,41 @@ def make_solver(method: str, config=None) -> AbstractSolver:
     else:
         raise TypeError(f"config must be a SolverConfig or a dict of its fields, got {type(config).__name__}")
     return cls(cfg)
+
+
+def _edge_unknowns(spec, size: int):
+    """Indices of the edge unknowns of a graph-system *spec* in the packed vector (nodes, edges, pools), or None."""
+    unknowns, graph = getattr(spec, "unknowns", None), getattr(spec, "graph", None)
+    if unknowns is None or graph is None or not getattr(unknowns, "edge_fields", None):
+        return None
+    start = graph.n_nodes * len(unknowns.node_fields)
+    stop = start + graph.n_edges * len(unknowns.edge_fields)
+    if stop > size or stop == start:
+        return None
+    return np.arange(start, stop)
+
+
+def _solve_eliminating(jac, residual: np.ndarray, eliminated: np.ndarray):
+    """
+    J δ = −R with the unknowns *eliminated* solved last, when their block D of J is diagonal and nonsingular:
+    (A − B D⁻¹ C) δ_k = −R_k + B D⁻¹ R_e, then δ_e = D⁻¹ (−R_e − C δ_k). None when D is not diagonal.
+    """
+    kept = np.setdiff1d(np.arange(jac.shape[0]), eliminated, assume_unique=True)
+    rows_e = jac[eliminated]
+    D = rows_e[:, eliminated]
+    d = D.diagonal()
+    if np.any(d == 0.) or (D - diags(d)).count_nonzero():
+        return None
+    rows_k = jac[kept]
+    A, B, C = rows_k[:, kept], rows_k[:, eliminated], rows_e[:, kept]
+    inverse = diags(1. / d)
+    schur = (A - B @ inverse @ C).tocsc()
+    residual = np.asarray(residual, dtype=np.float64)
+    r_k, r_e = residual[kept], residual[eliminated]
+    delta = np.empty_like(residual)
+    if kept.size:
+        delta[kept] = spsolve(schur, -(r_k - B @ (inverse @ r_e)), permc_spec="MMD_AT_PLUS_A")
+        delta[eliminated] = inverse @ (-r_e - C @ delta[kept])
+    else:
+        delta[eliminated] = -(inverse @ r_e)
+    return delta
