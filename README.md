@@ -1,10 +1,8 @@
 # MetaFSPM
 [![Docs](https://readthedocs.org/projects/mtg/badge/?version=latest)](https://metafspm.readthedocs.io/)
-(Not yet)
 [![Build Status](https://github.com/openalea/mtg/actions/workflows/conda-package-build.yml/badge.svg?branch=master)](https://github.com/openalea/mtg/actions/workflows/conda-package-build.yml?query=branch%3Amaster)
 [![Python Version](https://img.shields.io/badge/python-3.8%20%7C%203.9%20%7C%203.10%20%7C%203.11%20%7C%203.12-blue)](https://www.python.org/downloads/)
 [![License](https://img.shields.io/badge/License--CeCILL-C-blue)](https://www.cecill.info/licences/Licence_CeCILL-C_V1-en.html)
-(Not yet)
 [![Anaconda-Server Badge](https://anaconda.org/openalea3/mtg/badges/version.svg)](https://anaconda.org/openalea3/metafspm)
 
 ## Purpose 
@@ -41,7 +39,7 @@ pip install -e .
 
 ## Example use
 
-A full example is available in example/soil_plant_atmosphere/*.ipynb files for a real functional example.
+A full example is available in [Usage example](https://github.com/openalea/metafspm/examples/soil_plant_atmosphere/tutorial_fspm2026_general_usage.ipynb) files for a real functional example. For advanced modellers, you can look at the [Solver implementation example](https://github.com/openalea/metafspm/examples/soil_plant_atmosphere/tutorial_fspm2026_new_solver.ipynb).
 
 Bellow is a short presentation of basic usage of Components.
 
