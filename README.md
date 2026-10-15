@@ -41,7 +41,7 @@ pip install -e .
 
 ## Example use
 
-A full example is available in example/soil_plant_atmosphere/*.ipynb files for a real functional example.
+A full example is available in [Usage example](https://github.com/openalea/metafspm/examples/soil_plant_atmosphere/tutorial_fspm2026_general_usage.ipynb) files for a real functional example. For advanced modellers, you can look at the [Solver implementation example](https://github.com/openalea/metafspm/examples/soil_plant_atmosphere/tutorial_fspm2026_new_solver.ipynb).
 
 Bellow is a short presentation of basic usage of Components.
 
