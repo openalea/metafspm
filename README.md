@@ -37,7 +37,7 @@ pip install .
 
 ### Second option TODO : when package is released, just create in:
 ```
-mamba install -c conda-forge -c openalea3 metafspm
+mamba install -c conda-forge -c openalea3 openalea.metafspm
 ```
 
 ## Example use
