@@ -2247,3 +2247,10 @@ Per-file counts:
 
   Not ported: soil left–right potentials, phloem boundary at barrier > 0.
 - **metafspm:** no change.
+- **MECHA `reactions` branch** (your direction: port the solutes and the simulations, its last commit, the colleague works on the port from now on):
+  - snapshot `legacy_reactions` at 4c9c8c2 (MECHA-dev 91c49e7);
+  - its water side differs from the legacy (k_xyl 1.0; membrane floor; needle air-space water model);
+  - read in depth (solute equations, simulations);
+  - problems r1–r8 found, two verified (osmotic flux counted twice in advection; σ on the wrong membrane end);
+  - design note and questions Q-S1–Q-S5 (MECHA plan §23).
+- **metafspm:** no change.
