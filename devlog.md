@@ -2224,3 +2224,12 @@ Per-file counts:
 - **GRANAP (0f6a91f):** `wall_thickness` and `edge_wall_thickness` declared in µm (their values), not mm.
 - **MECHA plan §20:** design note on the osmotic potentials, questions Q-O1–Q-O4.
 - **metafspm:** no change.
+- **Your answers Q-O1–Q-O4** (MECHA plan §20c): π as an input by "Solutes" (metabolism models later), MECHA's presets for the comparison and for now; psi stays the unknown with water_potential = psi + π; evaporation by the water potential.
+- **MECHA osmotic step (1666331):**
+  - `MechaOsmoticPresets` (the legacy's scenario rules) feeds MechaHydraulics' new "Solutes" inputs;
+  - osmotic drives σΔπ in both graph systems and the flows; `water_potential`; `standard_osmotic`;
+  - against the legacy's `water_flux` scenarios (os_hetero 0–4, s_hetero 0–2, barriers 1 and 3, two roots): σ exact, π to 1e-13, solution and flows to 1e-12 (80 tests);
+  - legacy quirks (p) (all cortex cells in layer c1) and (q) (os_hetero 4's endodermis key) recorded;
+  - seedling SPAC with the presets: converges, uptake 0.1483 mm³ s⁻¹; the water potential steps at the collar, since the shoot has no sap π yet;
+  - 172 tests pass.
+- **metafspm:** no change.
