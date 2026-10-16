@@ -2216,3 +2216,11 @@ Per-file counts:
   - Questions Q-L1 (plasmodesmata rules), Q-L2 (cell length vs segment length), Q-L3 (xylem boundary of the standard problem), Q-L4 (wall thickness).
   - Steps 4–5 later (osmotic terms, solutes) will come from your colleague's `reaction` branch.
 - **Fixes without decision:** A1 (each protosieve cell once in the phloem boundary), A2 (each vessel its own flow share; tutorial 02's flow case: kr 1.6e-4 from the legacy's, ψ up to 3.5 % in the stele). MECHA-dev 7945ecd and the A2 commit; 80 tests pass.
+- **Your answers Q-L1–Q-L4** (MECHA plan §19): yes to Q-L1, Q-L3 and Q-L4; Q-L2 no (the height stays the segment's length for now; per-tissue cell heights later). Osmotic potentials to include now; solutes and leaf transpiration from the `reaction` branch. Recaps list the changes made to metafspm.
+- **MECHA Q-L1 (ace7ac7):** the original MECHA's plasmodesmata rules by default (`plasmodesmata_rules` 1), the legacy's as an option. New factors (`kpl_cortex_factor`, `kpl_endo_in/out_factor`, `kpl_PPP_factor`, `kpl_PCC_factor`, `kpl_PST_factor`, 1.0), the original's 15 frequencies plus the 18 of the added tissues. kr −0.06 % to +0.01 %.
+- **MECHA Q-L3 (5960bf4):** the standard problem's axial boundary by Poiseuille over the height (`standard_axial_source` 1), `k_xyl` as an option. kr +3.0–3.6 % at 200 µm, barrier 1.
+- **MECHA Q-L4 (53c6e6e):** each wall's own thickness (GRANAP's, `thickness_source` 2), MECHA's 1.5 µm as an option. kr +3.6 % (monocot), +8.7 % (dicot) at barrier 1.
+- **Comparisons:** `legacy_options(mecha)` sets the legacy's choices, so the comparison suite stays bit-exact on everything else. 87 tests (86 passed, 1 skipped).
+- **GRANAP (0f6a91f):** `wall_thickness` and `edge_wall_thickness` declared in µm (their values), not mm.
+- **MECHA plan §20:** design note on the osmotic potentials, questions Q-O1–Q-O4.
+- **metafspm:** no change.
