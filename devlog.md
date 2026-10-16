@@ -2195,3 +2195,24 @@ Per-file counts:
   - no stele regeneration for a `<granardata>` file (its stele is resolved);
   - tests on GRANAR's `current_root.xml` and on a GRANAP export read back; 24 CellSet tests pass.
 - **MECHA tutorial 01 `granar`:** the legacy tutorial's own section through GRANAP; legacy and port equal (kr 9.115400e-5 and 3.550639e-5, Kx 1.028664). The legacy's native XML builder differs by 0.05 % on kr and 0.26 % on Kx (its approximated cell areas and wall positions).
+
+## 2026-10-15 (SPAC tutorial notebook)
+
+- **`examples/soil_plant_atmosphere/tutorial.ipynb`** runs end to end (metafspm env): toy `@rate` component on one seedling's Compartments, `PlantWaterTransport` re-declared in the notebook, `SeedlingWater` with its translator, the Soil scene (7 steps, transpiration 0.0755 mm³ s⁻¹, as `one_plant.py`), and a final plotting cell (figures in `outputs/tutorial`).
+- **Found while fixing it:**
+  - a field declared without `scale`/`location` is silently not registered (the step then fails with "not registered");
+  - in anatomy mode, steps run on the nodes only: a step mixing a coarse-scale input (SubOrgan) with a parameter (broadcast to the nodes) fails on shapes;
+  - `@rate` takes no `name=`: the output is the method name without its leading underscore.
+- **`tutorial_fspm2026_new_solver.ipynb`** (same folder; the first tutorial was renamed `tutorial_fspm2026_general_usage.ipynb`): a solver's contract (`step_once(spec, previous_node_fields, dt)` → packed unknowns), a `MinimalNewtonSolver` from `AbstractSolver`, a `PCGNewtonSolver` overriding only `NewtonSolver._linear_step` (edge fluxes eliminated, Jacobi-preconditioned CG on the reduced node system, direct fallback when not eliminable or not symmetric). Plugged into the plant transport by re-decorating `components.PlantWaterTransport._flow._inner_cls`; the scene converges as with Newton (7 steps, 0.0755 mm³ s⁻¹). A toy `ToyChain` graph system on a 10-cell `ArrayDataStructure` matches its exact solution to 4e-16 MPa.
+- **Found:**
+  - the Jacobian is not exactly symmetric (finite-difference noise about 1e-8), so a symmetry check needs a loose tolerance;
+  - a component's `time_step` below the scene's simulation step makes a steady solve repeat (3600 solves per call at 1 s);
+  - reusing a component's equations with another solver needs the private `_flow._inner_cls`.
+
+## 2026-10-16 (MECHA legacy fixes: design note, A1, A2)
+
+- **MECHA plan §18, design note on the legacy fixes.** Reference for "fixed": the original MECHA (`src_old`, v4 SRS2025, its GRANAR project inputs).
+  - Found: the legacy's plasmodesmata tables depart from the original in more than key names (factors' interfaces and defaults, frequencies, xylem–xylem); the section height mixes MECHA's cell length with the segment's length (kr at barrier 3 falls 20× from 200 µm to 5 mm, mostly through the plasmodesmata); the legacy's xylem boundary ignores the original's Poiseuille source.
+  - Questions Q-L1 (plasmodesmata rules), Q-L2 (cell length vs segment length), Q-L3 (xylem boundary of the standard problem), Q-L4 (wall thickness).
+  - Steps 4–5 later (osmotic terms, solutes) will come from your colleague's `reaction` branch.
+- **Fixes without decision:** A1 (each protosieve cell once in the phloem boundary), A2 (each vessel its own flow share; tutorial 02's flow case: kr 1.6e-4 from the legacy's, ψ up to 3.5 % in the stele). MECHA-dev 7945ecd and the A2 commit; 80 tests pass.
