@@ -2259,3 +2259,11 @@ Per-file counts:
   - Q-S2: the reactions' membrane-floor relaxation is a workaround against MECHA's intent (air-filled spaces), so not adopted; the other water changes are inert or already covered.
   - Q-S1: no air path from the air spaces to the stomata, in GRANAP's needle or leaf, nor in the reactions model (pinned evaporating walls); the generalisation to all leaves needs GRANAP and MECHA work. Question Q-S1b on the order.
 - **metafspm:** no change.
+- **MECHA transpiration by the air spaces' walls** (your direction; MECHA-dev 9190b82 and the next commit):
+  - the reactions' needle water model ported (pinned walls, wall_air Kelvin exchange, air links, kw_meso_hypo), the reactions' choices as options;
+  - the needle through GRANAP's library;
+  - against the reactions' needle: penalty, conductances, wall_air coefficients bit-exact, solution to 1.8e-12; scenario 1 exact up to r10 (per-membrane wall osmotic potentials, 165 walls);
+  - problems r9 (kw_meso_hypo hits epidermis–cgroup 4) and r10 recorded;
+  - all leaves: the seedling SPAC diverges with pinned walls (no limiting conductance, the scene's iteration amplifies); the seedling keeps its pores pending question Q-T1;
+  - 180 tests pass.
+- **metafspm:** no change.
