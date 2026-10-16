@@ -2237,3 +2237,13 @@ Per-file counts:
 - **Your question, soil potential gradients around one section:** answered in the recap (standard problem only; kr needs a soil reference; x_rel from centroids, not GRANAP's seeds; the anatomy's own x axis).
 - **Soil gradients not ported** (your decision): no scenario in the branch sets left ≠ right (default scenario, BCs.xml, tests, tutorials); MECHA plan §21b.
 - **metafspm:** no change.
+- **MECHA osmotic visual example (0babf4e):** `example/hydraulics/osmotic_root.py`, maps, profiles and pathway shares, without solutes and with the presets.
+- **MECHA plan §22:** next steps, under the rule "only what a scenario of the branch uses":
+  1. the elongation sink (default scenario, barrier 0);
+  2. layer-wise outputs;
+  3. paraview exports;
+  4. Q-M2's second half;
+  5. the `reaction` branch.
+
+  Not ported: soil left–right potentials, phloem boundary at barrier > 0.
+- **metafspm:** no change.
