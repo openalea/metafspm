@@ -2235,4 +2235,5 @@ Per-file counts:
 - **metafspm:** no change.
 - **MECHA legacy problems p and q fixed (e8af9a1):** the original's cortex layers c1–c8 (the legacy put every cortex cell in c1, and ordered the layers outward) and the endodermis cells' own osmotic potential with os_hetero 4; `presets_rules` 2 keeps the legacy's for the comparison. Osmotic uptake +4 to +33 % (os_hetero 1, 2). 174 tests pass.
 - **Your question, soil potential gradients around one section:** answered in the recap (standard problem only; kr needs a soil reference; x_rel from centroids, not GRANAP's seeds; the anatomy's own x axis).
+- **Soil gradients not ported** (your decision): no scenario in the branch sets left ≠ right (default scenario, BCs.xml, tests, tutorials); MECHA plan §21b.
 - **metafspm:** no change.
