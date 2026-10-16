@@ -2267,3 +2267,10 @@ Per-file counts:
   - all leaves: the seedling SPAC diverges with pinned walls (no limiting conductance, the scene's iteration amplifies); the seedling keeps its pores pending question Q-T1;
   - 180 tests pass.
 - **metafspm:** no change.
+- **Transpiration through metafspm** (your direction): design note MECHA plan §26.
+  - The organ's transpiration as an Organ-scale input; its Neumann condition at one leaf-surface node per organ (broadcast and filtered: no metafspm change), joined to every pore.
+  - Pores as air nodes linked to the sub-stomatal air spaces (a GRANAP step).
+  - The boundary layer later.
+  - Vapour conductances in physical units (r11).
+  - Questions Q-T1–Q-T5.
+- **metafspm:** no change.
