@@ -2254,3 +2254,8 @@ Per-file counts:
   - problems r1–r8 found, two verified (osmotic flux counted twice in advection; σ on the wrong membrane end);
   - design note and questions Q-S1–Q-S5 (MECHA plan §23).
 - **metafspm:** no change.
+- **Your answers Q-S1–Q-S5** (MECHA plan §24):
+  - Q-S3 corrected: GRANAP's port builds needles; `for_needle` + `NeedleAnatomy` reproduce the simulations' network exactly; no GRANAP step.
+  - Q-S2: the reactions' membrane-floor relaxation is a workaround against MECHA's intent (air-filled spaces), so not adopted; the other water changes are inert or already covered.
+  - Q-S1: no air path from the air spaces to the stomata, in GRANAP's needle or leaf, nor in the reactions model (pinned evaporating walls); the generalisation to all leaves needs GRANAP and MECHA work. Question Q-S1b on the order.
+- **metafspm:** no change.
