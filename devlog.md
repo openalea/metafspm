@@ -2274,3 +2274,24 @@ Per-file counts:
   - Vapour conductances in physical units (r11).
   - Questions Q-T1–Q-T5.
 - **metafspm:** no change.
+
+## 2026-10-19 (MECHA: transpiration through metafspm)
+
+- **GRANAP plan §60–61** (739ccda, 3ae7401):
+  - stomatal pores as air nodes (wall_air walls, no plasmodesmata, an air link to their chamber);
+  - every air space's membrane wall_air;
+  - one leaf-surface Compartment per leaf organ with stomatal Connections (path 6), the pores' width and depth;
+  - the comparisons with GRANAP's legacy allow exactly these rules (`_apply_plan60`);
+  - the monocot leaf's intercellular spaces not added, and the air-link radius kept (your answers).
+- **MECHA plan §27–27a:**
+  - the single transpiration model (an Organ-scale leaf transpiration, Neumann at the leaf surface, physical vapour conductances, the stomata's anatomical g_max);
+  - E3 and the pinned walls removed;
+  - the seedling converges with a prescribed flow;
+  - 175 tests pass.
+- **Your question on cross-scale normalisation** answered (recap): metafspm maps by kind (extensive up: sum; intensive up: unweighted mean; massic: weighted mean, a weight required; down: broadcast, extensive refused), directly between any two scales. Missing:
+  - a conservative split down;
+  - weighted intensive means by default;
+  - a flux-density kind.
+
+  A metafspm design note if you want it.
+- **metafspm:** no change.
