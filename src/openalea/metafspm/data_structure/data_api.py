@@ -1833,7 +1833,13 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
         return n_id_a, n_id_b
 
     def _node_scale(self):
-        return self._mtg.scale(self._idx_to_vid[0]) if self._idx_to_vid else None
+        if not self._idx_to_vid:
+            return None
+        if getattr(self, "_anatomy", False):
+            # the Compartments' scale, whichever node is first: after a growth step the first node may be gone
+            # (its segment's anatomy removed) until update_topology rebuilds the index map
+            return self._mtg.scales.Compartment
+        return self._mtg.scale(self._idx_to_vid[0])
 
     def _keys_at_scale(self, vids, scale) -> list:
         """MTG vertices holding the values of *vids* for a property defined at *scale* (their complex at that scale)."""

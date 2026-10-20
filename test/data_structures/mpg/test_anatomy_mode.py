@@ -67,6 +67,19 @@ def test_owners_and_the_suborgan_location():
     np.testing.assert_array_equal(ds.get("segment_uptake"), 4.)   # summed over the anatomy of each segment
 
 
+def test_the_segment_variables_survive_the_first_segment_losing_its_anatomy():
+    """The nodes' scale does not depend on the first node still existing: a segment variable is carried over when the
+    first segment's anatomy is removed (as when it changes class and gets another)."""
+    g, segments, anatomies, ds = _plant()
+    ds.register("radius", np.array([1., 2., 3.]), location="SubOrgan")
+    first = anatomies[segments[0]]
+    g.remove_connections([first["epidermis"], first["cortex"], *first["xylem"]])
+    assert "SubOrgan" in ds._coarse_scale_names()
+    ds.update_topology()
+    assert ds.has("radius")
+    np.testing.assert_array_equal(ds.get("radius")[-2:], [2., 3.])
+
+
 def test_a_segment_concentration_is_broadcast_to_its_symplastic_compartments_only():
     g, segments, anatomies, ds = _plant()
     ds.register("label", ds._mtg_to_node_array("label"), location="node")
