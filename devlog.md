@@ -2295,3 +2295,13 @@ Per-file counts:
 
   A metafspm design note if you want it.
 - **metafspm:** no change.
+
+## 2026-10-20 (MECHA: the solute port)
+
+- **MECHA plan §28 (design note) and §28e** (25a9697), with your answers Q-U1–Q-U5 (the recommendations):
+  - `MechaSolutes`: sucrose and starch on the liquid network (no air nodes), Scharfetter–Gummel advection–diffusion on the water's flows × (1 − σ) on the membranes, implicit Euler, the starch reaction in the cells only, sinks at the phloem loading and the xylem;
+  - the diffusion factors and node volumes from MechaHydraulics, the sucrose's −R T c added to the presets' baseline after each transport step;
+  - against the reactions branch on the needle: the diffusion, volumes and sinks exact, one step to 4e-16 (with source, starch, σ_s: to 1e-11);
+  - reviewed differences: r1 (osmotic flow counted twice) 4.7 of the range, r4 (starch in the walls) 0.61 of the starch mass, r2 latent on this network, r12 negligible;
+  - 188 tests pass.
+- **metafspm:** no change.
