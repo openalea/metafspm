@@ -104,6 +104,29 @@ def test_an_entry_no_one_reads_is_refused():
         _scene([{}], soil_scenario={"condutivity": 0.3})
 
 
+class LayoutProbe(RootGrowthProbe):
+    """An initiator reading a non-numeric key per plant (declared in scenario_keys)."""
+    scenario_keys = ("layout",)
+
+    @classmethod
+    def initiate_plant(cls, g, plant, parameters):
+        super().initiate_plant(g, plant, parameters)
+        g.properties().setdefault("layout", {})[plant] = parameters.get("layout")
+
+
+class LaidOutPlants(Plants):
+    initiators = (LayoutProbe,)
+
+
+def test_an_initiators_scenario_keys_may_differ_between_plants():
+    layouts = [{"cortex": {"n_layers": 3}}, {"preset": "dicot"}]
+    scene = Scene(planting([LaidOutPlants] * 2, [{"parameters": {"layout": layout}} for layout in layouts]),
+                  time_step=DT)
+    population = scene.populations[0]
+    stored = population.data_structure.mtg.properties()["layout"]
+    assert [stored[int(p)] for p in population.plants] == layouts
+
+
 def test_a_parameter_not_stored_per_plant_must_be_the_same_for_every_plant():
     with pytest.raises(ValueError, match="rate_per_segment differs between the plants"):
         _scene([{"parameters": {"rate_per_segment": 5.}}, {"parameters": {"rate_per_segment": 6.}}])
