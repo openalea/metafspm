@@ -228,15 +228,18 @@ class Scene(CompositeModel):
     def _shared_scenario(model, rows: pd.DataFrame) -> dict:
         """
         The scenario the model is built with (its first plant's): only numeric parameters may differ between the
-        plants of one population, being stored per plant.
+        plants of one population, being stored per plant, and the keys its initiators read per plant (their
+        scenario_keys: each plant's own is given to initiate_plant).
         """
+        per_plant = {key for initiator in getattr(model, "initiators", ()) for key in getattr(initiator, "scenario_keys",
+                                                                                              ())}
         scenarios = [dict(s) if s is not None else {} for s in rows["scenario"]]
         first = scenarios[0]
         for other in scenarios[1:]:
             for key in set(first) | set(other):
                 if key == "parameters":
                     a, b = first.get(key, {}), other.get(key, {})
-                    for name in set(a) | set(b):
+                    for name in (set(a) | set(b)) - per_plant:
                         given = [v for v in (a.get(name), b.get(name)) if v is not None]   # missing: the default
                         if not all(_numeric(v) for v in given) and not _same(a.get(name), b.get(name)):
                             raise ValueError(f"{model.__name__}: parameter '{name}' differs between plants and is not "
