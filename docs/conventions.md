@@ -62,6 +62,7 @@ flux:    float = state_variable(..., location="edge")                       # so
 | `sum` | up: total over the nodes of each coarse entity |
 | `mean` | up: average over the nodes of each coarse entity; on edges, the mean of both ends |
 | `weighted_mean` | up: average weighted by `weight=` |
+| `split` | down: each node gets its share of its owner's amount, in proportion to `weight=` (the total conserved) |
 | `child` | to edges: the child's value (formerly `proximal`) |
 | `parent` | to edges: the parent's value (formerly `distal`) |
 
@@ -69,12 +70,21 @@ flux:    float = state_variable(..., location="edge")                       # so
 
 | `state_variable_type` | up | down |
 |---|---|---|
-| extensive, NonInertialExtensive | `sum` | error: give a mapping |
-| intensive, NonInertialIntensive | `mean` | `broadcast` |
-| massic_concentration | `weighted_mean` (give `weight=`) | `broadcast` |
+| extensive, NonInertialExtensive | `sum` | `split` by `weight=` (without a weight: error) |
+| intensive, NonInertialIntensive | `weighted_mean` by `weight=`, its capacity (without a weight: error; `mapping="mean"` for an unweighted mean) | `broadcast` |
+| massic_concentration | `weighted_mean` by `weight=`, a mass (without a weight: error) | `broadcast` |
 | none | error | error |
 
-Node → edge mappings have no default.
+An intensive variable is averaged with the weight of its capacity: a volume, a mass (a massic concentration), an area
+(a flux density, e.g. a transpiration rate per leaf area), or a mask (e.g. the liquid nodes only). The unweighted mean
+of a section's Compartments would be dominated by its walls and junctions, which outnumber its cells. An extensive
+amount goes down by a split, which conserves it; copying it would multiply it.
+
+**Coverage.** Nodes without an owner at the target scale (walls and junctions at the Cell scale) are left out of the
+means; a sum that would drop their non-zero amounts raises.
+
+Node → edge mappings have no default. Edges map up like their child-side nodes: an edge is counted at the owner of
+its child node (an axial junction at its child segment), with the defaults above.
 
 **Write-back.** State variables with a `scale` are written to the MTG after every component call, at the vertices of their scale, through the inverse mapping:
 - a broadcast variable is written as the (weighted) mean of its nodes;

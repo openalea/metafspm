@@ -87,6 +87,7 @@ class CompositeModel:
                 raise NotImplementedError(f"{link.receiver}.{link.variable} <- {link.provider}: coupling across "
                                           "DataStructures goes through the Scene (coupling.cross.Exchanges)")
             self._check_link_kinds(link, receiver, provider)
+            self._check_link_units(link, receiver, provider)
             self._check_link_scales(link, ds)
             detail = link.mapped_detail
             if detail == "identity":
@@ -104,10 +105,12 @@ class CompositeModel:
                                  f"factor {link.sources[link.variable]}: a same-name link within one data structure "
                                  "must have a factor of 1, rename the receiving variable")
             location = ds.location(link.variable) if ds.has(link.variable) else None
-            aggregation = link.aggregation
-            if aggregation is None and location is not None:
-                aggregation = self._default_link_mapping(ds, link, location)
-            options = dict(location=location, aggregation=aggregation, weight=link.weight, target=link.target)
+            aggregation, weight = link.aggregation, link.weight
+            if location is not None and (aggregation is None or (weight is None and aggregation in
+                                                                 ("weighted_mean", "split"))):
+                default, weight = self._default_link_mapping(ds, link, location)
+                aggregation = aggregation or default
+            options = dict(location=location, aggregation=aggregation, weight=weight, target=link.target)
             if link.target is not None and ds.has(link.variable):
                 options["default"] = ds._variable_meta().get(link.variable, {}).get("default", 0.)
             if link.formula is not None:
@@ -139,6 +142,23 @@ class CompositeModel:
                                  "massic with intensive or massic)")
 
     @staticmethod
+    def _declared_unit(component, name):
+        f = getattr(type(component), "__dataclass_fields__", {}).get(name)
+        return None if f is None else f.metadata.get("unit")
+
+    def _check_link_units(self, link, receiver, provider) -> None:
+        """A link without a conversion (its factors 1) between two declared, different units is a units mistake."""
+        from openalea.metafspm.coupling.declaration import units_agree
+        if link.formula is not None or any(factor not in (1., -1.) for factor in link.sources.values()):
+            return                                         # a factor (or a formula) states the conversion
+        received = self._declared_unit(receiver, link.variable)
+        for source in link.sources:
+            provided = self._declared_unit(provider, source)
+            if not units_agree(received, provided):
+                raise ValueError(f"{link.receiver}.{link.variable} ({received}) <- {link.provider}.{source} "
+                                 f"({provided}): the units differ and the link has no conversion factor")
+
+    @staticmethod
     def _check_link_scales(link, ds) -> None:
         """A link stating its scales must agree with the declared locations (the declarations rule)."""
         from openalea.metafspm.coupling.declaration import location_of_scale
@@ -154,13 +174,15 @@ class CompositeModel:
     @staticmethod
     def _default_link_mapping(ds, link, location):
         """
-        Mapping of a link between two locations that gives no aggregation, from its sources' state_variable_type
-        None when the locations are the same.
+        (mapping, weight) of a link between two locations that gives no aggregation (or a weighted one without its
+        weight), from its sources' state_variable_type; the weight is the link's, else the one declared on the
+        variable whose entities it weighs: the source's for a mean (up), the receiver's for a split (down).
+        (None, the link's weight) when the locations are the same.
         """
         from openalea.metafspm.coupling.declaration import DeclarationError, default_mapping, link_direction
         source_locations = {ds.location(source) for source in link.sources}
         if len(source_locations) != 1 or location in source_locations:
-            return None
+            return None, link.weight
         (source_location,) = source_locations
         name = f"{link.receiver}.{link.variable} <- {link.provider}"
         direction = link_direction(ds, source_location, location)
@@ -172,8 +194,14 @@ class CompositeModel:
             raise DeclarationError(f"{name}: its sources have different kinds {sorted(map(str, kinds))}, give "
                                    "aggregation=")
         (kind,) = kinds
+        weight = link.weight
+        if weight is None:
+            meta = ds._variable_meta()
+            weighed = [ds._resolve(source) for source in link.sources] if direction == "up" else [link.variable]
+            declared = {meta.get(name_, {}).get("weight") for name_ in weighed}
+            weight = declared.pop() if len(declared) == 1 else None
         try:
-            return default_mapping(kind, direction, name, weight=link.weight)
+            return default_mapping(kind, direction, name, weight=weight), weight
         except DeclarationError as error:
             raise DeclarationError(f"{error} (link from {source_location} to {location})") from None
 

@@ -19,7 +19,7 @@ import numpy as np
 from numba import njit
 
 from openalea.metafspm.coupling.declaration import (DeclarationError, EXTENSIVE_KINDS, INTENSIVE_KINDS,
-                                                    MASSIC_KINDS, kinds_agree)
+                                                    MASSIC_KINDS, kinds_agree, units_agree)
 from openalea.metafspm.data_structure.data_api import DataStructure, VariableStoreMixin
 
 SEGMENT_COORDINATES = ("x1", "x2", "y1", "y2", "z1", "z2")
@@ -432,6 +432,11 @@ class UnionMapping:
 
 # ── Translator links across DataStructures (fixed-point exchanges) ─────────────────
 
+def _declared_unit(component, name):
+    f = getattr(type(component), "__dataclass_fields__", {}).get(name)
+    return None if f is None else f.metadata.get("unit")
+
+
 def cross_default_mapping(kind: Optional[str], direction: str, name: str, weight: Optional[str] = None) -> str:
     """
     Mapping of a link between a plant DataStructure and a grid implied by its kind.
@@ -545,6 +550,11 @@ class Exchanges:
                 provided = _declared_kind(provider, source)
                 if not kinds_agree(received, provided):
                     raise ValueError(f"{name}.{source}: the kinds do not agree ({received} <- {provided})")
+                if link.sources[source] in (1., -1.):
+                    unit_in, unit_out = _declared_unit(receiver, link.variable), _declared_unit(provider, source)
+                    if not units_agree(unit_in, unit_out):
+                        raise ValueError(f"{name}.{source}: the units differ ({unit_in} <- {unit_out}) and the link "
+                                         "has no conversion factor")
             aggregation = link.aggregation
             if direction == "layer":
                 if aggregation is None:

@@ -24,6 +24,8 @@ class Segments(FunctionalComponent):
     """Outputs per segment, one of each kind."""
     uptake: float = state_variable(**DOC, initialize=1., scale=scales.SubOrgan, state_variable_type="extensive")
     potential: float = state_variable(**DOC, initialize=2., scale=scales.SubOrgan, state_variable_type="intensive")
+    weighted_potential: float = state_variable(**DOC, initialize=2., scale=scales.SubOrgan,
+                                               state_variable_type="intensive", weight="mass")
     concentration: float = state_variable(**DOC, initialize=3., scale=scales.SubOrgan,
                                           state_variable_type="massic_concentration")
     mass: float = state_variable(**DOC, initialize=0.5, scale=scales.SubOrgan, state_variable_type="extensive")
@@ -35,6 +37,7 @@ class Organs(FunctionalComponent):
     """Inputs per organ, and an organ output read back by the segments' scale."""
     organ_uptake: float = input_variable(**DOC, by="Segments", initialize=0., scale=scales.Organ)
     organ_potential: float = input_variable(**DOC, by="Segments", initialize=0., scale=scales.Organ)
+    organ_weighted_potential: float = input_variable(**DOC, by="Segments", initialize=0., scale=scales.Organ)
     organ_concentration: float = input_variable(**DOC, by="Segments", initialize=0., scale=scales.Organ)
     organ_tag: float = input_variable(**DOC, by="Segments", initialize=0., scale=scales.Organ)
     organ_supply: float = state_variable(**DOC, initialize=6., scale=scales.Organ, state_variable_type="extensive")
@@ -45,6 +48,7 @@ class Organs(FunctionalComponent):
 class SegmentInputs(FunctionalComponent):
     segment_temperature: float = input_variable(**DOC, by="Organs", initialize=0., scale=scales.SubOrgan)
     segment_supply: float = input_variable(**DOC, by="Organs", initialize=0., scale=scales.SubOrgan)
+    segment_share: float = input_variable(**DOC, by="Organs", initialize=0., scale=scales.SubOrgan, weight="mass")
     wrong_kind: float = input_variable(**DOC, by="Segments", initialize=0., scale=scales.Organ,
                                        state_variable_type="intensive")
 
@@ -79,13 +83,48 @@ def test_extensive_outputs_are_summed_up_by_default():
     np.testing.assert_allclose(ds.get("organ_uptake"), [sum(per_organ[o]) for o in ds.entity_ids("Organ")])
 
 
-def test_intensive_outputs_are_averaged_up_by_default():
-    g, ds = _couple(_link("Organs", "Segments", "organ_potential", "potential"))
+def test_intensive_outputs_are_averaged_up_by_their_declared_weight():
+    """An intensive variable's mean needs its capacity's weight: the link's, else the one it declares."""
+    with pytest.raises(DeclarationError, match="give the weight of its mean"):
+        _couple(_link("Organs", "Segments", "organ_potential", "potential"))
+    _, ds = _couple(_link("Organs", "Segments", "organ_potential", "potential", aggregation="mean"))
     np.testing.assert_allclose(ds.get("organ_potential"), 2.)
+    _, ds = _couple(_link("Organs", "Segments", "organ_weighted_potential", "weighted_potential"))
+    np.testing.assert_allclose(ds.get("organ_weighted_potential"), 2.)
+
+
+def test_extensive_inputs_are_split_down_by_their_declared_weight():
+    """An organ's amount split among its segments in proportion to their weight: the organs' totals conserved."""
+    g, ds = _couple(_link("SegmentInputs", "Organs", "segment_share", "organ_supply"))
+    ds.set("mass", np.arange(1., ds.n_nodes() + 1.))
+    per_organ = _per_organ(g, ds, ds.get("segment_share"))
+    np.testing.assert_allclose([sum(per_organ[o]) for o in ds.entity_ids("Organ")], 6.)
+    masses = _per_organ(g, ds, ds.get("mass"))
+    for o in ds.entity_ids("Organ"):
+        np.testing.assert_allclose(per_organ[o], 6. * np.array(masses[o]) / sum(masses[o]))
+
+
+def test_a_targeted_split_conserves_the_amount_on_the_target():
+    """Split over the target's entities only; an organ with an amount but no target entity raises (it would be
+    lost)."""
+    def roots_only(g, ds):
+        _root_mask(g, ds)
+        rooted = np.unique(ds.owner("Organ")[ds.mask("roots")])
+        ds.set("organ_supply", np.where(np.isin(np.arange(len(ds.entity_ids("Organ"))), rooted), 6., 0.))
+
+    with pytest.raises(ValueError, match="no weight on their entities"):
+        _couple(_link("SegmentInputs", "Organs", "segment_share", "organ_supply", target="roots"), before=_root_mask)
+    g, ds = _couple(_link("SegmentInputs", "Organs", "segment_share", "organ_supply", target="roots"),
+                    before=roots_only)
+    roots = ds.mask("roots")
+    assert (ds.get("segment_share")[~roots] == 0.).all()
+    owner = ds.owner("Organ")
+    for i in np.unique(owner[roots]):
+        np.testing.assert_allclose(ds.get("segment_share")[(owner == i) & roots].sum(), 6.)
 
 
 def test_massic_concentrations_need_a_weight_up():
-    with pytest.raises(DeclarationError, match="give the weight of its mass-weighted mean"):
+    with pytest.raises(DeclarationError, match="give the weight of its mean"):
         _couple(_link("Organs", "Segments", "organ_concentration", "concentration"))
     _, ds = _couple(_link("Organs", "Segments", "organ_concentration", "concentration", weight="mass"))
     np.testing.assert_allclose(ds.get("organ_concentration"), 3.)
@@ -186,3 +225,29 @@ def test_python_translators_keep_link_options_through_the_composite(tmp_path):
     np.testing.assert_allclose(ds.get("organ_uptake"), [len(per_organ[o]) for o in ds.entity_ids("Organ")])
     np.testing.assert_allclose(ds.get("organ_concentration"), 3.)
     np.testing.assert_allclose(ds.get("organ_tag"), 0.5 * ds.get("organ_uptake"))
+
+
+def test_a_link_between_different_units_needs_a_conversion_factor():
+    from openalea.metafspm.coupling.declaration import units_agree
+
+    @dataclass
+    class InHectopascal(FunctionalComponent):
+        p_hpa: float = input_variable(**{**DOC, "unit": "hPa"}, by="InMegapascal", initialize=0.,
+                                      scale=scales.SubOrgan)
+
+    @dataclass
+    class InMegapascal(FunctionalComponent):
+        p_mpa: float = state_variable(**{**DOC, "unit": "MPa"}, initialize=1., scale=scales.SubOrgan,
+                                      state_variable_type="intensive")
+
+    g, _ = generate_simple_mpg_seedling()
+    g.populate_graph(g.scales.SubOrgan)
+    g.convert_properties_to_arraydict()
+    ds = MPGDataStructure(g, from_scale=g.scales.SubOrgan)
+    model = CompositeModel()
+    model.components = [InHectopascal(data_structure=ds), InMegapascal(data_structure=ds)]
+    with pytest.raises(ValueError, match="the units differ"):
+        model._couple_on_data_structures(_link("InHectopascal", "InMegapascal", "p_hpa", "p_mpa"))
+    model._couple_on_data_structures({"InHectopascal": {"InMegapascal": {"p_hpa": {"sources": {"p_mpa": 1e4}}}}})
+    np.testing.assert_allclose(ds.get("p_hpa"), 1e4)
+    assert units_agree("cm3 d-1", "cm3.d-1") and units_agree("", "MPa") and not units_agree("MPa", "hPa")

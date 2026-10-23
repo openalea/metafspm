@@ -114,6 +114,12 @@ class Defaults:
     up_extensive: float = par(default=0., scale=scales.SubOrgan, location="Organ", state_variable_type="extensive")
     up_intensive: float = sv(initialize=0., scale=scales.SubOrgan, location="Organ",
                              state_variable_type="NonInertialIntensive")
+    up_intensive_weighted: float = sv(initialize=0., scale=scales.SubOrgan, location="Organ",
+                                      state_variable_type="NonInertialIntensive", weight="mass")
+    up_intensive_plain: float = sv(initialize=0., scale=scales.SubOrgan, location="Organ",
+                                   state_variable_type="intensive", mapping="mean")
+    down_extensive_split: float = inp(initialize=0., scale=scales.Organ, location="node",
+                                      state_variable_type="extensive", weight="mass")
     up_massic: float = sv(initialize=0., scale=scales.SubOrgan, location="Organ",
                           state_variable_type="massic_concentration")
     up_massic_weighted: float = sv(initialize=0., scale=scales.SubOrgan, location="Organ",
@@ -123,16 +129,19 @@ class Defaults:
 def test_default_mappings_follow_the_state_variable_type(seedling):
     _, _, ds = seedling
     mappings = {name: _spec(Defaults, name, ds).mapping
-                for name in ("down_intensive", "down_massic", "down_explicit", "up_extensive", "up_intensive",
-                             "up_massic_weighted")}
+                for name in ("down_intensive", "down_massic", "down_explicit", "down_extensive_split", "up_extensive",
+                             "up_intensive_weighted", "up_intensive_plain", "up_massic_weighted")}
     assert mappings == {"down_intensive": "broadcast", "down_massic": "broadcast", "down_explicit": "broadcast",
-                        "up_extensive": "sum", "up_intensive": "mean", "up_massic_weighted": "weighted_mean"}
+                        "down_extensive_split": "split", "up_extensive": "sum",
+                        "up_intensive_weighted": "weighted_mean", "up_intensive_plain": "mean",
+                        "up_massic_weighted": "weighted_mean"}
 
 
 @pytest.mark.parametrize("name, message", [
     ("down_extensive", "extensive and goes from a coarse scale down"),
     ("down_untyped", "does not imply one"),
-    ("up_massic", "give the weight of its mass-weighted mean"),
+    ("up_massic", "give the weight of its mean"),
+    ("up_intensive", "give the weight of its mean"),
 ])
 def test_ambiguous_scale_changes_need_an_explicit_mapping(seedling, name, message):
     _, _, ds = seedling

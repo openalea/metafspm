@@ -183,6 +183,27 @@ class DataStructure(ABC):
         ...
 
 
+def _split(totals, owner, weights, owners_name: str) -> np.ndarray:
+    """
+    Each entity's share of its owner's amount, in proportion to its weight (the owners' totals conserved): an amount
+    *totals*[o] split over the entities with *owner* o, by *weights*. Entities without an owner (-1) get 0; an
+    owner with an amount but no weight raises (its amount would be lost).
+    """
+    if weights is None:
+        raise ValueError("aggregation 'split' needs weights")
+    totals, weights = np.asarray(totals, dtype=float), np.asarray(weights, dtype=float)
+    owned = owner >= 0
+    weight_sums = np.bincount(owner[owned], weights=weights[owned], minlength=totals.size)
+    lost = (weight_sums == 0) & (totals != 0)
+    if lost.any():
+        raise ValueError(f"{int(lost.sum())} {owners_name} entities have an amount to split but no weight on their "
+                         "entities: their amount would be lost")
+    out = np.zeros(owner.size)
+    share = np.divide(totals, weight_sums, out=np.zeros(totals.size), where=weight_sums != 0)
+    out[owned] = share[owner[owned]] * weights[owned]
+    return out
+
+
 def _canonical_dtype(dtype):
     """float, int or object (the dtypes of DataStructure variables)."""
     if dtype in (float, np.float64, "float", None):
@@ -417,13 +438,19 @@ class VariableStoreMixin:
             if self._find(source)[1][self._find(source)[2]].dtype == object:
                 raise TypeError(f"derived variable '{name}': '{source}' holds objects, which cannot be derived")
         source_locations = {self._find(source)[0] for source in names}
-        if weight is not None:
+        if weight is not None and aggregation != "split":                # a mean's weights are the sources'
             source_locations.add(self._find(weight)[0])
         if len(source_locations) != 1:
             raise ValueError(f"derived variable '{name}': sources span several locations {sorted(source_locations)}")
         source_location = source_locations.pop()
         if location is None:
             location = self.location(name) if self.has(name) else source_location
+        if aggregation == "split":                                       # a split's weights are the targets'
+            if weight is None:
+                raise ValueError(f"derived variable '{name}': aggregation 'split' needs weight=")
+            if self._find(weight)[0] != location:
+                raise ValueError(f"derived variable '{name}': the weight '{weight}' of a split must be at {location}, "
+                                 f"where the amount is split, not at {self._find(weight)[0]}")
         if location != source_location and aggregation is None:
             raise ValueError(f"derived variable '{name}' at {location} from {source_location} needs an aggregation")
         derived = self.__dict__.setdefault("_derived", {})
@@ -505,6 +532,8 @@ class VariableStoreMixin:
         values = np.asarray(values, dtype=float)
         if spec["location"] != spec["source_location"]:
             weights = value(spec["weight"]) if spec["weight"] else None
+            if spec["aggregation"] == "split" and spec.get("target") is not None:     # split over the target only
+                weights = np.where(self.mask(spec["target"]), weights, 0.)
             values = self._map(values, spec["source_location"], spec["location"], spec["aggregation"], weights)
         if spec.get("target") is not None:
             values = np.where(self.mask(spec["target"]), values, spec["default"])
@@ -753,6 +782,15 @@ class VariableStoreMixin:
     def _map(self, values, from_location: str, to_location: str, aggregation: str, weights=None,
              fill=0.) -> np.ndarray:
         raise ValueError(f"{type(self).__name__} cannot map {from_location} to {to_location} ({aggregation})")
+
+    def map_to(self, values, from_location: str, to_location: str, aggregation: str, weights=None) -> np.ndarray:
+        """
+        *values* (one per entity at *from_location*) mapped to *to_location* by *aggregation* ("sum", "mean",
+        "weighted_mean", "broadcast", "split"; *weights* at the source for a mean, at the target for a split), as
+        a link would: e.g. an organ's amount split onto some of its Compartments, conserved.
+        """
+        return np.asarray(self._map(np.asarray(values, dtype=float), from_location, to_location, aggregation,
+                                    None if weights is None else np.asarray(weights, dtype=float)))
 
     @staticmethod
     def _reduce(values, aggregation: str, weights=None, axis=None):
@@ -1740,7 +1778,7 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
         raise ValueError(f"'{location}' has no entity ids (locations: node, edge, scalar, {self._coarse_scale_names()})")
 
     def _map(self, values, from_location: str, to_location: str, aggregation: str, weights=None,
-             fill=0.) -> np.ndarray:
+             fill=0., owner=None) -> np.ndarray:
         coarse = self._coarse_scale_names()
         if from_location == "node" and to_location == "edge":
             parents, children = self._connection_endpoints()
@@ -1751,10 +1789,19 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
                 return values[tail]
             if aggregation == "mean":
                 return (values[tail] + values[head]) / 2.
+        elif from_location == "edge" and to_location in coarse:
+            # An edge belongs to the owner of its child-side node (an axial junction to its child segment)
+            entities, node_owner = self._membership(to_location)
+            return self._map(values, "node", to_location, aggregation, weights, fill,
+                             owner=(entities, node_owner[self.to_graph_view().head]))
         elif from_location == "node" and to_location in coarse:
-            entities, owner = self._membership(to_location)
+            entities, owner = self._membership(to_location) if owner is None else owner
             if (owner < 0).any():                       # nodes without an entity there (anatomy walls) are skipped
                 kept = owner >= 0
+                if aggregation == "sum" and np.any(np.asarray(values)[~kept] != 0):
+                    raise ValueError(f"a sum to {to_location} would drop the amounts of {int((~kept).sum())} nodes "
+                                     f"without a {to_location} owner (e.g. walls and junctions, which belong to "
+                                     "their section, not to a cell): sum to a scale owning them, or zero them")
                 owner, values = owner[kept], np.asarray(values)[kept]
                 weights = None if weights is None else np.asarray(weights)[kept]
             if aggregation == "weighted_mean":
@@ -1765,6 +1812,9 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
                 return total
             if aggregation == "mean":
                 return total / np.bincount(owner, minlength=entities.size)
+        elif from_location in coarse and to_location == "node" and aggregation == "split":
+            owner = self._membership(from_location)[1]
+            return _split(values, owner, weights, from_location)
         elif from_location in coarse and to_location == "node" and aggregation == "broadcast":
             owner = self._membership(from_location)[1]
             values = np.asarray(values)
@@ -1781,11 +1831,17 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
             else:
                 fine, coarser, fine_values = to_location, from_location, None
             coarse_ids = self.entity_ids(coarser)
-            owner = self.index_of([int(self._mtg.complex_at_scale(int(v), getattr(self._mtg.scales, coarser)))
-                                   for v in self.entity_ids(fine)], coarser)
+            fine_ids, coarser_scale = np.asarray(self.entity_ids(fine), dtype=np.int64), getattr(self._mtg.scales, coarser)
+            if hasattr(self._mtg, "complex_at_scale_array"):                 # in bulk
+                complexes = np.asarray(self._mtg.complex_at_scale_array(fine_ids, coarser_scale), dtype=np.int64)
+            else:
+                complexes = np.array([int(self._mtg.complex_at_scale(int(v), coarser_scale)) for v in fine_ids])
+            owner = self.index_of(complexes, coarser)
             if fine_values is None:
                 if aggregation == "broadcast":
                     return values[owner]
+                if aggregation == "split":
+                    return _split(values, owner, weights, from_location)
             else:
                 if aggregation == "weighted_mean":
                     return (np.bincount(owner, weights=values * weights, minlength=coarse_ids.size)
@@ -1799,6 +1855,9 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
             return np.asarray(self._reduce(values, aggregation, weights))
         elif from_location == "scalar" and aggregation == "broadcast":
             return np.full(self._location_shape(to_location), float(values))
+        elif from_location == "scalar" and aggregation == "split":
+            return _split(np.atleast_1d(values), np.zeros(self._location_shape(to_location)[0], dtype=np.int64),
+                          weights, "the plant")
         return super()._map(values, from_location, to_location, aggregation, weights)
 
     def _broadcast_to_entities(self, values, location: str, to: str, name: str = None) -> np.ndarray:
@@ -1858,11 +1917,12 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
             return self._mtg.owners_at_scale(owners[np.searchsorted(compartments, vids)], scale)
         return np.asarray(self._mtg.complex_at_scale_array(vids, scale), dtype=np.int64)
 
-    def _mtg_values(self, name: str, vids, scale=None, fast_idx=None):
+    def _mtg_values(self, name: str, vids, scale=None, fast_idx=None, fill=None):
         """
         Values of MTG property *name* for *vids* (mapped to *scale*), or None if the property is absent.
         Fast path when the property is an ArrayDict keyed exactly by the node vids.
-        Raises ValueError when some vertices have no value (partial coverage used to fall back silently).
+        Vertices without a value get *fill* (a declared default); without one, they raise ValueError (partial
+        coverage used to fall back silently).
         """
         prop = self._mtg.properties().get(name)
         if prop is None or len(prop) == 0:
@@ -1878,20 +1938,24 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
             found = (prop.size > 0) & (stored[at] == keys) if prop.size else np.zeros(keys.size, dtype=bool)
             if not found.all():
                 missing = keys[~found]
-                raise ValueError(f"MTG property '{name}' has no value for vertices {sorted(set(missing.tolist()))[:10]} "
-                                 f"({np.unique(missing).size} missing).")
+                if fill is None:
+                    raise ValueError(f"MTG property '{name}' has no value for vertices "
+                                     f"{sorted(set(missing.tolist()))[:10]} ({np.unique(missing).size} missing).")
+                out = np.full(keys.size, float(fill))
+                out[found] = prop.values_array()[at[found]]
+                return out
             return prop.values_array()[at].astype(np.float64, copy=True)
         keys = self._keys_at_scale(vids, scale)
         missing = [k for k in keys if k not in prop]
-        if missing:
+        if missing and fill is None:
             raise ValueError(f"MTG property '{name}' has no value for vertices {sorted(set(missing))[:10]} "
                              f"({len(set(missing))} missing).")
         try:
-            return np.array([float(prop[k]) for k in keys], dtype=np.float64)
+            return np.array([float(prop[k]) if k in prop else float(fill) for k in keys], dtype=np.float64)
         except (TypeError, ValueError) as e:
             raise ValueError(f"MTG property '{name}' has non-numeric values: {e}") from None
 
-    def _mtg_to_node_array(self, name: str, scale=None) -> np.ndarray | None:
+    def _mtg_to_node_array(self, name: str, scale=None, fill=None) -> np.ndarray | None:
         """Per-node array from MTG property *name* defined at *scale* (default: the nodes' scale).
 
         Coarser scales are mapped through each node's complex at that scale. Returns None if the property
@@ -1899,7 +1963,7 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
         """
         if not self._idx_to_vid:
             return None
-        return self._mtg_values(name, self._idx_to_vid, scale=scale, fast_idx=self._bio_node_idx)
+        return self._mtg_values(name, self._idx_to_vid, scale=scale, fast_idx=self._bio_node_idx, fill=fill)
 
     def _mtg_to_edge_array(self, name: str, convention: str = "mean", scale=None) -> np.ndarray | None:
         """Per-edge array from MTG property *name* at *scale*, combining the endpoint values.
@@ -2040,16 +2104,17 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
             if prop is None or len(prop) == 0:
                 return None
             return [prop.get(int(v)) for v in self._idx_to_vid]
+        fill = spec.default if isinstance(spec.default, (int, float)) and not isinstance(spec.default, bool) else None
         if spec.location == "node":
-            return self._mtg_to_node_array(spec.name, scale=spec.scale)
+            return self._mtg_to_node_array(spec.name, scale=spec.scale, fill=fill)
         if spec.location == "edge":
             if self._anatomy and spec.scale == self._mtg.scales.Connection:
-                return self._mtg_values(spec.name, self.entity_ids("edge"))       # the Connections themselves
+                return self._mtg_values(spec.name, self.entity_ids("edge"), fill=fill)  # the Connections themselves
             return self._mtg_to_edge_array(spec.name, convention=spec.mapping, scale=spec.scale)
         if spec.mapping is None:
-            # Stored at its own coarse scale: the values of the vertices of that scale
-            return self._mtg_values(spec.name, self.entity_ids(spec.location))
-        values = self._mtg_to_node_array(spec.name)
+            # Stored at its own coarse scale: the values of the vertices of that scale (missing: the declared default)
+            return self._mtg_values(spec.name, self.entity_ids(spec.location), fill=fill)
+        values = self._mtg_to_node_array(spec.name, fill=fill)
         if values is None:
             return None
         weights = None

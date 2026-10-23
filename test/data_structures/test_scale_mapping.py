@@ -116,7 +116,8 @@ def test_a_broadcast_state_is_written_back_as_the_mean_of_its_nodes(seedling):
 
 @dataclass
 class OrganMean(FunctionalComponent):
-    concentration: float = sv(initialize=0., scale=scales.SubOrgan, location="Organ", state_variable_type="intensive")
+    concentration: float = sv(initialize=0., scale=scales.SubOrgan, location="Organ", state_variable_type="intensive",
+                              mapping="mean")
 
     @rate
     def _concentration(self, concentration):
