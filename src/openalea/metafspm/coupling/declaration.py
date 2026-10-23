@@ -20,7 +20,7 @@ from openalea.metafspm.data_structure.configs import ScalesConfig as _ScalesConf
 
 SOLVER_LOCATIONS = ("node", "edge", "scalar", "cell")
 UP_MAPPINGS = ("sum", "mean", "weighted_mean")
-DOWN_MAPPINGS = ("broadcast",)
+DOWN_MAPPINGS = ("broadcast", "split")
 EDGE_MAPPINGS = ("child", "parent", "mean")
 # Former edge mapping names: "proximal" took the child's value, "distal" the parent's
 _EDGE_MAPPING_RENAMES = {"proximal": "child", "distal": "parent"}
@@ -77,23 +77,31 @@ def default_mapping(kind: Optional[str], direction: str, name: str, weight: Opti
     """
     Mapping implied by the variable's state_variable_type when the declaration gives none.
     direction: "up" (fine -> coarse) or "down" (coarse -> fine).
+
+      extensive   up: sum (the total is conserved); down: split by *weight* (each entity's share of its owner's
+                  amount in proportion to its weight, the total conserved), else raise
+      intensive   up: the mean weighted by *weight* (its capacity: a volume, a mass, an area...), else raise
+                  (give mapping="mean" for an unweighted mean); down: broadcast. A massic concentration is an
+                  intensive variable whose weight is a mass, a flux density one whose weight is an area.
     """
     if direction == "up":
         if kind in EXTENSIVE_KINDS:
             return "sum"
-        if kind in INTENSIVE_KINDS:
-            return "mean"
-        if kind in MASSIC_KINDS:
+        if kind in INTENSIVE_KINDS or kind in MASSIC_KINDS:
             if weight is None:
-                raise DeclarationError(f"'{name}' is a massic concentration aggregated to a coarser scale: "
-                                       "give the weight of its mass-weighted mean (weight=...)")
+                raise DeclarationError(f"'{name}' is {kind} and averaged to a coarser scale: give the weight of its "
+                                       "mean (weight=..., its capacity: a volume, a mass, an area), or "
+                                       "mapping='mean' for an unweighted mean")
             return "weighted_mean"
     else:
         if kind in INTENSIVE_KINDS or kind in MASSIC_KINDS:
             return "broadcast"
         if kind in EXTENSIVE_KINDS:
+            if weight is not None:
+                return "split"
             raise DeclarationError(f"'{name}' is extensive and goes from a coarse scale down to finer entities: "
-                                   "give an explicit mapping (copying it would multiply the amount)")
+                                   "give the weight of its split (weight=...: each entity gets its share of the "
+                                   "amount), or an explicit mapping (copying it would multiply the amount)")
     raise DeclarationError(f"'{name}' changes scale without a mapping, and its state_variable_type ({kind!r}) "
                            "does not imply one: give mapping=...")
 
@@ -101,6 +109,20 @@ def default_mapping(kind: Optional[str], direction: str, name: str, weight: Opti
 KIND_FAMILIES = {"extensive": "extensive", "NonInertialExtensive": "extensive",
                  "intensive": "intensive", "NonInertialIntensive": "intensive", "massic_concentration": "intensive",
                  "descriptor": "descriptor"}
+
+
+def normalized_unit(unit) -> Optional[str]:
+    """A unit string without its spelling variants (spaces, dots, carets, '**'), or None when undeclared."""
+    if unit is None or not str(unit).strip():
+        return None
+    text = str(unit).replace("**", "").replace("^", "").replace("·", "").replace(".", "")
+    return "".join(text.split())
+
+
+def units_agree(a, b) -> bool:
+    """Whether two declared units are the same (undeclared units agree with anything)."""
+    a, b = normalized_unit(a), normalized_unit(b)
+    return a is None or b is None or a == b
 
 
 def kinds_agree(a: Optional[str], b: Optional[str]) -> bool:
@@ -115,17 +137,17 @@ def link_direction(ds, from_location: str, to_location: str) -> Optional[str]:
     "up" from finer to coarser locations (nodes, then coarse scales, then the scalar plant scale), "down" the
     other way, None when edges are involved (node <-> edge mappings have no default).
     """
-    def rank(location):
+    def rank(location, source=False):
         if location == "scalar":
             return 0
-        if location == "edge":
-            return None
+        if location == "edge":                       # edges map up like their (child) nodes; nothing maps down to them
+            return (node_scale(ds) or 99) if source else None
         if location in ("node", "cell"):
             return node_scale(ds) or 99
         names = {name: value for value, name in scale_names(ds).items()}
         return names.get(location)
 
-    a, b = rank(from_location), rank(to_location)
+    a, b = rank(from_location, source=True), rank(to_location)
     if a is None or b is None or a == b:
         return None
     return "up" if b < a else "down"
@@ -293,7 +315,7 @@ def resolve_declaration(f, ds) -> Optional[VariableSpec]:
             raise DeclarationError(f"'{f.name}' has no MTG scale, its mapping '{mapping}' maps nothing")
         if location == "cell":
             raise DeclarationError(f"'{f.name}': location 'cell' is a grid location, not a graph one")
-        return VariableSpec(location=location, **common)
+        return VariableSpec(location=location, weight=weight, **common)
 
     scale_location = location_of_scale(ds, scale)
     location = resolve_location(ds, location) if location is not None else scale_location
@@ -302,7 +324,7 @@ def resolve_declaration(f, ds) -> Optional[VariableSpec]:
         raise DeclarationError(f"'{f.name}': a scalar variable has no MTG scale (drop scale=)")
     if location == "edge":
         if scale_location == "edge":
-            return VariableSpec(location="edge", scale=None, **common)
+            return VariableSpec(location="edge", scale=None, weight=weight, **common)
         if mapping is None:
             raise DeclarationError(f"'{f.name}' maps scale {scale_names(ds)[scale]} to edges: give "
                                    f"mapping= one of {EDGE_MAPPINGS}")
@@ -320,7 +342,8 @@ def resolve_declaration(f, ds) -> Optional[VariableSpec]:
         if mapping is not None:
             raise DeclarationError(f"'{f.name}' is stored at its own scale ({location}): mapping '{mapping}' "
                                    "maps nothing")
-        return VariableSpec(location=location, scale=scale, **common)
+        # its weight (a mean's capacity, a split's share) is kept: the links mapping it use it
+        return VariableSpec(location=location, scale=scale, weight=weight, **common)
 
     # Between the nodes and a coarse scale
     if "node" not in (location, scale_location):
@@ -334,8 +357,11 @@ def resolve_declaration(f, ds) -> Optional[VariableSpec]:
     if mapping not in allowed:
         raise DeclarationError(f"'{f.name}' goes {direction} from scale {scale_names(ds)[scale]} to {location}: "
                                f"mapping must be one of {allowed}, got '{mapping}'")
-    if mapping == "weighted_mean" and weight is None:
-        raise DeclarationError(f"'{f.name}': mapping 'weighted_mean' needs weight=")
+    if mapping in ("weighted_mean", "split") and weight is None:
+        raise DeclarationError(f"'{f.name}': mapping '{mapping}' needs weight=")
+    if mapping == "split" and common["variable_type"] == "state_variable":
+        raise DeclarationError(f"'{f.name}' is a state variable split from scale {scale_names(ds)[scale]} to "
+                               f"{location}: store it at its own scale and split it in a link")
     if mapping == "sum" and common["variable_type"] == "state_variable":
         raise DeclarationError(f"'{f.name}' is a state variable summed from scale {scale_names(ds)[scale]} to "
                                f"{location}: it could not be written back to the finer scale, store it at its own "

@@ -204,3 +204,31 @@ def test_connection_scale_variables_are_the_connections_own_properties():
     np.testing.assert_array_equal(ds.get("tissue"), 2. * ds.entity_ids("node"))
     ds.set("conductance", np.full(ds.n_edges(), 7.))
     assert all(ds.mtg.property("conductance")[int(v)] == 7. for v in edges)       # written back at the Connections
+
+
+def test_edge_values_map_to_the_segment_of_their_child_side():
+    """An edge's value goes to the owner of its child-side node: each segment sums its own Connections and the
+    junctions leading into it."""
+    g, segments, anatomies, ds = _plant()
+    ds.register("flux", 1., location="edge")
+    ds.derive("segment_flux", {"flux": 1.}, location="SubOrgan", aggregation="sum")
+    owner = ds.owner("SubOrgan")
+    head = ds.to_graph_view().head
+    expected = np.bincount(owner[head], minlength=len(ds.entity_ids("SubOrgan")))
+    np.testing.assert_array_equal(ds.get("segment_flux"), expected)
+    assert expected.sum() == ds.n_edges()                                 # every edge counted once
+    junction = np.isin(ds.entity_ids("edge"), g.junction_vids())
+    assert not (junction & (owner[head] == 0)).any()                      # no junction leads into the base segment
+
+
+def test_a_missing_coarse_input_value_takes_its_declared_default():
+    """A coarse-scale MTG property present on some vertices only: the others take the declared initialize."""
+    from openalea.metafspm.coupling.declaration import VariableSpec
+    g, segments, anatomies, ds = _plant()
+    g.properties()["supply"] = {int(segments[0]): 3.}
+    spec = VariableSpec(name="supply", location="SubOrgan", scale=g.scales.SubOrgan, default=-1.,
+                        variable_type="input")
+    np.testing.assert_array_equal(ds.read_mtg(spec), [3., -1., -1.])
+    with pytest.raises(ValueError, match="has no value for vertices"):
+        ds.read_mtg(VariableSpec(name="supply", location="SubOrgan", scale=g.scales.SubOrgan, default=None,
+                                 variable_type="input"))

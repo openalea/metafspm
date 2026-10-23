@@ -63,10 +63,15 @@ def test_bulk_and_per_vertex_creation_build_the_same_anatomy():
 
 # ---------------------------------------------------------------- variables at the Layer and Cell scales
 
-def test_aggregations_to_a_cell_skip_the_walls_and_broadcasts_give_them_the_default():
+def test_aggregations_to_a_cell_refuse_to_drop_the_walls_amounts_and_broadcasts_give_them_the_default():
+    """A sum to Cell would lose the walls' amounts (they belong to their section, not to a cell): it raises; with
+    the walls at 0 it sums the protoplasts. Means use the owned nodes."""
     g, segments, sections, ds = _plant()
     ds.register("water", np.arange(ds.n_nodes(), dtype=float) + 1., location="node")
     cells = ds.entity_ids("Cell")
+    with pytest.raises(ValueError, match="would drop the amounts"):
+        ds._map(ds.get("water"), "node", "Cell", "sum")
+    ds.set("water", np.where(ds.owner("Cell") >= 0, ds.get("water"), 0.))
     per_cell = ds._map(ds.get("water"), "node", "Cell", "sum")
     protoplast_of = {int(g.complex(v)): v for v in ds.entity_ids("node") if g.scale(g.complex(v)) == g.scales.Cell}
     expected = [ds.get("water")[_index(ds, [protoplast_of[int(c)]])][0] for c in cells]
