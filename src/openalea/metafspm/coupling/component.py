@@ -674,6 +674,14 @@ class StructuralComponent(DataStructureComponent):
     # partition weight, entities created by growth only get their on_grow values.
     partition_weight = None
     active = None
+    # When the repartition runs: "after_mpg_steps", after each MPG-style step, between the weights before and after
+    # it; or "end_of_call", once per call after all its steps, between partition_basis (a node variable name, or a
+    # callable ds -> array, read after the call: the weight the entities of the call's start refer to, e.g. the
+    # initial masses a growth model keeps; default: the weights at the call's start) and the weights after the call,
+    # the entities absent at the call's start being the new ones. The latter suits models whose array steps change
+    # the weights too (growth, root hairs), as rhizodep's post_growth_updating does
+    repartition = "after_mpg_steps"
+    partition_basis = None
 
     def __post_init__(self):
         super().__post_init__()
@@ -686,6 +694,25 @@ class StructuralComponent(DataStructureComponent):
             return None
         values = self.partition_weight(ds) if callable(self.partition_weight) else ds.get(self.partition_weight)
         return np.array(values, dtype=float)
+
+    def __call__(self, *args):
+        if self.repartition not in ("after_mpg_steps", "end_of_call"):
+            raise ValueError(f"{type(self).__name__}.repartition must be 'after_mpg_steps' or 'end_of_call', got "
+                             f"'{self.repartition}'")
+        if self.repartition != "end_of_call" or self.partition_weight is None:
+            return super().__call__(*args)
+        ds = self.data_structure
+        start = ds.entity_ids("node").tolist()
+        start_weights = self._weights() if self.partition_basis is None else None
+        super().__call__(*args)
+        ids = ds.entity_ids("node").tolist()
+        if start_weights is not None:
+            basis = dict(zip(start, start_weights.tolist()))
+        else:
+            values = (self.partition_basis(ds) if callable(self.partition_basis) else ds.get(self.partition_basis))
+            values = dict(zip(ids, np.asarray(values, dtype=float).tolist()))
+            basis = {v: values[v] for v in start if v in values}
+        self._repartition(basis, {v: w > 0 for v, w in basis.items()})
 
     def _active_now(self, weights):
         ds = self.data_structure
@@ -705,7 +732,7 @@ class StructuralComponent(DataStructureComponent):
         else:
             for spec in specs:
                 ds.write_mtg(spec)
-        weights = self._weights()
+        weights = self._weights() if self.repartition == "after_mpg_steps" else None
         if weights is not None:
             ids = ds.entity_ids("node").tolist()
             weight_before = dict(zip(ids, weights.tolist()))

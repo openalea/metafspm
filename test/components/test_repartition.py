@@ -9,7 +9,7 @@ import pytest
 
 from openalea.metafspm.coupling.component import FunctionalComponent, StructuralComponent, state_variable
 from openalea.metafspm.data_structure.configs import PropsConfig, ScalesConfig as scales
-from openalea.metafspm.solve.decorator import actual, rate, segmentation
+from openalea.metafspm.solve.decorator import actual, potential, rate, segmentation
 
 from growth import DOC, CarbonProbe, RootGrowthProbe, make_chain
 
@@ -26,10 +26,11 @@ class Pools(FunctionalComponent):
     tag: float = state_variable(**DOC, initialize=7., scale=scales.SubOrgan, state_variable_type="descriptor")
 
 
-def _plant(hexose=1.):
+def _plant(hexose=1., repartition="after_mpg_steps"):
     g, ds, vids = make_chain()
     growth = RootGrowthProbe(data_structure=ds)
     growth.partition_weight = "struct_mass"
+    growth.repartition = repartition
     pools = Pools(data_structure=ds)
     CarbonProbe(data_structure=ds)
     ds.set("C_hexose_root", hexose)
@@ -40,8 +41,9 @@ def _by_vid(ds, name):
     return dict(zip(ds.entity_ids("node").tolist(), ds.get(name).tolist()))
 
 
-def test_elongation_dilutes_concentrations_and_keeps_amounts():
-    _, ds, vids, growth, _ = _plant(hexose=1.)
+@pytest.mark.parametrize("repartition", ["after_mpg_steps", "end_of_call"])
+def test_elongation_dilutes_concentrations_and_keeps_amounts(repartition):
+    _, ds, vids, growth, _ = _plant(hexose=1., repartition=repartition)
     growth()                                             # apex 0.5 -> 0.9: weight 1.0 -> 1.8
     apex = vids[-1]
     assert _by_vid(ds, "conc")[apex] == pytest.approx(3. * 1.0 / 1.8)
@@ -50,8 +52,9 @@ def test_elongation_dilutes_concentrations_and_keeps_amounts():
         assert _by_vid(ds, name)[apex] == pytest.approx(value)
 
 
-def test_segmentation_splits_amounts_by_weight_and_conserves_them():
-    _, ds, vids, growth, _ = _plant(hexose=1.5)
+@pytest.mark.parametrize("repartition", ["after_mpg_steps", "end_of_call"])
+def test_segmentation_splits_amounts_by_weight_and_conserves_them(repartition):
+    _, ds, vids, growth, _ = _plant(hexose=1.5, repartition=repartition)
     growth()                                             # apex 0.5 -> 1.1, then cut into 1.0 + a new apex of 0.1
     apex, new = vids[-1], int(ds.entity_ids("node")[ds.tips()[0]])
     w = _by_vid(ds, "struct_mass")
@@ -72,6 +75,63 @@ def test_without_a_partition_weight_growth_only_applies_on_grow():
     growth()
     new = int(ds.entity_ids("node")[ds.tips()[0]])
     assert _by_vid(ds, "amount")[new] == 4. and _by_vid(ds, "amount")[vids[-1]] == 4.
+
+
+@dataclass
+class ThickeningProbe(RootGrowthProbe):
+    """RootGrowthProbe whose structural mass also grows in an array step (as rhizodep's actual growth and root
+    hairs do), keeping its mass at the call's start as the basis of the repartition."""
+    initial_struct_mass: float = state_variable(**DOC, initialize=0., scale=scales.SubOrgan,
+                                                state_variable_type="descriptor")
+    partition_weight = "struct_mass"
+    partition_basis = "initial_struct_mass"
+    repartition = "end_of_call"
+
+    @potential
+    def _initial_struct_mass(self, struct_mass):
+        return np.array(struct_mass)
+
+    @actual
+    def _struct_mass(self, struct_mass, is_apex):
+        return struct_mass * np.where(is_apex == 0., 1.5, 1.)          # the segments thicken
+
+
+def test_end_of_call_dilutes_what_array_steps_grew():
+    """With "end_of_call", the weight an array step changed dilutes the concentrations too, against the basis; with
+    "after_mpg_steps" only the MPG-style steps' changes count."""
+    for repartition, expected in (("end_of_call", 3. / 1.5), ("after_mpg_steps", 3.)):
+        g, ds, vids = make_chain()
+        growth = ThickeningProbe(data_structure=ds)
+        growth.repartition = repartition
+        Pools(data_structure=ds)
+        CarbonProbe(data_structure=ds)
+        ds.set("C_hexose_root", 0.)                                    # no elongation, no segmentation
+        growth()
+        conc, mass = _by_vid(ds, "conc"), _by_vid(ds, "struct_mass")
+        assert mass[vids[0]] == pytest.approx(2. * 1.5)
+        assert conc[vids[0]] == pytest.approx(expected)
+        assert _by_vid(ds, "amount")[vids[0]] == 4.
+
+
+def test_end_of_call_conserves_through_growth_and_segmentation():
+    g, ds, vids = make_chain()
+    growth = ThickeningProbe(data_structure=ds)
+    Pools(data_structure=ds)
+    CarbonProbe(data_structure=ds)
+    ds.set("C_hexose_root", 1.5)
+    for _ in range(3):
+        before = (np.sum(ds.get("conc") * ds.get("struct_mass")), np.sum(ds.get("amount")), ds.n_nodes())
+        growth()
+        assert np.sum(ds.get("conc") * ds.get("struct_mass")) == pytest.approx(before[0])
+        assert np.sum(ds.get("amount")) == pytest.approx(before[1])
+    assert ds.n_nodes() > len(vids)
+
+
+def test_the_repartition_option_is_checked():
+    _, ds, _, growth, _ = _plant()
+    growth.repartition = "sometimes"
+    with pytest.raises(ValueError, match="after_mpg_steps"):
+        growth()
 
 
 # ---------------------------------------------------------------- inactive primordia
