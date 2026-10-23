@@ -188,6 +188,24 @@ def test_a_primordium_is_split_from_its_carrier_when_it_emerges():
     assert conc[p] * w[p] + conc[carrier] * w[carrier] == pytest.approx(3. * w[carrier])
 
 
+def test_an_entity_becoming_active_keeps_its_own_amount():
+    """An existing entity that becomes active (e.g. a primordium holding an amount) adds its share of its parent's
+    to its own: the amounts are conserved."""
+    _, ds, vids, branching = _branching_plant()
+    branching()
+    p, carrier = branching.primordium, vids[1]
+    amount = np.array(ds.get("amount"))
+    amount[ds.index_of(p)] = 2.
+    ds.set("amount", amount)
+    total = ds.get("amount").sum()
+    branching.emerge = True
+    branching()
+    w = _by_vid(ds, "struct_mass")
+    f = 0.5 / (0.5 + w[carrier])
+    assert _by_vid(ds, "amount")[p] == pytest.approx(2. + f * 4.)
+    assert ds.get("amount").sum() == pytest.approx(total)
+
+
 # ---------------------------------------------------------------- the active mask on vectorised steps
 
 @dataclass

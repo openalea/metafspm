@@ -760,7 +760,8 @@ class StructuralComponent(DataStructureComponent):
           kind                      new active entity v, or one becoming active,    new inactive     existing, weight
                                     with its parent p and f = w_v / (w_v + w_p)     entity           changed
           massic_concentration      the amount c_p * b_p is split by f, 1 - f       parent's value   c * b / w
-          extensive                 x_v = f x_p, x_p = (1 - f) x_p                   0                unchanged
+          extensive                 x_v = f x_p (+ its own when it existed),         0                unchanged
+                                    x_p = (1 - f) x_p
           (NonInertial)Intensive    parent's value                                   parent's value   unchanged
           NonInertialExtensive      x_v = f x_p, the parent unchanged                0                unchanged
           descriptor or none        its on_grow value                                on_grow          unchanged
@@ -790,6 +791,8 @@ class StructuralComponent(DataStructureComponent):
                      "NonInertialIntensive": "intensive", "NonInertialExtensive": "non_inertial_extensive"}.get(kind)
             if group is not None:
                 groups[group].append(name)
+        if not any(groups.values()):
+            return                                           # nothing to share (e.g. a growth model on its own)
         values = {name: np.array(ds.get(name), dtype=float) for group in groups.values() for name in group}
 
         for v in ds.order("pre"):
@@ -803,7 +806,8 @@ class StructuralComponent(DataStructureComponent):
                     values[name][v] = amount * f / weights[v]
                     values[name][p] = amount * (1. - f) / weights[p] if weights[p] > 0 else values[name][p]
                 for name in groups["extensive"]:
-                    values[name][v], values[name][p] = f * values[name][p], (1. - f) * values[name][p]
+                    own = values[name][v] if known[v] else 0.        # an entity becoming active keeps its own
+                    values[name][v], values[name][p] = own + f * values[name][p], (1. - f) * values[name][p]
                 for name in groups["non_inertial_extensive"]:
                     values[name][v] = f * values[name][p]
                 basis[p], basis[v] = weights[p], weights[v]
