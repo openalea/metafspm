@@ -145,6 +145,7 @@ class LabelsConfig:
         LeafElement: int = "LeafElement"
         StemElement: int = "StemElement"
         RootSegment: int = "RootSegment"
+        RootApex: int = "RootApex"                  # a root axis' tip, a SubOrgan of its own (rhizodep's apex)
 
     class Layer:
         scale = ScalesConfig.Layer
