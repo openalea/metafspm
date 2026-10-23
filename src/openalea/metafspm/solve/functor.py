@@ -100,6 +100,11 @@ class Functor:
         return out
 
     def _write_outputs(self, instance, ds, out, args, mask, mask_location):
+        if self.supplementary_outputs and (not isinstance(out, tuple)
+                                           or len(out) != 2 * self.supplementary_outputs + 1):
+            given = len(out) if isinstance(out, tuple) else 1
+            raise ValueError(f"{self.class_name}.{self.name} returns {given} items, its annotation declares "
+                             f"{2 * self.supplementary_outputs + 1} (its own output, then name, values pairs)")
         outputs = [(self.name, out[0] if self.supplementary_outputs else out)]
         for s in range(self.supplementary_outputs):
             outputs.append((out[2 * s + 1], out[2 * s + 2]))

@@ -111,3 +111,21 @@ def test_grid_outputs_are_inferred_on_cells_and_unmatched_shapes_raise():
     with pytest.warns(DeprecationWarning), pytest.raises(ValueError, match="'mismatched' of shape \\(3,\\) matches no location"):
         model()
     assert ds.location("drained") == "cell"
+
+
+@dataclass
+class MiscountedOutputs(FunctionalComponent):
+    level: float = state_variable(**DOC, initialize=1., scale=scales.SubOrgan)
+    other: float = state_variable(**DOC, initialize=0., scale=scales.SubOrgan)
+    third: float = state_variable(**DOC, initialize=0., scale=scales.SubOrgan)
+
+    @rate
+    def _level(self, level) -> tuple[np.ndarray, str, np.ndarray]:
+        return level, "other", level, "third", level        # two supplementary outputs, one declared
+
+
+def test_a_step_returning_more_outputs_than_its_annotation_declares_raises(ds):
+    """A step's supplementary outputs are counted by its annotation: a return that does not match it raises,
+    instead of the extra outputs being dropped."""
+    with pytest.raises(ValueError, match="returns 5 items, its annotation declares 3"):
+        MiscountedOutputs(data_structure=ds)()
