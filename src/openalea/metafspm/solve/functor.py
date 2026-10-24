@@ -108,6 +108,14 @@ class Functor:
         outputs = [(self.name, out[0] if self.supplementary_outputs else out)]
         for s in range(self.supplementary_outputs):
             outputs.append((out[2 * s + 1], out[2 * s + 2]))
+        # Nodes created by the step (a NewNodes pair, StructuralComponent): the repartition's basis is taken before any
+        # output is written, the nodes are created after the outputs on the existing ones
+        from openalea.metafspm.coupling.component import NewNodes
+        new_nodes = [values for _, values in outputs if isinstance(values, NewNodes)]
+        outputs = [(name, values) for name, values in outputs if not isinstance(values, NewNodes)]
+        if new_nodes and not hasattr(instance, "_create_nodes"):
+            raise TypeError(f"{self.class_name}.{self.name} returns NewNodes: only a StructuralComponent creates nodes")
+        before = instance._before_new_nodes() if new_nodes else None
         declared = getattr(self.fun, "__output_locations__", {})
         for name, values in outputs:
             values = np.asarray(values, dtype=float)
@@ -126,6 +134,9 @@ class Functor:
                 full[mask] = values
                 values = full
             ds.set(name, values)
+        for new in new_nodes:
+            instance._create_nodes(new, before)
+            before = instance._before_new_nodes() if before is not None else None
 
     def _mask(self, instance, ds):
         """

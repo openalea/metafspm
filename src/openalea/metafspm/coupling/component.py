@@ -636,6 +636,52 @@ class FunctionalComponent(DataStructureComponent):
                                               for fn, location in unknowns.items() if ds.has(fn)}
 
 
+class NewNodes:
+    """
+    Nodes an array-style step of a StructuralComponent creates, returned as one of its (name, values) output pairs
+    (the name is free): the framework creates them in the MPG in bulk, extends the DataStructure with their values and
+    repartitions the other components' variables, without the MPG synchronisation of an MPG-style step.
+
+        return (length, "struct_mass", mass,
+                "new_elements", NewNodes(parent=parents, edge=edges, label=labels, values={"length": lengths},
+                                         new_complex=laterals, complex_levels=((scales.Organ, labels.Organ.RootInternode),),
+                                         relabel=(apex_ids, segment_label)))
+
+    parent         per new node, its parent: an existing node's id (>= 0), or another new node, -1 - its index in the
+                   batch (a parent comes before its children)
+    edge           "<" or "+", per node or for all
+    label          the nodes' MPG label (an integer of the MPG's labels), per node or for all
+    values         {variable: values per node, or one for all}: the other variables take their on_grow value (their
+                   default, or their parent's with on_grow="inherit")
+    new_complex    per node (or for all), whether it starts a complex of its own (e.g. a lateral root's Organ), created
+                   under its parent's complex at the scale above *complex_levels*' first one; otherwise the node joins
+                   its parent's complex
+    complex_levels ((scale, label), ...) of the new complexes, coarsest first, down to the scale above the nodes'
+    relabel        (existing node ids, their new label(s)): e.g. an apex becoming a segment
+    """
+
+    def __init__(self, parent, edge="<", label=None, values=None, new_complex=False, complex_levels=(),
+                 relabel=None):
+        self.parent = np.asarray(parent, dtype=np.int64).reshape(-1)
+        n = self.parent.size
+        self.edge = np.broadcast_to(np.asarray(edge, dtype=object), (n,))
+        self.label = np.broadcast_to(np.asarray(label, dtype=object), (n,))
+        self.values = dict(values or {})
+        self.new_complex = np.broadcast_to(np.asarray(new_complex, dtype=bool), (n,))
+        self.complex_levels = tuple(complex_levels)
+        self.relabel = relabel
+        inner = self.parent < 0
+        if np.any(-1 - self.parent[inner] >= np.flatnonzero(inner)):
+            raise ValueError("NewNodes: a new node's parent must come before it in the batch")
+        if self.new_complex.any() and not self.complex_levels:
+            raise ValueError("NewNodes: new_complex needs complex_levels")
+        if not set(self.edge.tolist()) <= {"<", "+"}:
+            raise ValueError(f"NewNodes: edges are '<' or '+', got {sorted(set(self.edge.tolist()))}")
+
+    def __len__(self):
+        return self.parent.size
+
+
 @dataclass
 class StructuralComponent(DataStructureComponent):
     """
@@ -751,6 +797,89 @@ class StructuralComponent(DataStructureComponent):
                         ds.mark_mtg_synced(spec.name)
         if weights is not None:
             self._repartition(weight_before, active_before)
+
+    def _before_new_nodes(self):
+        """The partition weights and active entities before a step's outputs and new nodes (the repartition's basis
+        with repartition = "after_mpg_steps"), or None."""
+        weights = self._weights() if self.repartition == "after_mpg_steps" else None
+        if weights is None:
+            return None
+        ids = self.data_structure.entity_ids("node").tolist()
+        return dict(zip(ids, weights.tolist())), dict(zip(ids, self._active_now(weights).tolist()))
+
+    def _create_nodes(self, new: NewNodes, before=None) -> np.ndarray:
+        """
+        Create the nodes an array-style step returned (NewNodes): their complexes and themselves in the MPG, in bulk;
+        the DataStructure's topology extended, their values written; then the repartition from *before*
+        (_before_new_nodes). Returns their ids.
+        """
+        ds = self.data_structure
+        g = ds._mtg                          # not ds.mtg: the MPG's properties need no synchronisation here
+        n = len(new)
+        if new.relabel is not None:
+            ids, labels = new.relabel
+            ids = np.asarray(ids, dtype=np.int64).reshape(-1)
+            labels = np.broadcast_to(np.asarray(labels, dtype=object), ids.shape)
+            label = g.property("label")
+            for vid, value in zip(ids.tolist(), labels.tolist()):
+                label[vid] = value
+        if n == 0:
+            if new.relabel is not None:
+                ds.invalidate_topology()
+            return np.zeros(0, dtype=np.int64)
+        known = np.asarray(ds.entity_ids("node"), dtype=np.int64)
+        outer = new.parent >= 0
+        if outer.any() and not np.isin(new.parent[outer], known).all():
+            raise ValueError("NewNodes: a parent is not a node")
+        # Each node's complex (the scale above the nodes): its parent's, or a new one, created under an anchor (the
+        # parent's complex at the scale above complex_levels' first); a new complex is k, numbered -2 - k until created
+        anchor_scale = int(new.complex_levels[0][0]) - 1 if new.new_complex.any() else None
+        complex_of = np.full(n, -1, dtype=np.int64)
+        anchor_of = {}                                  # a new node's anchor, when its complex is a new one
+        anchors = []
+        for i in range(n):
+            parent = int(new.parent[i])
+            if not new.new_complex[i]:
+                complex_of[i] = g.complex(parent) if parent >= 0 else complex_of[-1 - parent]
+                if parent < 0 and -1 - parent in anchor_of:
+                    anchor_of[i] = anchor_of[-1 - parent]
+                continue
+            if parent >= 0:
+                anchor = g.complex_at_scale(parent, anchor_scale)
+            elif -1 - parent in anchor_of:
+                anchor = anchor_of[-1 - parent]
+            else:
+                anchor = g.complex_at_scale(int(complex_of[-1 - parent]), anchor_scale)
+            anchor_of[i] = anchor
+            complex_of[i] = -2 - len(anchors)
+            anchors.append(anchor)
+        if anchors:
+            created = anchors
+            for scale, label in new.complex_levels:
+                created = g.add_components_bulk(created, len(created), scale=scale, edge_type='/', label=label,
+                                                isanchor=False)
+            created = np.asarray(created, dtype=np.int64)
+            pending = complex_of <= -2
+            complex_of[pending] = created[-2 - complex_of[pending]]
+        first = g._id + 1
+        vids = np.arange(first, first + n, dtype=np.int64)
+        parents = np.where(outer, new.parent, vids[np.maximum(-1 - new.parent, 0)])
+        node_scale = g.scale(int(known[0])) if known.size else g.scales.SubOrgan
+        created = g.add_components_bulk(complex_of.tolist(), n, topo_parents=parents.tolist(), scale=node_scale,
+                                        edge_type=new.edge.tolist(), label=new.label.tolist(), isanchor=False)
+        assert created[0] == first
+        ds.update_topology()
+        self.topology_updates = getattr(self, "topology_updates", 0) + 1
+        index = ds.index_of(vids)
+        for name, values in new.values.items():
+            if not ds.has(name):
+                raise KeyError(f"NewNodes: '{name}' is not a variable of the DataStructure")
+            current = np.array(ds.get(name))
+            current[index] = values
+            ds.set(name, current)
+        if before is not None:
+            self._repartition(*before)
+        return vids
 
     def _repartition(self, weight_before: dict, active_before: dict) -> None:
         """
