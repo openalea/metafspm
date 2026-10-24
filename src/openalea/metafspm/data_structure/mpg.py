@@ -236,6 +236,8 @@ class MPG(MTG):
             self._scale[v] = self._scale[c] + 1
         if topo_parents is not None:
             for v, p in zip(vids, topo_parents):
+                if p is None:                               # a root at its scale: no topological parent
+                    continue
                 self._parent[v] = p
                 self._children.setdefault(p, []).append(v)
         # The new vertices' links, for the incremental topology arrays (instead of reading the MTG dicts back)

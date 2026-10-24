@@ -636,6 +636,31 @@ class FunctionalComponent(DataStructureComponent):
                                               for fn, location in unknowns.items() if ds.has(fn)}
 
 
+class NewComplexes:
+    """
+    New coarse vertices (Phytomers, Organs, ...) a NewNodes batch creates for its nodes, in order:
+
+    anchor   per complex, the vertex it is a component of: an existing vertex's id (>= 0), or an earlier new complex,
+             -1 - its index in this table
+    scale    the complexes' scale(s) (one for all, or per complex); a complex is one scale finer than its anchor
+    label    their MPG label(s)
+    values   {variable: values per complex, or one for all}, variables of the complexes' location (their scale's name)
+    """
+
+    def __init__(self, anchor, scale, label, values=None):
+        self.anchor = np.asarray(anchor, dtype=np.int64).reshape(-1)
+        n = self.anchor.size
+        self.scale = np.broadcast_to(np.asarray(scale, dtype=np.int64), (n,))
+        self.label = np.broadcast_to(np.asarray(label, dtype=object), (n,))
+        self.values = dict(values or {})
+        inner = self.anchor < 0
+        if np.any(-1 - self.anchor[inner] >= np.flatnonzero(inner)):
+            raise ValueError("NewComplexes: a complex's anchor must come before it in the table")
+
+    def __len__(self):
+        return self.anchor.size
+
+
 class NewNodes:
     """
     Nodes an array-style step of a StructuralComponent creates, returned as one of its (name, values) output pairs
@@ -658,19 +683,31 @@ class NewNodes:
                    its parent's complex
     complex_levels ((scale, label), ...) of the new complexes, coarsest first, down to the scale above the nodes'
     relabel        (existing node ids, their new label(s)): e.g. an apex becoming a segment
+    complexes      NewComplexes: complexes created explicitly (e.g. a Phytomer holding three Organs), instead of
+                   new_complex / complex_levels
+    complex        per node, its complex when *complexes* is given: an existing vertex's id (>= 0), or a new complex,
+                   -1 - its index in *complexes*
+    A node without a topological parent (a plant's first element) has parent NewNodes.NO_PARENT.
     """
+    NO_PARENT = np.iinfo(np.int64).min
 
     def __init__(self, parent, edge="<", label=None, values=None, new_complex=False, complex_levels=(),
-                 relabel=None):
+                 relabel=None, complexes=None, complex=None):
         self.parent = np.asarray(parent, dtype=np.int64).reshape(-1)
         n = self.parent.size
+        self.complexes = complexes
+        self.complex = None if complex is None else np.broadcast_to(np.asarray(complex, dtype=np.int64), (n,))
+        if (complexes is None) != (complex is None):
+            raise ValueError("NewNodes: complexes and complex go together")
+        if self.complex is not None and np.any(-1 - self.complex[self.complex < 0] >= len(complexes)):
+            raise ValueError("NewNodes: a node's complex is not in complexes")
         self.edge = np.broadcast_to(np.asarray(edge, dtype=object), (n,))
         self.label = np.broadcast_to(np.asarray(label, dtype=object), (n,))
         self.values = dict(values or {})
         self.new_complex = np.broadcast_to(np.asarray(new_complex, dtype=bool), (n,))
         self.complex_levels = tuple(complex_levels)
         self.relabel = relabel
-        inner = self.parent < 0
+        inner = (self.parent < 0) & (self.parent != self.NO_PARENT)
         if np.any(-1 - self.parent[inner] >= np.flatnonzero(inner)):
             raise ValueError("NewNodes: a new node's parent must come before it in the batch")
         if self.new_complex.any() and not self.complex_levels:
@@ -829,12 +866,74 @@ class StructuralComponent(DataStructureComponent):
             return np.zeros(0, dtype=np.int64)
         known = np.asarray(ds.entity_ids("node"), dtype=np.int64)
         outer = new.parent >= 0
+        root = new.parent == NewNodes.NO_PARENT
         if outer.any() and not np.isin(new.parent[outer], known).all():
             raise ValueError("NewNodes: a parent is not a node")
-        # Each node's complex (the scale above the nodes): its parent's, or a new one, created under an anchor (the
-        # parent's complex at the scale above complex_levels' first); a new complex is k, numbered -2 - k until created
-        anchor_scale = int(new.complex_levels[0][0]) - 1 if new.new_complex.any() else None
+        if new.complexes is not None:
+            complex_vids = self._create_complexes(g, new.complexes)
+            complex_of = np.where(new.complex >= 0, new.complex, complex_vids[np.maximum(-1 - new.complex, 0)])
+        else:
+            complex_vids = np.zeros(0, dtype=np.int64)
+            complex_of = self._complexes_by_levels(g, new, n)
+        first = g._id + 1
+        vids = np.arange(first, first + n, dtype=np.int64)
+        parents = np.where(outer, new.parent, vids[np.clip(-1 - new.parent, 0, n - 1)])
+        node_scale = g.scale(int(known[0])) if known.size else g.scales.SubOrgan
+        topo_parents = [None if is_root else int(p) for p, is_root in zip(parents.tolist(), root.tolist())]
+        created = g.add_components_bulk(complex_of.tolist(), n, topo_parents=topo_parents, scale=node_scale,
+                                        edge_type=new.edge.tolist(), label=new.label.tolist(), isanchor=False)
+        assert created[0] == first
+        ds.update_topology()
+        self.topology_updates = getattr(self, "topology_updates", 0) + 1
+        index = ds.index_of(vids)
+        for name, values in new.values.items():
+            if not ds.has(name):
+                raise KeyError(f"NewNodes: '{name}' is not a variable of the DataStructure")
+            current = np.array(ds.get(name))
+            current[index] = values
+            ds.set(name, current)
+        if new.complexes is not None and new.complexes.values:
+            scale_names = {value: name for name, value in vars(type(g.scales)).items() if isinstance(value, int)
+                           and not name.startswith("_")}
+            for name, values in new.complexes.values.items():
+                if not ds.has(name):
+                    raise KeyError(f"NewComplexes: '{name}' is not a variable of the DataStructure")
+                location = ds.location(name)
+                these = np.array([scale_names.get(int(scale)) == location for scale in new.complexes.scale])
+                if not these.any():
+                    raise ValueError(f"NewComplexes: '{name}' is at {location}, no new complex is")
+                current = np.array(ds.get(name))
+                current[ds.index_of(complex_vids[these], location=location)] = np.broadcast_to(
+                    np.asarray(values), (len(new.complexes),))[these]
+                ds.set(name, current)
+        if before is not None:
+            self._repartition(*before)
+        return vids
+
+    @staticmethod
+    def _create_complexes(g, complexes: NewComplexes) -> np.ndarray:
+        """The vids of the new complexes, created in bulk, generation by generation (an anchor before its
+        components)."""
+        n = len(complexes)
+        vids = np.full(n, -1, dtype=np.int64)
+        while (vids < 0).any():
+            anchors = np.where(complexes.anchor >= 0, complexes.anchor, vids[np.maximum(-1 - complexes.anchor, 0)])
+            ready = (vids < 0) & (anchors >= 0)
+            if not ready.any():
+                raise ValueError("NewComplexes: an anchor is never created")
+            index = np.flatnonzero(ready)
+            vids[index] = g.add_components_bulk(anchors[index].tolist(), index.size, edge_type='/',
+                                                scale=complexes.scale[index].tolist(),
+                                                label=complexes.label[index].tolist(), isanchor=False)
+        return vids
+
+    @staticmethod
+    def _complexes_by_levels(g, new: NewNodes, n: int) -> np.ndarray:
+        """Each node's complex by new_complex / complex_levels: its parent's, or a new chain of complex_levels."""
         complex_of = np.full(n, -1, dtype=np.int64)
+        # A new complex is created under an anchor (the parent's complex at the scale above complex_levels' first);
+        # the k-th is numbered -2 - k until created
+        anchor_scale = int(new.complex_levels[0][0]) - 1 if new.new_complex.any() else None
         anchor_of = {}                                  # a new node's anchor, when its complex is a new one
         anchors = []
         for i in range(n):
@@ -861,25 +960,7 @@ class StructuralComponent(DataStructureComponent):
             created = np.asarray(created, dtype=np.int64)
             pending = complex_of <= -2
             complex_of[pending] = created[-2 - complex_of[pending]]
-        first = g._id + 1
-        vids = np.arange(first, first + n, dtype=np.int64)
-        parents = np.where(outer, new.parent, vids[np.maximum(-1 - new.parent, 0)])
-        node_scale = g.scale(int(known[0])) if known.size else g.scales.SubOrgan
-        created = g.add_components_bulk(complex_of.tolist(), n, topo_parents=parents.tolist(), scale=node_scale,
-                                        edge_type=new.edge.tolist(), label=new.label.tolist(), isanchor=False)
-        assert created[0] == first
-        ds.update_topology()
-        self.topology_updates = getattr(self, "topology_updates", 0) + 1
-        index = ds.index_of(vids)
-        for name, values in new.values.items():
-            if not ds.has(name):
-                raise KeyError(f"NewNodes: '{name}' is not a variable of the DataStructure")
-            current = np.array(ds.get(name))
-            current[index] = values
-            ds.set(name, current)
-        if before is not None:
-            self._repartition(*before)
-        return vids
+        return complex_of
 
     def _repartition(self, weight_before: dict, active_before: dict) -> None:
         """

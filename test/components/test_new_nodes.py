@@ -9,7 +9,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from openalea.metafspm.coupling.component import NewNodes, StructuralComponent, state_variable
+from openalea.metafspm.coupling.component import NewComplexes, NewNodes, StructuralComponent, state_variable
 from openalea.metafspm.data_structure.configs import ScalesConfig as scales
 from openalea.metafspm.data_structure.data_api import MPGDataStructure
 from openalea.metafspm.scene.population import build_population
@@ -157,3 +157,100 @@ def test_the_batch_is_checked():
         NewNodes(parent=[5], new_complex=True)
     with pytest.raises(ValueError, match="'<' or '\\+'"):
         NewNodes(parent=[5], edge="/")
+
+
+@dataclass
+class Phytomers(StructuralComponent):
+    """On each tip: a Phytomer holding two Organs (explicit complexes, under the tip's GrowthUnit), each with two
+    elements; the first element branched (+) on the tip, the others chained (<). The Organs get a diameter."""
+    struct_mass: float = state_variable(**DOC, initialize=0., scale=scales.SubOrgan, state_variable_type="extensive")
+    diameter: float = state_variable(**DOC, initialize=-1., scale=scales.Organ, state_variable_type="descriptor")
+
+    @segmentation
+    def _struct_mass(self, struct_mass) -> tuple[float, str, NewNodes]:
+        ds = self.data_structure
+        g, labels = ds._mtg, ds._mtg.labels
+        tips = ds.entity_ids("node")[ds.tips()]
+        units = [g.complex_at_scale(int(t), scales.GrowthUnit) for t in tips]
+        anchor, scale, label, diameter = [], [], [], []
+        parent, complex_of = [], []
+        for k, (tip, unit) in enumerate(zip(tips.tolist(), units)):
+            base = len(anchor)
+            anchor += [unit, -1 - base, -1 - base]
+            scale += [scales.Phytomer, scales.Organ, scales.Organ]
+            label += [labels.Phytomer.Shoot, labels.Organ.StemInternode, labels.Organ.Leaf]
+            diameter += [0., 0.1 * (k + 1), 0.2 * (k + 1)]
+            first = len(parent)
+            parent += [tip, -1 - first, -1 - first, -1 - (first + 2)]
+            complex_of += [-1 - (base + 1), -1 - (base + 1), -1 - (base + 2), -1 - (base + 2)]
+        n = len(parent)
+        new = NewNodes(parent=parent, edge=(["+", "<", "+", "<"] * len(tips))[:n],
+                       label=labels.SubOrgan.StemElement, values=dict(struct_mass=1.),
+                       complexes=NewComplexes(anchor=anchor, scale=scale, label=label,
+                                              values=dict(diameter=diameter)),
+                       complex=complex_of)
+        return struct_mass, "new_phytomers", new
+
+
+def test_explicit_complexes():
+    g, ds, _ = _population()
+    component = Phytomers(data_structure=ds)
+    tips = ds.entity_ids("node")[ds.tips()].tolist()
+    component()
+    s = g.scales
+    for tip in tips:
+        first = [c for c in g.children(tip) if g.edge_type(c) == "+"][0]
+        phytomer = g.complex_at_scale(first, s.Phytomer)
+        assert g.label(phytomer) == g.labels.Phytomer.Shoot
+        assert g.complex(phytomer) == g.complex_at_scale(tip, s.GrowthUnit)
+        organs = g.components(phytomer)
+        assert [g.label(o) for o in organs] == [g.labels.Organ.StemInternode, g.labels.Organ.Leaf]
+        assert all(len(g.components(o)) == 2 for o in organs)
+    diameters = dict(zip(ds.entity_ids("Organ").tolist(), np.asarray(ds.get("diameter")).tolist()))
+    new_organs = [g.complex_at_scale(c, s.Organ) for tip in tips for c in g.children(tip) if g.edge_type(c) == "+"]
+    assert sorted(diameters[o] for o in new_organs) == pytest.approx(sorted(0.1 * (k + 1) for k in range(len(tips))))
+    rebuilt = MPGDataStructure(g, from_scale=g.scales.SubOrgan)
+    assert ds.parents().tolist() == rebuilt.parents().tolist()
+
+
+@dataclass
+class NewAxis(StructuralComponent):
+    """A new Axis (and its GrowthUnit, Phytomer, Organ) on the first plant, its first element without parent."""
+    struct_mass: float = state_variable(**DOC, initialize=0., scale=scales.SubOrgan, state_variable_type="extensive")
+
+    @segmentation
+    def _struct_mass(self, struct_mass) -> tuple[float, str, NewNodes]:
+        ds = self.data_structure
+        g, labels = ds._mtg, ds._mtg.labels
+        plant = int(ds.entity_ids("Plant")[0])
+        complexes = NewComplexes(anchor=[plant, -1, -2, -3], scale=[scales.Axis, scales.GrowthUnit, scales.Phytomer,
+                                                                     scales.Organ],
+                                 label=[labels.Axis.Shoot, labels.GrowthUnit.Shoot, labels.Phytomer.Shoot,
+                                        labels.Organ.StemInternode])
+        new = NewNodes(parent=[NewNodes.NO_PARENT, -1], edge="<", label=labels.SubOrgan.StemElement,
+                       complexes=complexes, complex=[-4, -4], values=dict(struct_mass=7.5))
+        return struct_mass, "new_axis", new
+
+
+def test_a_root_node_in_a_new_axis():
+    g, ds, _ = _population()
+    n_before = ds.n_nodes()
+    NewAxis(data_structure=ds)()
+    assert ds.n_nodes() == n_before + 2
+    is_new = np.asarray(ds.get("struct_mass")) == 7.5            # (a new root rebuilds the graph: any order)
+    new = sorted(ds.entity_ids("node")[is_new].tolist())
+    assert len(new) == 2 and g.parent(new[0]) is None and g.parent(new[1]) == new[0]
+    owner = np.asarray(ds.entity_ids("Plant"))[ds.owner("Plant")]
+    assert (owner[is_new] == ds.entity_ids("Plant")[0]).all()
+    rebuilt = MPGDataStructure(g, from_scale=g.scales.SubOrgan)
+    assert ds.entity_ids("node").tolist() == rebuilt.entity_ids("node").tolist()
+    assert ds.parents().tolist() == rebuilt.parents().tolist()
+
+
+def test_the_complexes_are_checked():
+    with pytest.raises(ValueError, match="before it"):
+        NewComplexes(anchor=[-2, 5], scale=5, label=1)
+    with pytest.raises(ValueError, match="go together"):
+        NewNodes(parent=[5], complex=[0])
+    with pytest.raises(ValueError, match="not in complexes"):
+        NewNodes(parent=[5], complexes=NewComplexes(anchor=[3], scale=5, label=1), complex=[-3])
