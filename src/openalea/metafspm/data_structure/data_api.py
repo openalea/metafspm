@@ -1626,10 +1626,21 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
     _default_location = "node"
 
     def _coarse_scale_names(self) -> list:
-        """Names of the biological scales coarser than the nodes (possible locations of aggregated variables)."""
+        """Names of the biological scales coarser than the nodes (possible locations of aggregated variables); cached
+        (per node scale, and per topology in anatomy mode), as every variable lookup asks."""
         node_scale = self._node_scale()
         if node_scale is None:
             return []
+        anatomy = getattr(self, "_anatomy", False)
+        key = (node_scale, self.topology_version, len(self._idx_to_vid)) if anatomy else (node_scale,)
+        cache = self.__dict__.get("_coarse_scale_names_cache")
+        if cache is not None and cache[0] == key:
+            return cache[1]
+        names = self._coarse_scale_names_uncached(node_scale)
+        self.__dict__["_coarse_scale_names_cache"] = (key, names)
+        return names
+
+    def _coarse_scale_names_uncached(self, node_scale) -> list:
         scales = self._mtg.scales
         if getattr(self, "_anatomy", False):
             # The scales up to from_scale, and those between it and the Compartments that own nodes (Layer, Cell)
@@ -2271,6 +2282,7 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
             store.clear()
 
         meta = self._variable_meta()
+        stores = self._var_stores()
         for location, (old_keys, variables) in old.items():
             keys = np.asarray(self.entity_ids(location), dtype=np.int64)
             order = np.argsort(old_keys, kind="stable")
@@ -2279,8 +2291,15 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
                 policy = meta.get(name, {"default": 0., "on_grow": "default"})
                 values = self._carry_over(_KeyedValues(old_keys[order], array[order], matched=(keys, *matched)),
                                           keys, policy)
-                self.register(name, values, location=location, default=policy["default"], on_grow=policy["on_grow"],
-                              dtype=policy.get("dtype", float), shape=policy.get("shape") or ())
+                dtype = _canonical_dtype(policy.get("dtype", float))
+                if dtype is object or name not in meta:
+                    self.register(name, values, location=location, default=policy["default"],
+                                  on_grow=policy["on_grow"], dtype=dtype, shape=policy.get("shape") or ())
+                else:
+                    # The carried values have the variable's shape: stored as they are (register's checks are its
+                    # first registration's), its metadata kept
+                    stores[location][name] = values if values.dtype == dtype else values.astype(dtype)
+                    self.mark_written(name)
             stored_ids[location] = keys
         self._bump_version()
 
