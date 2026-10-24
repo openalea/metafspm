@@ -747,6 +747,26 @@ class StructuralComponent(DataStructureComponent):
         """
         raise NotImplementedError(f"{cls.__name__} does not initiate plants")
 
+    def triangles(self, where=None):
+        """
+        The triangles of the elements (coupling.geometry.Triangles: vertices in the scene's frame, each one's node
+        index), for light models and display; *where*: a node mask restricting them. By default, for segment models
+        (variables x1, y1, z1, x2, y2, z2 and radius on the elements): a slim cylinder per segment of nonzero length.
+        A component with its own shapes (blades, ...) overrides it.
+        """
+        from openalea.metafspm.coupling.geometry import Triangles, segment_triangles
+        ds = self.data_structure
+        names = ("x1", "y1", "z1", "x2", "y2", "z2", "radius")
+        if not all(ds.has(name) for name in names):
+            raise NotImplementedError(f"{type(self).__name__} has no segments (x1 … z2, radius) to triangulate: "
+                                      f"its triangles() is to be defined")
+        x1, y1, z1, x2, y2, z2, radius = (np.asarray(ds.get(name), dtype=float) for name in names)
+        nodes = np.arange(x1.size) if where is None else np.flatnonzero(where)
+        start = np.stack([x1[nodes], y1[nodes], z1[nodes]], axis=1)
+        end = np.stack([x2[nodes], y2[nodes], z2[nodes]], axis=1)
+        vertices, drawn = segment_triangles(start, end, radius[nodes])
+        return Triangles(vertices[drawn].reshape(-1, 3, 3), np.repeat(nodes[drawn], vertices.shape[1]))
+
     def _mpg_signature(self) -> tuple:
         """Cheap topology signature of the MPG: vertex count and last allocated vertex id."""
         g = self.mtg

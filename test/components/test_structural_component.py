@@ -2,12 +2,17 @@
 StructuralComponent: MPG-style and array-style steps,
 the synchronisation of the DataStructure around MPG-style steps, and topology updates only when the MPG changed.
 """
+from dataclasses import dataclass
+
 import numpy as np
 import pytest
 
 from openalea.metafspm.coupling.choregrapher import Choregrapher
 
-from growth import SEGMENT_LENGTH, CarbonProbe, RootGrowthProbe, make_chain
+from openalea.metafspm.coupling.component import state_variable
+from openalea.metafspm.data_structure.configs import ScalesConfig as scales
+
+from growth import DOC, SEGMENT_LENGTH, CarbonProbe, RootGrowthProbe, make_chain
 
 
 
@@ -96,3 +101,30 @@ def test_the_owner_of_a_variable_sets_its_growth_policy(plant):
     meta = ds._variable_meta()["C_hexose_root"]
     assert (meta["variable_type"], meta["on_grow"], meta["kind"]) == ("state_variable", "inherit",
                                                                       "massic_concentration")
+
+
+@dataclass
+class _SegmentsProbe(RootGrowthProbe):
+    x1: float = state_variable(**DOC, initialize=0., scale=scales.SubOrgan, state_variable_type="descriptor")
+    y1: float = state_variable(**DOC, initialize=0., scale=scales.SubOrgan, state_variable_type="descriptor")
+    z1: float = state_variable(**DOC, initialize=0., scale=scales.SubOrgan, state_variable_type="descriptor")
+    x2: float = state_variable(**DOC, initialize=0., scale=scales.SubOrgan, state_variable_type="descriptor")
+    y2: float = state_variable(**DOC, initialize=0., scale=scales.SubOrgan, state_variable_type="descriptor")
+    z2: float = state_variable(**DOC, initialize=0., scale=scales.SubOrgan, state_variable_type="descriptor")
+
+
+def test_default_triangles_are_the_segments_cylinders():
+    Choregrapher().reset()
+    _, ds, _ = make_chain()
+    with pytest.raises(NotImplementedError):
+        RootGrowthProbe(data_structure=ds).triangles()
+    Choregrapher().reset()
+    _, ds, _ = make_chain()
+    model = _SegmentsProbe(data_structure=ds)
+    ds.set("z1", np.array([0., -1., -2.]))
+    ds.set("z2", np.array([-1., -2., -2.]))                     # the last one of zero length: no triangles
+    triangles = model.triangles()
+    assert triangles.owner.tolist() == [0] * 8 + [1] * 8
+    assert triangles.vertices[:8, :, 2].max() == pytest.approx(0.)
+    assert triangles.vertices[8:, :, 2].min() == pytest.approx(-2.)
+    assert model.triangles(where=np.array([False, True, True])).owner.tolist() == [1] * 8
