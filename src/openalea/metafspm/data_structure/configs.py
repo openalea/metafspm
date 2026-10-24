@@ -139,6 +139,10 @@ class LabelsConfig:
         Leaf: int = "Leaf"
         Flower: int = "Flower"
         Fruit: int = "Fruit"
+        Sheath: int = "Sheath"                      # a grass leaf's sheath (Adel's shoot)
+        Blade: int = "Blade"                        # a grass leaf's blade (lamina)
+        Peduncle: int = "Peduncle"
+        Ear: int = "Ear"
 
     class SubOrgan:
         scale = ScalesConfig.SubOrgan
@@ -146,6 +150,7 @@ class LabelsConfig:
         StemElement: int = "StemElement"
         RootSegment: int = "RootSegment"
         RootApex: int = "RootApex"                  # a root axis' tip, a SubOrgan of its own (rhizodep's apex)
+        HiddenElement: int = "HiddenElement"        # the part of a shoot organ hidden in the sheaths' tube (Adel's)
 
     class Layer:
         scale = ScalesConfig.Layer
