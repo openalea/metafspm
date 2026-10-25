@@ -14,6 +14,7 @@ segment_triangles.
 
 The turtle's frame operations follow PlantGL's PglTurtle (the same angles in degrees, the same senses), for models
 placing their elements as PlantGL would, without it: a frame is its heading H and its up U, its left L = U × H.
+follow_parents places elements that each start from their parent's end (roots, segments), with PlantGL's tropism.
 """
 from dataclasses import dataclass
 from math import cos, radians, sin, sqrt
@@ -157,3 +158,49 @@ def roll_to_vertical(heading, up):
     norm = sqrt(left[0] ** 2 + left[1] ** 2)
     left = left / norm if norm > 1e-12 else np.array([0., -1., 0.])
     up[:] = _cross(heading, left)
+
+
+@njit(cache=True)
+def follow_parents(order, parent, base_position, base_heading, base_up, pre_roll, down_angle, roll, elasticity, length,
+                   tropism):
+    """
+    Elements placed from their parent's end, as PlantGL's turtle draws a tree of segments: per element, from its
+    parent's end frame (from its *base_* position, heading and up when it has no parent, *parent* -1):
+      1. rollL(*pre_roll*) (°);
+      2. down(*down_angle*) (°);
+      3. rollL(*roll*) (°);
+      4. the tropism: the frame turned about H × *tropism* by *elasticity* times the angle between H and *tropism*
+         (PglTurtle.F's, whatever the length; none for a zero length, as F(0));
+      5. forward by *length*.
+    *order*: a pre-order of the elements (a parent before its children, e.g. ds.order("pre")); *parent*: each one's
+    parent's index, -1 for none; per element arrays, base_* (n, 3). Returns (position, heading, up, end), each (n, 3):
+    the element's start, its frame after the tropism (the one it is drawn in, and its children start from), its end.
+    """
+    n = parent.size
+    position, heading, up, end = np.zeros((n, 3)), np.zeros((n, 3)), np.zeros((n, 3)), np.zeros((n, 3))
+    norm_tropism = sqrt(tropism[0] ** 2 + tropism[1] ** 2 + tropism[2] ** 2)
+    target = tropism / norm_tropism if norm_tropism > 0. else tropism
+    for i in order:
+        k = parent[i]
+        if k < 0:
+            p, h, u = base_position[i].copy(), base_heading[i].copy(), base_up[i].copy()
+        else:
+            p, h, u = end[k].copy(), heading[k].copy(), up[k].copy()
+        if pre_roll[i] != 0.:
+            roll_right(h, u, -pre_roll[i])
+        if down_angle[i] != 0.:
+            down(h, u, down_angle[i])
+        if roll[i] != 0.:
+            roll_right(h, u, -roll[i])
+        if elasticity[i] != 0. and norm_tropism > 0. and length[i] != 0.:
+            axis = _cross(h, target)
+            sine = sqrt(axis[0] ** 2 + axis[1] ** 2 + axis[2] ** 2)
+            if sine > 1e-12:
+                cosine = min(1., max(-1., h[0] * target[0] + h[1] * target[1] + h[2] * target[2]))
+                angle = elasticity[i] * np.arccos(cosine)
+                axis = axis / sine
+                h[:] = _rotate(h, axis, angle)
+                u[:] = _rotate(u, axis, angle)
+        position[i], heading[i], up[i] = p, h, u
+        end[i] = p + h * length[i]
+    return position, heading, up, end
