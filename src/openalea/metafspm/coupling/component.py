@@ -74,11 +74,12 @@ def declare(unit: str, unit_comment: str, description: str, min_value: float, ma
     return field(default=default, metadata=metadata)
 
 
-def input_variable(unit: str, unit_comment: str, description: str, min_value: float,
-                   max_value: float, value_comment: str, references: str, DOI: list,
-                   by: str, initialize=None, scale=None, edge_mapping=None, on_grow="default",
+def input_variable(unit: str = "", unit_comment: str = "", description: str = "", min_value: float = "",
+                   max_value: float = "", value_comment: str = "", references: str = "", DOI: list = "",
+                   by: str = None, initialize=None, scale=None, edge_mapping=None, on_grow="default",
                    location=None, mapping=None, weight=None, state_variable_type=None, dtype=None, shape=None):
-    """Declare an input field — a variable driven by another model component.
+    """Declare an input field — a variable driven by another model component (*by*). The documentation fields are
+    keywords, *unit* and *description* at least: `input_variable(unit="m", description="...", by="Growth", ...)`.
 
     When the component is run in isolation (not coupled), the field keeps
     *initialize* as its uniform default everywhere.
@@ -97,8 +98,8 @@ def input_variable(unit: str, unit_comment: str, description: str, min_value: fl
     )
 
 
-def state_variable(unit: str, unit_comment: str, description: str, min_value: float,
-                   max_value: float, value_comment: str, references: str, DOI: list,
+def state_variable(unit: str = "", unit_comment: str = "", description: str = "", min_value: float = "",
+                   max_value: float = "", value_comment: str = "", references: str = "", DOI: list = "",
                    state_variable_type: Literal[
                        "massic_concentration", "intensive", "extensive",
                        "NonInertialExtensive", "NonInertialIntensive", "descriptor"
@@ -106,7 +107,8 @@ def state_variable(unit: str, unit_comment: str, description: str, min_value: fl
                    initialize=None, scale=None, by: str = None,
                    edge_mapping=None, on_grow="default", location=None, mapping=None, weight=None, dtype=None,
                    shape=None):
-    """Declare a prognostic state variable solved or integrated by this component.
+    """Declare a prognostic state variable solved or integrated by this component. The documentation fields are
+    keywords, *unit* and *description* at least.
 
     :param state_variable_type: Thermodynamic / extensive classification.
     :param scale:               "node" | "edge" (graph), biological scale integer,
@@ -127,11 +129,12 @@ def state_variable(unit: str, unit_comment: str, description: str, min_value: fl
     )
 
 
-def parameter(unit: str, unit_comment: str, description: str, min_value: float,
-              max_value: float, value_comment: str, references: str, DOI: list,
-              by: str, default=None, scale=None, state_variable_type=None,
+def parameter(unit: str = "", unit_comment: str = "", description: str = "", min_value: float = "",
+              max_value: float = "", value_comment: str = "", references: str = "", DOI: list = "",
+              by: str = None, default=None, scale=None, state_variable_type=None,
               edge_mapping=None, on_grow="default", location=None, mapping=None, weight=None, dtype=None):
-    """Declare a model parameter — a constant whose value is set at construction.
+    """Declare a model parameter — a constant whose value is set at construction. The documentation fields are
+    keywords, *unit* and *description* at least.
 
     Parameters are not prognostic; they are read by model equations but never
     written back.  Marking them with *scale* tells FunctionalComponent where
@@ -280,6 +283,12 @@ class Component:
         """Refresh the inputs derived by the coupling; FunctionalComponent implements it on its DataStructure."""
         pass
 
+    def run_stage(self, stage: str):
+        """Run once only the steps of one schedule row (*stage*: "potential", "segmentation", "postsegmentation",
+        "rate", ...), after pulling the inputs."""
+        self.pull_available_inputs()
+        self.choregrapher.run_stage(self, stage)
+
 
 @dataclass
 class DataStructureComponent(Component):
@@ -416,6 +425,30 @@ class DataStructureComponent(Component):
         for name in cls._plant_parameter_names:
             if name in self.__dict__:
                 pending[name] = self.__dict__.pop(name)
+
+    def parameter_value(self, name: str):
+        """The single value of parameter *name* for the population, outside steps (structural code, helpers); raises
+        when the plants' values differ (use parameter_values then)."""
+        values = np.asarray(self.data_structure.get(name))
+        if values.size == 0:
+            return getattr(type(self), name, None)
+        first = values.flat[0]
+        same = np.all(values == first) or (values.dtype.kind == "f" and np.isnan(first) and np.all(np.isnan(values)))
+        if not same:
+            raise ValueError(f"{type(self).__name__}.{name} differs between the plants ({np.unique(values)[:5]}...): "
+                             "use parameter_values(name, location)")
+        return first.item()
+
+    def cached(self, name: str, build, key=None):
+        """A value kept on the component: build() at the first call and again when *key* changes (by default the
+        DataStructure's topology version: values read from the structure)."""
+        key = self.data_structure.topology_version if key is None else key
+        store = self.__dict__.setdefault("_cached_values", {})
+        entry = store.get(name)
+        if entry is None or entry[0] != key:
+            entry = (key, build())
+            store[name] = entry
+        return entry[1]
 
     def parameter_values(self, name: str, location: str = "node") -> np.ndarray:
         """

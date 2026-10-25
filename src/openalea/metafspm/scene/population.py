@@ -1,7 +1,8 @@
 """
 A plant population in one MPG.
 
-  table = planting_table(...)                 one row per plant: position, rotation, model, scenario
+  table = planting_table(...)                 one row per plant: position, rotation, model, scenario (a random stand)
+  table = planting([Planting(x, y, z, rotation), ...], Model, parameters, plant_parameters)     given plants
   g, plants = build_population(table, initiators=(RootGrowth, ...))
   g.populate_graph(g.scales.SubOrgan); g.convert_properties_to_arraydict()
   ds = MPGDataStructure(g, from_scale=g.scales.SubOrgan)
@@ -19,12 +20,42 @@ model names in its __init__ (its own arguments) and those the initiators read. A
 """
 import inspect
 import random
+from dataclasses import dataclass
 
 import numpy as np
 import pandas as pd
 
 from openalea.metafspm.data_structure.configs import PropsConfig
 from openalea.metafspm.data_structure.mpg import MPG
+
+
+@dataclass
+class Planting:
+    """A plant to sow: its position (m; z is minus its sowing depth) and its rotation (°)."""
+    x: float = 0.
+    y: float = 0.
+    z: float = 0.
+    rotation: float = 0.
+
+
+def planting(plants, model, parameters: dict = None, plant_parameters: list = None, xrange: float = None,
+             yrange: float = None) -> pd.DataFrame:
+    """
+    The planting table of given *plants* ([Planting]), each a *model* with its scenario's *parameters* (shared) and
+    its own *plant_parameters* (one dict per plant, added to the shared ones). The stand's size (table.attrs xrange,
+    yrange) is the plants' extent (at least 0.1 m) unless given.
+    """
+    own = plant_parameters or [{}] * len(plants)
+    if len(own) != len(plants):
+        raise ValueError(f"planting: {len(own)} plant_parameters for {len(plants)} plants")
+    table = pd.DataFrame([dict(plant=f"p{k}", model=model, x=float(plant.x), y=float(plant.y), z=float(plant.z),
+                               rotation=float(plant.rotation),
+                               scenario={"parameters": dict(parameters or {}, **own[k])})
+                          for k, plant in enumerate(plants)])
+    xs, ys = table["x"].to_numpy(), table["y"].to_numpy()
+    table.attrs.update(xrange=xrange if xrange is not None else max(float(np.ptp(xs)), 0.1),
+                       yrange=yrange if yrange is not None else max(float(np.ptp(ys)), 0.1))
+    return table
 
 
 def planting_table(xrange: float, yrange: float, sowing_density: float, row_spacing: float, plant_models: list,

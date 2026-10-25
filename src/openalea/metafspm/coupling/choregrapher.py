@@ -1,3 +1,4 @@
+import ast
 from functools import partial
 
 
@@ -142,6 +143,22 @@ class Choregrapher(Singleton):
                 for functor in groups[step]:
                     functor()
         instance.__dict__["_clock"] = start
+
+
+    def run_stage(self, instance, stage: str):
+        """Run once the steps of component *instance* in the schedule row of *stage* ("potential", "segmentation",
+        "postsegmentation", "rate", ...), in their order: e.g. to update a structural component's postsegmentation
+        outputs after another model wrote its inputs."""
+        rows = [(row, schedule.index(stage) + 1) for row, schedule in enumerate(self.consensus_scheduling)
+                if stage in schedule]
+        if not rows:
+            raise ValueError(f"no schedule row has the stage '{stage}'")
+        row, position = rows[0]
+        _, groups = instance.__dict__["_choregraphy"]
+        for priority, functors in groups.items():
+            if ast.literal_eval(priority)[row] == position:
+                for functor in functors:
+                    functor()
 
 
 def family_of(cls) -> str:
