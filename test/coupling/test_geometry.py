@@ -3,8 +3,8 @@ PlantGL's PglTurtle."""
 import numpy as np
 import pytest
 
-from openalea.metafspm.coupling.geometry import (Triangles, down, left_of, place, roll_right, roll_to_vertical,
-                                                 segment_triangles, slim_cylinders, turn_left)
+from openalea.metafspm.coupling.geometry import (Triangles, down, follow_parents, left_of, place, roll_right,
+                                                 roll_to_vertical, segment_triangles, slim_cylinders, turn_left)
 
 
 def test_triangles_per_owner():
@@ -64,3 +64,53 @@ def test_frame_operations_as_plantgl(seed):
         assert heading == pytest.approx(list(turtle.getHeading()), abs=1e-9)
         assert up == pytest.approx(list(turtle.getUp()), abs=1e-9)
         assert left_of(heading, up) == pytest.approx(list(turtle.getLeft()), abs=1e-9)
+
+
+def test_follow_parents_as_pglturtle():
+    """A random tree of segments placed as PlantGL's turtle draws it (rhizodep's plot_mtg): from each parent's end,
+    rollL, down, rollL, the elasticity towards the tropism, F."""
+    pgl = pytest.importorskip("openalea.plantgl.all")
+    rng = np.random.default_rng(3)
+    n = 300
+    parent = np.array([-1] + [int(rng.integers(0, k)) for k in range(1, n)])
+    parent[rng.random(n) < 0.02] = -1                            # a few other bases
+    pre_roll = np.where(rng.random(n) < 0.3, rng.uniform(-180, 180, n), 0.)
+    down_angle, roll = rng.uniform(-90, 90, n), rng.uniform(-180, 180, n)
+    elasticity = np.where(rng.random(n) < 0.8, rng.uniform(0., 0.4, n), 0.)
+    length = np.where(rng.random(n) < 0.1, 0., rng.uniform(0., 0.02, n))
+    base_position = rng.uniform(-1, 1, (n, 3))
+    tropism = np.array([0., 0., -1.])
+    children = {k: [] for k in range(n)}
+    for i in range(1, n):
+        if parent[i] >= 0:
+            children[parent[i]].append(i)
+    order, stack = [], [i for i in range(n) if parent[i] < 0][::-1]
+    while stack:
+        i = stack.pop()
+        order.append(i)
+        stack.extend(children[i][::-1])
+    position, heading, up, end = follow_parents(
+        np.array(order), parent, base_position, np.tile([0., 0., -1.], (n, 1)), np.tile([-1., 0., 0.], (n, 1)),
+        pre_roll, down_angle, roll, elasticity, length, tropism)
+
+    turtle = pgl.PglTurtle()
+    turtle.tropism = tuple(tropism)
+    expected = {}
+    for i in order:
+        if parent[i] < 0:
+            start, h, u = pgl.Vector3(*base_position[i]), pgl.Vector3(0, 0, -1), pgl.Vector3(-1, 0, 0)
+        else:
+            start, h, u = expected[parent[i]]
+        turtle.move(start)
+        turtle.setHead(h, u)
+        if pre_roll[i]:
+            turtle.rollL(pre_roll[i])
+        turtle.down(down_angle[i])
+        turtle.rollL(roll[i])
+        turtle.elasticity = elasticity[i]
+        turtle.F(length[i])
+        assert list(turtle.getHeading()) == pytest.approx(heading[i], abs=1e-10)
+        assert list(turtle.getUp()) == pytest.approx(up[i], abs=1e-10)
+        assert list(turtle.getPosition()) == pytest.approx(end[i], abs=1e-10)
+        assert list(start) == pytest.approx(position[i], abs=1e-10)
+        expected[i] = (pgl.Vector3(turtle.getPosition()), turtle.getHeading(), turtle.getUp())
