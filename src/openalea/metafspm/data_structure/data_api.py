@@ -1069,9 +1069,9 @@ class MTGDataStructure(GraphDataStructure):
         return self._mtg
 
     @property
-    def topology(self):
+    def structure(self):
         """The MTG, to read the structure (labels, parents, complexes, components) without synchronising the
-        variables to it: read the variables with get()."""
+        variables to it: read the variables with get(). (topology() is the graph view.)"""
         return self._mtg
 
     @property

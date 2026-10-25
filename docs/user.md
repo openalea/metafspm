@@ -154,7 +154,7 @@ carbon()                                  # one time step: every step, in the sc
   schedule row only (e.g. after another model wrote the inputs they read).
 - **The MTG view.** By default (`mtg_sync = "lazy"`) the DataStructure is the reference and state variables reach the
   MTG when it is read (`ds.mtg`, `ds.flush_mtg()`), before an MPG-style step. `mtg_sync = "after_call"` writes them
-  after every call, `"never"` never. `ds.topology` is the MTG to read the structure only (labels, parents,
+  after every call, `"never"` never. `ds.structure` is the MTG to read the structure only (labels, parents,
   complexes), without that synchronisation.
 
 ## 3. Graph systems
@@ -247,7 +247,7 @@ def _new_segments(self, length, segment_length) -> dict:
     tips = np.flatnonzero(length > segment_length)
     return {"length": np.where(length > segment_length, length - segment_length, length),
             "new_segments": NewNodes(parent=self.data_structure.entity_ids("node")[tips], edge="<",
-                                     label=self.data_structure.topology.labels.SubOrgan.RootSegment,
+                                     label=self.data_structure.structure.labels.SubOrgan.RootSegment,
                                      values={"length": segment_length})}
 ```
 

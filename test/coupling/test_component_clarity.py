@@ -1,5 +1,5 @@
 """The plain forms of devplan_porting §16: named step outputs (a dict), declarations documented by keywords,
-parameter_value, cached, run_stage, ds.topology, planting; and display.draw."""
+parameter_value, cached, run_stage, ds.structure, planting; and display.draw."""
 from dataclasses import dataclass
 
 import numpy as np
@@ -87,6 +87,7 @@ def test_parameter_value_cached_and_run_stage():
     assert component.cached("thing", lambda: builds.append(1) or 7) == 7
     assert component.cached("thing", lambda: builds.append(1) or 8) == 7 and len(builds) == 1
     assert component.cached("thing", lambda: 9, key="another") == 9
+    assert ds.structure is ds._mtg                                  # the MTG, unsynchronised
     component.run_stage("postsegmentation")
     np.testing.assert_array_equal(ds.get("later"), 6.)
     np.testing.assert_array_equal(ds.get("double"), 0.)            # the rate step did not run
