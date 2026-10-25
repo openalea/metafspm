@@ -422,6 +422,14 @@ class MPG(MTG):
             return prop.order[:prop.size][prop.values_array() == scale].copy()
         return np.array(sorted(v for v, s in prop.items() if s == scale), dtype=np.int64)
 
+    def _as_arraydict(self, name) -> None:
+        """Property *name* as an ArrayDict when it is a plain dict of values: a property first written after the
+        conversion to ArrayDicts (e.g. the Connections' n_id_a of a plant that had a single element)."""
+        properties = self.properties()
+        prop = properties.get(name)
+        if isinstance(prop, dict) and not isinstance(prop, ArrayDict) and len(prop) > 0:
+            properties[name] = ArrayDict.from_items(list(prop.keys()), list(prop.values()))
+
     def _property_at(self, name, vids) -> tuple:
         """(the vertices of sorted *vids* having property *name*, their values)."""
         prop, vids = self.property(name), np.asarray(vids, dtype=np.int64)
@@ -849,7 +857,11 @@ class MPG(MTG):
         maintains a sorted, deduplicated key invariant, which allows numpy to
         skip internal uniqueness checks and go straight to binary search.
         """
+        for property_name in [name, *(filter_in or {}), *(filter_out or {})]:
+            self._as_arraydict(property_name)
         prop = self.property(name)
+        if not isinstance(prop, ArrayDict):          # a property no vertex has (e.g. no Connection yet)
+            return np.array([], dtype=float)
         if filter_in is None and filter_out is None:
             return prop.values_array()
 
