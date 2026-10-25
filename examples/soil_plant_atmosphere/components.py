@@ -55,11 +55,6 @@ AIR_WATER_POTENTIAL = float(air_water_potential(0.5, 20.))          # about -93.
 VAPOUR_FACTOR = float(vapour_factor(20.))
 
 
-def _doc(unit, description, lower=-1e9, upper=1e9):
-    return dict(unit=unit, unit_comment="", description=description, min_value=lower, max_value=upper,
-                value_comment="", references="", DOI=[])
-
-
 # ═══════════════════════════════════════════════════════════════════════════════
 # The water transport: in the plants and in the soil
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -71,31 +66,32 @@ class PlantWaterTransport(FunctionalComponent):
     and axial junctions) the edges. Water enters at the root epidermis from the soil and leaves at the stomatal
     cavities to the air.
     """
-    water_potential: float = state_variable(**_doc("MPa", "Water potential of a Compartment."), initialize=-0.1,
-                                            scale=scales.Compartment, state_variable_type="intensive")
-    water_flux: float = state_variable(**_doc("mm3 s-1", "Flux through a Connection, from n_id_a to n_id_b."),
+    water_potential: float = state_variable(unit="MPa", description="Water potential of a Compartment.",
+                                            initialize=-0.1, scale=scales.Compartment, state_variable_type="intensive")
+    water_flux: float = state_variable(unit="mm3 s-1", description="Flux through a Connection, from n_id_a to n_id_b.",
                                        initialize=0., scale=scales.Connection, state_variable_type="extensive")
-    conductance: float = input_variable(**_doc("mm3 s-1 MPa-1", "Hydraulic conductance of a Connection."),
+    conductance: float = input_variable(unit="mm3 s-1 MPa-1", description="Hydraulic conductance of a Connection.",
                                         by="SeedlingStructure", initialize=0., scale=scales.Connection,
                                         state_variable_type="intensive")
-    air_water_potential: float = parameter(**_doc("MPa", "Water potential of the air (a constant input)."),
+    air_water_potential: float = parameter(unit="MPa", description="Water potential of the air (a constant input).",
                                            by="PlantWaterTransport", default=AIR_WATER_POTENTIAL)
-    vapour_conductance: float = input_variable(**_doc("mm3 s-1 MPa-1", "Liquid-vapour conductance of a stomatal "
-                                                      "cavity."), by="SeedlingStructure", initialize=0.,
-                                               scale=scales.Compartment, state_variable_type="intensive")
-    is_evaporating: float = input_variable(**_doc("-", "1 at the stomatal cavities."), by="SeedlingStructure",
+    vapour_conductance: float = input_variable(unit="mm3 s-1 MPa-1",
+                                               description="Liquid-vapour conductance of a stomatal cavity.",
+                                               by="SeedlingStructure", initialize=0., scale=scales.Compartment,
+                                               state_variable_type="intensive")
+    is_evaporating: float = input_variable(unit="-", description="1 at the stomatal cavities.", by="SeedlingStructure",
                                            initialize=0., scale=scales.Compartment, state_variable_type="descriptor")
-    soil_water_potential: float = input_variable(**_doc("MPa", "Water potential of the soil around the root."),
+    soil_water_potential: float = input_variable(unit="MPa", description="Water potential of the soil around the root.",
                                                  by="SoilWaterTransport", initialize=0., scale=scales.Compartment,
                                                  state_variable_type="intensive")
-    soil_contact_conductance: float = input_variable(**_doc("mm3 s-1 MPa-1", "Root-soil conductance."),
+    soil_contact_conductance: float = input_variable(unit="mm3 s-1 MPa-1", description="Root-soil conductance.",
                                                      by="SeedlingStructure", initialize=0., scale=scales.Compartment,
                                                      state_variable_type="intensive")
-    is_soil_contact: float = input_variable(**_doc("-", "1 at the root epidermis."), by="SeedlingStructure",
+    is_soil_contact: float = input_variable(unit="-", description="1 at the root epidermis.", by="SeedlingStructure",
                                             initialize=0., scale=scales.Compartment, state_variable_type="descriptor")
-    root_uptake: float = state_variable(**_doc("mm3 s-1", "Water entering the root epidermis from the soil."),
+    root_uptake: float = state_variable(unit="mm3 s-1", description="Water entering the root epidermis from the soil.",
                                         initialize=0., scale=scales.Compartment, state_variable_type="extensive")
-    evaporation: float = state_variable(**_doc("mm3 s-1", "Water leaving a stomatal cavity to the air."),
+    evaporation: float = state_variable(unit="mm3 s-1", description="Water leaving a stomatal cavity to the air.",
                                         initialize=0., scale=scales.Compartment, state_variable_type="extensive")
 
     @graph_system(node_unknowns=["water_potential"], edge_unknowns=["water_flux"], solver=NewtonSolver, max_iter=20,
@@ -138,31 +134,34 @@ class SoilWaterTransport(FunctionalComponent):
     the water table, through the grid's bottom face, leaves at the surface to the air, and is taken up by the
     plants' roots.
     """
-    water_potential: float = state_variable(**_doc("MPa", "Water potential of a cell."), initialize=-0.1,
+    water_potential: float = state_variable(unit="MPa", description="Water potential of a cell.", initialize=-0.1,
                                             location="cell", state_variable_type="intensive")
-    water_flux: float = state_variable(**_doc("mm3 s-1", "Flux through a face, towards increasing coordinates."),
+    water_flux: float = state_variable(unit="mm3 s-1",
+                                       description="Flux through a face, towards increasing coordinates.",
                                        initialize=0., location="edge", state_variable_type="extensive")
-    conductance: float = input_variable(**_doc("mm3 s-1 MPa-1", "Hydraulic conductance of a face."),
+    conductance: float = input_variable(unit="mm3 s-1 MPa-1", description="Hydraulic conductance of a face.",
                                         by="SoilStructure", initialize=0., location="edge",
                                         state_variable_type="intensive")
-    air_water_potential: float = parameter(**_doc("MPa", "Water potential of the air (a constant input)."),
+    air_water_potential: float = parameter(unit="MPa", description="Water potential of the air (a constant input).",
                                            by="SoilWaterTransport", default=AIR_WATER_POTENTIAL, location="cell")
-    vapour_conductance: float = input_variable(**_doc("mm3 s-1 MPa-1", "Liquid-vapour conductance of a surface "
-                                                      "cell."), by="SoilStructure", initialize=0., location="cell",
+    vapour_conductance: float = input_variable(unit="mm3 s-1 MPa-1",
+                                               description="Liquid-vapour conductance of a surface cell.",
+                                               by="SoilStructure", initialize=0., location="cell",
                                                state_variable_type="intensive")
-    is_evaporating: float = input_variable(**_doc("-", "1 at the surface."), by="SoilStructure", initialize=0.,
+    is_evaporating: float = input_variable(unit="-", description="1 at the surface.", by="SoilStructure", initialize=0.,
                                            location="cell", state_variable_type="descriptor")
-    is_water_table: float = input_variable(**_doc("-", "1 at the water table."), by="SoilStructure", initialize=0.,
-                                           location="cell", state_variable_type="descriptor")
-    water_table_potential: float = parameter(**_doc("MPa", "Water potential at the water table."),
+    is_water_table: float = input_variable(unit="-", description="1 at the water table.", by="SoilStructure",
+                                           initialize=0., location="cell", state_variable_type="descriptor")
+    water_table_potential: float = parameter(unit="MPa", description="Water potential at the water table.",
                                              by="SoilWaterTransport", default=0., location="cell")
-    water_table_conductance: float = input_variable(**_doc("mm3 s-1 MPa-1", "Conductance between a bottom cell's "
-                                                           "centre and the water table."), by="SoilStructure",
+    water_table_conductance: float = input_variable(unit="mm3 s-1 MPa-1", description="Conductance between a bottom "
+                                                                                      "cell's centre and the water "
+                                                                                      "table.", by="SoilStructure",
                                                     initialize=0., location="cell", state_variable_type="intensive")
-    plant_uptake: float = input_variable(**_doc("mm3 s-1", "Water taken up by the plants from a cell."),
+    plant_uptake: float = input_variable(unit="mm3 s-1", description="Water taken up by the plants from a cell.",
                                          by="PlantWaterTransport", initialize=0., location="cell",
                                          state_variable_type="extensive")
-    evaporation: float = state_variable(**_doc("mm3 s-1", "Water leaving a surface cell to the air."),
+    evaporation: float = state_variable(unit="mm3 s-1", description="Water leaving a surface cell to the air.",
                                         initialize=0., location="cell", state_variable_type="extensive")
 
     @graph_system(node_unknowns=["water_potential"], edge_unknowns=["water_flux"], solver=NewtonSolver, max_iter=20,
@@ -218,59 +217,64 @@ class SeedlingStructure(StructuralComponent):
     edges k = k_axial / L (L between the two segments' centres).
     """
     # the conductances computed from the structure
-    k: float = state_variable(**_doc("mm3 s-1 MPa-1", "Hydraulic conductance of a Connection."), initialize=0.,
+    k: float = state_variable(unit="mm3 s-1 MPa-1", description="Hydraulic conductance of a Connection.", initialize=0.,
                               scale=scales.Connection, state_variable_type="intensive")
-    vapour_conductance: float = state_variable(**_doc("mm3 s-1 MPa-1", "Liquid-vapour conductance of a stomatal "
-                                                      "cavity."), initialize=0., scale=scales.Compartment,
-                                               state_variable_type="intensive")
-    soil_contact_conductance: float = state_variable(**_doc("mm3 s-1 MPa-1", "Root-soil conductance of the root "
-                                                            "epidermis."), initialize=0., scale=scales.Compartment,
+    vapour_conductance: float = state_variable(unit="mm3 s-1 MPa-1",
+                                               description="Liquid-vapour conductance of a stomatal cavity.",
+                                               initialize=0., scale=scales.Compartment, state_variable_type="intensive")
+    soil_contact_conductance: float = state_variable(unit="mm3 s-1 MPa-1",
+                                                     description="Root-soil conductance of the root epidermis.",
+                                                     initialize=0., scale=scales.Compartment,
                                                      state_variable_type="intensive")
     # the structure, read from the MPG (Compartment and Connection properties set by initiate_plant)
-    tissue: float = state_variable(**_doc("-", "Tissue code of a Compartment."), initialize=0.,
+    tissue: float = state_variable(unit="-", description="Tissue code of a Compartment.", initialize=0.,
                                    scale=scales.Compartment, state_variable_type="descriptor")
-    organ: float = state_variable(**_doc("-", "Organ code of a Compartment (root, stem, leaf)."), initialize=0.,
-                                  scale=scales.Compartment, state_variable_type="descriptor")
-    is_evaporating: float = state_variable(**_doc("-", "1 at the stomatal cavities."), initialize=0.,
+    organ: float = state_variable(unit="-", description="Organ code of a Compartment (root, stem, leaf).",
+                                  initialize=0., scale=scales.Compartment, state_variable_type="descriptor")
+    is_evaporating: float = state_variable(unit="-", description="1 at the stomatal cavities.", initialize=0.,
                                            scale=scales.Compartment, state_variable_type="descriptor")
-    evaporating_area: float = state_variable(**_doc("m2", "Leaf element area, at its stomatal cavity."),
+    evaporating_area: float = state_variable(unit="m2", description="Leaf element area, at its stomatal cavity.",
                                              initialize=0., scale=scales.Compartment, state_variable_type="extensive")
-    is_soil_contact: float = state_variable(**_doc("-", "1 at the root epidermis."), initialize=0.,
+    is_soil_contact: float = state_variable(unit="-", description="1 at the root epidermis.", initialize=0.,
                                             scale=scales.Compartment, state_variable_type="descriptor")
-    contact_length: float = state_variable(**_doc("m", "Root length in contact with the soil, at its epidermis."),
+    contact_length: float = state_variable(unit="m",
+                                           description="Root length in contact with the soil, at its epidermis.",
                                            initialize=0., scale=scales.Compartment, state_variable_type="extensive")
-    hydraulic_type: float = state_variable(**_doc("-", "Hydraulic type of a Connection."), initialize=0.,
+    hydraulic_type: float = state_variable(unit="-", description="Hydraulic type of a Connection.", initialize=0.,
                                            scale=scales.Connection, state_variable_type="descriptor")
-    conductance_length: float = state_variable(**_doc("m", "Length behind a Connection's conductance."),
+    conductance_length: float = state_variable(unit="m", description="Length behind a Connection's conductance.",
                                                initialize=0., scale=scales.Connection, state_variable_type="extensive")
     # segment geometry, read at the segments and seen by their Compartments (for the mapping onto the soil)
-    x1: float = state_variable(**_doc("m", ""), initialize=0., scale=scales.SubOrgan, location="node",
+    x1: float = state_variable(unit="m", description="", initialize=0., scale=scales.SubOrgan, location="node",
                                mapping="broadcast", state_variable_type="descriptor")
-    x2: float = state_variable(**_doc("m", ""), initialize=0., scale=scales.SubOrgan, location="node",
+    x2: float = state_variable(unit="m", description="", initialize=0., scale=scales.SubOrgan, location="node",
                                mapping="broadcast", state_variable_type="descriptor")
-    y1: float = state_variable(**_doc("m", ""), initialize=0., scale=scales.SubOrgan, location="node",
+    y1: float = state_variable(unit="m", description="", initialize=0., scale=scales.SubOrgan, location="node",
                                mapping="broadcast", state_variable_type="descriptor")
-    y2: float = state_variable(**_doc("m", ""), initialize=0., scale=scales.SubOrgan, location="node",
+    y2: float = state_variable(unit="m", description="", initialize=0., scale=scales.SubOrgan, location="node",
                                mapping="broadcast", state_variable_type="descriptor")
-    z1: float = state_variable(**_doc("m", ""), initialize=0., scale=scales.SubOrgan, location="node",
+    z1: float = state_variable(unit="m", description="", initialize=0., scale=scales.SubOrgan, location="node",
                                mapping="broadcast", state_variable_type="descriptor")
-    z2: float = state_variable(**_doc("m", ""), initialize=0., scale=scales.SubOrgan, location="node",
+    z2: float = state_variable(unit="m", description="", initialize=0., scale=scales.SubOrgan, location="node",
                                mapping="broadcast", state_variable_type="descriptor")
     # parameters, per plant
-    root_radial_k: float = parameter(**_doc("mm3 s-1 MPa-1 m-1", "Root radial conductance, per edge and length."),
+    root_radial_k: float = parameter(unit="mm3 s-1 MPa-1 m-1",
+                                     description="Root radial conductance, per edge and length.",
                                      by="SeedlingStructure", default=0.5)
-    stem_radial_k: float = parameter(**_doc("mm3 s-1 MPa-1 m-1", "Stem radial conductance, per edge and length."),
+    stem_radial_k: float = parameter(unit="mm3 s-1 MPa-1 m-1",
+                                     description="Stem radial conductance, per edge and length.",
                                      by="SeedlingStructure", default=0.1)
-    leaf_radial_k: float = parameter(**_doc("mm3 s-1 MPa-1 m-1", "Leaf radial conductance, per edge and length."),
+    leaf_radial_k: float = parameter(unit="mm3 s-1 MPa-1 m-1",
+                                     description="Leaf radial conductance, per edge and length.",
                                      by="SeedlingStructure", default=1.)
-    axial_k: float = parameter(**_doc("mm3 m s-1 MPa-1", "Xylem axial conductivity."), by="SeedlingStructure",
+    axial_k: float = parameter(unit="mm3 m s-1 MPa-1", description="Xylem axial conductivity.", by="SeedlingStructure",
                                default=0.1)
-    root_soil_k: float = parameter(**_doc("mm3 s-1 MPa-1 m-1", "Root-soil conductance per root length."),
+    root_soil_k: float = parameter(unit="mm3 s-1 MPa-1 m-1", description="Root-soil conductance per root length.",
                                    by="SeedlingStructure", default=0.5)
-    stomatal_conductance: float = parameter(**_doc("mol m-2 s-1", "Stomatal conductance to water vapour."),
+    stomatal_conductance: float = parameter(unit="mol m-2 s-1", description="Stomatal conductance to water vapour.",
                                             by="SeedlingStructure", default=0.2)
-    vapour_factor: float = parameter(**_doc("mm3 s-1 MPa-1 per (mol m-2 s-1 m2)",
-                                            "e_sat V_w² / (R T P): from a vapour conductance to a liquid one."),
+    vapour_factor: float = parameter(unit="mm3 s-1 MPa-1 per (mol m-2 s-1 m2)",
+                                     description="e_sat V_w² / (R T P): from a vapour conductance to a liquid one.",
                                      by="SeedlingStructure", default=VAPOUR_FACTOR)
 
     @classmethod
@@ -313,30 +317,33 @@ class SoilStructure(StructuralComponent):
     layer's bottom face is the water table (k_table = K A / (h/2)). Regular and adaptive grids alike (faces of unequal
     cells: their own A and d).
     """
-    k: float = state_variable(**_doc("mm3 s-1 MPa-1", "Hydraulic conductance of a face."), initialize=0.,
+    k: float = state_variable(unit="mm3 s-1 MPa-1", description="Hydraulic conductance of a face.", initialize=0.,
                               location="edge", state_variable_type="intensive")
-    vapour_conductance: float = state_variable(**_doc("mm3 s-1 MPa-1", "Liquid-vapour conductance of a surface "
-                                                      "cell."), initialize=0., location="cell",
-                                               state_variable_type="intensive")
-    is_evaporating: float = state_variable(**_doc("-", "1 at the surface."), initialize=0., location="cell",
+    vapour_conductance: float = state_variable(unit="mm3 s-1 MPa-1",
+                                               description="Liquid-vapour conductance of a surface cell.",
+                                               initialize=0., location="cell", state_variable_type="intensive")
+    is_evaporating: float = state_variable(unit="-", description="1 at the surface.", initialize=0., location="cell",
                                            state_variable_type="descriptor")
-    evaporating_area: float = state_variable(**_doc("m2", "Evaporating surface of a cell."), initialize=0.,
+    evaporating_area: float = state_variable(unit="m2", description="Evaporating surface of a cell.", initialize=0.,
                                              location="cell", state_variable_type="extensive")
-    water_table_area: float = state_variable(**_doc("m2", "Area of a bottom cell's face on the water table."),
+    water_table_area: float = state_variable(unit="m2", description="Area of a bottom cell's face on the water table.",
                                              initialize=0., location="cell", state_variable_type="extensive")
-    water_table_distance: float = state_variable(**_doc("m", "From a bottom cell's centre to the water table."),
+    water_table_distance: float = state_variable(unit="m",
+                                                 description="From a bottom cell's centre to the water table.",
                                                  initialize=1., location="cell", state_variable_type="descriptor")
-    K_sat: float = parameter(**_doc("mm3 m-1 s-1 MPa-1", "Hydraulic conductivity of a voxel."), by="SoilStructure",
-                             default=5., location="cell")
-    soil_surface_conductance: float = parameter(**_doc("mol m-2 s-1", "Vapour conductance of the soil surface."),
+    K_sat: float = parameter(unit="mm3 m-1 s-1 MPa-1", description="Hydraulic conductivity of a voxel.",
+                             by="SoilStructure", default=5., location="cell")
+    soil_surface_conductance: float = parameter(unit="mol m-2 s-1",
+                                                description="Vapour conductance of the soil surface.",
                                                 by="SoilStructure", default=0.005)
-    vapour_factor: float = parameter(**_doc("mm3 s-1 MPa-1 per (mol m-2 s-1 m2)",
-                                            "e_sat V_w² / (R T P): from a vapour conductance to a liquid one."),
+    vapour_factor: float = parameter(unit="mm3 s-1 MPa-1 per (mol m-2 s-1 m2)",
+                                     description="e_sat V_w² / (R T P): from a vapour conductance to a liquid one.",
                                      by="SoilStructure", default=VAPOUR_FACTOR)
-    is_water_table: float = state_variable(**_doc("-", "1 at the water table."), initialize=0., location="cell",
-                                           state_variable_type="descriptor")
-    water_table_conductance: float = state_variable(**_doc("mm3 s-1 MPa-1", "Conductance between a bottom cell's "
-                                                           "centre and the water table."), initialize=0.,
+    is_water_table: float = state_variable(unit="-", description="1 at the water table.", initialize=0.,
+                                           location="cell", state_variable_type="descriptor")
+    water_table_conductance: float = state_variable(unit="mm3 s-1 MPa-1", description="Conductance between a bottom "
+                                                                                      "cell's centre and the water "
+                                                                                      "table.", initialize=0.,
                                                     location="cell", state_variable_type="intensive")
 
     def __post_init__(self):
