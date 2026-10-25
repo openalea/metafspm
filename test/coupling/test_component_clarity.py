@@ -116,3 +116,10 @@ def test_draw():
     draw(axes, triangles, colors=value_colors(np.array([0., 1.])))
     assert len(axes.collections) == 1
     plt.close(figure)
+
+
+def test_declarations_and_schedule():
+    table = Named.declarations()
+    assert table.set_index("name").loc["length", ["kind", "unit", "by"]].tolist() == ["input", "m", "Test"]
+    assert table.set_index("name").loc["factor", "default"] == 3.
+    assert Named.schedule() == [(("postsegmentation",), ["_later"]), (("rate",), ["_measures"])]   # as they run
