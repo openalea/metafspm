@@ -16,6 +16,7 @@ class Functor:
         self.total = total
         self.input_names = self.inputs(self.fun)
         self.supplementary_outputs = int((self.num_outputs(fun) - 1) / 2)
+        self.returns_dict = self._annotated_dict(fun)
         if len(self.input_names) == 0:
             self.iterating = True
 
@@ -24,6 +25,12 @@ class Functor:
         arguments.remove("self")
         return arguments
     
+    @staticmethod
+    def _annotated_dict(func):
+        """Whether the step is annotated `-> dict` (its outputs named by the keys it returns)."""
+        returned = get_type_hints(func).get("return")
+        return returned is dict or get_origin(returned) is dict
+
     def num_outputs(self, func):
         """
         Convention: multiple outputs must be annotated as `-> tuple[...]`.
@@ -91,7 +98,9 @@ class Functor:
             shapes = [a.shape for a in args if a.ndim > 0]
             size = shapes[0][0] if shapes else 1
             per_element = [self.fun(instance, *(a if a.ndim == 0 else a[i] for a in args)) for i in range(size)]
-            if self.supplementary_outputs:
+            if per_element and isinstance(per_element[0], dict):
+                out = {name: np.asarray([values[name] for values in per_element]) for name in per_element[0]}
+            elif self.supplementary_outputs:
                 out = tuple(zip(*per_element))
                 out = (np.asarray(out[0]),) + tuple(
                     x[0] if k % 2 == 0 else np.asarray(x) for k, x in enumerate(out[1:]))
@@ -100,14 +109,19 @@ class Functor:
         return out
 
     def _write_outputs(self, instance, ds, out, args, mask, mask_location):
-        if self.supplementary_outputs and (not isinstance(out, tuple)
-                                           or len(out) != 2 * self.supplementary_outputs + 1):
-            given = len(out) if isinstance(out, tuple) else 1
-            raise ValueError(f"{self.class_name}.{self.name} returns {given} items, its annotation declares "
-                             f"{2 * self.supplementary_outputs + 1} (its own output, then name, values pairs)")
-        outputs = [(self.name, out[0] if self.supplementary_outputs else out)]
-        for s in range(self.supplementary_outputs):
-            outputs.append((out[2 * s + 1], out[2 * s + 2]))
+        if isinstance(out, dict):                       # named outputs: {name: values}
+            outputs = list(out.items())
+        elif self.returns_dict:
+            raise ValueError(f"{self.class_name}.{self.name} is annotated -> dict but returns {type(out).__name__}")
+        else:
+            if self.supplementary_outputs and (not isinstance(out, tuple)
+                                               or len(out) != 2 * self.supplementary_outputs + 1):
+                given = len(out) if isinstance(out, tuple) else 1
+                raise ValueError(f"{self.class_name}.{self.name} returns {given} items, its annotation declares "
+                                 f"{2 * self.supplementary_outputs + 1} (its own output, then name, values pairs)")
+            outputs = [(self.name, out[0] if self.supplementary_outputs else out)]
+            for s in range(self.supplementary_outputs):
+                outputs.append((out[2 * s + 1], out[2 * s + 2]))
         # Nodes created by the step (a NewNodes pair, StructuralComponent): the repartition's basis is taken before any
         # output is written, the nodes are created after the outputs on the existing ones
         from openalea.metafspm.coupling.component import NewNodes

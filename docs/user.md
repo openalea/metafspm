@@ -87,16 +87,17 @@ from openalea.metafspm.coupling.component import input_variable, parameter, stat
 from openalea.metafspm.data_structure.configs import ScalesConfig as scales
 from openalea.metafspm.solve.decorator import rate, state
 
-DOC = dict(unit="mol.g-1", unit_comment="", description="", min_value=0., max_value=1., value_comment="",
-           references="", DOI=[])
-
 @dataclass
 class RootCarbon(FunctionalComponent):
-    hexose: float = state_variable(**DOC, initialize=1e-3, scale=scales.SubOrgan,
-                                   state_variable_type="massic_concentration", on_grow="inherit")
-    exudation: float = state_variable(**DOC, initialize=0., scale=scales.SubOrgan, state_variable_type="extensive")
-    struct_mass: float = input_variable(**DOC, by="RootGrowth", initialize=0., scale=scales.SubOrgan)
-    exudation_rate: float = parameter(**DOC, by="RootCarbon", default=1e-6)
+    hexose: float = state_variable(unit="mol.g-1", description="The hexose concentration", initialize=1e-3,
+                                   scale=scales.SubOrgan, state_variable_type="massic_concentration",
+                                   on_grow="inherit")
+    exudation: float = state_variable(unit="mol.s-1", description="The hexose exuded", initialize=0.,
+                                      scale=scales.SubOrgan, state_variable_type="extensive")
+    struct_mass: float = input_variable(unit="g", description="The structural mass", by="RootGrowth",
+                                        initialize=0., scale=scales.SubOrgan)
+    exudation_rate: float = parameter(unit="g.s-1", description="The exudation's rate", by="RootCarbon",
+                                      default=1e-6)
 
     @rate
     def _exudation(self, hexose, struct_mass, exudation_rate):
@@ -115,18 +116,24 @@ carbon()                                  # one time step: every step, in the sc
   for a component that solves a steady state. A time step shorter than the simulation step makes the component
   run once per time step within it (900 s in a 3600 s scene: four runs per scene step, forcings read at the end
   of each). It must divide the simulation step a whole number of times.
-- **Declarations.** `scale=` places a variable at an MTG scale (its location follows from the graph), or
+- **Declarations.** Each is documented by keywords: `unit` and `description` at least, and optionally
+  `unit_comment`, `min_value`, `max_value`, `value_comment`, `references`, `DOI`. `scale=` places a variable at an MTG scale (its location follows from the graph), or
   `location=` gives it directly (`"cell"` on grids). `state_variable_type` (its kind: extensive, intensive,
   massic_concentration, descriptor) decides the default mappings and the repartition after growth. Variables are
   registered at construction, from the MTG's property when it exists, else from the default.
 - **Parameters** without a place are stored per plant (`"Plant"`) on plant DataStructures, as a scalar elsewhere.
   Plants of a population may then differ. Steps and equations take parameters **as arguments**; reading
   `self.<parameter>` inside a step raises, while outside steps `model.k = value` sets every plant.
-- **Steps** are methods named after their output (`_exudation` writes `exudation`), decorated by their place in the
-  schedule: `@stepinit`, `@rate`, `@totalrate`, `@state`, `@totalstate`, `@deficit`, `@axial`, then the growth rows
-  `@potential`, `@allocation`, `@actual`, `@segmentation`, `@postsegmentation`. They receive whole arrays; a step
-  written with scalar logic opts out with `@rate(vectorized=False)`. A step returning `-> tuple[...]` gives several
-  outputs, `(value, "other_name", other_value)`; a step returning `None` writes nothing.
+- **Steps** are methods decorated by their place in the schedule: `@stepinit`, `@rate`, `@totalrate`, `@state`,
+  `@totalstate`, `@deficit`, `@axial`, then the growth rows `@potential`, `@allocation`, `@actual`,
+  `@segmentation`, `@postsegmentation` (a structural component's steps, in that order: before, while and after it
+  changes the structure). Their arguments are variables, read from the DataStructure by name as whole arrays (one
+  value per entity); a step written with scalar logic opts out with `@rate(vectorized=False)`. A step returns
+  - one output, named after the method (`_exudation` writes `exudation`);
+  - or several, named, as a dict, annotated `-> dict`: `return {"x1": x, "y1": y}` (the method's name, e.g.
+    `_placement`, then only names the step);
+  - or `None`, writing nothing.
+  (The older form `-> tuple[...]`, `(value, "other_name", other_value)`, still works.)
 - **Selections.** Every decorator takes `filters=`, the entities it operates on, written as explicit key / values
   that must all hold: `@rate(filters={"label": "RootSegment", "length": ">0.01"})`. A value is matched, a list is
   one of several values, a comparison string (`">0"`, `"<=0.03"`) is tested, and label names are resolved. A key
@@ -140,9 +147,15 @@ carbon()                                  # one time step: every step, in the sc
   views when uniform).
 - **Random draws.** `self.random(stream, distribution="uniform", **parameters)` gives one reproducible draw per entity
   per call, independent of the visiting order.
+- **Outside steps** (structural code, helpers, harnesses): `self.parameter_value(name)` is a parameter's single
+  value for the population (it raises when plants differ; `parameter_values(name, location)` gives one per entity);
+  `self.cached(name, build, key=None)` keeps a value until *key* changes (by default the topology version), e.g. a
+  per-node array read from the MTG's labels; `component.run_stage("postsegmentation")` runs the steps of one
+  schedule row only (e.g. after another model wrote the inputs they read).
 - **The MTG view.** By default (`mtg_sync = "lazy"`) the DataStructure is the reference and state variables reach the
   MTG when it is read (`ds.mtg`, `ds.flush_mtg()`), before an MPG-style step. `mtg_sync = "after_call"` writes them
-  after every call, `"never"` never.
+  after every call, `"never"` never. `ds.topology` is the MTG to read the structure only (labels, parents,
+  complexes), without that synchronisation.
 
 ## 3. Graph systems
 
@@ -222,6 +235,28 @@ A structural component edits the plant (growth, segmentation, anatomy). Its step
 `StructuralComponent.initiate_plant(g, plant, parameters)` (a class method) builds one plant's initial structure in a
 population MPG, from that plant's scenario.
 
+**Creating nodes from an array-style step.** An array-style step returns a `NewNodes` among its outputs: the new
+nodes' parents (existing node ids, or earlier new nodes as `-1 - index`), edges, labels and values, and their new
+complexes (`new_complex` and `complex_levels`, or explicit `NewComplexes`, e.g. a phytomer holding three organs).
+The framework creates them in the MPG in bulk, extends the DataStructure with their values (the others at their
+`on_grow` value) and repartitions the other components' variables:
+
+```python
+@segmentation
+def _new_segments(self, length, segment_length) -> dict:
+    tips = np.flatnonzero(length > segment_length)
+    return {"length": np.where(length > segment_length, length - segment_length, length),
+            "new_segments": NewNodes(parent=self.data_structure.entity_ids("node")[tips], edge="<",
+                                     label=self.data_structure.topology.labels.SubOrgan.RootSegment,
+                                     values={"length": segment_length})}
+```
+
+**Geometry for light models and display.** `component.triangles(where=None)` gives the elements' triangles
+(`coupling.geometry.Triangles`: vertices in the scene's frame, each triangle's node index). Segment models
+declaring `x1`, `y1`, `z1`, `x2`, `y2`, `z2` and `radius` get slim cylinders by default; a component with its own
+shapes (Adel's blades) overrides it. A light model computes on the triangles and gives its results back per element
+(`Triangles.per_owner`). `openalea.metafspm.display.draw(axes, triangles, colors=...)` draws them with matplotlib.
+
 ### Tree kernels
 
 Whole-population computations along the topology are DataStructure methods, vectorised over every plant:
@@ -288,6 +323,9 @@ scene = Scene(table, environment=[RhizoSoil, LightModel], environment_scenarios=
 scene.simulate(n_iterations=2500)
 ```
 
+- **Planting tables** come from `planting_table` (a random stand at a sowing density) or from given plants:
+  `planting([Planting(x, y, z, rotation), ...], Model, parameters, plant_parameters)` (positions in m, z minus the
+  sowing depth; shared and per-plant scenario parameters).
 - **Plant models** are built once per model of the planting table, on an MPG holding all its plants:
   `Model(data_structure, time_step, <its own arguments>)`, with a class attribute `initiators` (the structural components
   building each plant). In anatomy mode (`nodes = "Compartment"`) the initiators build the anatomies, and a `wiring`
