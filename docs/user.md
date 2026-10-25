@@ -147,6 +147,8 @@ carbon()                                  # one time step: every step, in the sc
   views when uniform).
 - **Random draws.** `self.random(stream, distribution="uniform", **parameters)` gives one reproducible draw per entity
   per call, independent of the visiting order.
+- **Reading a component:** `Component.declarations()` lists its variables as a table (kind, scale, unit, description,
+  default, provider); `Component.schedule()` its steps in the order they run, grouped by stage.
 - **Outside steps** (structural code, helpers, harnesses): `self.parameter_value(name)` is a parameter's single
   value for the population (it raises when plants differ; `parameter_values(name, location)` gives one per entity);
   `self.cached(name, build, key=None)` keeps a value until *key* changes (by default the topology version), e.g. a

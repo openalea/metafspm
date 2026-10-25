@@ -145,6 +145,17 @@ class Choregrapher(Singleton):
         instance.__dict__["_clock"] = start
 
 
+    def describe(self, cls) -> list:
+        """[(stages, [step names])] of class *cls*, in the order its steps run: each group of steps with the stage it
+        has in each row of the schedule (e.g. ("rate",) or ("postsegmentation",))."""
+        described = []
+        for priority, functors in self.schedule_of(cls).items():
+            positions = ast.literal_eval(priority)
+            stages = tuple(self.consensus_scheduling[row][position - 1] for row, position in enumerate(positions)
+                           if position > 0)
+            described.append((stages, [functor.fun.__name__ for functor in functors]))
+        return described
+
     def run_stage(self, instance, stage: str):
         """Run once the steps of component *instance* in the schedule row of *stage* ("potential", "segmentation",
         "postsegmentation", "rate", ...), in their order: e.g. to update a structural component's postsegmentation

@@ -283,6 +283,30 @@ class Component:
         """Refresh the inputs derived by the coupling; FunctionalComponent implements it on its DataStructure."""
         pass
 
+    @classmethod
+    def declarations(cls):
+        """A pandas DataFrame of the declared variables: name, kind (input, state_variable, parameter), scale (its name)
+        or location, unit, description, default, and by (an input's provider, a parameter's owner)."""
+        import pandas as pd
+        from openalea.metafspm.data_structure.configs import ScalesConfig
+        scale_names = {value: name for name, value in vars(ScalesConfig).items() if isinstance(value, int)}
+        rows = []
+        for f in fields(cls):
+            meta = f.metadata
+            if "variable_type" not in meta:
+                continue
+            scale = meta.get("scale")
+            rows.append(dict(name=f.name, kind=meta["variable_type"],
+                             scale=scale_names.get(scale, scale) if scale is not None else meta.get("location"),
+                             unit=meta.get("unit"), description=meta.get("description"),
+                             default=f.default if f.default is not MISSING else None, by=meta.get("by")))
+        return pd.DataFrame(rows)
+
+    @classmethod
+    def schedule(cls) -> list:
+        """[(stages, [step methods])]: the class' steps in the order they run, grouped by their stage."""
+        return cls.choregrapher.describe(cls)
+
     def run_stage(self, stage: str):
         """Run once only the steps of one schedule row (*stage*: "potential", "segmentation", "postsegmentation",
         "rate", ...), after pulling the inputs."""
