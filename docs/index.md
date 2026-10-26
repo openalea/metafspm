@@ -12,10 +12,26 @@ processes, around the Multiscale Tree Graph (MTG) of OpenAlea.
   DataStructures (plants and soil, light, environment scalars) by mappings exchanged at fixed points.
 - **Scenes** build plant populations from a planting table and run them with their environment models.
 
+## Using models
+
+For those who want to run a plant model built with metafspm: what a component, a plant model and a scene are, in
+plain words, and the models available with their tutorials.
+
+```{toctree}
+:maxdepth: 1
+
+metafspm in five minutes <five_minutes>
+```
+
+## Building models
+
+For those who write, port or couple models: the framework's parts, its declaration conventions, the migration of an
+existing model, the API.
+
 ```{toctree}
 :maxdepth: 2
 
-User guide <user>
+Framework guide <user>
 Conventions <conventions>
 Migrating a model <migration>
 API reference <ref>
