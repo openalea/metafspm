@@ -26,3 +26,13 @@ def test_a_model_reference():
             """Only PARa."""
     text = component_rst(Light)
     assert "A light model." in text and "every 3600 s" in text and "``between``: Only PARa." in text
+
+
+def test_a_component_without_declarations():
+    from dataclasses import dataclass
+    from openalea.metafspm.coupling.component import FunctionalComponent
+
+    @dataclass
+    class Bare(FunctionalComponent):
+        """Nothing declared."""
+    assert component_rst(Bare).startswith("Nothing declared.")
