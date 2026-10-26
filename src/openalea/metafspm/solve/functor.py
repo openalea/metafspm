@@ -75,15 +75,20 @@ class Functor:
         step's location, the location of its other arguments (nodes, or cells on grids), as read-only views.
         """
         specs = getattr(instance, "_variable_specs", {})
-        is_parameter = [getattr(specs.get(name), "variable_type", None) == "parameter"
+        settings = set(type(instance).declared_settings()) if hasattr(type(instance), "declared_settings") else set()
+        is_parameter = [name not in settings and getattr(specs.get(name), "variable_type", None) == "parameter"
                         and ds.location(name) not in ("node", "edge", "cell") for name in self.input_names]
-        others = [ds.location(name) for name, p in zip(self.input_names, is_parameter) if not p]
+        others = [ds.location(name) for name, p in zip(self.input_names, is_parameter)
+                  if not p and name not in settings]
         stores = ds._var_stores()
         step_location = next((loc for loc in others if loc in ("node", "edge", "cell")),
                              "node" if "node" in stores else "cell")
         args, locations = [], []
         for name, parameter in zip(self.input_names, is_parameter):
-            if parameter:
+            if name in settings:                        # a setting: the value itself
+                args.append(getattr(instance, name))
+                locations.append(None)
+            elif parameter:
                 args.append(ds.parameter_view(name, step_location))
                 locations.append(step_location)
             else:
@@ -95,9 +100,11 @@ class Functor:
         if getattr(self.fun, "__vectorized__", True):
             out = self.fun(instance, *args)
         else:
-            shapes = [a.shape for a in args if a.ndim > 0]
+            arrays = [isinstance(a, np.ndarray) and a.ndim > 0 for a in args]      # settings stay whole
+            shapes = [a.shape for a, array in zip(args, arrays) if array]
             size = shapes[0][0] if shapes else 1
-            per_element = [self.fun(instance, *(a if a.ndim == 0 else a[i] for a in args)) for i in range(size)]
+            per_element = [self.fun(instance, *(a[i] if array else a for a, array in zip(args, arrays)))
+                           for i in range(size)]
             if per_element and isinstance(per_element[0], dict):
                 out = {name: np.asarray([values[name] for values in per_element]) for name in per_element[0]}
             elif self.supplementary_outputs:

@@ -179,3 +179,17 @@ def test_vector_components_are_exchanged_one_by_one():
     plants.set("compounds", np.arange(plants.n_nodes() * POOLS, dtype=float).reshape(-1, POOLS))
     scene.exchanges.exchange(into=grid)
     np.testing.assert_allclose(grid.get("compounds").reshape(-1, POOLS).sum(axis=0), plants.get("compounds").sum(axis=0))
+
+
+def test_kept_state_is_checkpointed_and_caches_are_not():
+    """A component's keep(): state saved by checkpoints; keep(saved=False): a cache left out."""
+    from openalea.metafspm.coupling.component import DataStructureComponent as Component
+    component = Component.__new__(Component)
+    component.keep("last_lighting", 7200.)
+    component.keep("canopy", object(), saved=False)
+    assert component.kept("last_lighting") == 7200. and component.kept("canopy") is not None
+    assert component.checkpoint_state() == {"kept": {"last_lighting": 7200.}}
+    restored = Component.__new__(Component)
+    restored.restore_state(component.checkpoint_state())
+    assert restored.kept("last_lighting") == 7200. and restored.kept("canopy") is None
+    assert restored.kept("missing", default=1) == 1

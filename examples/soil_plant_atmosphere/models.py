@@ -14,8 +14,7 @@ import numpy as np
 from openalea.metafspm.coupling.composite_wrapper import CompositeModel
 from openalea.metafspm.coupling.cross import CrossMapping
 from openalea.metafspm.coupling.translator import Translator
-from openalea.metafspm.data_structure.adaptive_grid import AdaptiveGridDataStructure
-from openalea.metafspm.data_structure.data_api import ArrayDataStructure
+from openalea.metafspm.scene.environment import EnvironmentModel
 
 from components import PlantWaterTransport, SeedlingStructure, SoilStructure, SoilWaterTransport
 
@@ -50,7 +49,7 @@ class SeedlingWater(CompositeModel):
         self.transport()
 
 
-class Soil(CompositeModel):
+class Soil(EnvironmentModel):
     """
     The soil environment model: a grid over the stand, z pointing down from the surface, its conductivity varying
     by layer (a denser subsoil), the water table at the bottom.
@@ -58,9 +57,8 @@ class Soil(CompositeModel):
 
     def __init__(self, populations, scene_xrange, scene_yrange, time_step, depth=0.4, voxel=0.025,
                  topsoil_K=1.5, subsoil_K=0.6, topsoil_depth=0.2):
-        shape = (max(1, round(scene_xrange / voxel)), max(1, round(scene_yrange / voxel)), max(1, round(depth / voxel)))
-        self.grid = ArrayDataStructure(shape=shape, dx=(scene_xrange / shape[0], scene_yrange / shape[1],
-                                                        depth / shape[2]), periodic=(True, True, False))
+        super().__init__(populations, scene_xrange, scene_yrange, time_step)
+        self.grid = self.build_grid(voxel, depth)
         self.structure = SoilStructure(data_structure=self.grid, time_step=time_step)
         self.transport = SoilWaterTransport(data_structure=self.grid, time_step=time_step)
         self.declare_data_and_couple_components(translator_path=SOIL_TRANSLATOR,
@@ -68,17 +66,13 @@ class Soil(CompositeModel):
         self.layers = dict(topsoil_K=topsoil_K, subsoil_K=subsoil_K, topsoil_depth=topsoil_depth)
         set_conductivity(self.grid, **self.layers)
 
-    def run(self):
-        self.structure()
-        self.transport()
-
 
 def set_conductivity(grid, topsoil_K, subsoil_K, topsoil_depth):
     """K_sat by layer, from the depth of each cell's centre (any grid)."""
     grid.set("K_sat", np.where(grid.cell_centers()[:, 2] < topsoil_depth, topsoil_K, subsoil_K))
 
 
-class AdaptiveSoil(CompositeModel):
+class AdaptiveSoil(EnvironmentModel):
     """
     The soil environment model on an adaptive grid: the components of Soil on an octree over a base grid of *voxel*
     cells, refined down to voxel / 2^max_level where the roots take up water. After each solve, cells whose sink
@@ -90,10 +84,8 @@ class AdaptiveSoil(CompositeModel):
 
     def __init__(self, populations, scene_xrange, scene_yrange, time_step, depth=0.4, voxel=0.025, max_level=2,
                  refine_fraction=0.05, coarsen_fraction=0.005, topsoil_K=1.5, subsoil_K=0.6, topsoil_depth=0.2):
-        shape = (max(1, round(scene_xrange / voxel)), max(1, round(scene_yrange / voxel)), max(1, round(depth / voxel)))
-        self.grid = AdaptiveGridDataStructure(shape=shape, dx=(scene_xrange / shape[0], scene_yrange / shape[1],
-                                                               depth / shape[2]),
-                                              periodic=(True, True, False), max_level=max_level)
+        super().__init__(populations, scene_xrange, scene_yrange, time_step)
+        self.grid = self.build_grid(voxel, depth, adaptive=True, max_level=max_level)
         self.structure = SoilStructure(data_structure=self.grid, time_step=time_step)
         self.transport = SoilWaterTransport(data_structure=self.grid, time_step=time_step)
         self.declare_data_and_couple_components(translator_path=SOIL_TRANSLATOR,
@@ -103,9 +95,7 @@ class AdaptiveSoil(CompositeModel):
         self.refine_fraction, self.coarsen_fraction = refine_fraction, coarsen_fraction
         self.history = []                                     # cells per level after each adaptation
 
-    def run(self):
-        self.structure()
-        self.transport()
+    def after_run(self):
         self.adapt()
 
     def sink_density(self):

@@ -147,16 +147,17 @@ class CompositeModel:
         return None if f is None else f.metadata.get("unit")
 
     def _check_link_units(self, link, receiver, provider) -> None:
-        """A link without a conversion (its factors 1) between two declared, different units is a units mistake."""
-        from openalea.metafspm.coupling.declaration import units_agree
-        if link.formula is not None or any(factor not in (1., -1.) for factor in link.sources.values()):
-            return                                         # a factor (or a formula) states the conversion
+        """The declared units against the link's factors (coupling.units.check_link), unless unit_check is off or
+        the link is a formula."""
+        from openalea.metafspm.coupling.units import check_link
+        if link.formula is not None or not link.unit_check:
+            return
         received = self._declared_unit(receiver, link.variable)
-        for source in link.sources:
-            provided = self._declared_unit(provider, source)
-            if not units_agree(received, provided):
-                raise ValueError(f"{link.receiver}.{link.variable} ({received}) <- {link.provider}.{source} "
-                                 f"({provided}): the units differ and the link has no conversion factor")
+        for source, factor in link.sources.items():
+            if not isinstance(factor, (int, float)):
+                continue                                   # an expression: its conversion is its own
+            check_link(received, self._declared_unit(provider, source), factor,
+                       f"{link.receiver}.{link.variable} <- {link.provider}.{source}")
 
     @staticmethod
     def _check_link_scales(link, ds) -> None:

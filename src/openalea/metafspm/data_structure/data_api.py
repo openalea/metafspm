@@ -214,7 +214,10 @@ class DataStructure(ABC):
 
     def triangles(self, where=None):
         """The elements' triangles (coupling.geometry.Triangles: each one's node index here), from the geometry
-        provider; *where*: a node mask restricting them."""
+        provider; *where*: a node mask restricting them, or a mask's name ("emerged", "active": every node when this
+        DataStructure does not define it)."""
+        if isinstance(where, str):
+            where = self.mask(where) if self.has_mask(where) else None
         provider = self.geometry_provider
         if provider is None:
             raise ValueError(f"{type(self).__name__} has no geometry provider: no StructuralComponent drawing its "
@@ -1167,6 +1170,13 @@ class MTGDataStructure(GraphDataStructure):
 _EDGE_CONVENTIONS = {"child": "proximal", "parent": "distal"}
 
 
+def _label_name(code, names):
+    """A label's name: the MPG stores labels as integer codes (LabelsConfig), *names* their translator."""
+    if isinstance(code, (int, float, np.integer, np.floating)) and not isinstance(code, bool):
+        return names.get(int(code), code)
+    return code
+
+
 class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
     """
     The variables of a plant population on one MPG, as arrays, with the MPG's solver graph as topology.
@@ -1653,6 +1663,21 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
         if location not in self._coarse_scale_names():
             raise ValueError(f"'{location}' is not a coarse location ({self._coarse_scale_names()})")
         return self._membership(location)[1]
+
+    def labels(self, of: str = None, per_node: bool = True) -> np.ndarray:
+        """Each node's MTG label name ("LeafElement", "RootSegment", ...), or with *of* a coarse scale ("Organ") the
+        label of the node's entity at that scale (*per_node* False: one per entity of that scale, in entity_ids'
+        order); an object array, read from the MTG once per topology."""
+        cache = self.__dict__.setdefault("_label_names", {})
+        kept = cache.get(of)
+        if kept is None or kept[0] != self.topology_version:
+            g = self.structure
+            names = g.labels.translator                   # the MPG's label codes → names
+            ids = self.entity_ids("node" if of is None else of).tolist()
+            kept = cache[of] = (self.topology_version,
+                                np.array([_label_name(g.label(v), names) for v in ids], dtype=object))
+        values = kept[1]
+        return values[self.owner(of)] if of is not None and per_node else values
 
     def validate(self, strict: bool = False) -> None:
         """Topology and variable store consistency (VariableStoreMixin.validate_variables)."""

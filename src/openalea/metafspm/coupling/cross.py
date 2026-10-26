@@ -18,8 +18,9 @@ from typing import Mapping, Optional
 import numpy as np
 from numba import njit
 
+from openalea.metafspm.coupling.units import check_link
 from openalea.metafspm.coupling.declaration import (DeclarationError, EXTENSIVE_KINDS, INTENSIVE_KINDS,
-                                                    MASSIC_KINDS, kinds_agree, units_agree)
+                                                    MASSIC_KINDS, kinds_agree)
 from openalea.metafspm.data_structure.data_api import DataStructure, VariableStoreMixin
 
 SEGMENT_COORDINATES = ("x1", "x2", "y1", "y2", "z1", "z2")
@@ -367,14 +368,24 @@ class UnionDataStructure(VariableStoreMixin, DataStructure):
 
     def triangles(self, where=None):
         """The parts' triangles (each part's geometry provider), their node indices those of the union; *where*: a
-        node mask of the union."""
+        node mask of the union, or a mask's name (each part's)."""
         from openalea.metafspm.coupling.geometry import Triangles
         self.update_topology()                             # the parts' current nodes
         slices = [self.part_slice(i) for i in range(len(self.parts))]
-        mask = None if where is None else np.asarray(where, dtype=bool)
-        return Triangles.concatenate([part.triangles(None if mask is None else mask[piece])
-                                      for part, piece in zip(self.parts, slices)],
+        if isinstance(where, str):
+            selections = [where] * len(self.parts)
+        else:
+            mask = None if where is None else np.asarray(where, dtype=bool)
+            selections = [None if mask is None else mask[piece] for piece in slices]
+        return Triangles.concatenate([part.triangles(selection) for part, selection in zip(self.parts, selections)],
                                      offsets=[piece.start for piece in slices])
+
+    def labels(self, of: str = None) -> np.ndarray:
+        """The parts' node labels (MPGDataStructure.labels; with *of*, each node's entity's at that scale), in the
+        union's order."""
+        self.update_topology()
+        return np.concatenate([np.asarray(part.labels(of), dtype=object) for part in self.parts]) \
+            if self.parts else np.zeros(0, dtype=object)
 
     def outdated(self) -> bool:
         return self._layout != self._current_layout()
@@ -561,11 +572,9 @@ class Exchanges:
                 provided = _declared_kind(provider, source)
                 if not kinds_agree(received, provided):
                     raise ValueError(f"{name}.{source}: the kinds do not agree ({received} <- {provided})")
-                if link.sources[source] in (1., -1.):
-                    unit_in, unit_out = _declared_unit(receiver, link.variable), _declared_unit(provider, source)
-                    if not units_agree(unit_in, unit_out):
-                        raise ValueError(f"{name}.{source}: the units differ ({unit_in} <- {unit_out}) and the link "
-                                         "has no conversion factor")
+                if link.unit_check and isinstance(link.sources[source], (int, float)):
+                    check_link(_declared_unit(receiver, link.variable), _declared_unit(provider, source),
+                               link.sources[source], f"{name}.{source}")
             aggregation = link.aggregation
             if direction == "layer":
                 if aggregation is None:

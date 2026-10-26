@@ -81,6 +81,8 @@ class Link:
                      scale's.
         target:      a mask of the DataStructure: the mapped values go to its entities only, the others getting the
                      receiver's default (e.g. a segment concentration broadcast to its symplastic Compartments).
+        unit_check:  the declared units checked against the factors (coupling.units.check_link: the same quantity,
+                     each factor the units' conversion); False for a deliberate factor (a share, a calibration).
     """
     receiver: str
     variable: str
@@ -92,6 +94,7 @@ class Link:
     weight: Optional[str] = None
     target: Optional[str] = None
     formula: Optional[Callable] = None
+    unit_check: bool = True
     raw_factors: Mapping = field(default_factory=dict, compare=False, repr=False)
 
     def __post_init__(self):
@@ -168,7 +171,7 @@ class Translator:
     def to_nested(self) -> dict:
         """
         Nested format {receiver: {provider: {variable: {source: factor}}}}, every pair present. A link with a
-        scale, aggregation, weight or target is written in its long form {"sources": {...}, "scale": name, ...},
+        scale, aggregation, weight, target or unit_check is written in its long form {"sources": {...}, "scale": name, ...},
         which from_dict() reads; formulas cannot be written.
         """
         names = self.components
@@ -180,6 +183,8 @@ class Translator:
             spec = dict(link.sources)
             options = {key: getattr(link, key) for key in ("scale", "source_scale", "aggregation", "weight", "target")
                        if getattr(link, key) is not None}
+            if not link.unit_check:
+                options["unit_check"] = False
             if options:
                 for key in ("scale", "source_scale"):
                     if key in options:
@@ -195,8 +200,8 @@ class Translator:
             for provider, links in (providers or {}).items():
                 for variable, spec in (links or {}).items():
                     if isinstance(spec, Mapping) and "sources" in spec:
-                        options = {key: spec[key] for key in ("scale", "source_scale", "aggregation", "weight", "target")
-                                   if key in spec}
+                        options = {key: spec[key] for key in ("scale", "source_scale", "aggregation", "weight", "target",
+                                                              "unit_check") if key in spec}
                         translator.link(receiver, variable, provider, dict(spec["sources"]), **options)
                     else:
                         translator.link(receiver, variable, provider, dict(spec))
