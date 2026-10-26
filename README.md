@@ -11,6 +11,19 @@
 
 This package is intended to provide minimal tools to assist Functionnal Structural Plant Modellers (FSPM) so that they can make their production more readable regarding scientific content. It is also intended as a minimal constraint in object oriented programming to ease the model coupling in OpenAlea around a Multiscale Tree Graph (MTG). However the idea is to remain very generic in order to accept a wide variety of model types. You can't impose formalism on others, that's how great civilizations die. Our aim here is rather to favor research projects among different scientific communities.
 
+## Just want to run a model?
+
+metafspm is the framework; the models built on it are in their own packages, each with step-by-step user
+tutorials (`example/tutorials/user/`) for newcomers: [ArchiSimple](https://github.com/openalea/archisimple) (root
+architecture), [Adel](https://github.com/openalea/adel) (wheat shoots),
+[Caribu](https://github.com/openalea/caribu) (light in canopies),
+[GRANAP](https://github.com/openalea-incubator/GRANAP-dev) (cross-section anatomies) and
+[MECHA](https://github.com/openalea-incubator/MECHA-dev) (water flow across root tissues). The page
+[metafspm in five minutes](docs/five_minutes.md) explains, in plain words, what a component, a plant model and a
+scene are.
+
+The rest of this page is for those who build or couple models.
+
 ## Installation
 
 Prerequisites to installation :
