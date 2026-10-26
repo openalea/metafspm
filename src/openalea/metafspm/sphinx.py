@@ -25,11 +25,19 @@ def _cell(value) -> str:
 
 def component_rst(cls, heading: str = "-") -> str:
     """The reference text of component class *cls* (reStructuredText), its section titles underlined with
-    *heading*."""
+    *heading*; a model without declarations (an EnvironmentModel) by its docstring and its methods'."""
     lines = []
     doc = inspect.getdoc(cls)
     if doc:
         lines += [doc, ""]
+    if not hasattr(cls, "declarations"):              # a model (an EnvironmentModel, a CompositeModel)
+        interval = getattr(cls, "interval", None)
+        if interval is not None:
+            lines += [f"Runs fully every {interval:g} s.", ""]
+        methods = [(name, inspect.getdoc(member)) for name, member in vars(cls).items()
+                   if inspect.isfunction(member) and not name.startswith("_")]
+        lines += [f"- ``{name}``: {' '.join(method_doc.split())}" for name, method_doc in methods if method_doc]
+        return "\n".join(lines) + "\n"
     table = cls.declarations()
     for kind, title in KINDS:
         rows = table[table["kind"] == kind]
