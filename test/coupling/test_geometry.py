@@ -114,3 +114,20 @@ def test_follow_parents_as_pglturtle():
         assert list(turtle.getPosition()) == pytest.approx(end[i], abs=1e-10)
         assert list(start) == pytest.approx(position[i], abs=1e-10)
         expected[i] = (pgl.Vector3(turtle.getPosition()), turtle.getHeading(), turtle.getUp())
+
+
+def test_mean_per_owner_and_clip_below():
+    """Per-owner means weighted by area (0 without triangles); triangles cut at the soil, the area above kept."""
+    vertices = np.array([[[0, 0, -1], [2, 0, 1], [0, 2, 1]],          # one vertex below: two triangles
+                         [[0, 0, 1], [2, 0, -1], [0, 2, -1]],          # two below: one triangle
+                         [[0, 0, -1], [1, 0, -1], [0, 1, -2]],         # all below: none
+                         [[0, 0, 0], [1, 0, 1], [0, 1, 0]]], dtype=float)  # on the soil: kept whole
+    triangles = Triangles(vertices, [0, 1, 2, 3])
+    kept = triangles.clip_below(0.)
+    assert kept.owner.tolist() == [3, 0, 0, 1] and (kept.vertices[..., 2] >= 0).all()
+    whole = triangles.areas()
+    np.testing.assert_allclose(kept.per_owner(kept.areas(), 4), [whole[0] * 3 / 4, whole[1] / 4, 0., whole[3]])
+    values = np.array([1., 2., 3., 4.])
+    np.testing.assert_allclose(triangles.mean_per_owner(values, 5), [1., 2., 3., 4., 0.])
+    both = Triangles(vertices[:2], [0, 0])
+    assert both.mean_per_owner([1., 3.], 1)[0] == pytest.approx((whole[0] + 3 * whole[1]) / (whole[0] + whole[1]))

@@ -125,3 +125,48 @@ def test_events_and_stop_conditions():
     scene.simulate(10)
     assert calls == [2 * DT] and scene.stopped and scene.iteration == 3
     assert scene.environment[0].grid.get("soil_nitrate").max() > 50.
+
+
+def test_a_forcing_read_at_the_steps_start():
+    """A forcing is read at the end of the component's step by default, at its start when asked (or declared
+    forcing_variable(at="start"))."""
+    lit = _scene().populations[0].instance.lit
+    lit.__dict__["_clock"] = 2 * DT
+    assert lit.forcing("PARi") == pytest.approx(3 * DT)                 # PARi(t) = t
+    assert lit.forcing("PARi", at="start") == pytest.approx(2 * DT)
+
+
+class CadencedSoil(SceneSoil):
+    """A full run every 3 steps, a light update in between, a hook after each full run."""
+    interval = 3 * DT
+
+    def __init__(self, populations, scene_xrange, scene_yrange, time_step):
+        super().__init__(populations, scene_xrange, scene_yrange, time_step)
+        self.calls = []
+
+    def full_run(self):
+        self.calls.append("full")
+        super().full_run()
+
+    def between(self):
+        self.calls.append("between")
+
+    def after_run(self):
+        self.calls.append("after")
+
+
+def test_environment_model_cadence_and_helpers():
+    """EnvironmentModel: full runs every interval (the time taken before the components' calls), between() at the
+    other steps, after_run() after each full run; the plants' union, a grid over the pattern; the last run kept by
+    checkpoints."""
+    table = planting([LitPlants, LitPlants])
+    forcings = pd.DataFrame({"PARi": [0., 10. * DT]}, index=[0., 10. * DT])
+    scene = Scene(table, environment=[CadencedSoil], translator=soil_translator("Lit"), time_step=DT, forcings=forcings)
+    soil = scene.environment[0]
+    for _ in range(7):
+        scene.run()
+    assert soil.calls == ["full", "after", "between", "between", "full", "after", "between", "between", "full", "after"]
+    assert soil.last_run == 6 * DT and soil.checkpoint_state() == {"last_run": 6 * DT}
+    assert soil.plants() is scene.populations[0].data_structure                  # one population: its own
+    grid = soil.build_grid(voxel=0.1, depth=0.3)
+    assert grid.shape == (8, 4, 3) and soil.pattern == (0., 0., 0.8, 0.4)

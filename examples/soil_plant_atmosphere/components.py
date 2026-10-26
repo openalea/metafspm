@@ -79,7 +79,7 @@ class PlantWaterTransport(FunctionalComponent):
                                                description="Liquid-vapour conductance of a stomatal cavity.",
                                                by="SeedlingStructure", initialize=0., scale=scales.Compartment,
                                                state_variable_type="intensive")
-    is_evaporating: float = input_variable(unit="-", description="1 at the stomatal cavities.", by="SeedlingStructure",
+    is_evaporating: float = input_variable(unit="adim", description="1 at the stomatal cavities.", by="SeedlingStructure",
                                            initialize=0., scale=scales.Compartment, state_variable_type="descriptor")
     soil_water_potential: float = input_variable(unit="MPa", description="Water potential of the soil around the root.",
                                                  by="SoilWaterTransport", initialize=0., scale=scales.Compartment,
@@ -87,7 +87,7 @@ class PlantWaterTransport(FunctionalComponent):
     soil_contact_conductance: float = input_variable(unit="mm3 s-1 MPa-1", description="Root-soil conductance.",
                                                      by="SeedlingStructure", initialize=0., scale=scales.Compartment,
                                                      state_variable_type="intensive")
-    is_soil_contact: float = input_variable(unit="-", description="1 at the root epidermis.", by="SeedlingStructure",
+    is_soil_contact: float = input_variable(unit="adim", description="1 at the root epidermis.", by="SeedlingStructure",
                                             initialize=0., scale=scales.Compartment, state_variable_type="descriptor")
     root_uptake: float = state_variable(unit="mm3 s-1", description="Water entering the root epidermis from the soil.",
                                         initialize=0., scale=scales.Compartment, state_variable_type="extensive")
@@ -148,9 +148,9 @@ class SoilWaterTransport(FunctionalComponent):
                                                description="Liquid-vapour conductance of a surface cell.",
                                                by="SoilStructure", initialize=0., location="cell",
                                                state_variable_type="intensive")
-    is_evaporating: float = input_variable(unit="-", description="1 at the surface.", by="SoilStructure", initialize=0.,
+    is_evaporating: float = input_variable(unit="adim", description="1 at the surface.", by="SoilStructure", initialize=0.,
                                            location="cell", state_variable_type="descriptor")
-    is_water_table: float = input_variable(unit="-", description="1 at the water table.", by="SoilStructure",
+    is_water_table: float = input_variable(unit="adim", description="1 at the water table.", by="SoilStructure",
                                            initialize=0., location="cell", state_variable_type="descriptor")
     water_table_potential: float = parameter(unit="MPa", description="Water potential at the water table.",
                                              by="SoilWaterTransport", default=0., location="cell")
@@ -227,20 +227,20 @@ class SeedlingStructure(StructuralComponent):
                                                      initialize=0., scale=scales.Compartment,
                                                      state_variable_type="intensive")
     # the structure, read from the MPG (Compartment and Connection properties set by initiate_plant)
-    tissue: float = state_variable(unit="-", description="Tissue code of a Compartment.", initialize=0.,
+    tissue: float = state_variable(unit="adim", description="Tissue code of a Compartment.", initialize=0.,
                                    scale=scales.Compartment, state_variable_type="descriptor")
-    organ: float = state_variable(unit="-", description="Organ code of a Compartment (root, stem, leaf).",
+    organ: float = state_variable(unit="adim", description="Organ code of a Compartment (root, stem, leaf).",
                                   initialize=0., scale=scales.Compartment, state_variable_type="descriptor")
-    is_evaporating: float = state_variable(unit="-", description="1 at the stomatal cavities.", initialize=0.,
+    is_evaporating: float = state_variable(unit="adim", description="1 at the stomatal cavities.", initialize=0.,
                                            scale=scales.Compartment, state_variable_type="descriptor")
     evaporating_area: float = state_variable(unit="m2", description="Leaf element area, at its stomatal cavity.",
                                              initialize=0., scale=scales.Compartment, state_variable_type="extensive")
-    is_soil_contact: float = state_variable(unit="-", description="1 at the root epidermis.", initialize=0.,
+    is_soil_contact: float = state_variable(unit="adim", description="1 at the root epidermis.", initialize=0.,
                                             scale=scales.Compartment, state_variable_type="descriptor")
     contact_length: float = state_variable(unit="m",
                                            description="Root length in contact with the soil, at its epidermis.",
                                            initialize=0., scale=scales.Compartment, state_variable_type="extensive")
-    hydraulic_type: float = state_variable(unit="-", description="Hydraulic type of a Connection.", initialize=0.,
+    hydraulic_type: float = state_variable(unit="adim", description="Hydraulic type of a Connection.", initialize=0.,
                                            scale=scales.Connection, state_variable_type="descriptor")
     conductance_length: float = state_variable(unit="m", description="Length behind a Connection's conductance.",
                                                initialize=0., scale=scales.Connection, state_variable_type="extensive")
@@ -322,7 +322,7 @@ class SoilStructure(StructuralComponent):
     vapour_conductance: float = state_variable(unit="mm3 s-1 MPa-1",
                                                description="Liquid-vapour conductance of a surface cell.",
                                                initialize=0., location="cell", state_variable_type="intensive")
-    is_evaporating: float = state_variable(unit="-", description="1 at the surface.", initialize=0., location="cell",
+    is_evaporating: float = state_variable(unit="adim", description="1 at the surface.", initialize=0., location="cell",
                                            state_variable_type="descriptor")
     evaporating_area: float = state_variable(unit="m2", description="Evaporating surface of a cell.", initialize=0.,
                                              location="cell", state_variable_type="extensive")
@@ -339,7 +339,7 @@ class SoilStructure(StructuralComponent):
     vapour_factor: float = parameter(unit="mm3 s-1 MPa-1 per (mol m-2 s-1 m2)",
                                      description="e_sat V_w² / (R T P): from a vapour conductance to a liquid one.",
                                      by="SoilStructure", default=VAPOUR_FACTOR)
-    is_water_table: float = state_variable(unit="-", description="1 at the water table.", initialize=0.,
+    is_water_table: float = state_variable(unit="adim", description="1 at the water table.", initialize=0.,
                                            location="cell", state_variable_type="descriptor")
     water_table_conductance: float = state_variable(unit="mm3 s-1 MPa-1", description="Conductance between a bottom "
                                                                                       "cell's centre and the water "

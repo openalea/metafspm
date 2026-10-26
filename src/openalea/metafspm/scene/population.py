@@ -197,6 +197,11 @@ def apply_plant_scenarios(ds, components, table: pd.DataFrame, plants: list) -> 
         raise ValueError(f"Plant vertices {sorted(missing)[:5]} have no row in the planting table")
     given = set().union(*by_plant.values()) if by_plant else set()
     for component in components:
+        settings = component.declared_settings() if hasattr(component, "declared_settings") else ()
+        for name in given.intersection(settings):     # a setting: one value for every plant
+            if not _same_for_all([by_plant[p].get(name, getattr(component, name)) for p in by_plant]):
+                raise ValueError(f"{type(component).__name__}.{name} is a setting, one value for the model: give "
+                                 "every plant the same")
         for name, spec in getattr(component, "_variable_specs", {}).items():
             if spec.variable_type != "parameter":
                 continue
@@ -229,7 +234,8 @@ def apply_model_scenario(model, instance, scenario: dict, read_by_initiators=())
     components = list(getattr(instance, "components", ()))
     unknown = []
     for name, value in entries.items():
-        owners = [c for c in components if name in getattr(c, "parameters", ())]
+        owners = [c for c in components if name in getattr(c, "parameters", ())
+                  or name in (c.declared_settings() if hasattr(c, "declared_settings") else ())]
         if not owners:
             if name not in named and name not in read_by_initiators:
                 unknown.append(name)
@@ -240,7 +246,9 @@ def apply_model_scenario(model, instance, scenario: dict, read_by_initiators=())
                 continue                                    # per plant: apply_plant_scenarios
             setattr(component, name, value)
     if unknown:
-        known = sorted({name for c in components for name in getattr(c, "parameters", ())})
+        known = sorted({name for c in components
+                        for name in (*getattr(c, "parameters", ()),
+                                     *(c.declared_settings() if hasattr(c, "declared_settings") else ()))})
         raise ValueError(f"{model.__name__}: scenario entries {sorted(unknown)} are neither parameters of its "
                          f"components ({', '.join(known) or 'none'}), arguments of {model.__name__}, nor read by its "
                          "initiators")

@@ -11,6 +11,7 @@ from openalea.metafspm.coupling.component import FunctionalComponent, input_vari
 from openalea.metafspm.coupling.translator import Translator
 from openalea.metafspm.data_structure.configs import ScalesConfig as scales
 from openalea.metafspm.data_structure.data_api import ArrayDataStructure
+from openalea.metafspm.scene.environment import EnvironmentModel
 from openalea.metafspm.solve.decorator import rate
 
 from growth import DOC, CarbonProbe, RootGrowthProbe
@@ -96,17 +97,14 @@ class SceneSoilNitrate(FunctionalComponent):
         return 0.9 * soil_nitrate + 0.01 * exudation
 
 
-class SceneSoil:
+class SceneSoil(EnvironmentModel):
     """An environment model building its grid."""
 
     def __init__(self, populations, scene_xrange, scene_yrange, time_step):
-        self.populations = populations
+        super().__init__(populations, scene_xrange, scene_yrange, time_step)
         self.grid = ArrayDataStructure(shape=(2, 1, 4), dx=0.4)
         self.nitrate = SceneSoilNitrate(data_structure=self.grid)
         self.components = [self.nitrate]
-
-    def run(self):
-        self.nitrate()
 
 
 def soil_translator(*plant_components):

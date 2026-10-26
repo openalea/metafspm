@@ -147,6 +147,13 @@ carbon()                                  # one time step: every step, in the sc
   views when uniform).
 - **Random draws.** `self.random(stream, distribution="uniform", **parameters)` gives one reproducible draw per entity
   per call, independent of the visiting order.
+- **Settings** (`setting(unit=, description=, default=, choices=)`): values of the model, not of the plants (a
+  latitude, a light model, a solver, a grid's voxel). One value for all, never stored on the DataStructure: read as
+  `self.name` anywhere, passed as the value itself to a step naming it, set by constructor keywords and scenarios
+  (the same for every plant), checked against their `choices`. Numeric `parameter`s stay per plant.
+- **State that is not a variable:** `self.keep(name, value)` and `self.kept(name, default)` (the time of a last
+  lighting), saved by the Scene's checkpoints; `keep(..., saved=False)` for a cache rebuilt when missing (a kept
+  canopy, incremental meshes); `self.cached(name, build, key)` for a value derived from the structure.
 - **Reading a component:** `Component.declarations()` lists its variables as a table (kind, scale, unit, description,
   default, provider); `Component.schedule()` its steps in the order they run, grouped by stage.
 - **Outside steps** (structural code, helpers, harnesses): `self.parameter_value(name)` is a parameter's single
@@ -225,7 +232,8 @@ class SoilDiffusion(FunctionalComponent):
   entity by another model through the translator, a forcing is a time series given from outside, the same for every
   entity. It is listed by `declarations()` (kind "forcing"), not stored on the DataStructure, and a `Scene` checks
   at its construction that every required one is given (`required=False`: an optional one, which raises KeyError
-  when read).
+  when read). A forcing is read at the end of the step by default; `forcing_variable(at="start")`, or
+  `self.forcing(name, at="start")`, reads it at the step's start (a meteo table whose hour begins with the step).
 - **Outputs and Jacobians.** `@graph_output(name, location=...)` derives outputs after the solve; `@graph_jacobian`
   gives an analytic Jacobian (finite differences with graph colouring otherwise).
 
@@ -264,7 +272,14 @@ declaring `x1`, `y1`, `z1`, `x2`, `y2`, `z2` and `radius` get slim cylinders by 
 shapes (Adel's blades) overrides it. A light model computes on the triangles and gives its results back per element
 (`Triangles.per_owner`). An environment model receives DataStructures, not components: `ds.triangles()` gives the
 triangles of the structural component built on it (the one with its own `triangles()` first; set
-`ds.geometry_provider` when several draw), and a `UnionDataStructure`'s concatenates its parts', in its node indices. `openalea.metafspm.display.draw(axes, triangles, colors=...)` draws them with matplotlib.
+`ds.geometry_provider` when several draw), and a `UnionDataStructure`'s concatenates its parts', in its node indices.
+`ds.triangles(where)` takes a node mask or a mask's name (`"emerged"`: plants not yet emerged left out; every node
+when the DataStructure has no such mask). `Triangles.clip_below(z)` cuts them at the soil (a buried part receives no
+light), `Triangles.mean_per_owner(values, n)` averages per element by area.
+
+**Labels.** `ds.labels()` gives each node's MTG label name (`"LeafElement"`, `"RootSegment"`, ...), and
+`ds.labels(of="Organ")` the label of its entity at a coarser scale; a `UnionDataStructure` gives its parts'. They are
+read once per topology, for steps that treat leaves and stems, or root orders, differently. `openalea.metafspm.display.draw(axes, triangles, colors=...)` draws them with matplotlib.
 
 ### Tree kernels
 
@@ -300,6 +315,13 @@ self.declare_data_and_couple_components(translator_path="translator.py", compone
 
 `openalea.metafspm.testing.assert_component_couplable(Component, translator)` checks a component against a
 translator in a package's own tests.
+
+**Units.** A declaration's unit follows one grammar: factors separated by spaces, signed integer exponents, `adim`
+for dimensionless, what an amount is of in `unit_comment` (`unit="mol s-1", unit_comment="of hexose"`). Units are
+read as quantities (`coupling.units.parse_unit`: SI dimensions and a scale; prefixes, `min`, `h`, `d`, `L`, `Pa`,
+`°C`, `°`, `%`, ...). Each link is checked: the receiver's and the source's units must be the same quantity, and the
+link's factor their conversion (`{"p_mpa": 1e4}` from MPa to hPa); `unit_check=False` on a link for a deliberate
+factor (a share, a calibration). Undeclared units agree with anything; unreadable ones must be spelled alike.
 
 ### Across DataStructures: mappings and exchanges
 
@@ -341,7 +363,12 @@ scene.simulate(n_iterations=2500)
   attribute gives the junction rules between them. Numeric parameters may differ per plant (one scenario per plant); an `emergence_time` column
   keeps a plant frozen until then.
 - **Environment models** are built as `Model(populations, scene_xrange, scene_yrange, time_step, <its own arguments>)` and
-  create their own DataStructures (a grid, a union of the populations).
+  create their own DataStructures (a grid, a union of the populations). `scene.environment.EnvironmentModel` is
+  their base: `self.plants()` (the population's DataStructure, or the union of several), `self.build_grid(voxel,
+  depth, adaptive=False)` (a grid over the scene's pattern, z down, periodic in x and y), a cadence (`interval` in s,
+  or an overridden `due(time)`; at the other steps `between()`, e.g. `self.light.run_stage("state")`),
+  `after_run()` (an adaptive grid refined), the time of the last full run kept by checkpoints. A light model and a
+  soil model are short subclasses of it (Caribu's CaribuLightModel; the soil–plant–atmosphere example's Soil).
 - **Scenarios** are applied by the Scene, so models do not forward them. A scenario's entries (its `"parameters"`
   dict, and its other keys) are parameters of the model's components. They are set after the model is built, with
   the same effect as constructor keywords: a numeric parameter is written to the DataStructure (per plant for
@@ -379,3 +406,53 @@ Its README describes each file and shows the figures.
 - Growth bookkeeping is incremental: only new vertices are read from the MTG.
 - An MPG-style step sees only the MTG properties its component declares; keep MTG reads in such steps to those.
 - `split="components"` is not parallel; graph systems are solved by sparse LU (SuperLU).
+
+### Compiled kernels (numba)
+
+Loops that numpy cannot vectorise (a z-buffer, a tree walk, a disc of form factors) are compiled with numba. What the
+ports learned:
+
+- **Array arguments cost.** Each array passed to a compiled function, and each view taken in it (`a[i]`, a slice),
+  updates reference counts with atomic operations. In a function called millions of times, or in threads sharing
+  the same arrays, these atomics dominate (Caribu's radiosity near field ran 2.5× faster without them). In hot
+  loops pass scalars and indices, index arrays element by element (`work[row, k]`), and gather small work arrays
+  into one packed array allocated once (`workspace()` in Caribu's nearfield).
+- **Options.** `@njit(cache=True, nogil=True)`: compiled once per environment, and releasing the GIL so that a
+  `ThreadPoolExecutor` runs the calls in parallel (per source, per chunk of receivers), each thread on its own work
+  arrays; results summed afterwards in a fixed order keep runs reproducible. `parallel=True` (`prange`) suits
+  independent iterations writing to separate places.
+- **Division.** numba raises on division by zero (Python's rule) unless `error_model="numpy"`: then IEEE results
+  (`inf`, `nan`, `−0.0`), as C. Use it when porting C or C++ code, whose degenerate cases produce them.
+- **Reproducing a legacy bit for bit.** Write float32 where the original used `float` (`np.float32(a * b)` rounds
+  each operation), keep its order of operations, and its C library functions (`math.sqrt`, `math.acos`); C's
+  `(int)` truncates towards zero (and gives INT_MIN for a NaN). Compare the outputs as text, as the original printed
+  them.
+- **The same code on a GPU.** A compiled function's Python source (`function.py_func`) can be compiled again as a
+  CUDA device function (`numba.cuda.jit(device=True)`), so that a kernel calls the CPU code's functions and gives
+  its results (Caribu's `gpu.py`); numba's CUDA simulator (`NUMBA_ENABLE_CUDASIM=1`, set before numba is imported)
+  tests it without a GPU.
+- **Measure before optimising.** Time the parts (the near field, the solve, the projections) on a real case; a
+  laptop that mixes performance and efficient cores, or throttles in long runs, needs a run pinned to one core
+  (`taskset -c 2`) for single-core comparisons.
+
+## 9. Porting a model
+
+The ports (GRANAP, MECHA, rhizodep, Adel, ArchiSimple, Caribu) share one approach: the original frozen in
+`<package>.legacy` (or run in its own environment), the port reproducing it first, its behaviours then corrected
+one by one, each correction named.
+
+- **Comparisons.** `<package>/comparison/legacy_run.py` runs the legacy and `port_run.py` the port on the same
+  inputs; `test/comparison/` asserts their outputs equal. `openalea.metafspm.testing` holds the shared pieces:
+  `run_executables(steps, files, outputs)` (a legacy's executables in a temporary folder), `run_in_env(env, script)`
+  (a legacy in its own conda environment), `assert_texts_equal` and `text_differences` (files row by row),
+  `assert_arrays_equal` and `array_differences` (bitwise, or within tolerances: the count, the first difference,
+  the largest gap), `worktree(repo, ref)` (an earlier version checked out apart, never by stash or reset).
+- **Corrections.** `openalea.metafspm.corrections.Corrections({name: description})`: `resolve("recommended" |
+  "legacy" | names, precision)`, presets of the port's own, refused with the legacy's precision (the bit-for-bit
+  reference); `table()` and `rst()` for the documentation.
+- **Documentation.** Each port documents its components from their declarations: in its Sphinx `conf.py`,
+  `extensions = [..., "openalea.metafspm.sphinx"]`, then `.. metafspm-component:: package.module.Component` renders
+  its docstring, its variables by kind and its schedule (`openalea.metafspm.sphinx.component_rst(cls)` the same text).
+  Beside it, the port's pages: a tutorial opening with the component formalism, `equations` (the model's equations
+  and the functions computing them), `legacy` (the legacy's algorithms and a registry of its behaviours, each with
+  what the port does) and `performance`.

@@ -10,9 +10,9 @@ from dataclasses import dataclass
 import numpy as np
 
 from openalea.metafspm.coupling.component import FunctionalComponent, input_variable, state_variable
-from openalea.metafspm.coupling.cross import UnionDataStructure
 from openalea.metafspm.coupling.translator import Translator
 from openalea.metafspm.data_structure.configs import ScalesConfig as scales
+from openalea.metafspm.scene.environment import EnvironmentModel
 from openalea.metafspm.scene.scene import Scene
 from openalea.metafspm.solve.decorator import rate
 
@@ -97,17 +97,18 @@ class ToyCaribu(FunctionalComponent):
         return absorbed_light(triangles(x1, x2, y1, y2, z1, z2, radius))
 
 
-class ToyCaribuModel:
+class ToyCaribuModel(EnvironmentModel):
     """Runs every 4 steps (e.g. every 4 h); its outputs are kept in between."""
-    run_every = 4
+    interval = 4 * DT
 
     def __init__(self, populations, scene_xrange, scene_yrange, time_step):
-        self.scene = UnionDataStructure(populations)
+        super().__init__(populations, scene_xrange, scene_yrange, time_step)
+        self.scene = self.plants()                          # the union of the two populations
         self.light = ToyCaribu(data_structure=self.scene)
         self.components = [self.light]
         self.runs = 0
 
-    def run(self):
+    def full_run(self):
         self.runs += 1
         self.light()
 

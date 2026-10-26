@@ -98,17 +98,35 @@ def input_variable(unit: str = "", unit_comment: str = "", description: str = ""
     )
 
 
+def setting(unit: str = "", unit_comment: str = "", description: str = "", references: str = "", DOI: list = "",
+            default=None, choices=None):
+    """Declare a setting: a value of the model, not of the plants (a latitude, a light model, a solver, a grid's
+    voxel), one for all. Listed by declarations() (kind "setting"), set by constructor keywords and scenarios, read
+    as `self.name` anywhere (steps and equations included), and passed as the value itself to a step naming it as an
+    argument. Never stored on the DataStructure (numeric parameters are, per plant). *choices*: the values allowed,
+    checked at construction. A default must be immutable (a tuple, not a list)."""
+    declared = declare(default=default, unit=unit, unit_comment=unit_comment, description=description, min_value="",
+                       max_value="", value_comment="", references=references, DOI=DOI, variable_type="setting",
+                       by="the model", state_variable_type=None, edit_by="user")
+    return field(default=default, metadata={**declared.metadata,
+                                            "choices": tuple(choices) if choices is not None else None})
+
+
 def forcing_variable(unit: str = "", unit_comment: str = "", description: str = "", references: str = "",
-                     DOI: list = "", required: bool = True):
+                     DOI: list = "", required: bool = True, at: str = "end"):
     """Declare a forcing: a time series given to the scene (its `forcings` table, shared by every model) or to the
     component (`self.forcings`), read by `self.forcing(name)` at the step's time, the same for every entity (meteo,
     an imposed supply). Not a DataStructure variable: listed by declarations(). A Scene raises at its construction
     when a *required* forcing is not given; an optional one (required=False) raises KeyError when read, for the
-    component to fall back. The documentation fields are keywords, *unit* and *description* at least."""
+    component to fall back. *at*: when a step reads it, "end" (the end of the (sub-)step, metafspm's convention for
+    implicit solves) or "start" (the step's start, e.g. a meteo table read as the hour begins). The documentation
+    fields are keywords, *unit* and *description* at least."""
+    if at not in ("start", "end"):
+        raise ValueError(f"forcing_variable(at=...): 'start' or 'end', got '{at}'")
     declared = declare(default=None, unit=unit, unit_comment=unit_comment, description=description, min_value="",
                        max_value="", value_comment="", references=references, DOI=DOI, variable_type="forcing",
                        by="the forcings", state_variable_type=None, edit_by="user")
-    return field(default=None, metadata={**declared.metadata, "required": required})
+    return field(default=None, metadata={**declared.metadata, "required": required, "at": at})
 
 
 def state_variable(unit: str = "", unit_comment: str = "", description: str = "", min_value: float = "",
@@ -297,6 +315,21 @@ class Component:
         pass
 
     @classmethod
+    def declared_settings(cls) -> tuple:
+        """The names of the settings the class declares (setting), read once per class."""
+        if "_setting_names" not in cls.__dict__:
+            cls._setting_names = tuple(f.name for f in fields(cls) if f.metadata.get("variable_type") == "setting")
+        return cls._setting_names
+
+    def check_settings(self) -> None:
+        """Each setting with choices holds one of them."""
+        for f in fields(self):
+            choices = f.metadata.get("choices") if f.metadata.get("variable_type") == "setting" else None
+            if choices is not None and getattr(self, f.name) not in choices:
+                raise ValueError(f"{type(self).__name__}.{f.name}: one of {list(choices)}, got "
+                                 f"{getattr(self, f.name)!r}")
+
+    @classmethod
     def declared_forcings(cls) -> dict:
         """{name: required} of the forcings the class declares (forcing_variable)."""
         return {f.name: f.metadata.get("required", True) for f in fields(cls)
@@ -315,6 +348,11 @@ class Component:
             if "variable_type" not in meta:
                 continue
             scale = meta.get("scale")
+            if meta["variable_type"] == "setting":         # one value of the model
+                rows.append(dict(name=f.name, kind="setting", scale="model", unit=meta.get("unit"),
+                                 description=meta.get("description"),
+                                 default=f.default if f.default is not MISSING else None, by=meta.get("by")))
+                continue
             if meta["variable_type"] == "forcing":         # a time series, the same for every entity
                 rows.append(dict(name=f.name, kind="forcing", scale="time series", unit=meta.get("unit"),
                                  description=meta.get("description"),
@@ -361,6 +399,7 @@ class DataStructureComponent(Component):
     mtg_sync = "lazy"
 
     def __post_init__(self):
+        self.check_settings()
         self._install_plant_parameters()
         if self.data_structure is None:
             raise TypeError(
@@ -487,6 +526,30 @@ class DataStructureComponent(Component):
             raise ValueError(f"{type(self).__name__}.{name} differs between the plants ({np.unique(values)[:5]}...): "
                              "use parameter_values(name, location)")
         return first.item()
+
+    def keep(self, name: str, value, saved: bool = True) -> None:
+        """Keep *value* on the component under *name*: state that is not a DataStructure variable (the time of the
+        last lighting), saved by the Scene's checkpoints (checkpoint_state); with *saved* False, a cache that is
+        rebuilt when missing (a kept canopy, incremental meshes), left out of checkpoints. Derived values rebuilt
+        on a key are `cached`'s."""
+        self.__dict__.get("_kept_unsaved" if saved else "_kept", {}).pop(name, None)
+        store = self.__dict__.setdefault("_kept" if saved else "_kept_unsaved", {})
+        store[name] = value
+
+    def kept(self, name: str, default=None):
+        """What keep() kept under *name* (*default* when nothing is)."""
+        for store in ("_kept", "_kept_unsaved"):
+            values = self.__dict__.get(store, {})
+            if name in values:
+                return values[name]
+        return default
+
+    def checkpoint_state(self) -> dict:
+        """The state checkpoints save: what keep() kept."""
+        return {"kept": dict(self.__dict__.get("_kept", {}))}
+
+    def restore_state(self, state: dict) -> None:
+        self.__dict__["_kept"] = dict(state.get("kept", {}))
 
     def cached(self, name: str, build, key=None):
         """A value kept on the component: build() at the first call and again when *key* changes (by default the
@@ -628,13 +691,16 @@ class FunctionalComponent(DataStructureComponent):
     # or a callable t -> value}, interpolated linearly
     forcings = None
 
-    def forcing_time(self) -> float:
+    def forcing_time(self, at: str = "end") -> float:
         """
         The time at which forcings are read: the end of the current (sub-)step for implicit solves and steps,
-        the evaluation time inside an IVP solve; times count from the component's clock (the scene time).
+        the evaluation time inside an IVP solve; with *at* "start", the start of the current (sub-)step. Times count
+        from the component's clock (the scene time).
         """
         start = self.__dict__.get("_clock", 0.)
         offset = self.__dict__.get("_solve_offset", 0.)
+        if at == "start":
+            return start + offset
         if "_ivp_time" in self.__dict__:
             return start + offset + self.__dict__["_ivp_time"]
         step = self.__dict__.get("_current_dt", None)
@@ -643,18 +709,22 @@ class FunctionalComponent(DataStructureComponent):
                          or 0.)
         return start + offset + step
 
-    def forcing(self, name: str):
+    def forcing(self, name: str, at: str = None):
         """
         Forcing *name* at forcing_time(): a callable of the time, or a table linearly interpolated, as a Series
-        indexed by time or a (times, values) pair.
+        indexed by time or a (times, values) pair. *at*: "end" or "start" of the step (by default its declaration's,
+        forcing_variable(at=...), else "end").
         """
+        if at is None:
+            declared = getattr(type(self), "__dataclass_fields__", {}).get(name)
+            at = declared.metadata.get("at", "end") if declared is not None else "end"
         table = (self.forcings or {}).get(name)
         shared = self.__dict__.get("_scene_forcings")
         if table is None and shared is not None and name in shared:
             table = shared[name]                          # the scene's shared table
         if table is None:
             raise KeyError(f"{type(self).__name__} has no forcing '{name}' (set self.forcings, or the scene's)")
-        t = self.forcing_time()
+        t = self.forcing_time(at)
         if callable(table):
             return table(t)
         if not isinstance(table, (tuple, list)) and hasattr(table, "index"):     # a Series indexed by time

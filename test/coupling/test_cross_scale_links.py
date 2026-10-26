@@ -246,8 +246,28 @@ def test_a_link_between_different_units_needs_a_conversion_factor():
     ds = MPGDataStructure(g, from_scale=g.scales.SubOrgan)
     model = CompositeModel()
     model.components = [InHectopascal(data_structure=ds), InMegapascal(data_structure=ds)]
-    with pytest.raises(ValueError, match="the units differ"):
+    with pytest.raises(ValueError, match="does not convert 'MPa' into 'hPa'"):
         model._couple_on_data_structures(_link("InHectopascal", "InMegapascal", "p_hpa", "p_mpa"))
+    with pytest.raises(ValueError, match="does not convert"):                  # a wrong conversion
+        model._couple_on_data_structures({"InHectopascal": {"InMegapascal": {"p_hpa": {"sources": {"p_mpa": 1e3}}}}})
     model._couple_on_data_structures({"InHectopascal": {"InMegapascal": {"p_hpa": {"sources": {"p_mpa": 1e4}}}}})
     np.testing.assert_allclose(ds.get("p_hpa"), 1e4)
+    model._couple_on_data_structures({"InHectopascal": {"InMegapascal": {"p_hpa": {"sources": {"p_mpa": 0.5},
+                                                                                 "unit_check": False}}}})
     assert units_agree("cm3 d-1", "cm3.d-1") and units_agree("", "MPa") and not units_agree("MPa", "hPa")
+
+
+def test_units_are_read_as_quantities():
+    from openalea.metafspm.coupling.units import canonical, check_link, conversion_factor, parse_unit
+    assert parse_unit("mol.m-2.s-1") == parse_unit("mol m-2 s-1") == ((-2, 0, -1, 1, 0), 1.)
+    assert conversion_factor("cm", "m") == pytest.approx(100.) and conversion_factor("mm3 s-1", "m3 s-1") == pytest.approx(1e9)
+    assert parse_unit("gC.g-1.s-1")[0] == (0, 0, -1, 0, 0) and parse_unit("mm/h")[0] == (1, 0, -1, 0, 0)
+    assert parse_unit("adim") == parse_unit("-") == parse_unit("dimensionless") == ((0,) * 5, 1.)
+    assert parse_unit("") is None and parse_unit("furlong") is None
+    assert canonical("mol of hexose.s-1") == "mol s-1" and canonical("-") == "adim" and canonical(".m-1") == "m-1"
+    with pytest.raises(ValueError, match="not the same quantity"):
+        check_link("m", "s", 1., "a link")
+    check_link("", "MPa", 1., "undeclared")                                   # agrees with anything
+    check_link("furlong", "furlong", 1., "unreadable, spelled alike")
+    with pytest.raises(ValueError):
+        conversion_factor("m", "kg")

@@ -178,3 +178,40 @@ def test_a_union_gives_its_parts_triangles_with_its_node_indices():
     assert triangles.owner.tolist() == [0] * 8 + [1] * 8 + [3, 4, 5]
     np.testing.assert_array_equal(triangles.vertices[:16], first.triangles().vertices)
     assert union.triangles(where=np.array([True, False, False, False, True, False])).owner.tolist() == [0] * 8 + [4]
+
+
+def test_labels_and_triangles_of_a_mask():
+    """ds.labels(): each node's MTG label name (or its complex's); a union's in its order. ds.triangles("name"):
+    those of a mask, every node's when the DataStructure has no such mask."""
+    from openalea.metafspm.coupling.cross import UnionDataStructure
+    ds, _ = _segments()
+    assert ds.labels().tolist() == ["RootSegment"] * 3
+    assert len(ds.triangles("emerged")) == 16                          # no such mask: all
+    ds.define_mask("deep", {"z1": "<0"})
+    assert ds.triangles("deep").owner.tolist() == [1] * 8
+    other, _ = _segments()
+    union = UnionDataStructure([ds, other])
+    assert union.labels().tolist() == ["RootSegment"] * 6
+    assert union.triangles("deep").owner.tolist() == [1] * 8 + [3] * 8 + [4] * 8     # the other part: no mask
+
+
+def test_labels_of_a_coarse_scale():
+    """ds.labels(of=scale): each node's entity's label, or one per entity (per_node=False)."""
+    from growth import RootGrowthProbe
+    from scene_doubles import planting
+    from openalea.metafspm.scene.scene import Scene
+    Choregrapher().reset()
+
+    class Roots:
+        initiators = (RootGrowthProbe,)
+
+        def __init__(self, data_structure, time_step):
+            self.growth = RootGrowthProbe(data_structure=data_structure)
+            self.components = [self.growth]
+
+        def run(self):
+            pass
+    ds = Scene(planting([Roots]), time_step=3600.).populations[0].data_structure
+    assert ds.labels(of="Organ").tolist() == ["RootInternode"] * ds.n_nodes()
+    assert ds.labels(of="Organ", per_node=False).tolist() == ["RootInternode"]
+    assert ds.labels(of="Axis", per_node=False).tolist() == ["Root"]

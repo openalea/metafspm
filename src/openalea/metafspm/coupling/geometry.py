@@ -62,6 +62,37 @@ class Triangles:
         values = np.asarray(values, dtype=float) * (1. if weights is None else np.asarray(weights, dtype=float))
         return np.bincount(self.owner, weights=values, minlength=n_owners)
 
+    def mean_per_owner(self, values, n_owners, weights=None) -> np.ndarray:
+        """Per-triangle *values* averaged per owner, weighted by *weights* (by default the triangles' areas); 0 for
+        an owner without triangles or weight."""
+        weights = self.areas() if weights is None else np.asarray(weights, dtype=float)
+        total = self.per_owner(weights, n_owners)
+        summed = self.per_owner(values, n_owners, weights=weights)
+        return np.divide(summed, total, out=np.zeros(n_owners), where=total > 0)
+
+    def clip_below(self, level=0.) -> "Triangles":
+        """The parts of the triangles above height *level* (the soil): a triangle across it cut at its plane (one
+        triangle or two, the same owner), one below it left out."""
+        vertices = self.vertices
+        below = vertices[:, :, 2] < level
+        count = below.sum(axis=1)
+        kept_vertices, kept_owners = [vertices[count == 0]], [self.owner[count == 0]]
+        for t in np.flatnonzero((count == 1) | (count == 2)):
+            points, buried = vertices[t], below[t]
+            polygon = []
+            for i in range(3):  # Sutherland–Hodgman against z >= level
+                current, following = points[i], points[(i + 1) % 3]
+                if not buried[i]:
+                    polygon.append(current)
+                if buried[i] != buried[(i + 1) % 3]:
+                    crossing = current + (level - current[2]) / (following[2] - current[2]) * (following - current)
+                    crossing[2] = level
+                    polygon.append(crossing)
+            for k in range(1, len(polygon) - 1):
+                kept_vertices.append(np.array([[polygon[0], polygon[k], polygon[k + 1]]]))
+                kept_owners.append(self.owner[t:t + 1])
+        return Triangles(np.concatenate(kept_vertices), np.concatenate(kept_owners))
+
 
 # The slim cylinder (Adel's mtg_interpreter.slim_cylinder): 3 points at its base, 3 at its top turned by π, 8 triangles
 _SLIM_INDICES = np.array([(2, 1, 0), (3, 4, 5), (0, 5, 4), (0, 4, 2), (2, 4, 3), (3, 1, 2), (1, 3, 5), (5, 0, 1)])
