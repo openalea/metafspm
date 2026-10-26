@@ -187,6 +187,7 @@ class Scene(CompositeModel):
         self.forcings = forcings
         for component in self.components:
             component.__dict__["_scene_forcings"] = forcings
+        self._check_forcings()
         self.events = sorted(list(events), key=lambda event: event[0])
         self._n_events = len(self.events)
         self.stop_when, self.stopped = stop_when, False
@@ -303,6 +304,19 @@ class Scene(CompositeModel):
                                                  flip_z=self.flip_z, mask=mask))
                 done.add((id(plant_ds), id(other)))
         return mappings
+
+    def _check_forcings(self) -> None:
+        """Every required forcing a component declares (forcing_variable) is given: the scene's or its own."""
+        missing = []
+        for component in self.components:
+            declared = getattr(component, "declared_forcings", lambda: {})()
+            own = getattr(component, "forcings", None) or {}
+            for name, required in declared.items():
+                if required and name not in own and (self.forcings is None or name not in self.forcings):
+                    missing.append(f"{type(component).__name__}.{name}")
+        if missing:
+            raise ValueError(f"forcings not given: {', '.join(missing)} (the Scene's forcings=, or the component's "
+                             "forcings)")
 
     # ── running ───────────────────────────────────────────────────────────────
 

@@ -220,7 +220,12 @@ class SoilDiffusion(FunctionalComponent):
   others frozen, dropped edges without flux), e.g. `filters="active"`; `split="components"`
   solves each connected piece (each plant) on its own, with its own convergence and adaptive steps.
 - **Forcings.** `self.forcing(name)` interpolates a time series of `self.forcings` (or of the scene's table) at the
-  end of the current (sub-)step, or at the evaluation time of an IVP solver.
+  end of the current (sub-)step, or at the evaluation time of an IVP solver. A component declares the forcings it
+  reads, `PARi: float = forcing_variable(unit="µmol m-2 s-1", description="...")`: unlike an input, written per
+  entity by another model through the translator, a forcing is a time series given from outside, the same for every
+  entity. It is listed by `declarations()` (kind "forcing"), not stored on the DataStructure, and a `Scene` checks
+  at its construction that every required one is given (`required=False`: an optional one, which raises KeyError
+  when read).
 - **Outputs and Jacobians.** `@graph_output(name, location=...)` derives outputs after the solve; `@graph_jacobian`
   gives an analytic Jacobian (finite differences with graph colouring otherwise).
 

@@ -98,6 +98,19 @@ def input_variable(unit: str = "", unit_comment: str = "", description: str = ""
     )
 
 
+def forcing_variable(unit: str = "", unit_comment: str = "", description: str = "", references: str = "",
+                     DOI: list = "", required: bool = True):
+    """Declare a forcing: a time series given to the scene (its `forcings` table, shared by every model) or to the
+    component (`self.forcings`), read by `self.forcing(name)` at the step's time, the same for every entity (meteo,
+    an imposed supply). Not a DataStructure variable: listed by declarations(). A Scene raises at its construction
+    when a *required* forcing is not given; an optional one (required=False) raises KeyError when read, for the
+    component to fall back. The documentation fields are keywords, *unit* and *description* at least."""
+    declared = declare(default=None, unit=unit, unit_comment=unit_comment, description=description, min_value="",
+                       max_value="", value_comment="", references=references, DOI=DOI, variable_type="forcing",
+                       by="the forcings", state_variable_type=None, edit_by="user")
+    return field(default=None, metadata={**declared.metadata, "required": required})
+
+
 def state_variable(unit: str = "", unit_comment: str = "", description: str = "", min_value: float = "",
                    max_value: float = "", value_comment: str = "", references: str = "", DOI: list = "",
                    state_variable_type: Literal[
@@ -284,9 +297,15 @@ class Component:
         pass
 
     @classmethod
+    def declared_forcings(cls) -> dict:
+        """{name: required} of the forcings the class declares (forcing_variable)."""
+        return {f.name: f.metadata.get("required", True) for f in fields(cls)
+                if f.metadata.get("variable_type") == "forcing"}
+
+    @classmethod
     def declarations(cls):
-        """A pandas DataFrame of the declared variables: name, kind (input, state_variable, parameter), scale (its name)
-        or location, unit, description, default, and by (an input's provider, a parameter's owner)."""
+        """A pandas DataFrame of the declared variables: name, kind (input, state_variable, parameter, forcing), scale
+        (its name) or location, unit, description, default, and by (an input's provider, a parameter's owner)."""
         import pandas as pd
         from openalea.metafspm.data_structure.configs import ScalesConfig
         scale_names = {value: name for name, value in vars(ScalesConfig).items() if isinstance(value, int)}
@@ -296,6 +315,12 @@ class Component:
             if "variable_type" not in meta:
                 continue
             scale = meta.get("scale")
+            if meta["variable_type"] == "forcing":         # a time series, the same for every entity
+                rows.append(dict(name=f.name, kind="forcing", scale="time series", unit=meta.get("unit"),
+                                 description=meta.get("description"),
+                                 default="required" if meta.get("required", True) else "optional",
+                                 by=meta.get("by")))
+                continue
             rows.append(dict(name=f.name, kind=meta["variable_type"],
                              scale=scale_names.get(scale, scale) if scale is not None else meta.get("location"),
                              unit=meta.get("unit"), description=meta.get("description"),
