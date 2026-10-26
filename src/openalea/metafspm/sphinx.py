@@ -40,6 +40,8 @@ def component_rst(cls, heading: str = "-") -> str:
         return "\n".join(lines) + "\n"
     table = cls.declarations()
     for kind, title in KINDS:
+        if table.empty:                                 # a component declaring no variable
+            break
         rows = table[table["kind"] == kind]
         if rows.empty:
             continue
