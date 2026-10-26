@@ -1,5 +1,6 @@
 """
-Scene services: a forcing table shared by every model, models run every n steps or when a
+Scene services: a forcing table shared by every model (the forcings components declare checked when the scene is
+built), models run every n steps or when a
 condition holds (their outputs kept on the other steps), spin-up before the first step, events and stop
 conditions.
 """
@@ -8,7 +9,9 @@ from dataclasses import dataclass
 import numpy as np
 import pandas as pd
 
-from openalea.metafspm.coupling.component import state_variable
+import pytest
+
+from openalea.metafspm.coupling.component import forcing_variable, state_variable
 from openalea.metafspm.data_structure.configs import ScalesConfig as scales
 from openalea.metafspm.scene.scene import Scene
 from openalea.metafspm.solve.decorator import rate
@@ -23,6 +26,8 @@ class Lit(SceneGeometry):
     light: float = state_variable(**DOC, initialize=0., scale=scales.SubOrgan)
     exudation: float = state_variable(**DOC, initialize=0., scale=scales.SubOrgan, state_variable_type="extensive")
     soil_nitrate: float = state_variable(**DOC, initialize=0., scale=scales.SubOrgan)
+    PARi: float = forcing_variable(unit="µmol m-2 s-1", description="The incident PAR")
+    wind: float = forcing_variable(unit="m s-1", description="The wind speed, when given", required=False)
 
     @rate
     def _light(self, light):
@@ -72,6 +77,19 @@ def test_components_read_the_scene_forcings():
     np.testing.assert_allclose(ds.get("light"), DT)                 # at the end of the first step
     scene.run()
     np.testing.assert_allclose(ds.get("light"), 2 * DT)
+
+
+def test_declared_forcings():
+    """A forcing declared is listed with the variables, never registered on the DataStructure, and checked when the
+    scene is built: a required one missing raises then, an optional one only when read."""
+    table = Lit.declarations().set_index("name")
+    assert table.loc["PARi", "kind"] == "forcing" and table.loc["PARi", "default"] == "required"
+    assert table.loc["wind", "default"] == "optional"
+    assert Lit.declared_forcings() == {"PARi": True, "wind": False}
+    scene = _scene()
+    assert not scene.populations[0].data_structure.has("PARi")
+    with pytest.raises(ValueError, match="Lit.PARi"):
+        Scene(planting([LitPlants]), time_step=DT, forcings=pd.DataFrame({"wind": [1., 1.]}, index=[0., DT]))
 
 
 def test_models_run_every_n_steps_and_spin_up_once():

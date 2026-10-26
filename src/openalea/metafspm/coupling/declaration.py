@@ -231,7 +231,7 @@ def resolve_declaration(f, ds) -> Optional[VariableSpec]:
     A scale coarser than the nodes without a location is stored at that scale.
     """
     meta = f.metadata
-    if meta.get("variable_type") is None:
+    if meta.get("variable_type") in (None, "forcing"):   # a forcing is a time series, not a DataStructure variable
         return None
     raw_scale, location = meta.get("scale"), meta.get("location")
     mapping, weight = meta.get("mapping"), meta.get("weight")
