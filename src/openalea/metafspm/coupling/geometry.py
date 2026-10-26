@@ -4,7 +4,8 @@ Geometry for light models and display: the triangles of a plant's elements, as n
 A StructuralComponent may provide ``triangles(where=None) -> Triangles``: every triangle of its elements in the
 scene's frame, and the node index (in its DataStructure) of the element each belongs to. A light model gathers them
 (one population's, or a UnionDataStructure's, the populations' node indices offset), runs on them, and gives its
-results back per element (np.bincount on the owners). No PlantGL in the path: a PlantGL scene, for display, can be
+results back per element (np.bincount on the owners). An environment model, given DataStructures, calls
+``ds.triangles()``: each StructuralComponent registers itself on its DataStructure as their provider. No PlantGL in the path: a PlantGL scene, for display, can be
 built from the same arrays. Segment models (roots, stems drawn as segments x1…z2 with a radius) get a default:
 segment_triangles.
 

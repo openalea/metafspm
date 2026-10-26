@@ -128,3 +128,53 @@ def test_default_triangles_are_the_segments_cylinders():
     assert triangles.vertices[:8, :, 2].max() == pytest.approx(0.)
     assert triangles.vertices[8:, :, 2].min() == pytest.approx(-2.)
     assert model.triangles(where=np.array([False, True, True])).owner.tolist() == [1] * 8
+
+
+@dataclass
+class _DrawnProbe(_SegmentsProbe):
+    """Its own drawing: one flat triangle per element."""
+
+    def triangles(self, where=None):
+        from openalea.metafspm.coupling.geometry import Triangles
+        nodes = np.arange(self.data_structure.n_nodes()) if where is None else np.flatnonzero(where)
+        return Triangles(np.tile(np.eye(3), (nodes.size, 1, 1)), nodes)
+
+
+def _segments(probe=None):
+    Choregrapher().reset()
+    _, ds, _ = make_chain()
+    model = (probe or _SegmentsProbe)(data_structure=ds)
+    ds.set("z1", np.array([0., -1., -2.]))
+    ds.set("z2", np.array([-1., -2., -2.]))
+    return ds, model
+
+
+def test_a_data_structure_gives_its_structural_components_triangles():
+    """ds.triangles(), for light models given DataStructures: its structural component's, the one drawing its
+    elements itself before the segments' default, the one set explicitly first."""
+    ds, model = _segments()
+    assert ds.geometry_provider is model
+    np.testing.assert_array_equal(ds.triangles().vertices, model.triangles().vertices)
+    assert ds.triangles(where=np.array([False, True, True])).owner.tolist() == [1] * 8
+    drawn = _DrawnProbe(data_structure=ds)
+    assert ds.geometry_provider is drawn and ds.triangles().owner.tolist() == [0, 1, 2]
+    _DrawnProbe(data_structure=ds)
+    with pytest.raises(ValueError):                             # two drawings: which one is ambiguous
+        ds.triangles()
+    ds.geometry_provider = model
+    assert len(ds.triangles()) == 16
+    Choregrapher().reset()
+    _, bare, _ = make_chain()
+    with pytest.raises(ValueError):
+        bare.triangles()
+
+
+def test_a_union_gives_its_parts_triangles_with_its_node_indices():
+    from openalea.metafspm.coupling.cross import UnionDataStructure
+    first, _ = _segments()
+    second, _ = _segments(_DrawnProbe)
+    union = UnionDataStructure([first, second])
+    triangles = union.triangles()
+    assert triangles.owner.tolist() == [0] * 8 + [1] * 8 + [3, 4, 5]
+    np.testing.assert_array_equal(triangles.vertices[:16], first.triangles().vertices)
+    assert union.triangles(where=np.array([True, False, False, False, True, False])).owner.tolist() == [0] * 8 + [4]

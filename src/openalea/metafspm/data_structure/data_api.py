@@ -182,6 +182,45 @@ class DataStructure(ABC):
         """
         ...
 
+    # ── The elements' geometry, for light models ─────────────────────────────
+
+    def add_geometry_provider(self, component) -> None:
+        """Register *component* (a StructuralComponent on this DataStructure, at its construction) as a source of the
+        elements' triangles."""
+        providers = self.__dict__.setdefault("_geometry_providers", [])
+        if not any(provider is component for provider in providers):
+            providers.append(component)
+
+    @property
+    def geometry_provider(self):
+        """The component whose triangles() gives this DataStructure's elements' triangles: the one set, else the
+        registered one with its own triangles() (Adel's shoot), else the first registered (the segments' default
+        cylinders, the same from every component); None without any."""
+        chosen = self.__dict__.get("_geometry_provider")
+        if chosen is not None:
+            return chosen
+        providers = self.__dict__.get("_geometry_providers", [])
+        from openalea.metafspm.coupling.component import StructuralComponent
+        own = [provider for provider in providers
+               if type(provider).triangles is not StructuralComponent.triangles]
+        if len(own) > 1:
+            raise ValueError(f"several components draw the elements ({', '.join(type(p).__name__ for p in own)}): "
+                             "set ds.geometry_provider to the one giving the triangles")
+        return own[0] if own else (providers[0] if providers else None)
+
+    @geometry_provider.setter
+    def geometry_provider(self, component) -> None:
+        self.__dict__["_geometry_provider"] = component
+
+    def triangles(self, where=None):
+        """The elements' triangles (coupling.geometry.Triangles: each one's node index here), from the geometry
+        provider; *where*: a node mask restricting them."""
+        provider = self.geometry_provider
+        if provider is None:
+            raise ValueError(f"{type(self).__name__} has no geometry provider: no StructuralComponent drawing its "
+                             "elements was built on it (or set ds.geometry_provider)")
+        return provider.triangles(where)
+
 
 def _split(totals, owner, weights, owners_name: str) -> np.ndarray:
     """

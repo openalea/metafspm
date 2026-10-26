@@ -365,6 +365,17 @@ class UnionDataStructure(VariableStoreMixin, DataStructure):
         """Each node's entity id in its part."""
         return np.concatenate(self._ids) if self._ids else np.empty(0, dtype=np.int64)
 
+    def triangles(self, where=None):
+        """The parts' triangles (each part's geometry provider), their node indices those of the union; *where*: a
+        node mask of the union."""
+        from openalea.metafspm.coupling.geometry import Triangles
+        self.update_topology()                             # the parts' current nodes
+        slices = [self.part_slice(i) for i in range(len(self.parts))]
+        mask = None if where is None else np.asarray(where, dtype=bool)
+        return Triangles.concatenate([part.triangles(None if mask is None else mask[piece])
+                                      for part, piece in zip(self.parts, slices)],
+                                     offsets=[piece.start for piece in slices])
+
     def outdated(self) -> bool:
         return self._layout != self._current_layout()
 

@@ -845,6 +845,7 @@ class StructuralComponent(DataStructureComponent):
 
     def __post_init__(self):
         super().__post_init__()
+        self.data_structure.add_geometry_provider(self)     # ds.triangles(), for light models
         if self.active is not None and not self.data_structure.has_mask("active"):
             self.data_structure.define_mask("active", self.active)
 
