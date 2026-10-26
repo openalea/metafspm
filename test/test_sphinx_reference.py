@@ -13,3 +13,16 @@ def test_component_reference():
     assert "State variables" in text and "Settings" in text and "``latitude``" in text and "Schedule" in text
     docutils = pytest.importorskip("docutils.core")
     docutils.publish_doctree("Lamp\n====\n\n" + text, settings_overrides={"report_level": 2, "halt_level": 2})
+
+
+def test_a_model_reference():
+    from openalea.metafspm.scene.environment import EnvironmentModel
+
+    class Light(EnvironmentModel):
+        """A light model."""
+        interval = 3600.
+
+        def between(self):
+            """Only PARa."""
+    text = component_rst(Light)
+    assert "A light model." in text and "every 3600 s" in text and "``between``: Only PARa." in text
