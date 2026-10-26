@@ -257,7 +257,9 @@ def _new_segments(self, length, segment_length) -> dict:
 (`coupling.geometry.Triangles`: vertices in the scene's frame, each triangle's node index). Segment models
 declaring `x1`, `y1`, `z1`, `x2`, `y2`, `z2` and `radius` get slim cylinders by default; a component with its own
 shapes (Adel's blades) overrides it. A light model computes on the triangles and gives its results back per element
-(`Triangles.per_owner`). `openalea.metafspm.display.draw(axes, triangles, colors=...)` draws them with matplotlib.
+(`Triangles.per_owner`). An environment model receives DataStructures, not components: `ds.triangles()` gives the
+triangles of the structural component built on it (the one with its own `triangles()` first; set
+`ds.geometry_provider` when several draw), and a `UnionDataStructure`'s concatenates its parts', in its node indices. `openalea.metafspm.display.draw(axes, triangles, colors=...)` draws them with matplotlib.
 
 ### Tree kernels
 
