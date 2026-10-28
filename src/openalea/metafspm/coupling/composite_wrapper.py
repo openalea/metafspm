@@ -1,3 +1,5 @@
+import os
+
 import yaml
 from dataclasses import fields
 from openalea.metafspm.coupling.translator import Translator
@@ -217,6 +219,8 @@ class CompositeModel:
             return translator_path
         if str(translator_path).endswith(".py"):
             return Translator.from_module(str(translator_path))
+        if os.path.isdir(translator_path):              # Windows' open() raises PermissionError on a directory
+            raise IsADirectoryError(f"the translator path is a directory: {translator_path}")
         try:
             with open(translator_path, "r") as f:
                 translator = yaml.safe_load(f)
