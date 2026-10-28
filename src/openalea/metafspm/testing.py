@@ -116,7 +116,8 @@ def run_in_env(env: str, script: str, cwd=None, timeout=None, variables=None) ->
     prefix = next((p for p in prefixes if os.path.basename(p) == env), None)
     if prefix is None:
         raise ValueError(f"no conda environment '{env}'")
-    done = subprocess.run([os.path.join(prefix, "bin", "python"), "-c", script], cwd=cwd, capture_output=True,
+    python = os.path.join(prefix, "python.exe") if os.name == "nt" else os.path.join(prefix, "bin", "python")
+    done = subprocess.run([python, "-c", script], cwd=cwd, capture_output=True,
                           text=True, timeout=timeout, env=dict(os.environ, **(variables or {})))
     if done.returncode != 0:
         raise RuntimeError(f"the script failed in '{env}':\n{done.stderr[-3000:]}")
