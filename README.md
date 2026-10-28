@@ -13,14 +13,23 @@ This package is intended to provide minimal tools to assist Functionnal Structur
 
 ## Just want to run a model?
 
-metafspm is the framework; the models built on it are in their own packages, each with step-by-step user
-tutorials (`example/tutorials/user/`) for newcomers: [ArchiSimple](https://github.com/openalea/archisimple) (root
-architecture), [Adel](https://github.com/openalea/adel) (wheat shoots),
-[Caribu](https://github.com/openalea/caribu) (light in canopies),
-[GRANAP](https://github.com/openalea-incubator/GRANAP-dev) (cross-section anatomies) and
-[MECHA](https://github.com/openalea-incubator/MECHA-dev) (water flow across root tissues). The page
-[metafspm in five minutes](docs/five_minutes.md) explains, in plain words, what a component, a plant model and a
-scene are.
+metafspm is the framework; the models built on it are in their own packages, on their development branches, each
+with step-by-step user tutorials (`example/tutorials/user/`) for newcomers and developer tutorials
+(`example/tutorials/developer/`):
+
+| package (branch) | what it models | its components |
+|---|---|---|
+| [ArchiSimple](https://github.com/openalea/archisimple/tree/develop) (`develop`) | root system architecture | `RootArchitecture` |
+| [Adel](https://github.com/openalea/adel/tree/to_metafspm) (`to_metafspm`) | wheat shoots in 3D | `ShootArchitecture`, `ScenarioDevelopment` (plant model `ScenarioShoot`) |
+| [Caribu](https://github.com/openalea/caribu/tree/to_metafspm) (`to_metafspm`) | light in canopies | `CaribuLight`, `CaribuLightModel` (environment model), `SimplePlant` |
+| [GRANAP](https://github.com/openalea-incubator/GRANAP-dev/tree/to_metafspm) (`to_metafspm`) | cross-section anatomies | `GranapAnatomy`, `RootAxis`, `Needle` |
+| [MECHA](https://github.com/openalea-incubator/MECHA-dev/tree/to_metafspm) (`to_metafspm`) | water and solutes across root and needle tissues | `MechaHydraulics`, `MechaSolutes`, `MechaOsmoticPresets` |
+
+None of them is on the `openalea3` channel in these versions yet (Adel's and Caribu's packages there are the original
+models, without these components): clone each one on its branch next to metafspm and install both with
+`pip install -e`, in the environment of the package's `conda/environment.y(a)ml` (mamba, from `openalea3` and
+`conda-forge`). The steps for each package are in [metafspm in five minutes](docs/five_minutes.md#installing-them),
+which also explains, in plain words, what a component, a plant model and a scene are.
 
 The rest of this page is for those who build or couple models.
 
