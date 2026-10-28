@@ -59,6 +59,13 @@ def test_run_in_env():
     import shutil
     import sys
     from openalea.metafspm.testing import run_in_env
-    if shutil.which(os.environ.get("CONDA_EXE", "conda")) is None:
+    import json
+    import subprocess
+    conda = os.environ.get("CONDA_EXE", "conda")
+    if shutil.which(conda) is None:
         pytest.skip("conda is not available")
+    listed = json.loads(subprocess.run([conda, "env", "list", "--json"], capture_output=True, text=True,
+                                       check=True).stdout)["envs"]
+    if os.path.realpath(sys.prefix) not in {os.path.realpath(prefix) for prefix in listed}:
+        pytest.skip("this environment is not one conda lists (conda-build's test environment)")
     assert run_in_env(os.path.basename(sys.prefix), "print(6 * 7)").strip() == "42"
