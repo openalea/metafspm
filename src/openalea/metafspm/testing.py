@@ -78,7 +78,7 @@ def assert_component_couplable(component_cls, translator, name: str = None, data
 
 def run_executables(steps, files: dict, outputs=()) -> dict:
     """{output name: text} of executables run one after the other in a temporary directory holding *files*
-    ({name: text}); *steps* [(executable, [arguments])] (an executable found on the PATH); outputs ending with a
+    ({name: text}, written as given: no newline translation on Windows); *steps* [(executable, [arguments])] (an executable found on the PATH); outputs ending with a
     "/"-prefixed folder name or not decodable are returned as bytes."""
     import shutil
     import subprocess
@@ -88,7 +88,7 @@ def run_executables(steps, files: dict, outputs=()) -> dict:
         for name, text in files.items():
             path = Path(directory, name)
             path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_bytes(text) if isinstance(text, bytes) else path.write_text(text)
+            path.write_bytes(text) if isinstance(text, bytes) else path.write_text(text, newline="")
         for executable, arguments in steps:
             command = shutil.which(executable) or executable
             subprocess.run([command, *map(str, arguments)], cwd=directory, capture_output=True, check=True)
