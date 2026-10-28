@@ -78,7 +78,7 @@ def assert_component_couplable(component_cls, translator, name: str = None, data
 
 def run_executables(steps, files: dict, outputs=()) -> dict:
     """{output name: text} of executables run one after the other in a temporary directory holding *files*
-    ({name: text}); *steps* [(executable, [arguments])] (an executable found on the PATH); outputs ending with a
+    ({name: text}, written as given: no newline translation on Windows); *steps* [(executable, [arguments])] (an executable found on the PATH); outputs ending with a
     "/"-prefixed folder name or not decodable are returned as bytes."""
     import shutil
     import subprocess
@@ -88,7 +88,7 @@ def run_executables(steps, files: dict, outputs=()) -> dict:
         for name, text in files.items():
             path = Path(directory, name)
             path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_bytes(text) if isinstance(text, bytes) else path.write_text(text)
+            path.write_bytes(text) if isinstance(text, bytes) else path.write_text(text, newline="")
         for executable, arguments in steps:
             command = shutil.which(executable) or executable
             subprocess.run([command, *map(str, arguments)], cwd=directory, capture_output=True, check=True)
@@ -116,7 +116,8 @@ def run_in_env(env: str, script: str, cwd=None, timeout=None, variables=None) ->
     prefix = next((p for p in prefixes if os.path.basename(p) == env), None)
     if prefix is None:
         raise ValueError(f"no conda environment '{env}'")
-    done = subprocess.run([os.path.join(prefix, "bin", "python"), "-c", script], cwd=cwd, capture_output=True,
+    python = os.path.join(prefix, "python.exe") if os.name == "nt" else os.path.join(prefix, "bin", "python")
+    done = subprocess.run([python, "-c", script], cwd=cwd, capture_output=True,
                           text=True, timeout=timeout, env=dict(os.environ, **(variables or {})))
     if done.returncode != 0:
         raise RuntimeError(f"the script failed in '{env}':\n{done.stderr[-3000:]}")

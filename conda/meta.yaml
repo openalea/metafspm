@@ -52,6 +52,8 @@ test:
 
   source_files:
     - test/**
+    - docs/conventions.md                       # test_conventions_doc checks the page against the code
+    - examples/soil_plant_atmosphere/*.py       # test_soil_plant_atmosphere runs the example's scenes
 
 
   commands:
