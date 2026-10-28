@@ -45,15 +45,44 @@ packages' developer tutorials show the full use, with several components and pla
 
 ## The models available
 
-Each package has **user tutorials** (`example/tutorials/user/`) that start from `simulate`:
+The models ported to metafspm are in their own packages, on their development branches (the links below). Each has
+**user tutorials** (`example/tutorials/user/`) that start from `simulate`, and **developer tutorials**
+(`example/tutorials/developer/`).
 
-| package | what it models |
-|---|---|
-| [ArchiSimple](https://github.com/openalea/archisimple) | the architecture of a root system: its roots' elongation, branching, thickening and death |
-| [Adel](https://github.com/openalea/adel) | the architecture of wheat shoots: their leaves, stems and tillers, in 3D |
-| [Caribu](https://github.com/openalea/caribu) | the light absorbed by each element of a canopy |
-| [GRANAP](https://github.com/openalea-incubator/GRANAP-dev) | the anatomy of plant organs' cross sections: their tissues and cells |
-| [MECHA](https://github.com/openalea-incubator/MECHA-dev) | the flow of water (and solutes) across a root's or a needle's tissues |
+| package (branch) | what it models | its components |
+|---|---|---|
+| [ArchiSimple](https://github.com/openalea/archisimple/tree/develop) (`develop`) | the architecture of a root system: its roots' elongation, branching, thickening and death | `RootArchitecture` (structural) |
+| [Adel](https://github.com/openalea/adel/tree/to_metafspm) (`to_metafspm`) | the architecture of wheat shoots: their leaves, stems and tillers, in 3D | `ShootArchitecture` (structural), `ScenarioDevelopment` (the organs' lengths from a scenario); the plant model `ScenarioShoot` couples them |
+| [Caribu](https://github.com/openalea/caribu/tree/to_metafspm) (`to_metafspm`) | the light absorbed by each element of a canopy | `CaribuLight` (functional), `CaribuLightModel` (the scene's light, an environment model), `SimplePlant` (a simple plant to light) |
+| [GRANAP](https://github.com/openalea-incubator/GRANAP-dev/tree/to_metafspm) (`to_metafspm`) | the anatomy of plant organs' cross sections: their tissues and cells | `GranapAnatomy` (structural: the sections' cells), `RootAxis` and `Needle` (organs to carry the sections) |
+| [MECHA](https://github.com/openalea-incubator/MECHA-dev/tree/to_metafspm) (`to_metafspm`) | the flow of water (and solutes) across a root's or a needle's tissues | `MechaHydraulics` (water), `MechaSolutes` (sucrose and starch), `MechaOsmoticPresets` (osmotic potentials); on GRANAP's anatomies |
+
+## Installing them
+
+metafspm and these ports are not published on the `openalea3` channel yet. Each is **cloned on its branch and
+installed from source** (`pip install -e`), in an environment created from the package's own
+`conda/environment.y(a)ml`, which takes the other dependencies (PlantGL, the MTG, numpy, ...) from `openalea3` and
+`conda-forge` with mamba. Clone the repositories side by side, in one folder:
+
+```bash
+mkdir fspm && cd fspm
+git clone -b data_structure_api https://github.com/openalea/metafspm.git metafspm
+```
+
+| package | clone | environment, then install |
+|---|---|---|
+| ArchiSimple | `git clone -b develop https://github.com/openalea/archisimple.git archisimple` | `mamba env create -f archisimple/conda/environment.yml`, `mamba activate archisimple`, `pip install -e metafspm` (the environment installs ArchiSimple) |
+| Adel | `git clone -b to_metafspm https://github.com/openalea/adel.git adel` | `mamba env create -n adel_dev -f adel/conda/environment.yml`, `mamba activate adel_dev`, `pip install -e metafspm` |
+| Caribu | `git clone -b to_metafspm https://github.com/openalea/caribu.git caribu` (and Adel's, as above, for the wheat examples) | `mamba env create -n caribu -f caribu/conda/environment.yml`, `mamba activate caribu`, `pip install -e metafspm` (and `pip install -e adel --no-deps`) |
+| GRANAP | `git clone -b to_metafspm https://github.com/openalea-incubator/GRANAP-dev.git GRANAP` | `mamba env create -f GRANAP/conda/environment.yaml`, `mamba activate granap`, `pip install -e metafspm`, `pip install -e GRANAP` |
+| MECHA | GRANAP's, as above, and `git clone -b to_metafspm https://github.com/openalea-incubator/MECHA-dev.git MECHA-dev` | `mamba env create -f MECHA-dev/conda/environment.yaml`, `mamba activate mecha`, `pip install -e metafspm`, `pip install -e GRANAP`, `pip install -e MECHA-dev` |
+
+Keep the folder names above: the environment files find metafspm (and GRANAP) next to the package. Each package's
+README gives the same steps. To update, `git pull` in each repository; the editable installs follow.
+
+Adel and Caribu are also on `openalea3` (`mamba install -c openalea3 -c conda-forge openalea.adel openalea.caribu`),
+but these are their released versions, the original models **without** the metafspm components above: for the
+components and the tutorials, install from the branches.
 
 ## For developers
 
