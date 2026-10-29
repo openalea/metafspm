@@ -9,20 +9,20 @@ import numpy as np
 import pandas as pd
 import pytest
 
-fspm_tf = pytest.importorskip("openalea.fspm_tf")
+from openalea import fspm_tf
 
-from openalea.fspm_tf.validate import validate_bytes  # noqa: E402
+from openalea.fspm_tf.validate import validate_bytes
 
-from openalea.metafspm.coupling.choregrapher import Choregrapher  # noqa: E402
-from openalea.metafspm.coupling.component import state_variable  # noqa: E402
-from openalea.metafspm.data_structure.configs import ScalesConfig as scales  # noqa: E402
-from openalea.metafspm.data_structure.adaptive_grid import AdaptiveGridDataStructure  # noqa: E402
-from openalea.metafspm.data_structure.data_api import ArrayDataStructure, MPGDataStructure  # noqa: E402
-from openalea.metafspm.io.fspm_tf import from_frame, to_frame, ucum_unit  # noqa: E402
-from openalea.metafspm.scene.population import build_population  # noqa: E402
+from openalea.metafspm.coupling.choregrapher import Choregrapher
+from openalea.metafspm.coupling.component import state_variable
+from openalea.metafspm.data_structure.configs import ScalesConfig as scales
+from openalea.metafspm.data_structure.adaptive_grid import AdaptiveGridDataStructure
+from openalea.metafspm.data_structure.data_api import ArrayDataStructure, MPGDataStructure
+from openalea.metafspm.io.fspm_tf import from_frame, to_frame, ucum_unit
+from openalea.metafspm.scene.population import build_population
 
-from growth import DOC, CarbonProbe, RootGrowthProbe  # noqa: E402
-from layered_anatomy import make_layered_anatomy, wiring  # noqa: E402
+from growth import DOC, CarbonProbe, RootGrowthProbe
+from layered_anatomy import make_layered_anatomy, wiring
 
 
 def _population():

@@ -396,8 +396,8 @@ scene.simulate(n_iterations=2500)
   same variables, bit for bit, from which a simulation continues as from the original. `Scene(...,
   output_dirpath=..., frame_period=24)` records a frame at the start and every 24 steps, in `output_dirpath/frames`
   with its index `scene.fspm.json`, which ParaView's fspm-TF reader plays as time steps; `frame_options=` passes
-  `scene_to_frame`'s options (e.g. `geometry=False`). It needs the
-  `openalea.fspm_tf` package (`pip install -e ../fspm-TF`).
+  `scene_to_frame`'s options (e.g. `geometry=False`). It uses
+  `openalea.fspm_tf`, a dependency of metafspm (in development, installed from the fspm-TF clone).
 
 ## 7. A complete example
 

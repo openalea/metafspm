@@ -64,8 +64,8 @@ def _fspm_tf():
     try:
         from openalea import fspm_tf
     except ImportError:
-        raise ImportError("openalea.metafspm.io.fspm_tf needs the openalea.fspm_tf package (clone fspm-TF next to "
-                          "metafspm, then pip install -e ../fspm-TF)") from None
+        raise ImportError("openalea.fspm_tf, a dependency of metafspm, is not installed (in development: clone fspm-TF "
+                          "next to metafspm, then pip install -e ../fspm-TF)") from None
     return fspm_tf
 
 

@@ -126,8 +126,9 @@ data_structures = import_frame("scene.glb")              # {id: DataStructure}
 scene = Scene(..., output_dirpath="outputs", frame_period=24)   # a frame every 24 steps, in outputs/frames
 ```
 
-It needs fspm-TF's Python package: clone [fspm-TF](https://github.com/openalea/fspm-TF) next to metafspm and
-`pip install -e ../fspm-TF` (or `pip install -e .[fspm_tf]` once it is published).
+fspm-TF's Python package, `openalea.fspm_tf`, is a dependency of metafspm. Until it is published, clone
+[fspm-TF](https://github.com/openalea/fspm-TF) next to metafspm; `conda/environment.yml` installs it from there
+(`pip install -e ../fspm-TF`).
 
 ## Code Structure
 

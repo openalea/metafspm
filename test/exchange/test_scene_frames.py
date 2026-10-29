@@ -6,16 +6,14 @@ import os
 import numpy as np
 import pytest
 
-pytest.importorskip("openalea.fspm_tf")
+from openalea import fspm_tf
+from openalea.fspm_tf.validate import validate_sequence
 
-from openalea import fspm_tf  # noqa: E402
-from openalea.fspm_tf.validate import validate_sequence  # noqa: E402
+from openalea.metafspm.coupling.choregrapher import Choregrapher
+from openalea.metafspm.io.fspm_tf import from_frame
+from openalea.metafspm.scene.scene import Scene
 
-from openalea.metafspm.coupling.choregrapher import Choregrapher  # noqa: E402
-from openalea.metafspm.io.fspm_tf import from_frame  # noqa: E402
-from openalea.metafspm.scene.scene import Scene  # noqa: E402
-
-from scene_doubles import DT, RootPopulation, SceneSoil, Seedlings, planting, soil_translator  # noqa: E402
+from scene_doubles import DT, RootPopulation, SceneSoil, Seedlings, planting, soil_translator
 
 
 def _arguments(output_dirpath, frame_period=2):
