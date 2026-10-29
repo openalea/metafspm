@@ -385,6 +385,23 @@ scene.simulate(n_iterations=2500)
   every `heavy_log_period` steps (CSV, one folder per population). `scene.checkpoint(path)` and
   `Scene.restore(path, *arguments)` continue a run bit for bit; models keep non-variable state through
   `checkpoint_state()` / `restore_state(state)`.
+- **Exchange with other platforms.** `openalea.metafspm.io.fspm_tf` writes a scene, or chosen DataStructures, as an
+  [fspm-TF](https://github.com/openalea/fspm-TF) frame: one glTF file that CPlantBox, GroIMP or VirtualPlantLab can
+  read, and that glTF viewers display. It holds each MPG scale as a table of vertices (ids, complex, parent, edge
+  type), the variables and MPG properties as columns with their declared units, kinds and standard names, the soil
+  grids, the mappings and the geometry: the DataStructure's triangles, and the shapes a component draws for display
+  only (`display_triangles(where=None)`, e.g. GRANAP's sections), which light models never receive.
+  `export_scene(path, scene)` or `export_frame(path, {id: ds},
+  components={id: [...]})` writes a frame. `import_frame(path)` rebuilds the DataStructures: the same MPG, the
+  same variables, bit for bit, from which a simulation continues as from the original. `Scene(...,
+  output_dirpath=..., frame_period=24)` records a frame at the start and every 24 steps, in `output_dirpath/frames`
+  with its index `scene.fspm.json`, which ParaView's fspm-TF reader plays as time steps; `frame_options=` passes
+  `scene_to_frame`'s options (e.g. `geometry=False`). For logging, the options also filter what each frame keeps:
+  `data_structures=` (which ones), `scales=` (e.g. `["Plant", "SubOrgan"]`), `entities=` (a plant, by vid or by its
+  name in the planting table, an axis, a segment with its cross-section: with everything they contain) and
+  `variables=`. Each is a value for every DataStructure or a `{id: value}` dict. A filtered frame is a smaller, valid
+  fspm-TF file, for outputs only: `import_frame` refuses to rebuild it. It uses
+  `openalea.fspm_tf`, a dependency of metafspm (in development, installed from the fspm-TF clone).
 
 ## 7. A complete example
 

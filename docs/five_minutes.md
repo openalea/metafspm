@@ -67,22 +67,38 @@ installed from source** (`pip install -e`), in an environment created from the p
 ```bash
 mkdir fspm && cd fspm
 git clone -b data_structure_api https://github.com/openalea/metafspm.git metafspm
+git clone https://github.com/openalea/fspm-TF.git fspm-TF        # openalea.fspm_tf, a dependency of metafspm
 ```
 
 | package | clone | environment, then install |
 |---|---|---|
-| ArchiSimple | `git clone -b develop https://github.com/openalea/archisimple.git archisimple` | `mamba env create -f archisimple/conda/environment.yml`, `mamba activate archisimple`, `pip install -e metafspm` (the environment installs ArchiSimple) |
-| Adel | `git clone -b to_metafspm https://github.com/openalea/adel.git adel` | `mamba env create -n adel_dev -f adel/conda/environment.yml`, `mamba activate adel_dev`, `pip install -e metafspm` |
-| Caribu | `git clone -b to_metafspm https://github.com/openalea/caribu.git caribu` (and Adel's, as above, for the wheat examples) | `mamba env create -n caribu -f caribu/conda/environment.yml`, `mamba activate caribu`, `pip install -e metafspm` (and `pip install -e adel --no-deps`) |
-| GRANAP | `git clone -b to_metafspm https://github.com/openalea-incubator/GRANAP-dev.git GRANAP` | `mamba env create -f GRANAP/conda/environment.yaml`, `mamba activate granap`, `pip install -e metafspm`, `pip install -e GRANAP` |
-| MECHA | GRANAP's, as above, and `git clone -b to_metafspm https://github.com/openalea-incubator/MECHA-dev.git MECHA-dev` | `mamba env create -f MECHA-dev/conda/environment.yaml`, `mamba activate mecha`, `pip install -e metafspm`, `pip install -e GRANAP`, `pip install -e MECHA-dev` |
+| ArchiSimple | `git clone -b develop https://github.com/openalea/archisimple.git archisimple` | `mamba env create -f archisimple/conda/environment.yml`, `mamba activate archisimple`, `pip install -e fspm-TF`, `pip install -e metafspm` (the environment installs ArchiSimple) |
+| Adel | `git clone -b to_metafspm https://github.com/openalea/adel.git adel` | `mamba env create -n adel_dev -f adel/conda/environment.yml`, `mamba activate adel_dev`, `pip install -e fspm-TF`, `pip install -e metafspm` |
+| Caribu | `git clone -b to_metafspm https://github.com/openalea/caribu.git caribu` (and Adel's, as above, for the wheat examples) | `mamba env create -n caribu -f caribu/conda/environment.yml`, `mamba activate caribu`, `pip install -e fspm-TF`, `pip install -e metafspm` (and `pip install -e adel --no-deps`) |
+| GRANAP | `git clone -b to_metafspm https://github.com/openalea-incubator/GRANAP-dev.git GRANAP` | `mamba env create -f GRANAP/conda/environment.yaml`, `mamba activate granap`, `pip install -e fspm-TF`, `pip install -e metafspm`, `pip install -e GRANAP` |
+| MECHA | GRANAP's, as above, and `git clone -b to_metafspm https://github.com/openalea-incubator/MECHA-dev.git MECHA-dev` | `mamba env create -f MECHA-dev/conda/environment.yaml`, `mamba activate mecha`, `pip install -e fspm-TF`, `pip install -e metafspm`, `pip install -e GRANAP`, `pip install -e MECHA-dev` |
 
-Keep the folder names above: the environment files find metafspm (and GRANAP) next to the package. Each package's
+Keep the folder names above: the environment files find metafspm, fspm-TF (and GRANAP) next to the package. Each package's
 README gives the same steps. To update, `git pull` in each repository; the editable installs follow.
 
 Adel and Caribu are also on `openalea3` (`mamba install -c openalea3 -c conda-forge openalea.adel openalea.caribu`),
 but these are their released versions, the original models **without** the metafspm components above: for the
 components and the tutorials, install from the branches.
+
+## Seeing and sharing the results
+
+A scene can also be saved as **fspm-TF files**, a format shared with other plant modelling platforms (CPlantBox,
+GroIMP, VirtualPlantLab). Each file holds the whole scene at one time step: every plant's elements and their
+variables, the soil, and the 3D shapes.
+
+- `export_scene("scene.glb", scene)` (from `openalea.metafspm.io.fspm_tf`) saves the scene as it is now.
+- A scene built with `output_dirpath="outputs", frame_period=24` saves one file every 24 steps in `outputs/frames`,
+  with an index file, `scene.fspm.json`.
+- In ParaView, fspm-TF's reader plugin opens a file, or the index to play the time steps. Every variable can then
+  colour the plants, the root sections or the soil.
+
+fspm-TF is installed with metafspm (the steps above). ParaView's plugin is the file `fspm-TF/paraview/fspm_tf_reader.py`,
+loaded once from ParaView's Tools → Manage Plugins menu.
 
 ## For developers
 

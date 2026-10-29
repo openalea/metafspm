@@ -13,5 +13,7 @@ dependencies:
   - pip
   - pytest
   # let pip install the rest using pyproject.toml (if you are okay with conda/pip mix)
+  - jsonschema           # openalea.fspm_tf's
   - pip:
+      - -e ../../fspm-TF   # openalea.fspm_tf, from the fspm-TF clone next to metafspm until it is published
       - -e .."[doc]"

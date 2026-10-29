@@ -105,6 +105,31 @@ environment. See the documentation in `docs/`: the user guide (`docs/user.md`), 
 
 For a model built on MetaFSPM, see [Root_CyNAPS](https://github.com/GeraultTr/Root_CyNAPS).
 
+## Exchange with other platforms
+
+`openalea.metafspm.io.fspm_tf` writes scenes and DataStructures as [fspm-TF](https://github.com/openalea/fspm-TF)
+files: one glTF file per time step, which CPlantBox, GroIMP or VirtualPlantLab can read, and ParaView displays with
+fspm-TF's reader plugin. A file holds:
+
+- each MPG scale as a table, with every variable at its declared unit, kind and standard name;
+- the soil grids, the mappings between plants and soil;
+- the geometry.
+
+`import_frame` rebuilds the DataStructures from a file, bit for bit, and a simulation continues from them as from
+the original.
+
+```python
+from openalea.metafspm.io.fspm_tf import export_scene, import_frame
+
+export_scene("scene.glb", scene)                         # one frame now
+data_structures = import_frame("scene.glb")              # {id: DataStructure}
+scene = Scene(..., output_dirpath="outputs", frame_period=24)   # a frame every 24 steps, in outputs/frames
+```
+
+fspm-TF's Python package, `openalea.fspm_tf`, is a dependency of metafspm. Until it is published, clone
+[fspm-TF](https://github.com/openalea/fspm-TF) next to metafspm; `conda/environment.yml` installs it from there
+(`pip install -e ../fspm-TF`).
+
 ## Code Structure
 
 Here is a dynamic view of OpenAlea.MetaFSPM's code structure : https://openalea.github.io/metafspm/
