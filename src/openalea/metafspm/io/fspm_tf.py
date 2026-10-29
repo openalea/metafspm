@@ -274,6 +274,36 @@ def _hashable(key):
     return tuple(_hashable(item) for item in key) if isinstance(key, list) else key
 
 
+_MISSING = object()
+
+
+def _lookup(prop, vids: np.ndarray) -> tuple:
+    """(present, values) of the MPG property *prop* at *vids*: a mask, and the values (a float array, NaN where
+    absent, for an ArrayDict, read in bulk from its sorted keys; a list, None where absent, for a dict)."""
+    if isinstance(prop, ArrayDict):
+        keys, stored = prop.order[:prop.size], prop.arr[:prop.size]
+        if keys.size == 0:
+            return np.zeros(vids.size, dtype=bool), np.full(vids.size, np.nan)
+        position = np.clip(np.searchsorted(keys, vids), 0, keys.size - 1)
+        present = keys[position] == vids
+        return present, np.where(present, stored[position], np.nan)
+    get = prop.get
+    values = [get(v, _MISSING) for v in vids.tolist()]
+    present = np.array([value is not _MISSING for value in values], dtype=bool)
+    return present, [None if value is _MISSING else value for value in values]
+
+
+def _arraydict(keys: np.ndarray, values: np.ndarray) -> ArrayDict:
+    """An ArrayDict of unique *keys* and their *values*, built from the arrays at once."""
+    keys, values = np.asarray(keys, dtype=np.int64), np.asarray(values, dtype=np.float64)
+    order = np.argsort(keys, kind="stable")
+    out = ArrayDict(init_capacity=keys.size)
+    out.order[:keys.size], out.arr[:keys.size] = keys[order], values[order]
+    out.size = int(keys.size)
+    out.vid2idx = dict(zip(out.order[:out.size].tolist(), range(out.size)))
+    return out
+
+
 # ── MPGDataStructure → data structure ───────────────────────────────────────
 
 def _scale_names(g) -> dict:
@@ -303,7 +333,8 @@ def _mpg_data_structure(identifier: str, ds, metadata: dict, standard_names: dic
             by_scale.setdefault(g._scale[vid], []).append(vid)
     connection = g.scales.Connection
     translator = dict(g.labels.translator)
-    label_property, edge_property = g.property("label"), g.property("edge_type")
+    properties = g.properties()                    # read only: g.property() would create a missing property
+    label_property, edge_property = properties.get("label", {}), properties.get("edge_type", {})
     extras = {"class": "MPGDataStructure", "construction": ds._construction(), "last_id": int(g._id),
               "anchors": sorted(int(v) for v in anchors), "scales": {}, "label_codes": {}, "properties": {},
               "absent": {}, "none": {}, "variables": {}, "tracked": sorted(ds.__dict__.get("_mtg_tracked", {})),
@@ -315,28 +346,28 @@ def _mpg_data_structure(identifier: str, ds, metadata: dict, standard_names: dic
         name = names[scale]
         relation = scale == connection
         reserved = _RELATION_RESERVED if relation else _GRAPH_RESERVED
-        raw_complex = np.array([-1 if g._complex.get(v) is None else g._complex[v] for v in vids], dtype=np.int64)
-        raw_parent = np.array([-1 if g._parent.get(v) is None else g._parent[v] for v in vids], dtype=np.int64)
+        listed = vids.tolist()
+        raw_complex = np.array([g._complex.get(v, -1) for v in listed], dtype=np.int64)
+        raw_parent = np.array([-1 if g._parent.get(v) is None else g._parent[v] for v in listed], dtype=np.int64)
         columns = {"id": vids}
-        codes = [label_property.get(int(v)) for v in vids]
-        if any(code is not None for code in codes):
-            labels = []
-            for v, code in zip(vids, codes):
-                if code is None:
-                    labels.append("_none")
-                    continue
+        present, codes = _lookup(label_property, vids)
+        codes = np.array([np.nan if code is None else code for code in codes], dtype=float)
+        if present.any():
+            names_of = {}
+            for code in np.unique(codes[present]):
                 label = translator.get(int(code), f"label_{int(code)}")
                 known = extras["label_codes"].setdefault(name, {})
-                if known.get(label, code) != code:             # the same name for two codes at this scale
+                if label in known and known[label] != code:     # the same name for two codes at this scale
                     label = f"{label}_{int(code)}"
                 known[label] = int(code) if float(code).is_integer() else float(code)
-                labels.append(label)
-            columns["relation" if relation else "label"] = np.array(labels, dtype=object)
+                names_of[float(code)] = label
+            columns["relation" if relation else "label"] = np.array(
+                [names_of[float(code)] if here else "_none" for here, code in zip(present, codes)], dtype=object)
         if relation:
-            columns["source"] = np.array([int(g.property("n_id_a")[int(v)]) for v in vids], dtype=np.int64)
-            columns["target"] = np.array([int(g.property("n_id_b")[int(v)]) for v in vids], dtype=np.int64)
+            columns["source"] = _lookup(properties.get("n_id_a", {}), vids)[1].astype(np.int64)
+            columns["target"] = _lookup(properties.get("n_id_b", {}), vids)[1].astype(np.int64)
         else:
-            same_scale = (raw_parent >= 0) & (np.array([g._scale.get(int(p), -1) for p in raw_parent]) == scale)
+            same_scale = (raw_parent >= 0) & (arrays["scale"][np.maximum(raw_parent, 0)] == scale)
             resolved = arrays["complex"][vids]
             owned = (resolved >= 0) & ~np.isin(resolved, list(anchors))
             # the containing entity: the complex, or for a vertex anchored to its scale's anchor, its parent at a
@@ -349,15 +380,16 @@ def _mpg_data_structure(identifier: str, ds, metadata: dict, standard_names: dic
             columns["edge_type"] = np.array(["none" if not same else ("branch" if code == 3 else "successor")
                                              for same, code in zip(same_scale, edge_codes)], dtype=object)
         columns["metafspm_complex"], columns["metafspm_parent"] = raw_complex, raw_parent
-        columns["metafspm_edge_type"] = np.array([{"/": 1, "<": 2, "+": 3}.get(edge_property.get(int(v)), 0)
-                                                  for v in vids], dtype=np.uint8)
-        if any(edge_property.get(int(v)) not in (None, "/", "<", "+") for v in vids):
+        raw_edges = [edge_property.get(v) for v in listed]
+        if not set(raw_edges) <= {None, "/", "<", "+"}:
             raise ValueError(f"{name}: edge types other than '/', '<' and '+' cannot be exchanged")
+        columns["metafspm_edge_type"] = np.array([{"/": 1, "<": 2, "+": 3}.get(edge, 0) for edge in raw_edges],
+                                                 dtype=np.uint8)
 
         for property_name, prop in g.properties().items():
             if property_name in ("label", "edge_type") or (relation and property_name in ("n_id_a", "n_id_b")):
                 continue
-            present = np.array([int(v) in prop for v in vids])
+            present, values = _lookup(prop, vids)
             if not present.any():
                 continue
             column = f"mtg_{property_name}" if property_name in reserved or property_name in LINK_COLUMNS \
@@ -365,10 +397,8 @@ def _mpg_data_structure(identifier: str, ds, metadata: dict, standard_names: dic
             if not re.fullmatch(r"[a-zA-Z_][a-zA-Z0-9_]*", column):
                 warnings.warn(f"MPG property '{property_name}' is not exchanged: its name is not an identifier")
                 continue
-            values = [prop[int(v)] if p else None for v, p in zip(vids, present)]
             if isinstance(prop, ArrayDict):
-                kind = "float64"
-                data = np.array([np.nan if value is None else value for value in values], dtype=np.float64)
+                kind, data = "float64", values
             else:
                 assigned = [value for value in values if value is not None]
                 if not assigned:
@@ -394,7 +424,8 @@ def _mpg_data_structure(identifier: str, ds, metadata: dict, standard_names: dic
             entry.setdefault("dtypes", {})[name] = kind
             if not present.all():
                 extras["absent"][f"{name}.{property_name}"] = vids[~present].tolist()
-            none = [int(v) for v, p, value in zip(vids, present, values) if p and value is None]
+            none = ([] if isinstance(prop, ArrayDict) else
+                    [v for v, here, value in zip(listed, present, values) if here and value is None])
             if none:
                 extras["none"][f"{name}.{property_name}"] = none
             if data is not None:
@@ -744,42 +775,44 @@ def _mpg_from(data_structure, extras: dict):
             g._children.setdefault(parent, []).append(vid)
     g._id = extras["last_id"]
     # The properties
-    labels, edge_types = {}, {}
+    labels, edge_types = [], {}
     for name, table in tables.items():
         codes = extras["label_codes"].get(name, {})
         column = "relation" if isinstance(table, _fspm_tf().Relation) else "label"
-        for vid, label in zip(table.columns["id"], table.columns.get(column, ())):
-            if label != "_none":
-                labels[int(vid)] = codes[label]
-        for vid, code in zip(table.columns["id"], table.columns["metafspm_edge_type"]):
-            if code:
-                edge_types[int(vid)] = EDGE_CODES[int(code)]
-    _merge(g, "label", "ArrayDict", labels)
+        if column in table.columns:
+            named = table.columns[column] != "_none"
+            labels.append((table.columns["id"][named],
+                           np.array([codes[label] for label in table.columns[column][named]], dtype=np.float64)))
+        edges = table.columns["metafspm_edge_type"]
+        edge_types.update(zip(table.columns["id"][edges > 0].tolist(),
+                              [EDGE_CODES[int(code)] for code in edges[edges > 0]]))
+    _merge_arrays(g, "label", labels)
     _merge(g, "edge_type", "dict", edge_types)
     for property_name, entry in extras["properties"].items():
-        values = {}
+        arrays, values = [], {}
         for name, kind in entry["dtypes"].items():
             table = tables[name]
-            absent = set(extras["absent"].get(f"{name}.{property_name}", ()))
-            none = set(extras["none"].get(f"{name}.{property_name}", ()))
+            ids = table.columns["id"]
+            absent = np.isin(ids, extras["absent"].get(f"{name}.{property_name}", ()))
+            none = np.isin(ids, extras["none"].get(f"{name}.{property_name}", ()))
             column = table.columns.get(entry["column"]) if kind is not None else None
-            for row, vid in enumerate(table.columns["id"].tolist()):
-                if vid in absent:
-                    continue
-                if vid in none or column is None:
-                    values[vid] = None
-                    continue
-                value = column[row]
-                values[vid] = (float(value) if kind == "float64" else int(value) if kind == "int64"
-                               else bool(value) if kind == "bool" else _decoded(value) if kind == "json"
-                               else str(value))
-        _merge(g, property_name, entry["container"], values)
+            if entry["container"] == "ArrayDict":
+                kept = ~absent & ~none
+                arrays.append((ids[kept], np.asarray(column, dtype=np.float64)[kept]))
+                continue
+            convert = {"float64": float, "int64": int, "bool": bool, "json": _decoded}.get(kind, str)
+            for vid, here, missing, value in zip(ids.tolist(), ~absent, none,
+                                                 column if column is not None else [None] * ids.size):
+                if here:
+                    values[vid] = None if missing or column is None else convert(value)
+        if entry["container"] == "ArrayDict":
+            _merge_arrays(g, property_name, arrays)
+        else:
+            _merge(g, property_name, "dict", values)
     for name, table in tables.items():
         if isinstance(table, _fspm_tf().Relation):
-            _merge(g, "n_id_a", "ArrayDict", {int(v): float(s) for v, s in zip(table.columns["id"],
-                                                                               table.columns["source"])})
-            _merge(g, "n_id_b", "ArrayDict", {int(v): float(t) for v, t in zip(table.columns["id"],
-                                                                               table.columns["target"])})
+            _merge_arrays(g, "n_id_a", [(table.columns["id"], table.columns["source"].astype(np.float64))])
+            _merge_arrays(g, "n_id_b", [(table.columns["id"], table.columns["target"].astype(np.float64))])
     for property_name, entry in extras.get("anchor_properties", {}).items():
         prop = g._properties.get(property_name)
         if prop is None:
@@ -808,6 +841,20 @@ def _mpg_from(data_structure, extras: dict):
 
 def _anchor_vids(g) -> list:
     return [g.root] + [int(v) for v in np.flatnonzero(g.topology_arrays()["is_anchor"])]
+
+
+def _merge_arrays(g, name: str, parts: list) -> None:
+    """Add [(vids, values)] to the MPG's ArrayDict property *name* (created when missing), at once."""
+    existing = g._properties.get(name)
+    if isinstance(existing, ArrayDict):
+        keys, values = [existing.order[:existing.size]], [existing.arr[:existing.size]]
+    else:                                              # a new MPG's dict (its anchors' values), or none
+        keys = [np.fromiter(existing.keys(), dtype=np.int64)] if existing else []
+        values = [np.array(list(existing.values()), dtype=np.float64)] if existing else []
+    keys += [np.asarray(vids, dtype=np.int64) for vids, _ in parts]
+    values += [np.asarray(part, dtype=np.float64) for _, part in parts]
+    g._properties[name] = _arraydict(np.concatenate(keys) if keys else np.zeros(0, dtype=np.int64),
+                                     np.concatenate(values) if values else np.zeros(0))
 
 
 def _merge(g, name: str, container: str, values: dict) -> None:
