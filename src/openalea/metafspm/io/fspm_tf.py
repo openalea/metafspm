@@ -24,7 +24,8 @@ What a frame holds:
   - a CrossMapping: its incidence (rows, columns, weights) as a mapping, which from_frame leaves out (the scene
     rebuilds its mappings);
   - declarations: the unit (as a UCUM code), kind, role, description, range and references of each variable
-    declared by the components given, with a standard name (STANDARD_NAMES) where the vocabulary has one.
+    declared by the components given, with a standard name where the vocabulary's metafspm column lists the
+    variable's name (its declared unit converting to the standard name's).
 
 Not exchanged: derivation formulas and mask rules (code), random streams, the components' own state.
 """
@@ -48,21 +49,6 @@ NO_ID = -1
 EDGE_CODES = {1: "/", 2: "<", 3: "+"}               # the MPG's edge types (MPG.topology_arrays)
 LINK_COLUMNS = ("metafspm_complex", "metafspm_parent", "metafspm_edge_type")
 
-# metafspm names whose quantity has a standard name in the fspm-TF vocabulary (used when the declared unit converts
-# to the standard name's unit)
-STANDARD_NAMES = {
-    "x1": "proximal_end_x", "y1": "proximal_end_y", "z1": "proximal_end_z",
-    "x2": "distal_end_x", "y2": "distal_end_y", "z2": "distal_end_z",
-    "length": "length", "radius": "radius", "struct_mass": "structural_mass", "volume": "volume",
-    "area": "surface_area", "green_area": "green_area", "distance_from_tip": "distance_from_tip",
-    "azimuth": "azimuth", "inclination": "inclination", "root_order": "branching_order", "age": "age",
-    "thermal_time": "thermal_time", "water_potential": "water_potential", "osmotic_potential": "osmotic_potential",
-    "soil_water_potential": "soil_water_potential", "soil_temperature": "soil_temperature",
-    "leaf_temperature": "leaf_temperature", "stomatal_conductance": "stomatal_conductance",
-    "PARa": "absorbed_par_photon_flux_density", "PARi": "incident_par_photon_flux_density",
-    "cell_area": "cell_area", "wall_thickness": "wall_thickness", "sucrose": "sucrose_concentration",
-    "starch": "starch_concentration",
-}
 _KINDS = {"intensive": "intensive", "extensive": "extensive", "massic_concentration": "massic_concentration",
           "volumic_concentration": "volumic_concentration", "descriptor": "descriptor",
           "NonInertialIntensive": "intensive", "NonInertialExtensive": "extensive"}
@@ -659,11 +645,11 @@ def to_frame(data_structures: dict, components: dict = None, mappings: dict = No
     The fspm-TF frame of *data_structures* ({id: DataStructure}; ids are identifiers), their variables declared
     by *components* ({id: [components]}), with *mappings* ({name: (CrossMapping, source id, target id)}), at *time*
     (in *time_unit*) and *step*. *geometry*: the MPGDataStructures' triangles as meshes. *standard_names*: {metafspm
-    name: standard name}, default STANDARD_NAMES (None values drop one).
+    name: standard name} on top of the vocabulary's metafspm column (a None value drops one).
     """
     fspm_tf = _fspm_tf()
     from openalea.fspm_tf import vocabulary
-    names = dict(STANDARD_NAMES, **(standard_names or {}))
+    names = dict(vocabulary.platform_names("metafspm"), **(standard_names or {}))
     names = {key: value for key, value in names.items() if value}
     frame = fspm_tf.Frame(time=float(time), time_unit=time_unit, step=int(step),
                           writer={"platform": PLATFORM}, vocabulary_version=vocabulary.version())

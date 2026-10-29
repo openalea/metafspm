@@ -165,6 +165,29 @@ def test_the_frame_reads_as_the_data_model():
     assert not structure.meshes                          # no component draws these segments
 
 
+def test_standard_names_come_from_the_vocabulary():
+    """The vocabulary's metafspm column names the variables (x1 is proximal_end_x), when the declared unit converts to
+    the standard name's; standard_names= adds to it or drops one."""
+    from dataclasses import field
+
+    @dataclass
+    class Declared:
+        x1: float = field(default=0., metadata=dict(unit="mm", variable_type="state_variable"))
+        length: float = field(default=0., metadata=dict(unit="s", variable_type="state_variable"))   # not a length
+
+    ds = _population()
+    _SegmentsProbe(data_structure=ds)
+
+    def declared(**options):
+        segments = to_frame({"plants": ds}, components={"plants": [Declared()]}, **options).data_structures[0]
+        return segments.entity_set("SubOrgan").variables
+
+    variables = declared()
+    assert variables["x1"].standard_name == "proximal_end_x" and variables["x1"].unit == "mm"
+    assert variables["length"].standard_name is None                     # its unit does not convert to m
+    assert declared(standard_names={"x1": None})["x1"].standard_name is None
+
+
 def test_the_geometry_is_a_mesh_by_scale():
     ds = _population()
     model = _SegmentsProbe(data_structure=ds)
