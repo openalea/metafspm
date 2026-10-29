@@ -389,7 +389,9 @@ scene.simulate(n_iterations=2500)
   [fspm-TF](https://github.com/openalea/fspm-TF) frame: one glTF file that CPlantBox, GroIMP or VirtualPlantLab can
   read, and that glTF viewers display. It holds each MPG scale as a table of vertices (ids, complex, parent, edge
   type), the variables and MPG properties as columns with their declared units, kinds and standard names, the soil
-  grids, the mappings and the geometry. `export_scene(path, scene)` or `export_frame(path, {id: ds},
+  grids, the mappings and the geometry: the DataStructure's triangles, and the shapes a component draws for display
+  only (`display_triangles(where=None)`, e.g. GRANAP's sections), which light models never receive.
+  `export_scene(path, scene)` or `export_frame(path, {id: ds},
   components={id: [...]})` writes a frame. `import_frame(path)` rebuilds the DataStructures: the same MPG, the
   same variables, bit for bit, from which a simulation continues as from the original. It needs the
   `openalea.fspm_tf` package (`pip install -e ../fspm-TF`).

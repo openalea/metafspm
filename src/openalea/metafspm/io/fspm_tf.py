@@ -14,7 +14,8 @@ What a frame holds:
   - an MPGDataStructure: one entity set per MPG scale holding vertices (Plant, Axis, ... SubOrgan, Layer, Cell,
     Compartment; ids are the vids), the Connections as a relation (n_id_a → n_id_b); as columns, every MPG property
     and every variable of the DataStructure at that scale's location; its scalars; the triangles of its geometry
-    provider as a mesh, by node and by coarser scale. The MPG's own links (the raw complex and parent of each
+    provider as a mesh, by node and by coarser scale, and a mesh for each component drawing shapes for display only
+    (display_triangles(), e.g. GRANAP's sections). The MPG's own links (the raw complex and parent of each
     vertex, its raw edge type) are the metafspm_complex, metafspm_parent and metafspm_edge_type columns, and the
     label codes, variable metadata and construction arguments go in the data structure's extras, so that
     from_frame rebuilds the same MPG (vertices, links, properties) and the same variables, bit for bit;
@@ -27,7 +28,7 @@ What a frame holds:
 
 Not exchanged: derivation formulas and mask rules (code), random streams, the components' own state.
 """
-from dataclasses import fields
+from dataclasses import fields, is_dataclass
 import json
 import math
 import re
@@ -123,6 +124,8 @@ def declarations(components) -> dict:
     """{variable name: declaration metadata} of the variables the *components* declare (the first declaring each)."""
     found = {}
     for component in components or ():
+        if not is_dataclass(component):
+            continue
         for item in fields(type(component)):
             if "variable_type" in item.metadata or "unit" in item.metadata:
                 found.setdefault(item.name, dict(item.metadata))
@@ -287,7 +290,7 @@ def _location_scales(ds) -> dict:
     return scales
 
 
-def _mpg_data_structure(identifier: str, ds, metadata: dict, standard_names: dict, geometry: bool):
+def _mpg_data_structure(identifier: str, ds, metadata: dict, standard_names: dict, geometry: bool, components=()):
     fspm_tf = _fspm_tf()
     ds.flush_mtg()                     # the MPG holds the variables' current values, as ds.mtg gives it
     g = ds.structure
@@ -453,7 +456,7 @@ def _mpg_data_structure(identifier: str, ds, metadata: dict, standard_names: dic
                                                     "(-1: none)",
                                  "metafspm_edge_type": "metafspm: the MPG's edge type (0 none, 1 '/', 2 '<', "
                                                        "3 '+')"}[column])
-    meshes = _meshes(ds, entity_sets, scale_of, names) if geometry else []
+    meshes = _meshes(ds, entity_sets, scale_of, names, components) if geometry else []
     return fspm_tf.DataStructure(identifier, kind="graph", entity_sets=entity_sets, relations=relations,
                                  scalars=scalars, meshes=meshes, platform=PLATFORM, model="MPGDataStructure",
                                  extras={EXTRAS: extras})
@@ -534,14 +537,24 @@ def _edge_rows(columns: dict, ids: np.ndarray) -> np.ndarray:
         return _rows_of(columns["target"], ids)
 
 
-def _meshes(ds, entity_sets: list, scale_of: dict, names: dict) -> list:
-    fspm_tf = _fspm_tf()
+def _meshes(ds, entity_sets: list, scale_of: dict, names: dict, components=()) -> list:
+    """The DataStructure's triangles (its geometry provider's, those light models get), and each component's
+    display_triangles() (shapes drawn for display only, e.g. GRANAP's sections), one mesh each."""
+    drawn = []
     try:
-        triangles = ds.triangles()
+        drawn.append(("triangles", ds.triangles()))
     except (ValueError, NotImplementedError):
-        return []
-    if len(triangles) == 0:
-        return []
+        pass
+    for component in components:
+        display = getattr(component, "display_triangles", None)
+        if callable(display):
+            drawn.append((type(component).__name__, display()))
+    return [_mesh_of(ds, entity_sets, scale_of, names, name, triangles) for name, triangles in drawn
+            if len(triangles)]
+
+
+def _mesh_of(ds, entity_sets: list, scale_of: dict, names: dict, name: str, triangles):
+    fspm_tf = _fspm_tf()
     sets = {entity_set.name: entity_set for entity_set in entity_sets}
     node_ids = np.asarray(ds.entity_ids("node"), dtype=np.int64)
     owners = np.repeat(triangles.owner, 3)
@@ -549,16 +562,16 @@ def _meshes(ds, entity_sets: list, scale_of: dict, names: dict) -> list:
     node_set = sets[names[scale_of["node"]]]
     feature_rows[node_set.name] = _rows_of(node_set.columns["id"], node_ids[owners])
     for location in ds._coarse_scale_names():
-        name = names[scale_of[location]]
-        if name not in sets or name == node_set.name:
+        set_name = names[scale_of[location]]
+        if set_name not in sets or set_name == node_set.name:
             continue
         entity = ds.owner(location)[owners]
         entity_ids = np.asarray(ds.entity_ids(location), dtype=np.int64)
         rows = np.full(owners.size, NO_ID, dtype=np.int64)
         known = entity >= 0
-        rows[known] = _rows_of(sets[name].columns["id"], entity_ids[entity[known]])
-        feature_rows[name] = rows
-    return [fspm_tf.Mesh("triangles", positions=triangles.vertices.reshape(-1, 3), feature_rows=feature_rows)]
+        rows[known] = _rows_of(sets[set_name].columns["id"], entity_ids[entity[known]])
+        feature_rows[set_name] = rows
+    return fspm_tf.Mesh(name, positions=triangles.vertices.reshape(-1, 3), feature_rows=feature_rows)
 
 
 # ── Grids → data structures ────────────────────────────────────────────────
@@ -626,7 +639,8 @@ def to_frame(data_structures: dict, components: dict = None, mappings: dict = No
     for identifier, ds in data_structures.items():
         metadata = declarations((components or {}).get(identifier, ()))
         if isinstance(ds, MPGDataStructure):
-            frame.data_structures.append(_mpg_data_structure(identifier, ds, metadata, names, geometry))
+            frame.data_structures.append(_mpg_data_structure(identifier, ds, metadata, names, geometry,
+                                                             (components or {}).get(identifier, ())))
         elif isinstance(ds, (ArrayDataStructure, AdaptiveGridDataStructure)):
             frame.data_structures.append(_grid_data_structure(identifier, ds, metadata, names))
         else:

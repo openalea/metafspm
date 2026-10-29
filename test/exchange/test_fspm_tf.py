@@ -182,6 +182,34 @@ def test_the_geometry_is_a_mesh_by_scale():
     assert validate_bytes(fspm_tf.to_bytes(to_frame({"plants": ds}, components={"plants": [model]}))).ok
 
 
+def test_display_shapes_are_a_mesh_of_their_own():
+    """A component's display_triangles() (shapes for display only) is written as a mesh named after it, beside the
+    DataStructure's triangles (those light models get)."""
+    from openalea.metafspm.coupling.geometry import Triangles
+
+    class Marker:
+        def __init__(self, ds):
+            self.ds = ds
+
+        def display_triangles(self, where=None):
+            nodes = np.arange(self.ds.n_nodes())
+            corners = np.stack([np.zeros((nodes.size, 3)), np.eye(3)[[0] * nodes.size], np.eye(3)[[1] * nodes.size]], 1)
+            return Triangles(corners + nodes[:, None, None], nodes)
+
+    ds = _population()
+    model = _SegmentsProbe(data_structure=ds)
+    depth = np.arange(ds.n_nodes()) * 0.01
+    ds.set("z1", -depth)
+    ds.set("z2", -depth - 0.01)
+    frame = to_frame({"plants": ds}, components={"plants": [model, Marker(ds)]})
+    meshes = {mesh.name: mesh for mesh in frame.data_structures[0].meshes}
+    assert set(meshes) == {"triangles", "Marker"}
+    assert len(meshes["Marker"].positions) == 3 * ds.n_nodes()
+    np.testing.assert_array_equal(frame.data_structures[0].entity_set("SubOrgan").columns["id"][
+        meshes["Marker"].feature_rows["SubOrgan"][::3]], ds.entity_ids("node"))
+    assert validate_bytes(fspm_tf.to_bytes(frame)).ok
+
+
 def test_grids_are_rebuilt_exactly():
     grid = ArrayDataStructure(shape=(2, 3, 4), dx=(0.1, 0.1, 0.05), origin=(0., 0., 0.), periodic=(True, True, False))
     grid.register("water_content", np.arange(24.).reshape(2, 3, 4) / 100., location="cell")
