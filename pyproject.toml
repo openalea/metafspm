@@ -70,6 +70,10 @@ dev = [
   "pytest >=6",
   "pytest-cov >=3",
 ]
+# the fspm-TF exchange format (openalea.metafspm.io.fspm_tf): not on a channel yet, pip install -e ../fspm-TF
+fspm_tf = [
+  "openalea.fspm_tf",
+]
 doc = [
   "pydata-sphinx-theme",
   "myst-parser",

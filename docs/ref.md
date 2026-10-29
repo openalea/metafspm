@@ -79,6 +79,13 @@
    :members: Scene, SceneRecorder, Population, AllMasks, load_translator
 ```
 
+## Exchange with other platforms
+
+```{eval-rst}
+.. automodule:: openalea.metafspm.io.fspm_tf
+   :members: to_frame, scene_to_frame, export_frame, export_scene, from_frame, import_frame, ucum_unit, declarations
+```
+
 ## Testing helpers
 
 ```{eval-rst}

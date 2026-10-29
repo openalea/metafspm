@@ -1,0 +1,720 @@
+"""
+metafspm's DataStructures as fspm-TF frames (the cross-platform scene format, https://github.com/openalea/fspm-TF),
+and back.
+
+    frame = to_frame({"plants": ds, "soil": grid}, components={"plants": [growth, carbon]},
+                     mappings={"roots_in_soil": (cross_mapping, "plants", "soil")})
+    frame = scene_to_frame(scene)                  every population's and environment model's DataStructure, and the
+                                                   scene's mappings
+    export_frame(path, ...), export_scene(path, scene)       the same, written to a .glb file
+    data_structures = from_frame(frame)            {id: DataStructure}, rebuilt: import_frame(path) from a file
+
+What a frame holds:
+
+  - an MPGDataStructure: one entity set per MPG scale holding vertices (Plant, Axis, ... SubOrgan, Layer, Cell,
+    Compartment; ids are the vids), the Connections as a relation (n_id_a → n_id_b); as columns, every MPG property
+    and every variable of the DataStructure at that scale's location; its scalars; the triangles of its geometry
+    provider as a mesh, by node and by coarser scale. The MPG's own links (the raw complex and parent of each
+    vertex, its raw edge type) are the metafspm_complex, metafspm_parent and metafspm_edge_type columns, and the
+    label codes, variable metadata and construction arguments go in the data structure's extras, so that
+    from_frame rebuilds the same MPG (vertices, links, properties) and the same variables, bit for bit;
+  - an ArrayDataStructure: a regular grid (its cells in C order, its faces as a relation); an
+    AdaptiveGridDataStructure: an adaptive grid (its leaves' level and index);
+  - a CrossMapping: its incidence (rows, columns, weights) as a mapping, which from_frame leaves out (the scene
+    rebuilds its mappings);
+  - declarations: the unit (as a UCUM code), kind, role, description, range and references of each variable
+    declared by the components given, with a standard name (STANDARD_NAMES) where the vocabulary has one.
+
+Not exchanged: derivation formulas and mask rules (code), random streams, the components' own state.
+"""
+from dataclasses import fields
+import math
+import re
+import warnings
+
+import numpy as np
+
+from openalea.metafspm.coupling.declaration import VariableSpec
+from openalea.metafspm.data_structure.adaptive_grid import AdaptiveGridDataStructure
+from openalea.metafspm.data_structure.arraydict import ArrayDict
+from openalea.metafspm.data_structure.data_api import ArrayDataStructure, MPGDataStructure
+from openalea.metafspm.data_structure.mpg import MPG
+
+PLATFORM = "openalea.metafspm"
+EXTRAS = "metafspm"
+NO_ID = -1
+EDGE_CODES = {1: "/", 2: "<", 3: "+"}               # the MPG's edge types (MPG.topology_arrays)
+LINK_COLUMNS = ("metafspm_complex", "metafspm_parent", "metafspm_edge_type")
+
+# metafspm names whose quantity has a standard name in the fspm-TF vocabulary (used when the declared unit converts
+# to the standard name's unit)
+STANDARD_NAMES = {
+    "x1": "proximal_end_x", "y1": "proximal_end_y", "z1": "proximal_end_z",
+    "x2": "distal_end_x", "y2": "distal_end_y", "z2": "distal_end_z",
+    "length": "length", "radius": "radius", "struct_mass": "structural_mass", "volume": "volume",
+    "area": "surface_area", "green_area": "green_area", "distance_from_tip": "distance_from_tip",
+    "azimuth": "azimuth", "inclination": "inclination", "root_order": "branching_order", "age": "age",
+    "thermal_time": "thermal_time", "water_potential": "water_potential", "osmotic_potential": "osmotic_potential",
+    "soil_water_potential": "soil_water_potential", "soil_temperature": "soil_temperature",
+    "leaf_temperature": "leaf_temperature", "stomatal_conductance": "stomatal_conductance",
+    "PARa": "absorbed_par_photon_flux_density", "PARi": "incident_par_photon_flux_density",
+    "cell_area": "cell_area", "wall_thickness": "wall_thickness", "sucrose": "sucrose_concentration",
+    "starch": "starch_concentration",
+}
+_KINDS = {"intensive": "intensive", "extensive": "extensive", "massic_concentration": "massic_concentration",
+          "volumic_concentration": "volumic_concentration", "descriptor": "descriptor",
+          "NonInertialIntensive": "intensive", "NonInertialExtensive": "extensive"}
+_ROLES = {"state_variable": "state", "plant_scale_state": "state", "input": "input", "parameter": "parameter",
+          "setting": "setting", "forcing": "input"}
+_DIMENSIONLESS = {"", "adim", "-", "1", "dimensionless", "adimensional", "unitless"}
+_SYMBOLS = {"°C": "Cel", "°": "deg", "day": "d", "days": "d", "yr": "a", "°Cd": "K.d", "°C.d": "K.d"}
+_GRAPH_RESERVED = ("id", "label", "complex", "parent", "edge_type", "level", "index")
+_RELATION_RESERVED = ("id", "source", "target", "relation")
+
+
+def _fspm_tf():
+    try:
+        from openalea import fspm_tf
+    except ImportError:
+        raise ImportError("openalea.metafspm.io.fspm_tf needs the openalea.fspm_tf package (clone fspm-TF next to "
+                          "metafspm, then pip install -e ../fspm-TF)") from None
+    return fspm_tf
+
+
+# ── Units, standard names, declarations ─────────────────────────────────────
+
+def ucum_unit(unit) -> str:
+    """The UCUM code of a metafspm declaration's unit: 'mm3 s-1 MPa-1' → 'mm3.s-1.MPa-1', '°C' → 'Cel', 'adim' →
+    '1', 'mol of hexose' → 'mol{hexose}'; a unit with no UCUM code becomes an annotation ('{phyllochron}')."""
+    from openalea.fspm_tf import ucum
+    text = "" if unit is None or (isinstance(unit, float) and math.isnan(unit)) else str(unit).strip()
+    if text in _DIMENSIONLESS:
+        return "1"
+    quotient = re.fullmatch(r"(.+?)\s+per\s+\((.+)\)", text)
+    if quotient:                                        # "A per (B)": A / (B)
+        numerator, denominator = ucum_unit(quotient.group(1)), ucum_unit(quotient.group(2))
+        if not numerator.startswith("{") and not denominator.startswith("{"):
+            return f"{numerator}/({denominator})"
+    qualifier = ""
+    found = re.search(r"\s+of\s+(.+)$", text)
+    if found:
+        qualifier, text = _annotation(found.group(1)), text[:found.start()]
+    factors = []
+    for factor in re.split(r"[\s·]+|(?<=[A-Za-z0-9])\.(?=[A-Za-zµ°%])", text.replace("µ", "u")):
+        if not factor:
+            continue
+        parts = re.fullmatch(r"(.*?)(\^|\*\*)?(-?\d+)?", factor)
+        symbol, exponent = parts.group(1), parts.group(3) or ""
+        factors.append(_SYMBOLS.get(symbol, symbol) + exponent)
+    code = ".".join(factors) + qualifier
+    if code and ucum.is_valid(code):
+        return code
+    return _annotation(str(unit))
+
+
+def _annotation(text: str) -> str:
+    """A UCUM annotation of *text*: printable ASCII, no spaces or braces."""
+    text = text.strip().replace("µ", "u").replace("°", "deg")
+    return "{" + re.sub(r"[^!-z|~]", "_", re.sub(r"[{}]", "", text)) + "}"
+
+
+def declarations(components) -> dict:
+    """{variable name: declaration metadata} of the variables the *components* declare (the first declaring each)."""
+    found = {}
+    for component in components or ():
+        for item in fields(type(component)):
+            if "variable_type" in item.metadata or "unit" in item.metadata:
+                found.setdefault(item.name, dict(item.metadata))
+    return found
+
+
+def _variable(name: str, metadata: dict, standard_names: dict, derived: bool = False):
+    fspm_tf = _fspm_tf()
+    from openalea.fspm_tf import ucum, vocabulary
+    unit = ucum_unit(metadata.get("unit"))
+    standard_name = standard_names.get(name)
+    entry = vocabulary.standard_names().get(standard_name) if standard_name else None
+    if entry is None or not ucum.convertible(unit, entry["canonical_unit"]):
+        standard_name = None
+    description = metadata.get("description") or None
+    if metadata.get("unit_comment"):
+        description = f"{description or ''} ({metadata['unit_comment']})".strip()
+    if unit.startswith("{") and metadata.get("unit"):
+        description = f"{description or ''} [unit as declared: {metadata['unit']}]".strip()
+
+    def number(value):
+        return float(value) if isinstance(value, (int, float, np.number)) and np.isfinite(value) else None
+
+    references = metadata.get("references")
+    references = (references,) if isinstance(references, str) and references.strip() else tuple(references or ())
+    doi = tuple(str(item) for item in (metadata.get("DOI") or ()) if str(item).strip())
+    return fspm_tf.Variable(unit=unit, standard_name=standard_name, kind=_KINDS.get(metadata.get("state_variable_type")),
+                            role="derived" if derived else _ROLES.get(metadata.get("variable_type"), "state"),
+                            description=description, minimum=number(metadata.get("min_value")),
+                            maximum=number(metadata.get("max_value")), references=tuple(str(r) for r in references),
+                            doi=doi)
+
+
+def _declare(table, metadata: dict, standard_names: dict, derived: set) -> None:
+    for column in table.columns:
+        name = column[len("mtg_"):] if column.startswith("mtg_") else column
+        if column in table.reserved or column in LINK_COLUMNS or name not in metadata:
+            continue
+        table.variables[column] = _variable(name, metadata[name], standard_names, derived=name in derived)
+
+
+def _json_meta(meta: dict) -> dict:
+    out = {}
+    for key, value in meta.items():
+        if key == "dtype":
+            value = {float: "float", int: "int", object: "object"}.get(value, str(value))
+        elif key == "shape":
+            value = list(value or ())
+        elif isinstance(value, (np.integer,)):
+            value = int(value)
+        elif isinstance(value, (np.floating,)):
+            value = float(value)
+        if isinstance(value, float) and not math.isfinite(value):
+            value = str(value)
+        out[key] = value
+    return out
+
+
+def _restored_meta(meta: dict) -> dict:
+    out = dict(meta)
+    out.pop("location", None)
+    out.pop("column", None)
+    if "dtype" in out:
+        out["dtype"] = {"float": float, "int": int, "object": object}[out["dtype"]]
+    if "shape" in out:
+        out["shape"] = tuple(out["shape"])
+    if isinstance(out.get("default"), str):
+        out["default"] = float(out["default"])
+    return out
+
+
+# ── Columns ────────────────────────────────────────────────────────────────
+
+def _empty_column(dtype, count: int, shape: tuple = ()):
+    shape = (count,) + tuple(shape)
+    if dtype == object:
+        return np.full(shape, "", dtype=object)
+    if np.issubdtype(np.dtype(dtype), np.floating):
+        return np.full(shape, np.nan, dtype=dtype)
+    return np.zeros(shape, dtype=dtype)
+
+
+def _place(columns: dict, column: str, rows: np.ndarray, values: np.ndarray, count: int) -> None:
+    """Write *values* at *rows* of the column (created with NaN / zeros elsewhere when new)."""
+    values = np.asarray(values)
+    if values.dtype == object:
+        if not all(isinstance(value, str) for value in values.reshape(-1)):
+            raise TypeError("only text object variables are exchanged")
+    if column not in columns or columns[column].dtype != values.dtype or columns[column].shape[1:] != values.shape[1:]:
+        columns[column] = _empty_column(values.dtype, count, values.shape[1:])
+    columns[column][rows] = values
+
+
+def _rows_of(ids: np.ndarray, wanted) -> np.ndarray:
+    order = np.argsort(ids, kind="stable")
+    position = np.searchsorted(ids[order], np.asarray(wanted, dtype=np.int64))
+    rows = order[np.clip(position, 0, ids.size - 1)]
+    if wanted is not None and len(wanted) and not np.array_equal(ids[rows], np.asarray(wanted, dtype=np.int64)):
+        raise KeyError("ids not found in the table")
+    return rows
+
+
+# ── MPGDataStructure → data structure ───────────────────────────────────────
+
+def _scale_names(g) -> dict:
+    return {value: name for name, value in vars(type(g.scales)).items()
+            if isinstance(value, int) and not name.startswith("_")}
+
+
+def _location_scales(ds) -> dict:
+    """{DataStructure location: MPG scale} of a graph DataStructure's locations other than scalar."""
+    g = ds.structure
+    scales = {"node": g.scales.Compartment if ds._anatomy else ds._from_scale, "edge": g.scales.Connection}
+    for name in ds._coarse_scale_names():
+        scales[name] = getattr(g.scales, name)
+    return scales
+
+
+def _mpg_data_structure(identifier: str, ds, metadata: dict, standard_names: dict, geometry: bool):
+    fspm_tf = _fspm_tf()
+    ds.flush_mtg()                     # the MPG holds the variables' current values, as ds.mtg gives it
+    g = ds.structure
+    names = _scale_names(g)
+    arrays = g.topology_arrays()
+    anchors = set(np.flatnonzero(arrays["is_anchor"]).tolist()) | {g.root}
+    by_scale = {}
+    for vid in sorted(g._scale):
+        if vid not in anchors:
+            by_scale.setdefault(g._scale[vid], []).append(vid)
+    connection = g.scales.Connection
+    translator = dict(g.labels.translator)
+    label_property, edge_property = g.property("label"), g.property("edge_type")
+    extras = {"class": "MPGDataStructure", "construction": ds._construction(), "last_id": int(g._id),
+              "anchors": sorted(int(v) for v in anchors), "scales": {}, "label_codes": {}, "properties": {},
+              "absent": {}, "none": {}, "variables": {}, "tracked": sorted(ds.__dict__.get("_mtg_tracked", {})),
+              "aliases": ds.aliases()}
+    tables = {}
+
+    for scale, vids in sorted(by_scale.items()):
+        vids = np.asarray(vids, dtype=np.int64)
+        name = names[scale]
+        relation = scale == connection
+        reserved = _RELATION_RESERVED if relation else _GRAPH_RESERVED
+        raw_complex = np.array([-1 if g._complex.get(v) is None else g._complex[v] for v in vids], dtype=np.int64)
+        raw_parent = np.array([-1 if g._parent.get(v) is None else g._parent[v] for v in vids], dtype=np.int64)
+        columns = {"id": vids}
+        codes = [label_property.get(int(v)) for v in vids]
+        if any(code is not None for code in codes):
+            labels = []
+            for v, code in zip(vids, codes):
+                if code is None:
+                    labels.append("_none")
+                    continue
+                label = translator.get(int(code), f"label_{int(code)}")
+                known = extras["label_codes"].setdefault(name, {})
+                if known.get(label, code) != code:             # the same name for two codes at this scale
+                    label = f"{label}_{int(code)}"
+                known[label] = int(code) if float(code).is_integer() else float(code)
+                labels.append(label)
+            columns["relation" if relation else "label"] = np.array(labels, dtype=object)
+        if relation:
+            columns["source"] = np.array([int(g.property("n_id_a")[int(v)]) for v in vids], dtype=np.int64)
+            columns["target"] = np.array([int(g.property("n_id_b")[int(v)]) for v in vids], dtype=np.int64)
+        else:
+            same_scale = (raw_parent >= 0) & (np.array([g._scale.get(int(p), -1) for p in raw_parent]) == scale)
+            resolved = arrays["complex"][vids]
+            owned = (resolved >= 0) & ~np.isin(resolved, list(anchors))
+            # the containing entity: the complex, or for a vertex anchored to its scale's anchor, its parent at a
+            # coarser scale (a wall's segment)
+            complex_ = np.where(owned, resolved, np.where((raw_parent >= 0) & ~same_scale, raw_parent, NO_ID))
+            if scale != min(by_scale):
+                columns["complex"] = complex_.astype(np.int64)
+            columns["parent"] = np.where(same_scale, raw_parent, NO_ID).astype(np.int64)
+            edge_codes = arrays["edge_type"][vids]
+            columns["edge_type"] = np.array(["none" if not same else ("branch" if code == 3 else "successor")
+                                             for same, code in zip(same_scale, edge_codes)], dtype=object)
+        columns["metafspm_complex"], columns["metafspm_parent"] = raw_complex, raw_parent
+        columns["metafspm_edge_type"] = np.array([{"/": 1, "<": 2, "+": 3}.get(edge_property.get(int(v)), 0)
+                                                  for v in vids], dtype=np.uint8)
+        if any(edge_property.get(int(v)) not in (None, "/", "<", "+") for v in vids):
+            raise ValueError(f"{name}: edge types other than '/', '<' and '+' cannot be exchanged")
+
+        for property_name, prop in g.properties().items():
+            if property_name in ("label", "edge_type") or (relation and property_name in ("n_id_a", "n_id_b")):
+                continue
+            present = np.array([int(v) in prop for v in vids])
+            if not present.any():
+                continue
+            column = f"mtg_{property_name}" if property_name in reserved or property_name in LINK_COLUMNS \
+                else property_name
+            if not re.fullmatch(r"[a-zA-Z_][a-zA-Z0-9_]*", column):
+                warnings.warn(f"MPG property '{property_name}' is not exchanged: its name is not an identifier")
+                continue
+            values = [prop[int(v)] if p else None for v, p in zip(vids, present)]
+            if isinstance(prop, ArrayDict):
+                kind = "float64"
+                data = np.array([np.nan if value is None else value for value in values], dtype=np.float64)
+            else:
+                assigned = [value for value in values if value is not None]
+                if not assigned:
+                    kind, data = None, None
+                elif all(isinstance(value, (bool, np.bool_)) for value in assigned):
+                    kind, data = "bool", np.array([bool(value) for value in values])
+                elif all(isinstance(value, (int, np.integer)) and not isinstance(value, bool) for value in assigned):
+                    kind, data = "int64", np.array([0 if value is None else value for value in values], dtype=np.int64)
+                elif all(isinstance(value, (int, float, np.number)) for value in assigned):
+                    kind = "float64"
+                    data = np.array([np.nan if value is None else value for value in values], dtype=np.float64)
+                elif all(isinstance(value, str) for value in assigned):
+                    kind, data = "str", np.array(["" if value is None else value for value in values], dtype=object)
+                else:
+                    warnings.warn(f"MPG property '{property_name}' is not exchanged at {name}: its values are not "
+                                  "numbers or text")
+                    continue
+            entry = extras["properties"].setdefault(property_name, {
+                "container": "ArrayDict" if isinstance(prop, ArrayDict) else "dict", "column": column})
+            entry.setdefault("dtypes", {})[name] = kind
+            if not present.all():
+                extras["absent"][f"{name}.{property_name}"] = vids[~present].tolist()
+            none = [int(v) for v, p, value in zip(vids, present, values) if p and value is None]
+            if none:
+                extras["none"][f"{name}.{property_name}"] = none
+            if data is not None:
+                columns[column] = data
+        tables[scale] = columns
+        extras["scales"][name] = scale
+
+    # The DataStructure's variables, at the scale of their location
+    scale_of = _location_scales(ds)
+    for location, store in ds._var_stores().items():
+        if location == "scalar" or not store:
+            continue
+        scale = scale_of[location]
+        if scale not in tables:
+            raise ValueError(f"{identifier}: variables at {location} but no MPG vertex at its scale")
+        columns = tables[scale]
+        ids = np.asarray(ds.entity_ids(location), dtype=np.int64)
+        rows = _edge_rows(columns, ids) if location == "edge" else _rows_of(columns["id"], ids)
+        reserved = _RELATION_RESERVED if scale == connection else _GRAPH_RESERVED
+        for name, values in store.items():
+            column = f"metafspm_{name}" if name in reserved or name in LINK_COLUMNS else name
+            try:
+                _place(columns, column, rows, values, columns["id"].size)
+            except TypeError:
+                warnings.warn(f"variable '{name}' is not exchanged: its values are not numbers or text")
+                continue
+            extras["variables"][name] = dict(_json_meta(ds._variable_meta().get(name, {})), location=location,
+                                             **({"column": column} if column != name else {}))
+    scalars = None
+    scalar_store = ds._var_stores().get("scalar", {})
+    if scalar_store:
+        scalars = fspm_tf.Table("scalars", columns={name: np.asarray(values).reshape((1,) + np.shape(values))
+                                                    for name, values in scalar_store.items()})
+        for name in scalar_store:
+            extras["variables"][name] = dict(_json_meta(ds._variable_meta().get(name, {})), location="scalar")
+
+    entity_sets, relations = [], []
+    for scale, columns in sorted(tables.items()):
+        if scale == connection:
+            endpoints = {g._scale.get(int(v)) for v in np.concatenate([columns["source"], columns["target"]])}
+            endpoint = names[endpoints.pop()] if len(endpoints) == 1 else names[g.scales.Compartment]
+            relations.append(fspm_tf.Relation(names[scale], columns=columns, source_set=endpoint,
+                                              target_set=endpoint))
+        else:
+            entity_sets.append(fspm_tf.EntitySet(names[scale], columns=columns, rank=int(scale)))
+    derived = set(ds.derived())
+    for table in entity_sets + relations + ([scalars] if scalars is not None else []):
+        _declare(table, metadata, standard_names, derived)
+        for column in ("isanchor", "scale"):
+            if column in table.columns and column not in table.variables:
+                table.variables[column] = fspm_tf.Variable(unit="1", kind="descriptor", role="setting",
+                                                           description=f"metafspm: the MPG property {column}")
+        for column in LINK_COLUMNS:
+            if column in table.columns:
+                table.variables[column] = fspm_tf.Variable(
+                    unit="1", kind="descriptor", role="setting",
+                    description={"metafspm_complex": "metafspm: the MPG's own complex of the vertex (-1: none)",
+                                 "metafspm_parent": "metafspm: the MPG's own parent of the vertex, at any scale "
+                                                    "(-1: none)",
+                                 "metafspm_edge_type": "metafspm: the MPG's edge type (0 none, 1 '/', 2 '<', "
+                                                       "3 '+')"}[column])
+    meshes = _meshes(ds, entity_sets, scale_of, names) if geometry else []
+    return fspm_tf.DataStructure(identifier, kind="graph", entity_sets=entity_sets, relations=relations,
+                                 scalars=scalars, meshes=meshes, platform=PLATFORM, model="MPGDataStructure",
+                                 extras={EXTRAS: extras})
+
+
+def _edge_rows(columns: dict, ids: np.ndarray) -> np.ndarray:
+    """Rows of the Connection relation holding the DataStructure's edges *ids*: their own vids (anatomy mode), or
+    their child vids (segment mode: the Connection ending at that vertex)."""
+    try:
+        return _rows_of(columns["id"], ids)
+    except KeyError:
+        return _rows_of(columns["target"], ids)
+
+
+def _meshes(ds, entity_sets: list, scale_of: dict, names: dict) -> list:
+    fspm_tf = _fspm_tf()
+    try:
+        triangles = ds.triangles()
+    except (ValueError, NotImplementedError):
+        return []
+    if len(triangles) == 0:
+        return []
+    sets = {entity_set.name: entity_set for entity_set in entity_sets}
+    node_ids = np.asarray(ds.entity_ids("node"), dtype=np.int64)
+    owners = np.repeat(triangles.owner, 3)
+    feature_rows = {}
+    node_set = sets[names[scale_of["node"]]]
+    feature_rows[node_set.name] = _rows_of(node_set.columns["id"], node_ids[owners])
+    for location in ds._coarse_scale_names():
+        name = names[scale_of[location]]
+        if name not in sets or name == node_set.name:
+            continue
+        entity = ds.owner(location)[owners]
+        entity_ids = np.asarray(ds.entity_ids(location), dtype=np.int64)
+        rows = np.full(owners.size, NO_ID, dtype=np.int64)
+        known = entity >= 0
+        rows[known] = _rows_of(sets[name].columns["id"], entity_ids[entity[known]])
+        feature_rows[name] = rows
+    return [fspm_tf.Mesh("triangles", positions=triangles.vertices.reshape(-1, 3), feature_rows=feature_rows)]
+
+
+# ── Grids → data structures ────────────────────────────────────────────────
+
+def _grid_data_structure(identifier: str, ds, metadata: dict, standard_names: dict):
+    fspm_tf = _fspm_tf()
+    adaptive = isinstance(ds, AdaptiveGridDataStructure)
+    extras = {"class": type(ds).__name__, "construction": ds._construction(), "variables": {},
+              "aliases": ds.aliases()}
+    count = ds.n_nodes()
+    cells = {"id": np.asarray(ds.entity_ids("cell"), dtype=np.int64)}        # a regular grid's: the C-order index
+    if adaptive:
+        cells["level"] = np.asarray(ds._level, dtype=np.int64)
+        cells["index"] = np.asarray(ds._index, dtype=np.int64)
+    faces = {}
+    edges = np.asarray(ds.edges(), dtype=np.int64).reshape(-1, 2)
+    cell_ids = np.asarray(ds.entity_ids("cell"), dtype=np.int64)
+    faces["source"], faces["target"] = cell_ids[edges[:, 0]], cell_ids[edges[:, 1]]
+    scalars = {}
+    for location, store in ds._var_stores().items():
+        for name, values in store.items():
+            values = np.asarray(values)
+            target = {"cell": cells, "edge": faces, "scalar": scalars}[location]
+            if location == "cell" and not adaptive:
+                values = values.reshape((count,) + values.shape[len(ds.shape):])
+            if location == "scalar":
+                values = values.reshape((1,) + values.shape)
+            column = f"metafspm_{name}" if name in ("id", "level", "index", "source", "target") else name
+            target[column] = values
+            extras["variables"][name] = dict(_json_meta(ds._variable_meta().get(name, {})), location=location,
+                                             **({"column": column} if column != name else {}))
+    cell_set = fspm_tf.EntitySet("cell", columns=cells)
+    face_relation = fspm_tf.Relation("face", columns=faces, source_set="cell", target_set="cell")
+    scalar_table = fspm_tf.Table("scalars", columns=scalars) if scalars else None
+    derived = set(ds.derived())
+    for table in [cell_set, face_relation] + ([scalar_table] if scalar_table is not None else []):
+        _declare(table, metadata, standard_names, derived)
+    construction = ds._construction()
+    grid = fspm_tf.Grid(kind="adaptive" if adaptive else "regular", shape=tuple(construction["shape"]),
+                        origin=tuple(construction["origin"]), spacing=tuple(construction["dx"]),
+                        axes=tuple(ds.axes), periodic=tuple(bool(p) for p in construction["periodic"]),
+                        z_up=False, max_level=int(construction.get("max_level", 0)), cells="cell")
+    return fspm_tf.DataStructure(identifier, kind="adaptive_grid" if adaptive else "regular_grid",
+                                 entity_sets=[cell_set], relations=[face_relation] if edges.size else [],
+                                 scalars=scalar_table, grid=grid, platform=PLATFORM, model=type(ds).__name__,
+                                 extras={EXTRAS: extras})
+
+
+# ── Frames ─────────────────────────────────────────────────────────────────
+
+def to_frame(data_structures: dict, components: dict = None, mappings: dict = None, time: float = 0.,
+             step: int = 0, time_unit: str = "s", geometry: bool = True, standard_names: dict = None):
+    """
+    The fspm-TF frame of *data_structures* ({id: DataStructure}; ids are identifiers), their variables declared
+    by *components* ({id: [components]}), with *mappings* ({name: (CrossMapping, source id, target id)}), at *time*
+    (in *time_unit*) and *step*. *geometry*: the MPGDataStructures' triangles as meshes. *standard_names*: {metafspm
+    name: standard name}, default STANDARD_NAMES (None values drop one).
+    """
+    fspm_tf = _fspm_tf()
+    names = dict(STANDARD_NAMES, **(standard_names or {}))
+    names = {key: value for key, value in names.items() if value}
+    frame = fspm_tf.Frame(time=float(time), time_unit=time_unit, step=int(step),
+                          writer={"platform": PLATFORM}, vocabulary_version=fspm_tf.vocabulary.version())
+    for identifier, ds in data_structures.items():
+        metadata = declarations((components or {}).get(identifier, ()))
+        if isinstance(ds, MPGDataStructure):
+            frame.data_structures.append(_mpg_data_structure(identifier, ds, metadata, names, geometry))
+        elif isinstance(ds, (ArrayDataStructure, AdaptiveGridDataStructure)):
+            frame.data_structures.append(_grid_data_structure(identifier, ds, metadata, names))
+        else:
+            raise TypeError(f"'{identifier}': a {type(ds).__name__} cannot be exchanged (MPGDataStructure, "
+                            "ArrayDataStructure and AdaptiveGridDataStructure can)")
+    for name, (mapping, source, target) in (mappings or {}).items():
+        rows, cells, weights = mapping.incidence()
+        source_ds, target_ds = data_structures[source], data_structures[target]
+        source_set = frame.data_structure(source)
+        source_name = (source_set.entity_sets[0].name if not isinstance(source_ds, MPGDataStructure)
+                       else _scale_names(source_ds.structure)[_location_scales(source_ds)["node"]])
+        frame.mappings.append(fspm_tf.Mapping(
+            name, source=(source, source_name), target=(target, "cell"), method=getattr(mapping, "method", None),
+            columns={"source": np.asarray(source_ds.entity_ids("node"), dtype=np.int64)[rows],
+                     "target": np.asarray(target_ds.entity_ids("cell"), dtype=np.int64)[cells],
+                     "weight": np.asarray(weights, dtype=np.float64)}))
+    return frame
+
+
+def scene_to_frame(scene, geometry: bool = True, standard_names: dict = None):
+    """The frame of a Scene now: each population's DataStructure (id: the population's name), each environment
+    model's (id: the model's class name, numbered when it has several), the scene's CrossMappings."""
+    data_structures, components = {}, {}
+    for population in scene.populations:
+        data_structures[population.name] = population.data_structure
+        components[population.name] = population.components
+    for model in scene.environment:
+        found = scene._data_structures(model)
+        for number, ds in enumerate(found):
+            identifier = type(model).__name__ + (f"_{number}" if len(found) > 1 else "")
+            data_structures[identifier] = ds
+            components[identifier] = list(model.components)
+    identifier_of = {id(ds): identifier for identifier, ds in data_structures.items()}
+    mappings = {}
+    for mapping in getattr(scene, "mappings", ()):
+        if not hasattr(mapping, "incidence"):
+            warnings.warn(f"a {type(mapping).__name__} is not exchanged (CrossMappings are)")
+            continue
+        source, target = identifier_of.get(id(mapping.source)), identifier_of.get(id(mapping.target))
+        if source is None or target is None:
+            continue
+        mappings[f"{source}_to_{target}"] = (mapping, source, target)
+    return to_frame(data_structures, components=components, mappings=mappings, time=scene.time,
+                    step=scene.iteration, time_unit="s", geometry=geometry, standard_names=standard_names)
+
+
+def export_frame(path: str, data_structures: dict, **options) -> None:
+    """Write to_frame(data_structures, **options) to the .glb file *path*."""
+    _fspm_tf().write(path, to_frame(data_structures, **options))
+
+
+def export_scene(path: str, scene, **options) -> None:
+    """Write scene_to_frame(scene, **options) to the .glb file *path*."""
+    _fspm_tf().write(path, scene_to_frame(scene, **options))
+
+
+# ── Data structures from a frame ────────────────────────────────────────────
+
+def from_frame(frame) -> dict:
+    """{id: DataStructure} of the data structures metafspm wrote in *frame* (their extras rebuild them exactly).
+    Data structures from other platforms are left out with a warning; mappings are left out (scenes rebuild them)."""
+    out = {}
+    for data_structure in frame.data_structures:
+        extras = data_structure.extras.get(EXTRAS)
+        if extras is None:
+            warnings.warn(f"'{data_structure.id}' was not written by metafspm: not rebuilt")
+            continue
+        if extras["class"] == "MPGDataStructure":
+            out[data_structure.id] = _mpg_from(data_structure, extras)
+        else:
+            out[data_structure.id] = _grid_from(data_structure, extras)
+    return out
+
+
+def import_frame(path: str) -> dict:
+    """from_frame of the .glb file *path*."""
+    return from_frame(_fspm_tf().read(path))
+
+
+def _mpg_from(data_structure, extras: dict):
+    g = MPG()
+    if sorted(set(_anchor_vids(g))) != extras["anchors"]:
+        raise ValueError(f"'{data_structure.id}': the MPG's scale anchors differ from the written ones")
+    scales = extras["scales"]
+    tables = {table.name: table for table in data_structure.entity_sets + data_structure.relations}
+    # The vertices and their own links, in vid order (the order of the MPG's component and children lists)
+    links = []
+    for name, table in tables.items():
+        scale = scales[name]
+        columns = table.columns
+        links += [(int(v), scale, int(c), int(p)) for v, c, p in
+                  zip(columns["id"], columns["metafspm_complex"], columns["metafspm_parent"])]
+    for vid, scale, complex_, parent in sorted(links):
+        g._scale[vid] = scale
+        if complex_ >= 0:
+            g._complex[vid] = complex_
+            g._components.setdefault(complex_, []).append(vid)
+        if parent >= 0:
+            g._parent[vid] = parent
+            g._children.setdefault(parent, []).append(vid)
+    g._id = extras["last_id"]
+    # The properties
+    labels, edge_types = {}, {}
+    for name, table in tables.items():
+        codes = extras["label_codes"].get(name, {})
+        column = "relation" if isinstance(table, _fspm_tf().Relation) else "label"
+        for vid, label in zip(table.columns["id"], table.columns.get(column, ())):
+            if label != "_none":
+                labels[int(vid)] = codes[label]
+        for vid, code in zip(table.columns["id"], table.columns["metafspm_edge_type"]):
+            if code:
+                edge_types[int(vid)] = EDGE_CODES[int(code)]
+    _merge(g, "label", "ArrayDict", labels)
+    _merge(g, "edge_type", "dict", edge_types)
+    for property_name, entry in extras["properties"].items():
+        values = {}
+        for name, kind in entry["dtypes"].items():
+            table = tables[name]
+            absent = set(extras["absent"].get(f"{name}.{property_name}", ()))
+            none = set(extras["none"].get(f"{name}.{property_name}", ()))
+            column = table.columns.get(entry["column"]) if kind is not None else None
+            for row, vid in enumerate(table.columns["id"].tolist()):
+                if vid in absent:
+                    continue
+                if vid in none or column is None:
+                    values[vid] = None
+                    continue
+                value = column[row]
+                values[vid] = (float(value) if kind == "float64" else int(value) if kind == "int64"
+                               else bool(value) if kind == "bool" else str(value))
+        _merge(g, property_name, entry["container"], values)
+    for name, table in tables.items():
+        if isinstance(table, _fspm_tf().Relation):
+            _merge(g, "n_id_a", "ArrayDict", {int(v): float(s) for v, s in zip(table.columns["id"],
+                                                                               table.columns["source"])})
+            _merge(g, "n_id_b", "ArrayDict", {int(v): float(t) for v, t in zip(table.columns["id"],
+                                                                               table.columns["target"])})
+    ds = MPGDataStructure._from_construction(dict(extras["construction"]), {"mtg": g, "state": {"_wiring": None}})
+    _restore_variables(ds, data_structure, extras, tables)
+    for name in extras["tracked"]:
+        meta = ds._variable_meta()[name]
+        ds.track_mtg(VariableSpec(name=name, location=extras["variables"][name]["location"], scale=meta.get("scale"),
+                                  mapping=meta.get("mapping"), weight=meta.get("weight"), kind=meta.get("kind"),
+                                  variable_type=meta.get("variable_type"), default=meta.get("default", 0.),
+                                  on_grow=meta.get("on_grow", "default"), dtype=meta.get("dtype", float),
+                                  shape=tuple(meta.get("shape", ()))))
+        ds.mark_mtg_synced(name)
+    return ds
+
+
+def _anchor_vids(g) -> list:
+    return [g.root] + [int(v) for v in np.flatnonzero(g.topology_arrays()["is_anchor"])]
+
+
+def _merge(g, name: str, container: str, values: dict) -> None:
+    """Add *values* ({vid: value}) to the MPG's property *name* (created as an ArrayDict or a dict)."""
+    existing = g._properties.get(name)
+    if container == "ArrayDict":
+        keys = list(existing.keys()) if existing is not None else []
+        old = [existing[k] for k in keys] if existing is not None else []
+        new_keys = [k for k in values if values[k] is not None]
+        g._properties[name] = ArrayDict.from_items(np.asarray(keys + new_keys, dtype=np.int64),
+                                                   np.asarray(old + [values[k] for k in new_keys], dtype=np.float64))
+    else:
+        merged = dict(existing or {})
+        merged.update(values)
+        g._properties[name] = merged
+
+
+def _restore_variables(ds, data_structure, extras: dict, tables: dict) -> None:
+    stores = ds._var_stores()
+    for store in stores.values():
+        store.clear()
+    scale_names = {scale: name for name, scale in extras.get("scales", {}).items()}
+    scale_of = _location_scales(ds) if isinstance(ds, MPGDataStructure) else {}
+    for name, meta in extras["variables"].items():
+        location, column = meta["location"], meta.get("column", name)
+        if location == "scalar":
+            values = data_structure.scalars.columns[column][0]
+        elif isinstance(ds, MPGDataStructure):
+            table = tables[scale_names[scale_of[location]]]
+            ids = np.asarray(ds.entity_ids(location), dtype=np.int64)
+            rows = _edge_rows(table.columns, ids) if location == "edge" else _rows_of(table.columns["id"], ids)
+            values = table.columns[column][rows]
+        else:
+            table = data_structure.entity_sets[0] if location == "cell" else data_structure.relations[0]
+            values = table.columns[column]
+            if location == "cell" and isinstance(ds, ArrayDataStructure):
+                values = values.reshape(tuple(ds.shape) + values.shape[1:])
+        restored = _restored_meta(meta)
+        dtype = restored.get("dtype", float)
+        array = np.array(values, dtype=object if dtype is object else (np.int64 if dtype is int else np.float64))
+        stores[location][name] = array
+        ds._variable_meta()[name] = restored
+    if extras.get("aliases"):
+        ds.__dict__["_aliases"] = dict(extras["aliases"])
+
+
+def _grid_from(data_structure, extras: dict):
+    construction = dict(extras["construction"])
+    if extras["class"] == "AdaptiveGridDataStructure":
+        cells = data_structure.entity_sets[0].columns
+        ds = AdaptiveGridDataStructure._from_construction(construction, {"state": {"_level": cells["level"],
+                                                                                   "_index": cells["index"]}})
+    else:
+        ds = ArrayDataStructure._from_construction(construction, {})
+    _restore_variables(ds, data_structure, extras, {})
+    return ds
