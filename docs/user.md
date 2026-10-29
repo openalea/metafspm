@@ -393,7 +393,10 @@ scene.simulate(n_iterations=2500)
   only (`display_triangles(where=None)`, e.g. GRANAP's sections), which light models never receive.
   `export_scene(path, scene)` or `export_frame(path, {id: ds},
   components={id: [...]})` writes a frame. `import_frame(path)` rebuilds the DataStructures: the same MPG, the
-  same variables, bit for bit, from which a simulation continues as from the original. It needs the
+  same variables, bit for bit, from which a simulation continues as from the original. `Scene(...,
+  output_dirpath=..., frame_period=24)` records a frame at the start and every 24 steps, in `output_dirpath/frames`
+  with its index `scene.fspm.json`, which ParaView's fspm-TF reader plays as time steps; `frame_options=` passes
+  `scene_to_frame`'s options (e.g. `geometry=False`). It needs the
   `openalea.fspm_tf` package (`pip install -e ../fspm-TF`).
 
 ## 7. A complete example
