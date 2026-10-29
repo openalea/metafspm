@@ -84,6 +84,22 @@ Adel and Caribu are also on `openalea3` (`mamba install -c openalea3 -c conda-fo
 but these are their released versions, the original models **without** the metafspm components above: for the
 components and the tutorials, install from the branches.
 
+## Seeing and sharing the results
+
+A scene can also be saved as **fspm-TF files**, a format shared with other plant modelling platforms (CPlantBox,
+GroIMP, VirtualPlantLab). Each file holds the whole scene at one time step: every plant's elements and their
+variables, the soil, and the 3D shapes.
+
+- `export_scene("scene.glb", scene)` (from `openalea.metafspm.io.fspm_tf`) saves the scene as it is now.
+- A scene built with `output_dirpath="outputs", frame_period=24` saves one file every 24 steps in `outputs/frames`,
+  with an index file, `scene.fspm.json`.
+- In ParaView, fspm-TF's reader plugin opens a file, or the index to play the time steps. Every variable can then
+  colour the plants, the root sections or the soil.
+
+To install it, clone fspm-TF next to metafspm (`git clone https://github.com/openalea/fspm-TF.git`), and add
+`pip install -e fspm-TF` to the steps above. ParaView's plugin is the file `fspm-TF/paraview/fspm_tf_reader.py`,
+loaded once from ParaView's Tools → Manage Plugins menu.
+
 ## For developers
 
 - The **framework guide** ({doc}`user`) describes each part: data structures, components, structure, coupling,

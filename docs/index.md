@@ -11,6 +11,8 @@ processes, around the Multiscale Tree Graph (MTG) of OpenAlea.
 - **Coupling** goes through translators: within a DataStructure by aliases and derived variables, across
   DataStructures (plants and soil, light, environment scalars) by mappings exchanged at fixed points.
 - **Scenes** build plant populations from a planting table and run them with their environment models.
+- **Exchange**: scenes and DataStructures are written as fspm-TF files (one glTF file per time step), which other
+  platforms read and ParaView displays, and read back bit for bit.
 
 ## Using models
 
