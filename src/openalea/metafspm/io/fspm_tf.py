@@ -685,8 +685,13 @@ def scene_to_frame(scene, geometry: bool = True, standard_names: dict = None):
         data_structures[population.name] = population.data_structure
         components[population.name] = population.components
     for model in scene.environment:
-        found = [ds for ds in scene._data_structures(model)                 # a population's is written once
-                 if not any(ds is other for other in data_structures.values())]
+        found = []
+        for ds in scene._data_structures(model):
+            shared = next((identifier for identifier, other in data_structures.items() if other is ds), None)
+            if shared is None:
+                found.append(ds)
+            else:                                   # a population's, written once, with this model's declarations too
+                components[shared] = components[shared] + list(model.components)
         for number, ds in enumerate(found):
             identifier = type(model).__name__ + (f"_{number}" if len(found) > 1 else "")
             data_structures[identifier] = ds

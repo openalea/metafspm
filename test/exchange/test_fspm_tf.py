@@ -188,6 +188,30 @@ def test_standard_names_come_from_the_vocabulary():
     assert declared(standard_names={"x1": None})["x1"].standard_name is None
 
 
+def test_a_model_lighting_the_plants_declares_its_variables_too():
+    """An environment model working on a population's own DataStructure (e.g. Caribu's light): the DataStructure is
+    written once, with the declarations of both the population's and the model's components."""
+    from dataclasses import field
+    from types import SimpleNamespace
+
+    from openalea.metafspm.io.fspm_tf import scene_to_frame
+
+    @dataclass
+    class Light:
+        PARa: float = field(default=0., metadata=dict(unit="µmol m-2 s-1", variable_type="state_variable"))
+
+    ds = _population()
+    models = _models(ds)
+    ds.register("PARa", 100., location="node")
+    light = SimpleNamespace(components=[Light()])
+    scene = SimpleNamespace(populations=[SimpleNamespace(name="plants", data_structure=ds, components=list(models))],
+                            environment=[light], _data_structures=lambda model: [ds], mappings=[], time=0., iteration=0)
+    frame = scene_to_frame(scene)
+    assert [data_structure.id for data_structure in frame.data_structures] == ["plants"]
+    declared = frame.data_structures[0].entity_set("SubOrgan").variables["PARa"]
+    assert declared.unit == "umol.m-2.s-1" and declared.standard_name == "absorbed_par_photon_flux_density"
+
+
 def test_the_geometry_is_a_mesh_by_scale():
     ds = _population()
     model = _SegmentsProbe(data_structure=ds)
