@@ -28,6 +28,7 @@ What a frame holds:
 Not exchanged: derivation formulas and mask rules (code), random streams, the components' own state.
 """
 from dataclasses import fields
+import json
 import math
 import re
 import warnings
@@ -182,8 +183,8 @@ def _json_meta(meta: dict) -> dict:
 
 def _restored_meta(meta: dict) -> dict:
     out = dict(meta)
-    out.pop("location", None)
-    out.pop("column", None)
+    for key in ("location", "column", "encoding"):
+        out.pop(key, None)
     if "dtype" in out:
         out["dtype"] = {"float": float, "int": int, "object": object}[out["dtype"]]
     if "shape" in out:
@@ -222,6 +223,52 @@ def _rows_of(ids: np.ndarray, wanted) -> np.ndarray:
     if wanted is not None and len(wanted) and not np.array_equal(ids[rows], np.asarray(wanted, dtype=np.int64)):
         raise KeyError("ids not found in the table")
     return rows
+
+
+def _jsonable(value):
+    """*value* as JSON values, tuples, arrays, non-text keys and non-finite floats marked, so that _decoded gives it
+    back; TypeError for what JSON cannot hold."""
+    if value is None or isinstance(value, (bool, str)):
+        return value
+    if isinstance(value, np.generic):
+        value = value.item()
+    if isinstance(value, bool) or isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        return value if math.isfinite(value) else {"__float__": repr(value)}
+    if isinstance(value, tuple):
+        return {"__tuple__": [_jsonable(item) for item in value]}
+    if isinstance(value, list):
+        return [_jsonable(item) for item in value]
+    if isinstance(value, np.ndarray):
+        return {"__array__": [_jsonable(item) for item in value.tolist()], "dtype": str(value.dtype)}
+    if isinstance(value, dict):
+        if all(isinstance(key, str) and not key.startswith("__") for key in value):
+            return {key: _jsonable(item) for key, item in value.items()}
+        return {"__dict__": [[_jsonable(key), _jsonable(item)] for key, item in value.items()]}
+    raise TypeError(f"a {type(value).__name__} cannot be written as JSON")
+
+
+def _encoded(value) -> str:
+    return json.dumps(_jsonable(value), separators=(",", ":"), allow_nan=False)
+
+
+def _decoded(text: str):
+    def hook(item: dict):
+        if "__tuple__" in item:
+            return tuple(item["__tuple__"])
+        if "__float__" in item:
+            return float(item["__float__"])
+        if "__array__" in item:
+            return np.array(item["__array__"], dtype=item["dtype"])
+        if "__dict__" in item:
+            return {_hashable(key): value for key, value in item["__dict__"]}
+        return item
+    return json.loads(text, object_hook=hook)
+
+
+def _hashable(key):
+    return tuple(_hashable(item) for item in key) if isinstance(key, list) else key
 
 
 # ── MPGDataStructure → data structure ───────────────────────────────────────
@@ -333,9 +380,12 @@ def _mpg_data_structure(identifier: str, ds, metadata: dict, standard_names: dic
                 elif all(isinstance(value, str) for value in assigned):
                     kind, data = "str", np.array(["" if value is None else value for value in values], dtype=object)
                 else:
-                    warnings.warn(f"MPG property '{property_name}' is not exchanged at {name}: its values are not "
-                                  "numbers or text")
-                    continue
+                    try:                                    # lists, tuples, records: as JSON text
+                        kind = "json"
+                        data = np.array(["" if value is None else _encoded(value) for value in values], dtype=object)
+                    except TypeError as error:
+                        warnings.warn(f"MPG property '{property_name}' is not exchanged at {name}: {error}")
+                        continue
             entry = extras["properties"].setdefault(property_name, {
                 "container": "ArrayDict" if isinstance(prop, ArrayDict) else "dict", "column": column})
             entry.setdefault("dtypes", {})[name] = kind
@@ -364,19 +414,19 @@ def _mpg_data_structure(identifier: str, ds, metadata: dict, standard_names: dic
         for name, values in store.items():
             column = f"metafspm_{name}" if name in reserved or name in LINK_COLUMNS else name
             try:
-                _place(columns, column, rows, values, columns["id"].size)
-            except TypeError:
-                warnings.warn(f"variable '{name}' is not exchanged: its values are not numbers or text")
+                values, encoding = _object_values(values)
+            except TypeError as error:
+                warnings.warn(f"variable '{name}' is not exchanged: {error}")
                 continue
+            if column in columns and not _holds(columns[column], rows, values):
+                column = f"metafspm_{name}"         # an MPG property of that name holds other values or text
+            _place(columns, column, rows, values, columns["id"].size)
             extras["variables"][name] = dict(_json_meta(ds._variable_meta().get(name, {})), location=location,
-                                             **({"column": column} if column != name else {}))
-    scalars = None
-    scalar_store = ds._var_stores().get("scalar", {})
-    if scalar_store:
-        scalars = fspm_tf.Table("scalars", columns={name: np.asarray(values).reshape((1,) + np.shape(values))
-                                                    for name, values in scalar_store.items()})
-        for name in scalar_store:
-            extras["variables"][name] = dict(_json_meta(ds._variable_meta().get(name, {})), location="scalar")
+                                             **({"column": column} if column != name else {}),
+                                             **({"encoding": encoding} if encoding else {}))
+    scalars = _scalar_table(ds, extras)
+    extras["tracked"] = [name for name in extras["tracked"] if name in extras["variables"]]
+    extras.update(_anchor_and_empty_properties(g, anchors))
 
     entity_sets, relations = [], []
     for scale, columns in sorted(tables.items()):
@@ -407,6 +457,72 @@ def _mpg_data_structure(identifier: str, ds, metadata: dict, standard_names: dic
     return fspm_tf.DataStructure(identifier, kind="graph", entity_sets=entity_sets, relations=relations,
                                  scalars=scalars, meshes=meshes, platform=PLATFORM, model="MPGDataStructure",
                                  extras={EXTRAS: extras})
+
+
+def _object_values(values) -> tuple:
+    """(values, encoding) of a variable: object values other than text become JSON text (encoding "json")."""
+    values = np.asarray(values)
+    if values.dtype != object:
+        return values, None
+    flat = values.reshape(-1)
+    if all(isinstance(value, str) for value in flat):
+        return values, None
+    return np.array([_encoded(value) for value in flat], dtype=object).reshape(values.shape), "json"
+
+
+def _holds(column: np.ndarray, rows: np.ndarray, values: np.ndarray) -> bool:
+    """Whether *column* already holds *values* at *rows*, with the same dtype (a variable and the MPG property it is
+    written back to share their column then)."""
+    if column.dtype != values.dtype or column.shape[1:] != values.shape[1:]:
+        return False
+    if values.dtype == object:
+        return column[rows].tolist() == values.tolist()
+    return np.ascontiguousarray(column[rows]).tobytes() == np.ascontiguousarray(values).tobytes()
+
+
+def _scalar_table(ds, extras: dict):
+    columns = {}
+    for name, values in ds._var_stores().get("scalar", {}).items():
+        try:
+            values, encoding = _object_values(values)
+        except TypeError as error:
+            warnings.warn(f"variable '{name}' is not exchanged: {error}")
+            continue
+        columns[name] = np.asarray(values).reshape((1,) + np.shape(values))
+        extras["variables"][name] = dict(_json_meta(ds._variable_meta().get(name, {})), location="scalar",
+                                         **({"encoding": encoding} if encoding else {}))
+    return _fspm_tf().Table("scalars", columns=columns) if columns else None
+
+
+def _anchor_and_empty_properties(g, anchors: set) -> dict:
+    """What the tables cannot hold: the property values of the scale anchors that differ from a new MPG's, the
+    properties without any value, and those of a new MPG that this one lacks."""
+    fresh = MPG()
+    anchor_values, empty = {}, {}
+    for name, prop in g.properties().items():
+        container = "ArrayDict" if isinstance(prop, ArrayDict) else "dict"
+        if len(prop) == 0:
+            empty[name] = container
+            continue
+        default = fresh.properties().get(name, {})
+        changed = {}
+        for vid in anchors:
+            here, there = vid in prop, vid in default
+            if here and (not there or not _same_value(prop[vid], default[vid])):
+                changed[str(vid)] = _encoded(prop[vid])
+            elif there and not here:
+                changed[str(vid)] = None
+        if changed:
+            anchor_values[name] = {"container": container, "values": changed}
+    missing = sorted(set(fresh.properties()) - set(g.properties()))
+    return {"anchor_properties": anchor_values, "empty_properties": empty, "missing_properties": missing}
+
+
+def _same_value(a, b) -> bool:
+    try:
+        return _encoded(a) == _encoded(b)
+    except TypeError:
+        return a is b
 
 
 def _edge_rows(columns: dict, ids: np.ndarray) -> np.ndarray:
@@ -502,10 +618,11 @@ def to_frame(data_structures: dict, components: dict = None, mappings: dict = No
     name: standard name}, default STANDARD_NAMES (None values drop one).
     """
     fspm_tf = _fspm_tf()
+    from openalea.fspm_tf import vocabulary
     names = dict(STANDARD_NAMES, **(standard_names or {}))
     names = {key: value for key, value in names.items() if value}
     frame = fspm_tf.Frame(time=float(time), time_unit=time_unit, step=int(step),
-                          writer={"platform": PLATFORM}, vocabulary_version=fspm_tf.vocabulary.version())
+                          writer={"platform": PLATFORM}, vocabulary_version=vocabulary.version())
     for identifier, ds in data_structures.items():
         metadata = declarations((components or {}).get(identifier, ()))
         if isinstance(ds, MPGDataStructure):
@@ -537,7 +654,8 @@ def scene_to_frame(scene, geometry: bool = True, standard_names: dict = None):
         data_structures[population.name] = population.data_structure
         components[population.name] = population.components
     for model in scene.environment:
-        found = scene._data_structures(model)
+        found = [ds for ds in scene._data_structures(model)                 # a population's is written once
+                 if not any(ds is other for other in data_structures.values())]
         for number, ds in enumerate(found):
             identifier = type(model).__name__ + (f"_{number}" if len(found) > 1 else "")
             data_structures[identifier] = ds
@@ -639,7 +757,8 @@ def _mpg_from(data_structure, extras: dict):
                     continue
                 value = column[row]
                 values[vid] = (float(value) if kind == "float64" else int(value) if kind == "int64"
-                               else bool(value) if kind == "bool" else str(value))
+                               else bool(value) if kind == "bool" else _decoded(value) if kind == "json"
+                               else str(value))
         _merge(g, property_name, entry["container"], values)
     for name, table in tables.items():
         if isinstance(table, _fspm_tf().Relation):
@@ -647,6 +766,19 @@ def _mpg_from(data_structure, extras: dict):
                                                                                table.columns["source"])})
             _merge(g, "n_id_b", "ArrayDict", {int(v): float(t) for v, t in zip(table.columns["id"],
                                                                                table.columns["target"])})
+    for property_name, entry in extras.get("anchor_properties", {}).items():
+        prop = g._properties.get(property_name)
+        if prop is None:
+            prop = g._properties[property_name] = ArrayDict() if entry["container"] == "ArrayDict" else {}
+        for vid, text in entry["values"].items():
+            if text is None:
+                prop.pop(int(vid), None)
+            else:
+                prop[int(vid)] = _decoded(text)
+    for property_name, container in extras.get("empty_properties", {}).items():
+        g._properties.setdefault(property_name, ArrayDict() if container == "ArrayDict" else {})
+    for property_name in extras.get("missing_properties", ()):
+        g._properties.pop(property_name, None)
     ds = MPGDataStructure._from_construction(dict(extras["construction"]), {"mtg": g, "state": {"_wiring": None}})
     _restore_variables(ds, data_structure, extras, tables)
     for name in extras["tracked"]:
@@ -701,7 +833,13 @@ def _restore_variables(ds, data_structure, extras: dict, tables: dict) -> None:
                 values = values.reshape(tuple(ds.shape) + values.shape[1:])
         restored = _restored_meta(meta)
         dtype = restored.get("dtype", float)
-        array = np.array(values, dtype=object if dtype is object else (np.int64 if dtype is int else np.float64))
+        if dtype is object:
+            values = np.asarray(values, dtype=object)
+            array = np.empty(values.shape, dtype=object)
+            for index, value in np.ndenumerate(values):
+                array[index] = _decoded(value) if meta.get("encoding") == "json" else value
+        else:
+            array = np.array(values, dtype=np.int64 if dtype is int else np.float64)
         stores[location][name] = array
         ds._variable_meta()[name] = restored
     if extras.get("aliases"):

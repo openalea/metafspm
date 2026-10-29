@@ -80,7 +80,9 @@ def _same_mpg(a, b):
         other_container, other = right["properties"][name]
         assert container == other_container and values.keys() == other.keys(), name
         for vid, value in values.items():
-            assert value == other[vid] or (value != value and other[vid] != other[vid]), (name, vid)
+            same = value == other[vid]
+            assert (same.all() if isinstance(same, np.ndarray) else same) or (value != value and other[vid] != other[vid]), \
+                (name, vid)
 
 
 def _same_variables(a, b):
@@ -91,8 +93,20 @@ def _same_variables(a, b):
         for name, values in left[location].items():
             other = right[location][name]
             assert values.dtype == other.dtype and values.shape == other.shape, name
-            assert np.ascontiguousarray(values).tobytes() == np.ascontiguousarray(other).tobytes(), name
-    assert a._variable_meta() == b._variable_meta()
+            if values.dtype == object:
+                assert values.tolist() == other.tolist(), name
+            else:
+                assert np.ascontiguousarray(values).tobytes() == np.ascontiguousarray(other).tobytes(), name
+    assert _comparable(a._variable_meta()) == _comparable(b._variable_meta())
+
+
+def _comparable(value):
+    """*value* with NaN made comparable (a NaN default read back is another float object)."""
+    if isinstance(value, dict):
+        return {key: _comparable(item) for key, item in value.items()}
+    if isinstance(value, float) and value != value:
+        return "nan"
+    return value
 
 
 def test_a_population_is_rebuilt_exactly():
@@ -208,3 +222,31 @@ def test_a_mapping_is_written():
                                         ("phyllochron", "{phyllochron}"), ("hPa or cm3 d-1", "{hPa_or_cm3_d-1}")])
 def test_units(unit, code):
     assert ucum_unit(unit) == code
+
+
+def test_what_numbers_and_text_alone_cannot_hold():
+    """Infinities, object variables mixing text and None, MPG properties holding tuples and records, values on the
+    scale anchors, empty properties: written and read back as they were."""
+    ds = _population()
+    models = _models(ds)
+    _steps(models, 1)
+    ds.register("offered_mass", np.inf, location="Plant")
+    ds.register("tissue", ["cortex", None] * (ds.n_nodes() // 2) + ["cortex"] * (ds.n_nodes() % 2), location="node",
+                dtype=object)
+    g = ds.structure
+    segment = int(ds.entity_ids("node")[0])
+    g.add_property("anatomy_class")
+    g.property("anatomy_class")[segment] = ("root", 3, 0.5)
+    g.add_property("anatomy_settings")
+    g.property("anatomy_settings")[segment] = {"layers": [1, 2], "kind": "monocot", 3: (1, 2)}
+    g.add_property("tissue")                             # a property of a variable's name, holding other values
+    for vid in ds.entity_ids("node"):
+        g.property("tissue")[int(vid)] = "epidermis"
+    g.add_property("track_id")
+    anchor = g.scales.anchors[g.scales.SubOrgan + 1]
+    g.property("x")[anchor] = -1.0
+    again = _round_trip({"plants": ds}, components={"plants": models})["plants"]
+    _same_mpg(ds.structure, again.structure)
+    _same_variables(ds, again)
+    assert again.get("offered_mass")[0] == np.inf
+    assert again.structure.property("anatomy_class")[segment] == ("root", 3, 0.5)
