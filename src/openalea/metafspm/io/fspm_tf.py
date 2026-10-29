@@ -640,12 +640,17 @@ def _grid_data_structure(identifier: str, ds, metadata: dict, standard_names: di
 # ── Frames ─────────────────────────────────────────────────────────────────
 
 def to_frame(data_structures: dict, components: dict = None, mappings: dict = None, time: float = 0.,
-             step: int = 0, time_unit: str = "s", geometry: bool = True, standard_names: dict = None):
+             step: int = 0, time_unit: str = "s", geometry: bool = True, standard_names: dict = None,
+             scales=None, entities=None, variables=None, plant_names: dict = None):
     """
     The fspm-TF frame of *data_structures* ({id: DataStructure}; ids are identifiers), their variables declared
     by *components* ({id: [components]}), with *mappings* ({name: (CrossMapping, source id, target id)}), at *time*
     (in *time_unit*) and *step*. *geometry*: the MPGDataStructures' triangles as meshes. *standard_names*: {metafspm
     name: standard name} on top of the vocabulary's metafspm column (a None value drops one).
+
+    For logging, *scales*, *entities* and *variables* filter what is written (see filter_frame), each a value for
+    every DataStructure or a {id: value} dict; *plant_names*: {id: {plant name: Plant vid}}, to give *entities* by
+    plant name. A filtered frame is a valid fspm-TF file, but from_frame does not rebuild it.
     """
     fspm_tf = _fspm_tf()
     from openalea.fspm_tf import vocabulary
@@ -674,29 +679,35 @@ def to_frame(data_structures: dict, components: dict = None, mappings: dict = No
             columns={"source": np.asarray(source_ds.entity_ids("node"), dtype=np.int64)[rows],
                      "target": np.asarray(target_ds.entity_ids("cell"), dtype=np.int64)[cells],
                      "weight": np.asarray(weights, dtype=np.float64)}))
+    if scales is not None or entities is not None or variables is not None:
+        filter_frame(frame, scales=scales, entities=entities, variables=variables, plant_names=plant_names)
     return frame
 
 
-def scene_to_frame(scene, geometry: bool = True, standard_names: dict = None):
+def scene_to_frame(scene, geometry: bool = True, standard_names: dict = None, data_structures=None, scales=None,
+                   entities=None, variables=None):
     """The frame of a Scene now: each population's DataStructure (id: the population's name), each environment
-    model's (id: the model's class name, numbered when it has several), the scene's CrossMappings."""
-    data_structures, components = {}, {}
+    model's (id: the model's class name, numbered when it has several), the scene's CrossMappings.
+
+    For logging: *data_structures*, the ids of those to write (default: all); *scales*, *entities* and *variables*,
+    as in to_frame (filter_frame), *entities* also given by the planting table's plant names (e.g. "p0")."""
+    written, components = {}, {}
     for population in scene.populations:
-        data_structures[population.name] = population.data_structure
+        written[population.name] = population.data_structure
         components[population.name] = population.components
     for model in scene.environment:
         found = []
         for ds in scene._data_structures(model):
-            shared = next((identifier for identifier, other in data_structures.items() if other is ds), None)
+            shared = next((identifier for identifier, other in written.items() if other is ds), None)
             if shared is None:
                 found.append(ds)
             else:                                   # a population's, written once, with this model's declarations too
                 components[shared] = components[shared] + list(model.components)
         for number, ds in enumerate(found):
             identifier = type(model).__name__ + (f"_{number}" if len(found) > 1 else "")
-            data_structures[identifier] = ds
+            written[identifier] = ds
             components[identifier] = list(model.components)
-    identifier_of = {id(ds): identifier for identifier, ds in data_structures.items()}
+    identifier_of = {id(ds): identifier for identifier, ds in written.items()}
     mappings = {}
     for mapping in getattr(scene, "mappings", ()):
         if not hasattr(mapping, "incidence"):
@@ -706,8 +717,17 @@ def scene_to_frame(scene, geometry: bool = True, standard_names: dict = None):
         if source is None or target is None:
             continue
         mappings[f"{source}_to_{target}"] = (mapping, source, target)
-    return to_frame(data_structures, components=components, mappings=mappings, time=scene.time,
-                    step=scene.iteration, time_unit="s", geometry=geometry, standard_names=standard_names)
+    if data_structures is not None:
+        unknown = set(data_structures) - set(written)
+        if unknown:
+            raise ValueError(f"no data structure {sorted(unknown)} in the scene ({sorted(written)})")
+        written = {identifier: ds for identifier, ds in written.items() if identifier in data_structures}
+        mappings = {name: entry for name, entry in mappings.items() if entry[1] in written and entry[2] in written}
+    plant_names = {population.name: {name: vid for vid, name in population.plant_names().items()}
+                   for population in scene.populations if hasattr(population, "plant_names")}
+    return to_frame(written, components=components, mappings=mappings, time=scene.time,
+                    step=scene.iteration, time_unit="s", geometry=geometry, standard_names=standard_names,
+                    scales=scales, entities=entities, variables=variables, plant_names=plant_names)
 
 
 def export_frame(path: str, data_structures: dict, **options) -> None:
@@ -718,6 +738,180 @@ def export_frame(path: str, data_structures: dict, **options) -> None:
 def export_scene(path: str, scene, **options) -> None:
     """Write scene_to_frame(scene, **options) to the .glb file *path*."""
     _fspm_tf().write(path, scene_to_frame(scene, **options))
+
+
+# ── Logging: filtered frames ────────────────────────────────────────────────
+
+def _for(value, identifier: str):
+    """A filter's value for the data structure *identifier*: its entry when *value* is a dict, else *value*."""
+    return value.get(identifier) if isinstance(value, dict) else value
+
+
+def filter_frame(frame, scales=None, entities=None, variables=None, plant_names: dict = None):
+    """
+    Keep, for logging, part of *frame* (changed in place, and returned); each filter is a value for every data
+    structure, or a {data structure id: value} dict (None: unfiltered):
+
+      entities:   ids (vids) of entities kept with everything they contain at finer scales, e.g. a plant, an axis,
+                  or a segment with its cross-section's layers, cells and compartments; also plant names of the
+                  planting table, through *plant_names* ({data structure id: {name: Plant vid}}). Their containing
+                  entities are kept too, so that every complex link resolves. Graphs only.
+      scales:     names of the entity sets kept (e.g. ["Plant", "SubOrgan"]); a complex link over a dropped scale
+                  goes to the nearest kept one. Graphs only.
+      variables:  names of the variables kept (the structure's columns always are), in every table.
+
+    Parents outside what is kept become none, relations and mappings keep the pairs whose ends are kept, meshes the
+    triangles of kept entities. The result is a valid fspm-TF frame, marked as filtered: from_frame does not rebuild it.
+    """
+    for data_structure in frame.data_structures:
+        wanted = {"entities": _for(entities, data_structure.id), "scales": _for(scales, data_structure.id),
+                  "variables": _for(variables, data_structure.id)}
+        if all(value is None for value in wanted.values()):
+            continue
+        graph = data_structure.kind == "graph"
+        if not graph and (wanted["entities"] is not None or wanted["scales"] is not None):
+            raise ValueError(f"'{data_structure.id}' is a {data_structure.kind}: only its variables can be filtered")
+        if wanted["entities"] is not None:
+            names = (plant_names or {}).get(data_structure.id, {})
+            ids = [names[item] if isinstance(item, str) else int(item) for item in np.atleast_1d(wanted["entities"])]
+            _keep_entities(data_structure, ids)
+        if wanted["scales"] is not None:
+            _keep_scales(data_structure, list(wanted["scales"]))
+        if wanted["variables"] is not None:
+            _keep_variables(data_structure, set(wanted["variables"]))
+        data_structure.extras.setdefault(EXTRAS, {})["filtered"] = {
+            key: (None if value is None else [item if isinstance(item, str) else int(item)
+                                              for item in np.atleast_1d(value)]) for key, value in wanted.items()}
+    _filter_mappings(frame)
+    return frame
+
+
+def _complex_links(data_structure) -> dict:
+    """{id: the id of its complex} over every entity set (-1: none)."""
+    links = {}
+    for entity_set in data_structure.entity_sets:
+        if "complex" in entity_set.columns:
+            links.update(zip(entity_set.columns["id"].tolist(), entity_set.columns["complex"].tolist()))
+    return links
+
+
+def _select_rows(table, rows: np.ndarray) -> None:
+    for name in list(table.columns):
+        table.columns[name] = table.columns[name][rows]
+
+
+def _keep_entities(data_structure, ids: list) -> None:
+    links = _complex_links(data_structure)
+    known = {identifier for entity_set in data_structure.entity_sets for identifier in entity_set.ids().tolist()}
+    missing = sorted(set(ids) - known)
+    if missing:
+        raise ValueError(f"'{data_structure.id}' has no entity {missing[:5]}")
+    kept = set(ids)
+    for identifier in ids:                                     # their containing entities, up to the coarsest scale
+        while links.get(identifier, NO_ID) != NO_ID:
+            identifier = links[identifier]
+            kept.add(identifier)
+    within = set(ids)
+    for entity_set in sorted(data_structure.entity_sets, key=lambda entity_set: entity_set.rank or 0):
+        if "complex" in entity_set.columns:                    # everything they contain, scale by scale
+            inside = np.isin(entity_set.columns["complex"], list(within))
+            within.update(entity_set.columns["id"][inside].tolist())
+    kept |= within
+    old_rows = {}
+    for entity_set in data_structure.entity_sets:
+        keep = np.isin(entity_set.columns["id"], list(kept))
+        old_rows[entity_set.name] = np.flatnonzero(keep)
+        _select_rows(entity_set, keep)
+        if "parent" in entity_set.columns:
+            outside = ~np.isin(entity_set.columns["parent"], list(kept))
+            entity_set.columns["parent"] = np.where(outside, NO_ID, entity_set.columns["parent"])
+            entity_set.columns["edge_type"] = np.where(outside, "none", entity_set.columns["edge_type"]).astype(object)
+    for relation in data_structure.relations:
+        _select_rows(relation, np.isin(relation.columns["source"], list(kept))
+                     & np.isin(relation.columns["target"], list(kept)))
+    data_structure.meshes = [mesh for mesh in (_mesh_rows(mesh, old_rows) for mesh in data_structure.meshes)
+                             if mesh is not None]
+
+
+def _mesh_rows(mesh, old_rows: dict):
+    """*mesh* with the triangles of the kept entities, its feature rows renumbered (None: no triangle left)."""
+    fspm_tf = _fspm_tf()
+    if mesh.indices is not None:
+        raise ValueError(f"mesh '{mesh.name}': indexed meshes are not filtered")
+    renumber = {}
+    for name, rows in old_rows.items():
+        if name in mesh.feature_rows:
+            new = np.full(max(rows.max() + 1 if rows.size else 0, mesh.feature_rows[name].max() + 1), NO_ID)
+            new[rows] = np.arange(rows.size)
+            renumber[name] = new
+    finest = next(name for name in reversed(list(mesh.feature_rows)) if name in renumber) if renumber else None
+    if finest is None:
+        return mesh
+    corners = mesh.feature_rows[finest].reshape(-1, 3)[:, 0]
+    keep = np.repeat((corners >= 0) & (renumber[finest][np.maximum(corners, 0)] >= 0), 3)
+    if not keep.any():
+        return None
+    rows = {name: np.where(values[keep] >= 0, renumber[name][np.maximum(values[keep], 0)], NO_ID)
+            if name in renumber else values[keep] for name, values in mesh.feature_rows.items()}
+    return fspm_tf.Mesh(mesh.name, positions=mesh.positions[keep], feature_rows=rows,
+                        display={name: values[keep] for name, values in mesh.display.items()},
+                        display_sources=dict(mesh.display_sources))
+
+
+def _keep_scales(data_structure, names: list) -> None:
+    unknown = set(names) - {entity_set.name for entity_set in data_structure.entity_sets}
+    if unknown:
+        raise ValueError(f"'{data_structure.id}' has no scale {sorted(unknown)} "
+                         f"({[entity_set.name for entity_set in data_structure.entity_sets]})")
+    links = _complex_links(data_structure)
+    kept = [entity_set for entity_set in data_structure.entity_sets if entity_set.name in names]
+    kept_ids = {identifier for entity_set in kept for identifier in entity_set.ids().tolist()}
+    for entity_set in kept:
+        if "complex" not in entity_set.columns:
+            continue
+        complexes = entity_set.columns["complex"].tolist()
+        for row, identifier in enumerate(complexes):            # over the dropped scales, to the nearest kept one
+            while identifier != NO_ID and identifier not in kept_ids:
+                identifier = links.get(identifier, NO_ID)
+            complexes[row] = identifier
+        if kept.index(entity_set) == 0:
+            del entity_set.columns["complex"]                   # now the coarsest scale kept
+        else:
+            entity_set.columns["complex"] = np.asarray(complexes, dtype=np.int64)
+    data_structure.entity_sets = kept
+    data_structure.relations = [relation for relation in data_structure.relations
+                                if relation.source_set in names and relation.target_set in names]
+    for mesh in data_structure.meshes:
+        mesh.feature_rows = {name: rows for name, rows in mesh.feature_rows.items() if name in names}
+        mesh.display_sources = {name: source for name, source in mesh.display_sources.items() if source in names}
+    data_structure.meshes = [mesh for mesh in data_structure.meshes if mesh.feature_rows]
+
+
+def _keep_variables(data_structure, names: set) -> None:
+    tables = list(data_structure.entity_sets) + list(data_structure.relations)
+    for table in tables + ([data_structure.scalars] if data_structure.scalars is not None else []):
+        for column in [column for column in table.columns if column not in table.reserved and column not in names]:
+            del table.columns[column]
+            table.variables.pop(column, None)
+    if data_structure.scalars is not None and not data_structure.scalars.columns:
+        data_structure.scalars = None
+
+
+def _filter_mappings(frame) -> None:
+    by_id = {data_structure.id: data_structure for data_structure in frame.data_structures}
+    kept = []
+    for mapping in frame.mappings:
+        ends = []
+        for data_structure_id, set_name in (mapping.source, mapping.target):
+            data_structure = by_id.get(data_structure_id)
+            sets = {entity_set.name: entity_set for entity_set in data_structure.entity_sets} if data_structure else {}
+            ends.append(sets.get(set_name))
+        if None in ends:
+            continue
+        _select_rows(mapping, np.isin(mapping.columns["source"], ends[0].ids())
+                     & np.isin(mapping.columns["target"], ends[1].ids()))
+        kept.append(mapping)
+    frame.mappings = kept
 
 
 # ── Data structures from a frame ────────────────────────────────────────────
@@ -731,6 +925,9 @@ def from_frame(frame) -> dict:
         if extras is None:
             warnings.warn(f"'{data_structure.id}' was not written by metafspm: not rebuilt")
             continue
+        if "filtered" in extras:
+            raise ValueError(f"'{data_structure.id}' was written filtered, for logging ({extras['filtered']}): "
+                             "it cannot be rebuilt (write it unfiltered to exchange it)")
         if extras["class"] == "MPGDataStructure":
             out[data_structure.id] = _mpg_from(data_structure, extras)
         else:

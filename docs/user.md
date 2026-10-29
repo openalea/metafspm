@@ -396,7 +396,11 @@ scene.simulate(n_iterations=2500)
   same variables, bit for bit, from which a simulation continues as from the original. `Scene(...,
   output_dirpath=..., frame_period=24)` records a frame at the start and every 24 steps, in `output_dirpath/frames`
   with its index `scene.fspm.json`, which ParaView's fspm-TF reader plays as time steps; `frame_options=` passes
-  `scene_to_frame`'s options (e.g. `geometry=False`). It uses
+  `scene_to_frame`'s options (e.g. `geometry=False`). For logging, the options also filter what each frame keeps:
+  `data_structures=` (which ones), `scales=` (e.g. `["Plant", "SubOrgan"]`), `entities=` (a plant, by vid or by its
+  name in the planting table, an axis, a segment with its cross-section: with everything they contain) and
+  `variables=`. Each is a value for every DataStructure or a `{id: value}` dict. A filtered frame is a smaller, valid
+  fspm-TF file, for outputs only: `import_frame` refuses to rebuild it. It uses
   `openalea.fspm_tf`, a dependency of metafspm (in development, installed from the fspm-TF clone).
 
 ## 7. A complete example
