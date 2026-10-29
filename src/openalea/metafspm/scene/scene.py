@@ -126,6 +126,10 @@ class Scene(CompositeModel):
         scene_xrange, _yrange: the stand's size (default: the planting table's, from planting_table).
         output_dirpath:        where the SceneRecorder writes (None: no recording); log_plants: the plants (names of the
                                planting table) whose per-segment state is written every heavy_log_period steps.
+        frame_period:          with output_dirpath, a frame of the whole scene (fspm-TF, io.fspm_tf.scene_to_frame) at
+                               the start and every frame_period steps, in output_dirpath/frames with its index
+                               scene.fspm.json (for ParaView, other platforms, restarts); frame_options: the
+                               scene_to_frame options (geometry=False, standard_names=...). Needs openalea.fspm_tf.
         forcings:              a table shared by every model (a DataFrame indexed by time in s): a component's
                                forcing(name) reads its column when the component has no forcing of that name.
         events:                (time, action) pairs: action(scene) runs at the start of the first step at or after time.
@@ -146,7 +150,8 @@ class Scene(CompositeModel):
                  time_step: float = 3600., mapping_method: str = "barycentre", periodic=(True, True, False),
                  flip_z: bool = True, scene_xrange: float = None, scene_yrange: float = None,
                  output_dirpath: str = None, log_plants=(), heavy_log_period: int = 24, logger_class=None,
-                 log_settings: dict = None, mappings=(), forcings=None, events=(), stop_when=None):
+                 log_settings: dict = None, mappings=(), forcings=None, events=(), stop_when=None,
+                 frame_period: int = None, frame_options: dict = None):
         Choregrapher().add_simulation_time_step(time_step)
         self.time_step, self.time, self.iteration = time_step, 0., 0
         self.scene_xrange = scene_xrange if scene_xrange is not None else planting.attrs.get("xrange")
@@ -195,7 +200,10 @@ class Scene(CompositeModel):
             if hasattr(model, "spin_up"):
                 model.spin_up(self)
 
-        self.recorder = (SceneRecorder(output_dirpath, log_plants=log_plants, heavy_log_period=heavy_log_period)
+        if frame_period is not None and output_dirpath is None:
+            raise ValueError("frame_period needs an output_dirpath to write the frames in")
+        self.recorder = (SceneRecorder(output_dirpath, log_plants=log_plants, heavy_log_period=heavy_log_period,
+                                       frame_period=frame_period, frame_options=frame_options)
                          if output_dirpath is not None else None)
         self.logger = (logger_class(scene=self, outputs_dirpath=output_dirpath, **(log_settings or {}))
                        if logger_class is not None else None)
@@ -322,6 +330,8 @@ class Scene(CompositeModel):
 
     def run(self) -> None:
         """One scene step: the environment, then the populations, each after the exchanges into it."""
+        if self.iteration == 0 and self.recorder is not None and self.recorder.frame_period:
+            self.recorder.write_frame(self)                      # the initial state (not again after a restore)
         while self.events and self.events[0][0] <= self.time:
             _, action = self.events.pop(0)
             action(self)
@@ -449,16 +459,27 @@ class SceneRecorder:
 
       summaries.csv  every step, one row per plant: sums of the extensive and means of the intensive node state
                      variables, and the Plant-located state variables;
-      segments.csv   every heavy_log_period steps, the node state variables of the log_plants only.
+      segments.csv   every heavy_log_period steps, the node state variables of the log_plants only;
+
+    and with frame_period, the scene's frames (fspm-TF), at the start and every frame_period steps::
+
+      frames/frame_<step>.glb, frames/scene.fspm.json (their index, rewritten at each frame)
     """
 
-    def __init__(self, output_dirpath: str, log_plants=(), heavy_log_period: int = 24):
+    def __init__(self, output_dirpath: str, log_plants=(), heavy_log_period: int = 24, frame_period: int = None,
+                 frame_options: dict = None):
         self.output_dirpath = output_dirpath
         self.log_plants = {str(name) for name in log_plants}
         self.heavy_log_period = int(heavy_log_period)
+        self.frame_period = int(frame_period) if frame_period else None
+        self.frame_options = dict(frame_options or {})
         self._columns = {}
+        self._frames = None            # the index's entries, read at the first frame written (a restored run's kept)
         self.resume = False            # after a restore: files are appended to, under their existing header
         os.makedirs(output_dirpath, exist_ok=True)
+        if self.frame_period:
+            from openalea.metafspm.io.fspm_tf import _fspm_tf
+            _fspm_tf()                 # fails now, not after the first steps, without openalea.fspm_tf
 
     @staticmethod
     def _state_variables(population: Population) -> dict:
@@ -518,7 +539,30 @@ class SceneRecorder:
         else:
             frame.reindex(columns=self._columns[key]).to_csv(path, mode="a", header=False, index=index)
 
+    def write_frame(self, scene: Scene) -> str:
+        """Write the scene's frame now (frames/frame_<step>.glb) and the frames' index; the frame's path."""
+        from openalea.metafspm.io.fspm_tf import _fspm_tf, scene_to_frame
+        fspm_tf = _fspm_tf()
+        folder = os.path.join(self.output_dirpath, "frames")
+        os.makedirs(folder, exist_ok=True)
+        index_path = os.path.join(folder, fspm_tf.codec.INDEX_FILE)
+        if self._frames is None:
+            self._frames = []
+            if self.resume and os.path.exists(index_path):       # a restored run: the frames up to its step
+                self._frames = [entry for entry in fspm_tf.read_index(index_path)["frames"]
+                                if entry["step"] < scene.iteration]
+                for entry in self._frames:
+                    entry.pop("path", None)
+        name = f"frame_{scene.iteration:06d}.glb"
+        fspm_tf.write(os.path.join(folder, name), scene_to_frame(scene, **self.frame_options))
+        self._frames = [entry for entry in self._frames if entry["step"] != scene.iteration]
+        self._frames.append({"time": float(scene.time), "step": int(scene.iteration), "file": name})
+        fspm_tf.write_index(index_path, self._frames, time_unit="s")
+        return os.path.join(folder, name)
+
     def record(self, scene: Scene) -> None:
+        if self.frame_period and scene.iteration % self.frame_period == 0:
+            self.write_frame(scene)
         for population in scene.populations:
             self._append(population, "summaries.csv", self.plant_summaries(population, scene.time), index=False)
             if self.log_plants and scene.iteration % self.heavy_log_period == 0:

@@ -59,7 +59,8 @@ dependencies = [
     "numpy",
     "numba",
     "pandas",
-    "scipy"
+    "scipy",
+    "openalea.fspm_tf",   # the fspm-TF exchange format (io.fspm_tf); in development: pip install -e ../fspm-TF
 ]
 
 [project.optional-dependencies]
@@ -70,6 +71,7 @@ dev = [
   "pytest >=6",
   "pytest-cov >=3",
 ]
+
 doc = [
   "pydata-sphinx-theme",
   "myst-parser",
