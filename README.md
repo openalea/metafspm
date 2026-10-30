@@ -1,11 +1,9 @@
 # MetaFSPM
-[![Docs](https://readthedocs.org/projects/mtg/badge/?version=latest)](https://metafspm.readthedocs.io/)
-(Not yet)
-[![Build Status](https://github.com/openalea/mtg/actions/workflows/conda-package-build.yml/badge.svg?branch=master)](https://github.com/openalea/mtg/actions/workflows/conda-package-build.yml?query=branch%3Amaster)
+[![Docs](https://readthedocs.org/projects/metafspm/badge/?version=latest)](https://metafspm.readthedocs.io/)
+[![Build Status](https://github.com/openalea/metafspm/actions/workflows/conda-build.yml/badge.svg?branch=main)](https://github.com/openalea/metafspm/actions/workflows/conda-build.yml?query=branch%3Amain)
 [![Python Version](https://img.shields.io/badge/python-3.8%20%7C%203.9%20%7C%203.10%20%7C%203.11%20%7C%203.12-blue)](https://www.python.org/downloads/)
 [![License](https://img.shields.io/badge/License--CeCILL-C-blue)](https://www.cecill.info/licences/Licence_CeCILL-C_V1-en.html)
-(Not yet)
-[![Anaconda-Server Badge](https://anaconda.org/openalea3/mtg/badges/version.svg)](https://anaconda.org/openalea3/metafspm)
+[![Anaconda-Server Badge](https://anaconda.org/openalea3/metafspm/badges/version.svg)](https://anaconda.org/openalea3/metafspm)
 
 ## Purpose 
 
