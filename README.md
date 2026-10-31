@@ -103,6 +103,11 @@ grids, light, environment) by mappings; a `Scene` builds populations from a plan
 environment. See the documentation in `docs/`: the user guide (`docs/user.md`), the declaration conventions
 (`docs/conventions.md`) and the guide for porting an existing model (`docs/migration.md`).
 
+A simulation follows one path: a scenario table (`read_scenarios`), `planting`, a `Scene` with its `forcings=` and
+a `SceneRecorder`, `simulate`, then the outputs read back (`run.json`, the `Plant/` and `Soil/` summaries, the
+frames), and `variants` of a scenario within the declared bounds. [From a scenario to its outputs](docs/tutorial.md)
+goes through it on a seedling in a soil column (`examples/soil_plant_atmosphere/scenario_to_outputs.py`).
+
 For a model built on MetaFSPM, see [Root_CyNAPS](https://github.com/GeraultTr/Root_CyNAPS).
 
 ## Exchange with other platforms

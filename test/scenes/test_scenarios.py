@@ -50,9 +50,12 @@ def test_a_scenario_table(tmp_path):
 
 
 def test_a_table_by_model():
-    table = pd.DataFrame({"name": ["EL", "depth"], "model": ["Roots", "Soil"], "a": [1e-3, 0.4], "b": [None, 0.6]})
-    assert read_scenarios(table) == {"a": {"Roots": {"EL": 1e-3}, "Soil": {"depth": 0.4}},
+    table = pd.DataFrame({"name": ["EL", "depth", "rain"], "model": ["Roots", "Soil", None],
+                          "type": ["parameter", "parameter", "forcing"], "a": [1e-3, 0.4, 2.], "b": [None, 0.6, None]})
+    assert read_scenarios(table) == {"a": {"Roots": {"EL": 1e-3}, "Soil": {"depth": 0.4}, "forcings": {"rain": 2.}},
                                      "b": {"Soil": {"depth": 0.6}}}
+    with pytest.raises(ValueError, match=r"\['depth'\] have no model"):
+        read_scenarios(table.assign(model=["Roots", None, None]))
 
 
 def test_the_parameter_table():

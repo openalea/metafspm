@@ -1,6 +1,7 @@
 """
 Smoke test of examples/soil_plant_atmosphere: the scenes (one plant, a population, one plant on an adaptive soil)
-converge to a steady state whose water balances close, and their plots are written.
+converge to a steady state whose water balances close, and their plots are written; the tutorial's path from a
+scenario table to its outputs runs and its outputs read back.
 """
 import os
 import sys
@@ -13,6 +14,7 @@ EXAMPLE = os.path.join(os.path.dirname(__file__), "..", "..", "examples", "soil_
 sys.path.insert(0, os.path.abspath(EXAMPLE))
 
 import one_plant                                                                     # noqa: E402
+import scenario_to_outputs                                                           # noqa: E402
 import one_plant_adaptative                                                          # noqa: E402
 import population                                                                    # noqa: E402
 from models import AdaptiveSoil, Soil                                                 # noqa: E402
@@ -85,3 +87,15 @@ def test_the_adaptive_soil_refines_where_the_roots_take_up_water(tmp_path):
                  "plant_anatomy_soil.png", "plant_anatomy_soil_psi.png", "cell_size.png", "soil_anomaly.png",
                  "size_against_metrics.png"):
         assert (tmp_path / "figures" / name).stat().st_size > 0
+
+
+def test_the_tutorial_path_from_a_scenario_table_to_its_outputs(tmp_path):
+    results = scenario_to_outputs.main(str(tmp_path), hours=12)
+    assert set(results) == {"humid", "dry"}
+    for name, outputs in results.items():
+        assert outputs["status"]["status"] == "finished" and outputs["status"]["iterations"] == 12
+        assert outputs["plant"]["hour"].tolist() == list(range(13)) and len(outputs["soil"]) == 13
+        assert [frame["step"] for frame in outputs["frames"]] == [0, 6, 12]
+        assert os.listdir(tmp_path / name / "checkpoints") == ["step_000012"]
+    dry, humid = (results[name]["plant"].set_index("hour").loc[12, "evaporation"] for name in ("dry", "humid"))
+    assert dry > humid > 0.                                         # the dry air pulls more water

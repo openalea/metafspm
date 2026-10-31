@@ -23,6 +23,7 @@ plain words, and the models available with their tutorials.
 :maxdepth: 1
 
 metafspm in five minutes <five_minutes>
+From a scenario to its outputs <tutorial>
 ```
 
 ## Building models

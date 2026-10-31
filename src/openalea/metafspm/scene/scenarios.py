@@ -18,7 +18,7 @@ A cell holds a number, True, False, None, a JSON list or dict, or text; an empty
 is not in that scenario). The rows of type "forcing" hold a number or a CSV file (relative to the table; its
 columns time, in s, and the name): they go to the scenario's "forcings" entry, {name: forcing}, for
 Scene(forcings=...) (pop it before planting). With a "model" column, each scenario is {model: {name: value}} (and
-its "forcings").
+its "forcings": a forcing row needs no model, forcings being the scene's).
 
 variants() builds scenarios around a base one, within the bounds the components declare (min_value, max_value):
 a grid of every combination, one entry changed at a time, or a Latin hypercube sampling. Sensitivity indices are
@@ -100,10 +100,13 @@ def read_scenarios(source, which=None, sheet=None) -> dict:
             raise KeyError(f"scenarios {missing} not in the table (its scenarios: {names})")
         names = list(which)
     model_column, type_column = lower.get("model"), lower.get("type")
-    if model_column is not None:
+    if model_column is not None:                       # every entry a model's, but the forcings (the scene's)
         given = table[model_column].map(_cell)
-        if given.isna().any() and given.notna().any():
-            rows = table.loc[given.isna(), name_column].tolist()
+        kinds = (table[type_column].map(lambda v: str(_cell(v) or "").strip().lower()) if type_column is not None
+                 else pd.Series("", index=table.index))
+        missing = given.isna() & (kinds != "forcing")
+        if missing.any() and given.notna().any():
+            rows = table.loc[missing, name_column].tolist()
             raise ValueError(f"entries {rows} have no model, in a table with a model column")
     scenarios = {}
     for scenario_name in names:

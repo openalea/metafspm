@@ -260,7 +260,7 @@ class SeedlingStructure(StructuralComponent):
     # parameters, per plant
     root_radial_k: float = parameter(unit="mm3 s-1 MPa-1 m-1",
                                      description="Root radial conductance, per edge and length.",
-                                     by="SeedlingStructure", default=0.5)
+                                     by="SeedlingStructure", default=0.5, min_value=0.05, max_value=2.)
     stem_radial_k: float = parameter(unit="mm3 s-1 MPa-1 m-1",
                                      description="Stem radial conductance, per edge and length.",
                                      by="SeedlingStructure", default=0.1)
@@ -272,7 +272,7 @@ class SeedlingStructure(StructuralComponent):
     root_soil_k: float = parameter(unit="mm3 s-1 MPa-1 m-1", description="Root-soil conductance per root length.",
                                    by="SeedlingStructure", default=0.5)
     stomatal_conductance: float = parameter(unit="mol m-2 s-1", description="Stomatal conductance to water vapour.",
-                                            by="SeedlingStructure", default=0.2)
+                                            by="SeedlingStructure", default=0.2, min_value=0.02, max_value=0.6)
     vapour_factor: float = parameter(unit="mm3 s-1 MPa-1 per (mol m-2 s-1 m2)",
                                      description="e_sat V_w² / (R T P): from a vapour conductance to a liquid one.",
                                      by="SeedlingStructure", default=VAPOUR_FACTOR)
