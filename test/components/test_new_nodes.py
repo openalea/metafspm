@@ -99,7 +99,7 @@ class Branching(StructuralComponent):
 
 def _population(sizes=(3, 5)):
     table = pd.DataFrame([dict(plant=f"p{i}", model=None, x=0.1 * i, y=0., z=0., rotation=0.,
-                               scenario={"parameters": {"n_segments": n}}) for i, n in enumerate(sizes)])
+                               scenario={"n_segments": n}) for i, n in enumerate(sizes)])
     g, plants = build_population(table, initiators=(RootGrowthProbe,))
     g.populate_graph(g.scales.SubOrgan)
     g.convert_properties_to_arraydict()

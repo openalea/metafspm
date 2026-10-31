@@ -36,7 +36,7 @@ class RootCNUnified(Model):
     hexose: float = declare(default=1e-3, ..., variable_type="state_variable", ...)
     def __init__(self, g, time_step, **scenario):
         self.props = g.properties(); self.vertices = ...
-        self.apply_scenario(**scenario); self.link_self_to_mtg()
+        self.apply_scenario(**scenario); self.link_self_to_mtg()     # apply_scenario is removed: the Scene sets them
         self.choregrapher.add_time_and_data(instance=self, sub_time_step=time_step, data=self.props)
 ```
 
@@ -137,7 +137,7 @@ class GrassBRIDGES(CompositeModel):
   - extensive cell → plant: `split`, which needs `weight=`;
   - variables without a declared kind need an explicit `aggregation=`.
 - **The scene** (`openalea.metafspm.scene.scene.Scene`, see `test/provide_usage_examples/scene_example.py`):
-  - builds one population per plant model of the planting table (`planting_table(...)`), then the environment models;
+  - builds one population per plant model of the planting table (`planting(...)`, with `stand(...)` for a sown stand), then the environment models;
   - infers the mappings (barycentre by default, `mapping_method="overlap"` as an option) and runs one `Exchanges` at fixed points: each environment model after the exchanges into it, then each population after the exchanges into it;
   - several plants feed one soil in one write, without zeroing.
 - **Replaced:** `compute_mtg_voxel_neighbors_fast`, `apply_to_voxel_fast` and `get_from_voxel_fast` by `CrossMapping`. `play_Orchestra`, `Transport`, `Coupler` and the queue protocol are removed.
@@ -145,12 +145,24 @@ class GrassBRIDGES(CompositeModel):
 
 ## 5. Outputs
 
-- **Built-in recorder:** the scene's `SceneRecorder` writes, for each population:
-  - per-plant summaries every step;
-  - the selected plants' segments every `heavy_log_period` steps (`log_plants=`).
-- **fspm-utility Logger:** it plugs in through `logger_class(scene=..., outputs_dirpath=..., **log_settings)` once adapted.
+- **The SceneRecorder replaces fspm-utility's Logger** (`Scene(..., recorder=SceneRecorder(folder, ...))`):
+  - `summaries.csv` (sums and means per plant, and per environment grid in `Soil/` or `Atmosphere/`) replaces the
+    summed CSV;
+  - `segments.csv` for the `log_plants` and the fspm-TF frames replace the NetCDF raw logs and the MTG pickles;
+  - `run.json` (status, timing) and `scenario.json` replace the simulation log and the saved scenario;
+  - `checkpoints/` restart a run;
+  - `tables={name: function(scene)}` adds a package's own summary.
 
-## 6. Logger (`openalea.fspm`): the xarray and csv writers only
+  The `logger_class` / `log_settings` hook is removed.
+- **Scenario files:** `read_scenarios` reads fspm-utility's sheets once laid out as one row per entry, a `model`
+  column instead of `Dedicated_to`, and `type` (`parameter`, `forcing`) instead of `Input_type`.
+  `MakeScenarios.from_table` and the Sobol sampler become `read_scenarios` and `variants(design="sampling")`.
+- **Input tables:** `CompositeModel.apply_input_tables` is removed. Time series are the Scene's `forcings=`, which
+  write the uncoupled inputs of that name at each step.
+
+## 6. Logger (`openalea.fspm`): no longer needed
+
+The SceneRecorder covers it (section 5). For a package still using the old Logger:
 
 - Accept any DataStructure in `model_instance.data_structures`, alongside the MTG / dict types.
 - In `mtg_to_dataset` / `recording_raw_MTG_properties_in_xarray`, replace the props traversal with:

@@ -32,6 +32,8 @@ class EnvironmentModel(CompositeModel):
 
     # Seconds between two full runs (None: every step); between them, between() runs instead
     interval = None
+    # The folder of its outputs (SceneRecorder): "Soil" or "Atmosphere" (None: "Soil" when its class name holds "soil")
+    compartment = None
 
     def __init__(self, populations, scene_xrange, scene_yrange, time_step):
         self.populations = list(populations)

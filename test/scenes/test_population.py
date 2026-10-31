@@ -13,7 +13,7 @@ from numba import njit
 from openalea.metafspm.coupling.component import FunctionalComponent, parameter, state_variable
 from openalea.metafspm.data_structure.configs import ScalesConfig as scales
 from openalea.metafspm.data_structure.data_api import ArrayDataStructure, MPGDataStructure
-from openalea.metafspm.scene.population import apply_plant_scenarios, build_population, planting_table
+from openalea.metafspm.scene.population import Planting, apply_plant_scenarios, build_population, planting, stand
 from openalea.metafspm.solve.decorator import rate
 
 from growth import DOC, CarbonProbe, RootGrowthProbe
@@ -43,14 +43,14 @@ def _run(scenarios, steps=3):
 
 
 def test_a_homogeneous_population_gives_every_plant_the_single_plant_result():
-    single = _run([{"parameters": {}}])[0]
-    population = _run([{"parameters": {}}] * 100)
+    single = _run([{}])[0]
+    population = _run([{}] * 100)
     assert len(population) == 100
     assert all(result == single for result in population.values())          # identical, computed in one call
 
 
 def test_per_plant_scenarios_give_each_plant_its_own_parameters():
-    slow, fast = {"parameters": {"elongation_rate": 0.4}}, {"parameters": {"elongation_rate": 0.9}}
+    slow, fast = {"elongation_rate": 0.4}, {"elongation_rate": 0.9}
     population = _run([slow, fast] * 5)
     reference_slow, reference_fast = _run([slow])[0], _run([fast])[0]
     assert reference_slow != reference_fast
@@ -59,7 +59,7 @@ def test_per_plant_scenarios_give_each_plant_its_own_parameters():
 
 
 def test_initial_structures_follow_the_plant_scenarios():
-    g, plants = build_population(_table([{"parameters": {"n_segments": 2}}, {"parameters": {"n_segments": 5}}]),
+    g, plants = build_population(_table([{"n_segments": 2}, {"n_segments": 5}]),
                                  initiators=(RootGrowthProbe,))
     counts = [sum(1 for v in g.vertices(scale=g.scales.SubOrgan) if g.complex_at_scale(v, g.scales.Plant) == p)
               for p in plants]
@@ -68,20 +68,34 @@ def test_initial_structures_follow_the_plant_scenarios():
                                 if g.complex_at_scale(v, g.scales.Plant) == plants[1])] == pytest.approx(0.1)
 
 
-def test_planting_table():
-    table = planting_table(0.6, 0.3, sowing_density=100, row_spacing=0.15, plant_models=[RootGrowthProbe],
-                           plant_scenarios=[{"parameters": {}}], exact=True, seed=1)
+def test_a_sown_stand():
+    sown = stand(0.6, 0.3, sowing_density=100, row_spacing=0.15, exact=True, seed=1)
+    table = planting(sown, RootGrowthProbe)
     assert len(table) == 4 * 4 and set(table.columns) >= {"plant", "model", "x", "y", "z", "rotation", "scenario"}
-    again = planting_table(0.6, 0.3, sowing_density=100, row_spacing=0.15, plant_models=[RootGrowthProbe],
-                           plant_scenarios=[{"parameters": {}}], exact=True, seed=1)
+    assert table["plant"].tolist() == [f"p{k}" for k in range(16)] and table.attrs["xrange"] == pytest.approx(0.6)
+    assert (table["z"] == -0.025).all()
+    again = planting(stand(0.6, 0.3, sowing_density=100, row_spacing=0.15, exact=True, seed=1), RootGrowthProbe)
     pd.testing.assert_frame_equal(table.drop(columns=["model", "scenario"]), again.drop(columns=["model", "scenario"]))
-    scenarios = [{"parameters": {"elongation_rate": r}} for r in np.linspace(0.1, 1., len(table))]
-    per_plant = planting_table(0.6, 0.3, sowing_density=100, row_spacing=0.15, plant_models=[RootGrowthProbe],
-                               plant_scenarios=[{"parameters": {}}], per_plant_scenarios=scenarios, seed=1)
-    assert per_plant["scenario"].tolist() == scenarios
-    with pytest.raises(ValueError, match="gives 1 scenarios for 16 plants"):
-        planting_table(0.6, 0.3, sowing_density=100, row_spacing=0.15, plant_models=[RootGrowthProbe],
-                       plant_scenarios=[{"parameters": {}}], per_plant_scenarios=scenarios[:1])
+    scenarios = [{"elongation_rate": r} for r in np.linspace(0.1, 1., len(table))]
+    per_plant = planting(sown, RootGrowthProbe, {"n_segments": 3}, plant_scenarios=scenarios)
+    assert per_plant["scenario"].tolist() == [dict(n_segments=3, **s) for s in scenarios]
+    with pytest.raises(ValueError, match="1 plant_scenarios for 16 plants"):
+        planting(sown, RootGrowthProbe, plant_scenarios=scenarios[:1])
+
+
+def test_a_stand_of_several_models():
+    sown = stand(0.6, 0.3, sowing_density=100, row_spacing=0.15, models=[RootGrowthProbe, Exudation],
+                 frequencies=[0.25, 0.75], sowing_depth=[0.01, 0.03], seed=2)
+    assert len(sown.models) == len(sown) and set(sown.models) == {RootGrowthProbe, Exudation}
+    table = planting(sown, sown.models, {RootGrowthProbe: {"n_segments": 2}, Exudation: {}})
+    probes = table["model"] == RootGrowthProbe
+    assert (table.loc[probes, "z"] == -0.01).all() and (table.loc[~probes, "z"] == -0.03).all()
+    assert all(s == {"n_segments": 2} for s in table.loc[probes, "scenario"])
+
+
+def test_scenarios_are_flat():
+    with pytest.raises(ValueError, match="flat"):
+        planting([Planting()], RootGrowthProbe, {"parameters": {"n_segments": 2}})
 
 
 # ---------------------------------------------------------------- parameters seen by equations
@@ -109,7 +123,7 @@ class ReadsSelf(FunctionalComponent):
 
 
 def _two_plants():
-    table = _table([{"parameters": {}}, {"parameters": {}}])
+    table = _table([{}, {}])
     g, plants = build_population(table, initiators=(RootGrowthProbe,))
     g.populate_graph(g.scales.SubOrgan)
     g.convert_properties_to_arraydict()

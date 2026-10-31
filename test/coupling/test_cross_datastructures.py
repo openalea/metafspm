@@ -62,7 +62,7 @@ class Soil(FunctionalComponent):
 
 def _population(xs, initiator=RootGrowthProbe, z=0., **scenario):
     table = pd.DataFrame([dict(plant=f"p{i}", model=initiator, x=x, y=0.05, z=z, rotation=0.,
-                               scenario={"parameters": dict(scenario)}) for i, x in enumerate(xs)])
+                               scenario=dict(scenario)) for i, x in enumerate(xs)])
     g, _ = build_population(table, initiators=(initiator,))
     g.populate_graph(g.scales.SubOrgan)
     g.convert_properties_to_arraydict()

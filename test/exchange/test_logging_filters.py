@@ -12,11 +12,11 @@ from openalea.metafspm.coupling.component import state_variable
 from openalea.metafspm.data_structure.configs import ScalesConfig as scales
 from openalea.metafspm.data_structure.data_api import ArrayDataStructure, MPGDataStructure
 from openalea.metafspm.io.fspm_tf import filter_frame, from_frame, scene_to_frame, to_frame
-from openalea.metafspm.scene.scene import Scene
+from openalea.metafspm.scene.scene import Scene, SceneRecorder
 
 from growth import DOC, RootGrowthProbe
 from layered_anatomy import make_layered_anatomy, wiring
-from scene_doubles import DT, RootPopulation, SceneSoil, Seedlings, planting, soil_translator
+from scene_doubles import DT, RootPopulation, SceneSoil, Seedlings, doubles_planting, soil_translator
 from test_fspm_tf import _models, _population, _steps
 
 
@@ -130,12 +130,12 @@ def test_a_filtered_frame_is_not_rebuilt():
 
 
 def test_a_scene_logs_filtered_frames(tmp_path):
-    table = planting([RootPopulation, Seedlings])
+    table = doubles_planting([RootPopulation, Seedlings])
     arguments = dict(planting=table, environment=[SceneSoil], translator=soil_translator("SceneExudation",
                                                                                           "SeedlingExudation"),
                      time_step=DT)
-    scene = Scene(**arguments, output_dirpath=str(tmp_path / "log"), frame_period=1,
-                  frame_options=dict(data_structures=["RootPopulation"], entities=["p0"], variables=["length"]))
+    scene = Scene(**arguments, recorder=SceneRecorder(str(tmp_path / "log"), summaries=False, frame_period=1,
+                  frame_options=dict(data_structures=["RootPopulation"], entities=["p0"], variables=["length"])))
     scene.run()
     scene.run()
     index = str(tmp_path / "log" / "frames" / "scene.fspm.json")

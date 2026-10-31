@@ -1,8 +1,8 @@
 """
 A plant population in one MPG.
 
-  table = planting_table(...)                 one row per plant: position, rotation, model, scenario (a random stand)
-  table = planting([Planting(x, y, z, rotation), ...], Model, parameters, plant_parameters)     given plants
+  table = planting([Planting(x, y, z, rotation), ...], Model, scenario, plant_scenarios)     given plants
+  table = planting(stand(xrange, yrange, sowing_density, row_spacing, seed=1), Model, scenario)   a sown stand
   g, plants = build_population(table, initiators=(RootGrowth, ...))
   g.populate_graph(g.scales.SubOrgan); g.convert_properties_to_arraydict()
   ds = MPGDataStructure(g, from_scale=g.scales.SubOrgan)
@@ -10,13 +10,15 @@ A plant population in one MPG.
   apply_plant_scenarios(ds, components, table, plants)
   apply_model_scenario(Model, model, scenario, read_by_initiators)
 
-Each StructuralComponent of `initiators` builds every plant's initial structure (StructuralComponent.initiate_plant),
-in order, before any component is constructed; components are then built once for the whole population, and their
-per-plant parameters filled from each plant's scenario.
+The planting table has one row per plant (columns plant, model, x, y, z, rotation, scenario, optionally
+emergence_time), its plants named p0, p1, ... in its order. Each StructuralComponent of `initiators` builds every
+plant's initial structure (StructuralComponent.initiate_plant), in order, before any component is constructed;
+components are then built once for the whole population, and their per-plant parameters filled from each plant's
+scenario.
 
-A scenario's entries (its "parameters" dict, and its other keys) are the parameters of the model's components, set
-by the Scene after the model is built as a constructor keyword would (apply_model_scenario), except the keys the
-model names in its __init__ (its own arguments) and those the initiators read. Any other entry raises.
+A scenario is flat, {name: value}: the parameters and settings of the model's components, set by the Scene after the
+model is built as a constructor keyword would (apply_model_scenario), the model's own arguments (the keys its
+__init__ names) and the keys its initiators read. Any other entry raises.
 """
 import inspect
 import random
@@ -38,109 +40,96 @@ class Planting:
     rotation: float = 0.
 
 
-def planting(plants, model, parameters: dict = None, plant_parameters: list = None, xrange: float = None,
-             yrange: float = None) -> pd.DataFrame:
-    """
-    The planting table of given *plants* ([Planting]), each a *model* with its scenario's *parameters* (shared) and
-    its own *plant_parameters* (one dict per plant, added to the shared ones). The stand's size (table.attrs xrange,
-    yrange) is the plants' extent (at least 0.1 m) unless given.
-    """
-    own = plant_parameters or [{}] * len(plants)
-    if len(own) != len(plants):
-        raise ValueError(f"planting: {len(own)} plant_parameters for {len(plants)} plants")
-    table = pd.DataFrame([dict(plant=f"p{k}", model=model, x=float(plant.x), y=float(plant.y), z=float(plant.z),
-                               rotation=float(plant.rotation),
-                               scenario={"parameters": dict(parameters or {}, **own[k])})
-                          for k, plant in enumerate(plants)])
-    xs, ys = table["x"].to_numpy(), table["y"].to_numpy()
-    table.attrs.update(xrange=xrange if xrange is not None else max(float(np.ptp(xs)), 0.1),
-                       yrange=yrange if yrange is not None else max(float(np.ptp(ys)), 0.1))
-    return table
+class Stand(list):
+    """Plantings laid out by stand(): the list, with the stand's size (xrange, yrange, m) and, when several models
+    were drawn, the model of each position (models)."""
+
+    def __init__(self, plantings, xrange: float, yrange: float, models: list = None):
+        super().__init__(plantings)
+        self.xrange, self.yrange, self.models = xrange, yrange, models
 
 
-def planting_table(xrange: float, yrange: float, sowing_density: float, row_spacing: float, plant_models: list,
-                   plant_scenarios: list, sowing_depth=(0.025,), plant_model_frequency: list = None,
-                   per_plant_scenarios: list = None, exact: bool = False, seed: int = None,
-                   emergence_times: list = None) -> pd.DataFrame:
+def planting(plants, model, scenario: dict = None, plant_scenarios: list = None, emergence_times: list = None,
+             xrange: float = None, yrange: float = None) -> pd.DataFrame:
     """
-    One row per plant (columns plant, model, x, y, z, rotation, scenario), with the layout of stand_initialization: rows every row_spacing, plants per row from sowing_density, a model drawn per position
-    from plant_model_frequency. Each plant's scenario is its model's, or per_plant_scenarios[i] when given (one
-    scenario per plant, the statistical repartition being built upstream). emergence_times (s, one per plant) adds
-    the emergence_time column read by the Scene. The stand's size is kept in table.attrs (xrange, yrange).
+    The planting table of *plants* ([Planting], or a Stand), named p0, p1, ... in their order. *model*: the plant
+    model of every plant, or one per plant (a list, e.g. a Stand's models). *scenario*: shared by every plant, or
+    {model class: scenario} with several models; *plant_scenarios*: one dict per plant, added to the shared one.
+    *emergence_times* (s, scene time): one per plant, the emergence_time column read by the Scene. The stand's size
+    (table.attrs xrange, yrange) is the Stand's, else the plants' extent (at least 0.1 m), unless given.
     """
-    if plant_model_frequency is None:
-        plant_model_frequency = [1. / len(plant_models)] * len(plant_models)
-    sowing_depth = list(sowing_depth) * (len(plant_models) if len(sowing_depth) == 1 else 1)
-    state = random.getstate()
-    if seed is not None:
-        random.seed(seed)
-    try:
-        xrange, yrange, sequence = stand_initialization("population", xrange, yrange, sowing_density, sowing_depth, row_spacing,
-                                              plant_models, plant_scenarios, plant_model_frequency, exact=exact)
-    finally:
-        if seed is not None:
-            random.setstate(state)
-    rows = [dict(plant=name, model=info["model"], x=info["coordinates"][0], y=info["coordinates"][1],
-                 z=info["coordinates"][2], rotation=info["rotation"], scenario=info["scenario"])
-            for name, info in sequence.items()]
-    table = pd.DataFrame(rows)
-    if per_plant_scenarios is not None:
-        if len(per_plant_scenarios) != len(table):
-            raise ValueError(f"per_plant_scenarios gives {len(per_plant_scenarios)} scenarios for {len(table)} plants")
-        table["scenario"] = list(per_plant_scenarios)
+    plants = list(plants) if not isinstance(plants, Stand) else plants
+    models = list(model) if isinstance(model, (list, tuple)) else [model] * len(plants)
+    own = plant_scenarios if plant_scenarios is not None else [{}] * len(plants)
+    for name, values in (("model", models), ("plant_scenarios", own), ("emergence_times", emergence_times)):
+        if values is not None and len(values) != len(plants):
+            raise ValueError(f"planting: {len(values)} {name} for {len(plants)} plants")
+    by_model = (scenario is not None and len(scenario) > 0 and all(isinstance(key, type) for key in scenario))
+    rows = []
+    for k, (plant, plant_model) in enumerate(zip(plants, models)):
+        shared = (scenario or {}).get(plant_model, {}) if by_model else (scenario or {})
+        rows.append(dict(plant=f"p{k}", model=plant_model, x=float(plant.x), y=float(plant.y), z=float(plant.z),
+                         rotation=float(plant.rotation), scenario=flat_scenario(dict(shared, **(own[k] or {})))))
+    table = pd.DataFrame(rows, columns=["plant", "model", "x", "y", "z", "rotation", "scenario"])
     if emergence_times is not None:
-        if len(emergence_times) != len(table):
-            raise ValueError(f"emergence_times gives {len(emergence_times)} times for {len(table)} plants")
         table["emergence_time"] = np.asarray(emergence_times, dtype=float)
+    xs, ys = table["x"].to_numpy(), table["y"].to_numpy()
+    if xrange is None:
+        xrange = plants.xrange if isinstance(plants, Stand) else max(float(np.ptp(xs)) if len(xs) else 0., 0.1)
+    if yrange is None:
+        yrange = plants.yrange if isinstance(plants, Stand) else max(float(np.ptp(ys)) if len(ys) else 0., 0.1)
     table.attrs.update(xrange=xrange, yrange=yrange)
     return table
 
 
-def stand_initialization(scene_name, xrange, yrange, sowing_density, sowing_depth, row_spacing,
-                            plant_models, plant_scenarios, plant_model_frequency, row_alternance=None, exact=False):
+def stand(xrange: float, yrange: float, sowing_density: float, row_spacing: float, sowing_depth=0.025,
+          models: list = None, frequencies: list = None, exact: bool = False, seed: int = None) -> Stand:
     """
-    Planting positions of the former one-plant-per-process scene: rows every row_spacing along x, plants per row from
-    sowing_density, a model drawn per position from plant_model_frequency, a random rotation. Returns (actual xrange,
-    yrange, {plant name: dict(model, scenario, coordinates, rotation)}).
+    A sown stand: rows every *row_spacing* along x (their number fitting *xrange*, the stand's xrange adjusted to
+    them), plants per row from *sowing_density* (plants m-2), each a little off its row (unless *exact*), at minus its
+    *sowing_depth* (m; one per model with several), its rotation random. With *models*, the model of each position is
+    drawn from *frequencies* (equal by default) and kept in the Stand's models. *seed*: the same stand again.
     """
-    # TODO : In the current state, field orientation relative to south cannot be chosen
-    unique_plant_ID = 0
-    
-    n_rows = int(xrange / row_spacing)
-    actual_xrange = n_rows * row_spacing # Reccomputed to make sure the scene size is adapted to symetry
-    number_per_row = max(int(yrange * xrange * sowing_density / n_rows), 1)
-    intra_row_distance = yrange / number_per_row
+    models = list(models) if models is not None else None
+    count = len(models) if models is not None else 1
+    frequencies = list(frequencies) if frequencies is not None else [1. / count] * count
+    depths = list(np.atleast_1d(sowing_depth))
+    depths = depths * count if len(depths) == 1 else depths
+    state = random.getstate()
+    if seed is not None:
+        random.seed(seed)
+    try:
+        n_rows = int(xrange / row_spacing)
+        actual_xrange = n_rows * row_spacing          # the rows repeat across the scene's pattern
+        number_per_row = max(int(yrange * xrange * sowing_density / n_rows), 1)
+        intra_row_distance = yrange / number_per_row
+        plantings, drawn = [], []
+        for row in range(n_rows):
+            for position in range(number_per_row):
+                picker, low_bound, index = random.random(), 0., count - 1
+                for i, frequency in enumerate(frequencies):    # the model whose interval holds the draw
+                    if picker < low_bound + frequency:
+                        index = i
+                        break
+                    low_bound += frequency
+                shear = 0. if exact else (random.random() - 0.5) * intra_row_distance / 2.
+                plantings.append(Planting(x=row_spacing / 2 + row * row_spacing,
+                                          y=intra_row_distance / 2 + position * intra_row_distance + shear,
+                                          z=-float(depths[index]), rotation=random.uniform(0, 360)))
+                drawn.append(index)
+    finally:
+        if seed is not None:
+            random.setstate(state)
+    return Stand(plantings, actual_xrange, yrange, [models[i] for i in drawn] if models is not None else None)
 
-    print(f"\033[1m\033[32mLaunching scene '{scene_name}' with {n_rows} rows, {number_per_row} plant per rows, which represents {n_rows * number_per_row} plants\033[0m")
-    
-    current_model_index = -1
-    planting_sequence = {}
-    for x in range(n_rows):
-        if exact:
-            row_random_shear = lambda x: 0
-        else:
-            row_random_shear = lambda x: (random.random()-0.5) * x / 2.
-        for y in range(number_per_row):
-            model_picker = random.random()
 
-            # Pick the model whose cumulative frequency interval [low_bound, low_bound + frequency) contains the draw
-            low_bound = 0
-            for i, frequency in enumerate(plant_model_frequency):
-                if model_picker < low_bound + frequency:
-                    current_model_index = i
-                    break
-                low_bound += frequency
-            
-            plant_ID=f"{plant_models[current_model_index].__name__}_{unique_plant_ID}_{scene_name}"
-            planting_sequence[plant_ID] = dict( model=plant_models[current_model_index],
-                                                scenario=plant_scenarios[current_model_index],
-                                                coordinates=[(row_spacing / 2) + x * row_spacing,
-                                                             (intra_row_distance/2) + y * intra_row_distance + row_random_shear(intra_row_distance),
-                                                            - sowing_depth[current_model_index]],
-                                                rotation=random.uniform(0, 360))
-            unique_plant_ID += 1
-
-    return actual_xrange, yrange, planting_sequence
+def flat_scenario(scenario) -> dict:
+    """*scenario* as given ({name: value}); the former {"parameters": {...}} nesting raises."""
+    scenario = dict(scenario or {})
+    if "parameters" in scenario:
+        raise ValueError("a scenario is flat, {name: value}: write the entries of its 'parameters' dict at its top "
+                         "level")
+    return scenario
 
 
 def build_population(table: pd.DataFrame, initiators=(), read_by_initiators: set = None) -> tuple:
@@ -220,17 +209,12 @@ def apply_model_scenario(model, instance, scenario: dict, read_by_initiators=())
     """
     Set *scenario*'s entries on the components of *instance* (built from the class *model*), as constructor keywords
     would: a numeric parameter is written to the DataStructure, another goes to the component's field. The entries are
-    the "parameters" dict and the other keys, except the keys *model*'s __init__ names (its own arguments). Parameters
+    the scenario's keys, except those *model*'s __init__ names (its own arguments). Parameters
     stored per plant are left to apply_plant_scenarios (a plant without the entry keeps the default). An entry that is
     no component parameter, no argument of the model and not read by its initiators raises.
     """
     named = model_arguments(model)
-    entries = {}
-    for key, value in (scenario or {}).items():
-        if key == "parameters":
-            entries.update(value or {})
-        elif key not in named:
-            entries[key] = value
+    entries = {key: value for key, value in flat_scenario(scenario).items() if key not in named}
     components = list(getattr(instance, "components", ()))
     unknown = []
     for name, value in entries.items():
@@ -278,6 +262,4 @@ def _same_for_all(values) -> bool:
 
 
 def _parameters(scenario) -> dict:
-    if scenario is None:
-        return {}
-    return dict(scenario.get("parameters", {})) if "parameters" in scenario else dict(scenario)
+    return flat_scenario(scenario)

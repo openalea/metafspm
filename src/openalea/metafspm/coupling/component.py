@@ -74,6 +74,11 @@ def declare(unit: str, unit_comment: str, description: str, min_value: float, ma
     return field(default=default, metadata=metadata)
 
 
+def _bound(value):
+    """A declared bound (min_value, max_value): a number, or None when not declared ("")."""
+    return None if value is None or (isinstance(value, str) and not value.strip()) else value
+
+
 def input_variable(unit: str = "", unit_comment: str = "", description: str = "", min_value: float = "",
                    max_value: float = "", value_comment: str = "", references: str = "", DOI: list = "",
                    by: str = None, initialize=None, scale=None, edge_mapping=None, on_grow="default",
@@ -300,16 +305,6 @@ class Component:
     def parameters(self):
         return [f.name for f in fields(self) if f.metadata.get("variable_type") == "parameter"]
 
-    def apply_scenario(self, **kwargs):
-        """
-        Method to superimpose default parameters in order to create a scenario.
-        Use Model.documentation to discover model parameters and state variables.
-        :param kwargs: mapping of existing variable to superimpose.
-        """
-        for changed_parameter, value in kwargs.items():
-            if changed_parameter in dir(self):
-                setattr(self, changed_parameter, value)
-
     def pull_available_inputs(self):
         """Refresh the inputs derived by the coupling; FunctionalComponent implements it on its DataStructure."""
         pass
@@ -338,7 +333,8 @@ class Component:
     @classmethod
     def declarations(cls):
         """A pandas DataFrame of the declared variables: name, kind (input, state_variable, parameter, forcing), scale
-        (its name) or location, unit, description, default, and by (an input's provider, a parameter's owner)."""
+        (its name) or location, unit, description, default, by (an input's provider, a parameter's owner), and the
+        bounds of its values min_value, max_value (None when not declared)."""
         import pandas as pd
         from openalea.metafspm.data_structure.configs import ScalesConfig
         scale_names = {value: name for name, value in vars(ScalesConfig).items() if isinstance(value, int)}
@@ -362,8 +358,14 @@ class Component:
             rows.append(dict(name=f.name, kind=meta["variable_type"],
                              scale=scale_names.get(scale, scale) if scale is not None else meta.get("location"),
                              unit=meta.get("unit"), description=meta.get("description"),
-                             default=f.default if f.default is not MISSING else None, by=meta.get("by")))
-        return pd.DataFrame(rows)
+                             default=f.default if f.default is not MISSING else None, by=meta.get("by"),
+                             min_value=_bound(meta.get("min_value")), max_value=_bound(meta.get("max_value"))))
+        table = pd.DataFrame(rows)
+        for column in ("min_value", "max_value"):
+            if column not in table:
+                table[column] = None
+            table[column] = table[column].astype(object).where(table[column].notna(), None)
+        return table
 
     @classmethod
     def schedule(cls) -> list:
@@ -711,9 +713,9 @@ class FunctionalComponent(DataStructureComponent):
 
     def forcing(self, name: str, at: str = None):
         """
-        Forcing *name* at forcing_time(): a callable of the time, or a table linearly interpolated, as a Series
-        indexed by time or a (times, values) pair. *at*: "end" or "start" of the step (by default its declaration's,
-        forcing_variable(at=...), else "end").
+        Forcing *name* at forcing_time() (coupling.forcings): a number, a callable of the time, or a table linearly
+        interpolated, as a Series indexed by time or a (times, values) pair. *at*: "end" or "start" of the step (by
+        default its declaration's, forcing_variable(at=...), else "end").
         """
         if at is None:
             declared = getattr(type(self), "__dataclass_fields__", {}).get(name)
@@ -724,14 +726,8 @@ class FunctionalComponent(DataStructureComponent):
             table = shared[name]                          # the scene's shared table
         if table is None:
             raise KeyError(f"{type(self).__name__} has no forcing '{name}' (set self.forcings, or the scene's)")
-        t = self.forcing_time(at)
-        if callable(table):
-            return table(t)
-        if not isinstance(table, (tuple, list)) and hasattr(table, "index"):     # a Series indexed by time
-            times, values = np.asarray(table.index, dtype=np.float64), np.asarray(table, dtype=np.float64)
-        else:
-            times, values = (np.asarray(x, dtype=np.float64) for x in table)
-        return float(np.interp(t, times, values))
+        from openalea.metafspm.coupling.forcings import forcing_value
+        return forcing_value(table, self.forcing_time(at))
 
     def pool_exchange(self, name: str):
         """

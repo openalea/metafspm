@@ -1,5 +1,5 @@
-"""The scene's frames (Scene(frame_period=)): the initial state and every frame_period steps, a valid fspm-TF sequence
-whose frames rebuild the scene's DataStructures as they were; a restored scene carries on its index."""
+"""The scene's frames (SceneRecorder(frame_period=)): the initial state and every frame_period steps, a valid fspm-TF
+sequence whose frames rebuild the scene's DataStructures as they were; a restored scene carries on its index."""
 import json
 import os
 
@@ -11,15 +11,15 @@ from openalea.fspm_tf.validate import validate_sequence
 
 from openalea.metafspm.coupling.choregrapher import Choregrapher
 from openalea.metafspm.io.fspm_tf import from_frame
-from openalea.metafspm.scene.scene import Scene
+from openalea.metafspm.scene.scene import Scene, SceneRecorder
 
-from scene_doubles import DT, RootPopulation, SceneSoil, Seedlings, planting, soil_translator
+from scene_doubles import DT, RootPopulation, SceneSoil, Seedlings, doubles_planting, soil_translator
 
 
 def _arguments(output_dirpath, frame_period=2):
-    return dict(planting=planting([RootPopulation, Seedlings]), environment=[SceneSoil],
+    return dict(planting=doubles_planting([RootPopulation, Seedlings]), environment=[SceneSoil],
                 translator=soil_translator("SceneExudation", "SeedlingExudation"), time_step=DT,
-                output_dirpath=output_dirpath, frame_period=frame_period)
+                recorder=SceneRecorder(output_dirpath, summaries=False, frame_period=frame_period))
 
 
 def _index(output_dirpath) -> list:
@@ -35,6 +35,7 @@ def test_frames_at_the_start_and_every_period(tmp_path):
     frames = _index(out)
     assert [entry["step"] for entry in frames] == [0, 2, 4]
     assert [entry["time"] for entry in frames] == [0., 2 * DT, 4 * DT]
+    assert os.listdir(out) == ["frames"] or set(os.listdir(out)) == {"frames", "run.json", "scenario.json"}  # no CSV
     report = validate_sequence(os.path.join(out, "frames", "scene.fspm.json"))
     assert report.ok, str(report)
     last = from_frame(fspm_tf.read(os.path.join(out, "frames", frames[-1]["file"])))
@@ -60,4 +61,4 @@ def test_a_restored_scene_carries_on_its_frames(tmp_path):
 
 def test_frames_need_an_output_folder():
     with pytest.raises(ValueError, match="output_dirpath"):
-        Scene(**_arguments(None))
+        _arguments(None)

@@ -115,8 +115,8 @@ def soil_translator(*plant_components):
     return translator
 
 
-def planting(models, scenarios=None, **columns):
-    scenarios = scenarios or [{"parameters": {}}] * len(models)
+def doubles_planting(models, scenarios=None, **columns):
+    scenarios = scenarios or [{}] * len(models)
     table = pd.DataFrame([dict(plant=f"p{i}", model=model, x=0.1 + 0.4 * (i % 2), y=0.05, z=0., rotation=0.,
                                scenario=scenario) for i, (model, scenario) in enumerate(zip(models, scenarios))])
     for name, values in columns.items():

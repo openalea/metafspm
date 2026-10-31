@@ -4,7 +4,8 @@
 
 ```{eval-rst}
 .. automodule:: openalea.metafspm
-   :members: FunctionalComponent, StructuralComponent, CompositeModel, Scene, planting_table
+   :members: FunctionalComponent, StructuralComponent, CompositeModel, Scene, SceneRecorder, planting, stand,
+             read_scenarios, variants, parameter_table, as_forcing
 ```
 
 ## Components and declarations
@@ -73,10 +74,19 @@
 
 ```{eval-rst}
 .. automodule:: openalea.metafspm.scene.population
-   :members: planting_table, stand_initialization, build_population, apply_plant_scenarios
+   :members: Planting, Stand, planting, stand, build_population, apply_plant_scenarios, apply_model_scenario
+
+.. automodule:: openalea.metafspm.scene.scenarios
+   :members: read_scenarios, parameter_table, variants
+
+.. automodule:: openalea.metafspm.coupling.forcings
+   :members: as_forcing, forcing_value, forcing_table
 
 .. automodule:: openalea.metafspm.scene.scene
-   :members: Scene, SceneRecorder, Population, AllMasks, load_translator
+   :members: Scene, Population, AllMasks, load_translator
+
+.. automodule:: openalea.metafspm.scene.recorder
+   :members: SceneRecorder, compartment
 ```
 
 ## Exchange with other platforms

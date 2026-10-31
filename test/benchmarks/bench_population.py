@@ -27,7 +27,8 @@ from openalea.metafspm.coupling.component import (FunctionalComponent, Structura
 from openalea.metafspm.coupling.translator import Translator
 from openalea.metafspm.data_structure.configs import PropsConfig, ScalesConfig as scales
 from openalea.metafspm.data_structure.data_api import ArrayDataStructure
-from openalea.metafspm.scene.scene import Scene
+from openalea.metafspm.scene.population import Planting, planting
+from openalea.metafspm.scene.scene import Scene, SceneRecorder
 from openalea.metafspm.solve.decorator import actual, edge_law, graph_system, node_balance, rate, segmentation, state
 
 DOC = dict(unit="", unit_comment="", description="", min_value=0., max_value=1., value_comment="", references="",
@@ -211,12 +212,9 @@ TRANSLATOR = (Translator().link("BenchSoilNitrate", "exudation", "BenchCarbon", 
 
 def _planting(n_plants, side):
     per_row = int(np.ceil(np.sqrt(n_plants)))
-    rows = [dict(plant=f"p{i}", model=BenchPlant, x=(i % per_row + 0.5) * side / per_row,
-                 y=(i // per_row + 0.5) * side / per_row, z=0., rotation=0., scenario={"parameters": {}})
-            for i in range(n_plants)]
-    table = pd.DataFrame(rows)
-    table.attrs.update(xrange=side, yrange=side)
-    return table
+    plants = [Planting(x=(i % per_row + 0.5) * side / per_row, y=(i // per_row + 0.5) * side / per_row)
+              for i in range(n_plants)]
+    return planting(plants, BenchPlant, xrange=side, yrange=side)
 
 
 def bench_segments(n_plants, steps, method):
@@ -225,7 +223,8 @@ def bench_segments(n_plants, steps, method):
     start = time.perf_counter()
     with tempfile.TemporaryDirectory() as folder:
         scene = Scene(_planting(n_plants, side=1.), environment=[BenchSoil], translator=TRANSLATOR, time_step=DT,
-                      mapping_method=method, output_dirpath=folder, log_plants=["p0"], heavy_log_period=steps)
+                      mapping_method=method,
+                      recorder=SceneRecorder(folder, log_plants=["p0"], segment_period=steps))
         built = time.perf_counter() - start
         ds = scene.populations[0].data_structure
         n0 = ds.n_nodes()

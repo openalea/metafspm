@@ -18,11 +18,9 @@ from openalea.metafspm.data_structure.data_api import ArrayDataStructure
 class RhizoSoil(CompositeModel):
     """The soil of the stand on a regular grid, periodic in x and y."""
 
-    def __init__(self, populations, scene_xrange: float, scene_yrange: float, time_step: int = 3600):
-        parameters = scenario["parameters"]["soil_model"]["soil"]
-        self.input_tables = scenario.get("input_tables", {})
-        self.time = 0
-        voxel_width, voxel_height, depth = (parameters.get(k) for k in ("voxel_width", "voxel_height", "max_depth"))
+    def __init__(self, populations, scene_xrange: float, scene_yrange: float, time_step: int = 3600,
+                 voxel_width: float = 0.01, voxel_height: float = 0.01, max_depth: float = 0.5, **parameters):
+        voxel_width, voxel_height, depth = voxel_width, voxel_height, max_depth
         shape = (max(1, round(scene_xrange / voxel_width)), max(1, round(scene_yrange / voxel_width)),
                  max(1, round(depth / voxel_height)))
         self.grid = ArrayDataStructure(shape=shape, dx=(scene_xrange / shape[0], scene_yrange / shape[1], voxel_height),
@@ -31,6 +29,5 @@ class RhizoSoil(CompositeModel):
         self.components = [self.soil]
 
     def run(self):
-        self.apply_input_tables(tables=self.input_tables, to=self.components, when=self.time)
-        self.soil()                 # transport (a graph system on the grid), then the cells' states
-        self.time += 1
+        self.soil()                 # transport (a graph system on the grid), then the cells' states; the time-varying
+                                    # inputs (rain, temperature) are the Scene's forcings

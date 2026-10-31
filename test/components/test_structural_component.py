@@ -198,7 +198,7 @@ def test_labels_and_triangles_of_a_mask():
 def test_labels_of_a_coarse_scale():
     """ds.labels(of=scale): each node's entity's label, or one per entity (per_node=False)."""
     from growth import RootGrowthProbe
-    from scene_doubles import planting
+    from scene_doubles import doubles_planting
     from openalea.metafspm.scene.scene import Scene
     Choregrapher().reset()
 
@@ -211,7 +211,7 @@ def test_labels_of_a_coarse_scale():
 
         def run(self):
             pass
-    ds = Scene(planting([Roots]), time_step=3600.).populations[0].data_structure
+    ds = Scene(doubles_planting([Roots]), time_step=3600.).populations[0].data_structure
     assert ds.labels(of="Organ").tolist() == ["RootInternode"] * ds.n_nodes()
     assert ds.labels(of="Organ", per_node=False).tolist() == ["RootInternode"]
     assert ds.labels(of="Axis", per_node=False).tolist() == ["Root"]

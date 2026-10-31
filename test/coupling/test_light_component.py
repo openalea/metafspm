@@ -17,7 +17,7 @@ from openalea.metafspm.scene.scene import Scene
 from openalea.metafspm.solve.decorator import rate
 
 from growth import DOC, RootGrowthProbe
-from scene_doubles import DT, planting
+from scene_doubles import DT, doubles_planting
 
 GEOMETRY = ("x1", "x2", "y1", "y2", "z1", "z2", "radius")
 
@@ -124,7 +124,7 @@ def _translator():
 
 
 def test_a_light_model_triangulates_the_populations_itself():
-    scene = Scene(planting([Wheat, Pea, Wheat]), environment=[ToyCaribuModel], translator=_translator(),
+    scene = Scene(doubles_planting([Wheat, Pea, Wheat]), environment=[ToyCaribuModel], translator=_translator(),
                   time_step=DT)
     wheat, pea = (p.data_structure for p in scene.populations)
     for ds in (wheat, pea):                                             # leaning elements: a projected area

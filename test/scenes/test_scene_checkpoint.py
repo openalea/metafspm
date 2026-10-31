@@ -3,6 +3,8 @@ State outside variables: a scene checkpointed and restored continues bit for bit
 non-variable state of models kept by checkpoint_state() / restore_state() hooks; vector-valued variables
 (MIMICS-like pools per cell) in steps, growth, exchanges, outputs and checkpoints.
 """
+import json
+import os
 from dataclasses import dataclass
 
 import numpy as np
@@ -14,11 +16,11 @@ from openalea.metafspm.coupling.component import FunctionalComponent, input_vari
 from openalea.metafspm.coupling.translator import Translator
 from openalea.metafspm.data_structure.configs import ScalesConfig as scales
 from openalea.metafspm.data_structure.data_api import ArrayDataStructure
-from openalea.metafspm.scene.scene import Scene
+from openalea.metafspm.scene.scene import Scene, SceneRecorder
 from openalea.metafspm.solve.decorator import rate
 
 from growth import DOC, RootGrowthProbe
-from scene_doubles import DT, RootPopulation, SceneGeometry, SceneSoil, Seedlings, planting, soil_translator
+from scene_doubles import DT, RootPopulation, SceneGeometry, SceneSoil, Seedlings, doubles_planting, soil_translator
 
 
 
@@ -41,16 +43,17 @@ class ExternalSolverSoil(SceneSoil):
         self.solver = dict(state)
 
 
-def _scene_arguments(output_dirpath=None):
+def _scene_arguments(output_dirpath=None, **recorder):
     """The arguments of the checkpointed scene, given again to Scene.restore."""
-    table = planting([RootPopulation, Seedlings, RootPopulation, Seedlings], emergence_time=[0., 0., 2 * DT, 0.])
+    table = doubles_planting([RootPopulation, Seedlings, RootPopulation, Seedlings], emergence_time=[0., 0., 2 * DT, 0.])
     return dict(planting=table, environment=[ExternalSolverSoil],
                 translator=soil_translator("SceneExudation", "SeedlingExudation"), time_step=DT,
-                output_dirpath=output_dirpath, log_plants=["p0"], heavy_log_period=1)
+                recorder=SceneRecorder(output_dirpath, log_plants=["p0"], segment_period=1, **recorder)
+                if output_dirpath is not None else None)
 
 
-def _scene(output_dirpath=None):
-    return Scene(**_scene_arguments(output_dirpath))
+def _scene(output_dirpath=None, **recorder):
+    return Scene(**_scene_arguments(output_dirpath, **recorder))
 
 
 def _state(scene):
@@ -86,15 +89,46 @@ def test_the_recorder_appends_after_a_restore(tmp_path):
     Choregrapher().reset()
     restored = Scene.restore(str(tmp_path / "c"), **_scene_arguments(str(tmp_path / "out")))
     restored.run()
-    summaries = pd.read_csv(tmp_path / "out" / "RootPopulation" / "summaries.csv")
-    assert sorted(set(summaries["t"])) == [DT, 2 * DT] and len(summaries) == 4
+    summaries = pd.read_csv(tmp_path / "out" / "Plant" / "RootPopulation" / "summaries.csv")
+    assert sorted(set(summaries["time"])) == [0., DT, 2 * DT] and len(summaries) == 6
+
+
+def test_a_restore_cuts_the_outputs_of_the_interrupted_run_back(tmp_path):
+    out = str(tmp_path / "out")
+    scene = _scene(out)
+    scene.run()
+    scene.checkpoint(str(tmp_path / "c"))
+    scene.run()
+    scene.run()                                        # the interrupted run went on past its checkpoint
+    Choregrapher().reset()
+    restored = Scene.restore(str(tmp_path / "c"), **_scene_arguments(out))
+    restored.simulate(2)
+    for name in ("Plant/RootPopulation/summaries", "Plant/RootPopulation/segments", "Soil/ExternalSolverSoil/summaries"):
+        table = pd.read_csv(os.path.join(out, name + ".csv"))
+        once = table.drop_duplicates(subset=[c for c in ("time", "plant", "vid") if c in table.columns])
+        assert len(once) == len(table) and sorted(set(table["time"])) == [0., DT, 2 * DT, 3 * DT], name
+    with open(os.path.join(out, "run.json")) as file:
+        run = json.load(file)
+    assert run["status"] == "finished" and run["iterations"] == 3 and len(run["resumed"]) == 1
+
+
+def test_checkpoints_every_period_the_last_ones_kept(tmp_path):
+    out = tmp_path / "out"
+    scene = _scene(str(out), checkpoint_period=2, keep_checkpoints=2)
+    scene.simulate(6)
+    assert sorted(os.listdir(out / "checkpoints")) == ["step_000004", "step_000006"]
+    with open(out / "run.json") as file:
+        assert json.load(file)["last_checkpoint"] == os.path.join("checkpoints", "step_000006")
+    Choregrapher().reset()
+    restored = Scene.restore(str(out / "checkpoints" / "step_000006"), **_scene_arguments())
+    assert restored.iteration == 6
 
 
 def test_a_scene_restored_with_other_arguments_is_refused(tmp_path):
     scene = _scene()
     scene.checkpoint(str(tmp_path / "c"))
     Choregrapher().reset()
-    other = dict(_scene_arguments(), planting=planting([RootPopulation, RootPopulation]))
+    other = dict(_scene_arguments(), planting=doubles_planting([RootPopulation, RootPopulation]))
     with pytest.raises(ValueError, match="build it with the same arguments"):
         Scene.restore(str(tmp_path / "c"), **other)
 
@@ -153,8 +187,8 @@ class MimicsSoil:
 
 def test_vector_variables_through_steps_growth_exchanges_and_outputs(tmp_path):
     translator = Translator().link("Mimics", "compounds", "VectorExudation", {"compounds": 1.})
-    scene = Scene(planting([VectorPlants, VectorPlants]), environment=[MimicsSoil], translator=translator,
-                  time_step=DT, output_dirpath=str(tmp_path / "out"))
+    scene = Scene(doubles_planting([VectorPlants, VectorPlants]), environment=[MimicsSoil], translator=translator,
+                  time_step=DT, recorder=str(tmp_path / "out"))
     plants, grid = scene.populations[0].data_structure, scene.environment[0].grid
     assert plants.get("compounds").shape == (plants.n_nodes(), POOLS)
     assert grid.get("pools").shape == grid.shape + (POOLS,)
@@ -166,7 +200,7 @@ def test_vector_variables_through_steps_growth_exchanges_and_outputs(tmp_path):
     assert (grid.get("pools").reshape(-1, POOLS) > 0).any(axis=0).all()
     frame = plants.to_dataframe(names=["compounds"], location="node")
     assert list(frame.columns) == ["compounds_0", "compounds_1", "compounds_2"]
-    summaries = pd.read_csv(tmp_path / "out" / "VectorPlants" / "summaries.csv")
+    summaries = pd.read_csv(tmp_path / "out" / "Plant" / "VectorPlants" / "summaries.csv")
     assert {"compounds_0", "compounds_2"} <= set(summaries.columns)
     grid.checkpoint(str(tmp_path / "grid"))
     np.testing.assert_array_equal(ArrayDataStructure.restore(str(tmp_path / "grid")).get("pools"), grid.get("pools"))
@@ -174,7 +208,7 @@ def test_vector_variables_through_steps_growth_exchanges_and_outputs(tmp_path):
 
 def test_vector_components_are_exchanged_one_by_one():
     translator = Translator().link("Mimics", "compounds", "VectorExudation", {"compounds": 1.})
-    scene = Scene(planting([VectorPlants]), environment=[MimicsSoil], translator=translator, time_step=DT)
+    scene = Scene(doubles_planting([VectorPlants]), environment=[MimicsSoil], translator=translator, time_step=DT)
     plants, grid = scene.populations[0].data_structure, scene.environment[0].grid
     plants.set("compounds", np.arange(plants.n_nodes() * POOLS, dtype=float).reshape(-1, POOLS))
     scene.exchanges.exchange(into=grid)

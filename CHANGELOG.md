@@ -2,6 +2,33 @@
 
 ## Unreleased (release2026)
 
+### Breaking: one way to plant, force, record and describe a scenario
+
+- **Planting:**
+  - `planting(plants, model, scenario, plant_scenarios, emergence_times)` is the one planting function. Plants are named `p0`, `p1`, ... in the table's order.
+  - `stand(xrange, yrange, sowing_density, row_spacing, ...)` lays out a sown stand: the former random stand, its size adjusted to the rows, with models drawn by frequency.
+  - **Removed:** `planting_table` and `stand_initialization`. `planting`'s arguments `parameters=` and `plant_parameters=` are renamed `scenario=` and `plant_scenarios=`.
+- **Scenarios** are flat, `{name: value}`. The `{"parameters": {...}}` nesting raises. `Component.apply_scenario` is removed.
+- **Forcings, the one route for time-varying inputs:**
+  - `Scene(forcings=)` takes `{name: forcing}` or a DataFrame indexed by time. A forcing is a number, a callable of the time, a Series or `(times, values)`.
+  - A name no component reads as a `forcing_variable` is written by the Scene, at each step's start, into the uncoupled inputs and parameters of that name. A forcing nothing takes raises.
+  - `as_forcing(value, time_unit=)` converts inputs given by day.
+  - **Removed:** `CompositeModel.apply_input_tables`.
+- **SceneRecorder:**
+  - `Scene(recorder=SceneRecorder(folder, ...))` (or `recorder=folder`) replaces `output_dirpath`, `log_plants`, `heavy_log_period`, `frame_period`, `frame_options`, `logger_class` and `log_settings`.
+  - It writes `run.json` (status, error, timing, versions) and `scenario.json` (with `forcings/`).
+  - Summaries go in `Plant/<Model>/summaries.csv` and in `Soil/` or `Atmosphere/<Model>/summaries.csv` for the environment grids, by the model's new `compartment` attribute. The time column is now `time`.
+  - It also writes `segments.csv` (`segment_period`), your own `tables=`, frames, and `checkpoints/` (`checkpoint_period`, `keep_checkpoints`).
+  - Every output can be switched off on its own. The initial and last states are recorded. Without a folder, the tables stay in memory (`recorder.table(name)`).
+  - `Scene.simulate` sets the run's status (finished, stopped, failed); `Scene.stop()` ends a `run()` loop.
+  - `Scene.timing` gives the wall time per model.
+- **Fixed:** after a restore, the recorder's CSVs are cut back to the checkpoint's time. A run that went past its checkpoint duplicated their rows.
+- **Scenario layer (`openalea.metafspm.scene.scenarios`):**
+  - `read_scenarios` reads a scenario table: one column per scenario, with type, unit and description columns; forcing rows read from CSV files; an optional `model` column.
+  - `parameter_table(*components, main=)` lists the parameters with their declared bounds.
+  - `variants(base, ranges, design="grid" | "one_at_a_time" | "sampling")` builds scenarios within the declared `min_value` / `max_value`.
+  - `declarations()` gains the `min_value` and `max_value` columns.
+
 ### Breaking: legacy APIs removed
 
 - **DataStructures:** `LegacyMPGDataStructure` and `MPGDataStructure.from_legacy`, `GraphView.from_mtg_subset`, and the setters `set_node_property`, `set_edge_property`, `add_field`, `_get_field` / `_set_field`. Use `register()` to create a variable, and `set()` / `get()` for its values. The abstract `extract_state` / `inject_state` contracts go through `get()` / `set()`.

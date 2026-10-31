@@ -100,30 +100,6 @@ def test_props_based_components_are_rejected(tmp_path):
         CompositeModel().couple_components(types.SimpleNamespace(props={}), translator_path=path)
 
 
-# ---------------------------------------------------------------- input tables
-
-def test_input_tables_none_is_noop(tmp_path):
-    model = _coupled_plant(tmp_path)[0]
-    model.apply_input_tables(tables=None, to=model.components, when=0)
-    assert not hasattr(model, "models_data_required")
-
-
-def test_input_tables_unknown_structure_raises():
-    target = types.SimpleNamespace(inputs=["x"], state_variables=[])
-    with pytest.raises(TypeError, match="Unknown data structure"):
-        CompositeModel().apply_input_tables(tables={"x": [1.]}, to=(target,), when=0)
-
-
-def test_input_tables_follow_target_changes(tmp_path):
-    """Q5: the variable selection was cached from the first call and went stale when `to` changed."""
-    model, carbon, nitrogen, ds = _coupled_plant(tmp_path)
-    model.apply_input_tables(tables={"C_hexose_soil": [7.]}, to=(carbon,), when=0)
-
-    model.apply_input_tables(tables={"C_hexose_soil": [7.]}, to=(carbon, nitrogen), when=0)
-
-    assert (ds.get("C_hexose_soil") == 7.).all()
-
-
 # ---------------------------------------------------------------- documentation
 
 @dataclass
@@ -206,14 +182,6 @@ def test_python_translator_module(tmp_path):
     carbon, nitrogen = doubles_ds.PlantCarbon(data_structure=ds), doubles_ds.PlantNitrogen(data_structure=ds)
     CompositeModel().declare_data_and_couple_components(translator_path=str(module), components=(carbon, nitrogen))
     assert ds.aliases() == {"sugar": "hexose"}
-
-
-def test_input_tables_write_the_data_structure(tmp_path):
-    model, carbon, nitrogen, ds = _coupled_plant(tmp_path)
-    # soil_temperature: input of PlantCarbon provided by no plant component; hexose: PlantCarbon state fed by data
-    model.apply_input_tables(tables={"soil_temperature": [5., 6.], "hexose": [9., 8.]}, to=model.components, when=1)
-    assert model.models_data_required == [["soil_temperature", "hexose"], []]
-    assert (ds.get("soil_temperature") == 6.).all() and (ds.get("hexose") == 8.).all()
 
 
 def test_documentation_of_data_structure_components(tmp_path):

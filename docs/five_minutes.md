@@ -92,7 +92,7 @@ GroIMP, VirtualPlantLab). Each file holds the whole scene at one time step: ever
 variables, the soil, and the 3D shapes.
 
 - `export_scene("scene.glb", scene)` (from `openalea.metafspm.io.fspm_tf`) saves the scene as it is now.
-- A scene built with `output_dirpath="outputs", frame_period=24` saves one file every 24 steps in `outputs/frames`,
+- A scene built with `recorder=SceneRecorder("outputs", frame_period=24)` saves one file every 24 steps in `outputs/frames`,
   with an index file, `scene.fspm.json`.
 - In ParaView, fspm-TF's reader plugin opens a file, or the index to play the time steps. Every variable can then
   colour the plants, the root sections or the soil.

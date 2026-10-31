@@ -22,7 +22,7 @@ from growth import DOC, RootGrowthProbe
 
 def _population(sizes):
     table = pd.DataFrame([dict(plant=f"p{i}", model=None, x=0., y=0., z=0., rotation=0.,
-                               scenario={"parameters": {"n_segments": n}}) for i, n in enumerate(sizes)])
+                               scenario={"n_segments": n}) for i, n in enumerate(sizes)])
     g, _ = build_population(table, initiators=(RootGrowthProbe,))
     g.populate_graph(g.scales.SubOrgan)
     g.convert_properties_to_arraydict()

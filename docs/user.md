@@ -344,19 +344,21 @@ variable are pooled in one write.
 A `Scene` runs plant populations and environment models together, in one process.
 
 ```python
-from openalea.metafspm import Scene, planting_table
+from openalea.metafspm import Scene, SceneRecorder, planting, stand
 
-table = planting_table(xrange=0.3, yrange=0.3, sowing_density=250, row_spacing=0.15,
-                       plant_models=[Wheat], plant_scenarios=[scenario], seed=1)
+table = planting(stand(xrange=0.3, yrange=0.3, sowing_density=250, row_spacing=0.15, seed=1), Wheat, scenario)
 scene = Scene(table, environment=[RhizoSoil, LightModel], environment_scenarios=[soil_scenario, light_scenario],
               translator="scene_translator.py", time_step=3600, forcings=meteo,
-              output_dirpath="outputs", log_plants=[table["plant"][0]], heavy_log_period=24)
+              recorder=SceneRecorder("outputs", log_plants=["p0"], frame_period=24, checkpoint_period=240))
 scene.simulate(n_iterations=2500)
 ```
 
-- **Planting tables** come from `planting_table` (a random stand at a sowing density) or from given plants:
-  `planting([Planting(x, y, z, rotation), ...], Model, parameters, plant_parameters)` (positions in m, z minus the
-  sowing depth; shared and per-plant scenario parameters).
+- **Planting tables** come from one function, `planting(plants, model, scenario, plant_scenarios,
+  emergence_times)`. *plants* are given (`[Planting(x, y, z, rotation), ...]`, positions in m, z minus the sowing
+  depth) or sown: `stand(xrange, yrange, sowing_density, row_spacing, sowing_depth, models=, frequencies=, seed=)`
+  lays out rows at a density, the stand's size adjusted to the rows, and with several models draws one per position
+  (`planting(sown, sown.models, {Wheat: ..., Pea: ...})`). The plants are named `p0`, `p1`, ... in the table's
+  order: those names are the `log_plants=`, the frames' `entities=` and the summaries' `plant` column.
 - **Plant models** are built once per model of the planting table, on an MPG holding all its plants:
   `Model(data_structure, time_step, <its own arguments>)`, with a class attribute `initiators` (the structural components
   building each plant). In anatomy mode (`nodes = "Compartment"`) the initiators build the anatomies, and a `wiring`
@@ -369,8 +371,8 @@ scene.simulate(n_iterations=2500)
   or an overridden `due(time)`; at the other steps `between()`, e.g. `self.light.run_stage("state")`),
   `after_run()` (an adaptive grid refined), the time of the last full run kept by checkpoints. A light model and a
   soil model are short subclasses of it (Caribu's CaribuLightModel; the soil–plant–atmosphere example's Soil).
-- **Scenarios** are applied by the Scene, so models do not forward them. A scenario's entries (its `"parameters"`
-  dict, and its other keys) are parameters of the model's components. They are set after the model is built, with
+- **Scenarios** are flat dicts, `{name: value}`, applied by the Scene, so models do not forward them. A scenario's
+  entries are parameters and settings of the model's components. They are set after the model is built, with
   the same effect as constructor keywords: a numeric parameter is written to the DataStructure (per plant for
   plant models, a plant without the entry keeping the default), and a non-numeric one goes to the component's
   field. Keys the model names in its `__init__` are its own arguments (e.g. `Soil(..., topsoil_K=1.5)`), and keys
@@ -379,12 +381,42 @@ scene.simulate(n_iterations=2500)
 - **A step** runs each environment model after the exchanges into it, then each population after the exchanges into
   it. Mappings between populations and grids or unions are inferred from the scene translator; others are given by
   `mappings=`.
-- **Services.** `forcings=` (one meteo table for every model), `run_every` / `run_when(scene)` on a model (skipped
-  steps keep its outputs), `spin_up(scene)`, `events=[(time, action)]`, `stop_when=condition`.
-- **Outputs and restarts.** The recorder writes per-plant summaries every step and the selected plants' segments
-  every `heavy_log_period` steps (CSV, one folder per population). `scene.checkpoint(path)` and
-  `Scene.restore(path, *arguments)` continue a run bit for bit; models keep non-variable state through
-  `checkpoint_state()` / `restore_state(state)`.
+- **Forcings, the time-varying inputs.** `forcings={name: forcing}`, or a DataFrame indexed by time (s) with one
+  column each. A forcing is a number, a callable of the scene time (s), a Series indexed by time, or a `(times,
+  values)` pair; tables are interpolated linearly. A component declaring the name (`forcing_variable`) reads it with
+  `self.forcing(name)`. Otherwise the Scene writes it at the start of each step into the input or parameter of that
+  name, on every component declaring it and not coupled to another (a measured soil temperature, a shoot's
+  supply). A forcing nothing takes raises. `as_forcing(value, time_unit=86400.)` turns an input given by day (a
+  number, a function of the day, a Series indexed by day, one value per day) into one. `events=[(time, action)]`
+  stay for one-off actions.
+- **Services.** `run_every` / `run_when(scene)` on a model (skipped steps keep its outputs), `spin_up(scene)`,
+  `stop_when=condition`.
+- **Outputs: the SceneRecorder.** `recorder=SceneRecorder(folder, ...)` (or `recorder=folder`) writes:
+  - `run.json`: status (running, finished, stopped, failed with its error), times, wall time per model, versions;
+  - `scenario.json`: the planting, the scenarios, the environment models, the forcings (tables in `forcings/`);
+  - `Plant/<Model>/summaries.csv`: one row per plant and step, its state variables summed (extensive) or averaged;
+  - `Plant/<Model>/segments.csv`: the `log_plants`' nodes every `segment_period` steps;
+  - `Soil/<Model>/summaries.csv` and `Atmosphere/<Model>/summaries.csv`: each environment model's grid, by its
+    `compartment` attribute;
+  - your own tables, `tables={name: function(scene) -> row}`, as `<name>.csv`;
+  - `frames/` (fspm-TF, every `frame_period` steps) and `checkpoints/step_<n>` (every `checkpoint_period`, the last
+    `keep_checkpoints` kept).
+
+  Each output is switched on its own (`summaries=False`, `frame_period=None`, ...); the initial state is recorded
+  at the first step and the last one at the end. Without a folder the tables stay in memory, and
+  `recorder.table(name)` reads any of them back. `Scene.simulate` sets the run's status; a loop of `scene.run()`
+  ends with `scene.stop()`.
+- **Restarts.** `scene.checkpoint(path)` and `Scene.restore(path, **arguments)` continue a run bit for bit; models
+  keep non-variable state through `checkpoint_state()` / `restore_state(state)`. A restored scene cuts its
+  recorder's tables and frames back to the checkpoint's step, so a run that went past its checkpoint leaves no
+  duplicate rows.
+- **Scenario tables and variants** (`scene.scenarios`). `read_scenarios("scenarios.csv")` reads a table with one row
+  per entry and one column per named scenario into `{name: scenario}`. Description columns (`type`, `unit`,
+  `description`, ...) are skipped, empty cells leave the defaults, `forcing` rows read their CSV, and a `model`
+  column nests the entries by model. `parameter_table(*components, main=)` lists the parameters with their units,
+  descriptions and declared bounds. `variants(base, ranges, design="grid" | "one_at_a_time" | "sampling",
+  declared=components)` builds scenarios within the declared `min_value` / `max_value`. `docs/tutorial.md` goes
+  through the whole path.
 - **Exchange with other platforms.** `openalea.metafspm.io.fspm_tf` writes a scene, or chosen DataStructures, as an
   [fspm-TF](https://github.com/openalea/fspm-TF) frame: one glTF file that CPlantBox, GroIMP or VirtualPlantLab can
   read, and that glTF viewers display. It holds each MPG scale as a table of vertices (ids, complex, parent, edge
@@ -393,9 +425,9 @@ scene.simulate(n_iterations=2500)
   only (`display_triangles(where=None)`, e.g. GRANAP's sections), which light models never receive.
   `export_scene(path, scene)` or `export_frame(path, {id: ds},
   components={id: [...]})` writes a frame. `import_frame(path)` rebuilds the DataStructures: the same MPG, the
-  same variables, bit for bit, from which a simulation continues as from the original. `Scene(...,
-  output_dirpath=..., frame_period=24)` records a frame at the start and every 24 steps, in `output_dirpath/frames`
-  with its index `scene.fspm.json`, which ParaView's fspm-TF reader plays as time steps; `frame_options=` passes
+  same variables, bit for bit, from which a simulation continues as from the original. `SceneRecorder(folder,
+  frame_period=24)` records a frame at the start and every 24 steps, in `folder/frames` with its index
+  `scene.fspm.json`, which ParaView's fspm-TF reader plays as time steps; `frame_options=` passes
   `scene_to_frame`'s options (e.g. `geometry=False`). For logging, the options also filter what each frame keeps:
   `data_structures=` (which ones), `scales=` (e.g. `["Plant", "SubOrgan"]`), `entities=` (a plant, by vid or by its
   name in the planting table, an axis, a segment with its cross-section: with everything they contain) and

@@ -22,35 +22,12 @@ from openalea.metafspm.solve.decorator import actual, segmentation
 
 from anatomy import add_anatomy, wiring as anatomy_wiring
 from growth import DOC, RootGrowthProbe, make_chain
-from scene_doubles import DT, RootPopulation, SceneSoil, Seedlings, planting, soil_translator
+from scene_doubles import DT, RootPopulation, SceneSoil, Seedlings, doubles_planting, soil_translator
 
 
 def _scene(**options):
-    return Scene(planting([RootPopulation, Seedlings]), environment=[SceneSoil],
+    return Scene(doubles_planting([RootPopulation, Seedlings]), environment=[SceneSoil],
                  translator=soil_translator("SceneExudation", "SeedlingExudation"), time_step=DT, **options)
-
-
-# ---------------------------------------------------------------- logger hook
-
-class RecordingLogger:
-    def __init__(self, scene, outputs_dirpath, **settings):
-        self.scene, self.outputs_dirpath, self.settings = scene, outputs_dirpath, settings
-        self.times, self.stopped = [], False
-
-    def __call__(self):
-        self.times.append(self.scene.time)
-
-    def stop(self):
-        self.stopped = True
-
-
-def test_the_logger_is_called_after_each_step_and_stopped_at_the_end(tmp_path):
-    scene = _scene(logger_class=RecordingLogger, output_dirpath=str(tmp_path), log_settings={"every": 2})
-    logger = scene.logger
-    assert (logger.scene, logger.outputs_dirpath, logger.settings) == (scene, str(tmp_path), {"every": 2})
-    scene.simulate(3)
-    assert logger.times == [DT, 2 * DT, 3 * DT]
-    assert logger.stopped
 
 
 # ---------------------------------------------------------------- explicit mappings
@@ -101,7 +78,7 @@ def _grid_layers(grid):
 
 def test_mappings_given_as_a_list_are_used_in_the_exchanges():
     column, grid = ArrayDataStructure(shape=(4,), dx=0.4), ArrayDataStructure(shape=(2, 1, 4), dx=0.4)
-    scene = Scene(planting([Seedlings]), environment=[ColumnModel, GridModel],
+    scene = Scene(doubles_planting([Seedlings]), environment=[ColumnModel, GridModel],
                   environment_scenarios=[{"column": column}, {"grid": grid}], translator=LAYERS, time_step=DT,
                   mappings=[LayerMapping(column, grid, axis="z")])
     scene.run()
@@ -115,7 +92,7 @@ def test_mappings_given_as_a_callable_are_built_once_the_models_are():
         built.append(scene)
         return [LayerMapping(scene.environment[0].column, scene.environment[1].grid, axis="z")]
 
-    scene = Scene(planting([Seedlings]), environment=[ColumnModel, GridModel], translator=LAYERS, time_step=DT,
+    scene = Scene(doubles_planting([Seedlings]), environment=[ColumnModel, GridModel], translator=LAYERS, time_step=DT,
                   mappings=mappings)
     assert built == [scene] and isinstance(scene.mappings[0], LayerMapping)
     scene.run()
@@ -133,7 +110,7 @@ def test_a_cross_mapping_given_replaces_the_inferred_one():
         ds.define_mask("first", {"is_first": ">0"})
         return [CrossMapping(ds, scene.environment[0].grid, mask="first")]
 
-    scene = Scene(planting([RootPopulation]), environment=[SceneSoil],
+    scene = Scene(doubles_planting([RootPopulation]), environment=[SceneSoil],
                   translator=soil_translator("SceneExudation"), time_step=DT, mappings=mappings)
     crosses = [m for m in scene.mappings if isinstance(m, CrossMapping)]
     assert len(crosses) == 1 and crosses[0].mask == "first"
@@ -145,15 +122,15 @@ def test_a_cross_mapping_given_replaces_the_inferred_one():
 
 def test_environment_scenarios_must_match_the_environment_models():
     with pytest.raises(ValueError, match="one scenario per environment model"):
-        Scene(planting([Seedlings]), environment=[ColumnModel, GridModel], environment_scenarios=[{}],
+        Scene(doubles_planting([Seedlings]), environment=[ColumnModel, GridModel], environment_scenarios=[{}],
               translator=LAYERS, time_step=DT)
 
 
 def test_the_stand_size_defaults_to_the_planting_table_and_can_be_overridden():
-    default = Scene(planting([Seedlings]), environment=[GridModel], time_step=DT)
+    default = Scene(doubles_planting([Seedlings]), environment=[GridModel], time_step=DT)
     assert (default.scene_xrange, default.scene_yrange) == (0.8, 0.4)
     Choregrapher().reset()
-    scene = Scene(planting([Seedlings]), environment=[GridModel], time_step=DT, scene_xrange=2., scene_yrange=3.)
+    scene = Scene(doubles_planting([Seedlings]), environment=[GridModel], time_step=DT, scene_xrange=2., scene_yrange=3.)
     assert (scene.scene_xrange, scene.scene_yrange) == (2., 3.)
     assert (scene.environment[0].scene_xrange, scene.environment[0].scene_yrange) == (2., 3.)
 
@@ -180,7 +157,7 @@ class BareStructure(StructuralComponent):
 
 def _rows(n, **parameters):
     return pd.DataFrame([dict(plant=f"p{i}", model=None, x=0., y=0., z=0., rotation=0.,
-                              scenario={"parameters": dict(parameters)}) for i in range(n)])
+                              scenario=dict(parameters)) for i in range(n)])
 
 
 def test_a_structural_component_without_initiate_plant_cannot_initiate_plants():
@@ -214,14 +191,14 @@ class AnatomyPopulation:
 
 
 def test_a_population_model_in_anatomy_mode_has_compartments_as_nodes():
-    scene = Scene(planting([AnatomyPopulation, AnatomyPopulation]), time_step=DT)
+    scene = Scene(doubles_planting([AnatomyPopulation, AnatomyPopulation]), time_step=DT)
     ds = scene.populations[0].data_structure
     assert len(ds.entity_ids("SubOrgan")) == 6                    # the segments are a coarse location
     np.testing.assert_array_equal(ds.get("water"), 2.)
 
 
 def test_a_population_in_anatomy_mode_has_only_the_anatomy_compartments():
-    scene = Scene(planting([AnatomyPopulation, AnatomyPopulation]), time_step=DT)
+    scene = Scene(doubles_planting([AnatomyPopulation, AnatomyPopulation]), time_step=DT)
     ds = scene.populations[0].data_structure
     assert ds.n_nodes() == 2 * 3 * 4 and ds.n_edges() == 2 * 3 * 3
 
@@ -231,7 +208,7 @@ class WiredAnatomyPopulation(AnatomyPopulation):
 
 
 def test_a_population_model_wires_the_junctions_between_its_anatomies():
-    scene = Scene(planting([WiredAnatomyPopulation, WiredAnatomyPopulation]), time_step=DT)
+    scene = Scene(doubles_planting([WiredAnatomyPopulation, WiredAnatomyPopulation]), time_step=DT)
     ds = scene.populations[0].data_structure
     # per plant, 2 links between 3 segments: 2 xylem vessels matched by index and the 1 x 1 symplastic pair
     assert ds.n_nodes() == 2 * 3 * 4 and ds.n_edges() == 2 * 3 * 3 + 2 * 2 * 3
@@ -299,7 +276,7 @@ def test_an_active_rule_given_as_a_callable_defines_the_active_mask():
 # ---------------------------------------------------------------- events across a checkpoint
 
 def _counting_scene(fired, time):
-    return Scene(planting([Seedlings]), environment=[SceneSoil], translator=soil_translator("SeedlingExudation"),
+    return Scene(doubles_planting([Seedlings]), environment=[SceneSoil], translator=soil_translator("SeedlingExudation"),
                  time_step=DT, events=[(time, lambda scene: fired.append(scene.time))])
 
 

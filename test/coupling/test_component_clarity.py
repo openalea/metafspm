@@ -96,13 +96,13 @@ def test_parameter_value_cached_and_run_stage():
 
 
 def test_planting():
-    table = planting([Planting(0., 0., -0.02, 10.), Planting(0.3, 0.1)], model=object, parameters=dict(a=1),
-                     plant_parameters=[dict(b=1), dict(b=2)])
+    table = planting([Planting(0., 0., -0.02, 10.), Planting(0.3, 0.1)], model=object, scenario=dict(a=1),
+                     plant_scenarios=[dict(b=1), dict(b=2)])
     assert table["z"].tolist() == [-0.02, 0.] and table["rotation"].tolist() == [10., 0.]
-    assert [row["parameters"] for row in table["scenario"]] == [dict(a=1, b=1), dict(a=1, b=2)]
+    assert table["scenario"].tolist() == [dict(a=1, b=1), dict(a=1, b=2)] and table["plant"].tolist() == ["p0", "p1"]
     assert table.attrs["xrange"] == pytest.approx(0.3) and table.attrs["yrange"] == pytest.approx(0.1)
     with pytest.raises(ValueError):
-        planting([Planting()], model=object, plant_parameters=[{}, {}])
+        planting([Planting()], model=object, plant_scenarios=[{}, {}])
 
 
 def test_draw():

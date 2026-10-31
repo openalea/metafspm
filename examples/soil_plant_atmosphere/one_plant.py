@@ -7,22 +7,19 @@ scene step until the water potentials stop changing (a lagged fixed point), then
 import os
 import sys
 
-import pandas as pd
-
-from openalea.metafspm.scene.scene import Scene
+from openalea.metafspm.scene.population import Planting, planting
+from openalea.metafspm.scene.scene import Scene, SceneRecorder
 
 from models import SCENE_TRANSLATOR, SeedlingWater, Soil, largest_change, root_surface_mappings
 import plotting
 
 
 def scene(output_dirpath=None, tolerance=1e-6, soil_scenario=None):
-    table = pd.DataFrame([dict(plant="seedling", model=SeedlingWater, x=0.1, y=0.1, z=0., rotation=0.,
-                               scenario={"parameters": {}})])
-    table.attrs.update(xrange=0.2, yrange=0.2)                     # the stand: a 0.2 m x 0.2 m column of soil
+    table = planting([Planting(x=0.1, y=0.1)], SeedlingWater, xrange=0.2, yrange=0.2)   # a 0.2 m x 0.2 m soil column
     stop = largest_change(tolerance)
     built = Scene(table, environment=[Soil], environment_scenarios=[soil_scenario or {}],
                   translator=SCENE_TRANSLATOR, time_step=3600, mappings=root_surface_mappings, stop_when=stop,
-                  output_dirpath=output_dirpath, log_plants=["seedling"], heavy_log_period=1)
+                  recorder=SceneRecorder(output_dirpath, log_plants=["p0"], segment_period=1) if output_dirpath else None)
     return built, stop
 
 

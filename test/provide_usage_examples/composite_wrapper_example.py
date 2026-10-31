@@ -25,8 +25,6 @@ class GrassBRIDGES(CompositeModel):
     from_scale = "SubOrgan"                                  # graph nodes: the segments
 
     def __init__(self, data_structure, time_step: int = 3600):
-        self.input_tables = scenario.get("input_tables", {})
-        self.time = 0
         # Numeric parameters come per plant from the planting table's scenarios (stored at the Plant scale)
         self.root_growth = RootGrowthModelCoupled(data_structure=data_structure, time_step=time_step)
         self.root_anatomy = RootAnatomy(data_structure=data_structure, time_step=time_step)
@@ -40,10 +38,8 @@ class GrassBRIDGES(CompositeModel):
             openalea.grassbridges.__path__[0], "plant_translator.py"))
 
     def run(self):
-        self.apply_input_tables(tables=self.input_tables, to=self.components, when=self.time)
         self.root_growth()          # potential, actual growth and segmentation; update_topology() carries the state
         self.root_anatomy()         # surfaces and volumes from the new structure
         self.root_water()
         self.root_cn()
-        self.shoot()
-        self.time += 1
+        self.shoot()          # time-varying inputs (meteo, soil temperature): the Scene's forcings

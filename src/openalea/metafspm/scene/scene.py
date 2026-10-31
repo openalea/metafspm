@@ -1,8 +1,9 @@
 """
 A scene of plant populations and environment models in one process::
 
-  scene = Scene(planting=planting_table(...), environment=[SoilModel, LightModel], environment_scenarios=[{}, {}],
-                translator="scene_translator.py", time_step=3600, output_dirpath="outputs", log_plants=["plant_0"])
+  scene = Scene(planting=planting(stand(...), Model, scenario), environment=[SoilModel, LightModel],
+                environment_scenarios=[{}, {}], translator="scene_translator.py", time_step=3600,
+                forcings={"air_temperature": series}, recorder=SceneRecorder("outputs", log_plants=["p0"]))
   scene.simulate(n_iterations=2500)
 
 Contracts::
@@ -13,13 +14,14 @@ Contracts::
                      (graph nodes, default "SubOrgan"), nodes ("Compartment" for anatomies, which the initiators
                      build) and wiring (the junction rules between anatomies, or a callable g -> rules). It exposes
                      components and run(). Numeric parameters come per plant from the planting table's scenarios.
-  scenarios          {"parameters": {name: value}} and/or {name: value}: the parameters of the model's components,
+  scenarios          {name: value} (flat): the parameters and settings of the model's components,
                      set by the Scene after the model is built (as constructor keywords would), per plant for the
                      numeric ones of plant models. Keys the model names in __init__ are its own arguments; the keys
                      initiators read are theirs. Any other key raises (a typo, a parameter no component declares).
   environment model  Model(populations, scene_xrange, scene_yrange, time_step, <its own arguments>): builds its DataStructures
                      (a grid, a UnionDataStructure of the populations, or works on a population's MPG) and exposes
-                     components and run(); it applies its input tables itself, as today.
+                     components and run(); its time-varying inputs are the scene's forcings. Its compartment
+                     class attribute ("Soil" or "Atmosphere") names its outputs' folder.
 
 A step: each environment model, after the exchanges into its DataStructures (the plants' last values); then
 each population, after the exchanges into it (the environment's new values). Exchanges between DataStructures go
@@ -30,6 +32,7 @@ Emergence: an "emergence_time" column of the planting table (s, scene time) free
 its nodes leave the "active" mask (steps skip them; MPG-style steps use active_ids()) and the mappings (no exchange).
 """
 import os
+from time import perf_counter
 from typing import Mapping
 
 import numpy as np
@@ -37,12 +40,13 @@ import pandas as pd
 
 from openalea.metafspm.coupling.choregrapher import Choregrapher
 from openalea.metafspm.coupling.composite_wrapper import CompositeModel
+from openalea.metafspm.coupling.forcings import forcing_table, forcing_value
 from openalea.metafspm.coupling.cross import CrossMapping, Exchanges, UnionDataStructure, UnionMapping
-from openalea.metafspm.coupling.declaration import EXTENSIVE_KINDS, INTENSIVE_KINDS, MASSIC_KINDS
 from openalea.metafspm.coupling.translator import Translator
 from openalea.metafspm.data_structure.data_api import MPGDataStructure
+from openalea.metafspm.scene.recorder import SceneRecorder
 from openalea.metafspm.scene.population import (apply_model_scenario, apply_plant_scenarios, build_population,
-                                                model_keywords)
+                                                flat_scenario, model_arguments, model_keywords)
 
 
 class AllMasks:
@@ -117,29 +121,27 @@ class Scene(CompositeModel):
     Arguments::
 
         planting:              one row per plant (columns plant, model, x, y, z, rotation, scenario, optionally
-                               emergence_time), e.g. scene.population.planting_table(...).
+                               emergence_time), scene.population.planting(...).
         environment:           environment model classes, run in this order; environment_scenarios: one dict each.
         translator:            the links between the populations' and the environment's components (a Translator, a
                                nested dict, a .py or YAML path). Links within one DataStructure are the models' own.
         mapping_method:        "barycentre" or "overlap", for every population <-> grid mapping; periodic, flip_z as
                                in CrossMapping.
-        scene_xrange, _yrange: the stand's size (default: the planting table's, from planting_table).
-        output_dirpath:        where the SceneRecorder writes (None: no recording); log_plants: the plants (names of the
-                               planting table) whose per-segment state is written every heavy_log_period steps.
-        frame_period:          with output_dirpath, a frame of the whole scene (fspm-TF, io.fspm_tf.scene_to_frame) at
-                               the start and every frame_period steps, in output_dirpath/frames with its index
-                               scene.fspm.json (for ParaView, other platforms, restarts); frame_options: the
-                               scene_to_frame options (geometry=False, standard_names=...). Needs openalea.fspm_tf.
-        forcings:              a table shared by every model (a DataFrame indexed by time in s): a component's
-                               forcing(name) reads its column when the component has no forcing of that name.
+        scene_xrange, _yrange: the stand's size (default: the planting table's, from planting).
+        recorder:              the outputs, a SceneRecorder (or a folder: a SceneRecorder with its defaults; None:
+                               no outputs). It begins at the first step and finishes with stop().
+        forcings:              the time-varying inputs (coupling.forcings), {name: forcing} or a DataFrame indexed
+                               by time (s), one column each; a forcing is a number, a callable of the time (s), a
+                               Series indexed by time or a (times, values) pair, linearly interpolated. A component
+                               declaring the name (forcing_variable) reads it with forcing(name), when it has no
+                               forcing of its own; otherwise the Scene writes it at the start of each step into the
+                               input or parameter of that name of the components declaring it (not coupled).
         events:                (time, action) pairs: action(scene) runs at the start of the first step at or after time.
         stop_when:             a condition(scene), checked after each step: simulate() stops when it holds.
         mappings:              further mappings between DataStructures (e.g. a LayerMapping between a column model and
                                the soil grid), or a callable scene -> mappings, called once the models are built. A
                                CrossMapping given here replaces the inferred one between its two DataStructures (e.g.
                                to map only the root surface, mask=).
-        logger_class:          optional, called as logger_class(scene=self, outputs_dirpath=..., **log_settings), then
-                               logger() after each step and logger.stop() at the end.
 
     Models may set run_every (steps) and run_when(scene) -> bool: on the other steps they and the exchanges into
     them are skipped, their outputs keeping their values; an environment model's spin_up(scene) runs once,
@@ -148,22 +150,23 @@ class Scene(CompositeModel):
 
     def __init__(self, planting: pd.DataFrame, environment=(), environment_scenarios=None, translator=None,
                  time_step: float = 3600., mapping_method: str = "barycentre", periodic=(True, True, False),
-                 flip_z: bool = True, scene_xrange: float = None, scene_yrange: float = None,
-                 output_dirpath: str = None, log_plants=(), heavy_log_period: int = 24, logger_class=None,
-                 log_settings: dict = None, mappings=(), forcings=None, events=(), stop_when=None,
-                 frame_period: int = None, frame_options: dict = None):
+                 flip_z: bool = True, scene_xrange: float = None, scene_yrange: float = None, forcings=None,
+                 events=(), stop_when=None, mappings=(), recorder=None):
         Choregrapher().add_simulation_time_step(time_step)
         self.time_step, self.time, self.iteration = time_step, 0., 0
         self.scene_xrange = scene_xrange if scene_xrange is not None else planting.attrs.get("xrange")
         self.scene_yrange = scene_yrange if scene_yrange is not None else planting.attrs.get("yrange")
 
+        self.planting = planting
         models = list(dict.fromkeys(planting["model"]))
         self.populations = [self._build_population(model, planting[planting["model"] == model]) for model in models]
         population_ds = [population.data_structure for population in self.populations]
 
-        environment_scenarios = environment_scenarios or [{}] * len(environment)
+        environment_scenarios = [flat_scenario(scenario) for scenario in
+                                 (environment_scenarios or [{}] * len(environment))]
         if len(environment_scenarios) != len(environment):
             raise ValueError("environment_scenarios must give one scenario per environment model")
+        self.environment_scenarios = environment_scenarios
         self.environment = [model(populations=population_ds, scene_xrange=self.scene_xrange,
                                   scene_yrange=self.scene_yrange, time_step=time_step,
                                   **model_keywords(model, scenario))
@@ -189,10 +192,11 @@ class Scene(CompositeModel):
                                     or frozenset((id(m.source), id(m.target))) not in linked]
         self.exchanges = Exchanges(self.translator, self.components, self.mappings)
         self._update_emergence()
-        self.forcings = forcings
+        self.forcings = forcing_table(forcings)
         for component in self.components:
-            component.__dict__["_scene_forcings"] = forcings
+            component.__dict__["_scene_forcings"] = self.forcings
         self._check_forcings()
+        self._forced = self._forced_variables()
         self.events = sorted(list(events), key=lambda event: event[0])
         self._n_events = len(self.events)
         self.stop_when, self.stopped = stop_when, False
@@ -200,13 +204,9 @@ class Scene(CompositeModel):
             if hasattr(model, "spin_up"):
                 model.spin_up(self)
 
-        if frame_period is not None and output_dirpath is None:
-            raise ValueError("frame_period needs an output_dirpath to write the frames in")
-        self.recorder = (SceneRecorder(output_dirpath, log_plants=log_plants, heavy_log_period=heavy_log_period,
-                                       frame_period=frame_period, frame_options=frame_options)
-                         if output_dirpath is not None else None)
-        self.logger = (logger_class(scene=self, outputs_dirpath=output_dirpath, **(log_settings or {}))
-                       if logger_class is not None else None)
+        self.timing = {}                # wall time (s) per model, the exchanges and the recording
+        self.recorder = SceneRecorder(recorder) if isinstance(recorder, (str, os.PathLike)) else recorder
+        self._recording = False         # the recorder began (at this object's first step)
 
     # ── construction ──────────────────────────────────────────────────────────
 
@@ -238,24 +238,24 @@ class Scene(CompositeModel):
         """
         The scenario the model is built with (its first plant's): only numeric parameters may differ between the
         plants of one population, being stored per plant, and the keys its initiators read per plant (their
-        scenario_keys: each plant's own is given to initiate_plant).
+        scenario_keys: each plant's own is given to initiate_plant). The model's own arguments are the same for all.
         """
         per_plant = {key for initiator in getattr(model, "initiators", ()) for key in getattr(initiator, "scenario_keys",
                                                                                               ())}
-        scenarios = [dict(s) if s is not None else {} for s in rows["scenario"]]
+        named = model_arguments(model)
+        scenarios = [flat_scenario(s) for s in rows["scenario"]]
         first = scenarios[0]
         for other in scenarios[1:]:
-            for key in set(first) | set(other):
-                if key == "parameters":
-                    a, b = first.get(key, {}), other.get(key, {})
-                    for name in (set(a) | set(b)) - per_plant:
-                        given = [v for v in (a.get(name), b.get(name)) if v is not None]   # missing: the default
-                        if not all(_numeric(v) for v in given) and not _same(a.get(name), b.get(name)):
-                            raise ValueError(f"{model.__name__}: parameter '{name}' differs between plants and is not "
-                                             "numeric, only numeric parameters are stored per plant")
-                elif not _same(first.get(key), other.get(key)):
-                    raise ValueError(f"{model.__name__}: scenario entry '{key}' differs between plants, only numeric "
-                                     "parameters may (one population per model)")
+            for key in (set(first) | set(other)) - per_plant:
+                if _same(first.get(key), other.get(key)):
+                    continue
+                if key in named:
+                    raise ValueError(f"{model.__name__}: its argument '{key}' differs between plants (one model "
+                                     "instance per population)")
+                given = [v for v in (first.get(key), other.get(key)) if v is not None]     # missing: the default
+                if not all(_numeric(v) for v in given):
+                    raise ValueError(f"{model.__name__}: parameter '{key}' differs between plants and is not numeric, "
+                                     "only numeric parameters are stored per plant")
         return first
 
     def _setup_emergence(self, population: Population) -> None:
@@ -320,41 +320,87 @@ class Scene(CompositeModel):
             declared = getattr(component, "declared_forcings", lambda: {})()
             own = getattr(component, "forcings", None) or {}
             for name, required in declared.items():
-                if required and name not in own and (self.forcings is None or name not in self.forcings):
+                if required and name not in own and name not in self.forcings:
                     missing.append(f"{type(component).__name__}.{name}")
         if missing:
             raise ValueError(f"forcings not given: {', '.join(missing)} (the Scene's forcings=, or the component's "
                              "forcings)")
 
+    def _forced_variables(self) -> list:
+        """
+        [(name, DataStructure)] the Scene writes at the start of each step: the forcings no component reads as
+        such (forcing_variable), each an input or parameter of the components declaring it, not provided by a
+        coupling. A forcing nothing declares, or only coupled inputs, raises.
+        """
+        linked = {(link.receiver, link.variable) for link in self.translator.links}
+        targets, unused = [], []
+        for name in self.forcings:
+            if any(name in getattr(c, "declared_forcings", lambda: {})() for c in self.components):
+                continue
+            declaring = [c for c in self.components
+                         if getattr(getattr(c, "_variable_specs", {}).get(name), "variable_type", None)
+                         in ("input", "parameter")]
+            free = [c for c in declaring if (type(c).__name__, name) not in linked
+                    and name not in getattr(c, "_derived_inputs", ())]
+            if not free:
+                unused.append(f"'{name}'" + (" (coupled)" if declaring else ""))
+            for component in free:
+                ds = component.data_structure
+                if not any(ds is other and name == known for known, other in targets):
+                    targets.append((name, ds))
+        if unused:
+            raise ValueError(f"forcings {', '.join(unused)}: no component reads them (forcing_variable) nor has an "
+                             "input or parameter of that name to be written")
+        return targets
+
+    def _write_forcings(self) -> None:
+        """The forced inputs and parameters at the step's start, the same for every entity of their location."""
+        for name, ds in self._forced:
+            value = forcing_value(self.forcings[name], self.time)
+            ds.set(name, np.full(np.shape(ds.get(name)), value, dtype=float))
+
     # ── running ───────────────────────────────────────────────────────────────
 
     def run(self) -> None:
         """One scene step: the environment, then the populations, each after the exchanges into it."""
-        if self.iteration == 0 and self.recorder is not None and self.recorder.frame_period:
-            self.recorder.write_frame(self)                      # the initial state (not again after a restore)
+        if self.recorder is not None and not self._recording:
+            self._recording = True
+            self.recorder.begin(self)                        # run.json, scenario.json, the initial state
         while self.events and self.events[0][0] <= self.time:
             _, action = self.events.pop(0)
             action(self)
         self._update_emergence()
+        self._write_forcings()
         for component in self.components:
             component.__dict__["_clock"] = self.time        # forcings read at the scene time
         for model in self.environment:
             if not self._due(model):
                 continue
+            started = perf_counter()
             for ds in self._data_structures(model):
                 self.exchanges.exchange(into=ds)
+            exchanged = perf_counter()
             model.run()
+            self._time("exchanges", exchanged - started)
+            self._time(type(model).__name__, perf_counter() - exchanged)
         for population in self.populations:
             if not self._due(population.instance):
                 continue
+            started = perf_counter()
             self.exchanges.exchange(into=population.data_structure)
+            exchanged = perf_counter()
             population.instance.run()
+            self._time("exchanges", exchanged - started)
+            self._time(population.name, perf_counter() - exchanged)
         self.time += self.time_step
         self.iteration += 1
         if self.recorder is not None:
+            started = perf_counter()
             self.recorder.record(self)
-        if self.logger is not None:
-            self.logger()
+            self._time("recording", perf_counter() - started)
+
+    def _time(self, key: str, seconds: float) -> None:
+        self.timing[key] = self.timing.get(key, 0.) + seconds
 
     __call__ = run
 
@@ -367,14 +413,20 @@ class Scene(CompositeModel):
         return when is None or bool(when(self))
 
     def simulate(self, n_iterations: int) -> None:
+        """
+        *n_iterations* steps, or until stop_when holds; then stop(): the recorder's run status is "finished",
+        "stopped" (stop_when) or "failed" (an exception, recorded with its message, then raised again).
+        """
         try:
             for _ in range(n_iterations):
                 self.run()
                 if self.stop_when is not None and self.stop_when(self):
                     self.stopped = True
                     break
-        finally:
-            self.stop()
+        except BaseException as error:
+            self.stop("failed" if isinstance(error, Exception) else "interrupted", error=error)
+            raise
+        self.stop("stopped" if self.stopped else "finished")
 
     # ── Checkpoints ────────────────────────────────────────────────
 
@@ -446,126 +498,11 @@ class Scene(CompositeModel):
         self.time, self.iteration, self.stopped = saved["time"], saved["iteration"], saved["stopped"]
         self.events = self.events[saved["events_fired"]:]         # the ones not fired yet, whatever their time
         if self.recorder is not None:
-            self.recorder.resume = True
+            self.recorder.resume_at(self)              # its tables cut back to this step, appended to from here
 
-    def stop(self) -> None:
-        if self.logger is not None:
-            self.logger.stop()
+    def stop(self, status: str = "finished", error: BaseException = None) -> None:
+        """The end of the run: the recorder writes the last state and the run's status (a loop of run() calls it)."""
+        if self.recorder is not None and self._recording:
+            self.recorder.finish(self, status, error)
 
 
-class SceneRecorder:
-    """
-    Scene outputs, one folder per population::
-
-      summaries.csv  every step, one row per plant: sums of the extensive and means of the intensive node state
-                     variables, and the Plant-located state variables;
-      segments.csv   every heavy_log_period steps, the node state variables of the log_plants only;
-
-    and with frame_period, the scene's frames (fspm-TF), at the start and every frame_period steps::
-
-      frames/frame_<step>.glb, frames/scene.fspm.json (their index, rewritten at each frame)
-    """
-
-    def __init__(self, output_dirpath: str, log_plants=(), heavy_log_period: int = 24, frame_period: int = None,
-                 frame_options: dict = None):
-        self.output_dirpath = output_dirpath
-        self.log_plants = {str(name) for name in log_plants}
-        self.heavy_log_period = int(heavy_log_period)
-        self.frame_period = int(frame_period) if frame_period else None
-        self.frame_options = dict(frame_options or {})
-        self._columns = {}
-        self._frames = None            # the index's entries, read at the first frame written (a restored run's kept)
-        self.resume = False            # after a restore: files are appended to, under their existing header
-        os.makedirs(output_dirpath, exist_ok=True)
-        if self.frame_period:
-            from openalea.metafspm.io.fspm_tf import _fspm_tf
-            _fspm_tf()                 # fails now, not after the first steps, without openalea.fspm_tf
-
-    @staticmethod
-    def _state_variables(population: Population) -> dict:
-        """{name: kind} of the population's float state variables."""
-        ds, found = population.data_structure, {}
-        for component in population.components:
-            for name, spec in getattr(component, "_variable_specs", {}).items():
-                if spec.variable_type == "state_variable" and ds.has(name) and ds.get(name).dtype.kind == "f":
-                    found.setdefault(name, spec.kind)
-        return found
-
-    def plant_summaries(self, population: Population, time: float) -> pd.DataFrame:
-        ds = population.data_structure
-        plants = np.asarray(ds.entity_ids("Plant"))
-        owner = np.asarray(ds.owner("Plant"))
-        counts = np.bincount(owner, minlength=plants.size)
-        names = population.plant_names()
-        table = {"t": time, "plant": [names.get(int(v), str(v)) for v in plants]}
-        for name, kind in self._state_variables(population).items():
-            location, stored = ds.location(name), np.asarray(ds.get(name), dtype=float)
-            columns = ({name: stored} if stored.ndim == 1 else            # vector variables: one column each
-                       {f"{name}_{j}": stored[:, j] for j in range(stored.reshape(stored.shape[0], -1).shape[1])})
-            for column, values in columns.items():
-                if location == "Plant":
-                    table[column] = values
-                elif location == "node" and kind in EXTENSIVE_KINDS:
-                    table[column] = np.bincount(owner, weights=values, minlength=plants.size)
-                elif location == "node" and (kind in INTENSIVE_KINDS or kind in MASSIC_KINDS):
-                    sums = np.bincount(owner, weights=values, minlength=plants.size)
-                    table[column] = np.divide(sums, counts, out=np.full(plants.size, np.nan), where=counts > 0)
-        return pd.DataFrame(table)
-
-    def selected_segments(self, population: Population, time: float) -> pd.DataFrame:
-        ds = population.data_structure
-        names = population.plant_names()
-        selected = [vid for vid, name in names.items() if name in self.log_plants]
-        if not selected:
-            return None
-        variables = [n for n in self._state_variables(population) if ds.location(n) == "node"]
-        frame = ds.to_dataframe(names=variables, location="node", time=time)
-        plant_of = np.asarray(ds.entity_ids("Plant"))[np.asarray(ds.owner("Plant"))]
-        frame.insert(0, "plant", [names[int(v)] for v in plant_of])
-        return frame[np.isin(plant_of, selected)]
-
-    def _append(self, population: Population, file: str, frame: pd.DataFrame, index: bool) -> None:
-        folder = os.path.join(self.output_dirpath, population.name)
-        os.makedirs(folder, exist_ok=True)
-        path = os.path.join(folder, file)
-        key = (population.name, file)
-        if key not in self._columns and self.resume and os.path.exists(path):
-            self._columns[key] = list(pd.read_csv(path, nrows=0, index_col=None).columns)
-            if index:
-                self._columns[key] = [c for c in self._columns[key] if c not in frame.index.names]
-        if key not in self._columns:
-            self._columns[key] = list(frame.columns)
-            frame.to_csv(path, index=index)
-        else:
-            frame.reindex(columns=self._columns[key]).to_csv(path, mode="a", header=False, index=index)
-
-    def write_frame(self, scene: Scene) -> str:
-        """Write the scene's frame now (frames/frame_<step>.glb) and the frames' index; the frame's path."""
-        from openalea.metafspm.io.fspm_tf import _fspm_tf, scene_to_frame
-        fspm_tf = _fspm_tf()
-        folder = os.path.join(self.output_dirpath, "frames")
-        os.makedirs(folder, exist_ok=True)
-        index_path = os.path.join(folder, fspm_tf.codec.INDEX_FILE)
-        if self._frames is None:
-            self._frames = []
-            if self.resume and os.path.exists(index_path):       # a restored run: the frames up to its step
-                self._frames = [entry for entry in fspm_tf.read_index(index_path)["frames"]
-                                if entry["step"] < scene.iteration]
-                for entry in self._frames:
-                    entry.pop("path", None)
-        name = f"frame_{scene.iteration:06d}.glb"
-        fspm_tf.write(os.path.join(folder, name), scene_to_frame(scene, **self.frame_options))
-        self._frames = [entry for entry in self._frames if entry["step"] != scene.iteration]
-        self._frames.append({"time": float(scene.time), "step": int(scene.iteration), "file": name})
-        fspm_tf.write_index(index_path, self._frames, time_unit="s")
-        return os.path.join(folder, name)
-
-    def record(self, scene: Scene) -> None:
-        if self.frame_period and scene.iteration % self.frame_period == 0:
-            self.write_frame(scene)
-        for population in scene.populations:
-            self._append(population, "summaries.csv", self.plant_summaries(population, scene.time), index=False)
-            if self.log_plants and scene.iteration % self.heavy_log_period == 0:
-                frame = self.selected_segments(population, scene.time)
-                if frame is not None:
-                    self._append(population, "segments.csv", frame, index=True)

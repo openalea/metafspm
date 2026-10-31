@@ -9,9 +9,8 @@ import os
 import sys
 import time
 
-import pandas as pd
-
-from openalea.metafspm.scene.scene import Scene
+from openalea.metafspm.scene.population import Planting, planting
+from openalea.metafspm.scene.scene import Scene, SceneRecorder
 
 from models import SCENE_TRANSLATOR, AdaptiveSoil, SeedlingWater, Soil, largest_change, root_surface_mappings
 import plotting
@@ -23,14 +22,11 @@ def scene(soil=AdaptiveSoil, soil_scenario=None, output_dirpath=None, tolerance=
     stop condition: the seedling at the centre of a 0.2 m x 0.2 m soil column, a lagged plant-soil coupling through
     the root surface, stopped when the water potentials (and so the grid) no longer change.
     """
-    table = pd.DataFrame([dict(plant="seedling", model=SeedlingWater, x=0.1, y=0.1, z=0., rotation=0.,
-                               scenario={"parameters": {}})])
-    table.attrs.update(xrange=0.2, yrange=0.2)
+    table = planting([Planting(x=0.1, y=0.1)], SeedlingWater, xrange=0.2, yrange=0.2)
     stop = largest_change(tolerance)
     built = Scene(table, environment=[soil], environment_scenarios=[soil_scenario or {}],
                   translator=SCENE_TRANSLATOR, time_step=3600, mappings=root_surface_mappings, stop_when=stop,
-                  output_dirpath=output_dirpath, log_plants=["seedling"] if output_dirpath else (),
-                  heavy_log_period=1)
+                  recorder=SceneRecorder(output_dirpath, log_plants=["p0"], segment_period=1) if output_dirpath else None)
     return built, stop
 
 

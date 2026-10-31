@@ -9,8 +9,8 @@ import sys
 
 import numpy as np
 
-from openalea.metafspm.scene.population import planting_table
-from openalea.metafspm.scene.scene import Scene
+from openalea.metafspm.scene.population import planting, stand
+from openalea.metafspm.scene.scene import Scene, SceneRecorder
 
 from models import SCENE_TRANSLATOR, SeedlingWater, Soil, largest_change, root_surface_mappings
 from one_plant import plots, summary
@@ -18,20 +18,18 @@ from one_plant import plots, summary
 
 def scene(output_dirpath=None, tolerance=1e-6, root_radial_k=(0.4, 0.5, 0.6), soil_scenario=None):
     """
-    A stand laid out by planting_table (rows every 0.1 m at 100 plants m-2, the stand's size adjusted to the rows and
-    kept in the table, which sizes the soil grid); the root radial conductance of each
+    A stand laid out by stand() (rows every 0.1 m at 100 plants m-2, the stand's size adjusted to the rows and
+    kept in the planting table, which sizes the soil grid); the root radial conductance of each
     plant (a SeedlingStructure parameter stored per plant) cycles through *root_radial_k*, given in its per-plant
     scenario.
     """
-    layout = dict(xrange=0.3, yrange=0.3, sowing_density=100., row_spacing=0.1, plant_models=[SeedlingWater],
-                  plant_scenarios=[{"parameters": {}}], sowing_depth=[0.], exact=True, seed=1)
-    n_plants = len(planting_table(**layout))
-    per_plant = [{"parameters": {"root_radial_k": root_radial_k[i % len(root_radial_k)]}} for i in range(n_plants)]
-    table = planting_table(**layout, per_plant_scenarios=per_plant)
+    sown = stand(xrange=0.3, yrange=0.3, sowing_density=100., row_spacing=0.1, sowing_depth=0., exact=True, seed=1)
+    per_plant = [{"root_radial_k": root_radial_k[i % len(root_radial_k)]} for i in range(len(sown))]
+    table = planting(sown, SeedlingWater, plant_scenarios=per_plant)
     stop = largest_change(tolerance)
     built = Scene(table, environment=[Soil], environment_scenarios=[soil_scenario or {}],
                   translator=SCENE_TRANSLATOR, time_step=3600, mappings=root_surface_mappings, stop_when=stop,
-                  output_dirpath=output_dirpath, log_plants=list(table["plant"][:1]), heavy_log_period=1)
+                  recorder=SceneRecorder(output_dirpath, log_plants=["p0"], segment_period=1) if output_dirpath else None)
     return built, stop
 
 

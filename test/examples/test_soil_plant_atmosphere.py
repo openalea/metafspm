@@ -65,7 +65,7 @@ def test_the_example_converges_with_closed_water_balances(example, tmp_path):
     _check_upscaling(scene.populations[0].data_structure)
     leaves = scene.populations[0].data_structure
     assert -10. < float(leaves.get("water_potential").min()) < -1.                  # a transpiring, not wilted, plant
-    assert os.path.exists(tmp_path / "records" / "SeedlingWater" / "summaries.csv")
+    assert os.path.exists(tmp_path / "records" / "Plant" / "SeedlingWater" / "summaries.csv")
     example.plots(scene, str(tmp_path / "figures"))
     for name in FIGURES:
         assert (tmp_path / "figures" / name).stat().st_size > 0

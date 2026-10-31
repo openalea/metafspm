@@ -13,15 +13,15 @@ from openalea.metafspm.coupling.component import FunctionalComponent, input_vari
 from openalea.metafspm.coupling.cross import CrossMapping, UnionDataStructure, UnionMapping
 from openalea.metafspm.coupling.translator import Translator
 from openalea.metafspm.data_structure.configs import ScalesConfig as scales
-from openalea.metafspm.scene.population import planting_table
-from openalea.metafspm.scene.scene import Scene
+from openalea.metafspm.scene.population import planting, stand
+from openalea.metafspm.scene.scene import Scene, SceneRecorder
 from openalea.metafspm.solve.decorator import rate
 
 from growth import DOC, RootGrowthProbe
-from scene_doubles import DT, RootPopulation, SceneSoil, Seedlings, coordinate, planting, soil_translator
+from scene_doubles import DT, RootPopulation, SceneSoil, Seedlings, coordinate, doubles_planting, soil_translator
 
 def _scene(models=(RootPopulation, Seedlings, RootPopulation, Seedlings), **options):
-    return Scene(planting(list(models), **options.pop("planting", {})), environment=[SceneSoil],
+    return Scene(doubles_planting(list(models), **options.pop("planting", {})), environment=[SceneSoil],
                  translator=soil_translator("SceneExudation", "SeedlingExudation"), time_step=DT, **options)
 
 
@@ -52,12 +52,12 @@ def test_a_step_runs_the_environment_then_the_populations_at_fixed_points():
 
 
 def test_per_plant_numeric_parameters_and_shared_other_entries():
-    fast = {"parameters": {"exudation_rate": 0.3}}
-    scene = _scene(models=(RootPopulation, RootPopulation), planting=dict(scenarios=[{"parameters": {}}, fast]))
+    fast = {"exudation_rate": 0.3}
+    scene = _scene(models=(RootPopulation, RootPopulation), planting=dict(scenarios=[{}, fast]))
     np.testing.assert_allclose(scene.populations[0].data_structure.get("exudation_rate"), [0.1, 0.3])
     with pytest.raises(ValueError, match="'mode' differs between plants"):
         _scene(models=(RootPopulation, RootPopulation),
-               planting=dict(scenarios=[{"parameters": {}, "mode": "a"}, {"parameters": {}, "mode": "b"}]))
+               planting=dict(scenarios=[{"mode": "a"}, {"mode": "b"}]))
 
 
 class SamePopulationComponents(RootPopulation):
@@ -94,16 +94,21 @@ def test_plants_are_frozen_until_their_emergence():
 
 
 def test_the_recorder_writes_plant_summaries_and_selected_plants(tmp_path):
-    scene = _scene(output_dirpath=str(tmp_path), log_plants=["p0"], heavy_log_period=2)
+    scene = _scene(recorder=SceneRecorder(str(tmp_path), log_plants=["p0"], segment_period=2))
     scene.simulate(3)
-    summaries = pd.read_csv(tmp_path / "RootPopulation" / "summaries.csv")
-    assert len(summaries) == 3 * 2 and set(summaries["plant"]) == {"p0", "p2"}
-    np.testing.assert_allclose(summaries[summaries["t"] == 3 * DT]["exudation"].sum(),
+    summaries = pd.read_csv(tmp_path / "Plant" / "RootPopulation" / "summaries.csv")
+    assert len(summaries) == 4 * 2 and set(summaries["plant"]) == {"p0", "p2"}          # the initial state too
+    assert sorted(set(summaries["time"])) == [0., DT, 2 * DT, 3 * DT]
+    np.testing.assert_allclose(summaries[summaries["time"] == 3 * DT]["exudation"].sum(),
                                scene.populations[0].data_structure.get("exudation").sum())
-    segments = pd.read_csv(tmp_path / "RootPopulation" / "segments.csv")
-    assert set(segments["plant"]) == {"p0"} and set(segments["t"]) == {2 * DT}
-    assert not (tmp_path / "Seedlings" / "segments.csv").exists()
-    assert len(pd.read_csv(tmp_path / "Seedlings" / "summaries.csv")) == 3 * 2
+    segments = pd.read_csv(tmp_path / "Plant" / "RootPopulation" / "segments.csv")
+    assert set(segments["plant"]) == {"p0"} and set(segments["time"]) == {0., 2 * DT, 3 * DT}     # and the last
+    assert not (tmp_path / "Plant" / "Seedlings" / "segments.csv").exists()
+    assert len(pd.read_csv(tmp_path / "Plant" / "Seedlings" / "summaries.csv")) == 4 * 2
+    soil = pd.read_csv(tmp_path / "Soil" / "SceneSoil" / "summaries.csv")                 # the environment too
+    assert list(soil.columns) == ["time", "soil_nitrate"] and len(soil) == 4
+    np.testing.assert_allclose(soil["soil_nitrate"].iloc[-1], scene.environment[0].grid.get("soil_nitrate").mean())
+
 
 
 # ---------------------------------------------------------------- a light model over both populations
@@ -163,7 +168,7 @@ def test_a_light_model_on_the_union_of_the_populations():
     for leaves in ("SceneLeaves", "SeedlingLeaves"):
         translator.link("SceneLight", "z1", leaves, {"z1": 1.})
         translator.link(leaves, "intercepted", "SceneLight", {"intercepted": 1.})
-    scene = Scene(planting([LeafPopulation, SeedlingLeafPopulation]), environment=[SceneLightModel],
+    scene = Scene(doubles_planting([LeafPopulation, SeedlingLeafPopulation]), environment=[SceneLightModel],
                   translator=translator, time_step=DT)
     assert len(scene.mappings) == 1 and isinstance(scene.mappings[0], UnionMapping)
     scene.run()
@@ -172,9 +177,9 @@ def test_a_light_model_on_the_union_of_the_populations():
         np.testing.assert_allclose(ds.get("intercepted"), np.exp(ds.get("z1")))
 
 
-def test_planting_table_keeps_the_stand_and_emergence():
-    table = planting_table(0.6, 0.3, sowing_density=100, row_spacing=0.15, plant_models=[RootPopulation],
-                           plant_scenarios=[{"parameters": {}}], exact=True, seed=1, emergence_times=[0.] * 16)
+def test_planting_keeps_the_stand_and_emergence():
+    table = planting(stand(0.6, 0.3, sowing_density=100, row_spacing=0.15, exact=True, seed=1), RootPopulation,
+                     emergence_times=[0.] * 16)
     assert table.attrs["xrange"] == pytest.approx(0.6) and (table["emergence_time"] == 0.).all()
 
 
@@ -193,7 +198,7 @@ class ApexLeaves(FunctionalComponent):
 
 
 def test_emergence_combines_with_a_model_active_mask():
-    scene = Scene(planting([ApexOnlyLeaves, ApexOnlyLeaves], emergence_time=[0., DT]), time_step=DT)
+    scene = Scene(doubles_planting([ApexOnlyLeaves, ApexOnlyLeaves], emergence_time=[0., DT]), time_step=DT)
     ds = scene.populations[0].data_structure
     early, late = scene.populations[0].plants
     owner = ds.entity_ids("Plant")[ds.owner("Plant")]

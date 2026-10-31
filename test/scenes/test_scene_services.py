@@ -17,7 +17,7 @@ from openalea.metafspm.scene.scene import Scene
 from openalea.metafspm.solve.decorator import rate
 
 from growth import DOC, RootGrowthProbe
-from scene_doubles import DT, SceneGeometry, SceneSoil, planting, soil_translator
+from scene_doubles import DT, SceneGeometry, SceneSoil, doubles_planting, soil_translator
 
 
 
@@ -64,7 +64,7 @@ class CountingSoil(SceneSoil):
 
 
 def _scene(**options):
-    table = planting([LitPlants, LitPlants])
+    table = doubles_planting([LitPlants, LitPlants])
     forcings = pd.DataFrame({"PARi": [0., 10. * DT]}, index=[0., 10. * DT])      # PARi(t) = t
     return Scene(table, environment=[CountingSoil], translator=soil_translator("Lit"), time_step=DT,
                  forcings=forcings, **options)
@@ -89,7 +89,7 @@ def test_declared_forcings():
     scene = _scene()
     assert not scene.populations[0].data_structure.has("PARi")
     with pytest.raises(ValueError, match="Lit.PARi"):
-        Scene(planting([LitPlants]), time_step=DT, forcings=pd.DataFrame({"wind": [1., 1.]}, index=[0., DT]))
+        Scene(doubles_planting([LitPlants]), time_step=DT, forcings=pd.DataFrame({"wind": [1., 1.]}, index=[0., DT]))
 
 
 def test_models_run_every_n_steps_and_spin_up_once():
@@ -159,7 +159,7 @@ def test_environment_model_cadence_and_helpers():
     """EnvironmentModel: full runs every interval (the time taken before the components' calls), between() at the
     other steps, after_run() after each full run; the plants' union, a grid over the pattern; the last run kept by
     checkpoints."""
-    table = planting([LitPlants, LitPlants])
+    table = doubles_planting([LitPlants, LitPlants])
     forcings = pd.DataFrame({"PARi": [0., 10. * DT]}, index=[0., 10. * DT])
     scene = Scene(table, environment=[CadencedSoil], translator=soil_translator("Lit"), time_step=DT, forcings=forcings)
     soil = scene.environment[0]

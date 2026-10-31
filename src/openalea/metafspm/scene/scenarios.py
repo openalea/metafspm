@@ -1,0 +1,264 @@
+"""
+Scenarios: reading them from a table, listing a model's parameters, building variants of one::
+
+  scenarios = read_scenarios("scenarios.csv")          {name: scenario}, one per column of the table
+  parameter_table(RootGrowth, Carbon, main=("EL",))    every parameter: value, unit, description, bounds, component
+  variants(scenarios["reference"], {"EL": None, "IPD": [0.005, 0.01]}, design="grid", declared=[RootGrowth])
+
+A scenario is flat, {name: value} (scene.population). The table has one row per entry: its name in a "name"
+column (else the first column), optional description columns (model, type, unit, description, references,
+default, explanation), and one column per named scenario::
+
+  name,   type,      unit, description,               reference, dry
+  EL,     parameter, m s-1, elongation rate,          1e-3,      8e-4
+  IPD,    parameter, m,    inter-primordia distance,   6e-3,
+  rain,   forcing,   mm,   the rainfall, by time (s),  rain.csv,  0.
+
+A cell holds a number, True, False, None, a JSON list or dict, or text; an empty cell leaves the default (the entry
+is not in that scenario). The rows of type "forcing" hold a number or a CSV file (relative to the table; its
+columns time, in s, and the name): they go to the scenario's "forcings" entry, {name: forcing}, for
+Scene(forcings=...) (pop it before planting). With a "model" column, each scenario is {model: {name: value}} (and
+its "forcings").
+
+variants() builds scenarios around a base one, within the bounds the components declare (min_value, max_value):
+a grid of every combination, one entry changed at a time, or a Latin hypercube sampling. Sensitivity indices are
+left to the user (e.g. SALib on the outputs).
+"""
+import itertools
+import json
+import os
+
+import numpy as np
+import pandas as pd
+
+DESCRIPTION_COLUMNS = ("model", "type", "unit", "description", "references", "default", "explanation")
+
+
+def _cell(value):
+    """A table cell as a scenario value (None when empty: the entry is not given)."""
+    if value is None or (isinstance(value, float) and np.isnan(value)):
+        return None
+    if isinstance(value, (bool, np.bool_)):
+        return bool(value)
+    if isinstance(value, (int, np.integer)):
+        return int(value)
+    if isinstance(value, (float, np.floating)):
+        return float(value)
+    text = str(value).strip()
+    if not text:
+        return None
+    special = {"True": True, "False": False, "None": "None"}
+    if text in special:
+        return special[text]
+    if text[0] in "[{":
+        try:
+            return json.loads(text)
+        except json.JSONDecodeError:
+            return text
+    try:
+        number = float(text)
+    except ValueError:
+        return text
+    return int(number) if number.is_integer() and "." not in text and "e" not in text.lower() else number
+
+
+def _forcing(value, folder: str, name: str):
+    """A forcing row's cell: a number, or a CSV file (columns time, in s, and *name*) as a Series indexed by time."""
+    if not isinstance(value, str):
+        return value
+    path = value if os.path.isabs(value) else os.path.join(folder, value)
+    table = pd.read_csv(path)
+    column = name if name in table.columns else [c for c in table.columns if c != "time"][0]
+    return pd.Series(table[column].to_numpy(dtype=float), index=table["time"].to_numpy(dtype=float), name=name)
+
+
+def read_scenarios(source, which=None, sheet=None) -> dict:
+    """
+    {name: scenario} from a scenario table (a CSV or Excel file, or a DataFrame), one per scenario column, or those
+    named by *which*. *sheet*: the Excel sheet (the first by default). See the module for the table's layout.
+    """
+    folder = "."
+    if isinstance(source, pd.DataFrame):
+        table = source.copy()
+    else:
+        path = os.fspath(source)
+        folder = os.path.dirname(os.path.abspath(path))
+        if path.lower().endswith((".xlsx", ".xls", ".ods")):
+            table = pd.read_excel(path, sheet_name=sheet if sheet is not None else 0, dtype=object,
+                                  keep_default_na=False, na_values=[""])
+        else:                                       # "None", "NA" are values, only empty cells are missing
+            table = pd.read_csv(path, dtype=object, skipinitialspace=True, keep_default_na=False, na_values=[""])
+    columns = {str(column).strip(): column for column in table.columns}
+    table.columns = list(columns)
+    name_column = "name" if "name" in table.columns else table.columns[0]
+    lower = {column.lower(): column for column in table.columns}
+    described = {lower[c] for c in DESCRIPTION_COLUMNS if c in lower} | {name_column}
+    names = [column for column in table.columns if column not in described]
+    if which is not None:
+        missing = [name for name in which if name not in names]
+        if missing:
+            raise KeyError(f"scenarios {missing} not in the table (its scenarios: {names})")
+        names = list(which)
+    model_column, type_column = lower.get("model"), lower.get("type")
+    if model_column is not None:
+        given = table[model_column].map(_cell)
+        if given.isna().any() and given.notna().any():
+            rows = table.loc[given.isna(), name_column].tolist()
+            raise ValueError(f"entries {rows} have no model, in a table with a model column")
+    scenarios = {}
+    for scenario_name in names:
+        scenario, forcings = {}, {}
+        for _, row in table.iterrows():
+            entry = str(row[name_column]).strip()
+            value = _cell(row[scenario_name])
+            if value is None:
+                continue
+            value = None if value == "None" else value
+            kind = str(_cell(row[type_column]) or "").strip().lower() if type_column is not None else ""
+            if kind == "forcing":
+                forcings[entry] = _forcing(value, folder, entry)
+                continue
+            if model_column is not None:
+                scenario.setdefault(str(_cell(row[model_column])), {})[entry] = value
+            else:
+                scenario[entry] = value
+        if forcings:
+            scenario["forcings"] = forcings
+        scenarios[scenario_name] = scenario
+    return scenarios
+
+
+def parameter_table(*components, values: dict = None, main=(), kinds=("parameter", "setting"),
+                    exclude=()) -> pd.DataFrame:
+    """
+    The parameters (and settings) the *components* (classes or instances) declare, one row each: name, value (the
+    default, or the one in *values*), unit, description, min_value, max_value, component, and main (whether it is
+    in *main*: those first, in its order). An entry declared by several components takes one row, the last one's.
+    *exclude*: names left out.
+    """
+    tables = []
+    for component in components:
+        component = component if isinstance(component, type) else type(component)
+        declarations = component.declarations()
+        if declarations.empty:
+            continue
+        table = declarations[declarations["kind"].isin(kinds)][["name", "default", "unit", "description",
+                                                                 "min_value", "max_value"]]
+        tables.append(table.assign(component=component.__name__))
+    columns = ["name", "value", "unit", "description", "min_value", "max_value", "component", "main"]
+    if not tables:
+        return pd.DataFrame(columns=columns)
+    table = pd.concat(tables).drop_duplicates("name", keep="last").rename(columns={"default": "value"})
+    table = table[~table["name"].isin(exclude)].reset_index(drop=True)
+    table["value"] = table["value"].astype(object)
+    for name, value in (values or {}).items():
+        if not (table["name"] == name).any():
+            raise KeyError(f"'{name}' is no parameter of {', '.join(sorted(set(table['component'])))}")
+        table.loc[table["name"] == name, "value"] = pd.Series([value] * int((table["name"] == name).sum()),
+                                                              index=table.index[table["name"] == name], dtype=object)
+    table["main"] = table["name"].isin(main)
+    order = {name: rank for rank, name in enumerate(main)}
+    table = table.assign(rank=table["name"].map(order).fillna(len(order))).sort_values("rank", kind="stable")
+    return table.drop(columns="rank").reset_index(drop=True)[columns]
+
+
+def _declared(declared) -> pd.DataFrame:
+    if declared is None:
+        return None
+    if isinstance(declared, pd.DataFrame):
+        return declared.drop_duplicates("name", keep="last").set_index("name")
+    components = declared if isinstance(declared, (list, tuple)) else [declared]
+    return parameter_table(*components).set_index("name")
+
+
+def _label(value) -> str:
+    return f"{value:g}" if isinstance(value, float) else str(value)
+
+
+def variants(base: dict, ranges: dict, design: str = "grid", levels: int = 3, samples: int = 10, seed: int = None,
+             declared=None) -> dict:
+    """
+    {name: scenario}: *base* (a flat scenario) with the entries of *ranges* changed. *ranges*: {name: [values]},
+    {name: (low, high)}, or {name: None} for its declared bounds (min_value, max_value of *declared*: component
+    classes, or a parameter_table). *design*:
+      "grid"            every combination, a (low, high) range in *levels* even steps: "EL=0.0008,IPD=0.006", ...
+      "one_at_a_time"   "base", then each value of each entry alone: "EL=0.0008", ...
+      "sampling"        *samples* scenarios of a Latin hypercube over the ranges (a list: its values drawn evenly),
+                        "sample_000", ... (*seed*: the same draws again)
+    A value outside its declared bounds raises; an entry whose base or default value is an integer stays one.
+    """
+    table = _declared(declared)
+    base = dict(base or {})
+    bounds, integer = {}, {}
+    for name in ranges:
+        low = high = None
+        if table is not None and name in table.index:
+            low, high = table.at[name, "min_value"], table.at[name, "max_value"]
+            default = table.at[name, "value"]
+        else:
+            default = None
+        reference = base.get(name, default)
+        integer[name] = isinstance(reference, (int, np.integer)) and not isinstance(reference, bool)
+        bounds[name] = (low, high)
+
+    def checked(name, value):
+        low, high = bounds[name]
+        if isinstance(value, (int, float, np.integer, np.floating)) and not isinstance(value, bool):
+            if (low is not None and value < low) or (high is not None and value > high):
+                raise ValueError(f"variants: {name}={value} outside its declared bounds [{low}, {high}]")
+        return value
+
+    def spread(name, low, high, fractions):
+        values = [low + (high - low) * f for f in fractions]
+        return [int(round(v)) if integer[name] else float(v) for v in values]
+
+    axes = {}
+    for name, given in ranges.items():
+        if given is None:
+            low, high = bounds[name]
+            if low is None or high is None:
+                raise ValueError(f"variants: '{name}' has no declared bounds (min_value, max_value): give its range")
+            given = (low, high)
+        if isinstance(given, tuple):
+            if len(given) != 2:
+                raise ValueError(f"variants: the range of '{name}' is (low, high), got {given}")
+            axes[name] = ("range", float(given[0]), float(given[1]))
+        else:
+            axes[name] = ("values", list(given))
+        if axes[name][0] == "range":
+            checked(name, axes[name][1]), checked(name, axes[name][2])
+        else:
+            for value in axes[name][1]:
+                checked(name, value)
+
+    def values_of(name):
+        axis = axes[name]
+        if axis[0] == "values":
+            return axis[1]
+        return spread(name, axis[1], axis[2], np.linspace(0., 1., levels) if levels > 1 else [0.5])
+
+    found = {}
+    if design == "grid":
+        names = list(axes)
+        for combination in itertools.product(*(values_of(name) for name in names)):
+            label = ",".join(f"{name}={_label(value)}" for name, value in zip(names, combination))
+            found[label] = dict(base, **dict(zip(names, combination)))
+    elif design == "one_at_a_time":
+        found["base"] = dict(base)
+        for name in axes:
+            for value in values_of(name):
+                found[f"{name}={_label(value)}"] = dict(base, **{name: value})
+    elif design == "sampling":
+        generator = np.random.default_rng(seed)
+        draws = {}
+        for name, axis in axes.items():
+            fractions = (generator.permutation(samples) + generator.random(samples)) / samples
+            if axis[0] == "values":
+                draws[name] = [axis[1][min(int(f * len(axis[1])), len(axis[1]) - 1)] for f in fractions]
+            else:
+                draws[name] = spread(name, axis[1], axis[2], fractions)
+        for k in range(samples):
+            found[f"sample_{k:03d}"] = dict(base, **{name: draws[name][k] for name in axes})
+    else:
+        raise ValueError(f"variants(design=...): 'grid', 'one_at_a_time' or 'sampling', got '{design}'")
+    return found

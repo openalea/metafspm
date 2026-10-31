@@ -123,7 +123,7 @@ from openalea.metafspm.io.fspm_tf import export_scene, import_frame
 
 export_scene("scene.glb", scene)                         # one frame now
 data_structures = import_frame("scene.glb")              # {id: DataStructure}
-scene = Scene(..., output_dirpath="outputs", frame_period=24)   # a frame every 24 steps, in outputs/frames
+scene = Scene(..., recorder=SceneRecorder("outputs", frame_period=24))   # a frame every 24 steps, in outputs/frames
 ```
 
 fspm-TF's Python package, `openalea.fspm_tf`, is a dependency of metafspm. Until it is published, clone
