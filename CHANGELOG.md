@@ -20,8 +20,9 @@
   - Summaries go in `Plant/<Model>/summaries.csv` and in `Soil/` or `Atmosphere/<Model>/summaries.csv` for the environment grids, by the model's new `compartment` attribute. The time column is now `time`.
   - It also writes `segments.csv` (`segment_period`), your own `tables=`, frames, and `checkpoints/` (`checkpoint_period`, `keep_checkpoints`).
   - Every output can be switched off on its own. The initial and last states are recorded. Without a folder, the tables stay in memory (`recorder.table(name)`).
-  - `Scene.simulate` sets the run's status (finished, stopped, failed); `Scene.stop()` ends a `run()` loop.
+  - `Scene.simulate` sets the run's status (finished, stopped, failed); `Scene.stop()` ends a `run()` loop. `simulate(0)` records a static scene's state, e.g. a section built once.
   - `Scene.timing` gives the wall time per model.
+- **Fixed:** an environment model's scenario entry that is a per-plant parameter on the plants' DataStructure (a light model's optics) was silently skipped. It is now set for every plant.
 - **Fixed:** after a restore, the recorder's CSVs are cut back to the checkpoint's time. A run that went past its checkpoint duplicated their rows.
 - **Scenario layer (`openalea.metafspm.scene.scenarios`):**
   - `read_scenarios` reads a scenario table: one column per scenario, with type, unit and description columns; forcing rows read from CSV files; an optional `model` column.

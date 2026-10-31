@@ -108,3 +108,11 @@ def test_compartments():
     Scene(doubles_planting([Seedlings]), environment=[Air], translator=soil_translator("SeedlingExudation"),
           time_step=DT, recorder=recorder).simulate(1)
     np.testing.assert_allclose(recorder.table("Atmosphere/Air/summaries")["time"], [0., DT])
+
+
+def test_a_scene_recorded_without_a_step(tmp_path):
+    scene = _scene(SceneRecorder(str(tmp_path), frame_period=1))
+    scene.simulate(0)                                       # a static model: its built state, once
+    assert _json(tmp_path / "run.json")["status"] == "finished" and _json(tmp_path / "run.json")["iterations"] == 0
+    assert pd.read_csv(tmp_path / "Plant" / "Seedlings" / "summaries.csv")["time"].tolist() == [0.]
+    assert sorted(os.listdir(tmp_path / "frames")) == ["frame_000000.glb", "scene.fspm.json"]

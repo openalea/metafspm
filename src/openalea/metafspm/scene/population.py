@@ -205,13 +205,15 @@ def apply_plant_scenarios(ds, components, table: pd.DataFrame, plants: list) -> 
             ds.set(name, values)
 
 
-def apply_model_scenario(model, instance, scenario: dict, read_by_initiators=()) -> None:
+def apply_model_scenario(model, instance, scenario: dict, read_by_initiators=(), per_plant: bool = True) -> None:
     """
     Set *scenario*'s entries on the components of *instance* (built from the class *model*), as constructor keywords
     would: a numeric parameter is written to the DataStructure, another goes to the component's field. The entries are
     the scenario's keys, except those *model*'s __init__ names (its own arguments). Parameters
-    stored per plant are left to apply_plant_scenarios (a plant without the entry keeps the default). An entry that is
-    no component parameter, no argument of the model and not read by its initiators raises.
+    stored per plant are left to apply_plant_scenarios (a plant without the entry keeps the default), or, with
+    *per_plant* False (an environment model's scenario: a light model's optics on the plants' DataStructure), set for
+    every plant. An entry that is no component parameter, no argument of the model and not read by its initiators
+    raises.
     """
     named = model_arguments(model)
     entries = {key: value for key, value in flat_scenario(scenario).items() if key not in named}
@@ -227,6 +229,8 @@ def apply_model_scenario(model, instance, scenario: dict, read_by_initiators=())
         for component in owners:
             ds = getattr(component, "data_structure", None)
             if ds is not None and ds.has(name) and ds.location(name) == "Plant":
+                if not per_plant:                           # every plant the environment's value
+                    ds.set(name, np.full(np.shape(ds.get(name)), value, dtype=np.asarray(ds.get(name)).dtype))
                 continue                                    # per plant: apply_plant_scenarios
             setattr(component, name, value)
     if unknown:

@@ -172,7 +172,7 @@ class Scene(CompositeModel):
                                   **model_keywords(model, scenario))
                             for model, scenario in zip(environment, environment_scenarios)]
         for model, instance, scenario in zip(environment, self.environment, environment_scenarios):
-            apply_model_scenario(model, instance, scenario)
+            apply_model_scenario(model, instance, scenario, per_plant=False)
 
         self.components = [c for p in self.populations for c in p.components]
         self.components += [c for model in self.environment for c in model.components]
@@ -501,8 +501,15 @@ class Scene(CompositeModel):
             self.recorder.resume_at(self)              # its tables cut back to this step, appended to from here
 
     def stop(self, status: str = "finished", error: BaseException = None) -> None:
-        """The end of the run: the recorder writes the last state and the run's status (a loop of run() calls it)."""
-        if self.recorder is not None and self._recording:
-            self.recorder.finish(self, status, error)
+        """
+        The end of the run: the recorder writes the last state and the run's status (a loop of run() calls it). A
+        scene stopped before any step (simulate(0): a static model, a section built once) records its state then.
+        """
+        if self.recorder is None:
+            return
+        if not self._recording:
+            self._recording = True
+            self.recorder.begin(self)
+        self.recorder.finish(self, status, error)
 
 

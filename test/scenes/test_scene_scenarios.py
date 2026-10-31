@@ -91,6 +91,28 @@ def test_environment_scenarios_reach_the_components_and_the_models_own_arguments
     assert not hasattr(ground.settings, "depth")                                   # the model's own argument
 
 
+@dataclass
+class Optics(FunctionalComponent):
+    """An environment component on the plants' DataStructure, with a per-plant parameter (a light model's optics)."""
+    reflectance: float = parameter(**DOC, by="", default=0.1)
+    absorbed: float = state_variable(**DOC, initialize=0., scale=scales.SubOrgan)
+
+
+class Light:
+    def __init__(self, populations, scene_xrange, scene_yrange, time_step):
+        self.optics = Optics(data_structure=populations[0], time_step=time_step)
+        self.components = [self.optics]
+
+    def run(self):
+        self.optics()
+
+
+def test_an_environment_scenario_sets_its_per_plant_parameters_for_every_plant():
+    scene = Scene(doubles_planting([Plants, Plants], [{}, {}]), environment=[Light],
+                  environment_scenarios=[{"reflectance": 0.25}], time_step=DT)
+    np.testing.assert_allclose(scene.populations[0].data_structure.get("reflectance"), [0.25, 0.25])
+
+
 def test_the_initiators_keys_and_the_models_arguments_are_accepted():
     scene = _scene([{"n_segments": 4, "label": "wheat"}])
     assert scene.populations[0].instance.label == "wheat"
