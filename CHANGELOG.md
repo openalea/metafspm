@@ -2,6 +2,13 @@
 
 ## Unreleased (release2026)
 
+### Upscaled variables and calibration
+
+- `state_variable(upscaling=upscaling(of=, law=, protocol=, references=))` declares what a coarse-scale variable is the equivalent of and under which protocol; `declarations()` gains the `upscaling` column, and the fspm-TF frames carry it in the variable's description.
+- `solve.network.equivalent_conductance(view, edge_conductance, sources, sinks, source_conductance=)`: a network's equivalent conductance between two node sets and each source's share (e.g. MARSHAL's Krs and SUF on MECHA's anatomical network).
+- `scene.calibration`: `read_observations`, `compare` (each observation's model value from the recorder, in its unit, and its residual), `residuals`, `objective` (the residuals as a function of parameters within their declared bounds, for scipy, MCMC or ABC tools; several virtual experiments).
+- `scene.scenarios.from_samples` (a SALib sample as scenarios, bounds checked) and `design_table`.
+
 ### Breaking: one public way per thing (the API cleanup)
 
 - **Fixed:**

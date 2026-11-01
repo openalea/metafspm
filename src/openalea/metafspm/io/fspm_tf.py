@@ -131,6 +131,8 @@ def _variable(name: str, metadata: dict, standard_names: dict, derived: bool = F
         description = f"{description or ''} ({metadata['unit_comment']})".strip()
     if unit.startswith("{") and metadata.get("unit"):
         description = f"{description or ''} [unit as declared: {metadata['unit']}]".strip()
+    if metadata.get("upscaling") is not None:
+        description = f"{description or ''} [upscaling: {metadata['upscaling']}]".strip()
 
     def number(value):
         return float(value) if isinstance(value, (int, float, np.number)) and np.isfinite(value) else None

@@ -21,8 +21,9 @@ Scene(forcings=...) (pop it before planting). With a "model" column, each scenar
 its "forcings": a forcing row needs no model, forcings being the scene's).
 
 variants() builds scenarios around a base one, within the bounds the components declare (min_value, max_value):
-a grid of every combination, one entry changed at a time, or a Latin hypercube sampling. Sensitivity indices are
-left to the user (e.g. SALib on the outputs).
+a grid of every combination, one entry changed at a time, or a Latin hypercube sampling; from_samples() takes the
+samples of an analysis tool (e.g. SALib's saltelli or morris) within the same bounds, and design_table() lays any of
+them out as a table, to join with the outputs. Sensitivity indices are left to that tool.
 """
 import itertools
 import json
@@ -267,3 +268,43 @@ def variants(base: dict, ranges: dict, design: str = "grid", levels: int = 3, sa
     else:
         raise ValueError(f"variants(design=...): 'grid', 'one_at_a_time' or 'sampling', got '{design}'")
     return found
+
+
+def from_samples(base: dict, names, matrix, declared=None) -> dict:
+    """
+    {"sample_000": scenario, ...}: *base* (a flat scenario) with *names* set from each row of *matrix* (one row per
+    sample, one column per name), e.g. a SALib sample (saltelli, morris) to run and analyse with SALib. A value
+    outside the bounds the *declared* components (or a parameter_table) give raises; an integer entry stays one.
+    """
+    names = list(names)
+    matrix = np.atleast_2d(np.asarray(matrix, dtype=float))
+    if matrix.shape[1] != len(names):
+        raise ValueError(f"from_samples: {len(names)} names for {matrix.shape[1]} columns")
+    table = _declared(declared)
+    base = dict(base or {})
+    found = {}
+    width = max(3, len(str(len(matrix) - 1)))
+    for k, row in enumerate(matrix):
+        scenario = dict(base)
+        for name, value in zip(names, row):
+            if table is not None and name in table.index:
+                low, high = table.at[name, "min_value"], table.at[name, "max_value"]
+                if (low is not None and value < low) or (high is not None and value > high):
+                    raise ValueError(f"from_samples: {name}={value} (sample {k}) outside its declared bounds "
+                                     f"[{low}, {high}]")
+            reference = base.get(name, table.at[name, "value"] if table is not None and name in table.index else None)
+            integer = isinstance(reference, (int, np.integer)) and not isinstance(reference, bool)
+            scenario[name] = int(round(value)) if integer else float(value)
+        found[f"sample_{k:0{width}d}"] = scenario
+    return found
+
+
+def design_table(scenarios: dict, names=None) -> pd.DataFrame:
+    """The design of *scenarios* ({name: flat scenario}: variants' or from_samples'), one row per scenario (indexed by
+    its name), one column per entry of *names* (default: the entries that differ between them): to join with the
+    runs' outputs for an analysis."""
+    names = list(names) if names is not None else [
+        key for key in dict.fromkeys(k for scenario in scenarios.values() for k in scenario)
+        if len({repr(scenario.get(key)) for scenario in scenarios.values()}) > 1]
+    rows = [{name: scenario.get(name) for name in names} for scenario in scenarios.values()]
+    return pd.DataFrame(rows, index=pd.Index(list(scenarios), name="scenario"), columns=names)

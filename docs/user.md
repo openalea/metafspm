@@ -461,7 +461,50 @@ scene = Scene.from_scenario(scenario, stand(...), Wheat, environment=[RhizoSoil,
   fspm-TF file, for outputs only: `import_frame` refuses to rebuild it. It uses
   `openalea.fspm_tf`, a dependency of metafspm (in development, installed from the fspm-TF clone).
 
-## 7. A complete example
+## 7. Upscaled variables, observations and calibration
+
+A variable at a coarse scale that is the equivalent of finer ones (a root system's conductance from its cells'
+walls and membranes) is an equation of the model, not a mapping: a step computes it. Its declaration says what it
+summarises and under which protocol, so that observations made at that scale know which model variable they
+measure:
+
+```python
+from openalea.metafspm.coupling.component import state_variable, upscaling
+from openalea.metafspm.solve.network import equivalent_conductance
+
+root_system_conductance: float = state_variable(
+    unit="cm3 hPa-1 d-1", description="Krs", location="Plant",
+    upscaling=upscaling(of=("kw", "kaqp", "kmb"), law="network",
+                        protocol="uniform soil potential, collar fixed: Krs = Q_collar / (psi_soil - psi_collar)"))
+
+@totalstate
+def _root_system_conductance(self, conductance, soil_conductance, collar_kind):
+    krs, inflow = equivalent_conductance(self.data_structure.to_graph_view(), conductance,
+                                         sources=soil_conductance > 0, sinks=collar_kind == 1,
+                                         source_conductance=soil_conductance)
+    ...
+```
+
+- **`upscaling(of=, law=, protocol=, references=)`** is metadata (`law`: `"sum"`, `"mean"`, `"weighted_mean"`,
+  `"series"` or `"network"`). `declarations()` lists it (column `upscaling`), the fspm-TF frames carry it.
+- **`solve.network.equivalent_conductance(view, edge_conductance, sources, sinks, source_conductance=)`**: the
+  conductance of a network between two node sets at a unit potential difference, and each source's inflow (one
+  sparse solve; Robin sources with `source_conductance`). It has no physics: the model chooses the protocol.
+- **Observations** (`scene.calibration.read_observations`): one row per measured value, `variable` and `value`,
+  and optionally `table`, `plant`, `time` (s), `uncertainty`, `unit` and `experiment`. `compare(scene, observations)`
+  reads each one's model value from the recorder (converted to the observation's unit from the declared one) and its
+  residual; with several virtual experiments, `compare({experiment: scene, ...}, observations)`.
+- **`objective(run, parameters, observations, declared=, scale=)`**: a callable of the parameters' values, its
+  residuals, for an optimiser (`scipy.optimize.least_squares(cost, x0, bounds=cost.bounds)`): `run(values,
+  experiment)` builds or updates one virtual experiment and returns its scene; the declared `min_value` /
+  `max_value` bound the parameters. Calibrate on the measurement's protocol (a virtual experiment), not on a whole
+  simulation, and check first which parameters the observations constrain (elasticities, a cost map).
+- **Sensitivity analysis** stays in its tools: `from_samples(base, names, matrix, declared=)` turns a SALib sample into
+  scenarios within the declared bounds, `design_table(scenarios)` lays them out to join with the outputs.
+
+MECHA's developer tutorial 10 goes through all of it on a seedling's root system.
+
+## 8. A complete example
 
 `examples/soil_plant_atmosphere/` puts every feature above together, on water flow from a water table through the
 soil and seedlings to a dry atmosphere:
@@ -474,7 +517,7 @@ soil and seedlings to a dry atmosphere:
 
 Its README describes each file and shows the figures.
 
-## 8. Performance notes
+## 9. Performance notes
 
 - Steps, graph systems, tree kernels and exchanges work on whole-population arrays: a step of 1000 plants of 2 000
   segments takes about 2 s in one process.
@@ -510,7 +553,7 @@ ports learned:
   laptop that mixes performance and efficient cores, or throttles in long runs, needs a run pinned to one core
   (`taskset -c 2`) for single-core comparisons.
 
-## 9. Porting a model
+## 10. Porting a model
 
 The ports (GRANAP, MECHA, rhizodep, Adel, ArchiSimple, Caribu) share one approach: the original frozen in
 `<package>.legacy` (or run in its own environment), the port reproducing it first, its behaviours then corrected

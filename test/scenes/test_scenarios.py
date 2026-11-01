@@ -91,3 +91,15 @@ def test_variants():
         variants(base, {"EL": [5e-3]}, declared=[Elongation])
     with pytest.raises(ValueError, match="no declared bounds"):
         variants(base, {"EL": None})
+
+
+def test_samples_of_an_analysis_tool_as_scenarios_and_their_design():
+    from openalea.metafspm.scene.scenarios import design_table, from_samples
+    samples = from_samples({"method": "rk4", "IPD": 6e-3}, ["EL", "IPD"], [[8e-4, 5e-3], [1.2e-3, 7e-3]],
+                           declared=[Elongation])
+    assert list(samples) == ["sample_000", "sample_001"] and samples["sample_001"]["EL"] == pytest.approx(1.2e-3)
+    assert samples["sample_000"]["method"] == "rk4"
+    design = design_table(samples)
+    assert list(design.columns) == ["IPD", "EL"] and design.index.name == "scenario"
+    with pytest.raises(ValueError, match="outside its declared bounds"):
+        from_samples({}, ["EL"], [[1.]], declared=[Elongation])

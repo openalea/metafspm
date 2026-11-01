@@ -20,7 +20,39 @@ _SCALE_INT_TO_LOC: dict = {
 
 _RENAMED = {"initialize": "default", "state_variable_type": "kind", "mapping": "aggregation"}
 DECLARATION_COLUMNS = ["name", "role", "kind", "scale", "unit", "description", "default", "by", "min_value",
-                       "max_value", "references", "DOI", "unit_comment", "value_comment"]
+                       "max_value", "references", "DOI", "unit_comment", "value_comment", "upscaling"]
+UPSCALING_LAWS = ("sum", "mean", "weighted_mean", "series", "network")
+
+
+@dataclass(frozen=True)
+class Upscaling:
+    """What a coarse-scale state variable is the equivalent of, and how: see upscaling()."""
+    of: tuple
+    law: str
+    protocol: str = ""
+    references: str = ""
+
+    def __str__(self) -> str:
+        text = f"{self.law} of {', '.join(self.of)}"
+        return f"{text}: {self.protocol}" if self.protocol else text
+
+
+def upscaling(of, law: str = "network", protocol: str = "", references: str = "") -> Upscaling:
+    """
+    The declaration of an upscaled state variable (state_variable(upscaling=upscaling(...))): the finer-scale
+    variables *of* it summarises (a name or several), the *law* that combines them ("sum", "mean", "weighted_mean",
+    "series", or "network": a solved network, not a reduction), the *protocol* that defines it (the conditions it is
+    computed under, e.g. "uniform soil water potential at the epidermis, the collar's xylem potential fixed"), and
+    its *references*. metafspm does not compute it: the model's step does (e.g. with solve.network's
+    equivalent_conductance). It is listed by declarations() and written in the fspm-TF frames' declarations, so that
+    an observation at the coarse scale can be told which model variable it measures.
+    """
+    of = (of,) if isinstance(of, str) else tuple(of)
+    if not of or not all(isinstance(name, str) and name for name in of):
+        raise ValueError(f"upscaling(of=...): the names of the variables it summarises, got {of!r}")
+    if law not in UPSCALING_LAWS:
+        raise ValueError(f"upscaling(law=...): one of {UPSCALING_LAWS}, got {law!r}")
+    return Upscaling(of=of, law=law, protocol=protocol, references=references)
 
 
 def _renamed(function: str, given: dict) -> dict:
@@ -39,7 +71,7 @@ def _renamed(function: str, given: dict) -> dict:
 def _declare(role: str, unit: str = "", description: str = "", default=None, default_factory=None, kind=None,
              by: str = None, scale=None, location=None, aggregation=None, weight=None, on_grow="default", dtype=None,
              shape=None, min_value=None, max_value=None, unit_comment: str = "", value_comment: str = "",
-             references: str = "", DOI=None, **extra):
+             references: str = "", DOI=None, upscaling=None, **extra):
     """
     The metadata of a declared field, shared by state_variable, input_variable, parameter, setting and
     forcing_variable (see them for the arguments). *role*: "state_variable", "input", "parameter", "setting" or
@@ -52,7 +84,7 @@ def _declare(role: str, unit: str = "", description: str = "", default=None, def
         unit=unit, unit_comment=unit_comment, description=description, min_value=min_value, max_value=max_value,
         value_comment=value_comment, references=references, DOI=list(DOI or []), variable_type=role, by=by,
         kind=kind, scale=scale, on_grow=on_grow, location=location, mapping=aggregation, weight=weight,
-        dtype=dtype, shape=tuple(shape) if shape is not None else None, **extra)
+        dtype=dtype, shape=tuple(shape) if shape is not None else None, upscaling=upscaling, **extra)
     if default_factory:
         return field(default_factory=default_factory, metadata=metadata)
     return field(default=default, metadata=metadata)
@@ -86,7 +118,7 @@ _KINDS = """
 def state_variable(unit: str = "", description: str = "", default=None, kind=None, scale=None, location=None,
                    aggregation=None, weight=None, on_grow="default", dtype=None, shape=None, by: str = None,
                    min_value=None, max_value=None, unit_comment: str = "", value_comment: str = "",
-                   references: str = "", DOI=None, **renamed):
+                   references: str = "", DOI=None, upscaling=None, **renamed):
     return _declare("state_variable", **_merge(locals(), "state_variable"))
 
 
@@ -115,7 +147,9 @@ def _merge(arguments: dict, function: str) -> dict:
 
 
 state_variable.__doc__ = """Declare a state variable, computed by this component's steps or solves. *default*: its
-    initial value (a number, the same everywhere).""" + _KINDS + _PLACE + _DOCUMENTATION
+    initial value (a number, the same everywhere). *upscaling*: for a variable at a coarse scale that is the
+    equivalent of finer ones (a root system's conductance), what it summarises and how (upscaling()).""" + _KINDS \
+    + _PLACE + _DOCUMENTATION
 input_variable.__doc__ = """Declare an input: a variable another component provides (an input named as another
     component's variable of the same DataStructure reads it; a translator link states a rename, a factor or a change
     of scale). *default*: its value when nothing provides it. *by*: the provider, for the documentation. *kind*:
@@ -250,7 +284,7 @@ class Component:
         setting, forcing); kind (extensive, intensive, ...: how it depends on size, None when not declared); scale
         (its name) or location; unit, description, default ("required" or "optional" for a forcing); by (an input's
         provider, a parameter's owner); min_value, max_value (the bounds of its values, None when not declared);
-        references, DOI, unit_comment, value_comment.
+        references, DOI, unit_comment, value_comment; upscaling (an Upscaling, or None).
         """
         import pandas as pd
         scale_names = declared_scale_names()
@@ -275,9 +309,9 @@ class Component:
                              by=meta.get("by"), min_value=_bound(meta.get("min_value")),
                              max_value=_bound(meta.get("max_value")), references=meta.get("references") or "",
                              DOI=list(meta.get("DOI") or []), unit_comment=meta.get("unit_comment") or "",
-                             value_comment=meta.get("value_comment") or ""))
+                             value_comment=meta.get("value_comment") or "", upscaling=meta.get("upscaling")))
         table = pd.DataFrame(rows, columns=DECLARATION_COLUMNS)
-        for column in ("kind", "min_value", "max_value"):
+        for column in ("kind", "min_value", "max_value", "upscaling"):
             table[column] = table[column].astype(object).where(table[column].notna(), None)
         return table
 

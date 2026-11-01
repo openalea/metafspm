@@ -12,8 +12,8 @@
 
 ```{eval-rst}
 .. automodule:: openalea.metafspm.coupling.component
-   :members: state_variable, input_variable, parameter, setting, forcing_variable, DataStructureComponent,
-             FunctionalComponent, StructuralComponent, NewNodes, NewComplexes
+   :members: state_variable, input_variable, parameter, setting, forcing_variable, upscaling, Upscaling,
+             DataStructureComponent, FunctionalComponent, StructuralComponent, NewNodes, NewComplexes
 
 .. automodule:: openalea.metafspm.coupling.declaration
    :members: VariableSpec, DeclarationError, resolve_declaration, default_mapping, kinds_agree, scale_names
@@ -26,6 +26,9 @@
    :members: rate, state, totalrate, totalstate, stepinit, deficit, axial, potential, allocation, actual,
              segmentation, postsegmentation, graph_system, node_balance, node_rate, edge_law, boundary_condition,
              boundary_set, pool_balance, graph_output, graph_jacobian
+
+.. automodule:: openalea.metafspm.solve.network
+   :members: equivalent_conductance
 
 .. automodule:: openalea.metafspm.coupling.choregrapher
    :members: Choregrapher, family_of
@@ -82,7 +85,10 @@ The solvers are chosen by key in `graph_system(solver=...)`: `"newton"`, `"newto
    :members: Planting, Stand, planting, stand, Population, population_data_structure
 
 .. automodule:: openalea.metafspm.scene.scenarios
-   :members: read_scenarios, parameter_table, variants
+   :members: read_scenarios, parameter_table, variants, from_samples, design_table
+
+.. automodule:: openalea.metafspm.scene.calibration
+   :members: read_observations, compare, residuals, objective, Objective
 
 .. automodule:: openalea.metafspm.coupling.forcings
    :members: as_forcing, forcing_value, forcing_table, is_spatial, seconds, time_unit_label
