@@ -1,0 +1,58 @@
+# Use case 1: a wheat plant in its soil and its light (metafspm, ArchiSimple, Adel, GRANAP, MECHA, CNW-Grass's gas
+# exchange, Caribu, and this example's Richards soil). Create it from this folder, the repositories cloned side by
+# side in one parent folder (metafspm, fspm-TF, archisimple, adel, caribu, GRANAP, MECHA-dev, cnwgrass), each on
+# its metafspm branch:
+#
+#     mamba env create -f environment.yaml
+#     conda activate metafspm_use_case_1
+#
+# Not here, on purpose: the original OpenAlea packages the ports replace (openalea.adel, openalea.caribu,
+# openalea.libcaribu, openalea.astk, rpy2, openalea.lpy): the ports install the same import names, and their
+# runtime does not use the originals (only their legacy/ and comparison/ folders do, which this example does not run).
+name: metafspm_use_case_1
+channels:
+  - openalea3            # openalea.mtg, openalea.plantgl
+  - conda-forge
+  - nodefaults           # ignore the defaults channels a ~/.condarc may add
+# flexible: strict priority doubled GRANAP's solve time with no different outcome
+channel_priority: flexible
+
+dependencies:
+  - python >=3.11,<3.14     # GRANAP needs 3.11; openalea.plantgl (via openalea.mtg) has no 3.14 build
+  - pip
+  # metafspm and fspm-TF
+  - openalea.mtg
+  - numpy
+  - scipy >=1.13,<1.18      # sparse solvers; GRANAP's vendored Qhull (Voronoi, cKDTree)
+  - pandas
+  - numba
+  - pyyaml
+  - jsonschema              # openalea.fspm_tf's validation
+  # GRANAP (and MECHA's sections): the geometry stack pinned as in GRANAP, whose golden regression suite pins an
+  # exact cell census that another GEOS build shifts
+  - geos =3.14.1
+  - shapely =2.1.2
+  - geopandas
+  - networkx
+  - munkres
+  - pydantic >=2.7
+  - roifile
+  - lxml                    # MECHA
+  # the example's outputs and tutorial
+  - matplotlib
+  - ipykernel
+  - jupyter
+  - nbconvert
+  - pytest
+  - pip:
+    # cv2 (GRANAP's geometry_collection). From pip rather than conda: every conda opencv 4.13 build needs icu 78,
+    # while openalea.plantgl (required by openalea.mtg) is built on Qt 5 / icu 75, so the solve never ends.
+    - "opencv-python-headless==4.13.0.*"
+    - "-e ../../../fspm-TF"      # openalea.fspm_tf
+    - "-e ../.."                 # openalea.metafspm (this repository)
+    - "-e ../../../archisimple"  # openalea.archisimple: the roots
+    - "-e ../../../adel"         # openalea.adel (the port, branch to_metafspm): the shoot
+    - "-e ../../../caribu"       # openalea.caribu (the port, branch to_metafspm): the light
+    - "-e ../../../GRANAP"       # openalea.granap: an anatomy per segment
+    - "-e ../../../MECHA-dev"    # openalea.mecha: the water flow on the whole plant's network
+    - "-e ../../../cnwgrass"     # openalea.cnw_grass (branch to_metafspm): the gas exchange component, once ported
