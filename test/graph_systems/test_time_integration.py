@@ -57,7 +57,7 @@ class OneStep(Fields):
 
 @dataclass
 class FourSubsteps(Fields):
-    _diffusion = _system(integrate="substeps", n_substeps=4)
+    _diffusion = _system(integrate="substeps", substeps=4)
 
 
 @dataclass
@@ -155,8 +155,8 @@ def test_previous_at_step_is_the_state_at_the_start_of_the_call():
 def test_options_are_checked():
     with pytest.raises(ValueError, match="integrate must be"):
         graph_system(node_unknowns=["c"], integrate="sometimes")
-    with pytest.raises(ValueError, match="n_substeps must be at least 1"):
-        graph_system(node_unknowns=["c"], integrate="substeps", n_substeps=0)
+    with pytest.raises(ValueError, match="substeps must be at least 1"):
+        graph_system(node_unknowns=["c"], integrate="substeps", substeps=0)
     grid, _ = _grid()
     with pytest.raises(ValueError, match="previous\\(at=\\) must be"):
         OneStep(data_structure=grid).previous("solute", at="yesterday")

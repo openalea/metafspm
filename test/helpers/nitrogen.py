@@ -41,12 +41,6 @@ def balance(self, concentration, axial_flux, radial_solute_input):
             + np.asarray(B @ axial_flux).reshape(-1) - radial_solute_input)
 
 
-def balance_target(self, axial_flux, radial_solute_input):
-    """explicit=True: the new concentration, c_old - dt (B q - J)."""
-    B = self._graph_view.incidence
-    return self.previous("concentration") - self.dt * (np.asarray(B @ axial_flux).reshape(-1) - radial_solute_input)
-
-
 def concentration_rate(self, axial_flux, radial_solute_input):
     """The rate form: dc/dt = J - B q."""
     B = self._graph_view.incidence
@@ -94,14 +88,6 @@ class TransportExplicitLaw(NitrogenFields):
 
 
 @dataclass
-class TransportExplicitBalance(NitrogenFields):
-    @graph_system(node_unknowns=["concentration"], edge_unknowns=["axial_flux"])
-    class _solve:
-        _balance = node_balance(field="concentration", explicit=True)(balance_target)
-        _fick = edge_law(field="axial_flux")(fick)
-
-
-@dataclass
 class TransportWithAmount(NitrogenFields):
     @graph_system(node_unknowns=["concentration"], edge_unknowns=["axial_flux"])
     class _solve:
@@ -137,7 +123,7 @@ class TransportDirichlet(NitrogenFields):
 class TransportNeumann(NitrogenFields):
     @graph_system(node_unknowns=["concentration"], edge_unknowns=["axial_flux"])
     class _solve:
-        _balance = node_balance(field="concentration", explicit=True)(balance_target)
+        _balance = node_balance(field="concentration")(balance)
         _fick = edge_law(field="axial_flux")(fick)
 
         @boundary_condition("node", "neumann", field="concentration", filters={"is_root": ">0"})

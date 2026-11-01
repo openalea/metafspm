@@ -24,7 +24,7 @@ Concerns:
 
 import numpy as np
 
-from openalea.metafspm.solve.solver import make_solver
+from openalea.metafspm.solve.solver import _make_solver
 from openalea.metafspm.solve.system_specs import GraphDAESpec, FieldState, UnknownLayout, EquationBlock
 from solver_specs import build_spec_decay_1node, _graph_view
 
@@ -34,7 +34,7 @@ from solver_specs import build_spec_decay_1node, _graph_view
 def test_explicit_euler_one_step_decay(spec_decay_1node):
     """x_new = x (1 − h) for ẋ = −x, h=0.1."""
     h      = 0.1
-    solver = make_solver("explicit_euler")
+    solver = _make_solver("explicit_euler")
     x_new  = solver.step_once(spec_decay_1node, dt=h)
     np.testing.assert_allclose(x_new, [1.0 * (1.0 - h)], atol=1e-12)
 
@@ -42,13 +42,13 @@ def test_explicit_euler_one_step_decay(spec_decay_1node):
 def test_explicit_euler_step_size_dependence():
     for h in [0.05, 0.1, 0.2]:
         spec  = build_spec_decay_1node(x_init=1.0)
-        x_new = make_solver("explicit_euler").step_once(spec, dt=h)
+        x_new = _make_solver("explicit_euler").step_once(spec, dt=h)
         np.testing.assert_allclose(x_new[0], 1.0 - h, atol=1e-12, err_msg=f"h={h}")
 
 
 def test_explicit_euler_nonunit_initial():
     spec  = build_spec_decay_1node(x_init=2.0)
-    x_new = make_solver("explicit_euler").step_once(spec, dt=0.1)
+    x_new = _make_solver("explicit_euler").step_once(spec, dt=0.1)
     np.testing.assert_allclose(x_new, [2.0 * 0.9], atol=1e-12)
 
 
@@ -56,7 +56,7 @@ def test_explicit_euler_nonunit_initial():
 
 def test_explicit_euler_error_estimate_is_zero(spec_decay_1node):
     """_integrate_step must return zero error so DAE solve accepts every step."""
-    solver = make_solver("explicit_euler")
+    solver = _make_solver("explicit_euler")
     p      = solver._update_p(spec_decay_1node, 0.0)
     x      = spec_decay_1node.pack_unknowns()
     x_new, err = solver._integrate_step(spec_decay_1node, 0.0, x, 0.1, p)
@@ -66,7 +66,7 @@ def test_explicit_euler_error_estimate_is_zero(spec_decay_1node):
 # ── 3. _recover_algebraic returns empty array for node-only spec ─────────────
 
 def test_explicit_euler_recover_algebraic_empty(spec_decay_1node):
-    solver = make_solver("explicit_euler")
+    solver = _make_solver("explicit_euler")
     p      = solver._update_p(spec_decay_1node, 0.0)
     x      = spec_decay_1node.pack_unknowns()
     y      = solver._recover_algebraic(spec_decay_1node, x, np.zeros(0), p)
@@ -95,7 +95,7 @@ def test_explicit_euler_rhs_evaluator_path():
         rhs_evaluator=rhs_eval,
         parameters={},
     )
-    solver = make_solver("explicit_euler")
+    solver = _make_solver("explicit_euler")
     x_new  = solver.step_once(spec, dt=0.1)
     # x_new = x + h * (−2x) = x (1 − 2h) = 1 * 0.8 = 0.8
     np.testing.assert_allclose(x_new, [0.8], atol=1e-12)
@@ -104,17 +104,17 @@ def test_explicit_euler_rhs_evaluator_path():
 # ── 5. Interface ──────────────────────────────────────────────────────────────
 
 def test_step_once_returns_ndarray(spec_decay_1node):
-    result = make_solver("explicit_euler").step_once(spec_decay_1node, dt=0.1)
+    result = _make_solver("explicit_euler").step_once(spec_decay_1node, dt=0.1)
     assert isinstance(result, np.ndarray)
 
 
 def test_step_once_1d(spec_decay_1node):
-    result = make_solver("explicit_euler").step_once(spec_decay_1node, dt=0.1)
+    result = _make_solver("explicit_euler").step_once(spec_decay_1node, dt=0.1)
     assert result.ndim == 1
 
 
 def test_step_once_shape_matches_spec(spec_decay_1node):
-    result = make_solver("explicit_euler").step_once(spec_decay_1node, dt=0.1)
+    result = _make_solver("explicit_euler").step_once(spec_decay_1node, dt=0.1)
     assert result.shape == (1,)
 
 
@@ -122,7 +122,7 @@ def test_step_once_shape_matches_spec(spec_decay_1node):
 
 def test_explicit_euler_multiple_steps_monotonic_decay():
     """5 stable explicit-Euler steps (h=0.1 < 1) produce monotonic decay."""
-    solver = make_solver("explicit_euler")
+    solver = _make_solver("explicit_euler")
     h      = 0.1
     x      = 1.0
     prev   = x
@@ -136,10 +136,10 @@ def test_explicit_euler_multiple_steps_monotonic_decay():
 
 def test_explicit_euler_5_steps_matches_formula():
     """x after 5 steps should equal x0*(1-h)^5."""
-    solver = make_solver("explicit_euler")
+    solver = _make_solver("explicit_euler")
     h, x0  = 0.1, 1.0
     x      = x0
     for _ in range(5):
         spec = build_spec_decay_1node(x_init=x)
-        x    = float(make_solver("explicit_euler").step_once(spec, dt=h)[0])
+        x    = float(_make_solver("explicit_euler").step_once(spec, dt=h)[0])
     np.testing.assert_allclose(x, x0 * (1.0 - h) ** 5, atol=1e-12)

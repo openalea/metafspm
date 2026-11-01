@@ -21,7 +21,7 @@ Concerns:
 import numpy as np
 import pytest
 
-from openalea.metafspm.solve.solver import make_solver
+from openalea.metafspm.solve.solver import _make_solver
 from solver_specs import build_spec_decay_1node
 
 
@@ -33,14 +33,14 @@ EXACT_1  = np.exp(-H_TEST)   # ≈ 0.9048
 
 @pytest.mark.parametrize("method", ["scipy_ivp_bdf", "scipy_ivp_radau"])
 def test_scipy_ivp_one_step_decay(method, spec_decay_1node):
-    solver = make_solver(method)
+    solver = _make_solver(method)
     x_new  = solver.step_once(spec_decay_1node, dt=H_TEST)
     np.testing.assert_allclose(x_new[0], EXACT_1, rtol=1e-4)
 
 
 @pytest.mark.parametrize("method", ["scipy_ivp_bdf", "scipy_ivp_radau"])
 def test_scipy_ivp_residual_near_exact(method, spec_decay_1node):
-    solver = make_solver(method)
+    solver = _make_solver(method)
     x_new  = solver.step_once(spec_decay_1node, dt=H_TEST)
     assert abs(x_new[0] - EXACT_1) < 1e-4
 
@@ -49,19 +49,19 @@ def test_scipy_ivp_residual_near_exact(method, spec_decay_1node):
 
 @pytest.mark.parametrize("method", ["scipy_ivp_bdf", "scipy_ivp_radau"])
 def test_step_once_returns_ndarray(method, spec_decay_1node):
-    result = make_solver(method).step_once(spec_decay_1node, dt=H_TEST)
+    result = _make_solver(method).step_once(spec_decay_1node, dt=H_TEST)
     assert isinstance(result, np.ndarray)
 
 
 @pytest.mark.parametrize("method", ["scipy_ivp_bdf", "scipy_ivp_radau"])
 def test_step_once_1d(method, spec_decay_1node):
-    result = make_solver(method).step_once(spec_decay_1node, dt=H_TEST)
+    result = _make_solver(method).step_once(spec_decay_1node, dt=H_TEST)
     assert result.ndim == 1
 
 
 @pytest.mark.parametrize("method", ["scipy_ivp_bdf", "scipy_ivp_radau"])
 def test_step_once_shape(method, spec_decay_1node):
-    result = make_solver(method).step_once(spec_decay_1node, dt=H_TEST)
+    result = _make_solver(method).step_once(spec_decay_1node, dt=H_TEST)
     assert result.shape == (1,)
 
 
@@ -77,7 +77,7 @@ def test_scipy_ivp_more_accurate_than_explicit_euler(method, spec_decay_1node):
     explicit_approx = 1.0 - H_TEST          # 0.9
     euler_error     = abs(explicit_approx - EXACT_1)  # ≈ 0.0048
 
-    solver = make_solver(method)
+    solver = _make_solver(method)
     x_new  = solver.step_once(spec_decay_1node, dt=H_TEST)
     ivp_error = abs(x_new[0] - EXACT_1)
     assert ivp_error < euler_error * 0.1, (
@@ -90,7 +90,7 @@ def test_scipy_ivp_more_accurate_than_explicit_euler(method, spec_decay_1node):
 
 @pytest.mark.parametrize("h", [0.01, 0.05, 0.2])
 def test_scipy_ivp_bdf_various_h(h, spec_decay_1node):
-    solver   = make_solver("scipy_ivp_bdf")
+    solver   = _make_solver("scipy_ivp_bdf")
     x_new    = solver.step_once(spec_decay_1node, dt=h)
     expected = np.exp(-h)
     np.testing.assert_allclose(x_new[0], expected, rtol=1e-4)
@@ -100,7 +100,7 @@ def test_scipy_ivp_bdf_various_h(h, spec_decay_1node):
 
 @pytest.mark.parametrize("method", ["scipy_ivp_bdf", "scipy_ivp_radau"])
 def test_recover_algebraic_empty_for_node_only(method, spec_decay_1node):
-    solver = make_solver(method)
+    solver = _make_solver(method)
     p      = solver._update_p(spec_decay_1node, 0.0)
     x      = spec_decay_1node.pack_unknowns()
     y      = solver._recover_algebraic(spec_decay_1node, x, np.zeros(0), p)
@@ -111,7 +111,7 @@ def test_recover_algebraic_empty_for_node_only(method, spec_decay_1node):
 
 def test_scipy_ivp_bdf_5_steps_track_exact():
     """5 BDF steps from x=1 should stay within rtol=1e-3 of e^{-t}."""
-    solver = make_solver("scipy_ivp_bdf")
+    solver = _make_solver("scipy_ivp_bdf")
     h      = 0.1
     x      = 1.0
     for k in range(1, 6):

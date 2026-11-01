@@ -150,7 +150,7 @@ class WaterMunchTransport(FunctionalComponent):
         kind="intensive", default=0.0, location="node",
     )
 
-    @graph_system(node_unknowns=["xylem_pressure", "phloem_pressure"], solver="newton", max_iter=15)
+    @graph_system(node_unknowns=["xylem_pressure", "phloem_pressure"], solver="newton", max_iterations=15)
     class _transport_solve(_WaterBalancesWithJacobian):
         pass
 
@@ -160,17 +160,17 @@ class WaterMunchFD(WaterMunchTransport):
     """The same balances with the finite-difference Jacobian (the inherited system is removed)."""
     steps_removed = ("transport_solve",)
 
-    @graph_system(node_unknowns=["xylem_pressure", "phloem_pressure"], solver="newton_fd", max_iter=15)
+    @graph_system(node_unknowns=["xylem_pressure", "phloem_pressure"], solver="newton_fd", max_iterations=15)
     class _transport_solve_fd(_WaterBalances):
         pass
 
 
 @dataclass
 class WaterMunchOneStep(WaterMunchTransport):
-    """The analytic Jacobian, with one Newton step and its convergence check (max_iter=2)."""
+    """The analytic Jacobian, with one Newton step and its convergence check (max_iterations=2)."""
     steps_removed = ("transport_solve",)
 
-    @graph_system(node_unknowns=["xylem_pressure", "phloem_pressure"], solver="newton", max_iter=2)
+    @graph_system(node_unknowns=["xylem_pressure", "phloem_pressure"], solver="newton", max_iterations=2)
     class _transport_solve_one_step(_WaterBalancesWithJacobian):
         pass
 

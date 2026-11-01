@@ -21,8 +21,8 @@ from openalea.metafspm.data_structure.configs import ScalesConfig as scales
 from openalea.metafspm.data_structure.data_api import MPGDataStructure
 from openalea.metafspm.solve.decorator import edge_law, graph_system, node_balance, node_rate, rate
 from simple_seedling import generate_simple_mpg_seedling
-from nitrogen import (DOC, DT, K, SCALES, NitrogenFields, Transport, TransportDirichlet, TransportExplicitBalance,
-                      TransportExplicitLaw, TransportNeumann, TransportWithAmount, TransportWithOutput,
+from nitrogen import (DOC, DT, K, SCALES, NitrogenFields, Transport, TransportDirichlet, TransportExplicitLaw,
+                      TransportNeumann, TransportWithAmount, TransportWithOutput,
                       balance, concentration_rate, fick, incidence, nitrogen_ds)
 
 @pytest.fixture(autouse=True)
@@ -104,7 +104,7 @@ def test_a_uniform_concentration_without_source_stays_uniform(scale):
     np.testing.assert_allclose(ds.get("axial_flux"), 0., atol=1e-12)
 
 
-@pytest.mark.parametrize("variant", [TransportExplicitLaw, TransportExplicitBalance])
+@pytest.mark.parametrize("variant", [TransportExplicitLaw])
 def test_explicit_forms_give_the_residual_forms_solution(scale, variant):
     reference, _, _, _ = _run(Transport, scale, seed=7)
     ds, _, _, _ = _run(variant, scale, seed=7)
@@ -164,8 +164,8 @@ def test_a_neumann_inflow_is_a_source_at_the_root(scale):
 @pytest.mark.parametrize("solver, options, atol", [
     ("newton_fd", {}, 1e-10),
     ("newton_fd", {"linesearch": True}, 1e-10),
-    ("scipy_krylov", {"max_iter": 50}, 1e-6),
-    ("scipy_hybr", {"max_iter": 50}, 1e-7),
+    ("scipy_krylov", {"max_iterations": 50}, 1e-6),
+    ("scipy_hybr", {"max_iterations": 50}, 1e-7),
 ], ids=["newton_fd", "newton_fd_linesearch", "scipy_krylov", "scipy_hybr"])
 def test_the_solver_keys_give_newtons_solution(scale, solver, options, atol):
     reference, _, _, _ = _run(Transport, scale)

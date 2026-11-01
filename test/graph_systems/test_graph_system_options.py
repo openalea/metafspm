@@ -66,19 +66,24 @@ def _implicit_step(ds, u0, robin_weight=None, robin_value=None):
 
 # ---------------------------------------------------------------- the solver argument
 
-def test_solver_and_method_cannot_both_be_given():
-    with pytest.raises(TypeError, match="both 'solver' and 'method'"):
-        graph_system(node_unknowns=["u"], solver="implicit_euler", method="newton")
-
-
 def test_an_unknown_solver_key_is_refused():
     with pytest.raises(ValueError, match="Unknown solver 'bogus'"):
         graph_system(node_unknowns=["u"], solver="bogus")
 
 
-def test_a_solver_instance_is_refused():
-    with pytest.raises(TypeError, match="must be a str or an uninstantiated"):
-        graph_system(node_unknowns=["u"], solver=NewtonSolver())
+def test_a_solver_is_chosen_by_its_key_only():
+    for solver in (NewtonSolver, NewtonSolver()):
+        with pytest.raises(TypeError, match="a solver key"):
+            graph_system(node_unknowns=["u"], solver=solver)
+
+
+def test_the_former_option_names_warn():
+    for old, new in (("max_iter", "max_iterations"), ("tol", "tolerance"), ("fd_eps", "finite_difference_step"),
+                     ("n_substeps", "substeps")):
+        with pytest.warns(DeprecationWarning, match=f"renamed {new}="):
+            graph_system(node_unknowns=["u"], **{old: 2})
+    with pytest.warns(DeprecationWarning, match='integrate="once"'):
+        graph_system(node_unknowns=["u"], integrate="st" + "ep")
 
 
 # ---------------------------------------------------------------- solver keys give the same steady solution
@@ -106,8 +111,7 @@ def _steady_class(name, solver):
 STEADY = {"newton": _steady_class("SteadyNewton", "newton"),
           "newton_fd": _steady_class("SteadyNewtonFD", "newton_fd"),
           "scipy_krylov": _steady_class("SteadyKrylov", "scipy_krylov"),
-          "scipy_hybr": _steady_class("SteadyHybr", "scipy_hybr"),
-          "NewtonSolver": _steady_class("SteadyNewtonClass", NewtonSolver)}
+          "scipy_hybr": _steady_class("SteadyHybr", "scipy_hybr")}
 
 
 def _steady(solver):
@@ -118,8 +122,8 @@ def _steady(solver):
     return ds.get("u").copy()
 
 
-@pytest.mark.parametrize("solver", ["newton_fd", "scipy_krylov", "scipy_hybr", "NewtonSolver"])
-def test_solver_keys_and_classes_reach_the_same_steady_solution(solver):
+@pytest.mark.parametrize("solver", ["newton_fd", "scipy_krylov", "scipy_hybr"])
+def test_solver_keys_reach_the_same_steady_solution(solver):
     reference = _steady("newton")
     assert np.abs(reference).max() > 0.1
     np.testing.assert_allclose(_steady(solver), reference, rtol=1e-6, atol=1e-8)
@@ -133,7 +137,7 @@ class Decay(FunctionalComponent):
     time_step = DT
     seen = None
 
-    @graph_system(node_unknowns=["u"], transient=True, integrate="substeps", n_substeps=4)
+    @graph_system(node_unknowns=["u"], transient=True, integrate="substeps", substeps=4)
     class _solve:
         @node_balance(field="u")
         def _balance(self, u):

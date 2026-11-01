@@ -24,7 +24,6 @@ from openalea.metafspm.coupling.component import (FunctionalComponent, Structura
 from openalea.metafspm.data_structure.configs import ScalesConfig as scales
 from openalea.metafspm.solve.decorator import (boundary_condition, edge_law, graph_output, graph_system,
                                                node_balance, postsegmentation)
-from openalea.metafspm.solve.solver import NewtonSolver
 
 from seedling import AXIAL, LEAF_RADIAL, ROOT_RADIAL, STEM_RADIAL, build_seedling
 
@@ -94,7 +93,7 @@ class PlantWaterTransport(FunctionalComponent):
     evaporation: float = state_variable(unit="mm3 s-1", description="Water leaving a stomatal cavity to the air.",
                                         default=0., scale=scales.Compartment, kind="extensive")
 
-    @graph_system(node_unknowns=["water_potential"], edge_unknowns=["water_flux"], solver=NewtonSolver, max_iter=20,
+    @graph_system(node_unknowns=["water_potential"], edge_unknowns=["water_flux"], solver="newton", max_iterations=20,
                   schedule_as="state")
     class _flow:
         """Steady flow: the outflows of each Compartment balance its inflows from the soil and to the air."""
@@ -164,7 +163,7 @@ class SoilWaterTransport(FunctionalComponent):
     evaporation: float = state_variable(unit="mm3 s-1", description="Water leaving a surface cell to the air.",
                                         default=0., location="cell", kind="extensive")
 
-    @graph_system(node_unknowns=["water_potential"], edge_unknowns=["water_flux"], solver=NewtonSolver, max_iter=20,
+    @graph_system(node_unknowns=["water_potential"], edge_unknowns=["water_flux"], solver="newton", max_iterations=20,
                   schedule_as="state")
     class _flow:
         """Steady flow: the outflows of each cell balance the water table, the plants' uptake and the evaporation."""

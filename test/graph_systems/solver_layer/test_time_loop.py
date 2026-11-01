@@ -7,8 +7,7 @@ With c(0) = (1, 0) and K = 1: c0(t) = (1 + exp(-2t)) / 2, c1 = 1 - c0, q = c0 - 
 import numpy as np
 import pytest
 
-from openalea.metafspm.solve.solver import (ExplicitEulerSolver, ImplicitEulerSolver, ScipyIVPSolver, SolverConfig,
-                                            make_solver)
+from openalea.metafspm.solve.solver import ExplicitEulerSolver, ScipyIVPSolver, SolverConfig, _make_solver
 from openalea.metafspm.solve.system_specs import EquationBlock, FieldState, GraphDAESpec, UnknownLayout
 
 from solver_specs import _graph_view, build_spec_decay_1node
@@ -56,15 +55,6 @@ def test_explicit_euler_time_loop_with_edge_recovery():
     assert q == pytest.approx(K * (c0 - c1), abs=1e-8)     # edges recovered at the new node state (nodes fixed)
 
 
-def test_implicit_euler_time_loop():
-    solver = ImplicitEulerSolver(SolverConfig(method="implicit_euler", max_step=0.01, max_steps=10_000))
-    result = solver.solve(build_spec_decay_1node(), t_span=(0., 1.))
-    x = result.x[:, 0]
-    assert result.success and result.n_steps >= 100
-    assert np.all(np.diff(x) < 0)
-    assert x[-1] == pytest.approx(np.exp(-1.), rel=1e-2)
-
-
 def test_scipy_ivp_step_with_edge_unknowns():
     spec = _diffusion_spec()
     packed = ScipyIVPSolver(SolverConfig(method="scipy_ivp_bdf", rtol=1e-8, atol=1e-10)).step_once(spec, dt=0.5)
@@ -80,23 +70,15 @@ def test_scipy_ivp_time_loop_with_edge_unknowns():
     np.testing.assert_allclose(result.x[-1], _exact(1.), rtol=1e-4, atol=1e-8)
 
 
-def test_solvers_start_from_the_given_state():
-    """_integrate_step used to restart from the spec's initial guess and ignore x."""
-    spec = build_spec_decay_1node(x_init=1.)
-    solver = ImplicitEulerSolver(SolverConfig(method="implicit_euler"))
-    x_new, _ = solver._integrate_step(spec, 0., np.array([0.5]), 0.1, {}, prev_fields={"x": np.array([0.5])})
-    assert x_new[0] == pytest.approx(0.5 / 1.1)
-
-
-# ---------------------------------------------------------------- make_solver configuration
+# ---------------------------------------------------------------- _make_solver configuration
 
 def test_make_solver_accepts_a_dict_config():
-    solver = make_solver("newton", {"tol": 1e-3, "max_iter": 7})
+    solver = _make_solver("newton", {"tol": 1e-3, "max_iter": 7})
     assert (solver.config.tol, solver.config.max_iter, solver.config.method) == (1e-3, 7, "newton")
 
 
 def test_make_solver_rejects_unknown_options():
     with pytest.raises(TypeError, match="tolerance"):
-        make_solver("newton", {"tolerance": 1e-3})
+        _make_solver("newton", {"tolerance": 1e-3})
     with pytest.raises(TypeError, match="SolverConfig"):
-        make_solver("newton", 1e-3)
+        _make_solver("newton", 1e-3)

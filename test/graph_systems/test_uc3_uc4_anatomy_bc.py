@@ -74,7 +74,7 @@ class TissueHydraulics(FunctionalComponent):
     is_collar: float = input_variable(**DOC, by="Setup", default=0., location="node")
     edge_water_flux: float = state_variable(**DOC, default=0., location="edge", kind="extensive")
 
-    @graph_system(node_unknowns=["water_potential"], solver="newton", max_iter=5)
+    @graph_system(node_unknowns=["water_potential"], solver="newton", max_iterations=5)
     class _pressure_solve(_HydraulicsWithJacobian):
         pass
 
@@ -84,7 +84,7 @@ class TissueHydraulicsOneStep(TissueHydraulics):
     """The analytic Jacobian with one Newton step and its convergence check."""
     steps_removed = ("pressure_solve",)
 
-    @graph_system(node_unknowns=["water_potential"], solver="newton", max_iter=2)
+    @graph_system(node_unknowns=["water_potential"], solver="newton", max_iterations=2)
     class _pressure_solve_one_step(_HydraulicsWithJacobian):
         pass
 
@@ -94,7 +94,7 @@ class TissueHydraulicsFD(TissueHydraulics):
     """The finite-difference Jacobian."""
     steps_removed = ("pressure_solve",)
 
-    @graph_system(node_unknowns=["water_potential"], solver="newton_fd", max_iter=5)
+    @graph_system(node_unknowns=["water_potential"], solver="newton_fd", max_iterations=5)
     class _pressure_solve_fd(_Hydraulics):
         pass
 
@@ -170,7 +170,7 @@ class TissueHydraulicsSparse(TissueHydraulics):
     """The analytic Jacobian as a sparse matrix (large anatomies): the boundary sets' terms added sparse."""
     steps_removed = ("pressure_solve",)
 
-    @graph_system(node_unknowns=["water_potential"], solver="newton", max_iter=2)
+    @graph_system(node_unknowns=["water_potential"], solver="newton", max_iterations=2)
     class _pressure_solve_sparse(_HydraulicsWithSparseJacobian):
         pass
 
@@ -199,7 +199,7 @@ class ChainFields(FunctionalComponent):
 
 @dataclass
 class ChainDirichlet(ChainFields):
-    @graph_system(node_unknowns=["pressure"], solver="newton", max_iter=50, tol=1e-12)
+    @graph_system(node_unknowns=["pressure"], solver="newton", max_iterations=50, tolerance=1e-12)
     class _solve:
         _balance = node_balance(field="pressure")(_laplacian)
         collar = boundary_set(filters={"is_collar": ">0"}, kind="dirichlet", value=2.0)
@@ -207,7 +207,7 @@ class ChainDirichlet(ChainFields):
 
 @dataclass
 class ChainNeumann(ChainFields):
-    @graph_system(node_unknowns=["pressure"], solver="newton", max_iter=50, tol=1e-12)
+    @graph_system(node_unknowns=["pressure"], solver="newton", max_iterations=50, tolerance=1e-12)
     class _solve:
         @node_balance(field="pressure")
         def _balance(self, pressure, K):
@@ -254,7 +254,7 @@ def test_uc4_a_neumann_inflow_is_balanced_by_the_leakage():
 @dataclass
 class ChainDirichletSparse(ChainFields):
     """A Dirichlet set with a sparse analytic Jacobian: its rows become the identity's."""
-    @graph_system(node_unknowns=["pressure"], solver="newton", max_iter=3, tol=1e-12)
+    @graph_system(node_unknowns=["pressure"], solver="newton", max_iterations=3, tolerance=1e-12)
     class _solve:
         _balance = node_balance(field="pressure")(_laplacian)
         collar = boundary_set(filters={"is_collar": ">0"}, kind="dirichlet", value=2.0)

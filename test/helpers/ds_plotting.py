@@ -7,7 +7,7 @@ Every public function accepts an abstract-base-class instance and uses
     GraphDataStructure  →  node_ids(), edges(), node_property(), incidence_matrix()
     FieldDataStructure  →  coordinates(), extract_state(), n_dof
 
-This is the same insulation the solver and GraphSystemBuilder will use:
+This is the same insulation the solver and _GraphSystemBuilder will use:
 the consumer never cares whether it receives an MPGDataStructure or an
 ArrayDataStructure.
 """

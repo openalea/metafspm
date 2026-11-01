@@ -43,14 +43,8 @@ from openalea.metafspm.solve.system_specs   import (
     SolverResult,
 )
 from openalea.metafspm.solve.solver         import (
-    SolverConfig, SolverSpec, make_solver, SOLVER_REGISTRY, ImplicitEulerSolver, ExplicitEulerSolver, ScipyIVPSolver, NewtonSolver,
+    SolverConfig, _SOLVER_REGISTRY, ExplicitEulerSolver, ScipyIVPSolver,
 )
-
-# Canonical method string for each concrete solver class (first key in SOLVER_REGISTRY wins).
-_CLASS_TO_METHOD: dict = {}
-for _k, _v in SOLVER_REGISTRY.items():
-    if _v not in _CLASS_TO_METHOD:
-        _CLASS_TO_METHOD[_v] = _k
 
 # Map MPG integer scale constants → generic "node"/"edge" for snapshot routing.
 from openalea.metafspm.data_structure.configs import ScalesConfig as _ScalesConfig
@@ -90,7 +84,7 @@ def _step(name: str, *, total: bool = False, iterating: bool = False):
         if func is None:
             return lambda f: decorator(f, vectorized=vectorized, location=location, locations=locations,
                                        filters=filters, include_inactive=include_inactive)
-        check_filters(filters, f"@{name} {func.__name__}")
+        _check_filters(filters, f"@{name} {func.__name__}")
         func.__filters__ = filters
         func.__include_inactive__ = include_inactive
         func.__step_tag__ = {"name": name, "total": total, "iterating": iterating, "vectorized": vectorized}
@@ -102,8 +96,6 @@ def _step(name: str, *, total: bool = False, iterating: bool = False):
         return func
     return decorator
 
-priorbalance     = _step("priorbalance", iterating=True)
-selfbalance      = _step("selfbalance", iterating=True)
 stepinit         = _step("stepinit", iterating=True)
 state            = _step("state")
 rate             = _step("rate")
@@ -122,23 +114,23 @@ postsegmentation = _step("postsegmentation")
 # Method-level decorators for graph systems  (public API)
 # ═══════════════════════════════════════════════════════════════════════════════
 
-def node_balance(field=None, filters=None, explicit=False):
+def node_balance(field=None, filters=None):
     """
     Tag a method as a node residual block for *field*.
 
     Parameters
     ----------
     field    : str   node-unknown field this block contributes to.
-    filters  : the nodes the block applies on ({variable: condition}, a mask name or a callable, see Filters), e.g.
+    filters  : the nodes the block applies on ({variable: condition}, a mask name or a callable: conventions.md), e.g.
                {"tissue": CORTEX}; the method's node arguments are sliced to them, and it contributes 0 elsewhere.
                Values the method reads through self (self.previous(), self.data_structure) are not sliced.
-    explicit : bool  when True the method returns the target value;
-                     the framework generates R = unknown − value automatically.
+    The method returns the residual (its time term written with self.previous() and self.dt); @node_rate is the
+    rate form.
     """
     def decorator(func):
         func.__graph_tag__ = {
             "kind": "node_balance", "field": field,
-            "filters": filters, "explicit": explicit,
+            "filters": filters, "explicit": False,
         }
         return func
     return decorator
@@ -183,7 +175,7 @@ def edge_law(func=None, *, field=None, filters=None,
     ----------
     field    : str   edge-unknown field this block contributes to.
     filters  : the edges the law applies on ({variable: condition} on edge variables, a mask name or a callable,
-               see Filters).
+               conventions.md).
     explicit : bool  method returns the value; R = unknown − value generated.
     integrate: bool  add the integrated amount "{field}_amount" (Q_new = Q_old + q dt) as an edge unknown.
     """
@@ -216,7 +208,7 @@ def boundary_condition(location, kind, field=None, filters=None, explicit=False)
                ``p - collar_pressure``; with explicit=True, the prescribed value itself);
                "neumann": the method's values are an inflow, subtracted from the residual, as boundary_set's.
     field    : the node unknown it applies to.
-    filters  : the nodes ({variable: condition}, a mask name or a callable, see Filters). Default: every node.
+    filters  : the nodes ({variable: condition}, a mask name or a callable: conventions.md). Default: every node.
     explicit : for dirichlet, the method returns the prescribed value instead of a residual.
     """
     if location == "edge":
@@ -226,7 +218,7 @@ def boundary_condition(location, kind, field=None, filters=None, explicit=False)
         raise ValueError(f"@boundary_condition: location must be 'node', got '{location}'")
     if kind not in ("dirichlet", "neumann"):
         raise ValueError(f"@boundary_condition: kind must be 'dirichlet' or 'neumann', got '{kind}'")
-    check_filters(filters, "@boundary_condition")
+    _check_filters(filters, "@boundary_condition")
 
     def decorator(func):
         func.__graph_tag__ = {
@@ -238,7 +230,7 @@ def boundary_condition(location, kind, field=None, filters=None, explicit=False)
     return decorator
 
 
-def check_filters(filters, owner: str) -> None:
+def _check_filters(filters, owner: str) -> None:
     """Refuse a filters= that is not a {variable: condition} dict, a mask name or a callable."""
     if filters is None or callable(filters) or isinstance(filters, str) or (isinstance(filters, dict) and filters):
         return
@@ -246,7 +238,7 @@ def check_filters(filters, owner: str) -> None:
                     f"got {filters!r}")
 
 
-class Filters:
+class _Filters:
     """
     The elements a decorator operates on, from its filters= argument::
 
@@ -261,7 +253,7 @@ class Filters:
     """
 
     def __init__(self, rule, key: str, location: str = "node"):
-        check_filters(rule, key)
+        _check_filters(rule, key)
         self.rule, self.key, self.location = rule, key, location
 
     def mask_name(self, ds) -> str:
@@ -293,7 +285,7 @@ class boundary_set:
 
     Arguments::
 
-        filters {variable: condition} | a mask name | a callable ds -> boolean mask (see Filters); membership
+        filters {variable: condition} | a mask name | a callable ds -> boolean mask (conventions.md); membership
                 follows the selecting variables and topology changes.
         kind    "robin":     + w * (x - v) in the field's residual (an outflow towards the external value v);
                 "dirichlet": the residual row becomes x - v;
@@ -321,7 +313,7 @@ class boundary_set:
         self.kind_variable = kinds
         if filters is None:
             raise TypeError("boundary_set: filters= is required (the nodes of the set)")
-        check_filters(filters, "boundary_set")
+        _check_filters(filters, "boundary_set")
         self.filters, self.kind, self.value, self.weight, self.field = filters, kind, value, weight, field
         self.name = None
         self.__graph_tag__ = {"kind": "boundary_set"}
@@ -336,7 +328,7 @@ class boundary_set:
 
     def members(self, instance, ds, size, take) -> np.ndarray:
         """Indices, in the solved graph, of the nodes of the set."""
-        return Filters(self.filters, f"{type(instance).__name__}.{self.name}").members(ds, take)
+        return _Filters(self.filters, f"{type(instance).__name__}.{self.name}").members(ds, take)
 
 
 def graph_jacobian(func):
@@ -350,14 +342,14 @@ def graph_output(name, location: str = None, filters=None):
     Tag a method as a named post-solve output hook. *location* ("node" or "edge") is required when *name* is not a
     declared field and its size does not identify a single location.
 
-    filters: the nodes the output is computed on ({variable: condition}, a mask name or a callable, see Filters);
+    filters: the nodes the output is computed on ({variable: condition}, a mask name or a callable: conventions.md);
     the method's node arguments are sliced to them, and the other nodes get 0. Node outputs only.
     """
     if location not in (None, "node", "edge"):
         raise ValueError(f"@graph_output('{name}'): location must be 'node' or 'edge', got '{location}'")
     if filters is not None and location == "edge":
         raise ValueError(f"@graph_output('{name}'): filters= chooses nodes, not edges")
-    check_filters(filters, f"@graph_output('{name}')")
+    _check_filters(filters, f"@graph_output('{name}')")
 
     def decorator(func):
         func.__graph_tag__ = {"kind": "graph_output", "name": name, "location": location, "filters": filters}
@@ -365,7 +357,7 @@ def graph_output(name, location: str = None, filters=None):
     return decorator
 
 
-def infer_output_location(owner: str, name: str, shape: tuple, shapes: dict) -> str:
+def _infer_output_location(owner: str, name: str, shape: tuple, shapes: dict) -> str:
     """
     Location of an undeclared output that gives none, from its shape: accepted, with a DeprecationWarning, only
     when exactly one of *shapes* ({location: shape}) matches; ambiguous or unmatched shapes raise.
@@ -630,11 +622,11 @@ def _snapshot(instance, required_names, node_vids_int, edge_vids_int,
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# GraphSystemBuilder
+# _GraphSystemBuilder
 # Replaces the inline assembly logic of _invoke_graph_system with a class
 # ═══════════════════════════════════════════════════════════════════════════════
 
-class GraphSystemBuilder:
+class _GraphSystemBuilder:
     """
     Builds a GraphDAESpec from a model instance and a graph_system spec dict,
     drives one solve step, and writes results back.
@@ -704,7 +696,7 @@ class GraphSystemBuilder:
                 key   = f"{type(instance).__name__}.{inner_cls.__name__}.{attr_name}"
                 selection = None
                 if tag.get("filters") is not None:
-                    selection = Filters(tag["filters"], key, "edge" if kind == "edge_law" else "node")
+                    selection = _Filters(tag["filters"], key, "edge" if kind == "edge_law" else "node")
                 if kind in ("node_balance", "node_rate"):
                     node_balance_items.append((
                         tag["field"], selection, attr_name, bound, obj,
@@ -1176,11 +1168,7 @@ class GraphSystemBuilder:
         """
         spec, _, _ = self.build()
         self.last_spec = spec
-        solver_cls = self._spec_def.get("solver_cls")
-        if solver_cls is not None:
-            solver = solver_cls(self._spec_cfg())
-        else:
-            solver = make_solver(self._spec_def["method"], self._spec_cfg())
+        solver = self._spec_def["solver_cls"](self._spec_cfg())
         packed  = solver.step_once(spec, previous_node_fields, dt)
         outputs = solver.derive_outputs(spec, packed, previous_node_fields, dt)
         return packed, outputs
@@ -1231,7 +1219,7 @@ def _invoke_graph_system(self, method_name: str) -> None:
     Build, solve, and write back one named graph-system.
 
     This is the refactored version of the old monolithic _invoke_graph_system.
-    It now delegates each concern to GraphSystemBuilder:
+    It now delegates each concern to _GraphSystemBuilder:
       build()            → GraphDAESpec construction
       build_and_step()   → spec + solver.step_once() + derive_outputs()
       inject_result()    → write-back to the DataStructure
@@ -1243,7 +1231,7 @@ def _invoke_graph_system(self, method_name: str) -> None:
     filters = spec_def.get("filters")
     # The active subgraph: the DataStructure mask of the system's filters
     where = (None if filters is None
-             else Filters(filters, f"{type(self).__name__}.{method_name}").mask_name(_live_ds(self)))
+             else _Filters(filters, f"{type(self).__name__}.{method_name}").mask_name(_live_ds(self)))
     split = spec_def.get("split", "whole") == "components"
     if where is None and not split:
         _solve_graph_system(self, method_name, spec_def)
@@ -1365,7 +1353,7 @@ def _shared_with_previous(self, key, array) -> bool:
 def _solve_graph_system(self, method_name: str, spec_def: dict) -> None:
     """
     Integrate one graph system over the component's time step:
-    "step" one solve of time_step; "substeps" n solves of time_step / n; "adaptive" step doubling. During each
+    "once" one solve of time_step; "substeps" n solves of time_step / n; "adaptive" step doubling. During each
     (sub-)step, self.dt is its length and self.previous(fn) the state at its start.
     """
     ds = _live_ds(self)
@@ -1380,7 +1368,7 @@ def _solve_graph_system(self, method_name: str, spec_def: dict) -> None:
         for fn in unknowns if ds.has(fn)}
     try:
         self.__dict__["_solve_offset"] = 0.         # start of the current (sub-)step within the call (forcings)
-        if integrate == "step":
+        if integrate == "once":
             self.__dict__["_current_dt"] = time_step
             _solve_once(self, method_name, spec_def)
         elif integrate == "substeps":
@@ -1453,21 +1441,12 @@ def _solve_once(self, method_name: str, spec_def: dict) -> None:
     previous_fields = getattr(self, _prev_key, None)
     dt = self.__dict__.get("_current_dt", getattr(self, "time_step", None))
 
-    # First implicit_euler call: use current field values as u_prev
-    _solver_cls = spec_def.get("solver_cls")
-    _is_implicit = (
-        spec_def.get("method") == "implicit_euler" or
-        (_solver_cls is not None and issubclass(_solver_cls, ImplicitEulerSolver))
-    )
-    if previous_fields is None and _is_implicit:
-        previous_fields = {fn: np.array(_live_ds(self).get(fn), dtype=np.float64).reshape(-1)
-                           for fn in spec_def["node_unknowns"]}
     take = _take(self, "node")
     if previous_fields is not None and take is not None:
         previous_fields = {fn: np.asarray(values)[take] for fn, values in previous_fields.items()}
 
     # ── Build + solve ─────────────────────────────────────────────────────────
-    builder = GraphSystemBuilder(self, spec_def)
+    builder = _GraphSystemBuilder(self, spec_def)
     packed, outputs = builder.build_and_step(
         previous_node_fields=previous_fields,
         dt=dt,
@@ -1498,7 +1477,7 @@ def _solve_once(self, method_name: str, spec_def: dict) -> None:
                                  f"'{oname}' is registered at {ds.location(oname)}")
         else:
             if location is None:
-                location = infer_output_location(type(self).__name__, oname, arr.shape,
+                location = _infer_output_location(type(self).__name__, oname, arr.shape,
                                                   {"node": (n,), "edge": (self._graph_view.n_edges,)})
             ds.register(oname, location=_entity_location(ds, location))
         if restriction is None:
@@ -1559,101 +1538,94 @@ class _GraphSystemDescriptor:
 # Public class decorator
 # ═══════════════════════════════════════════════════════════════════════════════
 
+_GRAPH_SYSTEM_RENAMES = {"max_iter": "max_iterations", "tol": "tolerance", "fd_eps": "finite_difference_step",
+                         "n_substeps": "substeps"}
+
+
 def graph_system(
     node_unknowns,
-    edge_unknowns  = (),
-    solver         = "newton",
-    method         = None,
-    max_iter       = 15,
-    tol            = 1e-10,
-    fd_eps         = 1e-8,
-    prefer_sparse  = True,
-    linesearch     = False,
-    schedule_as    = "axial",
-    filters        = None,
-    transient      = None,
-    integrate      = "step",
-    n_substeps     = 1,
-    rtol           = 1e-6,
-    atol           = 1e-9,
-    min_step       = None,
-    max_step       = None,
-    split          = "whole",
-    pool_unknowns  = None,
+    edge_unknowns          = (),
+    solver                 = "newton",
+    max_iterations         = 15,
+    tolerance              = 1e-10,
+    finite_difference_step = 1e-8,
+    prefer_sparse          = True,
+    linesearch             = False,
+    schedule_as            = "axial",
+    filters                = None,
+    transient              = None,
+    integrate              = "once",
+    substeps               = 1,
+    rtol                   = 1e-6,
+    atol                   = 1e-9,
+    min_step               = None,
+    max_step               = None,
+    split                  = "whole",
+    pool_unknowns          = None,
+    **renamed,
 ):
     """
-    Inner-class decorator that wires a GraphSystem solve into the Choregrapher.
-
-    Usage::
-
-        from openalea.metafspm.solve.solver import NewtonSolver
+    Inner-class decorator that wires a graph-system solve into the schedule::
 
         @dataclass
         class MyModel(FunctionalComponent):
 
-            @graph_system(node_unknowns=["pressure"], solver=NewtonSolver,
-                          schedule_as="axial")
+            @graph_system(node_unknowns=["pressure"], solver="newton", schedule_as="axial")
             class _pressure_solve:
 
                 @node_balance(field="pressure")
                 def _balance(self, pressure, K, soil_pressure): ...
 
-                @edge_law
+                @edge_law(field="flux")
                 def _darcy(self, pressure, K): ...
 
-    Parameters
-    ----------
-    node_unknowns  : list[str]
-        Ordered node-unknown field names.
-    edge_unknowns  : list[str]
-        Ordered edge-unknown field names.
-    solver         : str | type
-        Either a solver-registry key (e.g. ``"newton"``, ``"newton_fd"``,
-        ``"implicit_euler"``) for backward compatibility, or an uninstantiated
-        ``DAESolver`` subclass (e.g. ``NewtonSolver``, ``ImplicitEulerSolver``).
-        Passing the class directly is preferred: it is transparent and
-        inspectable without registry look-up.
-    method         : str | None
-        Deprecated alias for *solver*.  If supplied alongside *solver*, raises
-        ``TypeError``.
-    max_iter       : int     Newton / nonlinear iteration cap.
-    tol            : float   convergence criterion (||R||_inf).
-    fd_eps         : float   finite-difference step for FD Jacobian.
-    prefer_sparse  : bool    use sparse linear solves when available.
-    linesearch     : bool    Armijo backtracking in Newton loop.
-    schedule_as    : str     Choregrapher step name.
-    filters        : the nodes of the active subgraph the system is solved on ({variable: condition}, a mask name or
-        a callable, see Filters): the nodes it selects and the edges between them; the other nodes are frozen, and
+    node_unknowns, edge_unknowns: the ordered names of the node (field= of the equations) and edge unknowns.
+    solver: a key, "newton" (default), "newton_fd" (finite-difference Jacobian), "explicit_euler",
+        "scipy_krylov", "scipy_anderson", "scipy_hybr", "scipy_ivp_bdf" or "scipy_ivp_radau" ("implicit_euler" is
+        "newton" with transient=True, accepted with a warning for one release).
+    max_iterations, tolerance (||R||_inf), finite_difference_step (of the finite-difference Jacobian),
+        prefer_sparse, linesearch (Armijo backtracking): the Newton iterations.
+    schedule_as: the schedule row the solve runs in ("axial", "state", ...).
+    filters: the nodes of the active subgraph the system is solved on ({variable: condition}, a mask name or a
+        callable, conventions.md, Filters): the nodes it selects and the edges between them; the other nodes are frozen, and
         dropped edges carry no flux. None: the whole graph.
-    transient      : bool | None
-        Whether the balance has a time derivative. Steady systems on an active subgraph need a Dirichlet anchor in
-        every connected piece, which is checked. Default: True for the time-stepping solvers (explicit and implicit
-        Euler, IVP), False otherwise.
-    integrate      : "step" | "substeps" | "adaptive"
-        "step": one solve of the component's time_step (default); "substeps": n_substeps solves of
-        time_step / n_substeps; "adaptive": step doubling with rtol / atol, min_step / max_step. Equations must
-        write their time terms with self.dt and self.previous().
-    rtol, atol, max_step : the error control of "adaptive" and of the IVP solvers (scipy_ivp_bdf, scipy_ivp_radau).
-    pool_unknowns  : {name: location} | {name: {"location": ..., "exchange": boundary set name}} | None
-        Unknowns at a coarse scale, one per entity (e.g. the shoot phloem pool of each plant, location "Plant"),
-        solved with the node and edge unknowns. Their residual is a @pool_balance method; equations exchange
-        with them through self.pool_exchange(name), the sparse map between the nodes of the exchange set (default:
-        every node) and the pool of their entity. Newton solvers only.
-    split          : "whole" | "components"
-        "components": each connected piece of the graph (of the active subgraph with filters=), e.g. each plant of a
-        population, is solved on its own, with its own Newton convergence and integration steps. "whole": one
+    transient: whether the balance has a time term; it only decides the anchoring check (a steady system on an
+        active subgraph needs a Dirichlet anchor in every connected piece). Inferred: True with @node_rate or a
+        time-stepping solver (explicit_euler, the IVP solvers); give transient=True for a @node_balance writing its
+        own time term (self.previous(...)).
+    integrate: "once": one solve of the component's time_step (default); "substeps": *substeps* solves of
+        time_step / substeps; "adaptive": step doubling with rtol / atol, min_step / max_step. Equations write
+        their time terms with self.dt and self.previous().
+    rtol, atol, max_step: the error control of "adaptive" and of the IVP solvers (scipy_ivp_bdf, scipy_ivp_radau).
+    pool_unknowns: unknowns at a coarse scale, one per entity ({name: location} or {name: {"location": ...,
+        "exchange": boundary set name}}, e.g. the shoot phloem pool of each plant, location "Plant"), solved with the
+        node and edge unknowns. Their residual is a @pool_balance method; equations exchange with them through
+        self.pool_exchange(name), the sparse map between the nodes of the exchange set (default: every node) and the
+        pool of their entity. Newton solvers only.
+    split: "components": each connected piece of the graph (of the active subgraph with filters=), e.g. each plant
+        of a population, is solved on its own, with its own Newton convergence and integration steps. "whole": one
         system (default).
+    The former names max_iter, tol, fd_eps, n_substeps and integrate="step" are accepted with a warning for one
+    release.
     """
-    # Backward-compat: honour deprecated method= kwarg.
-    if method is not None:
-        if solver != "newton":
-            raise TypeError(
-                "graph_system() received both 'solver' and 'method'.  "
-                "Use 'solver' only; 'method' is a deprecated alias."
-            )
-        solver = method
+    for name, value in renamed.items():
+        if name not in _GRAPH_SYSTEM_RENAMES:
+            raise TypeError(f"graph_system() got an unexpected keyword argument '{name}'")
+        warnings.warn(f"graph_system({name}=...) is renamed {_GRAPH_SYSTEM_RENAMES[name]}=", DeprecationWarning,
+                      stacklevel=2)
+        if name == "max_iter":
+            max_iterations = value
+        elif name == "tol":
+            tolerance = value
+        elif name == "fd_eps":
+            finite_difference_step = value
+        else:
+            substeps = value
+    if integrate == "step":
+        warnings.warn('graph_system(integrate="step") is renamed integrate="once"', DeprecationWarning, stacklevel=2)
+        integrate = "once"
 
-    check_filters(filters, "graph_system")
+    _check_filters(filters, "graph_system")
     pools = {}
     for pool_name, pool_spec in (pool_unknowns or {}).items():
         pool_spec = {"location": pool_spec} if isinstance(pool_spec, str) else dict(pool_spec)
@@ -1662,35 +1634,23 @@ def graph_system(
         pools[pool_name] = {"location": pool_spec["location"], "exchange": pool_spec.get("exchange")}
     if split not in ("whole", "components"):
         raise ValueError(f"graph_system: split must be 'whole' or 'components', got '{split}'")
-    if integrate not in ("step", "substeps", "adaptive"):
-        raise ValueError(f"graph_system: integrate must be 'step', 'substeps' or 'adaptive', got '{integrate}'")
-    if integrate == "substeps" and int(n_substeps) < 1:
-        raise ValueError("graph_system: n_substeps must be at least 1")
+    if integrate not in ("once", "substeps", "adaptive"):
+        raise ValueError(f"graph_system: integrate must be 'once', 'substeps' or 'adaptive', got '{integrate}'")
+    if integrate == "substeps" and int(substeps) < 1:
+        raise ValueError("graph_system: substeps must be at least 1")
 
-    # Resolve to (solver_cls, method_str) pair.
-    if isinstance(solver, str):
-        solver_cls = SOLVER_REGISTRY.get(solver)
-        if solver_cls is None:
-            raise ValueError(
-                f"Unknown solver {solver!r}.  "
-                f"Valid keys: {sorted(SOLVER_REGISTRY)}.  "
-                "Alternatively, pass an uninstantiated DAESolver subclass."
-            )
-        method_str = solver
-    elif isinstance(solver, type):
-        solver_cls = solver
-        method_str = _CLASS_TO_METHOD.get(solver_cls, solver_cls.__name__.lower())
-    else:
-        raise TypeError(
-            f"graph_system() solver must be a str or an uninstantiated "
-            f"DAESolver subclass, got {type(solver).__name__!r}."
-        )
-
-    if issubclass(solver_cls, ImplicitEulerSolver):
+    if not isinstance(solver, str):
+        raise TypeError(f"graph_system(solver=...): a solver key, one of {sorted(_SOLVER_REGISTRY)}, got "
+                        f"{solver!r}")
+    if solver == "implicit_euler":
         warnings.warn("solver='implicit_euler' is deprecated: it is solver='newton' with transient=True, the "
                       "equations writing their time terms (or given as @node_rate)", DeprecationWarning, stacklevel=2)
-        solver_cls, method_str = NewtonSolver, "newton"
+        solver = "newton"
         transient = True if transient is None else transient
+    solver_cls = _SOLVER_REGISTRY.get(solver)
+    if solver_cls is None:
+        raise ValueError(f"Unknown solver {solver!r}. Valid keys: {sorted(_SOLVER_REGISTRY)}.")
+    method_str = solver
     rate_solver = issubclass(solver_cls, (ExplicitEulerSolver, ScipyIVPSolver))
 
     if pools and rate_solver:
@@ -1701,15 +1661,15 @@ def graph_system(
         "edge_unknowns" : list(edge_unknowns),
         "solver_cls"    : solver_cls,
         "method"        : method_str,
-        "max_iter"      : max_iter,
-        "tol"           : tol,
-        "fd_eps"        : fd_eps,
+        "max_iter"      : max_iterations,
+        "tol"           : tolerance,
+        "fd_eps"        : finite_difference_step,
         "prefer_sparse" : prefer_sparse,
         "linesearch"    : linesearch,
         "schedule_as"   : schedule_as,
         "filters"       : filters,
         "integrate"     : integrate,
-        "n_substeps"    : n_substeps,
+        "n_substeps"    : substeps,
         "rtol"          : rtol,
         "atol"          : atol,
         "min_step"      : min_step,

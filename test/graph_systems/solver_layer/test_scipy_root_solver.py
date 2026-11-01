@@ -19,7 +19,7 @@ Concerns:
 import numpy as np
 import pytest
 
-from openalea.metafspm.solve.solver import make_solver
+from openalea.metafspm.solve.solver import _make_solver
 
 
 # ── Tolerance used for root-finding assertions ────────────────────────────────
@@ -31,14 +31,14 @@ ROOT_TOL = 1e-6   # scipy root methods are slightly less tight than Newton
 
 @pytest.mark.parametrize("method", ["scipy_krylov", "scipy_anderson", "scipy_hybr"])
 def test_scipy_root_scalar_convergence(method, spec_nonlinear_1node):
-    solver = make_solver(method)
+    solver = _make_solver(method)
     x_new  = solver.step_once(spec_nonlinear_1node)
     np.testing.assert_allclose(abs(x_new[0]), 2.0, atol=ROOT_TOL)
 
 
 @pytest.mark.parametrize("method", ["scipy_krylov", "scipy_anderson", "scipy_hybr"])
 def test_scipy_root_scalar_residual_near_zero(method, spec_nonlinear_1node):
-    solver = make_solver(method)
+    solver = _make_solver(method)
     x_new  = solver.step_once(spec_nonlinear_1node)
     R      = spec_nonlinear_1node.residual(x_new, None, None)
     assert float(np.linalg.norm(R, ord=np.inf)) < ROOT_TOL
@@ -48,7 +48,7 @@ def test_scipy_root_scalar_residual_near_zero(method, spec_nonlinear_1node):
 
 @pytest.mark.parametrize("method", ["scipy_krylov", "scipy_anderson", "scipy_hybr"])
 def test_scipy_root_linear_2node(method, spec_linear_2node):
-    solver = make_solver(method)
+    solver = _make_solver(method)
     x_new  = solver.step_once(spec_linear_2node)
     np.testing.assert_allclose(x_new, [1.6, 1.8], atol=ROOT_TOL)
 
@@ -57,19 +57,19 @@ def test_scipy_root_linear_2node(method, spec_linear_2node):
 
 @pytest.mark.parametrize("method", ["scipy_krylov", "scipy_anderson", "scipy_hybr"])
 def test_step_once_returns_ndarray(method, spec_nonlinear_1node):
-    result = make_solver(method).step_once(spec_nonlinear_1node)
+    result = _make_solver(method).step_once(spec_nonlinear_1node)
     assert isinstance(result, np.ndarray)
 
 
 @pytest.mark.parametrize("method", ["scipy_krylov", "scipy_anderson", "scipy_hybr"])
 def test_step_once_1d(method, spec_nonlinear_1node):
-    result = make_solver(method).step_once(spec_nonlinear_1node)
+    result = _make_solver(method).step_once(spec_nonlinear_1node)
     assert result.ndim == 1
 
 
 @pytest.mark.parametrize("method", ["scipy_krylov", "scipy_anderson", "scipy_hybr"])
 def test_step_once_shape_matches_n_dof(method, spec_nonlinear_1node):
-    result = make_solver(method).step_once(spec_nonlinear_1node)
+    result = _make_solver(method).step_once(spec_nonlinear_1node)
     assert result.shape == (1,)
 
 
@@ -77,7 +77,7 @@ def test_step_once_shape_matches_n_dof(method, spec_nonlinear_1node):
 
 def test_all_methods_agree_on_scalar_root(spec_nonlinear_1node):
     results = {
-        method: make_solver(method).step_once(spec_nonlinear_1node)
+        method: _make_solver(method).step_once(spec_nonlinear_1node)
         for method in ["scipy_krylov", "scipy_anderson", "scipy_hybr"]
     }
     for method, x_new in results.items():
@@ -91,7 +91,7 @@ def test_all_methods_agree_on_scalar_root(spec_nonlinear_1node):
 
 def test_scipy_hybr_with_jacobian_converges(spec_nonlinear_1node):
     """hybr + analytic Jacobian must still converge (not just skip it)."""
-    solver = make_solver("scipy_hybr")
+    solver = _make_solver("scipy_hybr")
     x_new  = solver.step_once(spec_nonlinear_1node)
     np.testing.assert_allclose(abs(x_new[0]), 2.0, atol=ROOT_TOL)
 
@@ -99,7 +99,7 @@ def test_scipy_hybr_with_jacobian_converges(spec_nonlinear_1node):
 # ── 6. Recovery algebraic is no-op ───────────────────────────────────────────
 
 def test_scipy_root_recover_algebraic_empty(spec_nonlinear_1node):
-    solver = make_solver("scipy_hybr")
+    solver = _make_solver("scipy_hybr")
     p      = solver._update_p(spec_nonlinear_1node, 0.0)
     x      = spec_nonlinear_1node.pack_unknowns()
     y      = solver._recover_algebraic(spec_nonlinear_1node, x, np.zeros(0), p)

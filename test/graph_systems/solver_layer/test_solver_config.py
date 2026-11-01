@@ -1,21 +1,21 @@
-"""Tests for SolverConfig, SOLVER_REGISTRY, and make_solver factory.
+"""Tests for SolverConfig, _SOLVER_REGISTRY, and _make_solver factory.
 
 Concerns:
-  1. SolverConfig defaults and SolverSpec alias
-  2. make_solver returns correct concrete class for every registered method
-  3. make_solver preserves config fields (tol, max_iter, …)
-  4. make_solver raises on unknown method
+  1. SolverConfig defaults
+  2. _make_solver returns correct concrete class for every registered method
+  3. _make_solver preserves config fields (tol, max_iter, …)
+  4. _make_solver raises on unknown method
   5. All registry entries are instantiable without error
 """
 
 import pytest
 
 from openalea.metafspm.solve.solver import (
-    SolverConfig, SolverSpec,
+    SolverConfig,
     AbstractSolver, ODESolver, DAESolver,
-    NewtonSolver, ImplicitEulerSolver, ExplicitEulerSolver,
-    LinearDirectSolver, ScipyRootSolver, ScipyIVPSolver,
-    SOLVER_REGISTRY, make_solver,
+    NewtonSolver, ExplicitEulerSolver,
+    ScipyRootSolver, ScipyIVPSolver,
+    _SOLVER_REGISTRY, _make_solver,
 )
 
 
@@ -45,19 +45,12 @@ def test_default_prefer_sparse():
     assert SolverConfig().prefer_sparse is True
 
 
-def test_solver_spec_is_alias():
-    assert SolverSpec is SolverConfig
-
-
-# ── 2. make_solver returns correct type ──────────────────────────────────────
+# ── 2. _make_solver returns correct type ──────────────────────────────────────
 
 @pytest.mark.parametrize("method,expected_cls", [
     ("newton",                   NewtonSolver),
     ("newton_fd",                NewtonSolver),
-    ("newton_optional_jacobian", NewtonSolver),
-    ("implicit_euler",           ImplicitEulerSolver),
     ("explicit_euler",           ExplicitEulerSolver),
-    ("linear_direct",            LinearDirectSolver),
     ("scipy_krylov",             ScipyRootSolver),
     ("scipy_anderson",           ScipyRootSolver),
     ("scipy_hybr",               ScipyRootSolver),
@@ -65,46 +58,41 @@ def test_solver_spec_is_alias():
     ("scipy_ivp_radau",          ScipyIVPSolver),
 ])
 def test_make_solver_returns_correct_class(method, expected_cls):
-    s = make_solver(method)
+    s = _make_solver(method)
     assert isinstance(s, expected_cls)
 
 
 def test_make_solver_unknown_method_raises():
     with pytest.raises(ValueError, match="Unknown solver"):
-        make_solver("no_such_method")
+        _make_solver("no_such_method")
 
 
 def test_make_solver_error_mentions_valid_methods():
     with pytest.raises(ValueError, match="newton"):
-        make_solver("bad_method")
+        _make_solver("bad_method")
 
 
 # ── 3. Config preservation ────────────────────────────────────────────────────
 
 def test_make_solver_preserves_tol():
     cfg = SolverConfig(tol=1e-5)
-    s = make_solver("newton", cfg)
+    s = _make_solver("newton", cfg)
     assert s.config.tol == 1e-5
 
 
 def test_make_solver_preserves_max_iter():
     cfg = SolverConfig(max_iter=50)
-    s = make_solver("newton", cfg)
+    s = _make_solver("newton", cfg)
     assert s.config.max_iter == 50
 
 
 def test_make_solver_stamps_method_in_config():
-    s = make_solver("newton_fd")
+    s = _make_solver("newton_fd")
     assert s.config.method == "newton_fd"
 
 
-def test_make_solver_stamps_method_implicit_euler():
-    s = make_solver("implicit_euler")
-    assert s.config.method == "implicit_euler"
-
-
 def test_make_solver_none_config_uses_defaults():
-    s = make_solver("newton", None)
+    s = _make_solver("newton", None)
     assert s.config.tol == SolverConfig().tol
 
 
@@ -114,16 +102,8 @@ def test_newton_is_dae_solver():
     assert issubclass(NewtonSolver, DAESolver)
 
 
-def test_implicit_euler_is_dae_solver():
-    assert issubclass(ImplicitEulerSolver, DAESolver)
-
-
 def test_explicit_euler_is_dae_solver():
     assert issubclass(ExplicitEulerSolver, DAESolver)
-
-
-def test_linear_direct_is_dae_solver():
-    assert issubclass(LinearDirectSolver, DAESolver)
 
 
 def test_scipy_root_is_dae_solver():
@@ -145,15 +125,14 @@ def test_ode_solver_is_abstract_solver():
 # ── 5. All registry entries instantiable ─────────────────────────────────────
 
 def test_registry_all_entries_instantiable():
-    for method in SOLVER_REGISTRY:
-        s = make_solver(method)
+    for method in _SOLVER_REGISTRY:
+        s = _make_solver(method)
         assert isinstance(s, AbstractSolver), f"{method!r} did not produce AbstractSolver"
 
 
 def test_registry_has_expected_methods():
     expected = {
-        "newton", "newton_fd", "implicit_euler", "explicit_euler",
-        "linear_direct", "scipy_krylov", "scipy_anderson", "scipy_hybr",
+        "newton", "newton_fd", "explicit_euler", "scipy_krylov", "scipy_anderson", "scipy_hybr",
         "scipy_ivp_bdf", "scipy_ivp_radau",
     }
-    assert expected.issubset(set(SOLVER_REGISTRY))
+    assert set(_SOLVER_REGISTRY) == expected

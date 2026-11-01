@@ -76,8 +76,6 @@ class SolverConfig:
     dense_output : bool  = False
 
 
-# Backward-compatibility alias
-SolverSpec = SolverConfig
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -587,64 +585,6 @@ class NewtonSolver(DAESolver):
         return np.zeros(0)
 
 
-class ImplicitEulerSolver(DAESolver):
-    """
-    Backward-Euler transient DAE solver.
-
-    Augments the spatial residual with (u − u_prev)/h (where h serves as dt)
-    and the Jacobian with I/h, then drives the augmented system to zero via
-    Newton.  Both node and edge unknowns are solved jointly (implicit path).
-
-    On the first call (prev_fields=None) falls back to NewtonSolver so the
-    initial state is the quasi-static equilibrium.
-
-    solver="implicit_euler".
-    """
-
-    @property
-    def order(self) -> int:
-        return 1
-
-    def _integrate_step(self, spec, t, x, h, p, prev_fields=None):
-        if h is None or h <= 0:
-            raise ValueError(
-                "ImplicitEulerSolver requires h > 0 (h serves as dt). "
-                "Set self.time_step on the model or pass dt to step_once()."
-            )
-        if prev_fields is None:
-            # First call: no history → quasi-static initialisation
-            return NewtonSolver(self.config)._integrate_step(
-                spec, t, x, h, p, None
-            )
-
-        u_prev = spec.pack_unknowns(node_overrides=prev_fields)
-        packed = np.array(x, dtype=np.float64, copy=True)
-        N      = len(packed)
-
-        for step_i in range(self.config.max_iter):
-            R = spec.residual(packed, prev_fields, h) + (packed - u_prev) / h
-            # Always take at least one step so we compute the backward-Euler
-            # solution rather than just confirming the initial guess.
-            if step_i > 0 and np.linalg.norm(R, ord=np.inf) < self.config.tol:
-                return packed, np.zeros_like(packed)
-
-            J_s = spec.jacobian(packed, prev_fields, h)
-            J   = (J_s + eye(N, format="csr") * (1.0 / h)
-                   if issparse(J_s) else
-                   np.asarray(J_s, dtype=np.float64) + np.eye(N) / h)
-
-            packed = packed + self._linear_step(J, R, spec)
-
-        raise AssertionError(
-            f"ImplicitEuler Newton did not converge in {self.config.max_iter} "
-            f"iterations; final ||R||inf = {np.linalg.norm(R, ord=np.inf):.3e}"
-        )
-
-    def _recover_algebraic(self, spec, x, y_prev, p):
-        """No-op: x and y are solved jointly."""
-        return np.zeros(0)
-
-
 class ExplicitEulerSolver(DAESolver):
     """
     Forward (explicit) Euler time integration.
@@ -715,39 +655,6 @@ class ExplicitEulerSolver(DAESolver):
             return np.zeros(0)
         n_node_dof = spec.graph.n_nodes * len(spec.unknowns.node_fields)
         return _recover_edges(spec, x, tol=self.config.tol * 0.1, max_iter=self.config.max_iter)[n_node_dof:]
-
-
-class LinearDirectSolver(DAESolver):
-    """
-    One-shot direct sparse/dense solve for linear DAE systems: A x = b.
-
-    Requires spec.matrix_evaluator and spec.rhs_evaluator to be set.
-    solver="linear_direct".
-    """
-
-    @property
-    def order(self) -> int:
-        return 1
-
-    def _integrate_step(self, spec, t, x, h, p, prev_fields=None):
-        packed = spec.pack_unknowns()
-        mat    = spec._eval_matrix(packed, prev_fields, h)
-        rhs    = spec._eval_rhs(packed, prev_fields, h)
-        if issparse(mat):
-            if self.config.prefer_sparse:
-                result = np.asarray(
-                    spsolve(mat.tocsr(), rhs), dtype=np.float64
-                ).reshape(-1)
-            else:
-                result = np.linalg.solve(mat.toarray(), rhs)
-        else:
-            result = np.linalg.solve(
-                np.asarray(mat, dtype=np.float64), rhs
-            ).reshape(-1)
-        return result, np.zeros_like(result)
-
-    def _recover_algebraic(self, spec, x, y_prev, p):
-        return np.zeros(0)
 
 
 class ScipyRootSolver(DAESolver):
@@ -916,13 +823,10 @@ class ScipyIVPSolver(DAESolver):
 # Registry and factory
 # ═══════════════════════════════════════════════════════════════════════════════
 
-SOLVER_REGISTRY: dict[str, type] = {
+_SOLVER_REGISTRY: dict[str, type] = {
     "explicit_euler"           : ExplicitEulerSolver,
     "newton"                   : NewtonSolver,
     "newton_fd"                : NewtonSolver,
-    "newton_optional_jacobian" : NewtonSolver,
-    "implicit_euler"           : ImplicitEulerSolver,
-    "linear_direct"            : LinearDirectSolver,
     "scipy_krylov"             : ScipyRootSolver,
     "scipy_anderson"           : ScipyRootSolver,
     "scipy_hybr"               : ScipyRootSolver,
@@ -931,20 +835,20 @@ SOLVER_REGISTRY: dict[str, type] = {
 }
 
 
-def make_solver(method: str, config=None) -> AbstractSolver:
+def _make_solver(method: str, config=None) -> AbstractSolver:
     """
     Factory: method string → concrete solver instance.
 
     Parameters
     ----------
-    method : str     one of SOLVER_REGISTRY keys.
+    method : str     one of _SOLVER_REGISTRY keys.
     config : SolverConfig | None
     """
-    cls = SOLVER_REGISTRY.get(method)
+    cls = _SOLVER_REGISTRY.get(method)
     if cls is None:
         raise ValueError(
             f"Unknown solver method {method!r}. "
-            f"Valid: {sorted(SOLVER_REGISTRY)}."
+            f"Valid: {sorted(_SOLVER_REGISTRY)}."
         )
     if config is None:
         cfg = SolverConfig(method=method)

@@ -11,7 +11,7 @@ import pytest
 from openalea.metafspm.coupling.component import FunctionalComponent, state_variable
 from openalea.metafspm.data_structure.configs import ScalesConfig as scales
 from openalea.metafspm.data_structure.data_api import ArrayDataStructure, MPGDataStructure
-from openalea.metafspm.solve.decorator import graph_output, infer_output_location, rate, totalrate
+from openalea.metafspm.solve.decorator import graph_output, _infer_output_location, rate, totalrate
 from simple_seedling import generate_simple_mpg_seedling
 
 DOC = dict(unit="", unit_comment="", description="", min_value=0., max_value=1., value_comment="", references="",
@@ -31,11 +31,11 @@ def ds():
 
 def test_inference_needs_exactly_one_matching_location():
     with pytest.warns(DeprecationWarning, match="'node' was inferred from its shape"):
-        assert infer_output_location("Probe", "x", (5,), {"node": (5,), "edge": (4,)}) == "node"
+        assert _infer_output_location("Probe", "x", (5,), {"node": (5,), "edge": (4,)}) == "node"
     with pytest.raises(ValueError, match=r"matches several locations \['node', 'edge'\]"):
-        infer_output_location("Probe", "x", (5,), {"node": (5,), "edge": (5,)})   # n == m
+        _infer_output_location("Probe", "x", (5,), {"node": (5,), "edge": (5,)})   # n == m
     with pytest.raises(ValueError, match="matches no location"):
-        infer_output_location("Probe", "x", (7,), {"node": (5,), "edge": (4,)})
+        _infer_output_location("Probe", "x", (7,), {"node": (5,), "edge": (4,)})
 
 
 def test_graph_output_location_is_checked():

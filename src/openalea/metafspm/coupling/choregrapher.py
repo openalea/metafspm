@@ -5,7 +5,7 @@ from functools import partial
 # Executor singleton
 class Singleton:
     _instance = None
-    universal_steps = ["priorbalance", "selfbalance", "stepinit", "state", "totalstate", "rate", "totalrate", "deficit", 
+    universal_steps = ["stepinit", "state", "totalstate", "rate", "totalrate", "deficit", 
                        "axial", "potential", "allocation", "actual", "segmentation", "postsegmentation"]
 
     def __new__(class_, *args, **kwargs):
@@ -29,7 +29,6 @@ class Choregrapher(Singleton):
     """
 
     consensus_scheduling = [
-            ["priorbalance", "selfbalance"],
             ["stepinit", "rate", "totalrate", "state", "totalstate"],  # metabolic models
             ["axial"],  # subcategoy for metabolic models
             ["potential", "deficit", "allocation", "actual", "segmentation", "postsegmentation"],  # growth models

@@ -11,7 +11,7 @@ from openalea.metafspm.coupling.component import FunctionalComponent, state_vari
 from openalea.metafspm.coupling.translator import Translator
 from openalea.metafspm.data_structure.configs import ScalesConfig as scales
 from openalea.metafspm.data_structure.data_api import ArrayDataStructure, MPGDataStructure
-from openalea.metafspm.solve.decorator import Filters, _read_array, boundary_condition
+from openalea.metafspm.solve.decorator import _Filters, _read_array, boundary_condition
 from openalea.metafspm.testing import couplability_problems
 from simple_seedling import generate_simple_mpg_seedling
 
@@ -86,12 +86,12 @@ def test_a_missing_graph_variable_raises_instead_of_reading_zeros(ds):
 
 def test_a_missing_filter_variable_raises_instead_of_selecting_everything(seedling_ds_for_filters):
     with pytest.raises(KeyError, match="variable 'is_root' is not registered"):
-        Filters({"is_root": [1]}, "test").mask(seedling_ds_for_filters)
+        _Filters({"is_root": [1]}, "test").mask(seedling_ds_for_filters)
 
 
 def test_a_filters_string_names_a_mask(seedling_ds_for_filters):
     with pytest.raises(KeyError, match="names no mask"):
-        Filters("is_root", "test").mask(seedling_ds_for_filters)
+        _Filters("is_root", "test").mask(seedling_ds_for_filters)
 
 
 @pytest.fixture

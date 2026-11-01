@@ -144,8 +144,8 @@ class Functor:
                       and (values.ndim == 1 or (ds.has(name) and ds.get(name).shape[1:] == values.shape[1:])))
             if not ds.has(name):
                 if masked and name not in declared:
-                    from openalea.metafspm.solve.decorator import infer_output_location
-                    location = infer_output_location(f"{type(instance).__name__}.{self.name}", name, values.shape,
+                    from openalea.metafspm.solve.decorator import _infer_output_location
+                    location = _infer_output_location(f"{type(instance).__name__}.{self.name}", name, values.shape,
                                                      {mask_location: values.shape})
                 else:
                     location = self._output_location(instance, ds, name, values, declared)
@@ -173,9 +173,9 @@ class Functor:
         rule = getattr(self.fun, "__filters__", None)
         if rule is None:
             return active if active is not None else (None, None)
-        from openalea.metafspm.solve.decorator import Filters
+        from openalea.metafspm.solve.decorator import _Filters
         location = self._filters_location(ds, rule)
-        name = Filters(rule, f"{type(instance).__name__}.{self.name}", location).mask_name(ds)
+        name = _Filters(rule, f"{type(instance).__name__}.{self.name}", location).mask_name(ds)
         mask, location = ds.mask(name), ds.__dict__["_masks"][name]["location"]
         if active is not None and active[1] == location:
             mask = mask & active[0]
@@ -201,10 +201,10 @@ class Functor:
             return location
         if self.total or values.ndim == 0:
             return "scalar"
-        from openalea.metafspm.solve.decorator import infer_output_location
+        from openalea.metafspm.solve.decorator import _infer_output_location
         stores = ds._var_stores()
         shapes = {location: ds._location_shape(location) for location in ("node", "edge", "cell") if location in stores}
-        return infer_output_location(f"{type(instance).__name__}.{self.name}", name, values.shape, shapes)
+        return _infer_output_location(f"{type(instance).__name__}.{self.name}", name, values.shape, shapes)
 
     def __call__(self, instance, data, *args):
         """Run the step on *data*, the component's DataStructure (iterating steps only receive the instance)."""

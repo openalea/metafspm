@@ -169,7 +169,7 @@ class Forced(FunctionalComponent):
     time_step = DT
     seen = None
 
-    @graph_system(node_unknowns=["sugar"], transient=True, integrate="substeps", n_substeps=4)
+    @graph_system(node_unknowns=["sugar"], transient=True, integrate="substeps", substeps=4)
     class _solve:
         @node_balance(field="sugar")
         def _balance(self, sugar):

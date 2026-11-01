@@ -262,7 +262,7 @@ class GraphDAESpec(BaseSystemSpec):
 
     Together ODESystemSpec and GraphDAESpec cover the two main use cases:
       ODESystemSpec  →  ArrayDataStructure / FieldSpecBuilder (env models)
-      GraphDAESpec   →  MPGDataStructure / GraphSystemBuilder (plant graph)
+      GraphDAESpec   →  MPGDataStructure / _GraphSystemBuilder (plant graph)
 
     This class is the spec-and-evaluation half of the old GraphSystem.
     The solve half lives in solver.py.  GraphSystem (below) is the
@@ -609,7 +609,7 @@ class GraphSystem:
           - an AbstractSolver instance passed directly (new API)
           - a SolverConfig / SolverSpec (legacy: builds solver from method string)
         """
-        from .solver import AbstractSolver, make_solver, SolverConfig
+        from .solver import AbstractSolver, _make_solver as make_solver, SolverConfig
         if isinstance(self.solver, AbstractSolver):
             return self.solver
         if isinstance(self.solver, SolverConfig):

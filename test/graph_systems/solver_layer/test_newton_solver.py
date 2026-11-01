@@ -17,7 +17,7 @@ Concerns:
 import numpy as np
 import pytest
 
-from openalea.metafspm.solve.solver import NewtonSolver, SolverConfig, make_solver
+from openalea.metafspm.solve.solver import NewtonSolver, SolverConfig, _make_solver
 from solver_specs import build_spec_nonlinear_1node, build_spec_linear_2node
 
 
@@ -63,21 +63,21 @@ def test_newton_linear_2node_from_nonzero_init():
 # ── 3. FD Jacobian ────────────────────────────────────────────────────────────
 
 def test_newton_fd_scalar_converges(spec_nonlinear_1node):
-    solver = make_solver("newton_fd")
+    solver = _make_solver("newton_fd")
     x_new  = solver.step_once(spec_nonlinear_1node)
     np.testing.assert_allclose(x_new, [2.0], atol=1e-6)
 
 
 def test_newton_fd_agrees_with_analytic(spec_nonlinear_1node):
     s_analytic = NewtonSolver(SolverConfig(method="newton"))
-    s_fd       = make_solver("newton_fd")
+    s_fd       = _make_solver("newton_fd")
     x_analytic = s_analytic.step_once(spec_nonlinear_1node)
     x_fd       = s_fd.step_once(spec_nonlinear_1node)
     np.testing.assert_allclose(x_analytic, x_fd, atol=1e-6)
 
 
 def test_newton_fd_linear_2node_converges(spec_linear_2node):
-    solver = make_solver("newton_fd")
+    solver = _make_solver("newton_fd")
     x_new  = solver.step_once(spec_linear_2node)
     np.testing.assert_allclose(x_new, [1.6, 1.8], atol=1e-6)
 
