@@ -377,11 +377,11 @@ class UnionDataStructure(VariableStoreMixin, DataStructure):
         return Triangles.concatenate([part.triangles(selection) for part, selection in zip(self.parts, selections)],
                                      offsets=[piece.start for piece in slices])
 
-    def labels(self, of: str = None) -> np.ndarray:
-        """The parts' node labels (MPGDataStructure.labels; with *of*, each node's entity's at that scale), in the
-        union's order."""
+    def labels(self, location: str = None) -> np.ndarray:
+        """The parts' node labels (MPGDataStructure.labels; with *location*, each node's entity's at that scale), in
+        the union's order."""
         self.update_topology()
-        return np.concatenate([np.asarray(part.labels(of), dtype=object) for part in self.parts]) \
+        return np.concatenate([np.asarray(part.labels(location), dtype=object) for part in self.parts]) \
             if self.parts else np.zeros(0, dtype=object)
 
     def outdated(self) -> bool:

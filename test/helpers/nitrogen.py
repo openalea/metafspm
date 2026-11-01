@@ -30,7 +30,7 @@ def nitrogen_ds(scale="SubOrgan"):
 
 
 def incidence(ds):
-    return ds.incidence_matrix().toarray()
+    return ds._incidence_matrix().toarray()
 
 
 # ---------------------------------------------------------------- the equations

@@ -270,7 +270,7 @@ def test_grids_are_rebuilt_exactly():
     _same_variables(grid, again["soil"])
     _same_variables(adaptive, again["fine_soil"])
     np.testing.assert_array_equal(adaptive.entity_ids("cell"), again["fine_soil"].entity_ids("cell"))
-    np.testing.assert_array_equal(adaptive.levels(), again["fine_soil"].levels())
+    np.testing.assert_array_equal(adaptive.refinement_level(), again["fine_soil"].refinement_level())
 
 
 def test_a_mapping_is_written():

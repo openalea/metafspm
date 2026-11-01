@@ -36,7 +36,7 @@ def _check_balances(scene):
     assert uptake > 0 and uptake == pytest.approx(transpiration, rel=1e-8)          # the plants: in = out
     assert float(soil.get("plant_uptake").sum()) == pytest.approx(uptake, rel=1e-8)  # the soil gives what they take
     # the soil: the water table feeds the plants' uptake and the soil evaporation
-    outflow = np.asarray(soil.incidence_matrix() @ np.asarray(soil.get("water_flux"))).reshape(-1)
+    outflow = np.asarray(soil._incidence_matrix() @ np.asarray(soil.get("water_flux"))).reshape(-1)
     from_the_water_table = float(outflow[np.asarray(soil.get("is_water_table")).reshape(-1) > 0].sum())
     evaporation = float(soil.get("evaporation").sum())
     assert from_the_water_table == pytest.approx(uptake + evaporation, rel=1e-6)
@@ -78,7 +78,7 @@ def test_the_adaptive_soil_refines_where_the_roots_take_up_water(tmp_path):
     assert scene.stopped and stop.history[-1] < 1e-6
     _check_balances(scene)
     soil = scene.environment[0]
-    levels, sinks = soil.grid.levels(), soil.sink_density() > soil.refine_fraction * soil.sink_density().max()
+    levels, sinks = soil.grid.refinement_level(), soil.sink_density() > soil.refine_fraction * soil.sink_density().max()
     assert (levels[sinks] == soil.grid.max_level).all()                       # the sinks at the finest size
     assert soil.grid.n_nodes() < 0.1 * np.prod(soil.grid.shape) * 8 ** soil.grid.max_level
     np.testing.assert_array_equal(soil.history[-1], soil.history[-2])           # the grid settled

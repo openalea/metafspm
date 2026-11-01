@@ -33,7 +33,7 @@ class MPG(MTG):
         self.convert_properties_to_arraydict()
     
 
-    def add_system_root_at_scale(self, scale, **propargs):
+    def _add_system_root_at_scale(self, scale, **propargs):
         """
         Method used to create a root for current modelled achitecture at one of the systematic scales of the MPG
         """
@@ -77,29 +77,6 @@ class MPG(MTG):
         return v
 
 
-    @classmethod
-    def from_mtg(cls, mtg):
-        """
-        Create a fresh MPG whose parent-chain topology is read from *mtg*.
-
-        The source MTG is never modified.  The returned MPG holds its own
-        vertex structure (scale anchors + data vertices) and is typically used
-        as a transient object: populate it with populate_graph() or
-        populate_graph_custom_connections(), wrap it in an MPGDataStructure,
-        then discard it.
-
-        Parameters
-        ----------
-        mtg : MTG
-            Source MTG instance (e.g. the model's self.g).  Only its
-            parent() / vertex topology is queried; its properties are
-            not copied into the MPG.
-        """
-        mpg = cls()
-        mpg._source_mtg = mtg
-        return mpg
-
-
     def populate_graph(self, from_scale, filter_in=None, filter_out=None):
         """Populate Compartment nodes and Connection edges from all vertices at *from_scale*.
 
@@ -139,7 +116,7 @@ class MPG(MTG):
 
         # Pass 1: one Compartment node per from_scale vertex.
         # seg_to_node preserves post_order insertion order, required by Pass 3 chaining.
-        ordered = [vid for vid in self.post_order_mpg() if vid in valid_vids]
+        ordered = [vid for vid in self._post_order_mpg() if vid in valid_vids]
         compartments = self.add_components_bulk(
             node_anchor, len(ordered), topo_parents=ordered, vertex_id=ordered,
             **PropsConfig(scale=self.scales.Compartment, label=self.labels.Compartment.Symplastic, edge_type='/'))
@@ -310,7 +287,7 @@ class MPG(MTG):
         if orphans and valid.ids.size > len(orphans):
             # A new vertex with no linked parent is chained to the other roots of its plant by populate_graph's
             # pass 3, in traversal order: rebuild everything in that rare case (not met by segment growth)
-            self.repopulate_graph(from_scale)
+            self._repopulate_graph(from_scale)
             return {"added": added, "removed": removed, "relinked": [], "repopulated": True}
         self.add_components_bulk(node_anchor, len(added), topo_parents=added, vertex_id=added,
                                  **PropsConfig(scale=self.scales.Compartment,
@@ -326,7 +303,7 @@ class MPG(MTG):
                                                label=self.labels.Connection.Symplastic, edge_type='/'))
         return {"added": added, "removed": removed, "relinked": relinked}
 
-    def repopulate_graph(self, from_scale, filter_in=None, filter_out=None):
+    def _repopulate_graph(self, from_scale, filter_in=None, filter_out=None):
         """Clear all Compartment/Connection nodes and rebuild from *from_scale*.
 
         This is the idempotent counterpart of populate_graph(): safe to call
@@ -376,42 +353,6 @@ class MPG(MTG):
 
         self.populate_graph(from_scale, filter_in=filter_in, filter_out=filter_out)
         self.convert_properties_to_arraydict()
-
-    def populate_graph_custom_connections(self, from_scale, custom_connections,
-                                          filter_in=None, filter_out=None):
-        """Wire Connection edges between existing Compartment nodes at *from_scale*.
-
-        Compartment nodes are assumed to already exist, linked to their from_scale
-        vertex via add_component_with_topo(node_anchor, vid, ...).  The method
-        discovers the same topology and creates one Connection edge per entry in
-        *custom_connections* between matching compartments of adjacent from_scale
-        vertices (selected by label).  It is wire_junctions() on every vertex.
-
-        Parameters
-        ----------
-        from_scale : int
-            Scale whose vertices provide topology (e.g. g.scales.SubOrgan).
-        custom_connections : list of dict
-            Each entry specifies one inter-organ link type::
-
-              node_label — label of the Compartment nodes to pair
-              edge_label — label of the Connection edge to create
-              ordering   — (optional) name of a numerical property stored on the
-                           Compartment nodes.  When given, nodes on each side are
-                           matched by minimum absolute distance in that property
-                           (greedy nearest-neighbour, each node used at most once).
-                           When absent, all-to-all edges are created between the
-                           two sets.
-
-            See wire_junctions() for the other matching modes and callable rules.
-        filter_in, filter_out : dict, optional
-            ``{property_name: value}`` — include / exclude from_scale vertices.
-
-        Notes
-        -----
-        Call convert_properties_to_arraydict() after this method.
-        """
-        self.wire_junctions(from_scale, custom_connections, filter_in=filter_in, filter_out=filter_out)
 
     # ── Junctions between the anatomies of adjacent vertices ──
 
@@ -1130,7 +1071,7 @@ class MPG(MTG):
                     yield node
 
 
-    def pre_order_mpg(self, vtx_id=None, skip_anchors=True):
+    def _pre_order_mpg(self, vtx_id=None, skip_anchors=True):
         """Pre-order multiscale traversal of an MPG.
 
         Yields each vertex *before* its descendants, combining two axes:
@@ -1174,7 +1115,7 @@ class MPG(MTG):
                 stack.extend(reversed(list(self._component_topo_preorder(comps))))
 
 
-    def post_order_mpg(self, vtx_id=None, skip_anchors=True):
+    def _post_order_mpg(self, vtx_id=None, skip_anchors=True):
         """Post-order multiscale traversal of an MPG.
 
         Yields each vertex *after* all its descendants, combining two axes:
@@ -1224,11 +1165,10 @@ class MPG(MTG):
                     yield v
 
 
-    def convert_properties_to_arraydict(self, g = None, ignore: list = []):
-        if g is not None:
-            props = g.properties()
-        else:
-            props = self.properties()
+    def convert_properties_to_arraydict(self, ignore=()):
+        """The MPG's numeric properties as ArrayDicts (vectorised reads), after its structure is built (the Scene and
+        population_data_structure call it); *ignore*: properties left as dicts."""
+        props = self.properties()
 
         for k, v in props.items():
             # print(k, v)

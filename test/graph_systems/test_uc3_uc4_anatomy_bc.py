@@ -134,7 +134,7 @@ def _conductances(ds):
 
 def test_uc3_the_balance_holds_and_water_flows_to_the_xylem():
     ds, soil, collar = _anatomy()
-    B, p = ds.incidence_matrix().toarray(), np.asarray(ds.get("water_potential"))
+    B, p = ds._incidence_matrix().toarray(), np.asarray(ds.get("water_potential"))
     residual = B @ (_conductances(ds) * (B.T @ p))
     residual[soil] += SOIL_WEIGHT * (p[soil] - 0.)
     residual[collar] += XYLEM_WEIGHT * (p[collar] - (-1.))
@@ -145,7 +145,7 @@ def test_uc3_the_balance_holds_and_water_flows_to_the_xylem():
 
 def test_uc3_the_edge_flux_output_is_written():
     ds, _, _ = _anatomy()
-    B, p = ds.incidence_matrix().toarray(), np.asarray(ds.get("water_potential"))
+    B, p = ds._incidence_matrix().toarray(), np.asarray(ds.get("water_potential"))
     flux = np.asarray(ds.get("edge_water_flux"))
     np.testing.assert_allclose(flux, _conductances(ds) * (B.T @ p), atol=1e-12)
     assert np.abs(flux).max() > 0
@@ -220,7 +220,7 @@ def _chain(component_class):
     """3 segments (3 nodes, 2 edges), K = 1, the collar at the graph root."""
     g = MPG()
     scale = g.scales.SubOrgan
-    vid = g.add_system_root_at_scale(scale, label=g.labels.SubOrgan.RootSegment)
+    vid = g._add_system_root_at_scale(scale, label=g.labels.SubOrgan.RootSegment)
     for _ in range(2):
         vid = g.add_component_with_topo(g.scales.anchors[scale], vid, **PropsConfig(
             scale=scale, edge_type="<", label=g.labels.SubOrgan.RootSegment))
@@ -242,7 +242,7 @@ def test_uc4_a_dirichlet_set_brings_the_whole_chain_to_its_value():
 
 def test_uc4_a_neumann_inflow_is_balanced_by_the_leakage():
     ds = _chain(ChainNeumann)
-    B, p = ds.incidence_matrix().toarray(), np.asarray(ds.get("pressure"))
+    B, p = ds._incidence_matrix().toarray(), np.asarray(ds.get("pressure"))
     collar = int(ds.roots()[0])
     inflow = np.zeros(ds.n_nodes())
     inflow[collar] = 1.

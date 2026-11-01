@@ -131,7 +131,7 @@ def test_a_frozen_layer_is_left_out_by_an_active_subgraph_of_cells():
     FrozenTopSoil(data_structure=grid)()
     top = grid.layer_mask(z=0)
     np.testing.assert_array_equal(grid.get("solute")[top], before[top])
-    crossing = top.reshape(-1)[grid.topology().tail] | top.reshape(-1)[grid.topology().head]
+    crossing = top.reshape(-1)[grid.to_graph_view().tail] | top.reshape(-1)[grid.to_graph_view().head]
     np.testing.assert_array_equal(grid.get("solute_flux")[crossing], 0.)
 
 
@@ -158,5 +158,5 @@ def test_a_node_output_on_a_grid_is_written_on_the_cells():
     grid = _grid()
     DiffusionWithDivergence(data_structure=grid)()
     assert grid.location("divergence") == "cell" and grid.get("divergence").shape == SHAPE
-    expected = (grid.incidence_matrix() @ np.asarray(grid.get("solute_flux"))).reshape(SHAPE)
+    expected = (grid._incidence_matrix() @ np.asarray(grid.get("solute_flux"))).reshape(SHAPE)
     np.testing.assert_allclose(grid.get("divergence"), expected, atol=1e-14)

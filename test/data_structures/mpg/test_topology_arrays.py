@@ -25,7 +25,7 @@ def test_long_axes_no_longer_hit_the_recursion_limit():
     g = MPG()
     scale = g.scales.SubOrgan
     anchor = g.scales.anchors[scale]
-    vids = [g.add_system_root_at_scale(scale)]
+    vids = [g._add_system_root_at_scale(scale)]
     for _ in range(20_000 - 1):
         vids.append(g.add_component_with_topo(anchor, vids[-1], **PropsConfig(scale=scale, edge_type='<')))
     with pytest.raises(RecursionError):

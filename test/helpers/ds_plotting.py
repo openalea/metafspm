@@ -105,14 +105,14 @@ def plot_graph_property(
     Draw graph nodes coloured by a scalar node property, edges as grey lines.
 
     Abstract API consumed:
-        ds.node_ids(), ds.edges(), ds.node_property(var_name)
+        ds.node_ids(), ds.edges(), ds._node_property(var_name)
     """
     if ax is None:
         ax = plt.gca()
 
     ids    = ds.node_ids()               # abstract API
     edges  = ds.edges()                  # abstract API
-    values = ds.node_property(var_name)  # abstract API
+    values = ds._node_property(var_name)  # abstract API
     pos    = plant_graph_pos(ds)
 
     # Edges
@@ -143,14 +143,14 @@ def plot_incidence_structure(
     """
     Show the incidence matrix B as a colour image.
 
-    Abstract API consumed:  ds.incidence_matrix()
+    Abstract API consumed:  ds._incidence_matrix()
 
     Works identically for a dense and a sparse (CSR) matrix.
     """
     if ax is None:
         ax = plt.gca()
 
-    B = ds.incidence_matrix()           # abstract API
+    B = ds._incidence_matrix()           # abstract API
     try:
         B_dense = B.toarray()
     except AttributeError:

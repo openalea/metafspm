@@ -4,7 +4,6 @@ Both levels are pure Python — no MTG dependency.  Minimal concrete
 subclasses built inline verify:
   - instantiation guard (ABC enforcement)
   - extract_state / inject_state round-trip
-  - extract_algebraic / inject_algebraic round-trip
   - n_dof default
   - incidence matrix column-sum invariant (conservative flow)
   - validate() no-op default
@@ -58,16 +57,16 @@ class _LinearGraph(GraphDataStructure):
     def node_ids(self): return [0, 1, 2]
     def edges(self): return [(0, 1), (1, 2)]
 
-    def incidence_matrix(self):
+    def _incidence_matrix(self):
         # GraphDataStructure convention: +1 at the tail (parent), -1 at the head (child)
         return np.array([[1., 0.], [-1., 1.], [0., -1.]])
 
-    def node_property(self, name):
+    def _node_property(self, name):
         if name == 'p':
             return self._p.copy()
         raise KeyError(name)
 
-    def edge_property(self, name):
+    def _edge_property(self, name):
         if name == 'k':
             return self._k.copy()
         raise KeyError(name)
@@ -161,34 +160,26 @@ def test_extract_inject_state_graph_roundtrip():
     x = g.extract_state(['p'])
     np.testing.assert_array_equal(x, [1.0, 2.0, 3.0])
     g.inject_state(x * 2, ['p'])
-    np.testing.assert_array_equal(g.node_property('p'), [2.0, 4.0, 6.0])
-
-
-def test_extract_inject_algebraic_roundtrip():
-    g = _LinearGraph()
-    y = g.extract_algebraic(['k'])
-    np.testing.assert_array_equal(y, [10.0, 20.0])
-    g.inject_algebraic(y * 3, ['k'])
-    np.testing.assert_array_equal(g.edge_property('k'), [30.0, 60.0])
+    np.testing.assert_array_equal(g._node_property('p'), [2.0, 4.0, 6.0])
 
 
 def test_incidence_matrix_shape():
     g = _LinearGraph()
-    B = g.incidence_matrix()
+    B = g._incidence_matrix()
     assert B.shape == (3, 2)
 
 
 def test_incidence_matrix_column_sums_zero():
     """Each column of B sums to 0 — flow leaving one node enters the other."""
     g = _LinearGraph()
-    B = g.incidence_matrix()
+    B = g._incidence_matrix()
     np.testing.assert_array_equal(B.sum(axis=0), [0.0, 0.0])
 
 
 def test_incidence_matrix_values():
     """Tail (parent) node = +1, head (child) node = -1 (the solver's GraphView convention)."""
     g = _LinearGraph()
-    B = g.incidence_matrix()
+    B = g._incidence_matrix()
     # Edge 0: n0 → n1
     assert B[0, 0] == +1.0
     assert B[1, 0] == -1.0

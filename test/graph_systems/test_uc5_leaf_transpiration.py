@@ -124,7 +124,7 @@ def _microclimate(ds):
 
 
 def _direct_solution(ds):
-    B = ds.incidence_matrix().toarray()
+    B = ds._incidence_matrix().toarray()
     K = ds.get("K_axial")
     leaf, root = _is_leaf(ds), ds.get("root_surface") > 0
     w = np.where(leaf, ds.get("stomatal_conductance") * ds.get("exchange_surface"), 0.) \

@@ -35,7 +35,7 @@ def _ds():
 
 
 def _laplacian(ds):
-    B = ds.incidence_matrix().toarray()
+    B = ds._incidence_matrix().toarray()
     return B @ B.T
 
 

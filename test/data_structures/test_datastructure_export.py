@@ -26,11 +26,11 @@ def _plant():
 
 def test_export_copies_values():
     ds = _plant()
-    exported = ds.export(["length", "segment_length", "total_cytokinins"])
+    exported = ds._export(["length", "segment_length", "total_cytokinins"])
     np.testing.assert_array_equal(exported["length"], ds.get("length"))
     assert exported["segment_length"] is not ds.get("length")
     assert float(exported["total_cytokinins"]) == 5.
-    assert set(ds.export()) >= {"struct_mass", "length", "K", "total_cytokinins"}
+    assert set(ds._export()) >= {"struct_mass", "length", "K", "total_cytokinins"}
 
 
 def test_node_table_indexed_by_vid_and_time():

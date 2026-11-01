@@ -47,7 +47,7 @@ def build(n, bulk):
     n_cells, n_points, walls, membranes, plasmodesmata, layer_of_cell = grid_topology(n)
     g = MPG()
     s, L = g.scales, g.labels
-    segment = g.add_system_root_at_scale(s.SubOrgan, label=L.SubOrgan.RootSegment)
+    segment = g._add_system_root_at_scale(s.SubOrgan, label=L.SubOrgan.RootSegment)
     node_anchor, edge_anchor = s.anchors[s.Compartment], s.anchors[s.Connection]
 
     def props(scale, **values):

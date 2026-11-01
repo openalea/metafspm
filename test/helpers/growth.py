@@ -30,7 +30,7 @@ def make_chain(n_segments=3, apex_length=0.5):
     scale = g.scales.SubOrgan
     anchor = g.scales.anchors[scale]
     props = dict(label=g.labels.SubOrgan.RootSegment)
-    vids = [g.add_system_root_at_scale(scale, **props)]
+    vids = [g._add_system_root_at_scale(scale, **props)]
     for _ in range(n_segments - 1):
         vids.append(g.add_component_with_topo(anchor, vids[-1], **PropsConfig(scale=scale, edge_type='<', **props)))
     g.populate_graph(scale)

@@ -14,7 +14,7 @@ def test_arraydict():
 
     ad.assign_at([0, 2], [7, 8])  # value updates leave order intact
     ad.__delitem__(3)             # deletion
-    assert ad.check_invariant()   # confirms sorted order and mapping consistency
+    assert ad._check_invariant()   # confirms sorted order and mapping consistency
 
 
 def test_delete_many_equals_deleting_one_key_at_a_time():

@@ -46,7 +46,7 @@ def make_rooted_anatomy(n_segments=3):
     scale = g.scales.SubOrgan
     anchor = g.scales.anchors[scale]
     props = dict(label=g.labels.SubOrgan.RootSegment)
-    segments = [g.add_system_root_at_scale(scale, **props)]
+    segments = [g._add_system_root_at_scale(scale, **props)]
     for _ in range(n_segments - 1):
         segments.append(g.add_component_with_topo(anchor, segments[-1], **PropsConfig(scale=scale, edge_type='<',
                                                                                       **props)))

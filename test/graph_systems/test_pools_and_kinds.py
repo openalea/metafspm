@@ -88,7 +88,7 @@ def _start(model_class):
 
 def _reference(ds, sugar0, shoot0):
     """The same implicit step as one hand-assembled linear system."""
-    B = ds.incidence_matrix().toarray()
+    B = ds._incidence_matrix().toarray()
     n = ds.n_nodes()
     owner = np.asarray(ds.owner("Plant"))
     collar = np.flatnonzero(ds.parents() < 0)

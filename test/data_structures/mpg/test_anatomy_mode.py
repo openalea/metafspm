@@ -41,13 +41,13 @@ def test_nodes_are_compartments_and_edges_every_connection():
     np.testing.assert_array_equal(ds.index_of(ds.entity_ids("edge"), "edge"), np.arange(ds.n_edges()))
 
 
-def test_junction_pairs_match_populate_graph_custom_connections():
+def test_junction_pairs_match_wire_junctions():
     g, _, _, _ = _plant()
     twin, _, _ = make_rooted_anatomy()
     rules = [dict(node_label=twin.labels.Cell.MetaXylem, edge_label=twin.labels.Connection.Apoplastic,
                   ordering="vessel_index"),
              dict(node_label=twin.labels.Compartment.Symplastic, edge_label=twin.labels.Connection.Symplastic)]
-    twin.populate_graph_custom_connections(twin.scales.SubOrgan, rules)
+    twin.wire_junctions(twin.scales.SubOrgan, rules)
     assert _pairs(g, g.junction_vids()) == _pairs(twin, twin.junction_vids())
     vessel = g.property("vessel_index")
     for a, b in _pairs(g, g.junction_vids()):
@@ -86,7 +86,7 @@ def test_a_segment_concentration_is_broadcast_to_its_symplastic_compartments_onl
     ds.define_mask("symplastic", {"label": g.labels.Compartment.Symplastic})
     suborgans = ds.entity_ids("SubOrgan")
     ds.register("metabolites", suborgans.astype(float), location="SubOrgan")
-    ds.derive("cell_metabolites", {"metabolites": 1.}, location="node", aggregation="broadcast", target="symplastic",
+    ds.derive("cell_metabolites", {"metabolites": 1.}, location="node", aggregation="broadcast", where="symplastic",
               default=-1.)
     values = dict(zip(ds.entity_ids("node").tolist(), ds.get("cell_metabolites").tolist()))
     for segment, anatomy in anatomies.items():
@@ -174,7 +174,7 @@ def test_a_graph_system_solves_on_the_assembled_anatomy_graph():
     g, segments, anatomies, ds = _plant()
     model = AnatomyHydraulics(data_structure=ds)
     model()
-    B = ds.incidence_matrix().toarray()
+    B = ds._incidence_matrix().toarray()
     label = ds.get("label")
     soil = label == g.labels.Compartment.Apoplastic
     collar = (label == g.labels.Cell.MetaXylem) & (ds.owner("SubOrgan") == 0)
@@ -228,7 +228,7 @@ def test_a_missing_coarse_input_value_takes_its_declared_default():
     g.properties()["supply"] = {int(segments[0]): 3.}
     spec = VariableSpec(name="supply", location="SubOrgan", scale=g.scales.SubOrgan, default=-1.,
                         variable_type="input")
-    np.testing.assert_array_equal(ds.read_mtg(spec), [3., -1., -1.])
+    np.testing.assert_array_equal(ds._read_mtg(spec), [3., -1., -1.])
     with pytest.raises(ValueError, match="has no value for vertices"):
-        ds.read_mtg(VariableSpec(name="supply", location="SubOrgan", scale=g.scales.SubOrgan, default=None,
+        ds._read_mtg(VariableSpec(name="supply", location="SubOrgan", scale=g.scales.SubOrgan, default=None,
                                  variable_type="input"))

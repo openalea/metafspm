@@ -22,7 +22,7 @@ def _graph(g):
 def test_bulk_creation_gives_the_vertices_and_properties_of_one_by_one_creation():
     g = MPG()
     anchor = g.scales.anchors[g.scales.Compartment]
-    parents = [g.add_system_root_at_scale(g.scales.SubOrgan) for _ in range(3)]
+    parents = [g._add_system_root_at_scale(g.scales.SubOrgan) for _ in range(3)]
     one_by_one = [g.add_component_with_topo(anchor, p, **PropsConfig(scale=g.scales.Compartment, label=7, edge_type='/'),
                                             vertex_id=p) for p in parents]
     bulk = g.add_components_bulk(anchor, 3, topo_parents=parents, vertex_id=parents,
@@ -39,7 +39,7 @@ def test_the_plants_of_a_population_stay_disconnected():
     g.populate_graph(g.scales.SubOrgan)
     g.convert_properties_to_arraydict()
     ds = MPGDataStructure(g, from_scale=g.scales.SubOrgan)
-    count, _ = connected_components(ds.incidence_matrix() @ ds.incidence_matrix().T, directed=False)
+    count, _ = connected_components(ds._incidence_matrix() @ ds._incidence_matrix().T, directed=False)
     assert count == 3 and ds.n_edges() == 3 * 4
 
 

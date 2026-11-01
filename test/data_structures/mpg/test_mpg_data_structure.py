@@ -28,7 +28,7 @@ def _make_linear_mpg():
     g   = MPG()
     sc  = g.scales.SubOrgan
     anc = g.scales.anchors[sc]
-    v1 = g.add_system_root_at_scale(
+    v1 = g._add_system_root_at_scale(
         sc, label=g.labels.SubOrgan.StemElement)
     v2 = g.add_component_with_topo(
         anc, v1, **PropsConfig(scale=sc, edge_type='<',
@@ -48,7 +48,7 @@ def test_set_get_node_property_roundtrip():
     ds = MPGDataStructure(g)   # 3 nodes (anchors are excluded)
     vals = np.array([1.0, 2.0, 3.0])
     ds.register('potential', vals, location="node")
-    np.testing.assert_array_equal(ds.node_property('potential'), vals)
+    np.testing.assert_array_equal(ds._node_property('potential'), vals)
 
 
 def test_register_checks_node_length():
@@ -64,21 +64,21 @@ def test_set_get_edge_property_roundtrip():
     ds = MPGDataStructure(g)   # 2 edges
     vals = np.array([5.0, 8.0])
     ds.register('conductance', vals, location="edge")
-    np.testing.assert_array_equal(ds.edge_property('conductance'), vals)
+    np.testing.assert_array_equal(ds._edge_property('conductance'), vals)
 
 
 def test_node_property_missing_raises_key_error():
     g, sc, v1, v2, v3 = _make_linear_mpg()
     ds = MPGDataStructure(g)
     with pytest.raises(KeyError, match="potential"):
-        ds.node_property('potential')
+        ds._node_property('potential')
 
 
 def test_edge_property_missing_raises_key_error():
     g, sc, v1, v2, v3 = _make_linear_mpg()
     ds = MPGDataStructure(g)
     with pytest.raises(KeyError, match="conductance"):
-        ds.edge_property('conductance')
+        ds._edge_property('conductance')
 
 
 def test_available_vars_covers_node_and_edge():
@@ -96,14 +96,14 @@ def test_available_vars_covers_node_and_edge():
 def test_incidence_matrix_is_sparse():
     g, sc, v1, v2, v3 = _make_linear_mpg()
     ds = MPGDataStructure(g)
-    B  = ds.incidence_matrix()
+    B  = ds._incidence_matrix()
     assert issparse(B)
 
 
 def test_incidence_matrix_shape():
     g, sc, v1, v2, v3 = _make_linear_mpg()
     ds = MPGDataStructure(g)
-    B  = ds.incidence_matrix()
+    B  = ds._incidence_matrix()
     assert B.shape == (3, 2)   # 3 nodes, 2 edges
 
 
@@ -111,7 +111,7 @@ def test_incidence_matrix_column_sums_zero():
     """Columns of B must sum to zero (flow conservation)."""
     g, sc, v1, v2, v3 = _make_linear_mpg()
     ds = MPGDataStructure(g)
-    B  = ds.incidence_matrix()
+    B  = ds._incidence_matrix()
     col_sums = np.asarray(B.sum(axis=0)).ravel()
     np.testing.assert_array_equal(col_sums, [0.0, 0.0])
 
@@ -120,8 +120,8 @@ def test_incidence_matrix_is_cached():
     """Second call returns the same object — no recomputation."""
     g, sc, v1, v2, v3 = _make_linear_mpg()
     ds = MPGDataStructure(g)
-    B1 = ds.incidence_matrix()
-    B2 = ds.incidence_matrix()
+    B1 = ds._incidence_matrix()
+    B2 = ds._incidence_matrix()
     assert B1 is B2
 
 
@@ -129,9 +129,9 @@ def test_invalidate_topology_clears_cache():
     """invalidate_topology() forces a fresh incidence matrix on next call."""
     g, sc, v1, v2, v3 = _make_linear_mpg()
     ds = MPGDataStructure(g)
-    B1 = ds.incidence_matrix()
-    ds.invalidate_topology()
-    B2 = ds.incidence_matrix()
+    B1 = ds._incidence_matrix()
+    ds._invalidate_topology()
+    B2 = ds._incidence_matrix()
     assert B1 is not B2
 
 
@@ -140,7 +140,7 @@ def test_invalidate_topology_rebuilds_index_map():
     g, sc, v1, v2, v3 = _make_linear_mpg()
     ds = MPGDataStructure(g)
     assert ds.n_nodes() == 3
-    ds.invalidate_topology()
+    ds._invalidate_topology()
     assert ds.n_nodes() == 3 # same — no structural change
 
 
@@ -163,7 +163,7 @@ def test_mpg_data_structure_wraps_suborgan_scale():
     assert ds.n_nodes() == 14
     assert ds.n_edges() == 13
 
-    B = ds.incidence_matrix()
+    B = ds._incidence_matrix()
     assert issparse(B)
     assert B.shape == (14, 13)
     col_sums = np.asarray(B.sum(axis=0)).ravel()
@@ -185,4 +185,4 @@ def test_extract_inject_state_with_suborgan_data():
     x  = ds.extract_state(['potential'])
     np.testing.assert_array_equal(x, vals)
     ds.inject_state(x * 10.0, ['potential'])
-    np.testing.assert_array_equal(ds.node_property('potential'), vals * 10.0)
+    np.testing.assert_array_equal(ds._node_property('potential'), vals * 10.0)

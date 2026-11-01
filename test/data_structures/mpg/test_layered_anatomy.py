@@ -154,7 +154,7 @@ class SectionHydraulics(FunctionalComponent):
 def test_a_graph_system_solves_on_the_layered_graph():
     g, _, _, ds = _plant()
     SectionHydraulics(data_structure=ds)()
-    B = ds.incidence_matrix().toarray()
+    B = ds._incidence_matrix().toarray()
     walls = ds.get("kind") == WALL
     collar = (ds.get("label") == g.labels.Cell.MetaXylem) & (ds.owner("SubOrgan") == 0)
     A = B @ B.T + np.diag(np.where(walls, 0.6, 0.))

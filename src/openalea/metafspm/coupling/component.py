@@ -374,7 +374,7 @@ class DataStructureComponent(Component):
                 if name in pending and pending[name] != spec.default:
                     ds.set(name, pending[name])          # a value given to the constructor
             else:
-                values = ds.read_mtg(spec) if hasattr(ds, "read_mtg") else None
+                values = ds._read_mtg(spec) if hasattr(ds, "_read_mtg") else None
                 default = pending.get(name, spec.default) if spec.dtype is not object else spec.default
                 ds.register(name, values, location=spec.location, default=default, on_grow=spec.on_grow,
                             dtype=spec.dtype, shape=spec.shape)
@@ -391,10 +391,10 @@ class DataStructureComponent(Component):
                                                    if name in self._variable_specs}
         self.__dict__.pop("_pending_parameters", None)
         self._check_mtg_sync()
-        if self.mtg_sync == "lazy" and hasattr(ds, "track_mtg"):
+        if self.mtg_sync == "lazy" and hasattr(ds, "_track_mtg"):
             for spec in self._variable_specs.values():
                 if spec.variable_type == "state_variable" and spec.mtg_backed:
-                    ds.track_mtg(spec)
+                    ds._track_mtg(spec)
 
     def _check_mtg_sync(self) -> None:
         if self.mtg_sync not in ("lazy", "after_call", "never"):
@@ -513,7 +513,7 @@ class DataStructureComponent(Component):
     def write_back_to_mtg(self) -> None:
         """
         Write the declared state variables with an MTG scale to the MTG, at the vertices of their scale, through the
-        inverse of their mapping (MPGDataStructure.write_mtg). Called after every component call with
+        inverse of their mapping (MPGDataStructure._write_mtg). Called after every component call with
         mtg_sync = "after_call"; with "lazy" the DataStructure does it when the MTG is read.
 
         Only ``state_variable`` fields are written: parameters and inputs are owned by whoever sets them, and
@@ -521,11 +521,11 @@ class DataStructureComponent(Component):
         """
         self._check_mtg_sync()
         ds = self.data_structure
-        if self.mtg_sync == "never" or not hasattr(ds, "write_mtg"):
+        if self.mtg_sync == "never" or not hasattr(ds, "_write_mtg"):
             return
         for spec in getattr(self, "_variable_specs", {}).values():
             if spec.variable_type == "state_variable" and spec.mtg_backed and ds.has(spec.name):
-                ds.write_mtg(spec)
+                ds._write_mtg(spec)
 
     def _refresh_from_bio_scale(self) -> None:
         """
@@ -536,14 +536,14 @@ class DataStructureComponent(Component):
         Parameters whose MTG property is absent keep their DataStructure values.
         """
         ds = self.data_structure
-        if not hasattr(ds, "read_mtg"):
+        if not hasattr(ds, "_read_mtg"):
             return
         for spec in getattr(self, "_variable_specs", {}).values():
             if spec.variable_type != "parameter" or not spec.mtg_backed:
                 continue
             if hasattr(ds, "flush_mtg"):
                 ds.flush_mtg([spec.name])            # a value set on the DataStructure is not lost to a stale MTG one
-            values = ds.read_mtg(spec)
+            values = ds._read_mtg(spec)
             if values is not None:
                 ds.set(spec.name, values)
 
@@ -892,11 +892,11 @@ class StructuralComponent(DataStructureComponent):
             # parameters) changed since their last synchronisation are written first. Others are not: a step
             # reads what its component declares
             for spec in specs:
-                ds.track_mtg(spec)
+                ds._track_mtg(spec)
             ds.flush_mtg([spec.name for spec in specs])
         else:
             for spec in specs:
-                ds.write_mtg(spec)
+                ds._write_mtg(spec)
         weights = self._weights() if self.repartition == "after_mpg_steps" else None
         if weights is not None:
             ids = ds.entity_ids("node").tolist()
@@ -909,11 +909,11 @@ class StructuralComponent(DataStructureComponent):
             self.topology_updates = getattr(self, "topology_updates", 0) + 1
         for spec in specs:
             if spec.variable_type == "state_variable":
-                values = ds.read_mtg(spec)
+                values = ds._read_mtg(spec)
                 if values is not None:
                     ds.set(spec.name, values)
-                    if hasattr(ds, "mark_mtg_synced"):
-                        ds.mark_mtg_synced(spec.name)
+                    if hasattr(ds, "_mark_mtg_synced"):
+                        ds._mark_mtg_synced(spec.name)
         if weights is not None:
             self._repartition(weight_before, active_before)
 
@@ -944,7 +944,7 @@ class StructuralComponent(DataStructureComponent):
                 label[vid] = value
         if n == 0:
             if new.relabel is not None:
-                ds.invalidate_topology()
+                ds._invalidate_topology()
             return np.zeros(0, dtype=np.int64)
         known = np.asarray(ds.entity_ids("node"), dtype=np.int64)
         outer = new.parent >= 0

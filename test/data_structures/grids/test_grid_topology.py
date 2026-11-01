@@ -18,7 +18,7 @@ DOC = dict(unit="", unit_comment="", description="", min_value=0., max_value=1.,
                                        ((6, 1, 1), 0.1), ((1, 4, 3), (0.1, 0.2, 0.3))])
 def test_the_face_graph_reproduces_the_finite_difference_laplacian(shape, dx):
     grid = ArrayDataStructure(shape=shape, dx=dx)
-    B = grid.incidence_matrix().toarray()
+    B = grid._incidence_matrix().toarray()
     g = grid.get("face_area") / grid.get("face_distance") / grid.cell_volume()
     L = grid.laplacian()
     L = L.toarray() if hasattr(L, "toarray") else np.asarray(L)
@@ -28,7 +28,7 @@ def test_the_face_graph_reproduces_the_finite_difference_laplacian(shape, dx):
 def test_faces_are_oriented_towards_increasing_coordinates():
     grid = ArrayDataStructure(shape=(3, 2, 2))
     cells = np.arange(12).reshape(3, 2, 2)
-    view = grid.topology()
+    view = grid.to_graph_view()
     for e, (tail, head) in enumerate(zip(view.tail, view.head)):
         a, b = np.argwhere(cells == tail)[0], np.argwhere(cells == head)[0]
         axis = grid.face_axis()[e]
@@ -43,7 +43,7 @@ def test_periodic_axes_add_wrap_faces():
     assert (axis == 1).sum() == 4 * 2 * 2 + 4 * 2
     assert (axis == 2).sum() == 4 * 3 * 1                  # z is not periodic
     cells = np.arange(24).reshape(4, 3, 2)
-    wraps = [(t, h) for t, h, a in zip(grid.topology().tail, grid.topology().head, axis)
+    wraps = [(t, h) for t, h, a in zip(grid.to_graph_view().tail, grid.to_graph_view().head, axis)
              if a == 0 and np.argwhere(cells == t)[0][0] == 3]
     assert len(wraps) == 6 and all(np.argwhere(cells == h)[0][0] == 0 for _, h in wraps)
     two = ArrayDataStructure(shape=(2, 1, 1), periodic=True)

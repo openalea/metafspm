@@ -139,12 +139,6 @@ class ArrayDict(MutableMapping):
         return np.fromiter((self.vid2idx[v] for v in vids),
                            count=len(vids), dtype=np.int64)
 
-    def assign_all(self, values):
-        values = np.asarray(values, dtype=self.arr.dtype)
-        if values.shape[0] != self.size:
-            raise ValueError(f"assign_all length mismatch: got {values.shape[0]}, need {self.size}")
-        self.arr[:self.size] = values
-
     def assign_at(self, idxs, values):
         self.arr[np.asarray(idxs, np.int64)] = np.asarray(values, dtype=self.arr.dtype)
 
@@ -228,20 +222,7 @@ class ArrayDict(MutableMapping):
 
     # --- utilities -----------------------------------------------------------
 
-    def to_dict(self):
-        # Already in key order; order of dict doesn’t matter here
-        return {int(k): float(v) for k, v in self.items()}
-    
-    def reindex_sorted_inplace(self):
-        if self.size <= 1: return
-        p = np.argsort(self.order[:self.size], kind="mergesort")
-        self.order[:self.size] = self.order[:self.size][p]
-        self.arr[:self.size]   = self.arr[:self.size][p]
-        self.vid2idx.clear()
-        for i, k in enumerate(self.order[:self.size]):
-            self.vid2idx[int(k)] = i
-
-    def check_invariant(self):
+    def _check_invariant(self):
         if self.size == 0: return True
         keys = self.order[:self.size]
         if not np.all(keys[:-1] <= keys[1:]):

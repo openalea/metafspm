@@ -5,7 +5,7 @@ from openalea.metafspm.data_structure.configs import PropsConfig
 
 def generate_simple_mpg_seedling():
     g = MPG()
-    axis = g.add_system_root_at_scale(g.scales.Axis, label=g.labels.Axis.Shoot)
+    axis = g._add_system_root_at_scale(g.scales.Axis, label=g.labels.Axis.Shoot)
     growth_unit = g.add_component(axis, **PropsConfig(scale=g.scales.GrowthUnit, edge_type='/', label=g.labels.GrowthUnit.Shoot))
     # Add two consecutive phytomers
     phytomer = g.add_component(growth_unit, **PropsConfig(scale=g.scales.Phytomer, edge_type='/', label=g.labels.Phytomer.Shoot))

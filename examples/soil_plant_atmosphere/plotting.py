@@ -213,7 +213,7 @@ def _soil_background(ax, grid, plant_ds, row=None, quantity="anomaly"):
     diverging RdBu centred on 0) or its Ψ (copper). On an adaptive grid each cell is drawn at its own size.
     """
     collar_y = float(plant_ds.mtg.property("y")[int(plant_ds.entity_ids("Plant")[0])])
-    adaptive = hasattr(grid, "levels")
+    adaptive = hasattr(grid, "refinement_level")
     if adaptive:
         values = cell_anomaly(grid) if quantity == "anomaly" else np.asarray(grid.get("water_potential")).reshape(-1)
         kept = _plane_cells(grid, collar_y)[0]
@@ -481,7 +481,7 @@ def adaptive_slice(grid, plant_data_structures, path, quantity="size", y=None):
 
 def flux_density(grid):
     """Per cell, the mean water flux density through its faces, |j| / A (mm3 s-1 m-2)."""
-    incidence = abs(grid.incidence_matrix())
+    incidence = abs(grid._incidence_matrix())
     density = np.abs(np.asarray(grid.get("water_flux"))) / np.asarray(grid.get("face_area"))
     return (incidence @ density) / np.maximum(np.asarray(incidence.sum(axis=1)).reshape(-1), 1)
 

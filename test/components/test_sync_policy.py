@@ -130,8 +130,8 @@ def test_only_changed_variables_are_written(seedling, monkeypatch):
     g, ds = seedling
     Counter(data_structure=ds)()
     written = []
-    original = ds.write_mtg
-    monkeypatch.setattr(ds, "write_mtg", lambda spec: (written.append(spec.name), original(spec)))
+    original = ds._write_mtg
+    monkeypatch.setattr(ds, "_write_mtg", lambda spec: (written.append(spec.name), original(spec)))
     ds.flush_mtg()
     ds.flush_mtg()                    # nothing changed since
     assert written == ["count"]

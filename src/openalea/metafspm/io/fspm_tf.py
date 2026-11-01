@@ -1006,12 +1006,12 @@ def _mpg_from(data_structure, extras: dict):
     _restore_variables(ds, data_structure, extras, tables)
     for name in extras["tracked"]:
         meta = ds._variable_meta()[name]
-        ds.track_mtg(VariableSpec(name=name, location=extras["variables"][name]["location"], scale=meta.get("scale"),
+        ds._track_mtg(VariableSpec(name=name, location=extras["variables"][name]["location"], scale=meta.get("scale"),
                                   mapping=meta.get("mapping"), weight=meta.get("weight"), kind=meta.get("kind"),
                                   variable_type=meta.get("variable_type"), default=meta.get("default", 0.),
                                   on_grow=meta.get("on_grow", "default"), dtype=meta.get("dtype", float),
                                   shape=tuple(meta.get("shape", ()))))
-        ds.mark_mtg_synced(name)
+        ds._mark_mtg_synced(name)
     return ds
 
 

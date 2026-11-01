@@ -105,16 +105,6 @@ class GraphView:
     def n_edges(self) -> int:
         return int(self.edge_ids.size)
 
-    def node_local_index(self, node_id: int) -> int:
-        """Local index of *node_id*. node_ids are not assumed sorted (MPG local order is Compartment order)."""
-        order      = np.argsort(self.node_ids, kind="stable")
-        sorted_ids = self.node_ids[order]
-        pos        = int(np.searchsorted(sorted_ids, int(node_id)))
-        if pos >= sorted_ids.size or sorted_ids[pos] != int(node_id):
-            raise KeyError(f"Node id {node_id} is not in this GraphView.")
-        return int(order[pos])
-
-
 # ═══════════════════════════════════════════════════════════════════════════════
 # Abstract base
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -127,8 +117,8 @@ class DataStructure(ABC):
       extract_state  : DataStructure  →  flat numpy x   (for solver)
       inject_state   : solver result  →  DataStructure  (after solve)
 
-    The solver never touches DataStructure directly — only SystemSpec.
-    SpecBuilder is the only class that calls extract/inject.
+    The solver never touches the DataStructure directly: the graph systems' builder (solve.decorator) reads the
+    unknowns and writes the converged values back.
     """
 
     @abstractmethod
@@ -153,7 +143,7 @@ class DataStructure(ABC):
         ...
 
     def validate(self) -> None:
-        """Optional structural consistency check. Called by SpecBuilder.build()."""
+        """Optional structural consistency check (CompositeModel.couple and testing.couplability_problems call it)."""
         pass
 
     @abstractmethod
@@ -457,7 +447,7 @@ class VariableStoreMixin:
         return dict(self.__dict__.get("_derived", {}))
 
     def derive(self, name: str, sources=None, formula=None, location: str = None, aggregation: str = None,
-               weight: str = None, default: float = 0., on_grow: str = "default", target: str = None) -> np.ndarray:
+               weight: str = None, default: float = 0., on_grow: str = "default", where: str = None) -> np.ndarray:
         """
         Declare *name* as derived from other variables and compute it::
 
@@ -465,8 +455,8 @@ class VariableStoreMixin:
                          to *formula* (which then returns the values).
             location:    of *name* (default: the sources' location). A different location requires an
                          *aggregation* understood by the data structure (e.g. "sum", "mean", "weighted_mean",
-                         "broadcast", "proximal", "distal"); *weight* names the weights of "weighted_mean".
-            target:      a mask at *location*: the derived values are given on its entities only, the others getting
+                         "broadcast", "child", "parent"); *weight* names the weights of "weighted_mean".
+            where:       a mask at *location*: the derived values are given on its entities only, the others getting
                          *default* (e.g. a SubOrgan concentration broadcast to the symplastic Compartments only).
 
         The value is recomputed in place by refresh(); dependencies on other derived variables are refreshed first.
@@ -496,11 +486,11 @@ class VariableStoreMixin:
         if location != source_location and aggregation is None:
             raise ValueError(f"derived variable '{name}' at {location} from {source_location} needs an aggregation")
         derived = self.__dict__.setdefault("_derived", {})
-        if target is not None and not self.has_mask(target):
-            raise KeyError(f"derived variable '{name}': target mask '{target}' is not defined")
+        if where is not None and not self.has_mask(where):
+            raise KeyError(f"derived variable '{name}': its mask '{where}' (where=) is not defined")
         spec = {"sources": dict(sources) if formula is None else tuple(names), "formula": formula,
                 "source_location": source_location, "location": location,
-                "aggregation": aggregation, "weight": weight, "target": target, "default": float(default)}
+                "aggregation": aggregation, "weight": weight, "target": where, "default": float(default)}
         previous = derived.get(name)
         derived[name] = spec
         try:
@@ -622,26 +612,26 @@ class VariableStoreMixin:
         ids = self.entity_ids(location or self._default_location) if ids is None else ids
         return random_streams.draw(distribution, ids, seed=seed, stream=stream, step=step, **parameters)
 
-    def parameter_view(self, name: str, to: str) -> np.ndarray:
+    def parameter_view(self, name: str, location: str) -> np.ndarray:
         """
-        Parameter *name* (stored per plant, or as a scalar) as one value per entity of location *to*, read-only: a
+        Parameter *name* (stored per plant, or as a scalar) as one value per entity of *location*, read-only: a
         zero-stride view when every value is the same (no copy), else each entity's owner value (gathered once, and
         again only when the parameter or the topology changes).
         """
-        location = self.location(name)
-        shape = tuple(self._location_shape(to))
+        stored = self.location(name)
+        shape = tuple(self._location_shape(location))
         values = np.asarray(self.get(name))
         cache = self.__dict__.setdefault("_parameter_views", {})
-        key = (name, to)
+        key = (name, location)
         stamp = (self.write_count(name), self.topology_version, shape)
         if key in cache and cache[key][0] == stamp:
             return cache[key][1]
-        if location == to:
+        if stored == location:
             view = values.view()
         elif values.size == 0 or np.all(values == values.flat[0]):
             view = np.broadcast_to(np.asarray(values.flat[0] if values.size else 0., dtype=float), shape)
         else:
-            view = np.ascontiguousarray(self._broadcast_to_entities(values, location, to, name))
+            view = np.ascontiguousarray(self._broadcast_to_entities(values, stored, location, name))
         view = view.view()
         view.flags.writeable = False
         cache[key] = (stamp, view)
@@ -723,8 +713,8 @@ class VariableStoreMixin:
                 selected = {"<": np.less, "<=": np.less_equal, ">": np.greater, ">=": np.greater_equal,
                             "==": np.equal, "!=": np.not_equal}[operator](values, threshold)
             else:
-                if hasattr(self, "resolve_codes"):
-                    condition = self.resolve_codes(variable, condition)     # label names -> codes
+                if hasattr(self, "_resolve_codes"):
+                    condition = self._resolve_codes(variable, condition)     # label names -> codes
                 if isinstance(condition, str):
                     raise ValueError(f"mask '{name}': condition '{condition}' on '{variable}' is neither a comparison "
                                      "(e.g. '>0', '<=0.03') nor a label name")
@@ -853,7 +843,7 @@ class VariableStoreMixin:
 
     _INDEX_NAMES = {"node": "vid", "edge": "edge", "cell": "voxel"}
 
-    def export(self, names=None) -> dict:
+    def _export(self, names=None) -> dict:
         """Copies of the values of *names* (default: every registered variable)."""
         names = self.available_vars() if names is None else names
         return {name: np.array(self.get(name), copy=True) for name in names}
@@ -1035,13 +1025,13 @@ class GraphDataStructure(DataStructure):
     def edges(self) -> list[tuple]: ...
 
     @abstractmethod
-    def incidence_matrix(self): ...
+    def _incidence_matrix(self): ...
 
     @abstractmethod
-    def node_property(self, name: str) -> np.ndarray: ...
+    def _node_property(self, name: str) -> np.ndarray: ...
 
     @abstractmethod
-    def edge_property(self, name: str) -> np.ndarray: ...
+    def _edge_property(self, name: str) -> np.ndarray: ...
 
     @abstractmethod
     def set(self, name: str, values) -> None:
@@ -1052,21 +1042,12 @@ class GraphDataStructure(DataStructure):
         return self.n_nodes()
 
     def extract_state(self, var_names: list[str]) -> np.ndarray:
-        return np.concatenate([self.node_property(n) for n in var_names])
+        return np.concatenate([self._node_property(n) for n in var_names])
 
     def inject_state(self, x: np.ndarray, var_names: list[str]) -> None:
         n = self.n_nodes()
         for i, name in enumerate(var_names):
             self.set(name, x[i * n : (i + 1) * n])
-
-    def extract_algebraic(self, var_names: list[str]) -> np.ndarray:
-        return np.concatenate([self.edge_property(n) for n in var_names])
-
-    def inject_algebraic(self, y: np.ndarray, var_names: list[str]) -> None:
-        m = self.n_edges()
-        for i, name in enumerate(var_names):
-            self.set(name, y[i * m : (i + 1) * m])
-
 
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -1074,8 +1055,8 @@ class MTGDataStructure(GraphDataStructure):
     """
     Abstract MTG plant graph wrapper.
 
-    Vertex ids (vids) may be non-contiguous integers — both subclasses
-    maintain a vid ↔ contiguous-index bijection via _build_index_map().
+    Vertex ids (vids) may be non-contiguous integers: a vid ↔ contiguous-index bijection is kept by
+    _build_index_map() (MPGDataStructure builds its own, from the Compartments).
     """
 
     def __init__(self, mtg, scale: int = 1):
@@ -1095,12 +1076,8 @@ class MTGDataStructure(GraphDataStructure):
     @property
     def structure(self):
         """The MTG, to read the structure (labels, parents, complexes, components) without synchronising the
-        variables to it: read the variables with get(). (topology() is the graph view.)"""
+        variables to it: read the variables with get(). (to_graph_view() is the graph view.)"""
         return self._mtg
-
-    @property
-    def scale(self) -> int:
-        return self._scale
 
     def _build_index_map(self) -> None:
         if self._mtg is None:
@@ -1129,7 +1106,7 @@ class MTGDataStructure(GraphDataStructure):
     def n_edges(self) -> int:
         return len(self.edges())
 
-    def incidence_matrix(self) -> np.ndarray:
+    def _incidence_matrix(self) -> np.ndarray:
         """Dense B matrix.  Overridden by MPGDataStructure."""
         B = np.zeros((self.n_nodes(), self.n_edges()))
         for e_idx, (src, tgt) in enumerate(self.edges()):
@@ -1428,19 +1405,19 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
         """Nodes without children."""
         return self._traversal()["tips"]
 
-    def order(self, kind: str = "pre", convention: str = None) -> np.ndarray:
+    def order(self, kind: str = "pre", traversal: str = None) -> np.ndarray:
         """
         Node permutation: "pre" lists every parent before its children, "post" every child before its parent.
-        convention="openalea": the post order of openalea.mtg.traversal.post_order2 (children taken from the MTG, the
+        traversal="openalea": the post order of openalea.mtg.traversal.post_order2 (children taken from the MTG, the
         successor '<' subtree first, then the branches in reverse insertion order), the visiting order of models
         written with it, e.g. rhizodep. Segment mode only.
         """
         if kind not in ("pre", "post"):
             raise ValueError(f"order must be 'pre' or 'post', got '{kind}'")
-        if convention is None:
+        if traversal is None:
             return self._traversal()[kind]
-        if convention != "openalea" or kind != "post":
-            raise ValueError("convention='openalea' is available for kind='post' only")
+        if traversal != "openalea" or kind != "post":
+            raise ValueError("traversal='openalea' is available for kind='post' only")
         return self._openalea_post_order()
 
     def _openalea_post_order(self) -> np.ndarray:
@@ -1622,7 +1599,7 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
         as rhizodep's loops do.
         """
         from openalea.metafspm.data_structure import tree_kernels
-        visit = self.order("post", convention=order) if order is not None else self.order("post")
+        visit = self.order("post", traversal=order) if order is not None else self.order("post")
         if where is not None:
             visit = visit[np.asarray(where, dtype=bool)[visit]]
         return tree_kernels.path_contributions(self.parents(), budget, extent, values, visit, include=include)
@@ -1646,20 +1623,20 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
             raise ValueError(f"'{location}' is not a coarse location ({self._coarse_scale_names()})")
         return self._membership(location)[1]
 
-    def labels(self, of: str = None, per_node: bool = True) -> np.ndarray:
-        """Each node's MTG label name ("LeafElement", "RootSegment", ...), or with *of* a coarse scale ("Organ") the
-        label of the node's entity at that scale (*per_node* False: one per entity of that scale, in entity_ids'
-        order); an object array, read from the MTG once per topology."""
+    def labels(self, location: str = None, per_node: bool = True) -> np.ndarray:
+        """Each node's MTG label name ("LeafElement", "RootSegment", ...), or with *location* a coarse scale
+        ("Organ") the label of the node's entity at that scale (*per_node* False: one per entity of that scale, in
+        entity_ids' order); an object array, read from the MTG once per topology."""
         cache = self.__dict__.setdefault("_label_names", {})
-        kept = cache.get(of)
+        kept = cache.get(location)
         if kept is None or kept[0] != self.topology_version:
             g = self.structure
             names = g.labels.translator                   # the MPG's label codes → names
-            ids = self.entity_ids("node" if of is None else of).tolist()
-            kept = cache[of] = (self.topology_version,
-                                np.array([_label_name(g.label(v), names) for v in ids], dtype=object))
+            ids = self.entity_ids("node" if location is None else location).tolist()
+            kept = cache[location] = (self.topology_version,
+                                      np.array([_label_name(g.label(v), names) for v in ids], dtype=object))
         values = kept[1]
-        return values[self.owner(of)] if of is not None and per_node else values
+        return values[self.owner(location)] if location is not None and per_node else values
 
     def validate(self, strict: bool = False) -> None:
         """Topology and variable store consistency (VariableStoreMixin.validate_variables)."""
@@ -1846,9 +1823,9 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
         if from_location == "node" and to_location == "edge":
             parents, children = self._connection_endpoints()
             tail, head = self._vid_index(parents), self._vid_index(children)
-            if aggregation in ("proximal", "child"):
+            if aggregation == "child":
                 return values[head]
-            if aggregation in ("distal", "parent"):
+            if aggregation == "parent":
                 return values[tail]
             if aggregation == "mean":
                 return (values[tail] + values[head]) / 2.
@@ -1935,13 +1912,13 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
                 else on_nodes[self.index_of(np.array([b for _, b in self.edges()], dtype=np.int64))]
         return on_nodes
 
-    def node_property(self, name: str) -> np.ndarray:
+    def _node_property(self, name: str) -> np.ndarray:
         if self.has(name) and self.location(name) == "node":
             return self.get(name)
         raise KeyError(f"Node property '{name}' not registered. "
                        f"Available: {list(self._node_data)}.")
 
-    def edge_property(self, name: str) -> np.ndarray:
+    def _edge_property(self, name: str) -> np.ndarray:
         if self.has(name) and self.location(name) == "edge":
             return self.get(name)
         raise KeyError(f"Edge property '{name}' not registered. "
@@ -2063,7 +2040,7 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
             props[name] = prop = ArrayDict(dict(sorted(prop.items())))
         return prop
 
-    def write_node_to_mtg(self, name: str, arr: np.ndarray) -> None:
+    def _write_node_to_mtg(self, name: str, arr: np.ndarray) -> None:
         """Write a node array to MTG property *name* at the node vids (created if absent).
 
         Fast path: ArrayDict keyed exactly by the node vids → assign_at. Errors are raised.
@@ -2080,7 +2057,7 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
         else:
             _scatter(prop, np.asarray(self._idx_to_vid, dtype=np.int64), arr)
 
-    def write_edge_to_mtg(self, name: str, arr: np.ndarray,
+    def _write_edge_to_mtg(self, name: str, arr: np.ndarray,
                            convention: str = "proximal") -> None:
         """Write an edge array to MTG property *name* at the endpoint chosen by *convention*::
 
@@ -2132,7 +2109,7 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
                                  f"{sorted(labels.filters)[:4]}")
         raise ValueError(f"unknown label '{name}'")
 
-    def resolve_codes(self, variable: str, values):
+    def _resolve_codes(self, variable: str, values):
         """*values* (a value or a list) with label names replaced by their integer codes."""
         def code(value):
             return self.label_code(value, variable) if isinstance(value, str) else value
@@ -2152,7 +2129,7 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
         prop = self._mtg_property_for_write(name, numeric=not integer)     # integers stay Python ints in a dict
         _scatter(prop, np.asarray(vids, dtype=np.int64), values, integer=integer)
 
-    def read_mtg(self, spec):
+    def _read_mtg(self, spec):
         """
         Values of the MTG property of declared variable *spec* (a VariableSpec) at its location, mapped from its
         scale; None when the variable has no MTG scale or the property is absent.
@@ -2195,7 +2172,7 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
         self.flush_mtg()
         return self._mtg
 
-    def track_mtg(self, spec) -> None:
+    def _track_mtg(self, spec) -> None:
         """Keep MTG-backed variable *spec* in the MTG: written at the next flush_mtg(), then whenever it changed."""
         if not spec.mtg_backed or self._mtg is None:
             return
@@ -2215,15 +2192,15 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
                 continue
             count = self.write_count(name)
             if synced.get(name) != (count, self.topology_version):
-                self.write_mtg(tracked[name])
+                self._write_mtg(tracked[name])
                 synced[name] = (count, self.topology_version)
 
-    def mark_mtg_synced(self, name: str) -> None:
+    def _mark_mtg_synced(self, name: str) -> None:
         """Record that the MTG holds the current values of *name* (e.g. just read from it)."""
         if name in self.__dict__.get("_mtg_tracked", {}):
             self.__dict__["_mtg_synced"][name] = (self.write_count(name), self.topology_version)
 
-    def write_mtg(self, spec) -> None:
+    def _write_mtg(self, spec) -> None:
         """
         Write declared variable *spec* to its MTG property at the vertices of its scale, through the inverse of
         its mapping::
@@ -2243,7 +2220,7 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
             return
         if spec.location == "node":
             if spec.mapping is None:
-                self.write_node_to_mtg(spec.name, values)
+                self._write_node_to_mtg(spec.name, values)
                 return
             coarse = self._scale_name(spec.scale)
             weights = self.get(spec.weight) if spec.weight else None
@@ -2253,16 +2230,16 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
             if self._anatomy and spec.scale == self._mtg.scales.Connection:
                 self._write_at(spec.name, self.entity_ids("edge"), values)      # at the Connections themselves
             else:
-                self.write_edge_to_mtg(spec.name, values, convention=spec.mapping)
+                self._write_edge_to_mtg(spec.name, values, convention=spec.mapping)
         elif spec.mapping is None:
             self._write_at(spec.name, self.entity_ids(spec.location), values)
         else:
-            self.write_node_to_mtg(spec.name, self._map(values, spec.location, "node", "broadcast",
+            self._write_node_to_mtg(spec.name, self._map(values, spec.location, "node", "broadcast",
                                                         fill=self._default_of(spec.name)))
 
     # ── Incidence matrix ──────────────────────────────────────────────────────
 
-    def incidence_matrix(self):
+    def _incidence_matrix(self):
         """Sparse CSR incidence matrix (B[parent,e]=+1, B[child,e]=-1, GraphView convention), cached."""
         if self._B_cached is not None:
             return self._B_cached
@@ -2274,10 +2251,10 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
             rows = np.r_[self._vid_index(pairs[:, 0]), self._vid_index(pairs[:, 1])]
             self._B_cached = _coo((np.r_[np.ones(m), -np.ones(m)], (rows, np.r_[e, e])), shape=(n, m)).tocsr()
         else:
-            self._B_cached = super().incidence_matrix()
+            self._B_cached = super()._incidence_matrix()
         return self._B_cached
 
-    def invalidate_topology(self) -> None:
+    def _invalidate_topology(self) -> None:
         """Rebuild index map and incidence matrix after structural change."""
         self._build_index_map()
         self._B_cached = None
@@ -2327,7 +2304,7 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
         else:
             # Incremental: only new segments get Compartments and Connections, the others keep theirs
             self.last_extension = self._mtg.extend_graph(self._from_scale)
-        self.invalidate_topology()
+        self._invalidate_topology()
         self._node_data.clear()
         self._edge_data.clear()
         for store in self._scale_data.values():
@@ -2547,7 +2524,7 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
         Node IDs = SubOrgan VIDs (from vertex_id on Compartment nodes).
         Edge IDs = 0-based integers; endpoints from n_id_a/n_id_b.
         Sign convention: B[tail/parent, e] = +1, B[head/child, e] = -1
-        (consistent with GraphView.from_mtg_subset and incidence_matrix()).
+        (as GraphView.incidence everywhere).
         """
         node_ids = np.array(self._idx_to_vid, dtype=np.int64)
         n        = len(node_ids)
@@ -2588,9 +2565,9 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
             boundary_inc   = csc_matrix((n, 0), dtype=np.float64)
             boundary_names = ()
 
-        node_data = {name: self.node_property(name).copy()
+        node_data = {name: self._node_property(name).copy()
                      for name in node_properties if name in self._node_data}
-        edge_data = {name: self.edge_property(name).copy()
+        edge_data = {name: self._edge_property(name).copy()
                      for name in edge_properties if name in self._edge_data}
 
         return GraphView(
@@ -2604,26 +2581,6 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
             node_data          = node_data,
             edge_data          = edge_data,
         )
-
-    def topology(self, boundary_ports: tuple = ()) -> "GraphView":
-        """The graph view: one name for every DataStructure."""
-        return self.to_graph_view(boundary_ports=boundary_ports)
-
-    def to_props_dict(self) -> dict:
-        """
-        Convert arrays to {name: {id: value}} for the decorator machinery.
-
-        Node props are keyed by SubOrgan VID (matching to_graph_view node_ids).
-        Edge props are keyed by 0-based edge index (matching edge_ids = arange).
-        """
-        props: dict = {}
-        for name, arr in self._node_data.items():
-            props[name] = {int(vid): float(arr[i])
-                           for i, vid in enumerate(self._idx_to_vid)}
-        for name, arr in self._edge_data.items():
-            props[name] = {j: float(arr[j]) for j in range(len(arr))}
-        return props
-
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # Field / grid branch
@@ -2828,7 +2785,7 @@ class ArrayDataStructure(VariableStoreMixin, FieldDataStructure):
         """(lower cell, upper cell) of each face, as flat cell indices."""
         return list(zip(self._face_tail.tolist(), self._face_head.tolist()))
 
-    def incidence_matrix(self):
+    def _incidence_matrix(self):
         """Sparse incidence (n_cells, n_faces): +1 at the lower cell, -1 at the upper one."""
         n, m = self.n_nodes(), self.n_edges()
         e = np.arange(m)
@@ -2842,12 +2799,8 @@ class ArrayDataStructure(VariableStoreMixin, FieldDataStructure):
             raise NotImplementedError("boundary ports on grids: use boundary sets on the boundary cells")
         n = self.n_nodes()
         return GraphView(node_ids=np.arange(n, dtype=np.int64), edge_ids=np.arange(self.n_edges(), dtype=np.int64),
-                         tail=self._face_tail, head=self._face_head, incidence=self.incidence_matrix(),
+                         tail=self._face_tail, head=self._face_head, incidence=self._incidence_matrix(),
                          boundary_incidence=csc_matrix((n, 0), dtype=np.float64), boundary_names=())
-
-    def topology(self, boundary_ports: tuple = ()) -> "GraphView":
-        """The graph view: one name for every DataStructure."""
-        return self.to_graph_view(boundary_ports=boundary_ports)
 
     def layer_mask(self, **layers) -> np.ndarray:
         """
@@ -2904,6 +2857,8 @@ class ArrayDataStructure(VariableStoreMixin, FieldDataStructure):
         return np.arange(self.n_dof, dtype=np.int64)
 
     def cell_volume(self) -> float:
+        """The volume of a cell: one number, every cell of a regular grid having it (AdaptiveGridDataStructure gives
+        one per cell); it multiplies a grid variable of any shape."""
         return float(np.prod(self._dx))
 
     def cell_sizes(self) -> np.ndarray:

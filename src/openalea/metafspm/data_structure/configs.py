@@ -45,11 +45,6 @@ class ScalesConfig:
         return dict(sorted(tranlator.items(), key=lambda x: x[0]))
 
     @property
-    def name_translator(self):
-        tranlator = {f.name: f.default for f in fields(self)}
-        return dict(sorted(tranlator.items(), key=lambda x: x[1])) 
-
-    @property
     def names(self):
         return list(self.translator.values())
 
@@ -211,7 +206,7 @@ class LabelsConfig:
                     if attr.startswith('_'):
                         continue
                     if isinstance(val, str):
-                        unique_integer = self.filter_as_unique_int(val)
+                        unique_integer = self._filter_as_unique_int(val)
                         group[attr] = unique_integer
                         self.translator[unique_integer] = attr
                     else:
@@ -226,7 +221,7 @@ class LabelsConfig:
         self.__init__()                  # the same groups and integers (deterministic)
         self.__dict__.update(state)
 
-    def filter_as_unique_int(self, filter: str):
+    def _filter_as_unique_int(self, filter: str):
         if filter in self.filters.keys():
             integer = self.filters[filter]
         else:

@@ -45,8 +45,8 @@ def test_refinement_keeps_the_balance_and_closes_every_cell():
     corner = np.zeros(grid.n_nodes(), dtype=bool)
     corner[0] = True
     grid.refine(corner)
-    grid.refine(lambda g: (g.levels() == 1) & (g.cell_centers()[:, 2] < 0.03))
-    levels = grid.levels()
+    grid.refine(lambda g: (g.refinement_level() == 1) & (g.cell_centers()[:, 2] < 0.03))
+    levels = grid.refinement_level()
     assert levels.max() == 2 and grid.n_nodes() > 12
     tail, head = grid._face_tail, grid._face_head
     assert np.abs(levels[tail] - levels[head]).max() <= 1                       # 2:1 balance
@@ -71,7 +71,7 @@ def test_refine_and_coarsen_carry_values_conservatively():
     assert grid.n_nodes() == 12 + 4 * 7
     assert grid.get("mass").sum() == pytest.approx(total)                                      # split by volume
     assert (grid.get("concentration") * grid.cell_volume()).sum() == pytest.approx(mean)      # copied
-    grid.coarsen(lambda g: g.levels() > 0)
+    grid.coarsen(lambda g: g.refinement_level() > 0)
     assert grid.n_nodes() == 12
     np.testing.assert_allclose(grid.get("mass"), np.arange(12.) + 1.)                         # summed back
     np.testing.assert_allclose(grid.get("concentration"), np.arange(12.) + 1.)                # averaged back
@@ -153,7 +153,7 @@ def test_plants_map_onto_refined_cells():
         rows, columns, weights = CrossMapping(plants, grid, method=method).incidence()
         np.testing.assert_allclose(np.bincount(rows, weights=weights), 1.)
         centers = grid.cell_centers()[columns]
-        assert (centers[:, 0] < 0.1).all() and (grid.levels()[columns] > 0).all()   # the refined cells
+        assert (centers[:, 0] < 0.1).all() and (grid.refinement_level()[columns] > 0).all()   # the refined cells
 
 
 def test_a_refined_grid_is_checkpointed(tmp_path):
@@ -162,7 +162,7 @@ def test_a_refined_grid_is_checkpointed(tmp_path):
     grid.register("solute", np.arange(grid.n_nodes(), dtype=float), location="cell")
     grid.checkpoint(str(tmp_path / "g"))
     restored = AdaptiveGridDataStructure.restore(str(tmp_path / "g"))
-    np.testing.assert_array_equal(restored.levels(), grid.levels())
+    np.testing.assert_array_equal(restored.refinement_level(), grid.refinement_level())
     np.testing.assert_array_equal(restored.get("solute"), grid.get("solute"))
     np.testing.assert_array_equal(restored.get("face_area"), grid.get("face_area"))
 
@@ -187,14 +187,14 @@ def test_a_mapping_follows_the_refinement_of_its_grid():
     rows, columns, weights = mapping.incidence()
     assert columns.max() < grid.n_nodes() and columns.max() != before
     np.testing.assert_array_equal(columns, grid.locate(grid.cell_centers()[columns]))
-    assert (grid.levels()[columns] > 0).all()                                     # the new, refined cells
+    assert (grid.refinement_level()[columns] > 0).all()                                     # the new, refined cells
 
 
 def test_the_edge_difference_is_exact_for_linear_fields_across_refinement_levels():
     grid = AdaptiveGridDataStructure(shape=(4, 4, 6), dx=0.02, max_level=2, periodic=False)
     for radius in (0.03, 0.015):                                                 # two levels of refinement
         grid.refine(lambda g: np.linalg.norm(g.cell_centers() - [0.03, 0.05, 0.04], axis=1) < radius)
-    assert len(np.unique(grid.levels())) == 3
+    assert len(np.unique(grid.refinement_level())) == 3
     slope = np.array([0.7, -1.3, 3.5])
     u = grid.cell_centers() @ slope
     view = grid.to_graph_view()

@@ -86,7 +86,7 @@ def make_layered_anatomy(n_segments=2, bulk=True):
     g = MPG()
     scale = g.scales.SubOrgan
     props = dict(label=g.labels.SubOrgan.RootSegment)
-    segments = [g.add_system_root_at_scale(scale, **props)]
+    segments = [g._add_system_root_at_scale(scale, **props)]
     for _ in range(n_segments - 1):
         segments.append(g.add_component_with_topo(g.scales.anchors[scale], segments[-1],
                                                   **PropsConfig(scale=scale, edge_type='<', **props)))

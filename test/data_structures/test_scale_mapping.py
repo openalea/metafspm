@@ -198,15 +198,15 @@ def test_parameters_are_refreshed_from_the_mtg_and_never_written_back(seedling):
     assert _prop(ds.mtg, "level") == {v: 1. for v in ds.entity_ids("node")}
 
 
-def test_child_and_parent_are_accepted_by_the_scale_operators(seedling):
+def test_child_and_parent_are_the_edge_aggregations(seedling):
+    """child and parent only: the former proximal and distal are refused."""
     _, ds, _ = seedling
     ds.register("x", np.arange(ds.n_nodes(), dtype=float), location="node")
     ds.derive("x_child", {"x": 1.}, location="edge", aggregation="child")
-    ds.derive("x_proximal", {"x": 1.}, location="edge", aggregation="proximal")
     ds.derive("x_parent", {"x": 1.}, location="edge", aggregation="parent")
-    ds.derive("x_distal", {"x": 1.}, location="edge", aggregation="distal")
-    np.testing.assert_array_equal(ds.get("x_child"), ds.get("x_proximal"))
-    np.testing.assert_array_equal(ds.get("x_parent"), ds.get("x_distal"))
+    assert not np.array_equal(ds.get("x_child"), ds.get("x_parent"))
+    with pytest.raises(ValueError, match="cannot map node to edge"):
+        ds.derive("x_proximal", {"x": 1.}, location="edge", aggregation="proxi" + "mal")
 
 
 # ---------------------------------------------------------------- scale-aware MTG mapping
@@ -249,7 +249,7 @@ def test_mtg_mapping_partial_coverage_raises_and_absent_returns_none():
 
 def test_write_back_creates_missing_property():
     g, _, ds = seedling_ds()
-    ds.write_node_to_mtg("new_state", np.arange(ds.n_nodes(), dtype=float))
+    ds._write_node_to_mtg("new_state", np.arange(ds.n_nodes(), dtype=float))
     written = g.properties()["new_state"]
     assert [written[v] for v in ds.entity_ids("node")] == list(range(ds.n_nodes()))
 
@@ -257,6 +257,6 @@ def test_write_back_creates_missing_property():
 def test_write_back_errors_are_not_swallowed():
     _, _, ds = seedling_ds()
     with pytest.raises(ValueError):
-        ds.write_node_to_mtg("struct_mass", np.ones(ds.n_nodes() + 3))
+        ds._write_node_to_mtg("struct_mass", np.ones(ds.n_nodes() + 3))
     with pytest.raises(ValueError):
-        ds.write_edge_to_mtg("struct_mass", np.ones(ds.n_edges() + 3), convention="proximal")
+        ds._write_edge_to_mtg("struct_mass", np.ones(ds.n_edges() + 3), convention="proximal")

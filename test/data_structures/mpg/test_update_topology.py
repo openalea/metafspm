@@ -109,7 +109,7 @@ def test_mpg_update_topology_keeps_node_properties():
 
     ds.update_topology()
 
-    np.testing.assert_array_equal(ds.node_property("concentration"), np.ones(ds.n_nodes()))
+    np.testing.assert_array_equal(ds._node_property("concentration"), np.ones(ds.n_nodes()))
 
 
 def test_mpg_update_topology_keeps_edge_properties():
@@ -120,7 +120,7 @@ def test_mpg_update_topology_keeps_edge_properties():
 
     ds.update_topology()
 
-    np.testing.assert_array_equal(ds.edge_property("K_axial"), np.ones(ds.n_edges()))
+    np.testing.assert_array_equal(ds._edge_property("K_axial"), np.ones(ds.n_edges()))
 
 
 def test_mpg_update_topology_requires_from_scale():
@@ -179,9 +179,9 @@ def test_mpg_update_topology_graph_view_reflects_new_topology():
 def test_mpg_update_topology_invalidates_incidence_cache():
     """The incidence matrix cache is cleared so the next call rebuilds it."""
     g, _, ds = _fresh_populated_ds()
-    B1 = ds.incidence_matrix()
+    B1 = ds._incidence_matrix()
     ds.update_topology()
-    B2 = ds.incidence_matrix()
+    B2 = ds._incidence_matrix()
     assert B1 is not B2
 
 

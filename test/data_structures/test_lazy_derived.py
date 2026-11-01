@@ -125,4 +125,4 @@ def test_a_derived_value_follows_a_source_written_by_another_component():
     ds = _ds()
     ds.derive("status", {"amino_acids": 1., "nitrate": 0.5})
     ds.set("amino_acids", 5.)                                    # e.g. PlantNitrogen's step
-    assert float(ds.export(["status"])["status"].ravel()[0]) == 6.   # e.g. a Logger reading after the step
+    assert float(ds._export(["status"])["status"].ravel()[0]) == 6.   # e.g. a Logger reading after the step

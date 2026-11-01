@@ -91,7 +91,7 @@ def make_chain_plant_ds(coordinates=(0.025, 0.025, -0.01), n_segments=3):
     g = MPG()
     scale = g.scales.SubOrgan
     anchor = g.scales.anchors[scale]
-    vids = [g.add_system_root_at_scale(scale, label=g.labels.SubOrgan.RootSegment)]
+    vids = [g._add_system_root_at_scale(scale, label=g.labels.SubOrgan.RootSegment)]
     for _ in range(n_segments - 1):
         vids.append(g.add_component_with_topo(anchor, vids[-1], **PropsConfig(scale=scale, edge_type='<',
                                                                             label=g.labels.SubOrgan.RootSegment)))

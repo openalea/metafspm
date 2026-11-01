@@ -35,7 +35,7 @@ def _segment_chain(n_segments=3) -> MPGDataStructure:
     g = MPG()
     scale = g.scales.SubOrgan
     anchor = g.scales.anchors[scale]
-    vid = g.add_system_root_at_scale(scale, label=g.labels.SubOrgan.RootSegment)
+    vid = g._add_system_root_at_scale(scale, label=g.labels.SubOrgan.RootSegment)
     for _ in range(n_segments - 1):
         vid = g.add_component_with_topo(anchor, vid, **PropsConfig(scale=scale, edge_type="<",
                                                                  label=g.labels.SubOrgan.RootSegment))
@@ -215,7 +215,7 @@ def _default_water_model(ds, component_class=None):
 
 def _residuals(ds):
     """The xylem and phloem balances at the DataStructure's values, written by hand."""
-    B = ds.incidence_matrix().toarray()
+    B = ds._incidence_matrix().toarray()
     get = lambda name: np.asarray(ds.get(name))
     p_x, p_ph = get("xylem_pressure"), get("phloem_pressure")
     r_x = B @ (get("K_xylem") * (B.T @ p_x)) + get("sigma_xph") * (p_x - p_ph) \

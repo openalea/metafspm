@@ -122,11 +122,11 @@ def test_broadcast_from_a_coarser_scale():
 def test_node_to_edge_mappings():
     _, _, ds = _seedling_ds()
     ds.register("c", np.array([float(v) for v in ds.entity_ids("node")]), location="node")
-    for aggregation in ("proximal", "distal", "mean"):
+    for aggregation in ("child", "parent", "mean"):
         ds.derive(f"c_{aggregation}", {"c": 1.}, location="edge", aggregation=aggregation)
     parents, children = zip(*ds.edges())
-    np.testing.assert_array_equal(ds.get("c_proximal"), children)       # the child owns the edge
-    np.testing.assert_array_equal(ds.get("c_distal"), parents)
+    np.testing.assert_array_equal(ds.get("c_child"), children)          # the child owns the edge
+    np.testing.assert_array_equal(ds.get("c_parent"), parents)
     np.testing.assert_allclose(ds.get("c_mean"), (np.array(parents) + np.array(children)) / 2)
 
 

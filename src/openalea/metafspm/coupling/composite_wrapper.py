@@ -120,7 +120,7 @@ class CompositeModel:
                                                                  ("weighted_mean", "split"))):
                 default, weight = self._default_link_mapping(ds, link, location)
                 aggregation = aggregation or default
-            options = dict(location=location, aggregation=aggregation, weight=weight, target=link.target)
+            options = dict(location=location, aggregation=aggregation, weight=weight, where=link.target)
             if link.target is not None and ds.has(link.variable):
                 options["default"] = ds._variable_meta().get(link.variable, {}).get("default", 0.)
             if link.formula is not None:

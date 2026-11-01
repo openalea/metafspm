@@ -139,7 +139,7 @@ def test_available_vars_include_edge_and_scalar_variables():
     ds.register("flux", location="edge")
     ds.register("total", location="scalar")
     assert {"flux", "total"} <= set(ds.available_vars())
-    assert {"flux", "total"} <= set(ds.export())
+    assert {"flux", "total"} <= set(ds._export())
 
 
 def test_get_missing_raises_key_error():

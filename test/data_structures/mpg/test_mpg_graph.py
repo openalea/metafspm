@@ -179,7 +179,7 @@ def put_edges_on_existing_anatomy():
         g2.add_component_with_topo(edge_anchor, vid, **PropsConfig(scale=g2.scales.Connection, edge_type='/', label=g2.labels.Connection.Symplastic,    n_id_a=symplasm, n_id_b=phloem))
         g2.add_component_with_topo(edge_anchor, vid, **PropsConfig(scale=g2.scales.Connection, edge_type='/', label=g2.labels.Connection.Transmembrane, n_id_a=xylem,    n_id_b=phloem))
 
-    g2.populate_graph_custom_connections(
+    g2.wire_junctions(
         g2.scales.SubOrgan,
         [
             dict(node_label=g2.labels.Compartment.Symplastic, edge_label=g2.labels.Connection.Symplastic),
@@ -259,7 +259,7 @@ def test_ordered_connections():
 
     # ── Ordered: near↔near, far↔far ──────────────────────────────────────────
     g_ord = _setup()
-    g_ord.populate_graph_custom_connections(
+    g_ord.wire_junctions(
         g_ord.scales.SubOrgan,
         [dict(node_label=g_ord.labels.Cell.MetaXylem,
               edge_label=g_ord.labels.Connection.Apoplastic,
@@ -282,7 +282,7 @@ def test_ordered_connections():
 
     # ── All-to-all (no ordering): every pair among the 2 near/far nodes ───────
     g_all = _setup()
-    g_all.populate_graph_custom_connections(
+    g_all.wire_junctions(
         g_all.scales.SubOrgan,
         [dict(node_label=g_all.labels.Cell.MetaXylem,
               edge_label=g_all.labels.Connection.Apoplastic)],
@@ -338,7 +338,7 @@ if __name__ == "__main__":
         return g_x
 
     g_ord = _xylem_setup()
-    g_ord.populate_graph_custom_connections(
+    g_ord.wire_junctions(
         g_ord.scales.SubOrgan,
         [dict(node_label=g_ord.labels.Cell.MetaXylem,
               edge_label=g_ord.labels.Connection.Apoplastic,
@@ -349,7 +349,7 @@ if __name__ == "__main__":
              node_property='angle')
 
     g_all = _xylem_setup()
-    g_all.populate_graph_custom_connections(
+    g_all.wire_junctions(
         g_all.scales.SubOrgan,
         [dict(node_label=g_all.labels.Cell.MetaXylem,
               edge_label=g_all.labels.Connection.Apoplastic)],

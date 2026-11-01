@@ -111,7 +111,7 @@ class AdaptiveSoil(EnvironmentModel):
             self.grid.coarsen(density < self.coarsen_fraction * top)
             self.structure.set_layers()
             set_conductivity(self.grid, **self.layers)
-        self.history.append(np.bincount(self.grid.levels(), minlength=self.grid.max_level + 1))
+        self.history.append(np.bincount(self.grid.refinement_level(), minlength=self.grid.max_level + 1))
 
 
 def root_surface_mappings(scene):

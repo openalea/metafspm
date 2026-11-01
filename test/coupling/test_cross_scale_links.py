@@ -199,7 +199,7 @@ def test_targets_in_python_translators_and_unknown_masks():
     translator = Translator().link("SegmentInputs", "segment_temperature", "Organs", {"organ_temperature": 1.},
                                    target="roots")
     assert translator.links[0].target == "roots" and translator.links[0].coupling == "derived"
-    with pytest.raises(KeyError, match="target mask 'roots' is not defined"):
+    with pytest.raises(KeyError, match=r"its mask 'roots' \(where=\) is not defined"):
         _couple(_link("SegmentInputs", "Organs", "segment_temperature", "organ_temperature", target="roots"))
 
 

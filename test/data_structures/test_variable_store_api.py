@@ -176,12 +176,12 @@ def test_a_tracked_variable_reaches_the_mtg_and_is_read_back():
     spec = VariableSpec(name="water", location="node", scale=g.scales.SubOrgan)
     values = np.arange(1., ds.n_nodes() + 1.)
     ds.register("water", values, location="node")
-    assert ds.read_mtg(spec) is None                      # the property does not exist yet
-    ds.track_mtg(spec)
+    assert ds._read_mtg(spec) is None                      # the property does not exist yet
+    ds._track_mtg(spec)
     ds.flush_mtg()
     water = g.property("water")
     assert [water[int(v)] for v in ds.entity_ids("node")] == values.tolist()
-    np.testing.assert_array_equal(ds.read_mtg(spec), values)
+    np.testing.assert_array_equal(ds._read_mtg(spec), values)
 
 
 def test_only_mtg_backed_variables_are_tracked():
@@ -191,8 +191,8 @@ def test_only_mtg_backed_variables_are_tracked():
     ds.register("flux", 1., location="node")
     ds.register("pools", 1., location="node", shape=(3,))
     for spec in (solver_only, vector):
-        ds.track_mtg(spec)
-        assert ds.read_mtg(spec) is None
+        ds._track_mtg(spec)
+        assert ds._read_mtg(spec) is None
     ds.flush_mtg()
     assert not dict(g.property("flux")) and not dict(g.property("pools"))
 
@@ -222,16 +222,6 @@ def test_arraydict_scatter_writes_at_keys():
     assert dict(values) == {10: 11., 20: 2., 30: 33.}
     with pytest.raises(KeyError):
         values.indices_of([40])
-
-
-def test_arraydict_reindex_restores_the_sorted_order():
-    values = ArrayDict({1: 1., 2: 2., 3: 3.})
-    values.order[:3] = [3, 1, 2]                          # keys rewritten out of order, values aligned with them
-    values.arr[:3] = [30., 10., 20.]
-    assert not values.check_invariant()
-    values.reindex_sorted_inplace()
-    assert values.check_invariant()
-    assert dict(values) == {1: 10., 2: 20., 3: 30.}
 
 
 # ---------------------------------------------------------------- accessors

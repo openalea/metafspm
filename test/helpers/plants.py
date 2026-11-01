@@ -11,7 +11,7 @@ def branched_root_system(n_axes=5, n_segments=40, laterals_every=4):
     """A seminal axis bearing laterals, segments at SubOrgan scale under one Organ per axis."""
     g = MPG()
     s = g.scales
-    axis = g.add_system_root_at_scale(s.Axis, label=g.labels.Axis.Root)
+    axis = g._add_system_root_at_scale(s.Axis, label=g.labels.Axis.Root)
     gu = g.add_component(axis, **PropsConfig(scale=s.GrowthUnit, edge_type='/', label=g.labels.GrowthUnit.Root))
     phytomer = g.add_component(gu, **PropsConfig(scale=s.Phytomer, edge_type='/', label=g.labels.Phytomer.Root))
     organ = g.add_component(phytomer, **PropsConfig(scale=s.Organ, edge_type='/', label=g.labels.Organ.RootInternode))

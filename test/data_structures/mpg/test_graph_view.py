@@ -111,42 +111,6 @@ def test_n_edges():
     assert gv.n_edges == 3
 
 
-def test_node_local_index():
-    gv = _make_simple_graph_view(n=4)
-    for i in range(4):
-        assert gv.node_local_index(i) == i
-
-
-def test_node_local_index_sorted_ids():
-    """node_ids are sorted; searchsorted gives the correct position."""
-    node_ids = np.array([10, 20, 30, 40], dtype=np.int64)
-    gv = _make_simple_graph_view.__wrapped__(node_ids) \
-        if hasattr(_make_simple_graph_view, '__wrapped__') else None
-    # Build manually with non-sequential IDs
-    edges = [(0, 1), (1, 2), (2, 3)]
-    from scipy.sparse import coo_matrix
-    n, m = 4, 3
-    tail  = np.array([0, 1, 2], dtype=np.int64)
-    head  = np.array([1, 2, 3], dtype=np.int64)
-    ec    = np.arange(m, dtype=np.int64)
-    B     = coo_matrix(
-        (np.r_[np.ones(m), -np.ones(m)],
-         (np.r_[tail, head], np.r_[ec, ec])),
-        shape=(n, m),
-    ).tocsc()
-    gv = GraphView(
-        node_ids=np.array([10, 20, 30, 40], dtype=np.int64),
-        edge_ids=np.arange(m, dtype=np.int64),
-        tail=tail, head=head,
-        incidence=B,
-        boundary_incidence=csc_matrix((n, 0)),
-        boundary_names=(),
-    )
-    assert gv.node_local_index(10) == 0
-    assert gv.node_local_index(30) == 2
-    assert gv.node_local_index(40) == 3
-
-
 # ── Incidence matrix structure ────────────────────────────────────────────────
 
 def test_incidence_shape():
@@ -223,26 +187,12 @@ def test_graph_view_from_mpg_after_populate_graph():
 
 # ---------------------------------------------------------------- node_local_index on an MPG view
 
-def test_node_local_index_on_mpg_view():
-    """MPG local order is Compartment post-order, not sorted: lookups must not assume sorted ids."""
-    _, _, ds = seedling_ds()
-    gv = ds.to_graph_view()
-    assert list(gv.node_ids) != sorted(gv.node_ids)
-    assert [gv.node_local_index(v) for v in gv.node_ids] == list(range(gv.n_nodes))
-
-
-def test_node_local_index_missing_id_raises():
-    _, _, ds = seedling_ds()
-    with pytest.raises(KeyError):
-        ds.to_graph_view().node_local_index(999)
-
-
 # ---------------------------------------------------------------- incidence convention of an MPG view
 
 def test_incidence_matrix_matches_graph_view_convention():
     """One sign convention everywhere: B[parent, e] = +1, B[child, e] = -1 (the solver's GraphView)."""
     _, _, ds = seedling_ds()
-    np.testing.assert_array_equal(ds.incidence_matrix().toarray(), ds.to_graph_view().incidence.toarray())
+    np.testing.assert_array_equal(ds._incidence_matrix().toarray(), ds.to_graph_view().incidence.toarray())
     parent, child = ds.edges()[0]
-    B = ds.incidence_matrix().toarray()
+    B = ds._incidence_matrix().toarray()
     assert B[ds.index_of(parent), 0] == 1. and B[ds.index_of(child), 0] == -1.

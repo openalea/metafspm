@@ -232,4 +232,4 @@ def test_the_openalea_post_order_is_post_order2(plant):
     g, ds, _ = plant
     vids = ds.entity_ids("node").tolist()
     expected = [v for root in ds.roots().tolist() for v in post_order2(g, vids[root])]
-    assert [vids[i] for i in ds.order("post", convention="openalea")] == expected
+    assert [vids[i] for i in ds.order("post", traversal="openalea")] == expected

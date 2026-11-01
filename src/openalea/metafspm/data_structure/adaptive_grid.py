@@ -60,7 +60,7 @@ class AdaptiveGridDataStructure(VariableStoreMixin, DataStructure):
     def periodic(self) -> tuple:
         return tuple(bool(p) for p in self._periodic)
 
-    def levels(self) -> np.ndarray:
+    def refinement_level(self) -> np.ndarray:
         """Refinement level of each cell."""
         return self._level
 
@@ -302,7 +302,7 @@ class AdaptiveGridDataStructure(VariableStoreMixin, DataStructure):
     def edges(self) -> list:
         return list(zip(self._face_tail.tolist(), self._face_head.tolist()))
 
-    def incidence_matrix(self):
+    def _incidence_matrix(self):
         n, m = self.n_nodes(), self.n_edges()
         e = np.arange(m)
         return coo_matrix((np.r_[np.ones(m), -np.ones(m)], (np.r_[self._face_tail, self._face_head], np.r_[e, e])),
@@ -314,7 +314,7 @@ class AdaptiveGridDataStructure(VariableStoreMixin, DataStructure):
             raise NotImplementedError("boundary ports on grids: use boundary sets on the boundary cells")
         n = self.n_nodes()
         return GraphView(node_ids=self.cell_ids(), edge_ids=np.arange(self.n_edges(), dtype=np.int64),
-                         tail=self._face_tail, head=self._face_head, incidence=self.incidence_matrix(),
+                         tail=self._face_tail, head=self._face_head, incidence=self._incidence_matrix(),
                          boundary_incidence=csc_matrix((n, 0), dtype=np.float64), boundary_names=(),
                          difference=self.edge_difference())
 
@@ -326,7 +326,7 @@ class AdaptiveGridDataStructure(VariableStoreMixin, DataStructure):
         wrap = self._periodic[None, :]
         return np.where(wrap, delta - length * np.round(delta / length), delta)
 
-    def cell_gradient(self) -> tuple:
+    def _cell_gradient(self) -> tuple:
         """
         Per axis, the operator (cells x cells) giving each cell's gradient component: a least-squares fit over its face
         neighbours (centre offsets wrapped across periodic axes), exact for linear fields.
@@ -363,7 +363,7 @@ class AdaptiveGridDataStructure(VariableStoreMixin, DataStructure):
         level_t, level_h = self._level[tail], self._level[head]
         hanging = np.flatnonzero(level_t != level_h)
         if hanging.size:
-            gradient = self.cell_gradient()
+            gradient = self._cell_gradient()
             coarse = np.where(level_t[hanging] < level_h[hanging], tail[hanging], head[hanging])
             fine = np.where(level_t[hanging] < level_h[hanging], head[hanging], tail[hanging])
             sign = np.where(coarse == tail[hanging], 1., -1.)             # the coarse cell's sign in the difference
@@ -377,9 +377,6 @@ class AdaptiveGridDataStructure(VariableStoreMixin, DataStructure):
         difference.eliminate_zeros()
         self.__dict__["_edge_difference"] = (self.topology_version, difference)
         return difference
-
-    def topology(self, boundary_ports: tuple = ()) -> GraphView:
-        return self.to_graph_view(boundary_ports=boundary_ports)
 
     def layer_mask(self, **layers) -> np.ndarray:
         """Cells touching a boundary layer of the domain: layer_mask(z=-1) (bottom), layer_mask(x=0), ..."""
