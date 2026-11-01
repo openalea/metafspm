@@ -55,4 +55,4 @@ dependencies:
     - "-e ../../../caribu"       # openalea.caribu (the port, branch to_metafspm): the light
     - "-e ../../../GRANAP"       # openalea.granap: an anatomy per segment
     - "-e ../../../MECHA-dev"    # openalea.mecha: the water flow on the whole plant's network
-    - "-e ../../../cnwgrass"     # openalea.cnw_grass (branch to_metafspm): the gas exchange component, once ported
+    - "-e ../../../cnwgrass"     # openalea.cnwgrass (branch to_metafspm): the gas exchange component, once ported
