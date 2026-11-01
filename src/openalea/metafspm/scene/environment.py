@@ -1,7 +1,8 @@
 """
-The base of a scene's environment models (light, soil, atmosphere):
+The base of a scene's environment models (light, soil, atmosphere)::
 
     class Soil(EnvironmentModel):
+        compartment = "Soil"                                        # the folder of its outputs
         def __init__(self, plant_data_structures, xrange, yrange, time_step, depth=0.4, voxel=0.025):
             super().__init__(plant_data_structures, xrange, yrange, time_step)
             self.grid = self.build_grid(voxel, depth)               # a grid over the scene's pattern, z down
@@ -9,10 +10,11 @@ The base of a scene's environment models (light, soil, atmosphere):
             self.components = [self.transport]
 
     class Light(EnvironmentModel):
+        compartment = "Atmosphere"
         interval = 4 * 3600.                                        # a full run every 4 hours
-        def __init__(self, plant_data_structures, xrange, yrange, time_step, **parameters):
+        def __init__(self, plant_data_structures, xrange, yrange, time_step):
             super().__init__(plant_data_structures, xrange, yrange, time_step)
-            self.light = CaribuLight(data_structure=self.plant_data_structure(), time_step=time_step, **parameters)
+            self.light = CaribuLight(data_structure=self.plant_data_structure(), time_step=time_step)
             self.components = [self.light]
         def between(self):
             self.light.run_stage("state")                           # the other steps: only the row "state"

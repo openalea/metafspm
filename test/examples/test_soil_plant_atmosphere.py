@@ -99,3 +99,22 @@ def test_the_tutorial_path_from_a_scenario_table_to_its_outputs(tmp_path):
         assert os.listdir(tmp_path / name / "checkpoints") == ["step_000012"]
     dry, humid = (results[name]["plant"].set_index("hour").loc[12, "evaporation"] for name in ("dry", "humid"))
     assert dry > humid > 0.                                         # the dry air pulls more water
+
+
+def test_a_scene_from_the_tables_column_is_the_tutorials_scene(tmp_path):
+    """Scene.from_scenario (docs/tutorial.md, step 3 in one call) builds the scene the explicit path builds."""
+    from openalea.metafspm.scene.population import Planting
+    from openalea.metafspm.scene.scenarios import read_scenarios
+    from openalea.metafspm.scene.scene import Scene
+    from models import SCENE_TRANSLATOR, SeedlingWater, root_surface_mappings
+    scenario = read_scenarios(os.path.join(EXAMPLE, "scenarios", "scenarios.csv"))["dry"]
+    built = Scene.from_scenario(scenario, [Planting(x=0.1, y=0.1)], SeedlingWater, environment=[Soil], xrange=0.2,
+                                yrange=0.2, translator=SCENE_TRANSLATOR, time_step=3600,
+                                mappings=root_surface_mappings)
+    built.simulate(3)
+    explicit = scenario_to_outputs.run(scenario, str(tmp_path), hours=3)
+    for (name, (ds, _, _)), (other_name, (other, _, _)) in zip(built.data_structures().items(),
+                                                               explicit.data_structures().items()):
+        assert name == other_name
+        for variable in ds.available_vars():
+            np.testing.assert_array_equal(ds.get(variable), other.get(variable))

@@ -73,15 +73,14 @@ from openalea.metafspm.data_structure.configs import ScalesConfig as scales
 from openalea.metafspm.data_structure.data_api import MPGDataStructure
 from openalea.metafspm.solve.decorator import rate, state
 
-DOC = dict(unit="mol.g-1", unit_comment="", description="", min_value=0., max_value=1., value_comment="",
-           references="", DOI=[])
+DOC = dict(unit="mol g-1", description="", min_value=0., max_value=1.)
 
 @dataclass
 class RootCarbon(FunctionalComponent):
-    hexose: float = state_variable(**DOC, initialize=1e-3, scale=scales.SubOrgan,
-                                   state_variable_type="massic_concentration", on_grow="inherit")
-    exudation: float = state_variable(**DOC, initialize=0., scale=scales.SubOrgan, state_variable_type="extensive")
-    struct_mass: float = input_variable(**DOC, by="RootGrowth", initialize=0., scale=scales.SubOrgan)
+    hexose: float = state_variable(**DOC, default=1e-3, scale=scales.SubOrgan,
+                                   kind="massic_concentration", on_grow="inherit")
+    exudation: float = state_variable(**DOC, default=0., scale=scales.SubOrgan, kind="extensive")
+    struct_mass: float = input_variable(**DOC, by="RootGrowth", default=0., scale=scales.SubOrgan)
     exudation_rate: float = parameter(**DOC, by="RootCarbon", default=1e-6)
 
     @rate

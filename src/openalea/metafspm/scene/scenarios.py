@@ -183,11 +183,13 @@ def variants(base: dict, ranges: dict, design: str = "grid", levels: int = 3, sa
     """
     {name: scenario}: *base* (a flat scenario) with the entries of *ranges* changed. *ranges*: {name: [values]},
     {name: (low, high)}, or {name: None} for its declared bounds (min_value, max_value of *declared*: component
-    classes, or a parameter_table). *design*:
+    classes, or a parameter_table). *design*::
+
       "grid"            every combination, a (low, high) range in *levels* even steps: "EL=0.0008,IPD=0.006", ...
       "one_at_a_time"   "base", then each value of each entry alone: "EL=0.0008", ...
       "sampling"        *samples* scenarios of a Latin hypercube over the ranges (a list: its values drawn evenly),
                         "sample_000", ... (*seed*: the same draws again)
+
     A value outside its declared bounds raises; an entry whose base or default value is an integer stays one.
     """
     table = _declared(declared)

@@ -282,6 +282,9 @@ def _apply_model_scenario(model, instance, scenario: dict, read_by_initiators=()
                     ds.set(name, np.full(np.shape(ds.get(name)), value, dtype=np.asarray(ds.get(name)).dtype))
                 continue                                    # per plant: _apply_plant_scenarios
             setattr(component, name, value)
+    for component in components:                          # a setting's choices, checked as at construction
+        if hasattr(component, "check_settings"):
+            component.check_settings()
     if unknown:
         known = sorted({name for c in components
                         for name in (*getattr(c, "declared_parameters", tuple)(),

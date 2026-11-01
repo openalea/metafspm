@@ -1580,31 +1580,41 @@ def graph_system(
                 def _darcy(self, pressure, K): ...
 
     node_unknowns, edge_unknowns: the ordered names of the node (field= of the equations) and edge unknowns.
+
     solver: a key, "newton" (default), "newton_fd" (finite-difference Jacobian), "explicit_euler",
         "scipy_krylov", "scipy_anderson", "scipy_hybr", "scipy_ivp_bdf" or "scipy_ivp_radau" ("implicit_euler" is
         "newton" with transient=True, accepted with a warning for one release).
+
     max_iterations, tolerance (||R||_inf), finite_difference_step (of the finite-difference Jacobian),
         prefer_sparse, linesearch (Armijo backtracking): the Newton iterations.
+
     schedule_as: the schedule row the solve runs in ("axial", "state", ...).
+
     filters: the nodes of the active subgraph the system is solved on ({variable: condition}, a mask name or a
         callable, conventions.md, Filters): the nodes it selects and the edges between them; the other nodes are frozen, and
         dropped edges carry no flux. None: the whole graph.
+
     transient: whether the balance has a time term; it only decides the anchoring check (a steady system on an
         active subgraph needs a Dirichlet anchor in every connected piece). Inferred: True with @node_rate or a
         time-stepping solver (explicit_euler, the IVP solvers); give transient=True for a @node_balance writing its
         own time term (self.previous(...)).
+
     integrate: "once": one solve of the component's time_step (default); "substeps": *substeps* solves of
         time_step / substeps; "adaptive": step doubling with rtol / atol, min_step / max_step. Equations write
         their time terms with self.dt and self.previous().
+
     rtol, atol, max_step: the error control of "adaptive" and of the IVP solvers (scipy_ivp_bdf, scipy_ivp_radau).
+
     pool_unknowns: unknowns at a coarse scale, one per entity ({name: location} or {name: {"location": ...,
         "exchange": boundary set name}}, e.g. the shoot phloem pool of each plant, location "Plant"), solved with the
         node and edge unknowns. Their residual is a @pool_balance method; equations exchange with them through
         self.pool_exchange(name), the sparse map between the nodes of the exchange set (default: every node) and the
         pool of their entity. Newton solvers only.
+
     split: "components": each connected piece of the graph (of the active subgraph with filters=), e.g. each plant
         of a population, is solved on its own, with its own Newton convergence and integration steps. "whole": one
         system (default).
+
     The former names max_iter, tol, fd_eps, n_substeps and integrate="step" are accepted with a warning for one
     release.
     """

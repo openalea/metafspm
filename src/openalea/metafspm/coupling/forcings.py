@@ -7,9 +7,9 @@ Forcings, the time-varying inputs of a scene (meteo, a measured temperature, a s
 A forcing is a number; a callable of the scene time (s); a pandas Series indexed by time (s); or a (times, values)
 pair. Tables are linearly interpolated (and held constant beyond their ends). A callable of the time and the entity
 ids, (time, ids) -> one value per entity, varies in space (a soil temperature by depth, an input per segment): the
-Scene writes it into the input or parameter of that name, on the entities of its location. A component declaring the name with
-forcing_variable reads it with self.forcing(name); otherwise the Scene writes it, at the start of each step, into
-the input or parameter of that name of every component declaring it (not provided by a coupling).
+Scene writes it into the input or parameter of that name, on the entities of its location. A component declaring
+the name with forcing_variable reads it with self.forcing(name); otherwise the Scene writes it, at the start of each step, into
+the input or parameter of that name of every component declaring it (not provided by a coupling)::
 
   as_forcing(value, time_unit=86400.)         a user's input in days (a number, a function of the day, a Series
                                               indexed by day, one value per day from day 0) as a forcing

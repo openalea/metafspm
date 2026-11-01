@@ -1,5 +1,7 @@
 # Design note: the DataStructure variable contract (step 1)
 
+> **Historical.** This note records a design decision as it was made; the API it describes has changed since (see CHANGELOG.md and docs/). It is kept for the reasoning, not as a reference.
+
 Status: **under review**. N1–N5 are agreed (2026-10-02). 1a done (`4d1353d`), 1b done (`15f8976`), 1c done (`cc3e588`), 1d done (`bf008e3`), 1e done (`bc37e79`), 1f done: **step 1 complete**. It covers step 1 of `devplan_datastructures.md` §7: DS3 (locations and scale mapping), DS17 (derived variables resolved at read), DS5 (output locations), DS11 (validation) and DS16 (conventions).
 Branch `data_structure_api`, written against `1bf8356`. Code starts only after this note is agreed. The open points are in §8.
 

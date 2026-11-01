@@ -198,12 +198,14 @@ def follow_parents(order, parent, base_position, base_heading, base_up, pre_roll
     """
     Elements placed from their parent's end, as PlantGL's turtle draws a tree of segments: per element, from its
     parent's end frame (from its *base_* position, heading and up when it has no parent, *parent* -1):
-      1. rollL(*pre_roll*) (°);
-      2. down(*down_angle*) (°);
-      3. rollL(*roll*) (°);
-      4. the tropism: the frame turned about H × *tropism* by *elasticity* times the angle between H and *tropism*
-         (PglTurtle.F's, whatever the length; none for a zero length, as F(0));
-      5. forward by *length*.
+
+    1. rollL(*pre_roll*) (°);
+    2. down(*down_angle*) (°);
+    3. rollL(*roll*) (°);
+    4. the tropism: the frame turned about H × *tropism* by *elasticity* times the angle between H and *tropism*
+       (PglTurtle.F's, whatever the length; none for a zero length, as F(0));
+    5. forward by *length*.
+
     *order*: a pre-order of the elements (a parent before its children, e.g. ds.order("pre")); *parent*: each one's
     parent's index, -1 for none; per element arrays, base_* (n, 3). Returns (position, heading, up, end), each (n, 3):
     the element's start, its frame after the tropism (the one it is drawn in, and its children start from), its end.

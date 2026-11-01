@@ -93,6 +93,10 @@ scene.simulate(48)
   Without a folder, it keeps its tables in memory.
 - **`simulate(n)`** runs *n* steps, or fewer if `stop_when=` holds. It then records the last state and the run's
   status: finished, stopped, or failed with its error. A loop of `scene.run()` ends with `scene.finish()`.
+- **In one call.** `Scene.from_scenario(scenarios["dry"], [Planting(x=0.1, y=0.1)], SeedlingWater, environment=[Soil],
+  xrange=0.2, yrange=0.2, translator=SCENE_TRANSLATOR, time_step=3600, mappings=root_surface_mappings,
+  recorder=recorder)` does steps 2 and 3 from the table's column: each model's entries go to it, the forcings to
+  the scene.
 
 The folder then holds:
 

@@ -699,13 +699,14 @@ class FunctionalComponent(DataStructureComponent):
 
 class NewComplexes:
     """
-    New coarse vertices (Phytomers, Organs, ...) a NewNodes batch creates for its nodes, in order:
+    New coarse vertices (Phytomers, Organs, ...) a NewNodes batch creates for its nodes, in order::
 
-    anchor   per complex, the vertex it is a component of: an existing vertex's id (>= 0), or an earlier new complex,
-             -1 - its index in this table
-    scale    the complexes' scale(s) (one for all, or per complex); a complex is one scale finer than its anchor
-    label    their MPG label(s)
-    values   {variable: values per complex, or one for all}, variables of the complexes' location (their scale's name)
+        anchor   per complex, the vertex it is a component of: an existing vertex's id (>= 0), or an earlier new
+                 complex, -1 - its index in this table
+        scale    the complexes' scale(s) (one for all, or per complex); a complex is one scale finer than its anchor
+        label    their MPG label(s)
+        values   {variable: values per complex, or one for all}, variables of the complexes' location (their
+                 scale's name)
     """
 
     def __init__(self, anchor, scale, label, values=None):
@@ -725,29 +726,34 @@ class NewComplexes:
 class NewNodes:
     """
     Nodes an array-style step of a StructuralComponent creates, returned as one of its (name, values) output pairs
-    (the name is free): the framework creates them in the MPG in bulk, extends the DataStructure with their values and
-    repartitions the other components' variables, without the MPG synchronisation of an MPG-style step.
+    (the name is free): the framework creates them in the MPG in bulk, extends the DataStructure with their values
+    and repartitions the other components' variables, without the MPG synchronisation of an MPG-style step::
 
         return (length, "struct_mass", mass,
                 "new_elements", NewNodes(parent=parents, edge=edges, label=labels, values={"length": lengths},
-                                         new_complex=laterals, complex_levels=((scales.Organ, labels.Organ.RootInternode),),
+                                         new_complex=laterals,
+                                         complex_levels=((scales.Organ, labels.Organ.RootInternode),),
                                          relabel=(apex_ids, segment_label)))
 
-    parent         per new node, its parent: an existing node's id (>= 0), or another new node, -1 - its index in the
-                   batch (a parent comes before its children)
-    edge           "<" or "+", per node or for all
-    label          the nodes' MPG label (an integer of the MPG's labels), per node or for all
-    values         {variable: values per node, or one for all}: the other variables take their on_grow value (their
-                   default, or their parent's with on_grow="inherit")
-    new_complex    per node (or for all), whether it starts a complex of its own (e.g. a lateral root's Organ), created
-                   under its parent's complex at the scale above *complex_levels*' first one; otherwise the node joins
-                   its parent's complex
-    complex_levels ((scale, label), ...) of the new complexes, coarsest first, down to the scale above the nodes'
-    relabel        (existing node ids, their new label(s)): e.g. an apex becoming a segment
-    complexes      NewComplexes: complexes created explicitly (e.g. a Phytomer holding three Organs), instead of
-                   new_complex / complex_levels
-    complex        per node, its complex when *complexes* is given: an existing vertex's id (>= 0), or a new complex,
-                   -1 - its index in *complexes*
+    Its arguments::
+
+        parent          per new node, its parent: an existing node's id (>= 0), or another new node, -1 - its
+                        index in the batch (a parent comes before its children)
+        edge            "<" or "+", per node or for all
+        label           the nodes' MPG label (an integer of the MPG's labels), per node or for all
+        values          {variable: values per node, or one for all}: the other variables take their on_grow value
+                        (their default, or their parent's with on_grow="inherit")
+        new_complex     per node (or for all), whether it starts a complex of its own (e.g. a lateral root's
+                        Organ), created under its parent's complex at the scale above complex_levels' first one;
+                        otherwise the node joins its parent's complex
+        complex_levels  ((scale, label), ...) of the new complexes, coarsest first, down to the scale above the
+                        nodes'
+        relabel         (existing node ids, their new label(s)): e.g. an apex becoming a segment
+        complexes       NewComplexes: complexes created explicitly (e.g. a Phytomer holding three Organs), instead
+                        of new_complex / complex_levels
+        complex         per node, its complex when complexes is given: an existing vertex's id (>= 0), or a new
+                        complex, -1 - its index in complexes
+
     A node without a topological parent (a plant's first element) has parent NewNodes.NO_PARENT.
     """
     NO_PARENT = np.iinfo(np.int64).min

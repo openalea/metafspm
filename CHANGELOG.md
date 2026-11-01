@@ -2,6 +2,36 @@
 
 ## Unreleased (release2026)
 
+### Breaking: one public way per thing (the API cleanup)
+
+- **Fixed:**
+  - `@graph_system(rtol=, atol=, max_step=)` reach the IVP solvers (`scipy_ivp_bdf`, `scipy_ivp_radau` always ran at their own defaults); one set of defaults, 1e-6 / 1e-9.
+  - A missing translator file raises `FileNotFoundError` instead of starting an interactive builder.
+  - A model whose `__init__` takes `**kwargs` no longer receives its components' scenario entries: they are set once, by the Scene (a setting's `choices` checked then too).
+  - On grids, `index_of`, `random` and `define_mask` default to the cells; `available_vars()` lists the edge and scalar variables (`export` missed them).
+- **Coupling:**
+  - `CompositeModel.couple(*components, translator=None)` replaces `declare_data_and_couple_components` and `couple_components`; no translator means no link (an input named as another component's variable reads it). `couplings()` lists how each input is coupled: shared, alias, derived, scene, not provided.
+  - `Translator.load(source)` is the one loader (a Translator, a dict, a module, a .py or YAML path); `load_translator`, `from_yaml` and `from_module` are gone, and so are `open_or_create_translator`, `translator_matrix_builder` and the text documentation (`get_documentation`, `.documentation`, `.inputs`: `declarations()` is the route). `Link.kind` is `Link.coupling`.
+  - One default aggregation rule within and across DataStructures (`declaration.default_mapping`, with the column-grid layers); `ScalarMapping` and `cross_default_mapping` are private.
+- **Declarations:**
+  - `default=` everywhere (`initialize=` on state variables and inputs), `kind=` for `state_variable_type=`, `aggregation=` for `mapping=`: the former names warn for one release.
+  - `declarations()` has a `role` column (state_variable, input, parameter, setting, forcing) and a `kind` column (extensive, intensive, ...), and shows `references`, `DOI`, `unit_comment`, `value_comment`. `edit_by` is removed; `by=` is optional.
+  - Removed: `scale="node"` / `"edge"` / ... as a location (give `location=`), `edge_mapping=`, the edge aggregations `proximal` / `distal` (`child` / `parent`), `declare` (private), `plant_scale_state` and the Component list properties (`state_variables`, `extensive_variables`, ...), the per-component `forcings` table.
+- **Time step:** no silent 1 s default. A component alone runs one step of its own `time_step` per call; without one, reading `self.dt` raises. The Scene's `time_step` sets the simulation step; `Choregrapher().add_simulation_time_step` is private, and `Component.__call__` takes no argument.
+- **Scene:**
+  - `Scene.from_scenario(scenario, plants, model, environment=[...], **options)` builds a scene from a scenario table's column (by model, with its forcings).
+  - `Scene.finish()` replaces `Scene.stop()`; a recording scene dropped unfinished warns.
+  - `Scene` is no `CompositeModel`; `scene.data_structures()` is the one walk of the scene (recorder, frames, checkpoints); `__call__` is removed.
+  - The stand's size is `xrange` / `yrange` everywhere; environment models are `Model(plant_data_structures, xrange, yrange, time_step, ...)`, with `plant_data_structure()` and a required `compartment`.
+  - `run_every` is removed (`EnvironmentModel.interval` is the cadence); `run_when` is internal.
+  - A forcing may vary in space: a callable `(time, ids) -> one value per entity`.
+  - `population_data_structure(table, model, time_step=)` is the public population recipe; `build_population`, `apply_plant_scenarios`, `apply_model_scenario`, `model_keywords` and `flat_scenario` are private. `initiate_plant(g, plant, scenario)`.
+  - `SceneRecorder(folder=, segment_plants=)`; its `write_frame` and `checkpoint` are private.
+- **DataStructures:** the framework hooks are private (the MTG readers and writers, `node_property`, `edge_property`, `export`, `incidence_matrix`: use `to_graph_view().incidence`); `topology()`, `to_props_dict`, `summarize` (the recorder summarises), `extract_algebraic` / `inject_algebraic`, `MPG.from_mtg` and `populate_graph_custom_connections` (`wire_junctions`) are removed. One word per concept: `parameter_view(name, location)`, `labels(location=)`, `order(traversal=)`, `derive(where=)`, `AdaptiveGridDataStructure.refinement_level()`, `to_dataframe(time=)` indexed by `time`.
+- **Solving:** `graph_system(max_iterations=, tolerance=, finite_difference_step=, substeps=, integrate="once")` (the former names warn for one release); solvers by key only (the class form, `method=` and `SolverSpec` removed; `newton_optional_jacobian`, `linear_direct` and `ImplicitEulerSolver` removed, `implicit_euler` warns as an alias of `newton`); `node_balance(explicit=)`, `@priorbalance` and `@selfbalance` removed; the builder's internals private.
+- **Testing:** `openalea.metafspm.testing` keeps the couplability checks; the legacy comparisons move to `testing.comparison`, and `metafspm.corrections` to `testing.corrections`.
+- **Time units:** `as_forcing(time_unit=)` and `to_frame(time_unit=)` take seconds or a label (`"s"`, `"min"`, `"h"`, `"d"`).
+
 ### Breaking: one way to plant, force, record and describe a scenario
 
 - **Planting:**
@@ -20,7 +50,7 @@
   - Summaries go in `Plant/<Model>/summaries.csv` and in `Soil/` or `Atmosphere/<Model>/summaries.csv` for the environment grids, by the model's new `compartment` attribute. The time column is now `time`.
   - It also writes `segments.csv` (`segment_period`), your own `tables=`, frames, and `checkpoints/` (`checkpoint_period`, `keep_checkpoints`).
   - Every output can be switched off on its own. The initial and last states are recorded. Without a folder, the tables stay in memory (`recorder.table(name)`).
-  - `Scene.simulate` sets the run's status (finished, stopped, failed); `Scene.stop()` ends a `run()` loop. `simulate(0)` records a static scene's state, e.g. a section built once.
+  - `Scene.simulate` sets the run's status (finished, stopped, failed); `Scene.stop()` (now `finish()`) ends a `run()` loop. `simulate(0)` records a static scene's state, e.g. a section built once.
   - `Scene.timing` gives the wall time per model.
 - **Fixed:** an environment model's scenario entry that is a per-plant parameter on the plants' DataStructure (a light model's optics) was silently skipped. It is now set for every plant.
 - **Fixed:** after a restore, the recorder's CSVs are cut back to the checkpoint's time. A run that went past its checkpoint duplicated their rows.
@@ -115,8 +145,8 @@
 
 ### Scenarios applied by the Scene
 
-- **The Scene sets each scenario's entries on the model's components** after building the model. The entries are the `"parameters"` dict and the other keys, and they act as constructor keywords would: numeric ones go to the DataStructure (per plant for plant models), the others to the components' fields. Before, only numeric plant parameters reached the components; non-numeric ones and every environment parameter were dropped unless the model forwarded them, and none did.
-- **Breaking:** an entry that is no component parameter, no argument named by the model's `__init__` and not read by its initiators raises `ValueError`. So does a parameter that differs between plants without being stored per plant. Models whose `__init__` takes no `**kwargs` receive only the keys they name.
+- **The Scene sets each scenario's entries on the model's components** after building the model, as constructor keywords would: numeric ones go to the DataStructure (per plant for plant models), the others to the components' fields. Before, only numeric plant parameters reached the components; non-numeric ones and every environment parameter were dropped unless the model forwarded them, and none did. (Scenarios were then nested in a `"parameters"` dict; they are flat since.)
+- **Breaking:** an entry that is no component parameter, no argument named by the model's `__init__` and not read by its initiators raises `ValueError`. So does a parameter that differs between plants without being stored per plant. Models receive only the keys their `__init__` names.
 
 ### Breaking: one selection argument, `filters=`
 

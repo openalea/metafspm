@@ -44,7 +44,7 @@ def _documented_default(cell: str):
     return names[0] if names else None   # "error" cells name no mapping
 
 
-@pytest.mark.parametrize("row", _table("`state_variable_type`"), ids=lambda row: row[0])
+@pytest.mark.parametrize("row", _table("`kind`"), ids=lambda row: row[0])
 def test_the_default_mapping_table_matches_the_resolver(row):
     kinds = [kind.strip() for kind in row[0].split(",")]
     kinds = [None if kind == "none" else kind for kind in kinds]

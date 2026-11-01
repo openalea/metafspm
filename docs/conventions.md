@@ -6,7 +6,7 @@ These are the conventions that every component, translator and DataStructure fol
 
 - **Nodes and edges are the entities of the graph built by the MPG traversal** (`MPG.populate_graph(from_scale)`): one node per vertex of `from_scale` (e.g. SubOrgan), one edge per parent–child link. Model declarations anchored on biological scales are resolved against that graph, never the reverse.
 - **Incidence sign.** `B[parent, e] = +1` and `B[child, e] = -1`, so `(Bᵀ c)_e = c_parent − c_child`.
-- **Local order.** Arrays follow the Compartment post-order produced by population. It is **not** sorted by vertex id. Use `ds.entity_ids(location)` to know which entity a position holds, and `ds.index_of(ids, location)` for the reverse. Never compute a position by hand.
+- **Local order.** Arrays follow the order in which the population's Compartments were created (by the traversal of the MPG, then appended as the plants grow). It is **not** sorted by vertex id, nor a pre- or post-order: `ds.order("pre" | "post")` gives those. Use `ds.entity_ids(location)` to know which entity a position holds, and `ds.index_of(ids, location)` for the reverse. Never compute a position by hand.
 - **Traversal, in local indices** (derived from the Connections, cached per topology):
   - `ds.parents()`: −1 at a root;
   - `ds.children()`: CSR `(indptr, indices)`;
@@ -36,42 +36,42 @@ Where a DataStructure stores a variable, i.e. the shape the equations receive:
 | `scalar` | one value, e.g. a plant-scale quantity |
 | `cell` | one value per grid cell |
 
-A **scale name** is also a location:
+A **scale name** is also a location, in declarations (they resolve against the DataStructure the component is built on; DataStructure methods take the resolved locations):
 - the name of the graph's node scale (e.g. `"SubOrgan"`) means `node`;
 - `"Connection"` means `edge`;
 - a coarser scale (e.g. `"Organ"`) is its own location, with one value per vertex of that scale.
 
 Prefer scale names for biological variables: they keep their meaning when the graph's nodes change (anatomies). Keep `node` / `edge` for solver-level variables, which follow the graph's entities whatever they are.
 
-## Declarations: `scale`, `location`, `mapping`
+## Declarations: `scale`, `location`, `aggregation`
 
 ```python
 pool:    float = state_variable(..., scale=scales.Organ)                    # stored at "Organ"
 k_organ: float = parameter(..., scale=scales.Organ, location="node")        # Organ value, broadcast to the nodes
-K_axial: float = parameter(..., scale=scales.SubOrgan, location="edge", mapping="mean")
+K_axial: float = parameter(..., scale=scales.SubOrgan, location="edge", aggregation="mean")
 flux:    float = state_variable(..., location="edge")                       # solver-only, no MTG property
 ```
 
 - **`scale`:** the MTG scale of the property. Values are read from it at registration, and state variables are written back to it.
 - **`location`:** where it is stored. It defaults to the location of `scale`.
-- **`mapping`:** how values go between the two when they differ.
+- **`aggregation`:** how values go between the two when they differ (the links' word too).
 
-| Mapping | Direction |
+| Mapping (aggregation) | Direction |
 |---|---|
 | `broadcast` | down: each node gets its owner's value |
 | `sum` | up: total over the nodes of each coarse entity |
 | `mean` | up: average over the nodes of each coarse entity; on edges, the mean of both ends |
 | `weighted_mean` | up: average weighted by `weight=` |
 | `split` | down: each node gets its share of its owner's amount, in proportion to `weight=` (the total conserved) |
-| `child` | to edges: the child's value (formerly `proximal`) |
-| `parent` | to edges: the parent's value (formerly `distal`) |
+| `child` | to edges: the child's value |
+| `parent` | to edges: the parent's value |
 
-**Default mapping when none is given,** from `state_variable_type`:
+**Default aggregation when none is given,** from the variable's `kind`:
 
-| `state_variable_type` | up | down |
+| `kind` | up | down |
 |---|---|---|
 | extensive, NonInertialExtensive | `sum` | `split` by `weight=` (without a weight: error) |
-| intensive, NonInertialIntensive | `weighted_mean` by `weight=`, its capacity (without a weight: error; `mapping="mean"` for an unweighted mean) | `broadcast` |
+| intensive, NonInertialIntensive | `weighted_mean` by `weight=`, its capacity (without a weight: error; `aggregation="mean"` for an unweighted mean) | `broadcast` |
 | massic_concentration | `weighted_mean` by `weight=`, a mass (without a weight: error) | `broadcast` |
 | none | error | error |
 
@@ -86,18 +86,18 @@ means; a sum that would drop their non-zero amounts raises.
 Node → edge mappings have no default. Edges map up like their child-side nodes: an edge is counted at the owner of
 its child node (an axial junction at its child segment), with the defaults above.
 
-**Write-back.** State variables with a `scale` are written to the MTG after every component call, at the vertices of their scale, through the inverse mapping:
+**Write-back.** State variables with a `scale` are written to the MTG at the vertices of their scale, through the inverse mapping, when the MTG is read (lazily: `ds.mtg`, an MPG-style step, `ds.flush_mtg()`; `mtg_sync = "after_call"` writes them after every component call, `"never"` not at all):
 - a broadcast variable is written as the (weighted) mean of its nodes;
 - an averaged variable is broadcast back to its nodes;
 - an edge variable is written at its child or parent end.
 
 Declarations that cannot be written back raise when the component is created: a state variable summed to a coarser scale, an edge state at a scale coarser than the nodes, or an edge state with mapping `mean`.
 
-**Links between scales.** A translator link between two locations without `aggregation` uses the same table, applied to the provider's `state_variable_type`. A receiving input may declare its `state_variable_type`, which must be in the provider's family: extensive with extensive, intensive or massic with intensive or massic. Mappings between two coarse scales (e.g. Organ ↔ Axis) go through each finer entity's owner.
+**Links between scales.** A translator link between two locations without `aggregation` uses the same table, applied to the provider's `kind`. A receiving input may declare its `kind`, which must be in the provider's family: extensive with extensive, intensive or massic with intensive or massic. Mappings between two coarse scales (e.g. Organ ↔ Axis) go through each finer entity's owner.
 
 **Translator links:**
 - `scale=` / `source_scale=` on a link only check the declared locations;
-- `target="mask"` restricts a mapped link to the mask's entities, the others getting the receiver's default.
+- `target="mask"` restricts a mapped link to the mask's entities (`ds.derive(where="mask")` underneath), the others getting the receiver's default.
 
 **Types.**
 - Variables are floats by default.
@@ -192,7 +192,6 @@ leaves = boundary_set(filters={"label": "LeafElement"}, kind="robin", value="air
 - **`filters`** is a `{variable: condition}` dict, a mask name, or a callable, as for every decorator. Membership follows its variables and the topology.
 - **Live values.** `value` and `weight` are read at each solve.
 - **Parameters of grown entities.** A parameter read from the MTG gets its value for new entities at the refresh before the next solve. Until then, masks built on it use its `on_grow` value.
-- **Hand-set boundary ports** (`_boundary_ports`) are deprecated.
 
 ## Parameters
 
@@ -226,8 +225,8 @@ leaves = boundary_set(filters={"label": "LeafElement"}, kind="robin", value="air
 - A `StructuralComponent` edits the MPG through `self.mtg`. The MPG is the source of truth for structure.
 - **MPG-style steps** (no arguments) are synchronised: declared variables are written to the MPG before them; after them, the topology is updated if vertices were added or removed, and the declared state variables are re-read.
 - **Array-style steps** (with arguments) work on the DataStructure.
-- The component that owns a variable (declares it other than as an input) sets its default, `on_grow` and `state_variable_type`.
-- **Repartition.** A structural component with `partition_weight = "<node variable>"` shares the other components' node variables after each MPG-style step, by `state_variable_type`:
+- The component that owns a variable (declares it other than as an input) sets its default, `on_grow` and `kind`.
+- **Repartition.** A structural component with `partition_weight = "<node variable>"` shares the other components' node variables after each MPG-style step, by `kind`:
   - **massic concentrations:** an amount split by weight, or diluted when the weight grew;
   - **extensive:** split;
   - **intensive:** copied;

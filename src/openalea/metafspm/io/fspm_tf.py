@@ -1,6 +1,6 @@
 """
 metafspm's DataStructures as fspm-TF frames (the cross-platform scene format, https://github.com/openalea/fspm-TF),
-and back.
+and back::
 
     frame = to_frame({"plants": ds, "soil": grid}, components={"plants": [growth, carbon]},
                      mappings={"roots_in_soil": (cross_mapping, "plants", "soil")})
@@ -11,21 +11,21 @@ and back.
 
 What a frame holds:
 
-  - an MPGDataStructure: one entity set per MPG scale holding vertices (Plant, Axis, ... SubOrgan, Layer, Cell,
-    Compartment; ids are the vids), the Connections as a relation (n_id_a → n_id_b); as columns, every MPG property
-    and every variable of the DataStructure at that scale's location; its scalars; the triangles of its geometry
-    provider as a mesh, by node and by coarser scale, and a mesh for each component drawing shapes for display only
-    (display_triangles(), e.g. GRANAP's sections). The MPG's own links (the raw complex and parent of each
-    vertex, its raw edge type) are the metafspm_complex, metafspm_parent and metafspm_edge_type columns, and the
-    label codes, variable metadata and construction arguments go in the data structure's extras, so that
-    from_frame rebuilds the same MPG (vertices, links, properties) and the same variables, bit for bit;
-  - an ArrayDataStructure: a regular grid (its cells in C order, its faces as a relation); an
-    AdaptiveGridDataStructure: an adaptive grid (its leaves' level and index);
-  - a CrossMapping: its incidence (rows, columns, weights) as a mapping, which from_frame leaves out (the scene
-    rebuilds its mappings);
-  - declarations: the unit (as a UCUM code), kind, role, description, range and references of each variable
-    declared by the components given, with a standard name where the vocabulary's metafspm column lists the
-    variable's name (its declared unit converting to the standard name's).
+- an MPGDataStructure: one entity set per MPG scale holding vertices (Plant, Axis, ... SubOrgan, Layer, Cell,
+  Compartment; ids are the vids), the Connections as a relation (n_id_a → n_id_b); as columns, every MPG property
+  and every variable of the DataStructure at that scale's location; its scalars; the triangles of its geometry
+  provider as a mesh, by node and by coarser scale, and a mesh for each component drawing shapes for display only
+  (display_triangles(), e.g. GRANAP's sections). The MPG's own links (the raw complex and parent of each
+  vertex, its raw edge type) are the metafspm_complex, metafspm_parent and metafspm_edge_type columns, and the
+  label codes, variable metadata and construction arguments go in the data structure's extras, so that
+  from_frame rebuilds the same MPG (vertices, links, properties) and the same variables, bit for bit;
+- an ArrayDataStructure: a regular grid (its cells in C order, its faces as a relation); an
+  AdaptiveGridDataStructure: an adaptive grid (its leaves' level and index);
+- a CrossMapping: its incidence (rows, columns, weights) as a mapping, which from_frame leaves out (the scene
+  rebuilds its mappings);
+- declarations: the unit (as a UCUM code), kind, role, description, range and references of each variable
+  declared by the components given, with a standard name where the vocabulary's metafspm column lists the
+  variable's name (its declared unit converting to the standard name's).
 
 Not exchanged: derivation formulas and mask rules (code), random streams, the components' own state.
 """
@@ -719,12 +719,12 @@ def scene_to_frame(scene, geometry: bool = True, standard_names: dict = None, da
 
 
 def export_frame(path: str, data_structures: dict, **options) -> None:
-    """Write to_frame(data_structures, **options) to the .glb file *path*."""
+    """Write to_frame(data_structures, \\*\\*options) to the .glb file *path*."""
     _fspm_tf().write(path, to_frame(data_structures, **options))
 
 
 def export_scene(path: str, scene, **options) -> None:
-    """Write scene_to_frame(scene, **options) to the .glb file *path*."""
+    """Write scene_to_frame(scene, \\*\\*options) to the .glb file *path*."""
     _fspm_tf().write(path, scene_to_frame(scene, **options))
 
 
@@ -738,7 +738,7 @@ def _for(value, identifier: str):
 def filter_frame(frame, scales=None, entities=None, variables=None, plant_names: dict = None):
     """
     Keep, for logging, part of *frame* (changed in place, and returned); each filter is a value for every data
-    structure, or a {data structure id: value} dict (None: unfiltered):
+    structure, or a {data structure id: value} dict (None: unfiltered)::
 
       entities:   ids (vids) of entities kept with everything they contain at finer scales, e.g. a plant, an axis,
                   or a segment with its cross-section's layers, cells and compartments; also plant names of the

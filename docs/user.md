@@ -72,7 +72,7 @@ ds.register("pools", 0., location="cell", shape=(15,))   # a vector-valued varia
 
 Labels and types are declared with `dtype="int"` (label names are resolved through the MTG's `LabelsConfig`); lists
 and records with `dtype="object"`. `ds.validate_variables()` reports inconsistencies; `ds.to_dataframe(location=)`
-and `ds.summarize(...)` export values; `ds.checkpoint(path)` and `Class.restore(path)` (or `ds.load_checkpoint(path)`
+export values (the SceneRecorder writes the summaries); `ds.checkpoint(path)` and `Class.restore(path)` (or `ds.load_checkpoint(path)`
 in place) save and restore everything, bit for bit.
 
 ## 2. Components
@@ -89,14 +89,14 @@ from openalea.metafspm.solve.decorator import rate, state
 
 @dataclass
 class RootCarbon(FunctionalComponent):
-    hexose: float = state_variable(unit="mol.g-1", description="The hexose concentration", initialize=1e-3,
-                                   scale=scales.SubOrgan, state_variable_type="massic_concentration",
+    hexose: float = state_variable(unit="mol g-1", description="The hexose concentration", default=1e-3,
+                                   scale=scales.SubOrgan, kind="massic_concentration",
                                    on_grow="inherit")
-    exudation: float = state_variable(unit="mol.s-1", description="The hexose exuded", initialize=0.,
-                                      scale=scales.SubOrgan, state_variable_type="extensive")
+    exudation: float = state_variable(unit="mol s-1", description="The hexose exuded", default=0.,
+                                      scale=scales.SubOrgan, kind="extensive")
     struct_mass: float = input_variable(unit="g", description="The structural mass", by="RootGrowth",
-                                        initialize=0., scale=scales.SubOrgan)
-    exudation_rate: float = parameter(unit="g.s-1", description="The exudation's rate", by="RootCarbon",
+                                        default=0., scale=scales.SubOrgan)
+    exudation_rate: float = parameter(unit="g s-1", description="The exudation's rate", by="RootCarbon",
                                       default=1e-6)
 
     @rate
@@ -112,15 +112,21 @@ carbon()                                  # one time step: every step, in the sc
 ```
 
 - **Time step.** `time_step=` (s) at construction is the `dt` of the component's equations. Its default is the
-  class's `time_step` attribute when set, else the simulation time step (the scene's). Pass it explicitly, even
-  for a component that solves a steady state. A time step shorter than the simulation step makes the component
+  class's `time_step` attribute when set, else the scene's (`Scene(time_step=)`). Alone, a component runs one step
+  of its own time step per call; without any, its equations may not read `self.dt` (it raises). Pass it
+  explicitly, even for a component that solves a steady state. A time step shorter than the simulation step makes the component
   run once per time step within it (900 s in a 3600 s scene: four runs per scene step, forcings read at the end
   of each). It must divide the simulation step a whole number of times.
-- **Declarations.** Each is documented by keywords: `unit` and `description` at least, and optionally
-  `unit_comment`, `min_value`, `max_value`, `value_comment`, `references`, `DOI`. `scale=` places a variable at an MTG scale (its location follows from the graph), or
-  `location=` gives it directly (`"cell"` on grids). `state_variable_type` (its kind: extensive, intensive,
-  massic_concentration, descriptor) decides the default mappings and the repartition after growth. Variables are
-  registered at construction, from the MTG's property when it exists, else from the default.
+- **Declarations.** `default=` is the initial value of a state variable, the value of an input nothing provides,
+  a parameter's or a setting's value. Each declaration is documented by keywords: `unit` and `description` at
+  least, and optionally `min_value`, `max_value` (the bounds `variants` reads), `references`, `DOI`,
+  `unit_comment`, `value_comment`; `declarations()` lists them all, with each variable's `role` (state_variable,
+  input, parameter, setting, forcing) and `kind`. `scale=` places a variable at an MTG scale (its location follows
+  from the graph), or `location=` gives it directly (`"cell"` on grids). `kind=` (extensive, intensive,
+  massic_concentration, descriptor: how its value depends on the size of what it describes) decides the default
+  aggregations and the repartition after growth. Variables are registered at construction, from the MTG's property
+  when it exists, else from the default. The former `initialize=`, `state_variable_type=` and `mapping=` are
+  accepted with a warning for one release.
 - **Parameters** without a place are stored per plant (`"Plant"`) on plant DataStructures, as a scalar elsewhere.
   Plants of a population may then differ. Steps and equations take parameters **as arguments**; reading
   `self.<parameter>` inside a step raises, while outside steps `model.k = value` sets every plant.
@@ -176,8 +182,8 @@ from openalea.metafspm.solve.decorator import boundary_set, edge_law, graph_syst
 
 @dataclass
 class SoilDiffusion(FunctionalComponent):
-    solute: float = state_variable(**DOC, initialize=0., location="cell")
-    solute_flux: float = state_variable(**DOC, initialize=0., location="edge")
+    solute: float = state_variable(**DOC, default=0., location="cell")
+    solute_flux: float = state_variable(**DOC, default=0., location="edge")
     diffusivity: float = parameter(**DOC, by="", default=1e-9, location="edge")
 
     @graph_system(node_unknowns=["solute"], edge_unknowns=["solute_flux"], transient=True, integrate="adaptive")
@@ -202,8 +208,11 @@ class SoilDiffusion(FunctionalComponent):
   returns du/dt without time term (`J - B q`); the framework writes the time term for the solver chosen: backward
   Euler with the Newton family, `u += dt * rate` with `"explicit_euler"`, an IVP integration with `"scipy_ivp_bdf"`
   or `"scipy_ivp_radau"`. One rate-form model can thus be solved by any solver; a residual can only be solved by
-  Newton. The node unknowns of one system use one form. `integrate="substeps"` (with `n_substeps`) or `"adaptive"`
-  (step doubling, `rtol` / `atol`) integrate over the component's time step. Edge unknowns are algebraic
+  Newton. The node unknowns of one system use one form. `integrate="substeps"` (with `substeps=`) or `"adaptive"`
+  (step doubling, `rtol` / `atol`) integrate over the component's time step (`"once"` by default). The Newton
+  iterations take `max_iterations`, `tolerance`, `finite_difference_step`, `linesearch`; `transient=True` declares
+  that a `@node_balance` writes its own time term (it only decides the anchoring check; inferred for `@node_rate`).
+  `@edge_law(integrate=True)` adds the integrated amount `<field>_amount` (Q += q dt) as an edge unknown. Edge unknowns are algebraic
   (`@edge_law`), whatever the solver.
 - **Boundary sets.** `boundary_set(filters=..., kind="robin" | "dirichlet" | "neumann", value=..., weight=...)` on a
   set of nodes, with values and weights read at each solve. `kinds="variable"`
@@ -226,11 +235,11 @@ class SoilDiffusion(FunctionalComponent):
 - **Active subgraphs and pieces.** `@graph_system(filters=...)` solves on the subgraph of the selected nodes (the
   others frozen, dropped edges without flux), e.g. `filters="active"`; `split="components"`
   solves each connected piece (each plant) on its own, with its own convergence and adaptive steps.
-- **Forcings.** `self.forcing(name)` interpolates a time series of `self.forcings` (or of the scene's table) at the
-  end of the current (sub-)step, or at the evaluation time of an IVP solver. A component declares the forcings it
+- **Forcings.** `self.forcing(name)` interpolates a time series of the scene's forcings at the end of the current
+  (sub-)step, or at the evaluation time of an IVP solver. A component declares the forcings it
   reads, `PARi: float = forcing_variable(unit="µmol m-2 s-1", description="...")`: unlike an input, written per
   entity by another model through the translator, a forcing is a time series given from outside, the same for every
-  entity. It is listed by `declarations()` (kind "forcing"), not stored on the DataStructure, and a `Scene` checks
+  entity. It is listed by `declarations()` (role "forcing"), not stored on the DataStructure, and a `Scene` checks
   at its construction that every required one is given (`required=False`: an optional one, which raises KeyError
   when read). A forcing is read at the end of the step by default; `forcing_variable(at="start")`, or
   `self.forcing(name, at="start")`, reads it at the step's start (a meteo table whose hour begins with the step).
@@ -278,7 +287,7 @@ when the DataStructure has no such mask). `Triangles.clip_below(z)` cuts them at
 light), `Triangles.mean_per_owner(values, n)` averages per element by area.
 
 **Labels.** `ds.labels()` gives each node's MTG label name (`"LeafElement"`, `"RootSegment"`, ...), and
-`ds.labels(of="Organ")` the label of its entity at a coarser scale; a `UnionDataStructure` gives its parts'. They are
+`ds.labels(location="Organ")` the label of its entity at a coarser scale; a `UnionDataStructure` gives its parts'. They are
 read once per topology, for steps that treat leaves and stems, or root orders, differently. `openalea.metafspm.display.draw(axes, triangles, colors=...)` draws them with matplotlib.
 
 ### Tree kernels
@@ -296,7 +305,7 @@ Whole-population computations along the topology are DataStructure methods, vect
 | `path_window(budget, extent, values)` | sums over a node's ancestors within a budget (a supply window) |
 | `path_contributions`, `scatter_contributions` | the window element by element, and amounts shared back in visiting order |
 | `path_compose(transforms)` | composed 4 × 4 transforms from the root |
-| `parents()`, `children()`, `order("pre" \| "post", convention=None \| "openalea")`, `depth()`, `levels()` | traversal arrays |
+| `parents()`, `children()`, `order("pre" \| "post", traversal=None \| "openalea")`, `depth()`, `levels()` | traversal arrays |
 
 Chains are declared with `ds.define_chain(name, edge_type="<")` or by a group and a rank variable.
 
@@ -306,12 +315,18 @@ Chains are declared with `ds.define_chain(name, edge_type="<")` or by a group an
 
 A plant model is a `CompositeModel` whose components share one DataStructure. A translator states which component
 provides each input: `Translator().link(receiver, variable, provider, {source: factor}, aggregation=, weight=,
-formula=)`, or a nested YAML/Python dictionary. Links become aliases (same values, another name) or derived variables
-(factors, sums, formulas, mappings between scales), computed when read.
+formula=)`, or a nested YAML/Python dictionary. An input named as another component's variable needs no link: the
+DataStructure is the coupling, both read the same array. Links state the rest, and become aliases (a rename) or
+derived variables (factors, sums, formulas, aggregations between scales), computed when read.
 
 ```python
-self.couple(*self.components, translator="translator.py")
+self.couple(self.growth, self.carbon, translator="translator.py")     # Translator.load: a Translator, a dict, .py, YAML
+self.couple(self.anatomy, self.hydraulics)                            # every input shared by its name: no translator
+self.couplings()                                                      # how each input is coupled, one row each
 ```
+
+`couplings()` lists each input's provider and coupling: "shared" (by its name), "alias", "derived", "scene" (a
+link with another DataStructure, exchanged by the Scene) or "not provided" (its default, or a forcing).
 
 `openalea.metafspm.testing.assert_component_couplable(Component, translator)` checks a component against a
 translator in a package's own tests.
@@ -351,6 +366,10 @@ scene = Scene(table, environment=[RhizoSoil, LightModel], environment_scenarios=
               translator="scene_translator.py", time_step=3600, forcings=meteo,
               recorder=SceneRecorder("outputs", segment_plants=["p0"], frame_period=24, checkpoint_period=240))
 scene.simulate(n_iterations=2500)
+
+scenario = read_scenarios("scenarios.csv")["dry"]          # a scenario table's column, by model, with its forcings
+scene = Scene.from_scenario(scenario, stand(...), Wheat, environment=[RhizoSoil, LightModel],
+                            translator="scene_translator.py", time_step=3600, recorder="outputs")
 ```
 
 - **Planting tables** come from one function, `planting(plants, model, scenario, plant_scenarios,
@@ -363,7 +382,9 @@ scene.simulate(n_iterations=2500)
   `Model(data_structure, time_step, <its own arguments>)`, with a class attribute `initiators` (the structural components
   building each plant). In anatomy mode (`nodes = "Compartment"`) the initiators build the anatomies, and a `wiring`
   attribute gives the junction rules between them. Numeric parameters may differ per plant (one scenario per plant); an `emergence_time` column
-  keeps a plant frozen until then.
+  keeps a plant frozen until then. Without a Scene, `population_data_structure(table, Model, time_step=)` builds
+  the same: the plants' MPG and MPGDataStructure, the model on it, every plant's scenario applied
+  (`population.data_structure`, `population.instance`).
 - **Environment models** are built as `Model(plant_data_structures, xrange, yrange, time_step, <its own arguments>)` and
   create their own DataStructures (a grid, a union of the populations). `scene.environment.EnvironmentModel` is
   their base: `self.plant_data_structure()` (the population's DataStructure, or the union of several), `self.build_grid(voxel,
@@ -371,6 +392,10 @@ scene.simulate(n_iterations=2500)
   or an overridden `due(time)`; at the other steps `between()`, e.g. `self.light.run_stage("state")`),
   `after_run()` (an adaptive grid refined), the time of the last full run kept by checkpoints. A light model and a
   soil model are short subclasses of it (Caribu's CaribuLightModel; the soil–plant–atmosphere example's Soil).
+  Its `compartment` class attribute, `"Soil"` or `"Atmosphere"`, is required: the folder of its outputs.
+- **The scene's DataStructures.** `scene.data_structures()` gives `{id: (DataStructure, model, components)}`:
+  each population's (id: its model's name), then each environment model's own; the recorder's tables, the frames
+  and the checkpoints walk the scene with it.
 - **Scenarios** are flat dicts, `{name: value}`, applied by the Scene, so models do not forward them. A scenario's
   entries are parameters and settings of the model's components. They are set after the model is built, with
   the same effect as constructor keywords: a numeric parameter is written to the DataStructure (per plant for
@@ -383,10 +408,11 @@ scene.simulate(n_iterations=2500)
   `mappings=`.
 - **Forcings, the time-varying inputs.** `forcings={name: forcing}`, or a DataFrame indexed by time (s) with one
   column each. A forcing is a number, a callable of the scene time (s), a Series indexed by time, or a `(times,
-  values)` pair; tables are interpolated linearly. A component declaring the name (`forcing_variable`) reads it with
-  `self.forcing(name)`. Otherwise the Scene writes it at the start of each step into the input or parameter of that
+  values)` pair; tables are interpolated linearly; a callable of the time and the entity ids, `(time, ids) -> one
+  value per entity`, varies in space (a soil temperature by depth). A component declaring the name
+  (`forcing_variable`) reads it with `self.forcing(name)`. Otherwise the Scene writes it at the start of each step into the input or parameter of that
   name, on every component declaring it and not coupled to another (a measured soil temperature, a shoot's
-  supply). A forcing nothing takes raises. `as_forcing(value, time_unit=86400.)` turns an input given by day (a
+  supply). A forcing nothing takes raises. `as_forcing(value, time_unit=86400.)` (or `time_unit="d"`) turns an input given by day (a
   number, a function of the day, a Series indexed by day, one value per day) into one. `events=[(time, action)]`
   stay for one-off actions.
 - **Services.** An environment model's `interval` (s) is its cadence (`due()`, and `between()` at the other
@@ -496,7 +522,7 @@ one by one, each correction named.
   (a legacy in its own conda environment), `assert_texts_equal` and `text_differences` (files row by row),
   `assert_arrays_equal` and `array_differences` (bitwise, or within tolerances: the count, the first difference,
   the largest gap), `worktree(repo, ref)` (an earlier version checked out apart, never by stash or reset).
-- **Corrections.** `openalea.metafspm.corrections.Corrections({name: description})`: `resolve("recommended" |
+- **Corrections.** `openalea.metafspm.testing.corrections.Corrections({name: description})`: `resolve("recommended" |
   "legacy" | names, precision)`, presets of the port's own, refused with the legacy's precision (the bit-for-bit
   reference); `table()` and `rst()` for the documentation.
 - **Documentation.** Each port documents its components from their declarations: in its Sphinx `conf.py`,
