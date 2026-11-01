@@ -47,7 +47,7 @@ def _prop(g, name):
 
 @dataclass
 class OrganPool(FunctionalComponent):
-    organ_pool: float = sv(initialize=0., scale=scales.Organ, state_variable_type="extensive")
+    organ_pool: float = sv(default=0., scale=scales.Organ, kind="extensive")
 
     @rate
     def _organ_pool(self, organ_pool):
@@ -67,7 +67,7 @@ def test_a_coarse_state_is_written_at_the_vertices_of_its_scale(seedling):
 
 @dataclass
 class Level(FunctionalComponent):
-    level: float = sv(initialize=1., scale=scales.SubOrgan)
+    level: float = sv(default=1., scale=scales.SubOrgan)
 
     @rate
     def _level(self, level):
@@ -89,8 +89,8 @@ def test_a_rate_only_component_reaches_the_mtg(seedling):
 @dataclass
 class OrganTemperature(FunctionalComponent):
     rank: float = par(default=0., location="node")
-    organ_temperature: float = sv(initialize=0., scale=scales.Organ, location="node",
-                                  state_variable_type="intensive")
+    organ_temperature: float = sv(default=0., scale=scales.Organ, location="node",
+                                  kind="intensive")
 
     @rate
     def _organ_temperature(self, organ_temperature, rank):
@@ -116,8 +116,8 @@ def test_a_broadcast_state_is_written_back_as_the_mean_of_its_nodes(seedling):
 
 @dataclass
 class OrganMean(FunctionalComponent):
-    concentration: float = sv(initialize=0., scale=scales.SubOrgan, location="Organ", state_variable_type="intensive",
-                              mapping="mean")
+    concentration: float = sv(default=0., scale=scales.SubOrgan, location="Organ", kind="intensive",
+                              aggregation="mean")
 
     @rate
     def _concentration(self, concentration):
@@ -140,7 +140,7 @@ def test_a_state_averaged_to_a_coarse_scale_is_written_back_by_broadcast(seedlin
 
 @dataclass
 class ChildFlux(FunctionalComponent):
-    flux: float = sv(initialize=0., scale=scales.SubOrgan, location="edge", mapping="child")
+    flux: float = sv(default=0., scale=scales.SubOrgan, location="edge", aggregation="child")
 
     @rate
     def _flux(self, flux):
@@ -159,7 +159,7 @@ def test_an_edge_state_is_written_at_its_child_endpoint(seedling):
 
 @dataclass
 class ParentFlux(FunctionalComponent):
-    parent_flux: float = sv(initialize=0., scale=scales.SubOrgan, location="edge", mapping="parent")
+    parent_flux: float = sv(default=0., scale=scales.SubOrgan, location="edge", aggregation="parent")
 
     @rate
     def _parent_flux(self, parent_flux):
@@ -179,7 +179,7 @@ def test_a_parent_mapped_state_cannot_be_written_where_edges_share_a_parent(seed
 @dataclass
 class Mixed(FunctionalComponent):
     organ_k: float = par(default=1., scale=scales.Organ)
-    level: float = sv(initialize=1., scale=scales.SubOrgan)
+    level: float = sv(default=1., scale=scales.SubOrgan)
 
 
 def test_parameters_are_refreshed_from_the_mtg_and_never_written_back(seedling):

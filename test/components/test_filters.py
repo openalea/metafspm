@@ -22,7 +22,7 @@ DOC = dict(unit="", unit_comment="", description="", min_value=-1e9, max_value=1
 
 @pytest.fixture(autouse=True)
 def _simulation_time_step():
-    Choregrapher().add_simulation_time_step(1)
+    Choregrapher()._set_simulation_time_step(1)
 
 
 def _ds():
@@ -81,9 +81,9 @@ def test_filters_of_another_kind_are_refused():
 
 @dataclass
 class FilteredSteps(FunctionalComponent):
-    long: float = state_variable(**DOC, initialize=0., location="node")
-    every: float = state_variable(**DOC, initialize=0., location="node")
-    inactive_too: float = state_variable(**DOC, initialize=0., location="node")
+    long: float = state_variable(**DOC, default=0., location="node")
+    every: float = state_variable(**DOC, default=0., location="node")
+    inactive_too: float = state_variable(**DOC, default=0., location="node")
 
     @rate(filters={"length": ">0.03"})
     def _long(self, length):
@@ -110,8 +110,8 @@ def test_a_step_computes_on_its_filters_within_the_active_entities():
 
 @dataclass
 class EdgeStep(FunctionalComponent):
-    k: float = state_variable(**DOC, initialize=1., location="edge")
-    doubled: float = state_variable(**DOC, initialize=0., location="edge")
+    k: float = state_variable(**DOC, default=1., location="edge")
+    doubled: float = state_variable(**DOC, default=0., location="edge")
 
     @rate(filters={"k": ">1"})
     def _doubled(self, k):
@@ -132,8 +132,8 @@ def test_a_step_filtered_by_edge_variables_selects_edges():
 @dataclass
 class Relaxation(FunctionalComponent):
     """u goes to 1 on the long nodes and to 0 on the others (two filtered balances); an output on the long nodes."""
-    u: float = state_variable(**DOC, initialize=0., location="node")
-    doubled_u: float = state_variable(**DOC, initialize=0., location="node")
+    u: float = state_variable(**DOC, default=0., location="node")
+    doubled_u: float = state_variable(**DOC, default=0., location="node")
 
     @graph_system(node_unknowns=["u"])
     class _solve:
@@ -160,7 +160,7 @@ def test_balances_and_outputs_apply_on_their_filters():
 
 @dataclass
 class SubgraphRelaxation(FunctionalComponent):
-    u: float = state_variable(**DOC, initialize=0., location="node")
+    u: float = state_variable(**DOC, default=0., location="node")
 
     @graph_system(node_unknowns=["u"], filters={"rank": "<5"}, transient=True)
     class _solve:

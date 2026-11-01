@@ -15,8 +15,8 @@ from growth import DOC, make_chain
 
 @dataclass
 class Lamp(FunctionalComponent):
-    glow: float = state_variable(**DOC, initialize=0., scale=scales.SubOrgan)
-    seen: float = state_variable(**DOC, initialize=0., scale=scales.SubOrgan)
+    glow: float = state_variable(**DOC, default=0., scale=scales.SubOrgan)
+    seen: float = state_variable(**DOC, default=0., scale=scales.SubOrgan)
     latitude: float = setting(unit="°", description="The site's latitude", default=48.85)
     model: str = setting(description="The light model", default="direct", choices=("direct", "nested"))
     sky: tuple = setting(description="The sky's sectors", default=(4, 5))
@@ -44,7 +44,7 @@ def test_settings_are_values_of_the_model():
     np.testing.assert_allclose(ds.get("seen"), 180.)                 # a per-element step: the tuple kept whole
     assert not ds.has("latitude") and not ds.has("model")
     table = Lamp.declarations().set_index("name")
-    assert table.loc["latitude", "kind"] == "setting" and table.loc["latitude", "default"] == 48.85
+    assert table.loc["latitude", "role"] == "setting" and table.loc["latitude", "default"] == 48.85
     assert Lamp.declared_settings() == ("latitude", "model", "sky")
     component.model = "nested"
     component()

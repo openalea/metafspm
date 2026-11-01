@@ -66,7 +66,7 @@ def test_the_parameter_table():
     row = table.set_index("name").loc["EL"]
     assert (row["min_value"], row["max_value"], row["component"]) == (1e-4, 2e-3, "Branching")   # the last one's
     assert table.set_index("name").at["IPD", "value"] == 5e-3 and table["main"].tolist() == [True, True, False, False]
-    assert parameter_table(Elongation, kinds=("setting",))["name"].tolist() == ["method"]
+    assert parameter_table(Elongation, roles=("setting",))["name"].tolist() == ["method"]
     with pytest.raises(KeyError, match="'EK'"):
         parameter_table(Elongation, values={"EK": 1.})
 

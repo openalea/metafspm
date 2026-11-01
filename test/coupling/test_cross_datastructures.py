@@ -10,9 +10,8 @@ import pandas as pd
 import pytest
 
 from openalea.metafspm.coupling.component import FunctionalComponent, input_variable, parameter, state_variable
-from openalea.metafspm.coupling.cross import (CrossMapping, Exchanges, UnionDataStructure, UnionMapping,
-                                              cross_default_mapping)
-from openalea.metafspm.coupling.declaration import DeclarationError
+from openalea.metafspm.coupling.cross import CrossMapping, Exchanges, UnionDataStructure, UnionMapping
+from openalea.metafspm.coupling.declaration import DeclarationError, default_mapping
 from openalea.metafspm.coupling.translator import Translator
 from openalea.metafspm.data_structure.configs import ScalesConfig as scales
 from openalea.metafspm.data_structure.data_api import ArrayDataStructure, MPGDataStructure
@@ -26,7 +25,7 @@ COORDINATES = ("x1", "x2", "y1", "y2", "z1", "z2")
 
 
 def _descriptor(**options):
-    return state_variable(**DOC, initialize=0., scale=scales.SubOrgan, state_variable_type="descriptor", **options)
+    return state_variable(**DOC, default=0., scale=scales.SubOrgan, kind="descriptor", **options)
 
 
 @dataclass
@@ -39,11 +38,11 @@ class RootGeometry(FunctionalComponent):
     z1: float = _descriptor()
     z2: float = _descriptor()
     length: float = _descriptor()
-    exudation: float = state_variable(**DOC, initialize=1., scale=scales.SubOrgan, state_variable_type="extensive")
-    temperature: float = state_variable(**DOC, initialize=20., scale=scales.SubOrgan, state_variable_type="intensive")
-    soil_nitrate: float = input_variable(**DOC, by="Soil", initialize=0., scale=scales.SubOrgan)
-    nitrate_supply: float = input_variable(**DOC, by="Soil", initialize=0., scale=scales.SubOrgan,
-                                           state_variable_type="extensive")
+    exudation: float = state_variable(**DOC, default=1., scale=scales.SubOrgan, kind="extensive")
+    temperature: float = state_variable(**DOC, default=20., scale=scales.SubOrgan, kind="intensive")
+    soil_nitrate: float = input_variable(**DOC, by="Soil", default=0., scale=scales.SubOrgan)
+    nitrate_supply: float = input_variable(**DOC, by="Soil", default=0., scale=scales.SubOrgan,
+                                           kind="extensive")
 
 
 @dataclass
@@ -53,11 +52,11 @@ class OtherRootGeometry(RootGeometry):
 
 @dataclass
 class Soil(FunctionalComponent):
-    exudation: float = input_variable(**DOC, by="RootGeometry", initialize=0., location="cell",
-                                      state_variable_type="extensive")
-    root_temperature: float = input_variable(**DOC, by="RootGeometry", initialize=-1., location="cell")
-    soil_nitrate: float = state_variable(**DOC, initialize=0., location="cell", state_variable_type="intensive")
-    nitrate_supply: float = state_variable(**DOC, initialize=0., location="cell", state_variable_type="extensive")
+    exudation: float = input_variable(**DOC, by="RootGeometry", default=0., location="cell",
+                                      kind="extensive")
+    root_temperature: float = input_variable(**DOC, by="RootGeometry", default=-1., location="cell")
+    soil_nitrate: float = state_variable(**DOC, default=0., location="cell", kind="intensive")
+    nitrate_supply: float = state_variable(**DOC, default=0., location="cell", kind="extensive")
 
 
 def _population(xs, initiator=RootGrowthProbe, z=0., **scenario):
@@ -196,7 +195,7 @@ def test_intensive_plant_values_need_a_weight_and_pool_into_one_mean():
 
 def test_cell_amounts_are_split_between_populations_by_weight():
     _, _, _, components, mappings = _two_populations_and_soil()
-    with pytest.raises(DeclarationError, match="sharing each cell's amount"):
+    with pytest.raises(DeclarationError, match="weight of its split"):
         Exchanges(_translator(supply={}), components, mappings)
     roots, others, soil, components, mappings = _two_populations_and_soil(method="overlap")
     soil.set("nitrate_supply", 1.)
@@ -223,8 +222,9 @@ def test_links_are_checked():
     with pytest.raises(ValueError, match="does not go up"):
         Exchanges(Translator().link("Soil", "exudation", "RootGeometry", {"exudation": 1.}, aggregation="split",
                                     weight="length"), components, mappings)
-    assert cross_default_mapping("extensive", "up", "q") == "sum"
-    assert cross_default_mapping("intensive", "down", "c") == "broadcast"
+    assert default_mapping("extensive", "up", "q") == "sum"            # one rule within and across DataStructures
+    assert default_mapping("intensive", "down", "c") == "broadcast"
+    assert default_mapping("intensive", "layer", "c") == "mean"
 
 
 def test_formula_links_are_evaluated_on_the_provider_then_mapped():
@@ -241,9 +241,9 @@ def test_formula_links_are_evaluated_on_the_provider_then_mapped():
 @dataclass
 class Leaves(FunctionalComponent):
     z1: float = _descriptor()
-    height: float = state_variable(**DOC, initialize=0., scale=scales.SubOrgan, state_variable_type="descriptor")
-    area: float = state_variable(**DOC, initialize=1., scale=scales.SubOrgan, state_variable_type="extensive")
-    intercepted: float = input_variable(**DOC, by="Light", initialize=0., scale=scales.SubOrgan)
+    height: float = state_variable(**DOC, default=0., scale=scales.SubOrgan, kind="descriptor")
+    area: float = state_variable(**DOC, default=1., scale=scales.SubOrgan, kind="extensive")
+    intercepted: float = input_variable(**DOC, by="Light", default=0., scale=scales.SubOrgan)
 
 
 @dataclass
@@ -254,9 +254,9 @@ class OtherLeaves(Leaves):
 @dataclass
 class Light(FunctionalComponent):
     """CARIBU-like toy: each element gets I0 exp(-k * area of the elements above it), from every population."""
-    height: float = input_variable(**DOC, by="Leaves", initialize=0., scale=scales.SubOrgan)
-    area: float = input_variable(**DOC, by="Leaves", initialize=0., scale=scales.SubOrgan)
-    intercepted: float = state_variable(**DOC, initialize=0., scale=scales.SubOrgan, state_variable_type="intensive")
+    height: float = input_variable(**DOC, by="Leaves", default=0., scale=scales.SubOrgan)
+    area: float = input_variable(**DOC, by="Leaves", default=0., scale=scales.SubOrgan)
+    intercepted: float = state_variable(**DOC, default=0., scale=scales.SubOrgan, kind="intensive")
     extinction: float = parameter(**DOC, by="", default=0.5)
 
     @rate
@@ -328,9 +328,9 @@ def test_the_union_follows_the_growth_of_its_parts():
 @dataclass
 class GridLight(FunctionalComponent):
     """RATP-like toy: per cell, the absorbed flux density from the leaf area in the cell."""
-    leaf_area: float = input_variable(**DOC, by="Leaves", initialize=0., location="cell",
-                                      state_variable_type="extensive")
-    absorbed: float = state_variable(**DOC, initialize=0., location="cell", state_variable_type="intensive")
+    leaf_area: float = input_variable(**DOC, by="Leaves", default=0., location="cell",
+                                      kind="extensive")
+    absorbed: float = state_variable(**DOC, default=0., location="cell", kind="intensive")
 
     @rate
     def _absorbed(self, leaf_area):
@@ -339,8 +339,8 @@ class GridLight(FunctionalComponent):
 
 @dataclass
 class GridLeaves(RootGeometry):
-    area: float = state_variable(**DOC, initialize=1., scale=scales.SubOrgan, state_variable_type="extensive")
-    absorbed: float = input_variable(**DOC, by="GridLight", initialize=0., scale=scales.SubOrgan)
+    area: float = state_variable(**DOC, default=1., scale=scales.SubOrgan, kind="extensive")
+    absorbed: float = input_variable(**DOC, by="GridLight", default=0., scale=scales.SubOrgan)
 
 
 def test_a_light_model_on_a_grid_through_the_cross_mapping():

@@ -52,7 +52,7 @@ LINK_COLUMNS = ("metafspm_complex", "metafspm_parent", "metafspm_edge_type")
 _KINDS = {"intensive": "intensive", "extensive": "extensive", "massic_concentration": "massic_concentration",
           "volumic_concentration": "volumic_concentration", "descriptor": "descriptor",
           "NonInertialIntensive": "intensive", "NonInertialExtensive": "extensive"}
-_ROLES = {"state_variable": "state", "plant_scale_state": "state", "input": "input", "parameter": "parameter",
+_ROLES = {"state_variable": "state", "input": "input", "parameter": "parameter",
           "setting": "setting", "forcing": "input"}
 _DIMENSIONLESS = {"", "adim", "-", "1", "dimensionless", "adimensional", "unitless"}
 _SYMBOLS = {"°C": "Cel", "°": "deg", "day": "d", "days": "d", "yr": "a", "°Cd": "K.d", "°C.d": "K.d"}
@@ -106,7 +106,7 @@ def _annotation(text: str) -> str:
     return "{" + re.sub(r"[^!-z|~]", "_", re.sub(r"[{}]", "", text)) + "}"
 
 
-def declarations(components) -> dict:
+def _declarations(components) -> dict:
     """{variable name: declaration metadata} of the variables the *components* declare (the first declaring each)."""
     found = {}
     for component in components or ():
@@ -138,7 +138,7 @@ def _variable(name: str, metadata: dict, standard_names: dict, derived: bool = F
     references = metadata.get("references")
     references = (references,) if isinstance(references, str) and references.strip() else tuple(references or ())
     doi = tuple(str(item) for item in (metadata.get("DOI") or ()) if str(item).strip())
-    return fspm_tf.Variable(unit=unit, standard_name=standard_name, kind=_KINDS.get(metadata.get("state_variable_type")),
+    return fspm_tf.Variable(unit=unit, standard_name=standard_name, kind=_KINDS.get(metadata.get("kind")),
                             role="derived" if derived else _ROLES.get(metadata.get("variable_type"), "state"),
                             description=description, minimum=number(metadata.get("min_value")),
                             maximum=number(metadata.get("max_value")), references=tuple(str(r) for r in references),
@@ -214,7 +214,7 @@ def _rows_of(ids: np.ndarray, wanted) -> np.ndarray:
     return rows
 
 
-def _jsonable(value):
+def _round_trip(value):
     """*value* as JSON values, tuples, arrays, non-text keys and non-finite floats marked, so that _decoded gives it
     back; TypeError for what JSON cannot hold."""
     if value is None or isinstance(value, (bool, str)):
@@ -226,20 +226,20 @@ def _jsonable(value):
     if isinstance(value, float):
         return value if math.isfinite(value) else {"__float__": repr(value)}
     if isinstance(value, tuple):
-        return {"__tuple__": [_jsonable(item) for item in value]}
+        return {"__tuple__": [_round_trip(item) for item in value]}
     if isinstance(value, list):
-        return [_jsonable(item) for item in value]
+        return [_round_trip(item) for item in value]
     if isinstance(value, np.ndarray):
-        return {"__array__": [_jsonable(item) for item in value.tolist()], "dtype": str(value.dtype)}
+        return {"__array__": [_round_trip(item) for item in value.tolist()], "dtype": str(value.dtype)}
     if isinstance(value, dict):
         if all(isinstance(key, str) and not key.startswith("__") for key in value):
-            return {key: _jsonable(item) for key, item in value.items()}
-        return {"__dict__": [[_jsonable(key), _jsonable(item)] for key, item in value.items()]}
+            return {key: _round_trip(item) for key, item in value.items()}
+        return {"__dict__": [[_round_trip(key), _round_trip(item)] for key, item in value.items()]}
     raise TypeError(f"a {type(value).__name__} cannot be written as JSON")
 
 
 def _encoded(value) -> str:
-    return json.dumps(_jsonable(value), separators=(",", ":"), allow_nan=False)
+    return json.dumps(_round_trip(value), separators=(",", ":"), allow_nan=False)
 
 
 def _decoded(text: str):
@@ -293,8 +293,8 @@ def _arraydict(keys: np.ndarray, values: np.ndarray) -> ArrayDict:
 # ── MPGDataStructure → data structure ───────────────────────────────────────
 
 def _scale_names(g) -> dict:
-    return {value: name for name, value in vars(type(g.scales)).items()
-            if isinstance(value, int) and not name.startswith("_")}
+    from openalea.metafspm.coupling.declaration import scale_names
+    return scale_names(g)
 
 
 def _location_scales(ds) -> dict:
@@ -640,12 +640,12 @@ def _grid_data_structure(identifier: str, ds, metadata: dict, standard_names: di
 # ── Frames ─────────────────────────────────────────────────────────────────
 
 def to_frame(data_structures: dict, components: dict = None, mappings: dict = None, time: float = 0.,
-             step: int = 0, time_unit: str = "s", geometry: bool = True, standard_names: dict = None,
+             step: int = 0, time_unit="s", geometry: bool = True, standard_names: dict = None,
              scales=None, entities=None, variables=None, plant_names: dict = None):
     """
     The fspm-TF frame of *data_structures* ({id: DataStructure}; ids are identifiers), their variables declared
     by *components* ({id: [components]}), with *mappings* ({name: (CrossMapping, source id, target id)}), at *time*
-    (in *time_unit*) and *step*. *geometry*: the MPGDataStructures' triangles as meshes. *standard_names*: {metafspm
+    (in *time_unit*: "s", "min", "h", "d" or its number of seconds, as as_forcing's) and *step*. *geometry*: the MPGDataStructures' triangles as meshes. *standard_names*: {metafspm
     name: standard name} on top of the vocabulary's metafspm column (a None value drops one).
 
     For logging, *scales*, *entities* and *variables* filter what is written (see filter_frame), each a value for
@@ -656,10 +656,11 @@ def to_frame(data_structures: dict, components: dict = None, mappings: dict = No
     from openalea.fspm_tf import vocabulary
     names = dict(vocabulary.platform_names("metafspm"), **(standard_names or {}))
     names = {key: value for key, value in names.items() if value}
-    frame = fspm_tf.Frame(time=float(time), time_unit=time_unit, step=int(step),
+    from openalea.metafspm.coupling.forcings import time_unit_label
+    frame = fspm_tf.Frame(time=float(time), time_unit=time_unit_label(time_unit), step=int(step),
                           writer={"platform": PLATFORM}, vocabulary_version=vocabulary.version())
     for identifier, ds in data_structures.items():
-        metadata = declarations((components or {}).get(identifier, ()))
+        metadata = _declarations((components or {}).get(identifier, ()))
         if isinstance(ds, MPGDataStructure):
             frame.data_structures.append(_mpg_data_structure(identifier, ds, metadata, names, geometry,
                                                              (components or {}).get(identifier, ())))

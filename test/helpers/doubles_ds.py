@@ -8,7 +8,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from openalea.metafspm.coupling.component import FunctionalComponent, declare
+from openalea.metafspm.coupling.component import FunctionalComponent, _declare
 from openalea.metafspm.data_structure.configs import PropsConfig
 from openalea.metafspm.data_structure.data_api import MPGDataStructure
 from openalea.metafspm.data_structure.mpg import MPG
@@ -20,10 +20,10 @@ from simple_seedling import generate_simple_mpg_seedling
 NAMES = {"RootCarbon": "PlantCarbon", "RootNitrogen": "PlantNitrogen", "SoilModel": "SoilModel"}
 
 
-def _var(variable_type, default=0., state_variable_type="", by=""):
-    return declare(default=default, unit="", unit_comment="", description="", min_value="", max_value="",
-                   value_comment="", references="", DOI="", variable_type=variable_type, by=by,
-                   state_variable_type=state_variable_type, edit_by="user", scale="node")
+def _var(variable_type, default=0., kind="", by=""):
+    return _declare(default=default, unit="", unit_comment="", description="", min_value="", max_value="",
+                   value_comment="", references="", DOI="", role=variable_type, by=by,
+                   kind=kind, location="node")
 
 
 def translator(soil="SoilModel"):
@@ -47,8 +47,8 @@ class PlantCarbon(FunctionalComponent):
     soil_temperature: float = _var("input", default=10., by="SoilModel")
     nitrogen_status: float = _var("input", by="PlantNitrogen")
 
-    hexose: float = _var("state_variable", default=1., state_variable_type="massic_concentration")
-    hexose_exudation: float = _var("state_variable", state_variable_type="NonInertialExtensive")
+    hexose: float = _var("state_variable", default=1., kind="massic_concentration")
+    hexose_exudation: float = _var("state_variable", kind="NonInertialExtensive")
 
     exudation_rate: float = _var("parameter", default=0.1)
 
@@ -68,9 +68,9 @@ class PlantNitrogen(FunctionalComponent):
     carbon_supply: float = _var("input", by="PlantCarbon")
     C_hexose_soil: float = _var("input", by="SoilModel")
 
-    amino_acids: float = _var("state_variable", default=2., state_variable_type="massic_concentration")
-    nitrate: float = _var("state_variable", default=4., state_variable_type="massic_concentration")
-    amino_acids_exudation: float = _var("state_variable", state_variable_type="NonInertialExtensive")
+    amino_acids: float = _var("state_variable", default=2., kind="massic_concentration")
+    nitrate: float = _var("state_variable", default=4., kind="massic_concentration")
+    amino_acids_exudation: float = _var("state_variable", kind="NonInertialExtensive")
 
     @rate
     def _amino_acids_exudation(self, amino_acids, carbon_supply):
@@ -107,9 +107,9 @@ def make_chain_plant_ds(coordinates=(0.025, 0.025, -0.01), n_segments=3):
 
 
 def _var_cell(variable_type, default=0.):
-    return declare(default=default, unit="", unit_comment="", description="", min_value="", max_value="",
-                   value_comment="", references="", DOI="", variable_type=variable_type, by="",
-                   state_variable_type="", edit_by="user", scale="cell")
+    return _declare(default=default, unit="", unit_comment="", description="", min_value="", max_value="",
+                   value_comment="", references="", DOI="", role=variable_type, by="",
+                   kind="", location="cell")
 
 
 @dataclass

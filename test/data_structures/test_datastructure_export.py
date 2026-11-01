@@ -36,7 +36,7 @@ def test_export_copies_values():
 def test_node_table_indexed_by_vid_and_time():
     ds = _plant()
     table = ds.to_dataframe(["length", "struct_mass"], location="node", time=3)
-    assert list(table.index.names) == ["vid", "t"]
+    assert list(table.index.names) == ["vid", "time"]
     assert list(table.columns) == ["length", "struct_mass"]
     assert table.loc[(ds.entity_ids("node")[2], 3), "length"] == 2.
     assert len(table) == ds.n_nodes()
@@ -49,21 +49,9 @@ def test_edge_and_cell_tables():
     grid = ArrayDataStructure(shape=(2, 2, 2), dx=0.5)
     grid.register("water", np.arange(8.).reshape(2, 2, 2))
     cells = grid.to_dataframe(["water"], time=0)
-    assert list(cells.index.names) == ["voxel", "t"] and cells["water"].tolist() == list(range(8))
+    assert list(cells.index.names) == ["voxel", "time"] and cells["water"].tolist() == list(range(8))
     assert {"x", "y", "z"} <= set(cells.columns)          # cell centres, for spatial outputs
 
 
-def test_summaries_for_plant_scale_csv():
-    ds = _plant()
-    emerged = ds.get("struct_mass") > 0
-    row = ds.summarize(sums=["length"], means=["length"], scalars=["total_cytokinins"], where="struct_mass")
-    assert row["sum"]["length"] == pytest.approx(ds.get("length")[emerged].sum())
-    assert row["mean"]["length"] == pytest.approx(ds.get("length")[emerged].mean())
-    assert row["scalar"]["total_cytokinins"] == 5.
-
-
-def test_summaries_without_emerged_entities_are_none():
-    ds = _plant()
-    ds.set("struct_mass", 0.)
-    row = ds.summarize(sums=["length"], means=["length"], where="struct_mass")
-    assert row["sum"]["length"] == 0. and row["mean"]["length"] is None
+def test_the_summaries_are_the_recorders():
+    assert not hasattr(_plant(), "summarize")

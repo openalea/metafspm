@@ -29,7 +29,7 @@ def seedling():
 @dataclass
 class Scaled(FunctionalComponent):
     k: float = parameter(**DOC, by="", default=1., scale=scales.SubOrgan)
-    level: float = state_variable(**DOC, initialize=0., scale=scales.SubOrgan)
+    level: float = state_variable(**DOC, default=0., scale=scales.SubOrgan)
 
     @rate
     def _level(self, k):
@@ -38,7 +38,7 @@ class Scaled(FunctionalComponent):
 
 @dataclass
 class Silent(FunctionalComponent):
-    quiet: float = state_variable(**DOC, initialize=0., scale=scales.SubOrgan)
+    quiet: float = state_variable(**DOC, default=0., scale=scales.SubOrgan)
     mtg_sync = "never"
 
     @rate
@@ -74,7 +74,7 @@ def test_the_sync_policy_is_checked(seedling):
 
 @dataclass
 class Overwriting(FunctionalComponent):
-    c: float = state_variable(**DOC, initialize=0., scale=scales.SubOrgan)
+    c: float = state_variable(**DOC, default=0., scale=scales.SubOrgan)
     k: float = parameter(**DOC, by="", default=1., scale=scales.SubOrgan)
 
     @graph_system(node_unknowns=["c"], solver="newton")
@@ -97,7 +97,7 @@ def test_equations_cannot_write_into_their_parameters(seedling):
 
 @dataclass
 class Counter(FunctionalComponent):
-    count: float = state_variable(**DOC, initialize=0., scale=scales.SubOrgan)
+    count: float = state_variable(**DOC, default=0., scale=scales.SubOrgan)
 
     @rate
     def _count(self, count):

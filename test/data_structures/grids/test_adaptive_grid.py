@@ -23,7 +23,7 @@ DT, D = 0.5, 1e-3
 
 @pytest.fixture(autouse=True)
 def _simulation_time_step():
-    Choregrapher().add_simulation_time_step(DT)
+    Choregrapher()._set_simulation_time_step(DT)
 
 
 def _grid(**options):
@@ -93,8 +93,8 @@ class _Diffusion:
 
 @dataclass
 class AdaptiveDiffusion(FunctionalComponent):
-    solute: float = state_variable(**DOC, initialize=0., location="cell", state_variable_type="intensive")
-    solute_flux: float = state_variable(**DOC, initialize=0., location="edge", state_variable_type="extensive")
+    solute: float = state_variable(**DOC, default=0., location="cell", kind="intensive")
+    solute_flux: float = state_variable(**DOC, default=0., location="edge", kind="extensive")
     diffusivity: float = parameter(**DOC, by="", default=D, location="edge")
     time_step = DT
     _solve = graph_system(node_unknowns=["solute"], edge_unknowns=["solute_flux"], transient=True)(

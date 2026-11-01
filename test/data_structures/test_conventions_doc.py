@@ -39,12 +39,6 @@ def test_the_mappings_table_names_every_mapping():
     assert documented == set(declaration.UP_MAPPINGS) | set(declaration.DOWN_MAPPINGS) | set(declaration.EDGE_MAPPINGS)
 
 
-def test_former_edge_mapping_names_are_documented():
-    rows = {_code(row[0])[0]: row[1] for row in _table("Mapping")}
-    for former, current in declaration._EDGE_MAPPING_RENAMES.items():
-        assert f"formerly `{former}`" in rows[current]
-
-
 def _documented_default(cell: str):
     names = _code(cell)
     return names[0] if names else None   # "error" cells name no mapping

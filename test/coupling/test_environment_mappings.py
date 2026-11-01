@@ -31,14 +31,14 @@ def _population(sizes):
 
 @dataclass
 class Wheat(FunctionalComponent):
-    leaf_area: float = state_variable(**DOC, initialize=1., scale=scales.SubOrgan, state_variable_type="extensive")
-    temperature: float = state_variable(**DOC, initialize=20., scale=scales.SubOrgan, state_variable_type="intensive")
-    mass: float = state_variable(**DOC, initialize=1., scale=scales.SubOrgan, state_variable_type="extensive")
-    dry_matter: float = state_variable(**DOC, initialize=2., scale=scales.Plant, state_variable_type="extensive")
-    air_temperature: float = input_variable(**DOC, by="Weather", initialize=0., scale=scales.SubOrgan,
-                                            state_variable_type="intensive")
-    rain_share: float = input_variable(**DOC, by="Weather", initialize=0., scale=scales.SubOrgan,
-                                       state_variable_type="extensive")
+    leaf_area: float = state_variable(**DOC, default=1., scale=scales.SubOrgan, kind="extensive")
+    temperature: float = state_variable(**DOC, default=20., scale=scales.SubOrgan, kind="intensive")
+    mass: float = state_variable(**DOC, default=1., scale=scales.SubOrgan, kind="extensive")
+    dry_matter: float = state_variable(**DOC, default=2., scale=scales.Plant, kind="extensive")
+    air_temperature: float = input_variable(**DOC, by="Weather", default=0., scale=scales.SubOrgan,
+                                            kind="intensive")
+    rain_share: float = input_variable(**DOC, by="Weather", default=0., scale=scales.SubOrgan,
+                                       kind="extensive")
 
 
 @dataclass
@@ -52,15 +52,15 @@ def _scalar(**options):
 
 @dataclass
 class Weather(FunctionalComponent):
-    lai: float = input_variable(**DOC, by="Wheat", initialize=0., **_scalar(state_variable_type="extensive"))
-    canopy_temperature: float = input_variable(**DOC, by="Wheat", initialize=-1.,
-                                               **_scalar(state_variable_type="intensive"))
-    weighted_temperature: float = input_variable(**DOC, by="Wheat", initialize=-1.,
-                                                 **_scalar(state_variable_type="intensive"))
-    total_dry_matter: float = input_variable(**DOC, by="Wheat", initialize=0.,
-                                             **_scalar(state_variable_type="extensive"))
-    air_temperature: float = state_variable(**DOC, initialize=12., **_scalar(state_variable_type="intensive"))
-    rain: float = state_variable(**DOC, initialize=6., **_scalar(state_variable_type="extensive"))
+    lai: float = input_variable(**DOC, by="Wheat", default=0., **_scalar(kind="extensive"))
+    canopy_temperature: float = input_variable(**DOC, by="Wheat", default=-1.,
+                                               **_scalar(kind="intensive"))
+    weighted_temperature: float = input_variable(**DOC, by="Wheat", default=-1.,
+                                                 **_scalar(kind="intensive"))
+    total_dry_matter: float = input_variable(**DOC, by="Wheat", default=0.,
+                                             **_scalar(kind="extensive"))
+    air_temperature: float = state_variable(**DOC, default=12., **_scalar(kind="intensive"))
+    rain: float = state_variable(**DOC, default=6., **_scalar(kind="extensive"))
 
 
 def _scene():
@@ -107,22 +107,22 @@ def test_environment_scalars_reach_every_entity():
 
 @dataclass
 class SoilTemperatureColumn(FunctionalComponent):
-    moisture: float = input_variable(**DOC, by="SoilWater", initialize=0., location="cell",
-                                     state_variable_type="intensive")
-    uptake_profile: float = input_variable(**DOC, by="SoilWater", initialize=0., location="cell",
-                                           state_variable_type="extensive")
-    temperature: float = state_variable(**DOC, initialize=15., location="cell", state_variable_type="intensive")
-    heat: float = state_variable(**DOC, initialize=1., location="cell", state_variable_type="extensive")
+    moisture: float = input_variable(**DOC, by="SoilWater", default=0., location="cell",
+                                     kind="intensive")
+    uptake_profile: float = input_variable(**DOC, by="SoilWater", default=0., location="cell",
+                                           kind="extensive")
+    temperature: float = state_variable(**DOC, default=15., location="cell", kind="intensive")
+    heat: float = state_variable(**DOC, default=1., location="cell", kind="extensive")
 
 
 @dataclass
 class SoilWater(FunctionalComponent):
-    moisture: float = state_variable(**DOC, initialize=0.3, location="cell", state_variable_type="intensive")
-    uptake: float = state_variable(**DOC, initialize=0., location="cell", state_variable_type="extensive")
-    temperature: float = input_variable(**DOC, by="SoilTemperatureColumn", initialize=0., location="cell",
-                                        state_variable_type="intensive")
-    heat: float = input_variable(**DOC, by="SoilTemperatureColumn", initialize=0., location="cell",
-                                 state_variable_type="extensive")
+    moisture: float = state_variable(**DOC, default=0.3, location="cell", kind="intensive")
+    uptake: float = state_variable(**DOC, default=0., location="cell", kind="extensive")
+    temperature: float = input_variable(**DOC, by="SoilTemperatureColumn", default=0., location="cell",
+                                        kind="intensive")
+    heat: float = input_variable(**DOC, by="SoilTemperatureColumn", default=0., location="cell",
+                                 kind="extensive")
 
 
 def _layers():

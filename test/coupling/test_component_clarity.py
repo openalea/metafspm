@@ -15,13 +15,13 @@ from openalea.metafspm.solve.decorator import postsegmentation, rate
 
 @dataclass
 class Named(FunctionalComponent):
-    length: float = input_variable(unit="m", description="A length", by="Test", initialize=2., location="node")
-    double: float = state_variable(unit="m", description="Twice the length", initialize=0., location="node",
-                                   state_variable_type="extensive")
-    square: float = state_variable(unit="m2", description="The length squared", initialize=0., location="node",
-                                   state_variable_type="extensive")
-    later: float = state_variable(unit="m", description="Written at postsegmentation", initialize=0.,
-                                  location="node", state_variable_type="extensive")
+    length: float = input_variable(unit="m", description="A length", by="Test", default=2., location="node")
+    double: float = state_variable(unit="m", description="Twice the length", default=0., location="node",
+                                   kind="extensive")
+    square: float = state_variable(unit="m2", description="The length squared", default=0., location="node",
+                                   kind="extensive")
+    later: float = state_variable(unit="m", description="Written at postsegmentation", default=0.,
+                                  location="node", kind="extensive")
     factor: float = parameter(unit="adim", description="A factor", by="Test", default=3.)
 
     @rate
@@ -35,9 +35,9 @@ class Named(FunctionalComponent):
 
 @dataclass
 class Scalar(FunctionalComponent):
-    length: float = input_variable(unit="m", description="A length", by="Test", initialize=2., location="node")
-    double: float = state_variable(unit="m", description="Twice", initialize=0., location="node",
-                                   state_variable_type="extensive")
+    length: float = input_variable(unit="m", description="A length", by="Test", default=2., location="node")
+    double: float = state_variable(unit="m", description="Twice", default=0., location="node",
+                                   kind="extensive")
 
     @rate(vectorized=False)
     def _per_element(self, length) -> dict:
@@ -46,7 +46,7 @@ class Scalar(FunctionalComponent):
 
 @dataclass
 class Wrong(FunctionalComponent):
-    length: float = input_variable(unit="m", description="A length", by="Test", initialize=2., location="node")
+    length: float = input_variable(unit="m", description="A length", by="Test", default=2., location="node")
 
     @rate
     def _wrong(self, length) -> dict:
@@ -120,6 +120,6 @@ def test_draw():
 
 def test_declarations_and_schedule():
     table = Named.declarations()
-    assert table.set_index("name").loc["length", ["kind", "unit", "by"]].tolist() == ["input", "m", "Test"]
+    assert table.set_index("name").loc["length", ["role", "unit", "by"]].tolist() == ["input", "m", "Test"]
     assert table.set_index("name").loc["factor", "default"] == 3.
     assert Named.schedule() == [(("postsegmentation",), ["_later"]), (("rate",), ["_measures"])]   # as they run

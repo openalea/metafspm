@@ -1,3 +1,4 @@
+from openalea.metafspm.coupling.declaration import check_link
 from openalea.metafspm.coupling.translator import Translator
 
 
@@ -53,7 +54,7 @@ class CompositeModel:
             table = type(component).declarations()
             if table.empty:
                 continue
-            for name in table.loc[~table["kind"].isin(["input", "parameter", "setting", "forcing"]), "name"]:
+            for name in table.loc[~table["role"].isin(["input", "parameter", "setting", "forcing"]), "name"]:
                 provided.setdefault(name, type(component).__name__)
         rows = []
         for component in components:
@@ -61,16 +62,12 @@ class CompositeModel:
             table = type(component).declarations()
             if table.empty:
                 continue
-            for name in table.loc[table["kind"] == "input", "name"]:
+            for name in table.loc[table["role"] == "input", "name"]:
                 links = [link for link in translator.links_of(receiver) if link.variable == name
                          and link.provider != receiver]
                 if links:
                     link = links[0]
-                    if link.provider not in names:
-                        coupling = "scene"
-                    else:
-                        coupling = "alias" if link.mapped_detail == "alias" else (
-                            "shared" if link.mapped_detail == "identity" else "derived")
+                    coupling = "scene" if link.provider not in names else link.coupling
                     sources = ", ".join(f"{source}" if factor in (1, 1.) else f"{source} * {factor}"
                                         for source, factor in link.sources.items()) if link.formula is None \
                         else "formula"
@@ -100,8 +97,7 @@ class CompositeModel:
             if provider.data_structure is not ds:
                 raise NotImplementedError(f"{link.receiver}.{link.variable} <- {link.provider}: coupling across "
                                           "DataStructures goes through the Scene (coupling.cross.Exchanges)")
-            self._check_link_kinds(link, receiver, provider)
-            self._check_link_units(link, receiver, provider)
+            check_link(link, receiver, provider)
             self._check_link_scales(link, ds)
             detail = link.mapped_detail
             if detail == "identity":
@@ -136,44 +132,6 @@ class CompositeModel:
                 derived_inputs.append(link.variable)
 
     @staticmethod
-    def _declared_kind(component, ds, name):
-        spec = getattr(component, "_variable_specs", {}).get(name)
-        if spec is not None and spec.kind is not None:
-            return spec.kind
-        return ds._variable_meta().get(name, {}).get("kind") if hasattr(ds, "_variable_meta") else None
-
-    def _check_link_kinds(self, link, receiver, provider) -> None:
-        """A receiver declaring a state_variable_type must agree with its provider's."""
-        from openalea.metafspm.coupling.declaration import kinds_agree
-        ds = receiver.data_structure
-        received = getattr(receiver, "_variable_specs", {}).get(link.variable)
-        received = received.kind if received is not None else None
-        for source in link.sources:
-            provided = self._declared_kind(provider, ds, source)
-            if not kinds_agree(received, provided):
-                raise ValueError(f"{link.receiver}.{link.variable} ({received}) <- {link.provider}.{source} "
-                                 f"({provided}): the kinds do not agree (extensive with extensive, intensive or "
-                                 "massic with intensive or massic)")
-
-    @staticmethod
-    def _declared_unit(component, name):
-        f = getattr(type(component), "__dataclass_fields__", {}).get(name)
-        return None if f is None else f.metadata.get("unit")
-
-    def _check_link_units(self, link, receiver, provider) -> None:
-        """The declared units against the link's factors (coupling.units.check_link), unless unit_check is off or
-        the link is a formula."""
-        from openalea.metafspm.coupling.units import check_link
-        if link.formula is not None or not link.unit_check:
-            return
-        received = self._declared_unit(receiver, link.variable)
-        for source, factor in link.sources.items():
-            if not isinstance(factor, (int, float)):
-                continue                                   # an expression: its conversion is its own
-            check_link(received, self._declared_unit(provider, source), factor,
-                       f"{link.receiver}.{link.variable} <- {link.provider}.{source}")
-
-    @staticmethod
     def _check_link_scales(link, ds) -> None:
         """A link stating its scales must agree with the declared locations (the declarations rule)."""
         from openalea.metafspm.coupling.declaration import location_of_scale
@@ -190,7 +148,7 @@ class CompositeModel:
     def _default_link_mapping(ds, link, location):
         """
         (mapping, weight) of a link between two locations that gives no aggregation (or a weighted one without its
-        weight), from its sources' state_variable_type; the weight is the link's, else the one declared on the
+        weight), from its sources' kind; the weight is the link's, else the one declared on the
         variable whose entities it weighs: the source's for a mean (up), the receiver's for a split (down).
         (None, the link's weight) when the locations are the same.
         """

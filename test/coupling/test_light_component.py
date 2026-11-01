@@ -22,7 +22,7 @@ from scene_doubles import DT, doubles_planting
 GEOMETRY = ("x1", "x2", "y1", "y2", "z1", "z2", "radius")
 
 
-GEOMETRY_DOC = dict(**DOC, initialize=0., scale=scales.SubOrgan, state_variable_type="descriptor", on_grow="inherit")
+GEOMETRY_DOC = dict(**DOC, default=0., scale=scales.SubOrgan, kind="descriptor", on_grow="inherit")
 
 
 @dataclass
@@ -34,7 +34,7 @@ class WheatOrgans(FunctionalComponent):
     z1: float = state_variable(**GEOMETRY_DOC)
     z2: float = state_variable(**GEOMETRY_DOC)
     radius: float = state_variable(**GEOMETRY_DOC)
-    absorbed: float = input_variable(**DOC, by="ToyCaribu", initialize=-1., scale=scales.SubOrgan)
+    absorbed: float = input_variable(**DOC, by="ToyCaribu", default=-1., scale=scales.SubOrgan)
 
 
 @dataclass
@@ -83,14 +83,14 @@ def absorbed_light(tri, extinction=0.5, cell=1.):
 
 @dataclass
 class ToyCaribu(FunctionalComponent):
-    x1: float = input_variable(**DOC, by="WheatOrgans", initialize=0., scale=scales.SubOrgan)
-    x2: float = input_variable(**DOC, by="WheatOrgans", initialize=0., scale=scales.SubOrgan)
-    y1: float = input_variable(**DOC, by="WheatOrgans", initialize=0., scale=scales.SubOrgan)
-    y2: float = input_variable(**DOC, by="WheatOrgans", initialize=0., scale=scales.SubOrgan)
-    z1: float = input_variable(**DOC, by="WheatOrgans", initialize=0., scale=scales.SubOrgan)
-    z2: float = input_variable(**DOC, by="WheatOrgans", initialize=0., scale=scales.SubOrgan)
-    radius: float = input_variable(**DOC, by="WheatOrgans", initialize=0., scale=scales.SubOrgan)
-    absorbed: float = state_variable(**DOC, initialize=0., scale=scales.SubOrgan, state_variable_type="intensive")
+    x1: float = input_variable(**DOC, by="WheatOrgans", default=0., scale=scales.SubOrgan)
+    x2: float = input_variable(**DOC, by="WheatOrgans", default=0., scale=scales.SubOrgan)
+    y1: float = input_variable(**DOC, by="WheatOrgans", default=0., scale=scales.SubOrgan)
+    y2: float = input_variable(**DOC, by="WheatOrgans", default=0., scale=scales.SubOrgan)
+    z1: float = input_variable(**DOC, by="WheatOrgans", default=0., scale=scales.SubOrgan)
+    z2: float = input_variable(**DOC, by="WheatOrgans", default=0., scale=scales.SubOrgan)
+    radius: float = input_variable(**DOC, by="WheatOrgans", default=0., scale=scales.SubOrgan)
+    absorbed: float = state_variable(**DOC, default=0., scale=scales.SubOrgan, kind="intensive")
 
     @rate
     def _absorbed(self, x1, x2, y1, y2, z1, z2, radius):

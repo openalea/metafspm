@@ -52,7 +52,7 @@ def compartment(model) -> str:
     return declared
 
 
-def _jsonable(value):
+def _described(value):
     """*value* as JSON: numbers, text, lists and dicts as they are; arrays as lists, tables as columns, classes and
     functions by name, anything else by its repr."""
     if value is None or isinstance(value, (bool, str)):
@@ -61,15 +61,15 @@ def _jsonable(value):
         number = float(value) if isinstance(value, (float, np.floating)) else int(value)
         return number if not isinstance(number, float) or np.isfinite(number) else str(number)
     if isinstance(value, np.ndarray):
-        return _jsonable(value.tolist())
+        return _described(value.tolist())
     if isinstance(value, pd.DataFrame):
-        return {"table": {str(column): _jsonable(value[column].tolist()) for column in value.columns}}
+        return {"table": {str(column): _described(value[column].tolist()) for column in value.columns}}
     if isinstance(value, pd.Series):
-        return {"series": {"index": _jsonable(value.index.tolist()), "values": _jsonable(value.tolist())}}
+        return {"series": {"index": _described(value.index.tolist()), "values": _described(value.tolist())}}
     if isinstance(value, dict):
-        return {str(key if not isinstance(key, type) else key.__name__): _jsonable(item) for key, item in value.items()}
+        return {str(key if not isinstance(key, type) else key.__name__): _described(item) for key, item in value.items()}
     if isinstance(value, (list, tuple, set)):
-        return [_jsonable(item) for item in value]
+        return [_described(item) for item in value]
     if isinstance(value, type) or callable(value):
         return f"{getattr(value, '__module__', '')}.{getattr(value, '__qualname__', repr(value))}"
     return repr(value)
@@ -407,16 +407,16 @@ class SceneRecorder:
         for population in scene.populations:
             plants = []
             for row in population.table.itertuples(index=False):
-                plant = {key: _jsonable(getattr(row, key)) for key in ("plant", "x", "y", "z", "rotation")}
+                plant = {key: _described(getattr(row, key)) for key in ("plant", "x", "y", "z", "rotation")}
                 if population.emergence:
                     plant["emergence_time"] = float(row.emergence_time)
-                plant["scenario"] = _jsonable(row.scenario)
+                plant["scenario"] = _described(row.scenario)
                 plants.append(plant)
-            populations.append({"model": _jsonable(population.model), "plants": plants})
+            populations.append({"model": _described(population.model), "plants": plants})
         forcings = {}
         for name, forcing in scene.forcings.items():
             if callable(forcing):
-                forcings[name] = {"function": _jsonable(forcing)}
+                forcings[name] = {"function": _described(forcing)}
             elif np.ndim(forcing) == 0 and not hasattr(forcing, "to_numpy"):
                 forcings[name] = float(forcing)
             else:
@@ -429,15 +429,15 @@ class SceneRecorder:
                     os.path.join(self.folder, "forcings", f"{name}.csv"), index=False)
                 forcings[name] = {"table": f"forcings/{name}.csv"}
         content = {
-            "time_step": float(scene.time_step), "xrange": _jsonable(scene.xrange),
-            "yrange": _jsonable(scene.yrange), "populations": populations,
-            "environment": [{"model": _jsonable(type(model)), "compartment": compartment(model),
-                             "scenario": _jsonable(scenario)}
+            "time_step": float(scene.time_step), "xrange": _described(scene.xrange),
+            "yrange": _described(scene.yrange), "populations": populations,
+            "environment": [{"model": _described(type(model)), "compartment": compartment(model),
+                             "scenario": _described(scenario)}
                             for model, scenario in zip(scene.environment, scene.environment_scenarios)],
             "forcings": forcings,
             "recorder": {"summary_period": self.summary_period if self.summaries else None,
                          "segment_plants": sorted(self.segment_plants), "segment_period": self.segment_period,
-                         "frame_period": self.frame_period, "frame_options": _jsonable(self.frame_options),
+                         "frame_period": self.frame_period, "frame_options": _described(self.frame_options),
                          "checkpoint_period": self.checkpoint_period, "tables": sorted(self.tables),
                          "table_period": self.table_period}}
         _write_json(os.path.join(self.folder, "scenario.json"), content)

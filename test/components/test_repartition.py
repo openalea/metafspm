@@ -18,12 +18,12 @@ from growth import DOC, CarbonProbe, RootGrowthProbe, make_chain
 @dataclass
 class Pools(FunctionalComponent):
     """One variable of each kind, owned by a functional component."""
-    conc: float = state_variable(**DOC, initialize=3., scale=scales.SubOrgan, state_variable_type="massic_concentration")
-    amount: float = state_variable(**DOC, initialize=4., scale=scales.SubOrgan, state_variable_type="extensive")
-    temperature: float = state_variable(**DOC, initialize=20., scale=scales.SubOrgan, state_variable_type="intensive")
-    uptake: float = state_variable(**DOC, initialize=5., scale=scales.SubOrgan,
-                                   state_variable_type="NonInertialExtensive")
-    tag: float = state_variable(**DOC, initialize=7., scale=scales.SubOrgan, state_variable_type="descriptor")
+    conc: float = state_variable(**DOC, default=3., scale=scales.SubOrgan, kind="massic_concentration")
+    amount: float = state_variable(**DOC, default=4., scale=scales.SubOrgan, kind="extensive")
+    temperature: float = state_variable(**DOC, default=20., scale=scales.SubOrgan, kind="intensive")
+    uptake: float = state_variable(**DOC, default=5., scale=scales.SubOrgan,
+                                   kind="NonInertialExtensive")
+    tag: float = state_variable(**DOC, default=7., scale=scales.SubOrgan, kind="descriptor")
 
 
 def _plant(hexose=1., repartition="after_mpg_steps"):
@@ -81,8 +81,8 @@ def test_without_a_partition_weight_growth_only_applies_on_grow():
 class ThickeningProbe(RootGrowthProbe):
     """RootGrowthProbe whose structural mass also grows in an array step (as rhizodep's actual growth and root
     hairs do), keeping its mass at the call's start as the basis of the repartition."""
-    initial_struct_mass: float = state_variable(**DOC, initialize=0., scale=scales.SubOrgan,
-                                                state_variable_type="descriptor")
+    initial_struct_mass: float = state_variable(**DOC, default=0., scale=scales.SubOrgan,
+                                                kind="descriptor")
     partition_weight = "struct_mass"
     partition_basis = "initial_struct_mass"
     repartition = "end_of_call"
@@ -138,7 +138,7 @@ def test_the_repartition_option_is_checked():
 
 @dataclass
 class Branching(StructuralComponent):
-    struct_mass: float = state_variable(**DOC, initialize=0., scale=scales.SubOrgan, state_variable_type="extensive")
+    struct_mass: float = state_variable(**DOC, default=0., scale=scales.SubOrgan, kind="extensive")
     partition_weight = "struct_mass"
     active = {"struct_mass": ">0"}
 
@@ -210,9 +210,9 @@ def test_an_entity_becoming_active_keeps_its_own_amount():
 
 @dataclass
 class Uptake(FunctionalComponent):
-    root_uptake: float = state_variable(**DOC, initialize=-1., scale=scales.SubOrgan)
-    everywhere: float = state_variable(**DOC, initialize=-1., scale=scales.SubOrgan)
-    struct_mass: float = state_variable(**DOC, initialize=0., scale=scales.SubOrgan)
+    root_uptake: float = state_variable(**DOC, default=-1., scale=scales.SubOrgan)
+    everywhere: float = state_variable(**DOC, default=-1., scale=scales.SubOrgan)
+    struct_mass: float = state_variable(**DOC, default=0., scale=scales.SubOrgan)
 
     @rate
     def _root_uptake(self, struct_mass):

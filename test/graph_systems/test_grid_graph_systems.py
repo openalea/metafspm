@@ -23,7 +23,7 @@ SHAPE, DX, DT, D = (4, 3, 5), (0.1, 0.2, 0.05), 0.5, 1e-3
 def _simulation_time_step():
     """The scene's step is the components' (one solve per call)."""
     from openalea.metafspm.coupling.choregrapher import Choregrapher
-    Choregrapher().add_simulation_time_step(DT)
+    Choregrapher()._set_simulation_time_step(DT)
 
 
 
@@ -56,8 +56,8 @@ def _diffusion(groundwater=False, **options):
 
 @dataclass
 class SoilFields(FunctionalComponent):
-    solute: float = state_variable(**DOC, initialize=0., location="cell")
-    solute_flux: float = state_variable(**DOC, initialize=0., location="edge")
+    solute: float = state_variable(**DOC, default=0., location="cell")
+    solute_flux: float = state_variable(**DOC, default=0., location="edge")
     uptake: float = parameter(**DOC, by="", default=0., location="cell")
     diffusivity: float = parameter(**DOC, by="", default=D, location="edge")
     time_step = DT

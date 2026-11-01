@@ -46,51 +46,67 @@ def _spec(cls, name, ds):
 # ---------------------------------------------------------------- legacy forms and the new keys
 
 @dataclass
-class Legacy:
-    node_string: float = sv(initialize=0., scale="node")
-    edge_string: float = sv(initialize=0., scale="edge")
-    scalar_string: float = sv(initialize=0., scale="scalar")
-    at_nodes: float = sv(initialize=0., scale=scales.SubOrgan)
-    at_child_edge: float = sv(initialize=0., scale=scales.SubOrgan, edge_mapping="proximal")
-    at_parent_edge: float = par(default=0., scale=scales.SubOrgan, edge_mapping="distal")
-    at_compartment: float = sv(initialize=0., scale=scales.Compartment)
-    at_connection: float = sv(initialize=0., scale=scales.Connection)
-    at_organ: float = sv(initialize=0., scale=scales.Organ)
-    undeclared_scale: float = sv(initialize=0.)
+class Places:
+    node_string: float = sv(default=0., location="node")
+    edge_string: float = sv(default=0., location="edge")
+    scalar_string: float = sv(default=0., location="scalar")
+    at_nodes: float = sv(default=0., scale=scales.SubOrgan)
+    at_child_edge: float = sv(default=0., scale=scales.SubOrgan, aggregation="child")
+    at_parent_edge: float = par(default=0., scale=scales.SubOrgan, aggregation="parent")
+    at_compartment: float = sv(default=0., scale=scales.Compartment)
+    at_connection: float = sv(default=0., scale=scales.Connection)
+    at_organ: float = sv(default=0., scale=scales.Organ)
+    undeclared_scale: float = sv(default=0.)
 
 
-def test_legacy_forms_keep_their_location(seedling):
+def test_places_and_their_locations(seedling):
     _, _, ds = seedling
     expected = {"node_string": ("node", None, None), "edge_string": ("edge", None, None),
                 "scalar_string": ("scalar", None, None), "at_nodes": ("node", scales.SubOrgan, None),
                 "at_compartment": ("node", None, None), "at_connection": ("edge", None, None)}
     for name, (location, scale, mapping) in expected.items():
-        spec = _spec(Legacy, name, ds)
+        spec = _spec(Places, name, ds)
         assert (spec.location, spec.scale, spec.mapping) == (location, scale, mapping), name
-    assert _spec(Legacy, "undeclared_scale", ds) is None
+    assert _spec(Places, "undeclared_scale", ds) is None
 
 
-def test_former_edge_mapping_names_are_renamed(seedling):
+def test_the_former_declaration_forms_raise_or_warn(seedling):
+    """scale="node" (a location) and the edge aggregations "proximal" / "distal" are gone; initialize=,
+    state_variable_type= and mapping= are renamed default=, kind= and aggregation=, accepted with a warning for one
+    release."""
     _, _, ds = seedling
-    with pytest.warns(DeprecationWarning, match="'proximal' is renamed 'child'"):
-        child = _spec(Legacy, "at_child_edge", ds)
-    with pytest.warns(DeprecationWarning, match="'distal' is renamed 'parent'"):
-        parent = _spec(Legacy, "at_parent_edge", ds)
-    assert (child.location, child.mapping, parent.location, parent.mapping) == ("edge", "child", "edge", "parent")
+    former = {"scale": "no" + "de"}                          # spelled out of reach of the converters
+
+    @dataclass
+    class Former:
+        location_as_scale: float = sv(default=0., **former)
+
+    with pytest.raises(DeclarationError, match="is a location"):
+        _spec(Former, "location_as_scale", ds)
+    with pytest.raises(ValueError, match="'child' or 'parent'"):
+        sv(default=0., scale=scales.SubOrgan, aggregation="proxi" + "mal")
+    for old, new, value in (("initia" + "lize", "default", 2.), ("state_variable" + "_type", "kind", "extensive"),
+                            ("map" + "ping", "aggregation", "child")):
+        with pytest.warns(DeprecationWarning, match=f"renamed {new}="):
+            declared = sv(**{old: value})
+        assert (declared.default if new == "default" else declared.metadata[{"kind": "kind", "aggregation":
+                                                                              "mapping"}[new]]) == value
+    with pytest.raises(TypeError, match="unexpected keyword"):
+        sv(default=0., **{"edge_" + "mapping": "child"})
 
 
 def test_a_coarser_scale_is_stored_at_that_scale(seedling):
     """N1: no broadcast to the nodes unless asked for."""
     _, _, ds = seedling
-    spec = _spec(Legacy, "at_organ", ds)
+    spec = _spec(Places, "at_organ", ds)
     assert (spec.location, spec.scale, spec.mapping) == ("Organ", scales.Organ, None)
 
 
 @dataclass
 class ScaleNames:
-    by_node_scale_name: float = sv(initialize=0., location="SubOrgan")
-    by_connection_name: float = sv(initialize=0., location="Connection")
-    by_coarse_name: float = sv(initialize=0., location="Organ")
+    by_node_scale_name: float = sv(default=0., location="SubOrgan")
+    by_connection_name: float = sv(default=0., location="Connection")
+    by_coarse_name: float = sv(default=0., location="Organ")
 
 
 def test_scale_names_are_locations_resolved_against_the_graph(seedling):
@@ -105,25 +121,25 @@ def test_scale_names_are_locations_resolved_against_the_graph(seedling):
 @dataclass
 class Defaults:
     mass: float = par(default=1., scale=scales.SubOrgan)
-    down_intensive: float = sv(initialize=0., scale=scales.Organ, location="node", state_variable_type="intensive")
-    down_massic: float = sv(initialize=0., scale=scales.Organ, location="node",
-                            state_variable_type="massic_concentration")
-    down_extensive: float = sv(initialize=0., scale=scales.Organ, location="node", state_variable_type="extensive")
-    down_untyped: float = inp(initialize=0., scale=scales.Organ, location="node")
-    down_explicit: float = inp(initialize=0., scale=scales.Organ, location="node", mapping="broadcast")
-    up_extensive: float = par(default=0., scale=scales.SubOrgan, location="Organ", state_variable_type="extensive")
-    up_intensive: float = sv(initialize=0., scale=scales.SubOrgan, location="Organ",
-                             state_variable_type="NonInertialIntensive")
-    up_intensive_weighted: float = sv(initialize=0., scale=scales.SubOrgan, location="Organ",
-                                      state_variable_type="NonInertialIntensive", weight="mass")
-    up_intensive_plain: float = sv(initialize=0., scale=scales.SubOrgan, location="Organ",
-                                   state_variable_type="intensive", mapping="mean")
-    down_extensive_split: float = inp(initialize=0., scale=scales.Organ, location="node",
-                                      state_variable_type="extensive", weight="mass")
-    up_massic: float = sv(initialize=0., scale=scales.SubOrgan, location="Organ",
-                          state_variable_type="massic_concentration")
-    up_massic_weighted: float = sv(initialize=0., scale=scales.SubOrgan, location="Organ",
-                                   state_variable_type="massic_concentration", weight="mass")
+    down_intensive: float = sv(default=0., scale=scales.Organ, location="node", kind="intensive")
+    down_massic: float = sv(default=0., scale=scales.Organ, location="node",
+                            kind="massic_concentration")
+    down_extensive: float = sv(default=0., scale=scales.Organ, location="node", kind="extensive")
+    down_untyped: float = inp(default=0., scale=scales.Organ, location="node")
+    down_explicit: float = inp(default=0., scale=scales.Organ, location="node", aggregation="broadcast")
+    up_extensive: float = par(default=0., scale=scales.SubOrgan, location="Organ", kind="extensive")
+    up_intensive: float = sv(default=0., scale=scales.SubOrgan, location="Organ",
+                             kind="NonInertialIntensive")
+    up_intensive_weighted: float = sv(default=0., scale=scales.SubOrgan, location="Organ",
+                                      kind="NonInertialIntensive", weight="mass")
+    up_intensive_plain: float = sv(default=0., scale=scales.SubOrgan, location="Organ",
+                                   kind="intensive", aggregation="mean")
+    down_extensive_split: float = inp(default=0., scale=scales.Organ, location="node",
+                                      kind="extensive", weight="mass")
+    up_massic: float = sv(default=0., scale=scales.SubOrgan, location="Organ",
+                          kind="massic_concentration")
+    up_massic_weighted: float = sv(default=0., scale=scales.SubOrgan, location="Organ",
+                                   kind="massic_concentration", weight="mass")
 
 
 def test_default_mappings_follow_the_state_variable_type(seedling):
@@ -153,30 +169,28 @@ def test_ambiguous_scale_changes_need_an_explicit_mapping(seedling, name, messag
 
 @dataclass
 class Errors:
-    unknown_location: float = sv(initialize=0., location="Leaf")
-    mapping_on_own_scale: float = sv(initialize=0., scale=scales.SubOrgan, mapping="sum")
-    edge_without_mapping: float = sv(initialize=0., scale=scales.SubOrgan, location="edge")
-    unknown_edge_mapping: float = par(default=0., scale=scales.SubOrgan, location="edge", mapping="sum")
-    edge_mean_state: float = sv(initialize=0., scale=scales.SubOrgan, location="edge", mapping="mean")
-    scalar_with_scale: float = sv(initialize=0., scale=scales.Plant, location="scalar")
-    finer_than_nodes: float = sv(initialize=0., scale=scales.Layer)
-    between_coarse_scales: float = sv(initialize=0., scale=scales.Organ, location="Axis",
-                                      state_variable_type="extensive")
-    wrong_direction: float = sv(initialize=0., scale=scales.Organ, location="node", mapping="sum")
-    mapping_without_scale: float = sv(initialize=0., location="node", mapping="broadcast")
-    weighted_without_weight: float = sv(initialize=0., scale=scales.SubOrgan, location="Organ",
-                                        mapping="weighted_mean")
-    both_mappings: float = sv(initialize=0., scale=scales.SubOrgan, edge_mapping="proximal", mapping="child")
-    location_twice: float = sv(initialize=0., scale="node", location="edge")
-    non_numeric: str = sv(initialize="seminal", scale=scales.SubOrgan)
-    summed_state: float = sv(initialize=0., scale=scales.SubOrgan, location="Organ", state_variable_type="extensive")
-    coarse_edge_state: float = sv(initialize=0., scale=scales.Organ, location="edge", mapping="child")
+    unknown_location: float = sv(default=0., location="Leaf")
+    mapping_on_own_scale: float = sv(default=0., scale=scales.SubOrgan, aggregation="sum")
+    edge_without_mapping: float = sv(default=0., scale=scales.SubOrgan, location="edge")
+    unknown_edge_mapping: float = par(default=0., scale=scales.SubOrgan, location="edge", aggregation="sum")
+    edge_mean_state: float = sv(default=0., scale=scales.SubOrgan, location="edge", aggregation="mean")
+    scalar_with_scale: float = sv(default=0., scale=scales.Plant, location="scalar")
+    finer_than_nodes: float = sv(default=0., scale=scales.Layer)
+    between_coarse_scales: float = sv(default=0., scale=scales.Organ, location="Axis",
+                                      kind="extensive")
+    wrong_direction: float = sv(default=0., scale=scales.Organ, location="node", aggregation="sum")
+    mapping_without_scale: float = sv(default=0., location="node", aggregation="broadcast")
+    weighted_without_weight: float = sv(default=0., scale=scales.SubOrgan, location="Organ",
+                                        aggregation="weighted_mean")
+    non_numeric: str = sv(default="seminal", scale=scales.SubOrgan)
+    summed_state: float = sv(default=0., scale=scales.SubOrgan, location="Organ", kind="extensive")
+    coarse_edge_state: float = sv(default=0., scale=scales.Organ, location="edge", aggregation="child")
 
 
 @pytest.mark.parametrize("name, message", [
     ("unknown_location", "unknown location 'Leaf'"),
     ("mapping_on_own_scale", "stored at its own scale"),
-    ("edge_without_mapping", "give mapping= one of"),
+    ("edge_without_mapping", "give aggregation= one of"),
     ("unknown_edge_mapping", "is not one of"),
     ("edge_mean_state", "could not be written back"),
     ("scalar_with_scale", "scalar variable has no MTG scale"),
@@ -185,8 +199,6 @@ class Errors:
     ("wrong_direction", "goes down"),
     ("mapping_without_scale", "has no MTG scale"),
     ("weighted_without_weight", "needs weight="),
-    ("both_mappings", "not both"),
-    ("location_twice", "is a location"),
     ("non_numeric", "numeric default"),
     ("summed_state", "could not be written back to the finer scale"),
     ("coarse_edge_state", "several edges would write the same vertex"),
@@ -207,11 +219,11 @@ def test_errors_name_the_component_and_field(seedling):
 
 @dataclass
 class OrganProbe(FunctionalComponent):
-    organ_pool: float = sv(initialize=-1., scale=scales.Organ, state_variable_type="extensive")
-    organ_temperature: float = inp(initialize=-1., scale=scales.Organ, location="node", mapping="broadcast")
+    organ_pool: float = sv(default=-1., scale=scales.Organ, kind="extensive")
+    organ_temperature: float = inp(default=-1., scale=scales.Organ, location="node", aggregation="broadcast")
     organ_length: float = par(default=-1., scale=scales.SubOrgan, location="Organ",
-                              state_variable_type="extensive")
-    total: float = sv(initialize=3., location="scalar")
+                              kind="extensive")
+    total: float = sv(default=3., location="scalar")
 
 
 def _organ_of(g, ds):
@@ -262,9 +274,9 @@ def test_a_pre_registered_variable_at_another_location_is_rejected(seedling):
 
 @dataclass
 class GridProbe(FunctionalComponent):
-    water: float = sv(initialize=0.2, scale="cell")
-    rain: float = inp(initialize=1., location="scalar")
-    plant_only: float = sv(initialize=0., scale=scales.SubOrgan)
+    water: float = sv(default=0.2, location="cell")
+    rain: float = inp(default=1., location="scalar")
+    plant_only: float = sv(default=0., scale=scales.SubOrgan)
 
 
 def test_grids_register_their_own_locations_only():
@@ -279,7 +291,7 @@ def test_graph_equations_reject_coarse_located_variables_with_a_hint(seedling):
     from openalea.metafspm.solve.decorator import _declared_locations, _snapshot
     _, _, ds = seedling
     probe = OrganProbe(data_structure=ds)
-    with pytest.raises(ValueError, match="location='node' and mapping='broadcast'"):
+    with pytest.raises(ValueError, match="location='node' and aggregation='broadcast'"):
         _snapshot(probe, {"organ_pool"}, ds.entity_ids("node"), [], [], [], _declared_locations(probe))
     node_snap, _ = _snapshot(probe, {"organ_temperature", "total"}, ds.entity_ids("node"), [], [], [],
                              _declared_locations(probe))
@@ -288,7 +300,7 @@ def test_graph_equations_reject_coarse_located_variables_with_a_hint(seedling):
 
 @dataclass
 class NodesAndEdges(FunctionalComponent):
-    potential: float = state_variable(**DOC, initialize=0.5, location="node")
+    potential: float = state_variable(**DOC, default=0.5, location="node")
     conductance: float = parameter(**DOC, by="", default=2., location="edge")
 
 
@@ -306,7 +318,7 @@ def test_one_component_declared_on_nodes_runs_on_a_plant_graph_and_on_a_grid():
 
 @dataclass
 class Clocked(FunctionalComponent):
-    potential: float = state_variable(**DOC, initialize=0., location="node")
+    potential: float = state_variable(**DOC, default=0., location="node")
 
 
 @dataclass
@@ -316,7 +328,7 @@ class ClockedByClass(Clocked):
 
 def test_a_component_takes_its_time_step_at_construction_or_from_the_simulation():
     from openalea.metafspm.coupling.choregrapher import Choregrapher
-    Choregrapher().add_simulation_time_step(3600.)
+    Choregrapher()._set_simulation_time_step(3600.)
     grid = ArrayDataStructure(shape=(2,), dx=0.1)
     assert Clocked(data_structure=grid).time_step == Clocked(data_structure=grid).dt == 3600.   # the simulation's
     assert ClockedByClass(data_structure=grid).time_step == 60.                                 # its class's
@@ -325,8 +337,8 @@ def test_a_component_takes_its_time_step_at_construction_or_from_the_simulation(
 
 @dataclass
 class Counted(FunctionalComponent):
-    count: float = state_variable(**DOC, initialize=0., location="node")
-    seen_at: float = state_variable(**DOC, initialize=-1., location="scalar")
+    count: float = state_variable(**DOC, default=0., location="node")
+    seen_at: float = state_variable(**DOC, default=-1., location="scalar")
 
     @rate
     def _count(self, count):
@@ -339,7 +351,7 @@ class Counted(FunctionalComponent):
 
 def test_a_component_runs_once_per_time_step_within_the_simulation_step():
     from openalea.metafspm.coupling.choregrapher import Choregrapher
-    Choregrapher().add_simulation_time_step(3600.)
+    Choregrapher()._set_simulation_time_step(3600.)
     grid = ArrayDataStructure(shape=(2,), dx=0.1)
     model = Counted(data_structure=grid, time_step=900.)
     model()
@@ -351,7 +363,7 @@ def test_a_component_runs_once_per_time_step_within_the_simulation_step():
 
 def test_a_time_step_must_divide_the_simulation_step():
     from openalea.metafspm.coupling.choregrapher import Choregrapher
-    Choregrapher().add_simulation_time_step(3600.)
+    Choregrapher()._set_simulation_time_step(3600.)
     grid = ArrayDataStructure(shape=(2,), dx=0.1)
     with pytest.raises(ValueError, match="must divide the simulation time step"):
         Counted(data_structure=grid, time_step=1000.)

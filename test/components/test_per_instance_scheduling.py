@@ -21,12 +21,12 @@ DOC = dict(unit="", unit_comment="", description="", min_value=0., max_value=1.,
 
 @pytest.fixture(autouse=True)
 def _simulation_time_step():
-    Choregrapher().add_simulation_time_step(1)
+    Choregrapher()._set_simulation_time_step(1)
 
 
 @dataclass
 class Increment(FunctionalComponent):
-    level: float = state_variable(**DOC, initialize=0., location="cell")
+    level: float = state_variable(**DOC, default=0., location="cell")
 
     @rate
     def _level(self, level):
@@ -76,7 +76,7 @@ from openalea.metafspm.solve.decorator import rate
 @dataclass
 class Decay(FunctionalComponent):
     level: float = state_variable(unit="", unit_comment="", description="", min_value=0., max_value=1.,
-                                  value_comment="", references="", DOI=[], initialize=1., location="cell")
+                                  value_comment="", references="", DOI=[], default=1., location="cell")
 
     @rate
     def _level(self, level):
@@ -103,7 +103,7 @@ def test_same_named_classes_of_different_modules_do_not_collide():
 def test_classes_defined_in_a_function_are_scheduled():
     @dataclass
     class Local(FunctionalComponent):
-        level: float = state_variable(**DOC, initialize=0., location="cell")
+        level: float = state_variable(**DOC, default=0., location="cell")
 
         @rate
         def _level(self, level):

@@ -23,9 +23,9 @@ from scene_doubles import DT, SceneGeometry, SceneSoil, doubles_planting, soil_t
 
 @dataclass
 class Lit(SceneGeometry):
-    light: float = state_variable(**DOC, initialize=0., scale=scales.SubOrgan)
-    exudation: float = state_variable(**DOC, initialize=0., scale=scales.SubOrgan, state_variable_type="extensive")
-    soil_nitrate: float = state_variable(**DOC, initialize=0., scale=scales.SubOrgan)
+    light: float = state_variable(**DOC, default=0., scale=scales.SubOrgan)
+    exudation: float = state_variable(**DOC, default=0., scale=scales.SubOrgan, kind="extensive")
+    soil_nitrate: float = state_variable(**DOC, default=0., scale=scales.SubOrgan)
     PARi: float = forcing_variable(unit="µmol m-2 s-1", description="The incident PAR")
     wind: float = forcing_variable(unit="m s-1", description="The wind speed, when given", required=False)
 
@@ -83,7 +83,7 @@ def test_declared_forcings():
     """A forcing declared is listed with the variables, never registered on the DataStructure, and checked when the
     scene is built: a required one missing raises then, an optional one only when read."""
     table = Lit.declarations().set_index("name")
-    assert table.loc["PARi", "kind"] == "forcing" and table.loc["PARi", "default"] == "required"
+    assert table.loc["PARi", "role"] == "forcing" and table.loc["PARi", "default"] == "required"
     assert table.loc["wind", "default"] == "optional"
     assert Lit.declared_forcings() == {"PARi": True, "wind": False}
     scene = _scene()
@@ -105,7 +105,7 @@ def test_models_run_every_interval_and_spin_up_once():
 def test_a_model_runs_when_its_condition_holds():
     scene = _scene()
     population = scene.populations[0].instance
-    population.run_when = lambda s: s.time >= 2 * DT                  # e.g. only when there is light
+    population._run_when = lambda s: s.time >= 2 * DT                  # e.g. only when there is light
     ds = scene.populations[0].data_structure
     scene.run()
     scene.run()

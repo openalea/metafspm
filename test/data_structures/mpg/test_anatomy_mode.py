@@ -148,8 +148,8 @@ def _is(label_name):
 @dataclass
 class AnatomyHydraulics(FunctionalComponent):
     """Steady water potential on the cross-sections and the xylem / cortex junctions (UC3-like)."""
-    water_potential: float = state_variable(**DOC, initialize=-0.5, location="node")
-    water_flux: float = state_variable(**DOC, initialize=0., location="edge")
+    water_potential: float = state_variable(**DOC, default=-0.5, location="node")
+    water_flux: float = state_variable(**DOC, default=0., location="edge")
     K: float = parameter(**DOC, by="", default=1., location="edge")
     label: float = parameter(**DOC, by="", default=0., scale=scales.Compartment)
     soil_water_potential: float = parameter(**DOC, by="", default=-0.2, location="node")
@@ -188,8 +188,8 @@ def test_a_graph_system_solves_on_the_assembled_anatomy_graph():
 
 @dataclass
 class ConnectionProperties(FunctionalComponent):
-    conductance: float = state_variable(**DOC, initialize=0., scale=scales.Connection)
-    tissue: float = state_variable(**DOC, initialize=0., scale=scales.Compartment)
+    conductance: float = state_variable(**DOC, default=0., scale=scales.Connection)
+    tissue: float = state_variable(**DOC, default=0., scale=scales.Compartment)
 
 
 def test_connection_scale_variables_are_the_connections_own_properties():

@@ -61,7 +61,7 @@ def test_yaml_long_form_with_scale_and_aggregation(tmp_path):
         "sources": {"soil_temperature": 1}, "scale": "Organ", "aggregation": "weighted_mean", "weight": "length"}}}}))
     link, = Translator.load(str(path)).links
     assert (link.scale, link.aggregation, link.weight) == (scales.Organ, "weighted_mean", "length")
-    assert link.kind == "derived"
+    assert link.coupling == "derived"
 
 
 def test_yaml_unknown_scale_is_rejected(tmp_path):
@@ -85,8 +85,8 @@ def _python_translator():
 
 def test_python_translator_links():
     translator = _python_translator()
-    kinds = [link.kind for link in translator.links]
-    assert kinds == ["identity", "alias", "derived", "derived", "derived"]
+    couplings = [link.coupling for link in translator.links]
+    assert couplings == ["shared", "alias", "derived", "derived", "derived"]
     assert translator.links_of("SoilModel")[0].sources == {"hexose_exudation": 72}
     assert translator.links_of("CNW_Grass", provider="RootCN")[0].scale == scales.Plant
     assert translator.links_of("RootCN")[0].formula(6., 3.) == 2.
@@ -99,7 +99,7 @@ def test_formula_links_have_no_legacy_equivalent():
 
 def test_same_name_factor_is_derived():
     link = Link("SoilModel", "x", "RootCN", {"x": 5.})
-    assert (link.kind, link.detail) == ("derived", "same_name_factor")
+    assert (link.coupling, link.detail) == ("derived", "same_name_factor")
 
 
 def test_translator_module(tmp_path):

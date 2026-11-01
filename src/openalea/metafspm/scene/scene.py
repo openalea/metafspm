@@ -115,17 +115,15 @@ class Scene:
                                CrossMapping given here replaces the inferred one between its two DataStructures (e.g.
                                to map only the root surface, mask=).
 
-    A model's cadence: an environment model's interval (s, EnvironmentModel: between() runs at the other steps). A
-    model may also set run_when(scene) -> bool, a condition rather than a cadence (e.g. only when there is light):
-    at the steps it does not hold, the model and the exchanges into it are skipped, its outputs keeping their
-    values. An environment model's spin_up(scene) runs once, after the scene is built.
+    A model's cadence is an environment model's interval (s, EnvironmentModel: due() and between()). An environment
+    model's spin_up(scene) runs once, after the scene is built.
     """
 
     def __init__(self, planting: pd.DataFrame, environment=(), environment_scenarios=None, translator=None,
                  time_step: float = 3600., mapping_method: str = "barycentre", periodic=(True, True, False),
                  flip_z: bool = True, xrange: float = None, yrange: float = None, forcings=None,
                  events=(), stop_when=None, mappings=(), recorder=None):
-        Choregrapher().add_simulation_time_step(time_step)
+        Choregrapher()._set_simulation_time_step(time_step)
         self.time_step, self.time, self.iteration = time_step, 0., 0
         self.xrange = xrange if xrange is not None else planting.attrs.get("xrange")
         self.yrange = yrange if yrange is not None else planting.attrs.get("yrange")
@@ -389,8 +387,9 @@ class Scene:
         self.timing[key] = self.timing.get(key, 0.) + seconds
 
     def _due(self, model) -> bool:
-        """Whether *model* runs at this step (its run_when condition)."""
-        when = getattr(model, "run_when", None)
+        """Whether *model* runs at this step: an internal hook, _run_when(scene) -> bool (the cadence is
+        EnvironmentModel.interval)."""
+        when = getattr(model, "_run_when", None)
         return when is None or bool(when(self))
 
     def simulate(self, n_iterations: int) -> None:

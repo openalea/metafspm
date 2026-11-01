@@ -23,7 +23,7 @@ class Settings(FunctionalComponent):
     rate_per_plant: float = parameter(**DOC, by="", default=1.)
     rate_per_segment: float = parameter(**DOC, by="", default=2., scale=scales.SubOrgan)
     method: str = parameter(**DOC, by="", default="linear")
-    u: float = state_variable(**DOC, initialize=0., scale=scales.SubOrgan)
+    u: float = state_variable(**DOC, default=0., scale=scales.SubOrgan)
 
 
 class Plants:
@@ -42,7 +42,7 @@ class Plants:
 class SoilSettings(FunctionalComponent):
     conductivity: float = parameter(**DOC, by="", default=1.)
     scheme: str = parameter(**DOC, by="", default="upwind")
-    theta: float = state_variable(**DOC, initialize=0., location="cell")
+    theta: float = state_variable(**DOC, default=0., location="cell")
 
 
 class Ground:
@@ -95,7 +95,7 @@ def test_environment_scenarios_reach_the_components_and_the_models_own_arguments
 class Optics(FunctionalComponent):
     """An environment component on the plants' DataStructure, with a per-plant parameter (a light model's optics)."""
     reflectance: float = parameter(**DOC, by="", default=0.1)
-    absorbed: float = state_variable(**DOC, initialize=0., scale=scales.SubOrgan)
+    absorbed: float = state_variable(**DOC, default=0., scale=scales.SubOrgan)
 
 
 class Light:

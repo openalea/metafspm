@@ -48,15 +48,15 @@ def make_chain(n_segments=3, apex_length=0.5):
 
 @dataclass
 class RootGrowthProbe(StructuralComponent):
-    C_hexose_root: float = input_variable(**DOC, by="CarbonProbe", initialize=1., scale=scales.SubOrgan)
-    is_apex: float = state_variable(**DOC, initialize=0., scale=scales.SubOrgan, state_variable_type="descriptor")
-    length: float = state_variable(**DOC, initialize=0., scale=scales.SubOrgan, state_variable_type="descriptor")
-    struct_mass: float = state_variable(**DOC, initialize=0., scale=scales.SubOrgan, state_variable_type="extensive")
-    radius: float = state_variable(**DOC, initialize=1., scale=scales.SubOrgan, state_variable_type="descriptor")
-    potential_elongation: float = state_variable(**DOC, initialize=0., scale=scales.SubOrgan,
-                                                 state_variable_type="descriptor")
-    distance_from_tip: float = state_variable(**DOC, initialize=0., scale=scales.SubOrgan,
-                                              state_variable_type="descriptor")
+    C_hexose_root: float = input_variable(**DOC, by="CarbonProbe", default=1., scale=scales.SubOrgan)
+    is_apex: float = state_variable(**DOC, default=0., scale=scales.SubOrgan, kind="descriptor")
+    length: float = state_variable(**DOC, default=0., scale=scales.SubOrgan, kind="descriptor")
+    struct_mass: float = state_variable(**DOC, default=0., scale=scales.SubOrgan, kind="extensive")
+    radius: float = state_variable(**DOC, default=1., scale=scales.SubOrgan, kind="descriptor")
+    potential_elongation: float = state_variable(**DOC, default=0., scale=scales.SubOrgan,
+                                                 kind="descriptor")
+    distance_from_tip: float = state_variable(**DOC, default=0., scale=scales.SubOrgan,
+                                              kind="descriptor")
     elongation_rate: float = parameter(**DOC, by="RootGrowthProbe", default=0.4)
 
     def _prop(self, name):
@@ -141,9 +141,9 @@ class RootGrowthProbe(StructuralComponent):
 
 @dataclass
 class CarbonProbe(FunctionalComponent):
-    C_hexose_root: float = state_variable(**DOC, initialize=1., scale=scales.SubOrgan,
-                                          state_variable_type="massic_concentration", on_grow="inherit")
-    struct_mass: float = input_variable(**DOC, by="RootGrowthProbe", initialize=0., scale=scales.SubOrgan)
+    C_hexose_root: float = state_variable(**DOC, default=1., scale=scales.SubOrgan,
+                                          kind="massic_concentration", on_grow="inherit")
+    struct_mass: float = input_variable(**DOC, by="RootGrowthProbe", default=0., scale=scales.SubOrgan)
 
     @rate
     def _C_hexose_root(self, C_hexose_root, struct_mass):

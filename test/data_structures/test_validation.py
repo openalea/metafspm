@@ -118,8 +118,8 @@ def test_boundary_condition_arguments_are_checked():
 
 @dataclass
 class BadDeclaration(FunctionalComponent):
-    pool: float = state_variable(**DOC, initialize=0., scale=scales.SubOrgan, location="Organ",
-                                 state_variable_type="extensive")
+    pool: float = state_variable(**DOC, default=0., scale=scales.SubOrgan, location="Organ",
+                                 kind="extensive")
 
 
 def test_couplability_reports_declarations_that_do_not_resolve(ds):

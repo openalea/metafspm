@@ -23,12 +23,12 @@ from test_fspm_tf import _models, _population, _steps
 @dataclass
 class _Drawn(RootGrowthProbe):
     """The growth probe with segment ends, drawn as cylinders."""
-    x1: float = state_variable(**DOC, initialize=0., scale=scales.SubOrgan, state_variable_type="descriptor")
-    y1: float = state_variable(**DOC, initialize=0., scale=scales.SubOrgan, state_variable_type="descriptor")
-    z1: float = state_variable(**DOC, initialize=0., scale=scales.SubOrgan, state_variable_type="descriptor")
-    x2: float = state_variable(**DOC, initialize=0., scale=scales.SubOrgan, state_variable_type="descriptor")
-    y2: float = state_variable(**DOC, initialize=0., scale=scales.SubOrgan, state_variable_type="descriptor")
-    z2: float = state_variable(**DOC, initialize=0., scale=scales.SubOrgan, state_variable_type="descriptor")
+    x1: float = state_variable(**DOC, default=0., scale=scales.SubOrgan, kind="descriptor")
+    y1: float = state_variable(**DOC, default=0., scale=scales.SubOrgan, kind="descriptor")
+    z1: float = state_variable(**DOC, default=0., scale=scales.SubOrgan, kind="descriptor")
+    x2: float = state_variable(**DOC, default=0., scale=scales.SubOrgan, kind="descriptor")
+    y2: float = state_variable(**DOC, default=0., scale=scales.SubOrgan, kind="descriptor")
+    z2: float = state_variable(**DOC, default=0., scale=scales.SubOrgan, kind="descriptor")
 
 
 def _plants():

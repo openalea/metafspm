@@ -7,15 +7,15 @@ then in a page
 
     .. metafspm-component:: openalea.caribu.component.CaribuLight
 
-renders its docstring, its variables by kind (inputs, forcings, state variables, parameters, settings: name, scale,
+renders its docstring, its variables by role (inputs, forcings, state variables, parameters, settings: name, scale,
 unit, description, default or provider) and its schedule (the steps in the order they run, with their docstrings).
 `component_rst(cls)` gives the same text for other uses.
 """
 import importlib
 import inspect
 
-KINDS = (("input", "Inputs"), ("forcing", "Forcings"), ("state_variable", "State variables"),
-         ("plant_scale_state", "Plant-scale states"), ("parameter", "Parameters"), ("setting", "Settings"))
+ROLES = (("input", "Inputs"), ("forcing", "Forcings"), ("state_variable", "State variables"),
+         ("parameter", "Parameters"), ("setting", "Settings"))
 
 
 def _cell(value) -> str:
@@ -39,19 +39,19 @@ def component_rst(cls, heading: str = "-") -> str:
         lines += [f"- ``{name}``: {' '.join(method_doc.split())}" for name, method_doc in methods if method_doc]
         return "\n".join(lines) + "\n"
     table = cls.declarations()
-    for kind, title in KINDS:
+    for role, title in ROLES:
         if table.empty:                                 # a component declaring no variable
             break
-        rows = table[table["kind"] == kind]
+        rows = table[table["role"] == role]
         if rows.empty:
             continue
-        last = "provider" if kind == "input" else "default"
+        last = "provider" if role == "input" else "default"
         lines += [title, heading * len(title), "", ".. list-table::", "   :header-rows: 1", "",
                   "   * - name", "     - scale", "     - unit", "     - description", f"     - {last}"]
         for row in rows.itertuples(index=False):
             lines += [f"   * - ``{row.name}``", f"     - {_cell(row.scale)}", f"     - {_cell(row.unit)}",
                       f"     - {_cell(row.description)}",
-                      f"     - {_cell(row.by if kind == 'input' else row.default)}"]
+                      f"     - {_cell(row.by if role == 'input' else row.default)}"]
         lines.append("")
     schedule = cls.schedule()
     if schedule:

@@ -60,3 +60,12 @@ def test_inputs_in_days():
     assert forcing_value(by_day, 5 * day) == pytest.approx(15.)
     assert forcing_value(as_forcing(lambda d: 2 * d, time_unit=day, origin=1.), day) == pytest.approx(4.)
     assert forcing_value(as_forcing([1., 3., 5.], time_unit=day), 1.5 * day) == pytest.approx(4.)
+
+
+def test_a_time_unit_is_a_number_of_seconds_or_its_label():
+    from openalea.metafspm.coupling.forcings import seconds, time_unit_label
+    assert forcing_value(as_forcing([1., 3.], time_unit="d"), 86400.) == pytest.approx(3.)
+    assert seconds("h") == 3600. and seconds(60.) == 60. and time_unit_label(86400.) == "d"
+    with pytest.raises(ValueError):
+        seconds("week")
+

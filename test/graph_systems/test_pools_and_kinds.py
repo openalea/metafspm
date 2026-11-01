@@ -22,7 +22,7 @@ DT, K, EXCHANGE = 2., 0.3, 0.8
 
 @pytest.fixture(autouse=True)
 def _simulation_time_step():
-    Choregrapher().add_simulation_time_step(DT)
+    Choregrapher()._set_simulation_time_step(DT)
 
 
 def _population(sizes=(3, 5)):
@@ -54,8 +54,8 @@ class _Equations:
 
 
 def _fields():
-    return dict(sugar=state_variable(**DOC, initialize=0., scale=scales.SubOrgan),
-                shoot_sugar=state_variable(**DOC, initialize=0., scale=scales.Plant))
+    return dict(sugar=state_variable(**DOC, default=0., scale=scales.SubOrgan),
+                shoot_sugar=state_variable(**DOC, default=0., scale=scales.Plant))
 
 
 @dataclass
@@ -128,9 +128,9 @@ def test_pools_of_split_solves_agree_with_the_whole_solve():
 
 @dataclass
 class SwitchingCollar(FunctionalComponent):
-    sugar: float = state_variable(**DOC, initialize=1., scale=scales.SubOrgan)
-    collar_kind: float = state_variable(**DOC, initialize=0., scale=scales.SubOrgan, dtype="int")
-    collar_value: float = state_variable(**DOC, initialize=0., scale=scales.SubOrgan)
+    sugar: float = state_variable(**DOC, default=1., scale=scales.SubOrgan)
+    collar_kind: float = state_variable(**DOC, default=0., scale=scales.SubOrgan, dtype="int")
+    collar_value: float = state_variable(**DOC, default=0., scale=scales.SubOrgan)
     time_step = DT
 
     @graph_system(node_unknowns=["sugar"], transient=True)
@@ -165,7 +165,7 @@ def test_boundary_kinds_are_read_per_node_at_each_solve():
 
 @dataclass
 class Forced(FunctionalComponent):
-    sugar: float = state_variable(**DOC, initialize=0., scale=scales.SubOrgan)
+    sugar: float = state_variable(**DOC, default=0., scale=scales.SubOrgan)
     time_step = DT
     seen = None
 

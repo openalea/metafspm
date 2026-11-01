@@ -131,7 +131,7 @@ def read_scenarios(source, which=None, sheet=None) -> dict:
     return scenarios
 
 
-def parameter_table(*components, values: dict = None, main=(), kinds=("parameter", "setting"),
+def parameter_table(*components, values: dict = None, main=(), roles=("parameter", "setting"),
                     exclude=()) -> pd.DataFrame:
     """
     The parameters (and settings) the *components* (classes or instances) declare, one row each: name, value (the
@@ -145,7 +145,7 @@ def parameter_table(*components, values: dict = None, main=(), kinds=("parameter
         declarations = component.declarations()
         if declarations.empty:
             continue
-        table = declarations[declarations["kind"].isin(kinds)][["name", "default", "unit", "description",
+        table = declarations[declarations["role"].isin(roles)][["name", "default", "unit", "description",
                                                                  "min_value", "max_value"]]
         tables.append(table.assign(component=component.__name__))
     columns = ["name", "value", "unit", "description", "min_value", "max_value", "component", "main"]

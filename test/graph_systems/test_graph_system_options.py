@@ -30,7 +30,7 @@ DT, K = 2., 0.3
 
 @pytest.fixture(autouse=True)
 def _simulation_time_step():
-    Choregrapher().add_simulation_time_step(DT)
+    Choregrapher()._set_simulation_time_step(DT)
 
 
 def _ds():
@@ -92,7 +92,7 @@ class _SteadyEquations:
 
 @dataclass
 class SteadyFields(FunctionalComponent):
-    u: float = state_variable(**DOC, initialize=0., scale=scales.SubOrgan)
+    u: float = state_variable(**DOC, default=0., scale=scales.SubOrgan)
     source: float = parameter(**DOC, by="", default=1., location="node")
     time_step = DT
 
@@ -129,7 +129,7 @@ def test_solver_keys_and_classes_reach_the_same_steady_solution(solver):
 
 @dataclass
 class Decay(FunctionalComponent):
-    u: float = state_variable(**DOC, initialize=1., scale=scales.SubOrgan)
+    u: float = state_variable(**DOC, default=1., scale=scales.SubOrgan)
     time_step = DT
     seen = None
 
@@ -159,7 +159,7 @@ def test_previous_at_solve_is_the_start_of_the_call_and_at_substep_the_start_of_
 
 @dataclass
 class Neumann(FunctionalComponent):
-    u: float = state_variable(**DOC, initialize=1., scale=scales.SubOrgan)
+    u: float = state_variable(**DOC, default=1., scale=scales.SubOrgan)
     time_step = DT
 
     @graph_system(node_unknowns=["u"], transient=True)
@@ -178,7 +178,7 @@ def test_a_neumann_set_is_an_inflow_of_its_value():
 
 @dataclass
 class ConstantRobin(FunctionalComponent):
-    u: float = state_variable(**DOC, initialize=1., scale=scales.SubOrgan)
+    u: float = state_variable(**DOC, default=1., scale=scales.SubOrgan)
     time_step = DT
 
     @graph_system(node_unknowns=["u"], transient=True)
@@ -199,8 +199,8 @@ def test_a_robin_set_with_a_constant_weight_is_an_exchange_towards_its_value():
 
 @dataclass
 class RobinByCode(FunctionalComponent):
-    u: float = state_variable(**DOC, initialize=1., scale=scales.SubOrgan)
-    kind_code: float = state_variable(**DOC, initialize=0., scale=scales.SubOrgan, dtype="int")
+    u: float = state_variable(**DOC, default=1., scale=scales.SubOrgan)
+    kind_code: float = state_variable(**DOC, default=0., scale=scales.SubOrgan, dtype="int")
     conductance: float = parameter(**DOC, by="", default=0., location="node")
     time_step = DT
 
@@ -229,8 +229,8 @@ def test_per_node_kinds_apply_robin_where_the_code_says_so_with_per_node_weights
 
 @dataclass
 class TwoUnknowns(FunctionalComponent):
-    u: float = state_variable(**DOC, initialize=1., scale=scales.SubOrgan)
-    w: float = state_variable(**DOC, initialize=1., scale=scales.SubOrgan)
+    u: float = state_variable(**DOC, default=1., scale=scales.SubOrgan)
+    w: float = state_variable(**DOC, default=1., scale=scales.SubOrgan)
     time_step = DT
 
     @graph_system(node_unknowns=["u", "w"], transient=True)
@@ -246,8 +246,8 @@ class TwoUnknowns(FunctionalComponent):
 
 @dataclass
 class TwoUnknownsWithoutField(FunctionalComponent):
-    u: float = state_variable(**DOC, initialize=1., scale=scales.SubOrgan)
-    w: float = state_variable(**DOC, initialize=1., scale=scales.SubOrgan)
+    u: float = state_variable(**DOC, default=1., scale=scales.SubOrgan)
+    w: float = state_variable(**DOC, default=1., scale=scales.SubOrgan)
     time_step = DT
 
     @graph_system(node_unknowns=["u", "w"], transient=True)
@@ -285,8 +285,8 @@ def test_boundary_set_arguments_are_checked():
 @dataclass
 class CoupledInflow(FunctionalComponent):
     """A Neumann condition given by an equation of a coupled variable, read from the DataStructure at each solve."""
-    u: float = state_variable(**DOC, initialize=1., scale=scales.SubOrgan)
-    supply: float = input_variable(**DOC, by="Other", initialize=0.25, scale=scales.SubOrgan)
+    u: float = state_variable(**DOC, default=1., scale=scales.SubOrgan)
+    supply: float = input_variable(**DOC, by="Other", default=0.25, scale=scales.SubOrgan)
     time_step = DT
 
     @graph_system(node_unknowns=["u"], transient=True)
@@ -313,9 +313,9 @@ def test_a_neumann_condition_is_an_inflow_read_from_the_data_structure_at_each_s
 @dataclass
 class UptakeEquation(FunctionalComponent):
     """An exchange w (v - u) with an external value, written as an equation of the unknown and coupled variables."""
-    u: float = state_variable(**DOC, initialize=1., scale=scales.SubOrgan)
-    external: float = input_variable(**DOC, by="Soil", initialize=3., scale=scales.SubOrgan)
-    exchange_rate: float = input_variable(**DOC, by="Soil", initialize=0.4, scale=scales.SubOrgan)
+    u: float = state_variable(**DOC, default=1., scale=scales.SubOrgan)
+    external: float = input_variable(**DOC, by="Soil", default=3., scale=scales.SubOrgan)
+    exchange_rate: float = input_variable(**DOC, by="Soil", default=0.4, scale=scales.SubOrgan)
     time_step = DT
 
     @graph_system(node_unknowns=["u"], transient=True)
@@ -339,8 +339,8 @@ def test_a_condition_equation_of_the_unknown_is_solved_with_it():
 @dataclass
 class PrescribedCollar(FunctionalComponent):
     """A Dirichlet condition on the nodes of a DataStructure mask, at a coupled value."""
-    u: float = state_variable(**DOC, initialize=1., scale=scales.SubOrgan)
-    collar_value: float = input_variable(**DOC, by="Shoot", initialize=-0.3, scale=scales.SubOrgan)
+    u: float = state_variable(**DOC, default=1., scale=scales.SubOrgan)
+    collar_value: float = input_variable(**DOC, by="Shoot", default=-0.3, scale=scales.SubOrgan)
     time_step = DT
 
     @graph_system(node_unknowns=["u"], transient=True)
@@ -394,8 +394,8 @@ class _PoolEquations:
 
 @dataclass
 class EveryNodePool(FunctionalComponent):
-    sugar: float = state_variable(**DOC, initialize=0., scale=scales.SubOrgan)
-    shoot: float = state_variable(**DOC, initialize=0., scale=scales.Plant)
+    sugar: float = state_variable(**DOC, default=0., scale=scales.SubOrgan)
+    shoot: float = state_variable(**DOC, default=0., scale=scales.Plant)
     time_step = DT
     _solve = graph_system(node_unknowns=["sugar"], transient=True, pool_unknowns={"shoot": "Plant"}
                           )(type("_solve", (_PoolEquations,), {}))
@@ -428,8 +428,8 @@ def test_pool_exchange_names_a_pool_of_the_solve():
 
 @dataclass
 class UndeclaredExchange(FunctionalComponent):
-    sugar: float = state_variable(**DOC, initialize=0., scale=scales.SubOrgan)
-    shoot: float = state_variable(**DOC, initialize=0., scale=scales.Plant)
+    sugar: float = state_variable(**DOC, default=0., scale=scales.SubOrgan)
+    shoot: float = state_variable(**DOC, default=0., scale=scales.Plant)
     time_step = DT
     _solve = graph_system(node_unknowns=["sugar"], transient=True,
                           pool_unknowns={"shoot": {"location": "Plant", "exchange": "collar"}}
@@ -438,8 +438,8 @@ class UndeclaredExchange(FunctionalComponent):
 
 @dataclass
 class PoolWithoutBalance(FunctionalComponent):
-    sugar: float = state_variable(**DOC, initialize=0., scale=scales.SubOrgan)
-    shoot: float = state_variable(**DOC, initialize=0., scale=scales.Plant)
+    sugar: float = state_variable(**DOC, default=0., scale=scales.SubOrgan)
+    shoot: float = state_variable(**DOC, default=0., scale=scales.Plant)
     time_step = DT
 
     @graph_system(node_unknowns=["sugar"], transient=True, pool_unknowns={"shoot": "Plant"})
@@ -462,7 +462,7 @@ def test_pool_declarations_are_checked():
 
 @dataclass
 class Supplied(FunctionalComponent):
-    u: float = state_variable(**DOC, initialize=0., scale=scales.SubOrgan)
+    u: float = state_variable(**DOC, default=0., scale=scales.SubOrgan)
     time_step = DT
 
     @graph_system(node_unknowns=["u"], transient=True)
@@ -494,8 +494,8 @@ def test_a_missing_forcing_raises():
 
 @dataclass
 class WrongOutputLocation(FunctionalComponent):
-    u: float = state_variable(**DOC, initialize=1., scale=scales.SubOrgan)
-    doubled: float = state_variable(**DOC, initialize=0., scale=scales.SubOrgan)
+    u: float = state_variable(**DOC, default=1., scale=scales.SubOrgan)
+    doubled: float = state_variable(**DOC, default=0., scale=scales.SubOrgan)
     time_step = DT
 
     @graph_system(node_unknowns=["u"], transient=True)
@@ -514,9 +514,9 @@ def test_an_output_location_must_be_the_registered_one():
 
 @dataclass
 class ActiveOutputs(FunctionalComponent):
-    u: float = state_variable(**DOC, initialize=1., scale=scales.SubOrgan)
-    flux: float = state_variable(**DOC, initialize=0., location="edge")
-    doubled: float = state_variable(**DOC, initialize=-1., scale=scales.SubOrgan)
+    u: float = state_variable(**DOC, default=1., scale=scales.SubOrgan)
+    flux: float = state_variable(**DOC, default=0., location="edge")
+    doubled: float = state_variable(**DOC, default=-1., scale=scales.SubOrgan)
     time_step = DT
 
     @graph_system(node_unknowns=["u"], edge_unknowns=["flux"], transient=True, filters="active")
@@ -588,7 +588,7 @@ def test_integrated_amounts_on_an_active_subgraph_are_kept_on_dropped_edges():
 
 @dataclass
 class ZonedSource(FunctionalComponent):
-    u: float = state_variable(**DOC, initialize=0., scale=scales.SubOrgan)
+    u: float = state_variable(**DOC, default=0., scale=scales.SubOrgan)
     zone: float = parameter(**DOC, by="", default=0., location="node")
     source: float = parameter(**DOC, by="", default=0., location="node")
     time_step = DT
@@ -604,7 +604,7 @@ class ZonedSource(FunctionalComponent):
 
 @dataclass
 class FilterOnMissingVariable(FunctionalComponent):
-    u: float = state_variable(**DOC, initialize=0., scale=scales.SubOrgan)
+    u: float = state_variable(**DOC, default=0., scale=scales.SubOrgan)
     time_step = DT
 
     @graph_system(node_unknowns=["u"], transient=True)
@@ -632,7 +632,7 @@ def test_a_filtered_balance_adds_its_terms_on_the_selected_nodes_only():
 
 @dataclass
 class SelectedOutput(FunctionalComponent):
-    u: float = state_variable(**DOC, initialize=1., scale=scales.SubOrgan)
+    u: float = state_variable(**DOC, default=1., scale=scales.SubOrgan)
     time_step = DT
 
     @graph_system(node_unknowns=["u"], transient=True)

@@ -22,35 +22,35 @@ DOC = dict(unit="", unit_comment="", description="", min_value=0., max_value=1.,
 @dataclass
 class Segments(FunctionalComponent):
     """Outputs per segment, one of each kind."""
-    uptake: float = state_variable(**DOC, initialize=1., scale=scales.SubOrgan, state_variable_type="extensive")
-    potential: float = state_variable(**DOC, initialize=2., scale=scales.SubOrgan, state_variable_type="intensive")
-    weighted_potential: float = state_variable(**DOC, initialize=2., scale=scales.SubOrgan,
-                                               state_variable_type="intensive", weight="mass")
-    concentration: float = state_variable(**DOC, initialize=3., scale=scales.SubOrgan,
-                                          state_variable_type="massic_concentration")
-    mass: float = state_variable(**DOC, initialize=0.5, scale=scales.SubOrgan, state_variable_type="extensive")
-    tag: float = state_variable(**DOC, initialize=1., scale=scales.SubOrgan)
+    uptake: float = state_variable(**DOC, default=1., scale=scales.SubOrgan, kind="extensive")
+    potential: float = state_variable(**DOC, default=2., scale=scales.SubOrgan, kind="intensive")
+    weighted_potential: float = state_variable(**DOC, default=2., scale=scales.SubOrgan,
+                                               kind="intensive", weight="mass")
+    concentration: float = state_variable(**DOC, default=3., scale=scales.SubOrgan,
+                                          kind="massic_concentration")
+    mass: float = state_variable(**DOC, default=0.5, scale=scales.SubOrgan, kind="extensive")
+    tag: float = state_variable(**DOC, default=1., scale=scales.SubOrgan)
 
 
 @dataclass
 class Organs(FunctionalComponent):
     """Inputs per organ, and an organ output read back by the segments' scale."""
-    organ_uptake: float = input_variable(**DOC, by="Segments", initialize=0., scale=scales.Organ)
-    organ_potential: float = input_variable(**DOC, by="Segments", initialize=0., scale=scales.Organ)
-    organ_weighted_potential: float = input_variable(**DOC, by="Segments", initialize=0., scale=scales.Organ)
-    organ_concentration: float = input_variable(**DOC, by="Segments", initialize=0., scale=scales.Organ)
-    organ_tag: float = input_variable(**DOC, by="Segments", initialize=0., scale=scales.Organ)
-    organ_supply: float = state_variable(**DOC, initialize=6., scale=scales.Organ, state_variable_type="extensive")
-    organ_temperature: float = state_variable(**DOC, initialize=20., scale=scales.Organ, state_variable_type="intensive")
+    organ_uptake: float = input_variable(**DOC, by="Segments", default=0., scale=scales.Organ)
+    organ_potential: float = input_variable(**DOC, by="Segments", default=0., scale=scales.Organ)
+    organ_weighted_potential: float = input_variable(**DOC, by="Segments", default=0., scale=scales.Organ)
+    organ_concentration: float = input_variable(**DOC, by="Segments", default=0., scale=scales.Organ)
+    organ_tag: float = input_variable(**DOC, by="Segments", default=0., scale=scales.Organ)
+    organ_supply: float = state_variable(**DOC, default=6., scale=scales.Organ, kind="extensive")
+    organ_temperature: float = state_variable(**DOC, default=20., scale=scales.Organ, kind="intensive")
 
 
 @dataclass
 class SegmentInputs(FunctionalComponent):
-    segment_temperature: float = input_variable(**DOC, by="Organs", initialize=0., scale=scales.SubOrgan)
-    segment_supply: float = input_variable(**DOC, by="Organs", initialize=0., scale=scales.SubOrgan)
-    segment_share: float = input_variable(**DOC, by="Organs", initialize=0., scale=scales.SubOrgan, weight="mass")
-    wrong_kind: float = input_variable(**DOC, by="Segments", initialize=0., scale=scales.Organ,
-                                       state_variable_type="intensive")
+    segment_temperature: float = input_variable(**DOC, by="Organs", default=0., scale=scales.SubOrgan)
+    segment_supply: float = input_variable(**DOC, by="Organs", default=0., scale=scales.SubOrgan)
+    segment_share: float = input_variable(**DOC, by="Organs", default=0., scale=scales.SubOrgan, weight="mass")
+    wrong_kind: float = input_variable(**DOC, by="Segments", default=0., scale=scales.Organ,
+                                       kind="intensive")
 
 
 def _couple(links, before=None):
@@ -198,7 +198,7 @@ def test_targets_in_python_translators_and_unknown_masks():
     from openalea.metafspm.coupling.translator import Translator
     translator = Translator().link("SegmentInputs", "segment_temperature", "Organs", {"organ_temperature": 1.},
                                    target="roots")
-    assert translator.links[0].target == "roots" and translator.links[0].kind == "derived"
+    assert translator.links[0].target == "roots" and translator.links[0].coupling == "derived"
     with pytest.raises(KeyError, match="target mask 'roots' is not defined"):
         _couple(_link("SegmentInputs", "Organs", "segment_temperature", "organ_temperature", target="roots"))
 
@@ -228,17 +228,17 @@ def test_python_translators_keep_link_options_through_the_composite(tmp_path):
 
 
 def test_a_link_between_different_units_needs_a_conversion_factor():
-    from openalea.metafspm.coupling.declaration import units_agree
+    from openalea.metafspm.coupling.units import units_agree
 
     @dataclass
     class InHectopascal(FunctionalComponent):
-        p_hpa: float = input_variable(**{**DOC, "unit": "hPa"}, by="InMegapascal", initialize=0.,
+        p_hpa: float = input_variable(**{**DOC, "unit": "hPa"}, by="InMegapascal", default=0.,
                                       scale=scales.SubOrgan)
 
     @dataclass
     class InMegapascal(FunctionalComponent):
-        p_mpa: float = state_variable(**{**DOC, "unit": "MPa"}, initialize=1., scale=scales.SubOrgan,
-                                      state_variable_type="intensive")
+        p_mpa: float = state_variable(**{**DOC, "unit": "MPa"}, default=1., scale=scales.SubOrgan,
+                                      kind="intensive")
 
     g, _ = generate_simple_mpg_seedling()
     g.populate_graph(g.scales.SubOrgan)
@@ -258,7 +258,7 @@ def test_a_link_between_different_units_needs_a_conversion_factor():
 
 
 def test_units_are_read_as_quantities():
-    from openalea.metafspm.coupling.units import canonical, check_link, conversion_factor, parse_unit
+    from openalea.metafspm.coupling.units import canonical, check_link_units, conversion_factor, parse_unit
     assert parse_unit("mol.m-2.s-1") == parse_unit("mol m-2 s-1") == ((-2, 0, -1, 1, 0), 1.)
     assert conversion_factor("cm", "m") == pytest.approx(100.) and conversion_factor("mm3 s-1", "m3 s-1") == pytest.approx(1e9)
     assert parse_unit("gC.g-1.s-1")[0] == (0, 0, -1, 0, 0) and parse_unit("mm/h")[0] == (1, 0, -1, 0, 0)
@@ -266,8 +266,8 @@ def test_units_are_read_as_quantities():
     assert parse_unit("") is None and parse_unit("furlong") is None
     assert canonical("mol of hexose.s-1") == "mol s-1" and canonical("-") == "adim" and canonical(".m-1") == "m-1"
     with pytest.raises(ValueError, match="not the same quantity"):
-        check_link("m", "s", 1., "a link")
-    check_link("", "MPa", 1., "undeclared")                                   # agrees with anything
-    check_link("furlong", "furlong", 1., "unreadable, spelled alike")
+        check_link_units("m", "s", 1., "a link")
+    check_link_units("", "MPa", 1., "undeclared")                                   # agrees with anything
+    check_link_units("furlong", "furlong", 1., "unreadable, spelled alike")
     with pytest.raises(ValueError):
         conversion_factor("m", "kg")

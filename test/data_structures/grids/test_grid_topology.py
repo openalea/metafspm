@@ -73,7 +73,7 @@ def test_locate_wraps_along_the_grid_periodic_axes_by_default():
 
 @dataclass
 class FaceProbe(FunctionalComponent):
-    water: float = state_variable(**DOC, initialize=0.2, location="cell")
+    water: float = state_variable(**DOC, default=0.2, location="cell")
     conductivity: float = parameter(**DOC, by="", default=1e-3, location="edge")
 
 

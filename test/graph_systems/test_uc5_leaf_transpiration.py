@@ -61,28 +61,28 @@ def _water(jacobian=False, **options):
 
 @dataclass
 class TranspirationFields(FunctionalComponent):
-    water_potential: float = state_variable(**DOC, initialize=-0.5, scale=scales.SubOrgan,
-                                            state_variable_type="intensive")
-    axial_flux: float = state_variable(**DOC, initialize=0., location="edge")
+    water_potential: float = state_variable(**DOC, default=-0.5, scale=scales.SubOrgan,
+                                            kind="intensive")
+    axial_flux: float = state_variable(**DOC, default=0., location="edge")
     K_axial: float = parameter(**DOC, by="", default=2., location="edge")
     label: float = parameter(**DOC, by="", default=0., scale=scales.SubOrgan)
     root_surface: float = parameter(**DOC, by="", default=0., scale=scales.SubOrgan)
-    air_water_potential: float = input_variable(**DOC, by="Microclimate", initialize=-2., scale=scales.SubOrgan)
-    soil_water_potential: float = input_variable(**DOC, by="Soil", initialize=-0.3, scale=scales.SubOrgan)
-    stomatal_conductance: float = input_variable(**DOC, by="Stomata", initialize=0.01, scale=scales.SubOrgan)
+    air_water_potential: float = input_variable(**DOC, by="Microclimate", default=-2., scale=scales.SubOrgan)
+    soil_water_potential: float = input_variable(**DOC, by="Soil", default=-0.3, scale=scales.SubOrgan)
+    stomatal_conductance: float = input_variable(**DOC, by="Stomata", default=0.01, scale=scales.SubOrgan)
     exchange_surface: float = parameter(**DOC, by="", default=2., scale=scales.SubOrgan)
-    leaf_conductance: float = state_variable(**DOC, initialize=0., scale=scales.SubOrgan,
-                                             state_variable_type="NonInertialIntensive")
+    leaf_conductance: float = state_variable(**DOC, default=0., scale=scales.SubOrgan,
+                                             kind="NonInertialIntensive")
     radial_conductance: float = parameter(**DOC, by="", default=0.5, scale=scales.SubOrgan)
 
 
 @dataclass
 class Stomata(FunctionalComponent):
     """Leaf conductance from stomatal conductance and exchange surface, for the transpiration component."""
-    stomatal_conductance: float = input_variable(**DOC, by="Microclimate", initialize=0.01, scale=scales.SubOrgan)
+    stomatal_conductance: float = input_variable(**DOC, by="Microclimate", default=0.01, scale=scales.SubOrgan)
     exchange_surface: float = parameter(**DOC, by="", default=2., scale=scales.SubOrgan)
-    leaf_conductance: float = state_variable(**DOC, initialize=0., scale=scales.SubOrgan,
-                                             state_variable_type="NonInertialIntensive")
+    leaf_conductance: float = state_variable(**DOC, default=0., scale=scales.SubOrgan,
+                                             kind="NonInertialIntensive")
 
     @rate
     def _leaf_conductance(self, stomatal_conductance, exchange_surface):

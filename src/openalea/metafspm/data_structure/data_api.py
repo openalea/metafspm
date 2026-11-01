@@ -861,7 +861,7 @@ class VariableStoreMixin:
     def to_dataframe(self, names=None, location: str = None, time=None):
         """
         pandas DataFrame of the variables of one *location*, indexed by entity id ("vid" for nodes, "edge" by child
-        vid, "voxel" for cells, with the cell centres as x/y/z columns) and by "t" when *time* is given.
+        vid, "voxel" for cells, with the cell centres as x/y/z columns) and by "time" when *time* is given.
         ``.to_xarray()`` gives the spatialised dataset.
         """
         import pandas as pd
@@ -888,30 +888,9 @@ class VariableStoreMixin:
             for d, axis in enumerate(self.axes):
                 table[axis] = centers[:, d]
         if time is not None:
-            table["t"] = time
-            table = table.set_index("t", append=True)
+            table["time"] = time
+            table = table.set_index("time", append=True)
         return table
-
-    def summarize(self, sums=(), means=(), scalars=(), where=None) -> dict:
-        """
-        Plant- or scene-scale summary row: sums and means over the entities selected by *where* (a variable name,
-        selecting entities where it is > 0, or a callable returning a mask), and scalar values as is.
-        A mean over no entity is None.
-        """
-        def mask_for(name):
-            if where is None:
-                return np.ones(np.shape(self.get(name)), dtype=bool)
-            return (np.asarray(self.get(where)) > 0) if isinstance(where, str) else np.asarray(where(self), dtype=bool)
-
-        summary = {"sum": {}, "mean": {}, "scalar": {}}
-        for name in sums:
-            summary["sum"][name] = float(np.asarray(self.get(name))[mask_for(name)].sum())
-        for name in means:
-            selected = np.asarray(self.get(name))[mask_for(name)]
-            summary["mean"][name] = float(selected.mean()) if selected.size else None
-        for name in scalars:
-            summary["scalar"][name] = float(self.get(name))
-        return summary
 
     # ── Persistence: checkpoint and restore ───────────────────────────────
 

@@ -389,9 +389,8 @@ scene.simulate(n_iterations=2500)
   supply). A forcing nothing takes raises. `as_forcing(value, time_unit=86400.)` turns an input given by day (a
   number, a function of the day, a Series indexed by day, one value per day) into one. `events=[(time, action)]`
   stay for one-off actions.
-- **Services.** An environment model's `interval` (s) is its cadence (`between()` runs at the other steps);
-  `run_when(scene)` on a model is a condition, not a cadence (skipped steps keep its outputs); `spin_up(scene)`,
-  `stop_when=condition`.
+- **Services.** An environment model's `interval` (s) is its cadence (`due()`, and `between()` at the other
+  steps); `spin_up(scene)`, `stop_when=condition`.
 - **Outputs: the SceneRecorder.** `recorder=SceneRecorder(folder, ...)` (or `recorder=folder`) writes:
   - `run.json`: status (running, finished, stopped, failed with its error), times, wall time per model, versions;
   - `scenario.json`: the planting, the scenarios, the environment models, the forcings (tables in `forcings/`);

@@ -141,7 +141,7 @@ POOLS = 3
 @dataclass
 class VectorExudation(SceneGeometry):
     """Each segment exudes three compounds; a vector variable of shape (3,)."""
-    compounds: float = state_variable(**DOC, initialize=1., scale=scales.SubOrgan, state_variable_type="extensive",
+    compounds: float = state_variable(**DOC, default=1., scale=scales.SubOrgan, kind="extensive",
                                       shape=(POOLS,), on_grow="inherit")
 
     @rate
@@ -165,9 +165,9 @@ class VectorPlants:
 @dataclass
 class Mimics(FunctionalComponent):
     """MIMICS-like pools per cell, fed by the plants' compounds."""
-    compounds: float = input_variable(**DOC, by="VectorExudation", initialize=0., location="cell",
-                                      state_variable_type="extensive", shape=(POOLS,))
-    pools: float = state_variable(**DOC, initialize=0., location="cell", state_variable_type="extensive",
+    compounds: float = input_variable(**DOC, by="VectorExudation", default=0., location="cell",
+                                      kind="extensive", shape=(POOLS,))
+    pools: float = state_variable(**DOC, default=0., location="cell", kind="extensive",
                                   shape=(POOLS,))
 
     @rate

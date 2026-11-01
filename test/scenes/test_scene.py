@@ -116,7 +116,7 @@ def test_the_recorder_writes_plant_summaries_and_selected_plants(tmp_path):
 @dataclass
 class SceneLeaves(FunctionalComponent):
     z1: float = coordinate()
-    intercepted: float = input_variable(**DOC, by="SceneLight", initialize=0., scale=scales.SubOrgan)
+    intercepted: float = input_variable(**DOC, by="SceneLight", default=0., scale=scales.SubOrgan)
 
 
 @dataclass
@@ -126,8 +126,8 @@ class SeedlingLeaves(SceneLeaves):
 
 @dataclass
 class SceneLight(FunctionalComponent):
-    z1: float = input_variable(**DOC, by="SceneLeaves", initialize=0., scale=scales.SubOrgan)
-    intercepted: float = state_variable(**DOC, initialize=0., scale=scales.SubOrgan, state_variable_type="intensive")
+    z1: float = input_variable(**DOC, by="SceneLeaves", default=0., scale=scales.SubOrgan)
+    intercepted: float = state_variable(**DOC, default=0., scale=scales.SubOrgan, kind="intensive")
 
     @rate
     def _intercepted(self, z1):
@@ -194,7 +194,7 @@ class ApexOnlyLeaves(LeafPopulation):
 
 @dataclass
 class ApexLeaves(FunctionalComponent):
-    is_apex: float = state_variable(**DOC, initialize=0., scale=scales.SubOrgan, state_variable_type="descriptor")
+    is_apex: float = state_variable(**DOC, default=0., scale=scales.SubOrgan, kind="descriptor")
 
 
 def test_emergence_combines_with_a_model_active_mask():

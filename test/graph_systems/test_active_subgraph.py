@@ -38,8 +38,8 @@ def _diffusion(**options):
 
 @dataclass
 class DiffusionFields(FunctionalComponent):
-    concentration: float = state_variable(**DOC, initialize=0., scale=scales.SubOrgan)
-    flux: float = state_variable(**DOC, initialize=0., location="edge")
+    concentration: float = state_variable(**DOC, default=0., scale=scales.SubOrgan)
+    flux: float = state_variable(**DOC, default=0., location="edge")
     K: float = parameter(**DOC, by="", default=0.5, location="edge")
     source: float = parameter(**DOC, by="", default=0., location="node")
     time_step = 1.
@@ -124,8 +124,8 @@ def test_an_empty_mask_skips_the_solve():
 
 @dataclass
 class SteadyPotential(FunctionalComponent):
-    potential: float = state_variable(**DOC, initialize=0., scale=scales.SubOrgan)
-    water_flux: float = state_variable(**DOC, initialize=0., location="edge")
+    potential: float = state_variable(**DOC, default=0., scale=scales.SubOrgan)
+    water_flux: float = state_variable(**DOC, default=0., location="edge")
     K: float = parameter(**DOC, by="", default=1., location="edge")
     is_collar: float = parameter(**DOC, by="", default=0., location="node")
 

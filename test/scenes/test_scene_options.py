@@ -34,13 +34,13 @@ def _scene(**options):
 
 @dataclass
 class ColumnHeat(FunctionalComponent):
-    temperature: float = state_variable(**DOC, initialize=0., location="cell", state_variable_type="intensive")
+    temperature: float = state_variable(**DOC, default=0., location="cell", kind="intensive")
 
 
 @dataclass
 class GridHeat(FunctionalComponent):
-    temperature: float = input_variable(**DOC, by="ColumnHeat", initialize=-1., location="cell",
-                                        state_variable_type="intensive")
+    temperature: float = input_variable(**DOC, by="ColumnHeat", default=-1., location="cell",
+                                        kind="intensive")
 
 
 class ColumnModel:
@@ -175,7 +175,7 @@ def test_initiators_run_in_order_each_on_every_plant():
 
 @dataclass
 class CompartmentWater(FunctionalComponent):
-    water: float = state_variable(**DOC, initialize=2., location="node", state_variable_type="intensive")
+    water: float = state_variable(**DOC, default=2., location="node", kind="intensive")
 
 
 class AnatomyPopulation:
@@ -218,8 +218,8 @@ def test_a_population_model_wires_the_junctions_between_its_anatomies():
 
 @dataclass
 class Pools(FunctionalComponent):
-    conc: float = state_variable(**DOC, initialize=3., scale=scales.SubOrgan, state_variable_type="massic_concentration")
-    amount: float = state_variable(**DOC, initialize=4., scale=scales.SubOrgan, state_variable_type="extensive")
+    conc: float = state_variable(**DOC, default=3., scale=scales.SubOrgan, kind="massic_concentration")
+    amount: float = state_variable(**DOC, default=4., scale=scales.SubOrgan, kind="extensive")
 
 
 def _grown(partition_weight):
@@ -240,7 +240,7 @@ def test_a_callable_partition_weight_is_a_variable_name_computed():
 
 @dataclass
 class Branching(StructuralComponent):
-    struct_mass: float = state_variable(**DOC, initialize=0., scale=scales.SubOrgan, state_variable_type="extensive")
+    struct_mass: float = state_variable(**DOC, default=0., scale=scales.SubOrgan, kind="extensive")
     partition_weight = "struct_mass"
     active = staticmethod(lambda ds: np.asarray(ds.get("struct_mass")) > 0)
 

@@ -150,7 +150,7 @@ def population_data_structure(table: pd.DataFrame, model, time_step: float = 360
     anatomies), its wiring joins them; *scenario*: the one the model is built with (default: the first plant's).
     """
     from openalea.metafspm.coupling.choregrapher import Choregrapher
-    Choregrapher().add_simulation_time_step(time_step)
+    Choregrapher()._set_simulation_time_step(time_step)
     table = table.reset_index(drop=True)
     scenario = _flat_scenario(table["scenario"].iloc[0] if scenario is None and len(table) else scenario)
     read_by_initiators = set()
@@ -269,7 +269,7 @@ def _apply_model_scenario(model, instance, scenario: dict, read_by_initiators=()
     components = list(getattr(instance, "components", ()))
     unknown = []
     for name, value in entries.items():
-        owners = [c for c in components if name in getattr(c, "parameters", ())
+        owners = [c for c in components if name in getattr(c, "declared_parameters", tuple)()
                   or name in (c.declared_settings() if hasattr(c, "declared_settings") else ())]
         if not owners:
             if name not in named and name not in read_by_initiators:
@@ -284,7 +284,7 @@ def _apply_model_scenario(model, instance, scenario: dict, read_by_initiators=()
             setattr(component, name, value)
     if unknown:
         known = sorted({name for c in components
-                        for name in (*getattr(c, "parameters", ()),
+                        for name in (*getattr(c, "declared_parameters", tuple)(),
                                      *(c.declared_settings() if hasattr(c, "declared_settings") else ()))})
         raise ValueError(f"{model.__name__}: scenario entries {sorted(unknown)} are neither parameters of its "
                          f"components ({', '.join(known) or 'none'}), arguments of {model.__name__}, nor read by its "

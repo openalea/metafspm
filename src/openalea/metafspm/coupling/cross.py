@@ -18,14 +18,11 @@ from typing import Mapping, Optional
 import numpy as np
 from numba import njit
 
-from openalea.metafspm.coupling.units import check_link
-from openalea.metafspm.coupling.declaration import (DeclarationError, EXTENSIVE_KINDS, INTENSIVE_KINDS,
-                                                    MASSIC_KINDS, kinds_agree)
+from openalea.metafspm.coupling.declaration import (DOWN_MAPPINGS, INTENSIVE_KINDS, MASSIC_KINDS, UP_MAPPINGS,
+                                                    check_link, declared_kind, default_mapping)
 from openalea.metafspm.data_structure.data_api import DataStructure, VariableStoreMixin
 
 SEGMENT_COORDINATES = ("x1", "x2", "y1", "y2", "z1", "z2")
-UP = ("sum", "mean", "weighted_mean")
-DOWN = ("broadcast", "split")
 
 
 # ── Segment pieces in cells (length overlap) ─────────────────────────────────────
@@ -182,7 +179,7 @@ class CrossMapping:
                 raise ValueError("weighted_mean needs a weight variable")
             share = fractions * np.asarray(weights, dtype=float).reshape(-1)[rows]
         else:
-            raise ValueError(f"unknown aggregation '{aggregation}' towards cells, expected one of {UP}")
+            raise ValueError(f"unknown aggregation '{aggregation}' towards cells, expected one of {UP_MAPPINGS}")
         return (np.bincount(columns, weights=share * values[rows], minlength=n),
                 np.bincount(columns, weights=share, minlength=n))
 
@@ -204,7 +201,7 @@ class CrossMapping:
         if aggregation == "broadcast":
             return np.bincount(rows, weights=fractions * values[columns], minlength=n)
         if aggregation != "split":
-            raise ValueError(f"unknown aggregation '{aggregation}' from cells, expected one of {DOWN}")
+            raise ValueError(f"unknown aggregation '{aggregation}' from cells, expected one of {DOWN_MAPPINGS}")
         if weights is None:
             raise ValueError("split needs a weight variable")
         weights = np.asarray(weights, dtype=float).reshape(-1)
@@ -216,7 +213,7 @@ class CrossMapping:
 
 # ── Populations <-> environment scalars, and columns <-> grids ─────────────────
 
-class ScalarMapping:
+class _ScalarMapping:
     """
     Between the entities of a population's variable (*location*: nodes, a coarse scale) and one scalar of an
     environment model: "up" reduces over every entity (pooled over populations by Exchanges), "down" broadcasts
@@ -241,7 +238,7 @@ class ScalarMapping:
         if aggregation == "weighted_mean":
             weights = np.asarray(weights, dtype=float).reshape(-1)
             return np.array([(values * weights).sum()]), np.array([weights.sum()])
-        raise ValueError(f"unknown aggregation '{aggregation}' towards a scalar, expected one of {UP}")
+        raise ValueError(f"unknown aggregation '{aggregation}' towards a scalar, expected one of {UP_MAPPINGS}")
 
     def weight_totals(self, weights) -> np.ndarray:
         return np.array([np.asarray(weights, dtype=float).sum()])
@@ -251,7 +248,7 @@ class ScalarMapping:
         if aggregation == "broadcast":
             return np.full(self._size(), value)
         if aggregation != "split":
-            raise ValueError(f"unknown aggregation '{aggregation}' from a scalar, expected one of {DOWN}")
+            raise ValueError(f"unknown aggregation '{aggregation}' from a scalar, expected one of {DOWN_MAPPINGS}")
         weights = np.asarray(weights, dtype=float).reshape(-1)
         total = (self.weight_totals(weights) if totals is None else totals)[0]
         return np.zeros(weights.size) if total == 0. else value * weights / total
@@ -454,47 +451,6 @@ class UnionMapping:
 
 # ── Translator links across DataStructures (fixed-point exchanges) ─────────────────
 
-def _declared_unit(component, name):
-    f = getattr(type(component), "__dataclass_fields__", {}).get(name)
-    return None if f is None else f.metadata.get("unit")
-
-
-def cross_default_mapping(kind: Optional[str], direction: str, name: str, weight: Optional[str] = None) -> str:
-    """
-    Mapping of a link between a plant DataStructure and a grid implied by its kind.
-    direction: "up" (plant entities -> cells) or "down" (cells -> plant entities).
-    """
-    extensive, intensive = kind in EXTENSIVE_KINDS, kind in INTENSIVE_KINDS or kind in MASSIC_KINDS
-    if direction == "up":
-        if extensive:
-            return "sum"
-        if intensive:
-            if weight is None:
-                raise DeclarationError(f"'{name}' is intensive and goes from plant entities to cells: give the weight "
-                                       "of its mean in the cell (weight=..., e.g. length), or aggregation='mean'")
-            return "weighted_mean"
-    else:
-        if intensive:
-            return "broadcast"
-        if extensive:
-            if weight is None:
-                raise DeclarationError(f"'{name}' is extensive and goes from cells to plant entities: give the weight "
-                                       "sharing each cell's amount (weight=..., e.g. length)")
-            return "split"
-    raise DeclarationError(f"'{name}' crosses DataStructures and its state_variable_type ({kind!r}) does not imply a "
-                           "mapping: give aggregation=...")
-
-
-def _declared_kind(component, name: str) -> Optional[str]:
-    spec = getattr(component, "_variable_specs", {}).get(name)
-    if spec is not None and spec.kind is not None:
-        return spec.kind
-    ds = component.data_structure
-    if hasattr(ds, "_variable_meta") and ds.has(name):
-        return ds._variable_meta().get(ds._resolve(name), {}).get("kind")
-    return None
-
-
 class _CrossLink:
     """One translator link across DataStructures, resolved against its mapping."""
 
@@ -567,25 +523,14 @@ class Exchanges:
                 continue
             mapping, direction, part = self._mapping_between(link, provider.data_structure, receiver.data_structure)
             name = f"{link.receiver}.{link.variable} <- {link.provider}"
-            received = _declared_kind(receiver, link.variable)
-            for source in ([] if link.formula is not None else link.sources):
-                provided = _declared_kind(provider, source)
-                if not kinds_agree(received, provided):
-                    raise ValueError(f"{name}.{source}: the kinds do not agree ({received} <- {provided})")
-                if link.unit_check and isinstance(link.sources[source], (int, float)):
-                    check_link(_declared_unit(receiver, link.variable), _declared_unit(provider, source),
-                               link.sources[source], f"{name}.{source}")
+            check_link(link, receiver, provider)
+            received = declared_kind(receiver, link.variable)
             aggregation = link.aggregation
             if direction == "layer":
                 if aggregation is None:
                     kind = received if received is not None else next(iter(
-                        {_declared_kind(provider, source) for source in link.sources}), None)
-                    if kind in EXTENSIVE_KINDS:
-                        aggregation = "sum"
-                    elif kind in INTENSIVE_KINDS or kind in MASSIC_KINDS:
-                        aggregation = "mean"
-                    else:
-                        raise DeclarationError(f"{name}: a column <-> grid link needs a kind or aggregation=")
+                        {declared_kind(provider, source) for source in link.sources}), None)
+                    aggregation = default_mapping(kind, "layer", name)
             elif direction in ("into_union", "from_union"):
                 if aggregation not in (None, "identity"):
                     raise ValueError(f"{name}: a union exchanges values one to one, aggregation '{aggregation}' "
@@ -595,14 +540,14 @@ class Exchanges:
                 if aggregation is None:
                     kind = received
                     if kind is None and link.formula is None:
-                        kinds = {_declared_kind(provider, source) for source in link.sources}
+                        kinds = {declared_kind(provider, source) for source in link.sources}
                         kind = kinds.pop() if len(kinds) == 1 else None
-                    if (isinstance(mapping, ScalarMapping) and direction == "up" and link.weight is None
+                    if (isinstance(mapping, _ScalarMapping) and direction == "up" and link.weight is None
                             and (kind in INTENSIVE_KINDS or kind in MASSIC_KINDS)):
                         aggregation = "mean"              # an environment scalar: the plain mean
                     else:
-                        aggregation = cross_default_mapping(kind, direction, name, weight=link.weight)
-                allowed = UP if direction == "up" else DOWN
+                        aggregation = default_mapping(kind, direction, name, weight=link.weight)
+                allowed = UP_MAPPINGS if direction == "up" else DOWN_MAPPINGS
                 if aggregation not in allowed:
                     raise ValueError(f"{name}: aggregation '{aggregation}' does not go {direction}, expected one of "
                                      f"{allowed}")
@@ -616,11 +561,11 @@ class Exchanges:
                 and link.formula is None and all(provider_ds.has(source) for source in link.sources):
             (location,) = {provider_ds.location(source) for source in link.sources}
             if location != "scalar":
-                return ScalarMapping(provider_ds, location), "up", None
+                return _ScalarMapping(provider_ds, location), "up", None
         if link.formula is None and all(provider_ds.has(source) and provider_ds.location(source) == "scalar"
                                         for source in link.sources) and receiver_ds.has(link.variable) \
                 and receiver_ds.location(link.variable) != "scalar":
-            return ScalarMapping(receiver_ds, receiver_ds.location(link.variable)), "down", None
+            return _ScalarMapping(receiver_ds, receiver_ds.location(link.variable)), "down", None
         for mapping in self.mappings:
             if isinstance(mapping, LayerMapping) and {id(provider_ds), id(receiver_ds)} == {id(mapping.column),
                                                                                            id(mapping.grid)}:

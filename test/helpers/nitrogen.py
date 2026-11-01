@@ -68,10 +68,10 @@ def fick_target(self, concentration, K_axial):
 
 @dataclass
 class NitrogenFields(FunctionalComponent):
-    concentration: float = state_variable(**DOC, initialize=0.5, location="node", state_variable_type="intensive")
-    axial_flux: float = state_variable(**DOC, initialize=0., location="edge", state_variable_type="extensive")
+    concentration: float = state_variable(**DOC, default=0.5, location="node", kind="intensive")
+    axial_flux: float = state_variable(**DOC, default=0., location="edge", kind="extensive")
     K_axial: float = parameter(**DOC, by="NitrogenFields", default=0.05, location="edge")
-    radial_solute_input: float = input_variable(**DOC, by="RadialExchange", initialize=0., location="node")
+    radial_solute_input: float = input_variable(**DOC, by="RadialExchange", default=0., location="node")
     c_dirichlet: float = parameter(**DOC, by="NitrogenFields", default=0., location="node")
     q_boundary: float = parameter(**DOC, by="NitrogenFields", default=0., location="node")
     time_step = DT

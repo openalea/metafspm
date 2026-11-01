@@ -70,15 +70,39 @@ class _InUnit:
         return float(value)
 
 
-def as_forcing(value, time_unit: float = 1., origin: float = 0.):
+TIME_UNITS = {"s": 1., "min": 60., "h": 3600., "d": 86400.}
+
+
+def seconds(time_unit) -> float:
+    """A time unit in seconds: a number of seconds, or its label ("s", "min", "h", "d")."""
+    if isinstance(time_unit, str):
+        if time_unit not in TIME_UNITS:
+            raise ValueError(f"time unit '{time_unit}': one of {sorted(TIME_UNITS)}, or a number of seconds")
+        return TIME_UNITS[time_unit]
+    return float(time_unit)
+
+
+def time_unit_label(time_unit) -> str:
+    """A time unit's label ("s", "min", "h", "d"), from its label or its number of seconds."""
+    if isinstance(time_unit, str):
+        seconds(time_unit)
+        return time_unit
+    for label, value in TIME_UNITS.items():
+        if float(time_unit) == value:
+            return label
+    raise ValueError(f"time unit {time_unit} s has no label: one of {TIME_UNITS}")
+
+
+def as_forcing(value, time_unit=1., origin: float = 0.):
     """
-    A forcing of the scene time from a user's input given in *time_unit* (s; 86400 for days): a number, a function
+    A forcing of the scene time from a user's input given in *time_unit* (s, or "s", "min", "h", "d"; 86400 or "d"
+    for days): a number, a function
     of that unit, a pandas Series indexed by it, or a sequence (one value per unit from 0), linearly interpolated.
     *origin*: the input's time at the scene's time 0 (e.g. the hour of the day the scene starts).
     """
     if np.ndim(value) == 0 and not callable(value) and not _series(value):
         return float(value)
-    return _InUnit(value, time_unit, origin)
+    return _InUnit(value, seconds(time_unit), origin)
 
 
 def forcing_table(forcings) -> dict:

@@ -25,9 +25,9 @@ from scene_doubles import DT, SceneSoil, Seedlings, soil_translator
 
 @dataclass
 class Uptake(FunctionalComponent):
-    temperature: float = input_variable(**DOC, by="", initialize=0., scale=scales.SubOrgan)
+    temperature: float = input_variable(**DOC, by="", default=0., scale=scales.SubOrgan)
     uptake_rate: float = parameter(**DOC, by="", default=1.)
-    uptake: float = state_variable(**DOC, initialize=0., scale=scales.SubOrgan, state_variable_type="extensive")
+    uptake: float = state_variable(**DOC, default=0., scale=scales.SubOrgan, kind="extensive")
 
     def __call__(self, *args):
         self.data_structure.set("uptake", self.uptake_rate * np.asarray(self.data_structure.get("temperature")))
@@ -48,7 +48,7 @@ class Roots:
 class Counted(FunctionalComponent):
     """Counts the times the scenario's value of its parameter is set."""
     gain: float = parameter(**DOC, by="", default=1.)
-    u: float = state_variable(**DOC, initialize=0., location="cell")
+    u: float = state_variable(**DOC, default=0., location="cell")
 
     def __setattr__(self, name, value):
         if name == "gain" and value == 2.:

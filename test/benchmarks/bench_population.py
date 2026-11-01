@@ -38,8 +38,8 @@ SEGMENT_LENGTH = 0.01
 MAIN, LATERALS, LATERAL = 1000, 5, 200          # 2 000 segments per plant
 
 
-def _node(kind="descriptor", initialize=0., **options):
-    return state_variable(**DOC, initialize=initialize, scale=scales.SubOrgan, state_variable_type=kind, **options)
+def _node(kind="descriptor", default=0., **options):
+    return state_variable(**DOC, default=initialize, scale=scales.SubOrgan, kind=kind, **options)
 
 
 # ---------------------------------------------------------------- plant model
@@ -47,7 +47,7 @@ def _node(kind="descriptor", initialize=0., **options):
 @dataclass
 class BenchGrowth(StructuralComponent):
     """Apices elongate (array-style); those longer than a segment are cut, all at once (bulk creation)."""
-    length: float = _node(initialize=SEGMENT_LENGTH)
+    length: float = _node(default=SEGMENT_LENGTH)
     is_apex: float = _node()
     x1: float = _node(on_grow="inherit")
     x2: float = _node(on_grow="inherit")
@@ -123,8 +123,8 @@ class BenchCarbon(FunctionalComponent):
     struct_mass: float = _node("extensive", 1.)
     exudation: float = _node("extensive")
     consumption: float = _node("extensive")
-    soil_nitrate: float = input_variable(**DOC, by="BenchSoilNitrate", initialize=0., scale=scales.SubOrgan)
-    length: float = input_variable(**DOC, by="BenchGrowth", initialize=0., scale=scales.SubOrgan)
+    soil_nitrate: float = input_variable(**DOC, by="BenchSoilNitrate", default=0., scale=scales.SubOrgan)
+    length: float = input_variable(**DOC, by="BenchGrowth", default=0., scale=scales.SubOrgan)
     exudation_rate: float = parameter(**DOC, by="", default=1e-6)
     consumption_rate: float = parameter(**DOC, by="", default=1e-6)
 
@@ -146,8 +146,8 @@ class BenchPhloem(FunctionalComponent):
     """One graph system: implicit axial diffusion of sucrose, solved on the whole population at once (each plant a
     connected piece of the graph)."""
     sucrose: float = _node("intensive", 1.)
-    sucrose_flux: float = state_variable(**DOC, initialize=0., scale=scales.SubOrgan, location="edge",
-                                         mapping="child", state_variable_type="extensive")
+    sucrose_flux: float = state_variable(**DOC, default=0., scale=scales.SubOrgan, location="edge",
+                                         aggregation="child", kind="extensive")
     conductance: float = parameter(**DOC, by="", default=1e-5)
     time_step = DT
 
@@ -185,9 +185,9 @@ class BenchPlant:
 
 @dataclass
 class BenchSoilNitrate(FunctionalComponent):
-    exudation: float = input_variable(**DOC, by="BenchCarbon", initialize=0., location="cell",
-                                      state_variable_type="extensive")
-    soil_nitrate: float = state_variable(**DOC, initialize=1., location="cell", state_variable_type="intensive")
+    exudation: float = input_variable(**DOC, by="BenchCarbon", default=0., location="cell",
+                                      kind="extensive")
+    soil_nitrate: float = state_variable(**DOC, default=1., location="cell", kind="intensive")
 
     @rate
     def _soil_nitrate(self, soil_nitrate, exudation):
@@ -261,7 +261,7 @@ def bench_anatomy(n_segments, steps):
     from anatomy import make_rooted_anatomy, wiring
     from openalea.metafspm.data_structure.data_api import MPGDataStructure
     Choregrapher().reset()
-    Choregrapher().add_simulation_time_step(DT)
+    Choregrapher()._set_simulation_time_step(DT)
     start = time.perf_counter()
     g, _, _ = make_rooted_anatomy(n_segments)
     ds = MPGDataStructure(g, from_scale=g.scales.SubOrgan, nodes="Compartment", wiring=wiring(g))
@@ -281,8 +281,8 @@ def bench_anatomy(n_segments, steps):
 
 @dataclass
 class AnatomyCarbon(FunctionalComponent):
-    hexose: float = state_variable(**DOC, initialize=1., scale=scales.Compartment, state_variable_type="intensive")
-    exudation: float = state_variable(**DOC, initialize=0., scale=scales.Compartment, state_variable_type="extensive")
+    hexose: float = state_variable(**DOC, default=1., scale=scales.Compartment, kind="intensive")
+    exudation: float = state_variable(**DOC, default=0., scale=scales.Compartment, kind="extensive")
     exudation_rate: float = parameter(**DOC, by="", default=1e-6)
 
     @rate
@@ -296,8 +296,8 @@ class AnatomyCarbon(FunctionalComponent):
 
 @dataclass
 class AnatomyPhloem(FunctionalComponent):
-    solute: float = state_variable(**DOC, initialize=1., scale=scales.Compartment, state_variable_type="intensive")
-    solute_flux: float = state_variable(**DOC, initialize=0., scale=scales.Connection, state_variable_type="extensive")
+    solute: float = state_variable(**DOC, default=1., scale=scales.Compartment, kind="intensive")
+    solute_flux: float = state_variable(**DOC, default=0., scale=scales.Connection, kind="extensive")
     conductance: float = parameter(**DOC, by="", default=1e-5)
     time_step = DT
 

@@ -14,8 +14,8 @@ from openalea.metafspm.solve.decorator import segmentation
 
 @dataclass
 class OneApex(StructuralComponent):
-    length: float = state_variable(unit="m", description="The element's length", initialize=0.01,
-                                   scale=scales.SubOrgan, state_variable_type="extensive")
+    length: float = state_variable(unit="m", description="The element's length", default=0.01,
+                                   scale=scales.SubOrgan, kind="extensive")
 
     @classmethod
     def initiate_plant(cls, g, plant, parameters):

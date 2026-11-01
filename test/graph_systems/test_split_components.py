@@ -21,7 +21,7 @@ DT = 10.
 
 @pytest.fixture(autouse=True)
 def _simulation_time_step():
-    Choregrapher().add_simulation_time_step(DT)
+    Choregrapher()._set_simulation_time_step(DT)
 
 
 class _Diffusion:
@@ -35,9 +35,9 @@ class _Diffusion:
 
 
 def _fields():
-    return dict(sugar=state_variable(**DOC, initialize=0., scale=scales.SubOrgan, state_variable_type="intensive"),
-                sugar_flux=state_variable(**DOC, initialize=0., scale=scales.SubOrgan, location="edge",
-                                          mapping="child", state_variable_type="extensive"))
+    return dict(sugar=state_variable(**DOC, default=0., scale=scales.SubOrgan, kind="intensive"),
+                sugar_flux=state_variable(**DOC, default=0., scale=scales.SubOrgan, location="edge",
+                                          aggregation="child", kind="extensive"))
 
 
 @dataclass

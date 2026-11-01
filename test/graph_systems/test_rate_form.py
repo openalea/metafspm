@@ -23,7 +23,7 @@ DT, K = 0.5, 0.3
 
 @pytest.fixture(autouse=True)
 def _simulation_time_step():
-    Choregrapher().add_simulation_time_step(DT)
+    Choregrapher()._set_simulation_time_step(DT)
 
 
 def _ds():
@@ -49,7 +49,7 @@ class _Rate:
 def _model(solver, **options):
     @dataclass
     class Diffusion(FunctionalComponent):
-        u: float = state_variable(**DOC, initialize=0., scale=scales.SubOrgan)
+        u: float = state_variable(**DOC, default=0., scale=scales.SubOrgan)
         time_step = DT
         _solve = graph_system(node_unknowns=["u"], solver=solver, **options)(type("_solve", (_Rate,), {}))
     return Diffusion
@@ -99,7 +99,7 @@ def test_implicit_euler_is_a_deprecated_alias_of_newton():
 
 @dataclass
 class RateWithInflow(FunctionalComponent):
-    u: float = state_variable(**DOC, initialize=1., scale=scales.SubOrgan)
+    u: float = state_variable(**DOC, default=1., scale=scales.SubOrgan)
     time_step = DT
 
     @graph_system(node_unknowns=["u"], solver="explicit_euler")
@@ -124,7 +124,7 @@ def _residual_balance(self, u):
 
 @dataclass
 class ResidualWithExplicit(FunctionalComponent):
-    u: float = state_variable(**DOC, initialize=1., scale=scales.SubOrgan)
+    u: float = state_variable(**DOC, default=1., scale=scales.SubOrgan)
     time_step = DT
 
     @graph_system(node_unknowns=["u"], solver="explicit_euler")
@@ -139,8 +139,8 @@ def test_explicit_and_ivp_solvers_refuse_a_residual():
 
 @dataclass
 class MixedForms(FunctionalComponent):
-    u: float = state_variable(**DOC, initialize=1., scale=scales.SubOrgan)
-    v: float = state_variable(**DOC, initialize=1., scale=scales.SubOrgan)
+    u: float = state_variable(**DOC, default=1., scale=scales.SubOrgan)
+    v: float = state_variable(**DOC, default=1., scale=scales.SubOrgan)
     time_step = DT
 
     @graph_system(node_unknowns=["u", "v"], solver="newton")
@@ -157,7 +157,7 @@ def test_one_graph_system_uses_one_form():
 
 @dataclass
 class DirichletWithExplicit(FunctionalComponent):
-    u: float = state_variable(**DOC, initialize=1., scale=scales.SubOrgan)
+    u: float = state_variable(**DOC, default=1., scale=scales.SubOrgan)
     time_step = DT
 
     @graph_system(node_unknowns=["u"], solver="explicit_euler")

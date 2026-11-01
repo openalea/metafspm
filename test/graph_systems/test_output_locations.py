@@ -47,7 +47,7 @@ def test_graph_output_location_is_checked():
 
 @dataclass
 class Steps(FunctionalComponent):
-    level: float = state_variable(**DOC, initialize=1., scale=scales.SubOrgan)
+    level: float = state_variable(**DOC, default=1., scale=scales.SubOrgan)
 
     @rate(location="edge", locations={"organ_count": "Organ"})
     def _edge_value(self, level) -> tuple[np.ndarray, str, np.ndarray]:
@@ -76,8 +76,8 @@ def test_step_outputs_take_the_locations_given_to_the_decorator(ds):
 
 @dataclass
 class Declared(FunctionalComponent):
-    level: float = state_variable(**DOC, initialize=1., scale=scales.SubOrgan)
-    doubled: float = state_variable(**DOC, initialize=0., scale=scales.SubOrgan)
+    level: float = state_variable(**DOC, default=1., scale=scales.SubOrgan)
+    doubled: float = state_variable(**DOC, default=0., scale=scales.SubOrgan)
 
     @rate
     def _doubled(self, level):
@@ -94,7 +94,7 @@ def test_declared_outputs_need_no_location(ds):
 
 @dataclass
 class GridSteps(FunctionalComponent):
-    water: float = state_variable(**DOC, initialize=1., scale="cell")
+    water: float = state_variable(**DOC, default=1., location="cell")
 
     @rate
     def _drained(self, water):
@@ -115,9 +115,9 @@ def test_grid_outputs_are_inferred_on_cells_and_unmatched_shapes_raise():
 
 @dataclass
 class MiscountedOutputs(FunctionalComponent):
-    level: float = state_variable(**DOC, initialize=1., scale=scales.SubOrgan)
-    other: float = state_variable(**DOC, initialize=0., scale=scales.SubOrgan)
-    third: float = state_variable(**DOC, initialize=0., scale=scales.SubOrgan)
+    level: float = state_variable(**DOC, default=1., scale=scales.SubOrgan)
+    other: float = state_variable(**DOC, default=0., scale=scales.SubOrgan)
+    third: float = state_variable(**DOC, default=0., scale=scales.SubOrgan)
 
     @rate
     def _level(self, level) -> tuple[np.ndarray, str, np.ndarray]:

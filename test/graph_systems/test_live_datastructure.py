@@ -20,7 +20,7 @@ from simple_seedling import generate_simple_mpg_seedling
 
 @pytest.fixture(autouse=True)
 def _simulation_time_step():
-    Choregrapher().add_simulation_time_step(DT)
+    Choregrapher()._set_simulation_time_step(DT)
 
 
 def _model(component_class=Transport, seed=42):
@@ -71,11 +71,11 @@ def test_integrated_amounts_and_outputs_are_registered(component_class, name, lo
 @dataclass
 class VectorisedProbe(FunctionalComponent):
     level: float = state_variable(unit="", unit_comment="", description="", min_value="", max_value="",
-                                  value_comment="", references="", DOI="", initialize=1., scale=scales.SubOrgan)
+                                  value_comment="", references="", DOI="", default=1., scale=scales.SubOrgan)
     doubled: float = state_variable(unit="", unit_comment="", description="", min_value="", max_value="",
-                                    value_comment="", references="", DOI="", initialize=0., scale=scales.SubOrgan)
+                                    value_comment="", references="", DOI="", default=0., scale=scales.SubOrgan)
     clipped: float = state_variable(unit="", unit_comment="", description="", min_value="", max_value="",
-                                    value_comment="", references="", DOI="", initialize=0., scale=scales.SubOrgan)
+                                    value_comment="", references="", DOI="", default=0., scale=scales.SubOrgan)
     threshold: float = parameter(unit="", unit_comment="", description="", min_value="", max_value="",
                                  value_comment="", references="", DOI="", by="", default=2.)
 

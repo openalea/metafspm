@@ -22,7 +22,7 @@ DOC = dict(unit="", unit_comment="", description="", min_value=0., max_value=1.,
 
 @pytest.fixture(autouse=True)
 def _simulation_time_step():
-    Choregrapher().add_simulation_time_step(1)
+    Choregrapher()._set_simulation_time_step(1)
 
 
 def test_draws_depend_on_the_entity_not_on_the_order_or_the_others():
@@ -51,7 +51,7 @@ def test_distributions():
 
 @dataclass
 class Emergence(FunctionalComponent):
-    draw: float = state_variable(**DOC, initialize=0., scale=scales.SubOrgan)
+    draw: float = state_variable(**DOC, default=0., scale=scales.SubOrgan)
 
     @rate
     def _draw(self, draw):
@@ -73,7 +73,7 @@ def test_component_streams_advance_and_are_reproducible():
     model()
     assert not np.any(ds.get("draw") == first)                 # a new step at each call
     Choregrapher().reset()
-    Choregrapher().add_simulation_time_step(1)
+    Choregrapher()._set_simulation_time_step(1)
     again = _ds()
     replay = Emergence(data_structure=again)
     replay()
@@ -90,7 +90,7 @@ def test_streams_continue_across_a_checkpoint(tmp_path):
     model()
     expected = ds.get("draw").copy()
     Choregrapher().reset()
-    Choregrapher().add_simulation_time_step(1)
+    Choregrapher()._set_simulation_time_step(1)
     restored = MPGDataStructure.restore(str(tmp_path / "c"))
     Emergence(data_structure=restored)()
     np.testing.assert_array_equal(restored.get("draw"), expected)

@@ -76,8 +76,8 @@ def test_label_names_follow_the_scale_of_the_variable_and_raise_when_ambiguous()
 
 @dataclass
 class Vessels(FunctionalComponent):
-    vessel_radii: object = state_variable(**DOC, initialize=None, scale=scales.SubOrgan, dtype="object")
-    n_vessels: int = state_variable(**DOC, initialize=0, scale=scales.SubOrgan, dtype="int")
+    vessel_radii: object = state_variable(**DOC, default=None, scale=scales.SubOrgan, dtype="object")
+    n_vessels: int = state_variable(**DOC, default=0, scale=scales.SubOrgan, dtype="int")
 
     @rate(vectorized=False)
     def _n_vessels(self, vessel_radii):
@@ -103,7 +103,7 @@ def test_object_variables_are_stored_per_entity_and_round_trip_through_the_mtg(s
 
 @dataclass
 class UsesObjects(FunctionalComponent):
-    c: float = state_variable(**DOC, initialize=0., scale=scales.SubOrgan)
+    c: float = state_variable(**DOC, default=0., scale=scales.SubOrgan)
     vessel_radii: object = parameter(**DOC, by="", default=None, scale=scales.SubOrgan, dtype="object")
 
     @graph_system(node_unknowns=["c"], solver="newton")

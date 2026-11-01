@@ -124,7 +124,21 @@ def canonical(unit) -> Optional[str]:
     return " ".join(token.strip(".") for token in text.split() if token.strip("."))
 
 
-def check_link(received_unit, provided_unit, factor, name: str) -> None:
+def normalized_unit(unit) -> Optional[str]:
+    """A unit string without its spelling variants (spaces, dots, carets, '**'), or None when undeclared."""
+    if unit is None or not str(unit).strip():
+        return None
+    text = str(unit).replace("**", "").replace("^", "").replace("·", "").replace(".", "")
+    return "".join(text.split())
+
+
+def units_agree(a, b) -> bool:
+    """Whether two declared units are the same (undeclared units agree with anything)."""
+    a, b = normalized_unit(a), normalized_unit(b)
+    return a is None or b is None or a == b
+
+
+def check_link_units(received_unit, provided_unit, factor, name: str) -> None:
     """A translator link's units against its coefficient: undeclared units agree with anything; readable units must
     be the same quantity and the coefficient (its absolute value) their conversion factor; unreadable ones must be
     spelled alike when the coefficient is ±1. Raises ValueError naming the link."""
@@ -137,7 +151,6 @@ def check_link(received_unit, provided_unit, factor, name: str) -> None:
             raise ValueError(f"{name}: the coefficient {factor} does not convert '{provided_unit}' into "
                              f"'{received_unit}' ({expected:g}); give it, or unit_check=False for a deliberate one")
         return
-    from openalea.metafspm.coupling.declaration import units_agree
     if factor in (1., -1.) and not units_agree(received_unit, provided_unit):
         raise ValueError(f"{name}: the units differ ('{received_unit}' <- '{provided_unit}') and the link has no "
                          "conversion factor")

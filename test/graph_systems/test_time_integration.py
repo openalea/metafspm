@@ -44,8 +44,8 @@ def _system(**options):
 
 @dataclass
 class Fields(FunctionalComponent):
-    solute: float = state_variable(**DOC, initialize=0., location="cell")
-    solute_flux: float = state_variable(**DOC, initialize=0., location="edge")
+    solute: float = state_variable(**DOC, default=0., location="cell")
+    solute_flux: float = state_variable(**DOC, default=0., location="edge")
     diffusivity: float = parameter(**DOC, by="", default=1e-3, location="edge")
     time_step = DT
 

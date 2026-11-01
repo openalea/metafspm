@@ -22,7 +22,7 @@ import numpy as np
 from dataclasses import dataclass
 from scipy.sparse import diags
 
-from openalea.metafspm.coupling.component import FunctionalComponent, declare
+from openalea.metafspm.coupling.component import FunctionalComponent, _declare
 from openalea.metafspm.data_structure.configs import PropsConfig
 from openalea.metafspm.data_structure.data_api import MPGDataStructure
 from openalea.metafspm.data_structure.mpg import MPG
@@ -93,61 +93,61 @@ class WaterMunchTransport(FunctionalComponent):
         R_ph = L_ph p_ph - σ_xph (p_x - p_ph) - s_ph = 0
     """
 
-    xylem_pressure: float = declare(
+    xylem_pressure: float = _declare(
         unit="MPa", unit_comment="",
         description="Xylem water potential per segment node. Node unknown.",
         min_value=-5.0, max_value=0.5, value_comment="", references="", DOI=[],
-        variable_type="state_variable", by="WaterMunchTransport",
-        state_variable_type="intensive", edit_by="dev", default=-0.1, scale="node",
+        role="state_variable", by="WaterMunchTransport",
+        kind="intensive", default=-0.1, location="node",
     )
-    phloem_pressure: float = declare(
+    phloem_pressure: float = _declare(
         unit="MPa", unit_comment="",
         description="Phloem turgor pressure per segment node. Node unknown.",
         min_value=-1.0, max_value=2.0, value_comment="", references="", DOI=[],
-        variable_type="state_variable", by="WaterMunchTransport",
-        state_variable_type="intensive", edit_by="dev", default=0.8, scale="node",
+        role="state_variable", by="WaterMunchTransport",
+        kind="intensive", default=0.8, location="node",
     )
-    K_xylem: float = declare(
+    K_xylem: float = _declare(
         unit="m4 s-1 MPa-1", unit_comment="",
         description="Axial hydraulic conductance of xylem vessels per edge.",
         min_value=0.0, max_value=1.0, value_comment="", references="", DOI=[],
-        variable_type="parameter", by="WaterMunchTransport",
-        state_variable_type="intensive", edit_by="dev", default=1e-10, scale="edge",
+        role="parameter", by="WaterMunchTransport",
+        kind="intensive", default=1e-10, location="edge",
     )
-    K_phloem: float = declare(
+    K_phloem: float = _declare(
         unit="m4 s-1 MPa-1", unit_comment="",
         description="Axial hydraulic conductance of phloem sieve tubes per edge.",
         min_value=0.0, max_value=1.0, value_comment="", references="", DOI=[],
-        variable_type="parameter", by="WaterMunchTransport",
-        state_variable_type="intensive", edit_by="dev", default=1e-11, scale="edge",
+        role="parameter", by="WaterMunchTransport",
+        kind="intensive", default=1e-11, location="edge",
     )
-    sigma_xph: float = declare(
+    sigma_xph: float = _declare(
         unit="m3 s-1 MPa-1", unit_comment="radial, per segment",
         description="Radial membrane conductance between xylem and phloem per node.",
         min_value=0.0, max_value=1.0, value_comment="", references="", DOI=[],
-        variable_type="parameter", by="WaterMunchTransport",
-        state_variable_type="intensive", edit_by="dev", default=1e-13, scale="node",
+        role="parameter", by="WaterMunchTransport",
+        kind="intensive", default=1e-13, location="node",
     )
-    sigma_soil: float = declare(
+    sigma_soil: float = _declare(
         unit="m3 s-1 MPa-1", unit_comment="radial, per segment",
         description="Radial soil-root conductance per node.",
         min_value=0.0, max_value=1.0, value_comment="", references="", DOI=[],
-        variable_type="parameter", by="WaterMunchTransport",
-        state_variable_type="intensive", edit_by="dev", default=1e-12, scale="node",
+        role="parameter", by="WaterMunchTransport",
+        kind="intensive", default=1e-12, location="node",
     )
-    soil_water_potential: float = declare(
+    soil_water_potential: float = _declare(
         unit="MPa", unit_comment="",
         description="p_soil: prescribed soil water potential per node.",
         min_value=-5.0, max_value=0.5, value_comment="", references="", DOI=[],
-        variable_type="input", by="SoilWaterModel",
-        state_variable_type="intensive", edit_by="dev", default=-0.05, scale="node",
+        role="input", by="SoilWaterModel",
+        kind="intensive", default=-0.05, location="node",
     )
-    phloem_assimilate_loading: float = declare(
+    phloem_assimilate_loading: float = _declare(
         unit="MPa s-1", unit_comment="",
         description="s_ph: osmotic source from assimilate loading per node.",
         min_value=-1.0, max_value=1.0, value_comment="", references="", DOI=[],
-        variable_type="input", by="CarbonModel",
-        state_variable_type="intensive", edit_by="dev", default=0.0, scale="node",
+        role="input", by="CarbonModel",
+        kind="intensive", default=0.0, location="node",
     )
 
     @graph_system(node_unknowns=["xylem_pressure", "phloem_pressure"], solver="newton", max_iter=15)

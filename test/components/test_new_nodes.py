@@ -76,8 +76,8 @@ def test_as_an_mpg_style_step(repartition):
 class Branching(StructuralComponent):
     """On each tip (no child): a chain of two segments, the first bearing a lateral in an Organ of its own; the tip
     relabelled."""
-    struct_mass: float = state_variable(**DOC, initialize=0., scale=scales.SubOrgan, state_variable_type="extensive")
-    rank: float = state_variable(**DOC, initialize=-1., scale=scales.SubOrgan, state_variable_type="descriptor")
+    struct_mass: float = state_variable(**DOC, default=0., scale=scales.SubOrgan, kind="extensive")
+    rank: float = state_variable(**DOC, default=-1., scale=scales.SubOrgan, kind="descriptor")
 
     @segmentation
     def _struct_mass(self, struct_mass) -> tuple[float, str, NewNodes]:
@@ -163,8 +163,8 @@ def test_the_batch_is_checked():
 class Phytomers(StructuralComponent):
     """On each tip: a Phytomer holding two Organs (explicit complexes, under the tip's GrowthUnit), each with two
     elements; the first element branched (+) on the tip, the others chained (<). The Organs get a diameter."""
-    struct_mass: float = state_variable(**DOC, initialize=0., scale=scales.SubOrgan, state_variable_type="extensive")
-    diameter: float = state_variable(**DOC, initialize=-1., scale=scales.Organ, state_variable_type="descriptor")
+    struct_mass: float = state_variable(**DOC, default=0., scale=scales.SubOrgan, kind="extensive")
+    diameter: float = state_variable(**DOC, default=-1., scale=scales.Organ, kind="descriptor")
 
     @segmentation
     def _struct_mass(self, struct_mass) -> tuple[float, str, NewNodes]:
@@ -216,7 +216,7 @@ def test_explicit_complexes():
 @dataclass
 class NewAxis(StructuralComponent):
     """A new Axis (and its GrowthUnit, Phytomer, Organ) on the first plant, its first element without parent."""
-    struct_mass: float = state_variable(**DOC, initialize=0., scale=scales.SubOrgan, state_variable_type="extensive")
+    struct_mass: float = state_variable(**DOC, default=0., scale=scales.SubOrgan, kind="extensive")
 
     @segmentation
     def _struct_mass(self, struct_mass) -> tuple[float, str, NewNodes]:

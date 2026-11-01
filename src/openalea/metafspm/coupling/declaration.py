@@ -22,8 +22,6 @@ SOLVER_LOCATIONS = ("node", "edge", "scalar", "cell")
 UP_MAPPINGS = ("sum", "mean", "weighted_mean")
 DOWN_MAPPINGS = ("broadcast", "split")
 EDGE_MAPPINGS = ("child", "parent", "mean")
-# Former edge mapping names: "proximal" took the child's value, "distal" the parent's
-_EDGE_MAPPING_RENAMES = {"proximal": "child", "distal": "parent"}
 
 EXTENSIVE_KINDS = ("extensive", "NonInertialExtensive")
 INTENSIVE_KINDS = ("intensive", "NonInertialIntensive")
@@ -38,8 +36,8 @@ class VariableSpec:
     scale: Optional[int] = None          # MTG scale of the property; None: solver-only variable
     mapping: Optional[str] = None        # scale -> location mapping when they differ
     weight: Optional[str] = None         # weight variable of "weighted_mean"
-    kind: Optional[str] = None           # state_variable_type
-    variable_type: Optional[str] = None  # "state_variable" | "input" | "parameter" | "plant_scale_state"
+    kind: Optional[str] = None           # extensive, intensive, ... (its declaration's kind=)
+    variable_type: Optional[str] = None  # "state_variable" | "input" | "parameter"
     default: float = 0.
     on_grow: str = "default"
     dtype: type = float                  # float, int or object
@@ -59,15 +57,6 @@ class DeclarationError(ValueError):
     """A declaration that cannot be resolved on the DataStructure it is bound to."""
 
 
-def edge_mapping_name(name: str) -> str:
-    """Current name of an edge mapping, warning for the former names (proximal -> child, distal -> parent)."""
-    if name in _EDGE_MAPPING_RENAMES:
-        new = _EDGE_MAPPING_RENAMES[name]
-        warnings.warn(f"edge mapping '{name}' is renamed '{new}'", DeprecationWarning, stacklevel=3)
-        return new
-    return name
-
-
 def legacy_edge_convention(mapping: str) -> str:
     """Name used by the DataStructure's MTG edge readers and writers."""
     return {"child": "proximal", "parent": "distal"}.get(mapping, mapping)
@@ -75,23 +64,30 @@ def legacy_edge_convention(mapping: str) -> str:
 
 def default_mapping(kind: Optional[str], direction: str, name: str, weight: Optional[str] = None) -> str:
     """
-    Mapping implied by the variable's state_variable_type when the declaration gives none.
-    direction: "up" (fine -> coarse) or "down" (coarse -> fine).
+    Aggregation implied by the variable's kind when the declaration or the link gives none, within a
+    DataStructure and across DataStructures (plant entities and cells) alike. direction: "up" (fine -> coarse,
+    plant entities -> cells), "down" (coarse -> fine, cells -> plant entities) or "layer" (a column's layers and a
+    grid's: "sum" for extensive variables, "mean" for intensive ones).
 
       extensive   up: sum (the total is conserved); down: split by *weight* (each entity's share of its owner's
                   amount in proportion to its weight, the total conserved), else raise
       intensive   up: the mean weighted by *weight* (its capacity: a volume, a mass, an area...), else raise
-                  (give mapping="mean" for an unweighted mean); down: broadcast. A massic concentration is an
+                  (give aggregation="mean" for an unweighted mean); down: broadcast. A massic concentration is an
                   intensive variable whose weight is a mass, a flux density one whose weight is an area.
     """
-    if direction == "up":
+    if direction == "layer":
+        if kind in EXTENSIVE_KINDS:
+            return "sum"
+        if kind in INTENSIVE_KINDS or kind in MASSIC_KINDS:
+            return "mean"
+    elif direction == "up":
         if kind in EXTENSIVE_KINDS:
             return "sum"
         if kind in INTENSIVE_KINDS or kind in MASSIC_KINDS:
             if weight is None:
                 raise DeclarationError(f"'{name}' is {kind} and averaged to a coarser scale: give the weight of its "
                                        "mean (weight=..., its capacity: a volume, a mass, an area), or "
-                                       "mapping='mean' for an unweighted mean")
+                                       "aggregation='mean' for an unweighted mean")
             return "weighted_mean"
     else:
         if kind in INTENSIVE_KINDS or kind in MASSIC_KINDS:
@@ -101,9 +97,9 @@ def default_mapping(kind: Optional[str], direction: str, name: str, weight: Opti
                 return "split"
             raise DeclarationError(f"'{name}' is extensive and goes from a coarse scale down to finer entities: "
                                    "give the weight of its split (weight=...: each entity gets its share of the "
-                                   "amount), or an explicit mapping (copying it would multiply the amount)")
-    raise DeclarationError(f"'{name}' changes scale without a mapping, and its state_variable_type ({kind!r}) "
-                           "does not imply one: give mapping=...")
+                                   "amount), or aggregation= (copying it would multiply the amount)")
+    raise DeclarationError(f"'{name}' changes scale without a mapping, and its kind ({kind!r}) "
+                           "does not imply one: give aggregation=...")
 
 
 KIND_FAMILIES = {"extensive": "extensive", "NonInertialExtensive": "extensive",
@@ -111,25 +107,48 @@ KIND_FAMILIES = {"extensive": "extensive", "NonInertialExtensive": "extensive",
                  "descriptor": "descriptor"}
 
 
-def normalized_unit(unit) -> Optional[str]:
-    """A unit string without its spelling variants (spaces, dots, carets, '**'), or None when undeclared."""
-    if unit is None or not str(unit).strip():
-        return None
-    text = str(unit).replace("**", "").replace("^", "").replace("·", "").replace(".", "")
-    return "".join(text.split())
-
-
-def units_agree(a, b) -> bool:
-    """Whether two declared units are the same (undeclared units agree with anything)."""
-    a, b = normalized_unit(a), normalized_unit(b)
-    return a is None or b is None or a == b
-
-
 def kinds_agree(a: Optional[str], b: Optional[str]) -> bool:
-    """Whether two state_variable_types can be linked (same family); unknown kinds agree with anything."""
+    """Whether two kinds can be linked (same family); unknown kinds agree with anything."""
     if a is None or b is None or a not in KIND_FAMILIES or b not in KIND_FAMILIES:
         return True
     return KIND_FAMILIES[a] == KIND_FAMILIES[b]
+
+
+def declared_unit(component, name: str) -> Optional[str]:
+    """The unit *component*'s class declares for *name* (None when undeclared)."""
+    f = getattr(type(component), "__dataclass_fields__", {}).get(name)
+    return None if f is None else f.metadata.get("unit")
+
+
+def declared_kind(component, name: str) -> Optional[str]:
+    """The kind of *name* for *component*: its declaration's, else the one recorded on its DataStructure."""
+    spec = getattr(component, "_variable_specs", {}).get(name)
+    if spec is not None and spec.kind is not None:
+        return spec.kind
+    ds = getattr(component, "data_structure", None)
+    if ds is not None and hasattr(ds, "_variable_meta") and ds.has(name):
+        return ds._variable_meta().get(ds._resolve(name), {}).get("kind")
+    return None
+
+
+def check_link(link, receiver, provider) -> None:
+    """A link's kinds agree (extensive with extensive, intensive or massic with intensive or massic) and its factors
+    convert the provider's declared units into the receiver's (unless unit_check is off or it is a formula)."""
+    from openalea.metafspm.coupling.units import check_link_units
+    name = f"{link.receiver}.{link.variable} <- {link.provider}"
+    received = declared_kind(receiver, link.variable)
+    for source in ([] if link.formula is not None else link.sources):
+        provided = declared_kind(provider, source)
+        if not kinds_agree(received, provided):
+            raise ValueError(f"{link.receiver}.{link.variable} ({received}) <- {link.provider}.{source} ({provided}): "
+                             "the kinds do not agree (extensive with extensive, intensive or massic with intensive or "
+                             "massic)")
+    if link.formula is not None or not link.unit_check:
+        return
+    for source, factor in link.sources.items():
+        if isinstance(factor, (int, float)):            # an expression: its conversion is its own
+            check_link_units(declared_unit(receiver, link.variable), declared_unit(provider, source), factor,
+                             f"{name}.{source}")
 
 
 def link_direction(ds, from_location: str, to_location: str) -> Optional[str]:
@@ -161,10 +180,18 @@ def _scales_of(ds):
     return type(scales) if scales is not None else _ScalesConfig
 
 
-def scale_names(ds) -> dict:
-    """{scale int: scale name} for the DataStructure's MTG (the class defaults without an MTG)."""
-    return {value: name for name, value in vars(_scales_of(ds)).items()
-            if isinstance(value, int) and not name.startswith("_")}
+def scale_names(of=None) -> dict:
+    """{scale int: scale name} of *of*: a DataStructure (its MTG's scales), an MTG, a ScalesConfig class, or None
+    (ScalesConfig's)."""
+    if of is None:
+        scales = _ScalesConfig
+    elif isinstance(of, type):
+        scales = of
+    elif hasattr(of, "scales") and not hasattr(of, "_mtg"):          # an MTG
+        scales = type(of.scales)
+    else:
+        scales = _scales_of(of)
+    return {value: name for name, value in vars(scales).items() if isinstance(value, int) and not name.startswith("_")}
 
 
 def node_scale(ds) -> Optional[int]:
@@ -220,27 +247,20 @@ def _scale_value(ds, scale):
 def resolve_declaration(f, ds) -> Optional[VariableSpec]:
     """
     VariableSpec of dataclass field *f* on DataStructure *ds*, or None when the field is not a DataStructure
-    variable (no declare() metadata, or neither scale nor location given).
-
-    Legacy forms (accepted for one release)::
-
-      scale="node" | "edge" | "scalar" | "cell"  -> that location, no MTG property;
-      scale=<int>, edge_mapping=m                -> location "edge", mapping m;
-      scale=Compartment / Connection             -> "node" / "edge", no MTG property.
-
-    A scale coarser than the nodes without a location is stored at that scale.
+    variable (no declaration metadata, or neither scale nor location given). scale=Compartment / Connection are the
+    graph's nodes / edges (no MTG property behind them, except in anatomy mode); a scale coarser than the nodes
+    without a location is stored at that scale.
     """
     meta = f.metadata
     if meta.get("variable_type") in (None, "forcing", "setting"):   # a time series, a model's value: not stored
         return None
     raw_scale, location = meta.get("scale"), meta.get("location")
     mapping, weight = meta.get("mapping"), meta.get("weight")
-    legacy_edge = meta.get("edge_mapping")
-    kind = meta.get("state_variable_type")
+    kind = meta.get("kind")
     from openalea.metafspm.data_structure.data_api import _canonical_dtype
     dtype = _canonical_dtype(meta.get("dtype"))
-    if isinstance(raw_scale, str) and raw_scale in SOLVER_LOCATIONS and location is None:
-        location, raw_scale = raw_scale, None
+    if isinstance(raw_scale, str) and raw_scale in SOLVER_LOCATIONS:
+        raise DeclarationError(f"'{f.name}': scale='{raw_scale}' is a location: give location='{raw_scale}'")
     if raw_scale is None and location is None:
         # A numeric parameter without a place is stored per plant: at the
         # "Plant" location of plant DataStructures, at "scalar" elsewhere. Other fields are not DataStructure variables.
@@ -264,10 +284,6 @@ def resolve_declaration(f, ds) -> Optional[VariableSpec]:
                   default=default, on_grow=meta.get("on_grow") or "default", dtype=dtype,
                   shape=tuple(meta.get("shape") or ()))
 
-    if isinstance(raw_scale, str) and raw_scale in SOLVER_LOCATIONS:
-        if location is not None:
-            raise DeclarationError(f"'{f.name}': scale='{raw_scale}' is a location, do not also give location=")
-        location, raw_scale = raw_scale, None
     if not _is_graph(ds):
         # Grids: only their own locations; biological scales have no meaning there. "node" is a grid's cells (the
         # nodes of its graph), so that one component class runs on plant graphs and on grids.
@@ -292,7 +308,7 @@ def resolve_declaration(f, ds) -> Optional[VariableSpec]:
         pass    # anatomy mode: the Compartments are the MTG vertices behind the nodes, their properties are read
     elif scale == scales.Connection and node_scale(ds) == scales.Compartment:
         # anatomy mode: the edges are the Connections themselves, their properties are read and written
-        if location not in (None, "edge") or mapping is not None or legacy_edge is not None:
+        if location not in (None, "edge") or mapping is not None:
             raise DeclarationError(f"'{f.name}': in anatomy mode, scale Connection is the edges themselves")
         return VariableSpec(location="edge", scale=scale, **common)
     elif scale in (scales.Compartment, scales.Connection):
@@ -300,14 +316,6 @@ def resolve_declaration(f, ds) -> Optional[VariableSpec]:
         if location is None:
             location = "node" if scale == scales.Compartment else "edge"
         scale = None
-
-    if legacy_edge is not None:
-        if mapping is not None:
-            raise DeclarationError(f"'{f.name}': give mapping= or the former edge_mapping=, not both")
-        mapping = legacy_edge
-        location = location or "edge"
-    if mapping is not None and mapping in _EDGE_MAPPING_RENAMES:
-        mapping = edge_mapping_name(mapping)
 
     if scale is None:
         location = resolve_location(ds, location)
@@ -327,7 +335,7 @@ def resolve_declaration(f, ds) -> Optional[VariableSpec]:
             return VariableSpec(location="edge", scale=None, weight=weight, **common)
         if mapping is None:
             raise DeclarationError(f"'{f.name}' maps scale {scale_names(ds)[scale]} to edges: give "
-                                   f"mapping= one of {EDGE_MAPPINGS}")
+                                   f"aggregation= one of {EDGE_MAPPINGS}")
         if mapping not in EDGE_MAPPINGS:
             raise DeclarationError(f"'{f.name}': edge mapping '{mapping}' is not one of {EDGE_MAPPINGS}")
         if mapping == "mean" and common["variable_type"] == "state_variable":

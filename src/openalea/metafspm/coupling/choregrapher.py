@@ -39,53 +39,41 @@ class Choregrapher(Singleton):
     def _init_state(self):
         super()._init_state()
         self.scheduled_groups = {}
-        self.sub_time_step = {}
-        self.data_structure = {}
 
 
     def reset(self):
         """
-        Clear run state (bound schedules, sub time steps, data structures, simulation time step) in place.
+        Clear run state (bound schedules, the simulation time step) in place.
 
         The processes registered by step decorators at class definition are kept, so that component classes
         defined before the reset can still be instantiated and scheduled. The instance is kept as well, since
         Component.choregrapher is bound at class creation and a new instance would never be called.
         """
         self.scheduled_groups = {}
-        self.sub_time_step = {}
-        self.data_structure = {}
         if "simulation_time_step" in self.__dict__:
             del self.simulation_time_step
 
 
-    def add_time_and_data(self, instance, sub_time_step: int, data, compartment: str = "graph"):
+    def bind(self, instance, time_step: float, data) -> None:
         """
         Bind the steps of the instance's class, its own and those inherited from its bases, to the instance and
-        its DataStructure. The bound schedule is kept on the instance, so that several instances of one class run
-        their own steps on their own DataStructures.
-
-        Args:
-            instance: component instance whose class the steps were collected from
-            sub_time_step (int): sub time step of the component (the simulation step is divided accordingly)
-            data: the component's DataStructure
-            compartment (str, optional): name under which the DataStructure is recorded
+        its DataStructure *data*, run every *time_step* (s). The bound schedule is kept on the instance, so that
+        several instances of one class run their own steps on their own DataStructures.
         """
         family = family_of(type(instance))
-        self.sub_time_step[family] = sub_time_step
-        self.data_structure[compartment] = data
         groups = {priority: [partial(functor, instance, data) for functor in functors]
                   for priority, functors in self.schedule_of(type(instance)).items()}
-        instance.__dict__["_choregraphy"] = (sub_time_step, groups)
+        instance.__dict__["_choregraphy"] = (time_step, groups)
         self.scheduled_groups[family] = groups      # introspection: the last bound instance of the class
 
-    def add_simulation_time_step(self, simulation_time_step: int):
-        """
-        Enables to add a global simulation time step to the Choregrapher for it to slice subtimesteps accordingly
-        :param simulation_time_step: global simulation time step in seconds
-        :return:
-        """
+    def _set_simulation_time_step(self, simulation_time_step: float) -> None:
+        """The scene's time step (s), set by the Scene (and population_data_structure): each component runs
+        simulation_time_step / its time_step sub-steps per call."""
         self.simulation_time_step = simulation_time_step
 
+    def simulation_step(self):
+        """The scene's time step (s), None when no Scene set one (a component run alone runs one of its steps)."""
+        return self.__dict__.get("simulation_time_step")
 
     def add_process(self, f, name):
         """Register step functor *f* in category *name* for its class, identified by module and qualified name."""
@@ -137,8 +125,10 @@ class Choregrapher(Singleton):
         """
         sub_time_step, groups = instance.__dict__["_choregraphy"]
         start = instance.__dict__.get("_clock", 0.)
-        for increment in range(sub_steps(self.simulation_time_step, sub_time_step, type(instance).__name__)):
-            instance.__dict__["_clock"] = start + increment * sub_time_step
+        simulation_step = self.simulation_step() or sub_time_step
+        increments = 1 if sub_time_step is None else sub_steps(simulation_step, sub_time_step, type(instance).__name__)
+        for increment in range(increments):
+            instance.__dict__["_clock"] = start + increment * (sub_time_step or 0.)
             for step in groups:
                 for functor in groups[step]:
                     functor()

@@ -7,6 +7,7 @@ from openalea.metafspm.data_structure.mpg import MPG
 from openalea.metafspm.data_structure.data_api import DataStructure, MPGDataStructure, GraphDataStructure
 from openalea.metafspm.data_structure.configs import ScalesConfig as _ScalesConfig
 from openalea.metafspm.coupling.declaration import declared_specs, DeclarationError
+from openalea.metafspm.coupling.declaration import scale_names as declared_scale_names
 
 # Map integer MPG scale constants to the generic "node"/"edge" vocabulary used
 # by GraphDataStructure.  Compartment nodes are graph nodes; Connection edges
@@ -17,58 +18,41 @@ _SCALE_INT_TO_LOC: dict = {
 }
 
 
-def declare(unit: str, unit_comment: str, description: str, min_value: float, max_value: float,
-            value_comment: str, references: str, DOI: list,
-            variable_type: Literal["state_variable", "plant_scale_state", "input", "parameter"],
-            by: str, state_variable_type: str, edit_by: Literal["user", "dev"],
-            default=None, default_factory=None, scale=None, edge_mapping=None, on_grow="default",
-            location=None, mapping=None, weight=None, dtype=None, shape=None):
-    """
-    Constrain component variable declarations in a commonly agreed-upon way.
+_RENAMED = {"initialize": "default", "state_variable_type": "kind", "mapping": "aggregation"}
+DECLARATION_COLUMNS = ["name", "role", "kind", "scale", "unit", "description", "default", "by", "min_value",
+                       "max_value", "references", "DOI", "unit_comment", "value_comment"]
 
-    :param default:            Default value (scalar).
-    :param unit:               SI unit string.
-    :param unit_comment:       Precision about the unit (e.g. 'mol of N per g DW').
-    :param description:        Full description of purpose, scale, and hypotheses.
-    :param value_comment:      Why the default differs from the literature value.
-    :param references:         Literature references (Author et al., Year).
-    :param DOI:                List of DOI strings for the cited papers.
-    :param variable_type:      "input" | "state_variable" | "plant_scale_state" | "parameter"
-    :param by:                 Name of the model component that owns this variable.
-    :param state_variable_type: "intensive" | "extensive" | "massic_concentration" | …
-    :param edit_by:            "user" or "dev" — who may override the default.
-    :param scale:              Where this variable lives in the data structure.
-                               For graph models: "node" or "edge".
-                               For multi-grid models: integer level index or a
-                               grid-level descriptor string (e.g. "fine").
-                               Used by FunctionalComponent.__post_init__ to
-                               auto-register defaults on the bound DataStructure,
-                               and by the solver decorator to classify fields
-                               during the Newton snapshot.
-    :param location:           Where the DataStructure stores the variable: "node", "edge", "scalar", "cell", or a
-                               scale name (resolved against the graph). Default: the location of *scale*.
-    :param mapping:            How values go between *scale* and *location* when they differ: "broadcast" (down),
-                               "sum" / "mean" / "weighted_mean" (up, with *weight*), "child" / "parent" / "mean"
-                               (to edges). Default: implied by state_variable_type.
-    :param weight:             Weight variable of "weighted_mean".
-    :param dtype:              "int" for labels, types and indices (kept as integers), "object" for lists and records
-                               (not usable by graph systems, derivations or transport); default float.
-    :param shape:              Per-entity shape of a vector-valued variable, e.g. (15,) for 15 pools per cell: an
-                               (n, 15) array, used by steps, mappings, checkpoints and outputs; not an MTG property
-                               nor a graph-system unknown.
-    :param on_grow:            Value of entities created by topology growth: "default" (the declared
-                               default) or "inherit" (the parent's value). The growth model may still
-                               overwrite them, e.g. from parent states for concentrations.
+
+def _renamed(function: str, given: dict) -> dict:
+    """The former keyword names of the declarations (initialize, state_variable_type, mapping), accepted with a
+    warning for one release; any other unknown keyword raises."""
+    import warnings
+    found = {}
+    for name, value in given.items():
+        if name not in _RENAMED:
+            raise TypeError(f"{function}() got an unexpected keyword argument '{name}'")
+        warnings.warn(f"{function}({name}=...) is renamed {_RENAMED[name]}=", DeprecationWarning, stacklevel=3)
+        found[_RENAMED[name]] = value
+    return found
+
+
+def _declare(role: str, unit: str = "", description: str = "", default=None, default_factory=None, kind=None,
+             by: str = None, scale=None, location=None, aggregation=None, weight=None, on_grow="default", dtype=None,
+             shape=None, min_value=None, max_value=None, unit_comment: str = "", value_comment: str = "",
+             references: str = "", DOI=None, **extra):
     """
+    The metadata of a declared field, shared by state_variable, input_variable, parameter, setting and
+    forcing_variable (see them for the arguments). *role*: "state_variable", "input", "parameter", "setting" or
+    "forcing"; *extra*: the role's own keys (a setting's choices, a forcing's required and at).
+    """
+    if aggregation in ("proximal", "distal"):
+        raise ValueError(f"aggregation='{aggregation}' is 'child' or 'parent' (the value of the edge's child or "
+                         "parent node)")
     metadata = dict(
-        unit=unit, unit_comment=unit_comment, description=description,
-        min_value=min_value, max_value=max_value, value_comment=value_comment,
-        references=references, DOI=DOI, variable_type=variable_type, by=by,
-        state_variable_type=state_variable_type, edit_by=edit_by,
-        scale=scale, edge_mapping=edge_mapping, on_grow=on_grow,
-        location=location, mapping=mapping, weight=weight, dtype=dtype,
-        shape=tuple(shape) if shape is not None else None,
-    )
+        unit=unit, unit_comment=unit_comment, description=description, min_value=min_value, max_value=max_value,
+        value_comment=value_comment, references=references, DOI=list(DOI or []), variable_type=role, by=by,
+        kind=kind, scale=scale, on_grow=on_grow, location=location, mapping=aggregation, weight=weight,
+        dtype=dtype, shape=tuple(shape) if shape is not None else None, **extra)
     if default_factory:
         return field(default_factory=default_factory, metadata=metadata)
     return field(default=default, metadata=metadata)
@@ -79,120 +63,92 @@ def _bound(value):
     return None if value is None or (isinstance(value, str) and not value.strip()) else value
 
 
-def input_variable(unit: str = "", unit_comment: str = "", description: str = "", min_value: float = "",
-                   max_value: float = "", value_comment: str = "", references: str = "", DOI: list = "",
-                   by: str = None, initialize=None, scale=None, edge_mapping=None, on_grow="default",
-                   location=None, mapping=None, weight=None, state_variable_type=None, dtype=None, shape=None):
-    """Declare an input field — a variable driven by another model component (*by*). The documentation fields are
-    keywords, *unit* and *description* at least: `input_variable(unit="m", description="...", by="Growth", ...)`.
+# The documentation keywords of every declaration: unit and description at least, the bounds of its values, the
+# literature (references, DOI) and comments on the unit and on the value chosen; all listed by declarations()
+_DOCUMENTATION = """
+    Documentation, keywords: *unit* (UCUM-like, "mol g-1") and *description* at least; *min_value*, *max_value* (the
+    bounds of its values, read by scenarios.variants); *references*, *DOI*; *unit_comment*, *value_comment*."""
 
-    When the component is run in isolation (not coupled), the field keeps
-    *initialize* as its uniform default everywhere.
+_PLACE = """
+    Place: *scale* (where its MTG property lives, a ScalesConfig scale or its name) and *location* (where the
+    DataStructure stores it: "node", "edge", "scalar", "cell", or a coarse scale name; default: *scale*'s), with
+    *aggregation* between them when they differ ("broadcast" or "split" down; "sum", "mean" or "weighted_mean" up, with
+    *weight*; "child", "parent" or "mean" to edges; default: implied by its kind). *dtype*: "int" for labels and
+    indices, "object" for lists and records (not for graph systems); *shape*: the per-entity shape of a vector-valued
+    variable. *on_grow*: the value of entities created by growth, "default" or "inherit" (the parent's)."""
 
-    :param scale:  "node" | "edge" (graph), a biological scale, or use location="cell" on grids.
-    :param state_variable_type: optional kind of the input ("extensive", "intensive", ...): when given, it must
-                   agree with the kind of the variable that provides it through the translator.
-    """
-    return declare(
-        default=initialize, unit=unit, unit_comment=unit_comment,
-        description=description, min_value=min_value, max_value=max_value,
-        value_comment=value_comment, references=references, DOI=DOI,
-        variable_type="input", by=by, state_variable_type=state_variable_type,
-        edit_by="user", scale=scale, edge_mapping=edge_mapping, on_grow=on_grow,
-        location=location, mapping=mapping, weight=weight, dtype=dtype, shape=shape,
-    )
+_KINDS = """
+    *kind*: how its value depends on the size of what it describes: "extensive" (an amount, summed up),
+    "intensive" (a concentration, a potential, averaged up by *weight*), "massic_concentration", "descriptor",
+    "NonInertialExtensive", "NonInertialIntensive"; links between kinds that disagree raise."""
 
 
-def setting(unit: str = "", unit_comment: str = "", description: str = "", references: str = "", DOI: list = "",
-            default=None, choices=None):
+def state_variable(unit: str = "", description: str = "", default=None, kind=None, scale=None, location=None,
+                   aggregation=None, weight=None, on_grow="default", dtype=None, shape=None, by: str = None,
+                   min_value=None, max_value=None, unit_comment: str = "", value_comment: str = "",
+                   references: str = "", DOI=None, **renamed):
+    return _declare("state_variable", **_merge(locals(), "state_variable"))
+
+
+def input_variable(unit: str = "", description: str = "", default=None, kind=None, by: str = None, scale=None,
+                   location=None, aggregation=None, weight=None, on_grow="default", dtype=None, shape=None,
+                   min_value=None, max_value=None, unit_comment: str = "", value_comment: str = "",
+                   references: str = "", DOI=None, **renamed):
+    return _declare("input", **_merge(locals(), "input_variable"))
+
+
+def parameter(unit: str = "", description: str = "", default=None, kind=None, by: str = None, scale=None,
+              location=None, aggregation=None, weight=None, on_grow="default", dtype=None, min_value=None,
+              max_value=None, unit_comment: str = "", value_comment: str = "", references: str = "", DOI=None,
+              **renamed):
+    return _declare("parameter", **_merge(locals(), "parameter"))
+
+
+def _merge(arguments: dict, function: str) -> dict:
+    arguments = dict(arguments)
+    renamed = _renamed(function, arguments.pop("renamed"))
+    for name, value in renamed.items():
+        if arguments.get(name) is not None:
+            raise TypeError(f"{function}(): give {name}= only (its former name is also given)")
+        arguments[name] = value
+    return arguments
+
+
+state_variable.__doc__ = """Declare a state variable, computed by this component's steps or solves. *default*: its
+    initial value (a number, the same everywhere).""" + _KINDS + _PLACE + _DOCUMENTATION
+input_variable.__doc__ = """Declare an input: a variable another component provides (an input named as another
+    component's variable of the same DataStructure reads it; a translator link states a rename, a factor or a change
+    of scale). *default*: its value when nothing provides it. *by*: the provider, for the documentation. *kind*:
+    optional, checked against the provider's.""" + _PLACE + _DOCUMENTATION
+parameter.__doc__ = """Declare a parameter: a constant of the equations, set by constructor keywords and
+    scenarios. A numeric parameter without a place is stored per plant (each plant's scenario may change it); with
+    *scale* or *location*, one value per entity. *by*: its owner, for the documentation.""" + _KINDS + _PLACE \
+    + _DOCUMENTATION
+
+
+def setting(unit: str = "", description: str = "", default=None, choices=None, unit_comment: str = "",
+            references: str = "", DOI=None):
     """Declare a setting: a value of the model, not of the plants (a latitude, a light model, a solver, a grid's
-    voxel), one for all. Listed by declarations() (kind "setting"), set by constructor keywords and scenarios, read
+    voxel), one for all. Listed by declarations() (role "setting"), set by constructor keywords and scenarios, read
     as `self.name` anywhere (steps and equations included), and passed as the value itself to a step naming it as an
     argument. Never stored on the DataStructure (numeric parameters are, per plant). *choices*: the values allowed,
     checked at construction. A default must be immutable (a tuple, not a list)."""
-    declared = declare(default=default, unit=unit, unit_comment=unit_comment, description=description, min_value="",
-                       max_value="", value_comment="", references=references, DOI=DOI, variable_type="setting",
-                       by="the model", state_variable_type=None, edit_by="user")
-    return field(default=default, metadata={**declared.metadata,
-                                            "choices": tuple(choices) if choices is not None else None})
+    return _declare("setting", unit=unit, description=description, default=default, unit_comment=unit_comment,
+                    references=references, DOI=DOI, choices=tuple(choices) if choices is not None else None)
 
 
-def forcing_variable(unit: str = "", unit_comment: str = "", description: str = "", references: str = "",
-                     DOI: list = "", required: bool = True, at: str = "end"):
+def forcing_variable(unit: str = "", description: str = "", required: bool = True, at: str = "end",
+                     unit_comment: str = "", references: str = "", DOI=None):
     """Declare a forcing: a time series given to the scene (its `forcings` table, shared by every model), read by
-    `self.forcing(name)` at the step's time, the same for every entity (meteo, an imposed supply). Not a DataStructure variable: listed by declarations(). A Scene raises at its construction
-    when a *required* forcing is not given; an optional one (required=False) raises KeyError when read, for the
-    component to fall back. *at*: when a step reads it, "end" (the end of the (sub-)step, metafspm's convention for
-    implicit solves) or "start" (the step's start, e.g. a meteo table read as the hour begins). The documentation
-    fields are keywords, *unit* and *description* at least."""
+    `self.forcing(name)` at the step's time, the same for every entity (meteo, an imposed supply). Not a
+    DataStructure variable: listed by declarations(). A Scene raises at its construction when a *required* forcing
+    is not given; an optional one (required=False) raises KeyError when read, for the component to fall back. *at*:
+    when a step reads it, "end" (the end of the (sub-)step, metafspm's convention for implicit solves) or "start"
+    (the step's start, e.g. a meteo table read as the hour begins)."""
     if at not in ("start", "end"):
         raise ValueError(f"forcing_variable(at=...): 'start' or 'end', got '{at}'")
-    declared = declare(default=None, unit=unit, unit_comment=unit_comment, description=description, min_value="",
-                       max_value="", value_comment="", references=references, DOI=DOI, variable_type="forcing",
-                       by="the forcings", state_variable_type=None, edit_by="user")
-    return field(default=None, metadata={**declared.metadata, "required": required, "at": at})
-
-
-def state_variable(unit: str = "", unit_comment: str = "", description: str = "", min_value: float = "",
-                   max_value: float = "", value_comment: str = "", references: str = "", DOI: list = "",
-                   state_variable_type: Literal[
-                       "massic_concentration", "intensive", "extensive",
-                       "NonInertialExtensive", "NonInertialIntensive", "descriptor"
-                   ] = None,
-                   initialize=None, scale=None, by: str = None,
-                   edge_mapping=None, on_grow="default", location=None, mapping=None, weight=None, dtype=None,
-                   shape=None):
-    """Declare a prognostic state variable solved or integrated by this component. The documentation fields are
-    keywords, *unit* and *description* at least.
-
-    :param state_variable_type: Thermodynamic / extensive classification.
-    :param scale:               "node" | "edge" (graph), biological scale integer,
-                                or grid-level descriptor.
-    :param edge_mapping:        "proximal" | "distal" | "mean" — required when
-                                *scale* is a biological integer and the variable
-                                lives on edges.  "proximal" means the value on
-                                edge (parent, child) is owned by the child vertex.
-    """
-    return declare(
-        default=initialize, unit=unit, unit_comment=unit_comment,
-        description=description, min_value=min_value, max_value=max_value,
-        value_comment=value_comment, references=references, DOI=DOI,
-        variable_type="state_variable", by=by,
-        state_variable_type=state_variable_type, edit_by="user",
-        scale=scale, edge_mapping=edge_mapping, on_grow=on_grow,
-        location=location, mapping=mapping, weight=weight, dtype=dtype, shape=shape,
-    )
-
-
-def parameter(unit: str = "", unit_comment: str = "", description: str = "", min_value: float = "",
-              max_value: float = "", value_comment: str = "", references: str = "", DOI: list = "",
-              by: str = None, default=None, scale=None, state_variable_type=None,
-              edge_mapping=None, on_grow="default", location=None, mapping=None, weight=None, dtype=None):
-    """Declare a model parameter — a constant whose value is set at construction. The documentation fields are
-    keywords, *unit* and *description* at least.
-
-    Parameters are not prognostic; they are read by model equations but never
-    written back.  Marking them with *scale* tells FunctionalComponent where
-    to register the default array on the DataStructure so the solver decorator
-    can snapshot them at the correct entity level.
-
-    :param default:            Nominal parameter value.
-    :param scale:              "node" | "edge" (graph), biological scale integer,
-                               or grid-level descriptor.
-    :param edge_mapping:       "proximal" | "distal" | "mean" — see state_variable.
-    :param state_variable_type: Optional size-dependence classification
-                               ("intensive" / "extensive"); used for coupling
-                               consistency checks.
-    """
-    return declare(
-        default=default, unit=unit, unit_comment=unit_comment,
-        description=description, min_value=min_value, max_value=max_value,
-        value_comment=value_comment, references=references, DOI=DOI,
-        variable_type="parameter", by=by,
-        state_variable_type=state_variable_type, edit_by="dev",
-        scale=scale, edge_mapping=edge_mapping, on_grow=on_grow,
-        location=location, mapping=mapping, weight=weight, dtype=dtype,
-    )
+    return _declare("forcing", unit=unit, description=description, default=None, unit_comment=unit_comment,
+                    references=references, DOI=DOI, required=required, at=at)
 
 
 class _PlantParameter:
@@ -228,22 +184,19 @@ class _PlantParameter:
         else:
             obj.__dict__.setdefault("_pending_parameters", {})[self.name] = value
 
-    def values_at(self, obj, location: str = "node") -> np.ndarray:
-        return obj.data_structure.parameter_view(self.name, location)
-
 
 @dataclass
 class Component:
     """
     Base component for structuring base FSPM modules
 
-    Variables are declared with declare() / state_variable() / input_variable() / parameter(); the data lives in a
-    DataStructure (see FunctionalComponent).
+    Variables are declared with state_variable(), input_variable(), parameter(), setting() and forcing_variable();
+    the data lives in a DataStructure (see FunctionalComponent).
     """
 
     choregrapher = Choregrapher()
 
-    def __call__(self, *args):
+    def __call__(self):
         self.pull_available_inputs()
         self.choregrapher(instance=self)
         # State variables reach the MTG after every call with mtg_sync = "after_call"; by default ("lazy") the
@@ -254,55 +207,16 @@ class Component:
                 self.write_back_to_mtg()
         # The component's clock (forcings): the start of its next call
         self.__dict__["_clock"] = self.__dict__.get("_clock", 0.) + float(
-            getattr(self.choregrapher, "simulation_time_step", 0.) or 0.)
+            self.choregrapher.simulation_step() or self.time_step or 0.)
 
     def write_back_to_mtg(self) -> None:
         """Write the component's state variables to the MTG; FunctionalComponent implements it."""
         pass
 
-    @property
-    def inputs(self):
-        return [f.name for f in fields(self) if f.metadata.get("variable_type") == "input"]
-
-    @property
-    def state_variables(self):
-        return [f.name for f in fields(self) if f.metadata.get("variable_type") == "state_variable"]
-
-    @property
-    def extensive_variables(self):
-        return [f.name for f in fields(self) if (f.metadata.get("variable_type") == "state_variable" and f.metadata.get("state_variable_type") == "extensive")]
-
-    @property
-    def massic_concentration(self):
-        return [f.name for f in fields(self) if (f.metadata.get("variable_type") == "state_variable" and f.metadata.get("state_variable_type") == "massic_concentration")]
-
-    @property
-    def intensive_variables(self):
-        return [f.name for f in fields(self) if (f.metadata.get("variable_type") == "state_variable" and f.metadata.get("state_variable_type") == "intensive")]
-
-    @property
-    def non_inertial_extensive(self):
-        return [f.name for f in fields(self) if (f.metadata.get("variable_type") == "state_variable" and f.metadata.get("state_variable_type") == "NonInertialExtensive")]
-
-    @property
-    def non_inertial_intensive(self):
-        return [f.name for f in fields(self) if (f.metadata.get("variable_type") == "state_variable" and f.metadata.get("state_variable_type") == "NonInertialIntensive")]
-
-    @property
-    def non_inertial_variables(self):
-        return [f.name for f in fields(self) if (f.metadata.get("variable_type") == "state_variable" and f.metadata.get("state_variable_type") in ("NonInertialIntensive", "NonInertialExtensive"))]
-
-    @property
-    def descriptor(self):
-        return [f.name for f in fields(self) if (f.metadata.get("variable_type") == "state_variable" and f.metadata.get("state_variable_type") == "descriptor")]
-
-    @property
-    def plant_scale_state(self):
-        return [f.name for f in fields(self) if f.metadata.get("variable_type") == "plant_scale_state"]
-
-    @property
-    def parameters(self):
-        return [f.name for f in fields(self) if f.metadata.get("variable_type") == "parameter"]
+    @classmethod
+    def declared_parameters(cls) -> tuple:
+        """The names of the parameters the class declares (parameter)."""
+        return tuple(f.name for f in fields(cls) if f.metadata.get("variable_type") == "parameter")
 
     def pull_available_inputs(self):
         """Refresh the inputs derived by the coupling; FunctionalComponent implements it on its DataStructure."""
@@ -331,38 +245,39 @@ class Component:
 
     @classmethod
     def declarations(cls):
-        """A pandas DataFrame of the declared variables: name, kind (input, state_variable, parameter, forcing), scale
-        (its name) or location, unit, description, default, by (an input's provider, a parameter's owner), and the
-        bounds of its values min_value, max_value (None when not declared)."""
+        """
+        A pandas DataFrame of the declared variables, one row each: name; role (state_variable, input, parameter,
+        setting, forcing); kind (extensive, intensive, ...: how it depends on size, None when not declared); scale
+        (its name) or location; unit, description, default ("required" or "optional" for a forcing); by (an input's
+        provider, a parameter's owner); min_value, max_value (the bounds of its values, None when not declared);
+        references, DOI, unit_comment, value_comment.
+        """
         import pandas as pd
-        from openalea.metafspm.data_structure.configs import ScalesConfig
-        scale_names = {value: name for name, value in vars(ScalesConfig).items() if isinstance(value, int)}
+        scale_names = declared_scale_names()
         rows = []
         for f in fields(cls):
             meta = f.metadata
-            if "variable_type" not in meta:
+            role = meta.get("variable_type")
+            if role is None:
                 continue
             scale = meta.get("scale")
-            if meta["variable_type"] == "setting":         # one value of the model
-                rows.append(dict(name=f.name, kind="setting", scale="model", unit=meta.get("unit"),
-                                 description=meta.get("description"),
-                                 default=f.default if f.default is not MISSING else None, by=meta.get("by")))
-                continue
-            if meta["variable_type"] == "forcing":         # a time series, the same for every entity
-                rows.append(dict(name=f.name, kind="forcing", scale="time series", unit=meta.get("unit"),
-                                 description=meta.get("description"),
-                                 default="required" if meta.get("required", True) else "optional",
-                                 by=meta.get("by")))
-                continue
-            rows.append(dict(name=f.name, kind=meta["variable_type"],
-                             scale=scale_names.get(scale, scale) if scale is not None else meta.get("location"),
-                             unit=meta.get("unit"), description=meta.get("description"),
-                             default=f.default if f.default is not MISSING else None, by=meta.get("by"),
-                             min_value=_bound(meta.get("min_value")), max_value=_bound(meta.get("max_value"))))
-        table = pd.DataFrame(rows)
-        for column in ("min_value", "max_value"):
-            if column not in table:
-                table[column] = None
+            if role == "setting":                           # one value of the model
+                place = "model"
+            elif role == "forcing":                         # a time series, the same for every entity
+                place = "time series"
+            else:
+                place = scale_names.get(scale, scale) if scale is not None else meta.get("location")
+            default = f.default if f.default is not MISSING else None
+            if role == "forcing":
+                default = "required" if meta.get("required", True) else "optional"
+            rows.append(dict(name=f.name, role=role, kind=meta.get("kind"), scale=place,
+                             unit=meta.get("unit"), description=meta.get("description"), default=default,
+                             by=meta.get("by"), min_value=_bound(meta.get("min_value")),
+                             max_value=_bound(meta.get("max_value")), references=meta.get("references") or "",
+                             DOI=list(meta.get("DOI") or []), unit_comment=meta.get("unit_comment") or "",
+                             value_comment=meta.get("value_comment") or ""))
+        table = pd.DataFrame(rows, columns=DECLARATION_COLUMNS)
+        for column in ("kind", "min_value", "max_value"):
             table[column] = table[column].astype(object).where(table[column].notna(), None)
         return table
 
@@ -389,9 +304,9 @@ class DataStructureComponent(Component):
     """
 
     data_structure: Optional[DataStructure] = None
-    # Time step of the component (s): the dt of its equations, and its sub-step: it runs simulation_time_step /
-    # time_step times per simulation step. Default: its class's time_step when it sets one, else the simulation time
-    # step (the scene's)
+    # Time step of the component (s): the dt of its equations, and its sub-step: it runs (the scene's time step) /
+    # time_step times per scene step, once when run alone. Default: its class's time_step when it sets one, else the
+    # scene's
     time_step: Optional[float] = None
 
     # MTG synchronisation policy: "lazy" (default) writes the state variables
@@ -416,17 +331,17 @@ class DataStructureComponent(Component):
         self._auto_declare_on_ds(ds)
         if not hasattr(self, "pullable_inputs"):
             self.pullable_inputs = {}
-        if not hasattr(self.choregrapher, "simulation_time_step"):
-            self.choregrapher.add_simulation_time_step(1)
+        simulation_step = self.choregrapher.simulation_step()
         if self.time_step is None:
             declared = getattr(type(self), "time_step", None)                 # a class attribute of a subclass
-            self.time_step = declared if declared is not None else self.choregrapher.simulation_time_step
-        # The component runs once per time_step: simulation_time_step / time_step times per simulation step
-        sub_time_step = getattr(self, "sub_time_step", None) or self.time_step
-        from openalea.metafspm.coupling.choregrapher import sub_steps
-        sub_steps(self.choregrapher.simulation_time_step, sub_time_step, type(self).__name__)
+            self.time_step = declared if declared is not None else simulation_step
+        # The component runs once per time_step: simulation step / time_step times per simulation step; once per
+        # call alone, or without a time step (then its equations may not read self.dt)
+        if simulation_step is not None and self.time_step is not None:
+            from openalea.metafspm.coupling.choregrapher import sub_steps
+            sub_steps(simulation_step, self.time_step, type(self).__name__)
         # Live reading: steps and solves read and write the DataStructure arrays
-        self.choregrapher.add_time_and_data(self, sub_time_step, ds, compartment="graph")
+        self.choregrapher.bind(self, self.time_step, ds)
 
     def pull_available_inputs(self):
         """
@@ -702,8 +617,7 @@ class FunctionalComponent(DataStructureComponent):
             return start + offset + self.__dict__["_ivp_time"]
         step = self.__dict__.get("_current_dt", None)
         if step is None:                                   # outside a solve: the end of the component's sub-step
-            step = float(getattr(self, "time_step", None) or getattr(self.choregrapher, "simulation_time_step", 0.)
-                         or 0.)
+            step = float(getattr(self, "time_step", None) or self.choregrapher.simulation_step() or 0.)
         return start + offset + step
 
     def forcing(self, name: str, at: str = None):
@@ -738,7 +652,11 @@ class FunctionalComponent(DataStructureComponent):
     @property
     def dt(self) -> float:
         """Length of the current (sub-)step of a graph-system solve; the time step outside sub-stepping."""
-        return self.__dict__.get("_current_dt", getattr(self, "time_step", None))
+        step = self.__dict__.get("_current_dt", getattr(self, "time_step", None))
+        if step is None:
+            raise AttributeError(f"{type(self).__name__} has no time step: give its time_step= (s), or build it in a "
+                                 "Scene (its time_step=)")
+        return step
 
     def previous(self, name: str, at: str = "substep") -> np.ndarray:
         """
@@ -942,16 +860,16 @@ class StructuralComponent(DataStructureComponent):
         values = self.partition_weight(ds) if callable(self.partition_weight) else ds.get(self.partition_weight)
         return np.array(values, dtype=float)
 
-    def __call__(self, *args):
+    def __call__(self):
         if self.repartition not in ("after_mpg_steps", "end_of_call"):
             raise ValueError(f"{type(self).__name__}.repartition must be 'after_mpg_steps' or 'end_of_call', got "
                              f"'{self.repartition}'")
         if self.repartition != "end_of_call" or self.partition_weight is None:
-            return super().__call__(*args)
+            return super().__call__()
         ds = self.data_structure
         start = ds.entity_ids("node").tolist()
         start_weights = self._weights() if self.partition_basis is None else None
-        super().__call__(*args)
+        super().__call__()
         ids = ds.entity_ids("node").tolist()
         if start_weights is not None:
             basis = dict(zip(start, start_weights.tolist()))
@@ -1057,8 +975,7 @@ class StructuralComponent(DataStructureComponent):
             current[index] = values
             ds.set(name, current)
         if new.complexes is not None and new.complexes.values:
-            scale_names = {value: name for name, value in vars(type(g.scales)).items() if isinstance(value, int)
-                           and not name.startswith("_")}
+            scale_names = declared_scale_names(g)
             for name, values in new.complexes.values.items():
                 if not ds.has(name):
                     raise KeyError(f"NewComplexes: '{name}' is not a variable of the DataStructure")

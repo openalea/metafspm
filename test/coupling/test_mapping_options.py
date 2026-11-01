@@ -24,16 +24,16 @@ from simple_seedling import generate_simple_mpg_seedling
 
 @dataclass
 class PlantSide(FunctionalComponent):
-    exudation: float = state_variable(**DOC, initialize=1., scale=scales.SubOrgan, state_variable_type="extensive")
-    soil_nitrate: float = input_variable(**DOC, by="SoilSide", initialize=-1., scale=scales.SubOrgan,
-                                         state_variable_type="intensive")
+    exudation: float = state_variable(**DOC, default=1., scale=scales.SubOrgan, kind="extensive")
+    soil_nitrate: float = input_variable(**DOC, by="SoilSide", default=-1., scale=scales.SubOrgan,
+                                         kind="intensive")
 
 
 @dataclass
 class SoilSide(FunctionalComponent):
-    exudation: float = input_variable(**DOC, by="PlantSide", initialize=0., location="cell",
-                                      state_variable_type="extensive")
-    soil_nitrate: float = state_variable(**DOC, initialize=5., location="cell", state_variable_type="intensive")
+    exudation: float = input_variable(**DOC, by="PlantSide", default=0., location="cell",
+                                      kind="extensive")
+    soil_nitrate: float = state_variable(**DOC, default=5., location="cell", kind="intensive")
 
 
 def _deepest(plants):
@@ -97,8 +97,8 @@ def test_an_unknown_mapping_method_is_refused():
 
 @dataclass
 class LightSide(FunctionalComponent):
-    exudation: float = input_variable(**DOC, by="PlantSide", initialize=0., scale=scales.SubOrgan,
-                                      state_variable_type="extensive")
+    exudation: float = input_variable(**DOC, by="PlantSide", default=0., scale=scales.SubOrgan,
+                                      kind="extensive")
 
 
 def test_a_union_refuses_an_aggregation():
@@ -112,12 +112,12 @@ def test_a_union_refuses_an_aggregation():
 
 @dataclass
 class Column(FunctionalComponent):
-    temperature: float = state_variable(**DOC, initialize=10., location="cell")
+    temperature: float = state_variable(**DOC, default=10., location="cell")
 
 
 @dataclass
 class Grid(FunctionalComponent):
-    temperature: float = input_variable(**DOC, by="Column", initialize=0., location="cell")
+    temperature: float = input_variable(**DOC, by="Column", default=0., location="cell")
 
 
 def test_a_column_grid_link_needs_a_kind_or_an_aggregation():
@@ -126,7 +126,7 @@ def test_a_column_grid_link_needs_a_kind_or_an_aggregation():
     components = (Column(data_structure=column), Grid(data_structure=grid))
     mapping = LayerMapping(column, grid, axis="z")
     translator = Translator().link("Grid", "temperature", "Column", {"temperature": 1.})
-    with pytest.raises(DeclarationError, match="a column <-> grid link needs a kind or aggregation="):
+    with pytest.raises(DeclarationError, match="does not imply one: give aggregation="):
         Exchanges(translator, components, [mapping])
     explicit = Translator().link("Grid", "temperature", "Column", {"temperature": 1.}, aggregation="mean")
     Exchanges(explicit, components, [mapping]).exchange(into=grid)
@@ -192,13 +192,13 @@ def test_long_form_links_round_trip_through_the_nested_and_yaml_formats(tmp_path
 
 @dataclass
 class Provider(FunctionalComponent):
-    uptake: float = state_variable(**DOC, initialize=2., scale=scales.SubOrgan, state_variable_type="extensive")
+    uptake: float = state_variable(**DOC, default=2., scale=scales.SubOrgan, kind="extensive")
 
 
 @dataclass
 class Receiver(FunctionalComponent):
-    uptake: float = input_variable(**DOC, by="Provider", initialize=0., scale=scales.SubOrgan,
-                                   state_variable_type="extensive")
+    uptake: float = input_variable(**DOC, by="Provider", default=0., scale=scales.SubOrgan,
+                                   kind="extensive")
 
 
 def test_a_same_name_link_stating_its_scale_is_an_identity():

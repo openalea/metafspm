@@ -102,8 +102,8 @@ def test_scenarios_are_flat():
 
 @dataclass
 class Exudation(FunctionalComponent):
-    hexose: float = state_variable(**DOC, initialize=1., scale=scales.SubOrgan)
-    exudation: float = state_variable(**DOC, initialize=0., scale=scales.SubOrgan)
+    hexose: float = state_variable(**DOC, default=1., scale=scales.SubOrgan)
+    exudation: float = state_variable(**DOC, default=0., scale=scales.SubOrgan)
     k: float = parameter(**DOC, by="", default=0.1)
 
     @rate
@@ -113,8 +113,8 @@ class Exudation(FunctionalComponent):
 
 @dataclass
 class ReadsSelf(FunctionalComponent):
-    hexose: float = state_variable(**DOC, initialize=1., scale=scales.SubOrgan)
-    leak: float = state_variable(**DOC, initialize=0., scale=scales.SubOrgan)
+    hexose: float = state_variable(**DOC, default=1., scale=scales.SubOrgan)
+    leak: float = state_variable(**DOC, default=0., scale=scales.SubOrgan)
     k: float = parameter(**DOC, by="", default=0.1)
 
     @rate
@@ -188,8 +188,8 @@ def test_numba_steps_take_homogeneous_and_heterogeneous_parameters():
 
 @dataclass
 class PlantFreeGridDecay(FunctionalComponent):
-    nitrate: float = state_variable(**DOC, initialize=1., location="cell")
-    decay: float = state_variable(**DOC, initialize=0., location="cell")
+    nitrate: float = state_variable(**DOC, default=1., location="cell")
+    decay: float = state_variable(**DOC, default=0., location="cell")
     k: float = parameter(**DOC, by="", default=0.5)
 
     @rate

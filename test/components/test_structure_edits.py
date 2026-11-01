@@ -18,20 +18,20 @@ from growth import DOC, make_chain
 
 @pytest.fixture(autouse=True)
 def _simulation_time_step():
-    Choregrapher().add_simulation_time_step(1)
+    Choregrapher()._set_simulation_time_step(1)
 
 
 @dataclass
 class Tissue(FunctionalComponent):
-    mass: float = state_variable(**DOC, initialize=1., scale=scales.SubOrgan, state_variable_type="extensive")
-    concentration: float = state_variable(**DOC, initialize=2., scale=scales.SubOrgan, on_grow="inherit",
-                                          state_variable_type="intensive")
+    mass: float = state_variable(**DOC, default=1., scale=scales.SubOrgan, kind="extensive")
+    concentration: float = state_variable(**DOC, default=2., scale=scales.SubOrgan, on_grow="inherit",
+                                          kind="intensive")
 
 
 @dataclass
 class Emerging(StructuralComponent):
     """An element emerges between two segments (insert_parent), and a middle segment is removed (re-linking)."""
-    mass: float = state_variable(**DOC, initialize=1., scale=scales.SubOrgan, state_variable_type="extensive")
+    mass: float = state_variable(**DOC, default=1., scale=scales.SubOrgan, kind="extensive")
     insert_above: int = -1
     remove: int = -1
 
@@ -85,8 +85,8 @@ def test_a_removed_vertex_relinks_its_children_to_their_grandparent():
 
 @dataclass
 class Carbon(FunctionalComponent):
-    sugar: float = state_variable(**DOC, initialize=1., scale=scales.SubOrgan)
-    respiration: float = state_variable(**DOC, initialize=0., scale=scales.SubOrgan)
+    sugar: float = state_variable(**DOC, default=1., scale=scales.SubOrgan)
+    respiration: float = state_variable(**DOC, default=0., scale=scales.SubOrgan)
 
     @rate
     def _respiration(self, sugar):

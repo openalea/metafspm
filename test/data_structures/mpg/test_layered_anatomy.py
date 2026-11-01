@@ -95,9 +95,9 @@ def test_a_mask_on_a_cell_variable_reads_the_default_on_walls():
 
 @dataclass
 class CellProperties(FunctionalComponent):
-    osmotic_potential: float = state_variable(**DOC, initialize=-0.6, scale=scales.Cell)
+    osmotic_potential: float = state_variable(**DOC, default=-0.6, scale=scales.Cell)
     reflection: float = parameter(**DOC, by="", default=0.8, scale=scales.Cell)
-    seen: float = state_variable(**DOC, initialize=0., location="node")
+    seen: float = state_variable(**DOC, default=0., location="node")
 
     @rate
     def _seen(self, seen, reflection):
@@ -128,8 +128,8 @@ def test_a_cell_scale_declaration_is_the_cells_property_and_reaches_their_protop
 @dataclass
 class SectionHydraulics(FunctionalComponent):
     """Steady water potential on two sections and their xylem junctions; walls exchange with the soil."""
-    water_potential: float = state_variable(**DOC, initialize=-0.5, location="node")
-    water_flux: float = state_variable(**DOC, initialize=0., location="edge")
+    water_potential: float = state_variable(**DOC, default=-0.5, location="node")
+    water_flux: float = state_variable(**DOC, default=0., location="edge")
     K: float = parameter(**DOC, by="", default=1., location="edge")
     label: float = parameter(**DOC, by="", default=0., scale=scales.Compartment)
     kind: float = parameter(**DOC, by="", default=0., scale=scales.Compartment)

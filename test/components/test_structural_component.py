@@ -105,12 +105,12 @@ def test_the_owner_of_a_variable_sets_its_growth_policy(plant):
 
 @dataclass
 class _SegmentsProbe(RootGrowthProbe):
-    x1: float = state_variable(**DOC, initialize=0., scale=scales.SubOrgan, state_variable_type="descriptor")
-    y1: float = state_variable(**DOC, initialize=0., scale=scales.SubOrgan, state_variable_type="descriptor")
-    z1: float = state_variable(**DOC, initialize=0., scale=scales.SubOrgan, state_variable_type="descriptor")
-    x2: float = state_variable(**DOC, initialize=0., scale=scales.SubOrgan, state_variable_type="descriptor")
-    y2: float = state_variable(**DOC, initialize=0., scale=scales.SubOrgan, state_variable_type="descriptor")
-    z2: float = state_variable(**DOC, initialize=0., scale=scales.SubOrgan, state_variable_type="descriptor")
+    x1: float = state_variable(**DOC, default=0., scale=scales.SubOrgan, kind="descriptor")
+    y1: float = state_variable(**DOC, default=0., scale=scales.SubOrgan, kind="descriptor")
+    z1: float = state_variable(**DOC, default=0., scale=scales.SubOrgan, kind="descriptor")
+    x2: float = state_variable(**DOC, default=0., scale=scales.SubOrgan, kind="descriptor")
+    y2: float = state_variable(**DOC, default=0., scale=scales.SubOrgan, kind="descriptor")
+    z2: float = state_variable(**DOC, default=0., scale=scales.SubOrgan, kind="descriptor")
 
 
 def test_default_triangles_are_the_segments_cylinders():

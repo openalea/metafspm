@@ -27,7 +27,7 @@ from nitrogen import (DOC, DT, K, SCALES, NitrogenFields, Transport, TransportDi
 
 @pytest.fixture(autouse=True)
 def _simulation_time_step():
-    Choregrapher().add_simulation_time_step(DT)
+    Choregrapher()._set_simulation_time_step(DT)
 
 
 @pytest.fixture(params=list(SCALES))
@@ -199,7 +199,7 @@ def test_the_rate_form_with_an_ivp_solver_is_close_to_fine_backward_euler(scale)
 
 @dataclass
 class TransportWithExchange(Transport):
-    radial_solute_input: float = state_variable(**DOC, initialize=0., location="node", state_variable_type="extensive")
+    radial_solute_input: float = state_variable(**DOC, default=0., location="node", kind="extensive")
     k_radial: float = parameter(**DOC, by="TransportWithExchange", default=0.)
     c_ext: float = parameter(**DOC, by="TransportWithExchange", default=0.)
 
@@ -226,16 +226,16 @@ def test_a_rate_step_runs_before_a_graph_system_scheduled_as_a_state(scale):
 
 @dataclass
 class SegmentFields(FunctionalComponent):
-    concentration: float = state_variable(**DOC, initialize=0.5, scale=scales.SubOrgan)
+    concentration: float = state_variable(**DOC, default=0.5, scale=scales.SubOrgan)
     K_axial: float = parameter(**DOC, by="SegmentFields", default=0.05, scale=scales.SubOrgan, location="edge",
-                               mapping="child")
+                               aggregation="child")
 
 
 @dataclass
 class OrganFields(FunctionalComponent):
-    concentration: float = state_variable(**DOC, initialize=0.5, scale=scales.Organ)
+    concentration: float = state_variable(**DOC, default=0.5, scale=scales.Organ)
     K_axial: float = parameter(**DOC, by="OrganFields", default=0.05, scale=scales.Organ, location="edge",
-                               mapping="child")
+                               aggregation="child")
 
 
 FIELDS = {"SubOrgan": SegmentFields, "Organ": OrganFields}

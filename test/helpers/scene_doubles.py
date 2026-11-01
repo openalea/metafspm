@@ -21,7 +21,7 @@ DT = 3600.
 
 
 def coordinate():
-    return state_variable(**DOC, initialize=0., scale=scales.SubOrgan, state_variable_type="descriptor",
+    return state_variable(**DOC, default=0., scale=scales.SubOrgan, kind="descriptor",
                           on_grow="inherit")
 
 
@@ -38,9 +38,9 @@ class SceneGeometry(FunctionalComponent):
 
 @dataclass
 class SceneExudation(SceneGeometry):
-    exudation: float = state_variable(**DOC, initialize=0., scale=scales.SubOrgan, state_variable_type="extensive")
-    soil_nitrate: float = input_variable(**DOC, by="SceneSoilNitrate", initialize=0., scale=scales.SubOrgan)
-    struct_mass: float = input_variable(**DOC, by="RootGrowthProbe", initialize=0., scale=scales.SubOrgan)
+    exudation: float = state_variable(**DOC, default=0., scale=scales.SubOrgan, kind="extensive")
+    soil_nitrate: float = input_variable(**DOC, by="SceneSoilNitrate", default=0., scale=scales.SubOrgan)
+    struct_mass: float = input_variable(**DOC, by="RootGrowthProbe", default=0., scale=scales.SubOrgan)
     exudation_rate: float = parameter(**DOC, by="", default=0.1)
 
     @rate
@@ -51,8 +51,8 @@ class SceneExudation(SceneGeometry):
 @dataclass
 class SeedlingExudation(SceneGeometry):
     """The second model's component (no growth): a constant exudation."""
-    exudation: float = state_variable(**DOC, initialize=0., scale=scales.SubOrgan, state_variable_type="extensive")
-    soil_nitrate: float = input_variable(**DOC, by="SceneSoilNitrate", initialize=0., scale=scales.SubOrgan)
+    exudation: float = state_variable(**DOC, default=0., scale=scales.SubOrgan, kind="extensive")
+    soil_nitrate: float = input_variable(**DOC, by="SceneSoilNitrate", default=0., scale=scales.SubOrgan)
 
     @rate
     def _exudation(self, soil_nitrate):
@@ -88,9 +88,9 @@ class Seedlings:
 
 @dataclass
 class SceneSoilNitrate(FunctionalComponent):
-    exudation: float = input_variable(**DOC, by="SceneExudation", initialize=0., location="cell",
-                                      state_variable_type="extensive")
-    soil_nitrate: float = state_variable(**DOC, initialize=1., location="cell", state_variable_type="intensive")
+    exudation: float = input_variable(**DOC, by="SceneExudation", default=0., location="cell",
+                                      kind="extensive")
+    soil_nitrate: float = state_variable(**DOC, default=1., location="cell", kind="intensive")
 
     @rate
     def _soil_nitrate(self, soil_nitrate, exudation):

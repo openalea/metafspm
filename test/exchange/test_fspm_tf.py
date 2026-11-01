@@ -37,12 +37,12 @@ def _population():
 @dataclass
 class _SegmentsProbe(RootGrowthProbe):
     """The growth probe with segment ends: its segments drawn as cylinders (StructuralComponent's triangles)."""
-    x1: float = state_variable(**DOC, initialize=0., scale=scales.SubOrgan, state_variable_type="descriptor")
-    y1: float = state_variable(**DOC, initialize=0., scale=scales.SubOrgan, state_variable_type="descriptor")
-    z1: float = state_variable(**DOC, initialize=0., scale=scales.SubOrgan, state_variable_type="descriptor")
-    x2: float = state_variable(**DOC, initialize=0., scale=scales.SubOrgan, state_variable_type="descriptor")
-    y2: float = state_variable(**DOC, initialize=0., scale=scales.SubOrgan, state_variable_type="descriptor")
-    z2: float = state_variable(**DOC, initialize=0., scale=scales.SubOrgan, state_variable_type="descriptor")
+    x1: float = state_variable(**DOC, default=0., scale=scales.SubOrgan, kind="descriptor")
+    y1: float = state_variable(**DOC, default=0., scale=scales.SubOrgan, kind="descriptor")
+    z1: float = state_variable(**DOC, default=0., scale=scales.SubOrgan, kind="descriptor")
+    x2: float = state_variable(**DOC, default=0., scale=scales.SubOrgan, kind="descriptor")
+    y2: float = state_variable(**DOC, default=0., scale=scales.SubOrgan, kind="descriptor")
+    z2: float = state_variable(**DOC, default=0., scale=scales.SubOrgan, kind="descriptor")
 
 
 def _models(ds):
@@ -326,3 +326,24 @@ def test_what_numbers_and_text_alone_cannot_hold():
     _same_variables(ds, again)
     assert again.get("offered_mass")[0] == np.inf
     assert again.structure.property("anatomy_class")[segment] == ("root", 3, 0.5)
+
+
+def test_frames_written_to_and_read_from_files(tmp_path):
+    """export_frame and export_scene write .glb files, import_frame rebuilds the DataStructures from one."""
+    from types import SimpleNamespace
+
+    from openalea.metafspm.io.fspm_tf import export_frame, export_scene, import_frame
+
+    ds = _population()
+    models = _models(ds)
+    export_frame(str(tmp_path / "frame.glb"), {"plants": ds}, components={"plants": list(models)}, time=2.,
+                 time_unit="h")
+    assert fspm_tf.read(str(tmp_path / "frame.glb")).time_unit == "h"
+    rebuilt = import_frame(str(tmp_path / "frame.glb"))["plants"]
+    for name in ("struct_mass", "length"):
+        np.testing.assert_array_equal(rebuilt.get(name), ds.get(name))
+    scene = SimpleNamespace(populations=[], environment=[], mappings=[], time=3600., iteration=1,
+                            data_structures=lambda: {"plants": (ds, None, list(models))})
+    export_scene(str(tmp_path / "scene.glb"), scene)
+    frame = fspm_tf.read(str(tmp_path / "scene.glb"))
+    assert frame.time == 3600. and frame.step == 1 and [d.id for d in frame.data_structures] == ["plants"]

@@ -27,7 +27,7 @@ SOIL_WEIGHT, XYLEM_WEIGHT = 0.6, 1.0
 
 @pytest.fixture(autouse=True)
 def _simulation_time_step():
-    Choregrapher().add_simulation_time_step(1)
+    Choregrapher()._set_simulation_time_step(1)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -64,15 +64,15 @@ class _HydraulicsWithJacobian(_Hydraulics):
 
 @dataclass
 class TissueHydraulics(FunctionalComponent):
-    water_potential: float = state_variable(**DOC, initialize=0., location="node", state_variable_type="intensive")
+    water_potential: float = state_variable(**DOC, default=0., location="node", kind="intensive")
     K_membrane: float = parameter(**DOC, by="TissueHydraulics", default=0., location="edge")
     K_symplastic: float = parameter(**DOC, by="TissueHydraulics", default=0., location="edge")
     K_apoplastic: float = parameter(**DOC, by="TissueHydraulics", default=0., location="edge")
-    soil_water_potential: float = input_variable(**DOC, by="Soil", initialize=0., location="node")
-    xylem_water_potential: float = input_variable(**DOC, by="Xylem", initialize=-1., location="node")
-    is_soil: float = input_variable(**DOC, by="Setup", initialize=0., location="node")
-    is_collar: float = input_variable(**DOC, by="Setup", initialize=0., location="node")
-    edge_water_flux: float = state_variable(**DOC, initialize=0., location="edge", state_variable_type="extensive")
+    soil_water_potential: float = input_variable(**DOC, by="Soil", default=0., location="node")
+    xylem_water_potential: float = input_variable(**DOC, by="Xylem", default=-1., location="node")
+    is_soil: float = input_variable(**DOC, by="Setup", default=0., location="node")
+    is_collar: float = input_variable(**DOC, by="Setup", default=0., location="node")
+    edge_water_flux: float = state_variable(**DOC, default=0., location="edge", kind="extensive")
 
     @graph_system(node_unknowns=["water_potential"], solver="newton", max_iter=5)
     class _pressure_solve(_HydraulicsWithJacobian):
@@ -192,8 +192,8 @@ def _laplacian(self, pressure, K):
 
 @dataclass
 class ChainFields(FunctionalComponent):
-    pressure: float = state_variable(**DOC, initialize=0., location="node", state_variable_type="intensive")
-    is_collar: float = input_variable(**DOC, by="Setup", initialize=0., location="node")
+    pressure: float = state_variable(**DOC, default=0., location="node", kind="intensive")
+    is_collar: float = input_variable(**DOC, by="Setup", default=0., location="node")
     K: float = parameter(**DOC, by="ChainFields", default=1., location="edge")
 
 

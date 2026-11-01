@@ -269,10 +269,10 @@ def test_component_fields_declare_their_on_grow_policy():
     @dataclass
     class GrowingProbe(FunctionalComponent):
         concentration: float = state_variable(unit="", unit_comment="", description="", min_value="", max_value="",
-                                              value_comment="", references="", DOI="", by="", initialize=2.,
-                                              scale="node", on_grow="inherit")
+                                              value_comment="", references="", DOI="", by="", default=2.,
+                                              location="node", on_grow="inherit")
         amount: float = state_variable(unit="", unit_comment="", description="", min_value="", max_value="",
-                                       value_comment="", references="", DOI="", by="", initialize=5., scale="node")
+                                       value_comment="", references="", DOI="", by="", default=5., location="node")
 
     g, seedling, ds = seedling_ds()
     GrowingProbe(data_structure=ds)

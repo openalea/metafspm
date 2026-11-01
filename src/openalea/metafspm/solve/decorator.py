@@ -621,7 +621,7 @@ def _snapshot(instance, required_names, node_vids_int, edge_vids_int,
             loc = "node"   # scalars are broadcast over the entities; grid cells are the graph's nodes
         elif loc not in ("node", "edge"):
             raise ValueError(f"{type(instance).__name__}: '{name}' is stored at {loc}, graph equations take node "
-                             f"or edge arrays: declare it with location='node' and mapping='broadcast'")
+                             f"or edge arrays: declare it with location='node' and aggregation='broadcast'")
         size = len(node_vids_int) if loc == "node" else len(edge_vids_int)
         # Parameters and inputs: read-only views, so that equations cannot overwrite them
         (node_snap if loc == "node" else edge_snap)[name] = _read_array(ds, name, loc, size, type(instance).__name__,

@@ -61,10 +61,11 @@ def _scale(value) -> Optional[int]:
 
 def _scale_name(scale: int) -> str:
     """ScalesConfig name of a scale integer."""
-    for name, value in vars(ScalesConfig).items():
-        if not name.startswith("_") and value == scale and isinstance(value, int):
-            return name
-    raise ValueError(f"Scale {scale} has no ScalesConfig name")
+    from openalea.metafspm.coupling.declaration import scale_names
+    names = scale_names()
+    if scale not in names:
+        raise ValueError(f"Scale {scale} has no ScalesConfig name")
+    return names[scale]
 
 
 @dataclass(frozen=True)
@@ -76,7 +77,7 @@ class Link:
                      variable names passed to *formula*.
         aggregation: how values are mapped across locations ("sum", "mean", "weighted_mean", "broadcast",
                      "child", "parent", ...), with *weight* for "weighted_mean". Without it, a link between two
-                     locations is mapped from its provider's state_variable_type.
+                     locations is mapped from its provider's kind.
         scale, source_scale:
                      the receiver-side (and sources') scale when the link changes scale (a ScalesConfig reference
                      or name); when given, the receiver's (and the sources') declared location must be that
@@ -129,10 +130,11 @@ class Link:
         return "same_name_factor" if source == self.variable else "factor"
 
     @property
-    def kind(self) -> str:
-        """identity (no link needed on one DataStructure) | alias (name-level) | derived (computed)."""
-        detail = self.detail
-        return detail if detail in ("identity", "alias") else "derived"
+    def coupling(self) -> str:
+        """How the link couples on one DataStructure: "shared" (the same name, nothing to do), "alias" (a rename) or
+        "derived" (computed: a factor, a change of scale, a formula), as CompositeModel.couplings() lists it."""
+        detail = self.mapped_detail
+        return {"identity": "shared", "alias": "alias"}.get(detail, "derived")
 
     @property
     def mapped_detail(self) -> str:

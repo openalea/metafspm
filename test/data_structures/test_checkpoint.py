@@ -124,7 +124,7 @@ def test_lambdas_are_refused_with_a_hint(tmp_path):
 
 @dataclass
 class GridDiffusionProbe(FunctionalComponent):
-    nitrate: float = state_variable(**DOC, initialize=1., location="cell")
+    nitrate: float = state_variable(**DOC, default=1., location="cell")
 
     @rate
     def _nitrate(self, nitrate):
