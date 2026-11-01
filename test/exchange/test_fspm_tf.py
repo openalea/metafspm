@@ -19,7 +19,7 @@ from openalea.metafspm.data_structure.configs import ScalesConfig as scales
 from openalea.metafspm.data_structure.adaptive_grid import AdaptiveGridDataStructure
 from openalea.metafspm.data_structure.data_api import ArrayDataStructure, MPGDataStructure
 from openalea.metafspm.io.fspm_tf import from_frame, to_frame, ucum_unit
-from openalea.metafspm.scene.population import build_population
+from openalea.metafspm.scene.population import _build_population
 
 from growth import DOC, CarbonProbe, RootGrowthProbe
 from layered_anatomy import make_layered_anatomy, wiring
@@ -28,7 +28,7 @@ from layered_anatomy import make_layered_anatomy, wiring
 def _population():
     table = pd.DataFrame([dict(plant=f"p{i}", model=None, x=0.1 * i, y=0., z=0., rotation=0.,
                                scenario={"n_segments": 2 + i}) for i in range(3)])
-    g, _ = build_population(table, initiators=(RootGrowthProbe,))
+    g, _ = _build_population(table, initiators=(RootGrowthProbe,))
     g.populate_graph(g.scales.SubOrgan)
     g.convert_properties_to_arraydict()
     return MPGDataStructure(g, from_scale=g.scales.SubOrgan)
@@ -205,7 +205,8 @@ def test_a_model_lighting_the_plants_declares_its_variables_too():
     ds.register("PARa", 100., location="node")
     light = SimpleNamespace(components=[Light()])
     scene = SimpleNamespace(populations=[SimpleNamespace(name="plants", data_structure=ds, components=list(models))],
-                            environment=[light], _data_structures=lambda model: [ds], mappings=[], time=0., iteration=0)
+                            environment=[light], mappings=[], time=0., iteration=0,
+                            data_structures=lambda: {"plants": (ds, None, list(models) + light.components)})
     frame = scene_to_frame(scene)
     assert [data_structure.id for data_structure in frame.data_structures] == ["plants"]
     declared = frame.data_structures[0].entity_set("SubOrgan").variables["PARa"]

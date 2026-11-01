@@ -51,8 +51,7 @@ class ContractPlant(CompositeModel):
             ds.register(name, [g.property(name)[v] for v in ds.entity_ids("node")], location="node")
         self.carbon = doubles_ds.PlantCarbon(data_structure=ds)
         self.nitrogen = doubles_ds.PlantNitrogen(data_structure=ds)
-        self.declare_data_and_couple_components(translator_path=self.translator_path,
-                                                components=(self.carbon, self.nitrogen))
+        self.couple(self.carbon, self.nitrogen, translator=self.translator_path)
 
     def run(self):
         self.carbon()
@@ -60,8 +59,10 @@ class ContractPlant(CompositeModel):
 
 
 class ContractSoil:
-    def __init__(self, populations, scene_xrange, scene_yrange, time_step):
-        self.grid = ArrayDataStructure(shape=(int(round(scene_xrange / SIDE)), int(round(scene_yrange / SIDE)), 2),
+    compartment = "Soil"
+
+    def __init__(self, plant_data_structures, xrange, yrange, time_step):
+        self.grid = ArrayDataStructure(shape=(int(round(xrange / SIDE)), int(round(yrange / SIDE)), 2),
                                        dx=SIDE)
         self.soil = doubles_ds.GridSoil(data_structure=self.grid)
         self.components = [self.soil]
@@ -89,7 +90,7 @@ def scene(tmp_path):
     table = pd.DataFrame([dict(plant=f"p{i}", model=ContractPlant, x=0.025 + 0.05 * i, y=0.025, z=-0.01, rotation=0.,
                                scenario={}) for i in range(3)])
     return Scene(table, environment=[ContractSoil], translator=_soil_links(nested), time_step=doubles.TIME_STEP,
-                 scene_xrange=0.15, scene_yrange=0.05)
+                 xrange=0.15, yrange=0.05)
 
 
 def test_the_contract_models_run_in_a_scene(scene):

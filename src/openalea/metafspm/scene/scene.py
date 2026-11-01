@@ -3,8 +3,10 @@ A scene of plant populations and environment models in one process::
 
   scene = Scene(planting=planting(stand(...), Model, scenario), environment=[SoilModel, LightModel],
                 environment_scenarios=[{}, {}], translator="scene_translator.py", time_step=3600,
-                forcings={"air_temperature": series}, recorder=SceneRecorder("outputs", log_plants=["p0"]))
+                forcings={"air_temperature": series}, recorder=SceneRecorder("outputs", segment_plants=["p0"]))
   scene.simulate(n_iterations=2500)
+  scene = Scene.from_scenario(read_scenarios("scenarios.csv")["dry"], [Planting()], Model, environment=[SoilModel],
+                              translator=..., time_step=3600, recorder="outputs")    one column of a scenario table
 
 Contracts::
 
@@ -18,10 +20,10 @@ Contracts::
                      set by the Scene after the model is built (as constructor keywords would), per plant for the
                      numeric ones of plant models. Keys the model names in __init__ are its own arguments; the keys
                      initiators read are theirs. Any other key raises (a typo, a parameter no component declares).
-  environment model  Model(populations, scene_xrange, scene_yrange, time_step, <its own arguments>): builds its DataStructures
-                     (a grid, a UnionDataStructure of the populations, or works on a population's MPG) and exposes
-                     components and run(); its time-varying inputs are the scene's forcings. Its compartment
-                     class attribute ("Soil" or "Atmosphere") names its outputs' folder.
+  environment model  Model(plant_data_structures, xrange, yrange, time_step, <its own arguments>): builds its
+                     DataStructures (a grid, a UnionDataStructure of the populations, or works on a population's
+                     MPG) and exposes components and run(); its time-varying inputs are the scene's forcings. Its
+                     compartment class attribute ("Soil" or "Atmosphere", required) names its outputs' folder.
 
 A step: each environment model, after the exchanges into its DataStructures (the plants' last values); then
 each population, after the exchanges into it (the environment's new values). Exchanges between DataStructures go
@@ -32,6 +34,7 @@ Emergence: an "emergence_time" column of the planting table (s, scene time) free
 its nodes leave the "active" mask (steps skip them; MPG-style steps use active_ids()) and the mappings (no exchange).
 """
 import os
+import warnings
 from time import perf_counter
 from typing import Mapping
 
@@ -39,14 +42,13 @@ import numpy as np
 import pandas as pd
 
 from openalea.metafspm.coupling.choregrapher import Choregrapher
-from openalea.metafspm.coupling.composite_wrapper import CompositeModel
-from openalea.metafspm.coupling.forcings import forcing_table, forcing_value
+from openalea.metafspm.coupling.forcings import forcing_table, forcing_value, is_spatial
 from openalea.metafspm.coupling.cross import CrossMapping, Exchanges, UnionDataStructure, UnionMapping
 from openalea.metafspm.coupling.translator import Translator
 from openalea.metafspm.data_structure.data_api import MPGDataStructure
 from openalea.metafspm.scene.recorder import SceneRecorder
-from openalea.metafspm.scene.population import (apply_model_scenario, apply_plant_scenarios, build_population,
-                                                flat_scenario, model_arguments, model_keywords)
+from openalea.metafspm.scene.population import (Population, _apply_model_scenario, _flat_scenario, _model_arguments,
+                                                _model_keywords, planting as _planting, population_data_structure)
 
 
 class AllMasks:
@@ -60,39 +62,6 @@ class AllMasks:
         for name in self.names[1:]:
             selected = selected & ds.mask(name)
         return selected
-
-
-class Population:
-    """The plants of one model: their planting rows, Plant vertices, MPGDataStructure and model instance."""
-
-    def __init__(self, model, table: pd.DataFrame, plants: list, data_structure, instance):
-        self.model, self.table, self.plants = model, table, list(plants)
-        self.data_structure, self.instance = data_structure, instance
-        self.emergence = "emergence_time" in table.columns
-
-    @property
-    def name(self) -> str:
-        return self.model.__name__
-
-    @property
-    def components(self) -> list:
-        return list(self.instance.components)
-
-    def plant_names(self) -> dict:
-        """{Plant vid: name in the planting table}."""
-        return {int(vid): str(name) for vid, name in zip(self.plants, self.table["plant"])}
-
-
-def load_translator(translator) -> Translator:
-    """A Translator from a Translator, a nested dict, a .py module path or a YAML path (None: no link)."""
-    if translator is None:
-        return Translator()
-    if isinstance(translator, Translator):
-        return translator
-    if isinstance(translator, Mapping):
-        return Translator.from_dict(translator)
-    path = str(translator)
-    return Translator.from_module(path) if path.endswith(".py") else Translator.from_yaml(path)
 
 
 def _same(a, b) -> bool:
@@ -114,7 +83,7 @@ def _numeric(value) -> bool:
     return not isinstance(value, bool) and isinstance(value, (int, float, np.integer, np.floating))
 
 
-class Scene(CompositeModel):
+class Scene:
     """
     Plant populations and environment models run together, exchanging their values at fixed points.
 
@@ -127,12 +96,15 @@ class Scene(CompositeModel):
                                nested dict, a .py or YAML path). Links within one DataStructure are the models' own.
         mapping_method:        "barycentre" or "overlap", for every population <-> grid mapping; periodic, flip_z as
                                in CrossMapping.
-        scene_xrange, _yrange: the stand's size (default: the planting table's, from planting).
+        xrange, yrange:        the stand's size (default: the planting table's, from planting).
         recorder:              the outputs, a SceneRecorder (or a folder: a SceneRecorder with its defaults; None:
-                               no outputs). It begins at the first step and finishes with stop().
+                               no outputs). It begins at the first step and ends with finish() (simulate() calls
+                               it).
         forcings:              the time-varying inputs (coupling.forcings), {name: forcing} or a DataFrame indexed
                                by time (s), one column each; a forcing is a number, a callable of the time (s), a
-                               Series indexed by time or a (times, values) pair, linearly interpolated. A component
+                               Series indexed by time or a (times, values) pair, linearly interpolated; a callable
+                               of the time and the entity ids, (time, ids) -> one value per entity, varies in space
+                               (written by the Scene, not read with forcing(name)). A component
                                declaring the name (forcing_variable) reads it with forcing(name), when it has no
                                forcing of its own; otherwise the Scene writes it at the start of each step into the
                                input or parameter of that name of the components declaring it (not coupled).
@@ -143,36 +115,36 @@ class Scene(CompositeModel):
                                CrossMapping given here replaces the inferred one between its two DataStructures (e.g.
                                to map only the root surface, mask=).
 
-    Models may set run_every (steps) and run_when(scene) -> bool: on the other steps they and the exchanges into
-    them are skipped, their outputs keeping their values; an environment model's spin_up(scene) runs once,
-    after the scene is built.
+    A model's cadence: an environment model's interval (s, EnvironmentModel: between() runs at the other steps). A
+    model may also set run_when(scene) -> bool, a condition rather than a cadence (e.g. only when there is light):
+    at the steps it does not hold, the model and the exchanges into it are skipped, its outputs keeping their
+    values. An environment model's spin_up(scene) runs once, after the scene is built.
     """
 
     def __init__(self, planting: pd.DataFrame, environment=(), environment_scenarios=None, translator=None,
                  time_step: float = 3600., mapping_method: str = "barycentre", periodic=(True, True, False),
-                 flip_z: bool = True, scene_xrange: float = None, scene_yrange: float = None, forcings=None,
+                 flip_z: bool = True, xrange: float = None, yrange: float = None, forcings=None,
                  events=(), stop_when=None, mappings=(), recorder=None):
         Choregrapher().add_simulation_time_step(time_step)
         self.time_step, self.time, self.iteration = time_step, 0., 0
-        self.scene_xrange = scene_xrange if scene_xrange is not None else planting.attrs.get("xrange")
-        self.scene_yrange = scene_yrange if scene_yrange is not None else planting.attrs.get("yrange")
+        self.xrange = xrange if xrange is not None else planting.attrs.get("xrange")
+        self.yrange = yrange if yrange is not None else planting.attrs.get("yrange")
 
         self.planting = planting
         models = list(dict.fromkeys(planting["model"]))
         self.populations = [self._build_population(model, planting[planting["model"] == model]) for model in models]
         population_ds = [population.data_structure for population in self.populations]
 
-        environment_scenarios = [flat_scenario(scenario) for scenario in
+        environment_scenarios = [_flat_scenario(scenario) for scenario in
                                  (environment_scenarios or [{}] * len(environment))]
         if len(environment_scenarios) != len(environment):
             raise ValueError("environment_scenarios must give one scenario per environment model")
         self.environment_scenarios = environment_scenarios
-        self.environment = [model(populations=population_ds, scene_xrange=self.scene_xrange,
-                                  scene_yrange=self.scene_yrange, time_step=time_step,
-                                  **model_keywords(model, scenario))
+        self.environment = [model(plant_data_structures=population_ds, xrange=self.xrange, yrange=self.yrange,
+                                  time_step=time_step, **_model_keywords(model, scenario))
                             for model, scenario in zip(environment, environment_scenarios)]
         for model, instance, scenario in zip(environment, self.environment, environment_scenarios):
-            apply_model_scenario(model, instance, scenario, per_plant=False)
+            _apply_model_scenario(model, instance, scenario, per_plant=False)
 
         self.components = [c for p in self.populations for c in p.components]
         self.components += [c for model in self.environment for c in model.components]
@@ -182,7 +154,7 @@ class Scene(CompositeModel):
             raise ValueError(f"component classes {duplicated} appear in several models of the scene: "
                              "the scene translator identifies components by class name (one population per model)")
 
-        self.translator = load_translator(translator)
+        self.translator = Translator.load(translator)
         self.mapping_method, self.periodic, self.flip_z = mapping_method, periodic, flip_z
         # Explicit mappings (e.g. a LayerMapping column <-> grid, or a CrossMapping with a mask), then the inferred
         # population <-> grid / union ones for the pairs the explicit ones do not link
@@ -207,28 +179,47 @@ class Scene(CompositeModel):
         self.timing = {}                # wall time (s) per model, the exchanges and the recording
         self.recorder = SceneRecorder(recorder) if isinstance(recorder, (str, os.PathLike)) else recorder
         self._recording = False         # the recorder began (at this object's first step)
+        self._finished = False
+
+    @classmethod
+    def from_scenario(cls, scenario: dict, plants, plant_model, environment=(), plant_scenarios: list = None,
+                      emergence_times: list = None, xrange: float = None, yrange: float = None, **options) -> "Scene":
+        """
+        A scene from one scenario of a scenario table (read_scenarios with a model column): {model name or class:
+        {name: value}, "forcings": {name: forcing}}. *plants*: [Planting] or a Stand, of *plant_model*;
+        *environment*: the environment model classes; each model's entries go to it (none: its defaults), the
+        forcings to the Scene's. *plant_scenarios*, *emergence_times*, *xrange*, *yrange*: as planting's; *options*:
+        the Scene's (translator, time_step, recorder, mappings, ...; forcings= are added to the scenario's).
+        """
+        scenario = dict(scenario or {})
+        forcings = forcing_table(scenario.pop("forcings", None))
+        models = [plant_model, *environment]
+        by_model = {}
+        for key, entries in scenario.items():
+            matched = [model for model in models if key is model or key == model.__name__]
+            if not matched:
+                raise KeyError(f"Scene.from_scenario: the scenario's '{getattr(key, '__name__', key)}' is none of the "
+                               f"scene's models ({', '.join(model.__name__ for model in models)})")
+            if not isinstance(entries, Mapping):
+                raise TypeError(f"Scene.from_scenario: a scenario by model, {{model: {{name: value}}}} (read_scenarios "
+                                f"with a model column), got '{key}': {entries!r}")
+            by_model[matched[0]] = dict(entries)
+        given = forcing_table(options.pop("forcings", None))
+        twice = sorted(set(forcings) & set(given))
+        if twice:
+            raise ValueError(f"Scene.from_scenario: forcings {twice} are in the scenario and in forcings=")
+        table = _planting(plants, plant_model, by_model.get(plant_model, {}), plant_scenarios=plant_scenarios,
+                          emergence_times=emergence_times, xrange=xrange, yrange=yrange)
+        return cls(table, environment=list(environment),
+                   environment_scenarios=[by_model.get(model, {}) for model in environment],
+                   forcings=dict(forcings, **given), **options)
 
     # ── construction ──────────────────────────────────────────────────────────
 
     def _build_population(self, model, rows: pd.DataFrame) -> Population:
         rows = rows.reset_index(drop=True)
-        scenario = self._shared_scenario(model, rows)
-        read_by_initiators = set()
-        g, plants = build_population(rows, initiators=getattr(model, "initiators", ()),
-                                     read_by_initiators=read_by_initiators)
-        scale = getattr(model, "from_scale", None) or "SubOrgan"
-        scale = getattr(g.scales, scale) if isinstance(scale, str) else scale
-        nodes = getattr(model, "nodes", None)
-        if nodes is None:
-            g.populate_graph(scale)                 # anatomy mode: the initiators built the Compartments
-        g.convert_properties_to_arraydict()
-        wiring = getattr(model, "wiring", None)
-        wiring = wiring(g) if callable(wiring) else wiring
-        ds = MPGDataStructure(g, from_scale=scale, nodes=nodes, wiring=wiring)
-        instance = model(data_structure=ds, time_step=self.time_step, **model_keywords(model, scenario))
-        population = Population(model, rows, plants, ds, instance)
-        apply_model_scenario(model, instance, scenario, read_by_initiators)
-        apply_plant_scenarios(ds, population.components, rows, plants)
+        population = population_data_structure(rows, model, time_step=self.time_step,
+                                               scenario=self._shared_scenario(model, rows))
         if population.emergence:
             self._setup_emergence(population)
         return population
@@ -242,8 +233,8 @@ class Scene(CompositeModel):
         """
         per_plant = {key for initiator in getattr(model, "initiators", ()) for key in getattr(initiator, "scenario_keys",
                                                                                               ())}
-        named = model_arguments(model)
-        scenarios = [flat_scenario(s) for s in rows["scenario"]]
+        named = _model_arguments(model)
+        scenarios = [_flat_scenario(s) for s in rows["scenario"]]
         first = scenarios[0]
         for other in scenarios[1:]:
             for key in (set(first) | set(other)) - per_plant:
@@ -281,15 +272,6 @@ class Scene(CompositeModel):
             if not np.array_equal(values, ds.get("emerged")):
                 ds.set("emerged", values)
 
-    @staticmethod
-    def _data_structures(model) -> list:
-        found = []
-        for component in model.components:
-            ds = getattr(component, "data_structure", None)
-            if ds is not None and not any(ds is other for other in found):
-                found.append(ds)
-        return found
-
     def _infer_mappings(self) -> list:
         """A CrossMapping per (population, grid) and a UnionMapping per union joined by a translator link."""
         by_name = {type(c).__name__: c for c in self.components}
@@ -314,17 +296,15 @@ class Scene(CompositeModel):
         return mappings
 
     def _check_forcings(self) -> None:
-        """Every required forcing a component declares (forcing_variable) is given: the scene's or its own."""
+        """Every required forcing a component declares (forcing_variable) is given."""
         missing = []
         for component in self.components:
             declared = getattr(component, "declared_forcings", lambda: {})()
-            own = getattr(component, "forcings", None) or {}
             for name, required in declared.items():
-                if required and name not in own and name not in self.forcings:
+                if required and name not in self.forcings:
                     missing.append(f"{type(component).__name__}.{name}")
         if missing:
-            raise ValueError(f"forcings not given: {', '.join(missing)} (the Scene's forcings=, or the component's "
-                             "forcings)")
+            raise ValueError(f"forcings not given: {', '.join(missing)} (the Scene's forcings=)")
 
     def _forced_variables(self) -> list:
         """
@@ -354,9 +334,15 @@ class Scene(CompositeModel):
         return targets
 
     def _write_forcings(self) -> None:
-        """The forced inputs and parameters at the step's start, the same for every entity of their location."""
+        """The forced inputs and parameters at the step's start: the same for every entity of their location, or
+        each entity's (a forcing of the time and the entity ids)."""
         for name, ds in self._forced:
-            value = forcing_value(self.forcings[name], self.time)
+            forcing = self.forcings[name]
+            if is_spatial(forcing):
+                values = np.asarray(forcing(self.time, ds.entity_ids(ds.location(name))), dtype=float)
+                ds.set(name, np.broadcast_to(values, np.shape(ds.get(name))).copy())
+                continue
+            value = forcing_value(forcing, self.time)
             ds.set(name, np.full(np.shape(ds.get(name)), value, dtype=float))
 
     # ── running ───────────────────────────────────────────────────────────────
@@ -377,7 +363,7 @@ class Scene(CompositeModel):
             if not self._due(model):
                 continue
             started = perf_counter()
-            for ds in self._data_structures(model):
+            for ds in _own_data_structures(model):
                 self.exchanges.exchange(into=ds)
             exchanged = perf_counter()
             model.run()
@@ -402,19 +388,14 @@ class Scene(CompositeModel):
     def _time(self, key: str, seconds: float) -> None:
         self.timing[key] = self.timing.get(key, 0.) + seconds
 
-    __call__ = run
-
     def _due(self, model) -> bool:
-        """Whether *model* runs at this step (run_every, run_when)."""
-        every = getattr(model, "run_every", None)
-        if every is not None and self.iteration % int(every) != 0:
-            return False
+        """Whether *model* runs at this step (its run_when condition)."""
         when = getattr(model, "run_when", None)
         return when is None or bool(when(self))
 
     def simulate(self, n_iterations: int) -> None:
         """
-        *n_iterations* steps, or until stop_when holds; then stop(): the recorder's run status is "finished",
+        *n_iterations* steps, or until stop_when holds; then finish(): the recorder's run status is "finished",
         "stopped" (stop_when) or "failed" (an exception, recorded with its message, then raised again).
         """
         try:
@@ -424,17 +405,41 @@ class Scene(CompositeModel):
                     self.stopped = True
                     break
         except BaseException as error:
-            self.stop("failed" if isinstance(error, Exception) else "interrupted", error=error)
+            self.finish("failed" if isinstance(error, Exception) else "interrupted", error=error)
             raise
-        self.stop("stopped" if self.stopped else "finished")
+        self.finish("stopped" if self.stopped else "finished")
 
     # ── Checkpoints ────────────────────────────────────────────────
 
-    def _all_data_structures(self) -> list:
-        """Every DataStructure of the scene, in a fixed order: the populations', then each environment model's."""
-        found = [population.data_structure for population in self.populations]
+    def data_structures(self) -> dict:
+        """
+        {id: (DataStructure, model, components)} of every DataStructure of the scene, in a fixed order: each
+        population's (id: its model's name), then each environment model's own (id: its class name, with "_<k>"
+        from its second one), a union of the plants' left out. *components*: those working on it, an environment
+        model's on a population's included (a light model's on the plants). The recorder's tables, the frames and
+        the checkpoints walk the scene with it.
+        """
+        found = {}
+        for population in self.populations:
+            found[population.name] = (population.data_structure, population.instance, list(population.components))
         for model in self.environment:
-            found += [ds for ds in self._data_structures(model) if not any(ds is other for other in found)]
+            own = []
+            for ds in _own_data_structures(model):
+                on_ds = [c for c in model.components if getattr(c, "data_structure", None) is ds]
+                shared = next((key for key, entry in found.items() if entry[0] is ds), None)
+                if shared is not None:
+                    found[shared][2].extend(on_ds)
+                elif not isinstance(ds, UnionDataStructure):
+                    own.append((ds, on_ds))
+            for k, (ds, on_ds) in enumerate(own):
+                found[type(model).__name__ + (f"_{k}" if k else "")] = (ds, model, on_ds)
+        return found
+
+    def _all_data_structures(self) -> list:
+        """Every DataStructure the checkpoints save: data_structures(), then the unions."""
+        found = [entry[0] for entry in self.data_structures().values()]
+        for model in self.environment:
+            found += [ds for ds in _own_data_structures(model) if not any(ds is other for other in found)]
         return found
 
     def _stateful(self) -> dict:
@@ -500,11 +505,13 @@ class Scene(CompositeModel):
         if self.recorder is not None:
             self.recorder.resume_at(self)              # its tables cut back to this step, appended to from here
 
-    def stop(self, status: str = "finished", error: BaseException = None) -> None:
+    def finish(self, status: str = "finished", error: BaseException = None) -> None:
         """
-        The end of the run: the recorder writes the last state and the run's status (a loop of run() calls it). A
-        scene stopped before any step (simulate(0): a static model, a section built once) records its state then.
+        The end of the run: the recorder writes the last state and the run's status. simulate() calls it; a loop of
+        run() ends with it. A scene finished before any step (simulate(0): a static model, a section built once)
+        records its state then.
         """
+        self._finished = True
         if self.recorder is None:
             return
         if not self._recording:
@@ -512,4 +519,17 @@ class Scene(CompositeModel):
             self.recorder.begin(self)
         self.recorder.finish(self, status, error)
 
+    def __del__(self):
+        if getattr(self, "_recording", False) and not getattr(self, "_finished", True):
+            warnings.warn("a recording Scene was dropped before scene.finish(): its last state and its run status "
+                          "were not written (end a loop of run() with finish())", ResourceWarning, stacklevel=2)
 
+
+def _own_data_structures(model) -> list:
+    """The DataStructures of *model*'s components, in their order, each once."""
+    found = []
+    for component in model.components:
+        ds = getattr(component, "data_structure", None)
+        if ds is not None and not any(ds is other for other in found):
+            found.append(ds)
+    return found

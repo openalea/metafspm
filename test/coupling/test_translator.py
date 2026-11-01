@@ -34,7 +34,7 @@ def test_factor_expressions_reject_code(expression):
 # ---------------------------------------------------------------- YAML
 
 def test_wheatbridges_yaml_loads_every_link():
-    translator = Translator.from_yaml(WHEATBRIDGES)
+    translator = Translator.load(WHEATBRIDGES)
     kinds = {}
     for link in translator.links:
         kinds[link.detail] = kinds.get(link.detail, 0) + 1
@@ -45,7 +45,7 @@ def test_wheatbridges_yaml_loads_every_link():
 def test_yaml_round_trip_matches_the_legacy_nested_format():
     with open(WHEATBRIDGES) as f:
         raw = yaml.safe_load(f)
-    nested = Translator.from_yaml(WHEATBRIDGES).to_nested()
+    nested = Translator.load(WHEATBRIDGES).to_nested()
 
     assert set(nested) == set(raw)
     for receiver, providers in raw.items():
@@ -59,7 +59,7 @@ def test_yaml_long_form_with_scale_and_aggregation(tmp_path):
     path = tmp_path / "translator.yaml"
     path.write_text(yaml.dump({"RootCN": {"Soil": {"mean_temperature": {
         "sources": {"soil_temperature": 1}, "scale": "Organ", "aggregation": "weighted_mean", "weight": "length"}}}}))
-    link, = Translator.from_yaml(str(path)).links
+    link, = Translator.load(str(path)).links
     assert (link.scale, link.aggregation, link.weight) == (scales.Organ, "weighted_mean", "length")
     assert link.kind == "derived"
 
@@ -68,7 +68,7 @@ def test_yaml_unknown_scale_is_rejected(tmp_path):
     path = tmp_path / "translator.yaml"
     path.write_text(yaml.dump({"A": {"B": {"x": {"sources": {"y": 1}, "scale": "Organelle"}}}}))
     with pytest.raises(ValueError, match="Organelle"):
-        Translator.from_yaml(str(path))
+        Translator.load(str(path))
 
 
 # ---------------------------------------------------------------- Python translators
@@ -108,7 +108,7 @@ def test_translator_module(tmp_path):
         "from openalea.metafspm.coupling.translator import Translator\n"
         "from openalea.metafspm.data_structure.configs import ScalesConfig as scales\n"
         "translator = Translator().link('A', 'x', 'B', {'y': 2}, scale=scales.Organ)\n")
-    link, = Translator.from_module(str(module)).links
+    link, = Translator.load(str(module)).links
     assert (link.receiver, link.variable, link.provider, link.sources, link.scale) == ("A", "x", "B", {"y": 2.}, scales.Organ)
 
 

@@ -16,14 +16,14 @@ from openalea.metafspm.scene.scene import Scene, SceneRecorder
 from scene_doubles import DT, RootPopulation, SceneSoil, Seedlings, doubles_planting, soil_translator
 
 
-def _arguments(output_dirpath, frame_period=2):
+def _arguments(folder, frame_period=2):
     return dict(planting=doubles_planting([RootPopulation, Seedlings]), environment=[SceneSoil],
                 translator=soil_translator("SceneExudation", "SeedlingExudation"), time_step=DT,
-                recorder=SceneRecorder(output_dirpath, summaries=False, frame_period=frame_period))
+                recorder=SceneRecorder(folder, summaries=False, frame_period=frame_period))
 
 
-def _index(output_dirpath) -> list:
-    with open(os.path.join(output_dirpath, "frames", "scene.fspm.json")) as file:
+def _index(folder) -> list:
+    with open(os.path.join(folder, "frames", "scene.fspm.json")) as file:
         return json.load(file)["frames"]
 
 
@@ -60,5 +60,5 @@ def test_a_restored_scene_carries_on_its_frames(tmp_path):
 
 
 def test_frames_need_an_output_folder():
-    with pytest.raises(ValueError, match="output_dirpath"):
+    with pytest.raises(ValueError, match="folder"):
         _arguments(None)

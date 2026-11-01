@@ -1,15 +1,13 @@
 """
 CompositeModel on DataStructure-backed components: translator links become aliases and derived variables on the
-shared DataStructure; translator files and the interactive builder, input tables, documentation. Exchanges between
+shared DataStructure; translator sources; couplings(). Exchanges between
 DataStructures are in test_cross_datastructures.py.
 """
 import os
 import types
-from dataclasses import dataclass, field
 
 import numpy as np
 import pytest
-import yaml
 
 import doubles
 import doubles_ds
@@ -26,65 +24,42 @@ def _coupled_plant(tmp_path, translator=None):
     ds = doubles_ds.make_plant_ds()
     carbon, nitrogen = doubles_ds.PlantCarbon(data_structure=ds), doubles_ds.PlantNitrogen(data_structure=ds)
     model = CompositeModel()
-    model.declare_data_and_couple_components(translator_path=path, components=(carbon, nitrogen))
+    model.couple(carbon, nitrogen, translator=path)
     return model, carbon, nitrogen, ds
 
 
-# ---------------------------------------------------------------- translator file
+# ---------------------------------------------------------------- translator sources
 
-def test_open_translator_loads_full_path(translator_path):
-    assert CompositeModel().open_or_create_translator(translator_path) == doubles.TRANSLATOR
-
-
-def test_open_translator_builds_and_writes_missing_file(tmp_path, monkeypatch):
-    model = CompositeModel()
-    monkeypatch.setattr(model, "translator_matrix_builder", lambda: {"A": {"A": {}}})
-    path = str(tmp_path / "new_translator.yaml")
-
-    assert model.open_or_create_translator(path) == {"A": {"A": {}}}
-    with open(path) as f:
-        assert yaml.safe_load(f) == {"A": {"A": {}}}
+def test_a_translator_loads_from_a_yaml_path(translator_path):
+    assert Translator.load(translator_path).to_nested() == Translator.from_dict(doubles.TRANSLATOR).to_nested()
 
 
-def test_open_translator_rejects_directory(tmp_path):
+def test_a_missing_translator_file_raises_instead_of_asking(tmp_path):
+    """The interactive builder (input() prompts, then a YAML written) is gone: a missing file raises, no translator
+    means no link."""
+    with pytest.raises(FileNotFoundError, match="no translator"):
+        Translator.load(str(tmp_path / "new_translator.yaml"))
+    with pytest.raises(FileNotFoundError):
+        Translator.load("")
+    assert Translator.load(None).links == []
+
+
+def test_a_translator_directory_is_rejected(tmp_path):
     with pytest.raises(IsADirectoryError):
-        CompositeModel().open_or_create_translator(str(tmp_path))
+        Translator.load(str(tmp_path))
 
 
-def test_open_translator_from_python_module(tmp_path):
+def test_a_translator_from_a_python_module(tmp_path):
     module = tmp_path / "coupling_translator.py"
     module.write_text(
         "from openalea.metafspm.coupling.translator import Translator\n"
         f"translator = Translator.from_dict({doubles.TRANSLATOR!r})\n")
-    loaded = CompositeModel().open_or_create_translator(str(module)).to_nested()   # kept as a Translator
+    loaded = Translator.load(str(module)).to_nested()
     assert loaded["SoilModel"]["RootCarbon"] == {"hexose_exudation_massic": {"hexose_exudation": 72.}}
     assert loaded["RootNitrogen"]["RootCarbon"]["sugar"] == {"hexose": 1.}
-
-
-def test_translator_matrix_builder_scripted(monkeypatch):
-    ds = doubles_ds.make_plant_ds()
-    model = CompositeModel()
-    model.components = [doubles_ds.PlantCarbon(data_structure=ds), doubles_ds.PlantNitrogen(data_structure=ds)]
-    answers = iter([
-        # PlantCarbon needs PlantNitrogen, then SoilModel
-        "2", "amino_acids*1.0;nitrate*0.5",
-        "0",  # SoilModel: none
-        # PlantNitrogen needs PlantCarbon, then SoilModel
-        "1", "", "hexose", "hexose_exudation*2",  # hexose (same name), sugar (alias), carbon_supply (factor)
-        "5",  # out of range: none
-    ])
-    monkeypatch.setattr("builtins.input", lambda prompt="": next(answers))
-
-    translator = model.translator_matrix_builder()
-
-    assert translator == {
-        "PlantCarbon": {"PlantCarbon": {}, "PlantNitrogen": {"nitrogen_status": {"amino_acids": 1.0, "nitrate": 0.5}}},
-        "PlantNitrogen": {"PlantCarbon": {"hexose": {"hexose": 1.0}, "sugar": {"hexose": 1.0},
-                                          "carbon_supply": {"hexose_exudation": 2.0}},
-                          "PlantNitrogen": {}},
-    }
-    with pytest.raises(StopIteration):
-        next(answers)
+    imported = types.ModuleType("translator_module")
+    imported.translator = Translator.from_dict(doubles.TRANSLATOR)
+    assert Translator.load(imported) is imported.translator
 
 
 def test_translator_expressions_are_not_evaluated_as_code(tmp_path):
@@ -94,51 +69,46 @@ def test_translator_expressions_are_not_evaluated_as_code(tmp_path):
         _coupled_plant(tmp_path, translator)
 
 
-def test_props_based_components_are_rejected(tmp_path):
-    path = doubles.write_translator(tmp_path / "translator.yaml", doubles_ds.translator())
+def test_props_based_components_are_rejected():
     with pytest.raises(TypeError, match="DataStructure"):
-        CompositeModel().couple_components(types.SimpleNamespace(props={}), translator_path=path)
+        CompositeModel().couple(types.SimpleNamespace(props={}))
 
 
-# ---------------------------------------------------------------- documentation
-
-@dataclass
-class _UndocumentedField(doubles_ds.PlantCarbon):
-    # A field without declare() metadata, like FunctionalComponent.data_structure
-    extra: dict = field(default_factory=dict)
-
-
-def test_documentation_lists_declared_fields(tmp_path):
-    doc = _coupled_plant(tmp_path)[0].documentation
-    assert "description" in doc
-    for name in ("hexose", "hexose_exudation", "amino_acids", "exudation_rate"):
-        assert name in doc
-
-
-def _documented_names(doc):
-    return {line.split()[0] for line in doc.splitlines() if " | " in line and line.split()[0] != "name"}
-
-
-def test_documentation_input_filter(tmp_path):
-    inputs = _documented_names(_coupled_plant(tmp_path)[0].inputs)
-    assert {"soil_temperature", "carbon_supply"} <= inputs
-    assert "hexose_exudation" not in inputs
-
-
-def test_documentation_skips_fields_without_metadata():
-    model = CompositeModel()
-    model.components = [_UndocumentedField(data_structure=doubles_ds.make_plant_ds())]
-    doc = model.get_documentation(filters=dict(variable_type=["input"]), models=model.components)
-    assert "soil_temperature" in doc and not any(line.startswith("extra") for line in doc.splitlines())
-
-
-def test_documentation_of_bare_model_is_empty():
-    assert CompositeModel().documentation == ""
+def test_the_text_documentation_is_gone():
+    """Component.declarations() is the one documentation route."""
+    for name in ("get_documentation", "documentation", "inputs", "couple_components",
+                 "declare_data_and_couple_components", "open_or_create_translator", "translator_matrix_builder"):
+        assert not hasattr(CompositeModel, name)
 
 
 def test_recursive_reload_removed():
     from openalea.metafspm.coupling import composite_wrapper
     assert not hasattr(composite_wrapper, "recursive_reload")
+
+
+# ---------------------------------------------------------------- couplings
+
+def test_couplings_list_how_each_input_is_coupled(tmp_path):
+    model, carbon, nitrogen, ds = _coupled_plant(tmp_path)
+    table = model.couplings().set_index(["receiver", "variable"])
+    assert table.loc[("PlantNitrogen", "sugar"), "coupling"] == "alias"
+    assert table.loc[("PlantNitrogen", "sugar"), "sources"] == "hexose"
+    assert table.loc[("PlantNitrogen", "carbon_supply"), "coupling"] == "derived"
+    assert table.loc[("PlantNitrogen", "carbon_supply"), "sources"] == "hexose_exudation * 2.0"
+    assert table.loc[("PlantCarbon", "soil_temperature"), "coupling"] in ("scene", "not provided")
+
+
+def test_an_input_of_the_same_name_is_shared_without_a_link():
+    """No translator: an input named as another component's variable reads it (the DataStructure is the
+    coupling), and couplings() shows it."""
+    ds = doubles_ds.make_plant_ds()
+    carbon, nitrogen = doubles_ds.PlantCarbon(data_structure=ds), doubles_ds.PlantNitrogen(data_structure=ds)
+    model = CompositeModel()
+    model.couple(carbon, nitrogen)
+    table = model.couplings().set_index(["receiver", "variable"])
+    assert table.loc[("PlantNitrogen", "hexose"), "coupling"] == "shared"
+    assert table.loc[("PlantNitrogen", "hexose"), "provider"] == "PlantCarbon"
+    assert table.loc[("PlantNitrogen", "sugar"), "coupling"] == "not provided"
 
 
 # ---------------------------------------------------------------- coupling semantics
@@ -180,14 +150,8 @@ def test_python_translator_module(tmp_path):
                       f"translator = Translator.from_dict({doubles_ds.translator()!r})\n")
     ds = doubles_ds.make_plant_ds()
     carbon, nitrogen = doubles_ds.PlantCarbon(data_structure=ds), doubles_ds.PlantNitrogen(data_structure=ds)
-    CompositeModel().declare_data_and_couple_components(translator_path=str(module), components=(carbon, nitrogen))
+    CompositeModel().couple(carbon, nitrogen, translator=str(module))
     assert ds.aliases() == {"sugar": "hexose"}
-
-
-def test_documentation_of_data_structure_components(tmp_path):
-    model, carbon, nitrogen, ds = _coupled_plant(tmp_path)
-    assert "soil_temperature" in model.inputs
-    assert not any(line.startswith("data_structure") for line in model.documentation.splitlines())
 
 
 def test_functional_components_run_once_per_simulation_step(tmp_path):
@@ -205,6 +169,6 @@ def test_a_translator_object_is_used_as_given():
     carbon, nitrogen = doubles_ds.PlantCarbon(data_structure=ds), doubles_ds.PlantNitrogen(data_structure=ds)
     translator = Translator.from_dict(doubles_ds.translator())
     model = CompositeModel()
-    assert model.open_or_create_translator(translator) is translator
-    model.declare_data_and_couple_components(translator_path=translator, components=(carbon, nitrogen))
+    assert Translator.load(translator) is translator
+    model.couple(carbon, nitrogen, translator=translator)
     assert ds.aliases() == {"sugar": "hexose"}

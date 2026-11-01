@@ -11,7 +11,7 @@ import pytest
 from openalea.metafspm.coupling.component import FunctionalComponent, parameter, state_variable
 from openalea.metafspm.data_structure.configs import ScalesConfig as scales
 from openalea.metafspm.data_structure.data_api import ArrayDataStructure, MPGDataStructure
-from openalea.metafspm.scene.population import build_population
+from openalea.metafspm.scene.population import _build_population
 from openalea.metafspm.scene.scene import Scene
 
 from growth import DOC, RootGrowthProbe
@@ -46,7 +46,7 @@ class SoilSettings(FunctionalComponent):
 
 
 class Ground:
-    def __init__(self, populations, scene_xrange, scene_yrange, time_step, depth=0.4):
+    def __init__(self, plant_data_structures, xrange, yrange, time_step, depth=0.4):
         self.depth = depth
         self.grid = ArrayDataStructure(shape=(2, 1, 2), dx=0.2)
         self.settings = SoilSettings(data_structure=self.grid, time_step=time_step)
@@ -74,7 +74,7 @@ def test_other_parameters_are_set_as_constructor_keywords_would():
     assert settings.method == "exponential"                                      # the dataclass field
     np.testing.assert_allclose(ds.get("rate_per_segment"), 5.)                    # the DataStructure variable
 
-    g, _ = build_population(doubles_planting([Plants], [{}]), initiators=Plants.initiators)
+    g, _ = _build_population(doubles_planting([Plants], [{}]), initiators=Plants.initiators)
     g.populate_graph(g.scales.SubOrgan)
     g.convert_properties_to_arraydict()
     other = MPGDataStructure(g, from_scale=g.scales.SubOrgan)
@@ -99,8 +99,8 @@ class Optics(FunctionalComponent):
 
 
 class Light:
-    def __init__(self, populations, scene_xrange, scene_yrange, time_step):
-        self.optics = Optics(data_structure=populations[0], time_step=time_step)
+    def __init__(self, plant_data_structures, xrange, yrange, time_step):
+        self.optics = Optics(data_structure=plant_data_structures[0], time_step=time_step)
         self.components = [self.optics]
 
     def run(self):

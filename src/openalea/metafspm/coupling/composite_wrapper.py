@@ -1,7 +1,3 @@
-import os
-
-import yaml
-from dataclasses import fields
 from openalea.metafspm.coupling.translator import Translator
 
 
@@ -12,66 +8,83 @@ def _live_data_structure(component):
 
 
 class CompositeModel:
+    """
+    Components sharing one DataStructure, coupled by couple(): an input with the name of another component's
+    variable reads it (the DataStructure is the coupling); the translator's links state the rest, a rename, a
+    conversion factor, a change of scale or a formula. couplings() lists how each input is coupled.
+    """
 
-    def get_documentation(self, filters: dict, models: list):
+    def couple(self, *components, translator=None) -> None:
         """
-        Documentation of the declared variables of each model, one column per metadata key.
-        Fields without declare() metadata (e.g. FunctionalComponent.data_structure) are skipped.
-
-        :param filters: {metadata key: accepted values}, a field is listed only if it matches every filter.
-        :return: documentation text
+        Couple the DataStructure-backed *components*: the links of *translator* (Translator.load: a Translator, a
+        nested dict, a .py module or a YAML file; None: no link, every input shared by its name) between them become
+        aliases and derived variables on their DataStructure; links with components on other DataStructures (the
+        environment) are exchanged by the Scene (coupling.cross.Exchanges). Their DataStructures are then checked
+        (shapes, aliases, derivations).
         """
-        def cell(value, width=30):
-            text = "" if value is None else str(value)
-            if len(text) > width:
-                text = text[:width - 3] + "..."
-            return f"{text:<{width + 1}} | "
-
-        to_print = ""
-        for model in models:
-            to_print += "MODEL DOCUMENTATION : \n"
-            to_print += ("   no documentation" if model.__doc__ is None else model.__doc__) + "\n\n"
-            to_print += "MODEL OUTPUT VARIABLES : \n"
-
-            declared = [f for f in fields(model) if "variable_type" in f.metadata]
-            if len(declared) == 0:
-                continue
-            headers = list(declared[0].metadata.keys())
-            widths = {header: 90 if header == "description" else 30 for header in headers}
-            to_print += cell("name") + "".join(cell(header, widths[header]) for header in headers) + "\n\n"
-
-            for f in declared:
-                if all(f.metadata.get(k) in v for k, v in filters.items()):
-                    to_print += cell(f.name) + "".join(cell(f.metadata.get(header), widths[header]) for header in headers) + "\n"
-
-        return to_print
-
-    @property
-    def documentation(self):
-        return self.get_documentation(filters={}, models=getattr(self, "components", []))
-
-    @property
-    def inputs(self):
-        return self.get_documentation(filters=dict(variable_type=["input"]), models=getattr(self, "components", []))
-
-
-    def couple_components(self, *args, translator_path: str = ""):
-        """
-        Couple the DataStructure-backed components *args* through the translator at *translator_path*
-        (YAML or Python module): links between them become aliases and derived variables on their
-        DataStructure (see _couple_on_data_structures). Links with components on other DataStructures (the
-        environment) are exchanged by the Scene (coupling.cross.Exchanges).
-        """
-        self.components = [component for component in args]
+        self.components = list(components)
         for component in self.components:
             if _live_data_structure(component) is None:
                 raise TypeError(f"{type(component).__name__} is not DataStructure-backed: props-based components were "
                                 "removed, see docs/migration.md")
+        self.translator = Translator.load(translator)
+        self._couple_on_data_structures(self.translator)
+        checked = []
+        for component in self.components:
+            ds = component.data_structure
+            if hasattr(ds, "validate_variables") and not any(ds is other for other in checked):
+                ds.validate_variables()
+                checked.append(ds)
 
-        translator = self.open_or_create_translator(translator_path)
-        self._couple_on_data_structures(translator)
+    def couplings(self):
+        """
+        A pandas DataFrame, one row per input of the coupled components: receiver, variable, provider and coupling,
+        "shared" (another component of the composite declares it: the same array), "alias" or "derived" (a link of
+        the translator: a rename, or a factor, change of scale or formula), "scene" (a link with a component on
+        another DataStructure, exchanged by the Scene) or "not provided" (its initial value, or what the Scene
+        writes: a forcing, an event).
+        """
+        import pandas as pd
+        components = getattr(self, "components", [])
+        translator = getattr(self, "translator", None) or Translator()
+        names = {type(component).__name__ for component in components}
+        provided = {}
+        for component in components:
+            table = type(component).declarations()
+            if table.empty:
+                continue
+            for name in table.loc[~table["kind"].isin(["input", "parameter", "setting", "forcing"]), "name"]:
+                provided.setdefault(name, type(component).__name__)
+        rows = []
+        for component in components:
+            receiver = type(component).__name__
+            table = type(component).declarations()
+            if table.empty:
+                continue
+            for name in table.loc[table["kind"] == "input", "name"]:
+                links = [link for link in translator.links_of(receiver) if link.variable == name
+                         and link.provider != receiver]
+                if links:
+                    link = links[0]
+                    if link.provider not in names:
+                        coupling = "scene"
+                    else:
+                        coupling = "alias" if link.mapped_detail == "alias" else (
+                            "shared" if link.mapped_detail == "identity" else "derived")
+                    sources = ", ".join(f"{source}" if factor in (1, 1.) else f"{source} * {factor}"
+                                        for source, factor in link.sources.items()) if link.formula is None \
+                        else "formula"
+                    rows.append(dict(receiver=receiver, variable=name, provider=link.provider,
+                                     coupling=coupling, sources=sources))
+                elif name in provided and provided[name] != receiver:
+                    rows.append(dict(receiver=receiver, variable=name, provider=provided[name], coupling="shared",
+                                     sources=name))
+                else:
+                    rows.append(dict(receiver=receiver, variable=name, provider=None, coupling="not provided",
+                                     sources=None))
+        return pd.DataFrame(rows, columns=["receiver", "variable", "provider", "coupling", "sources"])
 
-    def _couple_on_data_structures(self, translator: dict) -> None:
+    def _couple_on_data_structures(self, translator) -> None:
         """
         Coupling of DataStructure-backed components: links between components sharing a
         DataStructure become name-level aliases or derived variables refreshed by the receiver before its step;
@@ -79,8 +92,7 @@ class CompositeModel:
         by the Scene, not here.
         """
         by_name = {component.__class__.__name__: component for component in self.components}
-        links = translator.links if isinstance(translator, Translator) else Translator.from_dict(translator).links
-        for link in links:
+        for link in Translator.load(translator).links:
             if link.receiver not in by_name or link.provider not in by_name or link.receiver == link.provider:
                 continue
             receiver, provider = by_name[link.receiver], by_name[link.provider]
@@ -207,76 +219,3 @@ class CompositeModel:
             return default_mapping(kind, direction, name, weight=weight), weight
         except DeclarationError as error:
             raise DeclarationError(f"{error} (link from {source_location} to {location})") from None
-
-    def open_or_create_translator(self, translator_path):
-        """
-        Translator from a YAML file, in the nested {receiver: {provider: {variable: {source: factor}}}} format, or
-        from a Python module defining ``translator = Translator(...)`` (.py), kept as a Translator so that its links'
-        options (aggregation, weight, target, formula, scales) are kept. A missing YAML file is built interactively
-        and written. A Translator or a nested dict given directly is used as is.
-        """
-        if isinstance(translator_path, (Translator, dict)):
-            return translator_path
-        if str(translator_path).endswith(".py"):
-            return Translator.from_module(str(translator_path))
-        if os.path.isdir(translator_path):              # Windows' open() raises PermissionError on a directory
-            raise IsADirectoryError(f"the translator path is a directory: {translator_path}")
-        try:
-            with open(translator_path, "r") as f:
-                translator = yaml.safe_load(f)
-        except FileNotFoundError:
-            print("NOTE : You will now have to provide information about shared variables between the modules composing this model :\n")
-            translator = self.translator_matrix_builder()
-            with open(translator_path, "w") as f:
-                yaml.dump(translator, f)
-        
-        return translator
-
-    def translator_matrix_builder(self):
-        """
-        Translator matrix builder utility, to be used if no translator dictionay is available on modules' directory
-
-        :param components: inistances of components that should be coupled as indicated by the coupling_translator.yaml
-        """
-        L = len(self.components)
-        translator = {self.components[i].__class__.__name__:{self.components[k].__class__.__name__:{} for k in range(L)} for i in range(L)}
-        for receiver_model in range(L):
-            # Fields without declare() metadata (e.g. FunctionalComponent.data_structure) are not variables
-            inputs = [f for f in fields(self.components[receiver_model]) if f.metadata.get("variable_type") == "input"]
-            needed_models = list(set([f.metadata["by"] for f in inputs]))
-            needed_models.sort()
-            for name in needed_models:
-                print([(model + 1, self.components[model].__class__.__name__) for model in range(len(self.components))])
-                which = int(input(f"[for {self.components[receiver_model].__class__.__name__}] Which is {name}? (0 for None): ")) - 1
-                needed_inputs = [f.name for f in inputs if f.metadata["by"] == name]
-                if 0 <= which < L:
-                    available = self.get_documentation(filters=dict(variable_type=["state_variable", "plant_scale_state"]), models=[self.components[which]])
-                    print(available)
-                    for var in needed_inputs:
-                        selected = input(f"For {var}, Nothing for same name / enter target names * conversion factor / Separate by ; -> ").split(";")
-                        com_dict = {}
-                        for expression in selected:
-                            if "*" in expression:
-                                l = expression.split("*")
-                                com_dict[l[0].replace(" ", "")] = float(l[1])
-                            elif expression.strip() == "":
-                                com_dict[var] = 1.
-                            else:
-                                com_dict[expression.replace(" ", "")] = 1.
-                        translator[self.components[receiver_model].__class__.__name__][self.components[which].__class__.__name__][var] = com_dict
-
-        return translator
-
-    def declare_data_and_couple_components(self, translator_path: str = "", components: tuple = ()):
-        """
-        Couple *components* through the translator at *translator_path* (couple_components), then check that
-        their DataStructures are consistent (shapes, aliases, derivations).
-        """
-        self.couple_components(translator_path=translator_path, *components)
-        # The coupled DataStructures must be consistent (shapes, aliases, derivations)
-        checked = []
-        for component in getattr(self, "components", ()):
-            ds = getattr(component, "data_structure", None)
-            if ds is not None and hasattr(ds, "validate_variables") and not any(ds is other for other in checked):
-                ds.validate_variables()
-                checked.append(ds)

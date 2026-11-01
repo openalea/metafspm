@@ -31,7 +31,7 @@ def test_one_population_per_model_and_inferred_mappings():
     assert [len(p.plants) for p in scene.populations] == [2, 2]
     assert [p.plant_names() for p in scene.populations][1] == dict(zip(scene.populations[1].plants, ["p1", "p3"]))
     assert len(scene.mappings) == 2 and all(isinstance(m, CrossMapping) for m in scene.mappings)
-    assert scene.scene_xrange == 0.8
+    assert scene.xrange == 0.8
 
 
 def test_a_step_runs_the_environment_then_the_populations_at_fixed_points():
@@ -94,7 +94,7 @@ def test_plants_are_frozen_until_their_emergence():
 
 
 def test_the_recorder_writes_plant_summaries_and_selected_plants(tmp_path):
-    scene = _scene(recorder=SceneRecorder(str(tmp_path), log_plants=["p0"], segment_period=2))
+    scene = _scene(recorder=SceneRecorder(str(tmp_path), segment_plants=["p0"], segment_period=2))
     scene.simulate(3)
     summaries = pd.read_csv(tmp_path / "Plant" / "RootPopulation" / "summaries.csv")
     assert len(summaries) == 4 * 2 and set(summaries["plant"]) == {"p0", "p2"}          # the initial state too
@@ -154,8 +154,8 @@ class SeedlingLeafPopulation(LeafPopulation):
 class SceneLightModel:
     """A CARIBU-like environment model on the union of the populations."""
 
-    def __init__(self, populations, scene_xrange, scene_yrange, time_step):
-        self.scene = UnionDataStructure(populations)
+    def __init__(self, plant_data_structures, xrange, yrange, time_step):
+        self.scene = UnionDataStructure(plant_data_structures)
         self.light = SceneLight(data_structure=self.scene)
         self.components = [self.light]
 

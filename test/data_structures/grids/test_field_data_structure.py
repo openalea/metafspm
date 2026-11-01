@@ -118,16 +118,28 @@ def test_register_with_values():
     np.testing.assert_array_equal(ds.get('moisture'), [0.1, 0.2, 0.3])
 
 
+GRID_GEOMETRY = {"face_area", "face_distance"}           # the grid's own edge variables
+
+
 def test_available_vars_empty():
     ds = ArrayDataStructure(shape=(3,))
-    assert ds.available_vars() == []
+    assert set(ds.available_vars()) == GRID_GEOMETRY
 
 
 def test_available_vars_after_add():
     ds = ArrayDataStructure(shape=(3,))
     ds.register('temperature')
     ds.register('moisture')
-    assert set(ds.available_vars()) == {'temperature', 'moisture'}
+    assert set(ds.available_vars()) == {'temperature', 'moisture'} | GRID_GEOMETRY
+
+
+def test_available_vars_include_edge_and_scalar_variables():
+    """Edge and scalar variables are listed too (export used to miss them)."""
+    ds = ArrayDataStructure(shape=(3,))
+    ds.register("flux", location="edge")
+    ds.register("total", location="scalar")
+    assert {"flux", "total"} <= set(ds.available_vars())
+    assert {"flux", "total"} <= set(ds.export())
 
 
 def test_get_missing_raises_key_error():

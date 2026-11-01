@@ -16,7 +16,7 @@ from openalea.metafspm.coupling.declaration import DeclarationError
 from openalea.metafspm.coupling.translator import Translator
 from openalea.metafspm.data_structure.configs import ScalesConfig as scales
 from openalea.metafspm.data_structure.data_api import ArrayDataStructure, MPGDataStructure
-from openalea.metafspm.scene.population import build_population
+from openalea.metafspm.scene.population import _build_population
 from openalea.metafspm.solve.decorator import rate
 
 from growth import DOC, RootGrowthProbe
@@ -63,7 +63,7 @@ class Soil(FunctionalComponent):
 def _population(xs, initiator=RootGrowthProbe, z=0., **scenario):
     table = pd.DataFrame([dict(plant=f"p{i}", model=initiator, x=x, y=0.05, z=z, rotation=0.,
                                scenario=dict(scenario)) for i, x in enumerate(xs)])
-    g, _ = build_population(table, initiators=(initiator,))
+    g, _ = _build_population(table, initiators=(initiator,))
     g.populate_graph(g.scales.SubOrgan)
     g.convert_properties_to_arraydict()
     return MPGDataStructure(g, from_scale=g.scales.SubOrgan)

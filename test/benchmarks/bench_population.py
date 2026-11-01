@@ -195,8 +195,10 @@ class BenchSoilNitrate(FunctionalComponent):
 
 
 class BenchSoil:
-    def __init__(self, populations, scene_xrange, scene_yrange, time_step):
-        self.grid = ArrayDataStructure(shape=(20, 20, 50), dx=(scene_xrange / 20, scene_yrange / 20, 0.02))
+    compartment = "Soil"
+
+    def __init__(self, plant_data_structures, xrange, yrange, time_step):
+        self.grid = ArrayDataStructure(shape=(20, 20, 50), dx=(xrange / 20, yrange / 20, 0.02))
         self.nitrate = BenchSoilNitrate(data_structure=self.grid)
         self.components = [self.nitrate]
 
@@ -224,7 +226,7 @@ def bench_segments(n_plants, steps, method):
     with tempfile.TemporaryDirectory() as folder:
         scene = Scene(_planting(n_plants, side=1.), environment=[BenchSoil], translator=TRANSLATOR, time_step=DT,
                       mapping_method=method,
-                      recorder=SceneRecorder(folder, log_plants=["p0"], segment_period=steps))
+                      recorder=SceneRecorder(folder, segment_plants=["p0"], segment_period=steps))
         built = time.perf_counter() - start
         ds = scene.populations[0].data_structure
         n0 = ds.n_nodes()

@@ -14,12 +14,12 @@ from models import SCENE_TRANSLATOR, SeedlingWater, Soil, largest_change, root_s
 import plotting
 
 
-def scene(output_dirpath=None, tolerance=1e-6, soil_scenario=None):
+def scene(folder=None, tolerance=1e-6, soil_scenario=None):
     table = planting([Planting(x=0.1, y=0.1)], SeedlingWater, xrange=0.2, yrange=0.2)   # a 0.2 m x 0.2 m soil column
     stop = largest_change(tolerance)
     built = Scene(table, environment=[Soil], environment_scenarios=[soil_scenario or {}],
                   translator=SCENE_TRANSLATOR, time_step=3600, mappings=root_surface_mappings, stop_when=stop,
-                  recorder=SceneRecorder(output_dirpath, log_plants=["p0"], segment_period=1) if output_dirpath else None)
+                  recorder=SceneRecorder(folder, segment_plants=["p0"], segment_period=1) if folder else None)
     return built, stop
 
 
@@ -51,7 +51,7 @@ def summary(built, stop):
 
 if __name__ == "__main__":
     folder = sys.argv[1] if len(sys.argv) > 1 else "outputs/one_plant"
-    built, stop = scene(output_dirpath=folder)
+    built, stop = scene(folder=folder)
     built.simulate(100)
     summary(built, stop)
     plots(built, folder)

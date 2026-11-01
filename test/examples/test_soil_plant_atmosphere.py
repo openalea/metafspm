@@ -60,7 +60,7 @@ def _check_upscaling(ds):
 
 @pytest.mark.parametrize("example", [one_plant, population], ids=["one_plant", "population"])
 def test_the_example_converges_with_closed_water_balances(example, tmp_path):
-    scene, stop = example.scene(output_dirpath=str(tmp_path / "records"))
+    scene, stop = example.scene(folder=str(tmp_path / "records"))
     scene.simulate(50)
     assert scene.stopped and stop.history[-1] < 1e-6 and scene.iteration < 50
     _check_balances(scene)
@@ -74,7 +74,7 @@ def test_the_example_converges_with_closed_water_balances(example, tmp_path):
 
 
 def test_the_adaptive_soil_refines_where_the_roots_take_up_water(tmp_path):
-    scene, stop, _ = one_plant_adaptative.run(output_dirpath=str(tmp_path / "records"), max_iterations=50)
+    scene, stop, _ = one_plant_adaptative.run(folder=str(tmp_path / "records"), max_iterations=50)
     assert scene.stopped and stop.history[-1] < 1e-6
     _check_balances(scene)
     soil = scene.environment[0]

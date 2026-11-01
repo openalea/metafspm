@@ -119,9 +119,8 @@ def setting(unit: str = "", unit_comment: str = "", description: str = "", refer
 
 def forcing_variable(unit: str = "", unit_comment: str = "", description: str = "", references: str = "",
                      DOI: list = "", required: bool = True, at: str = "end"):
-    """Declare a forcing: a time series given to the scene (its `forcings` table, shared by every model) or to the
-    component (`self.forcings`), read by `self.forcing(name)` at the step's time, the same for every entity (meteo,
-    an imposed supply). Not a DataStructure variable: listed by declarations(). A Scene raises at its construction
+    """Declare a forcing: a time series given to the scene (its `forcings` table, shared by every model), read by
+    `self.forcing(name)` at the step's time, the same for every entity (meteo, an imposed supply). Not a DataStructure variable: listed by declarations(). A Scene raises at its construction
     when a *required* forcing is not given; an optional one (required=False) raises KeyError when read, for the
     component to fall back. *at*: when a step reads it, "end" (the end of the (sub-)step, metafspm's convention for
     implicit solves) or "start" (the step's start, e.g. a meteo table read as the hour begins). The documentation
@@ -689,10 +688,6 @@ class FunctionalComponent(DataStructureComponent):
         self.__dict__["_graph_view_cache"] = view
         self.__dict__["_graph_view_version"] = getattr(self.data_structure, "topology_version", None)
 
-    # Forcings read inside steps and equations: {name: pandas Series indexed by time (s), (times, values),
-    # or a callable t -> value}, interpolated linearly
-    forcings = None
-
     def forcing_time(self, at: str = "end") -> float:
         """
         The time at which forcings are read: the end of the current (sub-)step for implicit solves and steps,
@@ -720,14 +715,14 @@ class FunctionalComponent(DataStructureComponent):
         if at is None:
             declared = getattr(type(self), "__dataclass_fields__", {}).get(name)
             at = declared.metadata.get("at", "end") if declared is not None else "end"
-        table = (self.forcings or {}).get(name)
-        shared = self.__dict__.get("_scene_forcings")
-        if table is None and shared is not None and name in shared:
-            table = shared[name]                          # the scene's shared table
-        if table is None:
-            raise KeyError(f"{type(self).__name__} has no forcing '{name}' (set self.forcings, or the scene's)")
-        from openalea.metafspm.coupling.forcings import forcing_value
-        return forcing_value(table, self.forcing_time(at))
+        forcings = self.__dict__.get("_scene_forcings") or {}
+        if name not in forcings:
+            raise KeyError(f"{type(self).__name__} has no forcing '{name}' (the Scene's forcings=)")
+        from openalea.metafspm.coupling.forcings import forcing_value, is_spatial
+        if is_spatial(forcings[name]):
+            raise TypeError(f"forcing '{name}' varies in space ((time, ids) -> values): the Scene writes it into an "
+                            "input or parameter, a component does not read it with forcing()")
+        return forcing_value(forcings[name], self.forcing_time(at))
 
     def pool_exchange(self, name: str):
         """
@@ -886,12 +881,12 @@ class StructuralComponent(DataStructureComponent):
         return self.data_structure.mtg
 
     @classmethod
-    def initiate_plant(cls, g, plant_vid: int, parameters: dict) -> None:
+    def initiate_plant(cls, g, plant: int, scenario: dict) -> None:
         """
-        Build the initial structure of one plant under its Plant-scale vertex *plant_vid* in the population MPG *g*,
-        from that plant's scenario *parameters*, before any component is constructed. Several structural components
+        Build the initial structure of one plant under its Plant-scale vertex *plant* in the population MPG *g*,
+        from that plant's *scenario* ({name: value}), before any component is constructed. Several structural components
         may each add their part, in order (e.g. roots, then anatomies). The plant's position is in
-        g.property("x"/"y"/"z"/"rotation")[plant_vid]; the component computes its elements' coordinates from it.
+        g.property("x"/"y"/"z"/"rotation")[plant]; the component computes its elements' coordinates from it.
         """
         raise NotImplementedError(f"{cls.__name__} does not initiate plants")
 

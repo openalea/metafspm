@@ -583,11 +583,12 @@ class VariableStoreMixin:
 
     # ── Entity identity and traversal ────────
 
-    def index_of(self, ids, location: str = "node"):
+    def index_of(self, ids, location: str = None):
         """
-        Local indices of entity *ids* at *location* (an id or an array of ids), the inverse of entity_ids().
-        Unknown ids raise KeyError.
+        Local indices of entity *ids* at *location* (an id or an array of ids; default: the DataStructure's nodes or
+        cells), the inverse of entity_ids(). Unknown ids raise KeyError.
         """
+        location = location or self._default_location
         cache = self.__dict__.setdefault("_index_cache", {})
         key = (location, self.topology_version)
         if key not in cache:
@@ -610,14 +611,15 @@ class VariableStoreMixin:
     # ── Parameters seen by equations ────────────────────
 
     def random(self, distribution: str = "uniform", stream: str = "", step: int = 0, ids=None,
-               location: str = "node", seed: int = 0, **parameters) -> np.ndarray:
+               location: str = None, seed: int = 0, **parameters) -> np.ndarray:
         """
-        Reproducible draws, one per entity of *location* (or per entity id of *ids*, e.g. vids just created by an
+        Reproducible draws, one per entity of *location* (default: the nodes or cells; or per entity id of *ids*,
+        e.g. vids just created by an
         MPG-style step): a pure function of (seed, stream, step, entity id), independent of the visiting order
         (random_streams). *parameters*: low / high, loc / scale, ...
         """
         from openalea.metafspm.data_structure import random_streams
-        ids = self.entity_ids(location) if ids is None else ids
+        ids = self.entity_ids(location or self._default_location) if ids is None else ids
         return random_streams.draw(distribution, ids, seed=seed, stream=stream, step=step, **parameters)
 
     def parameter_view(self, name: str, to: str) -> np.ndarray:
@@ -657,15 +659,16 @@ class VariableStoreMixin:
 
     # ── Named masks ─────────────────────
 
-    def define_mask(self, name: str, rule, location: str = "node") -> None:
+    def define_mask(self, name: str, rule, location: str = None) -> None:
         """
-        Define mask *name* at *location* from *rule*:
+        Define mask *name* at *location* (default: the nodes or cells) from *rule*:
           {variable: condition}, every condition holding: ">0" (or "<0", ">=0", "<=0"), a value, or a list of values;
           a callable ds -> boolean array (recomputed at every mask() call, its sources being unknown).
         """
         if not (callable(rule) or (isinstance(rule, dict) and rule)):
             raise TypeError(f"mask '{name}': rule must be a non-empty {{variable: condition}} dict or a callable")
         masks = self.__dict__.setdefault("_masks", {})
+        location = location or self._default_location
         masks[name] = {"rule": rule, "location": location, "stamps": None, "values": None, "version": 0}
 
     def has_mask(self, name: str) -> bool:
@@ -2897,7 +2900,7 @@ class ArrayDataStructure(VariableStoreMixin, FieldDataStructure):
         return super()._map(values, from_location, to_location, aggregation, weights)
 
     def available_vars(self) -> list[str]:
-        return list(self._fields.keys())
+        return [name for store in self._var_stores().values() for name in store]
 
     def coordinates(self) -> np.ndarray:
         """Grid vertex positions (origin + i * dx), one row per cell in flat order. See cell_centers()."""

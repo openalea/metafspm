@@ -13,7 +13,7 @@ import pytest
 from openalea.metafspm.coupling.choregrapher import Choregrapher
 from openalea.metafspm.coupling.component import FunctionalComponent, state_variable
 from openalea.metafspm.data_structure.data_api import ArrayDataStructure, MPGDataStructure
-from openalea.metafspm.scene.population import build_population
+from openalea.metafspm.scene.population import _build_population
 from openalea.metafspm.solve.decorator import rate
 from growth import DOC, CarbonProbe, RootGrowthProbe
 
@@ -22,7 +22,7 @@ from growth import DOC, CarbonProbe, RootGrowthProbe
 def _population():
     table = pd.DataFrame([dict(plant=f"p{i}", model=None, x=0.1 * i, y=0., z=0., rotation=0.,
                                scenario={"n_segments": 2 + i}) for i in range(3)])
-    g, _ = build_population(table, initiators=(RootGrowthProbe,))
+    g, _ = _build_population(table, initiators=(RootGrowthProbe,))
     g.populate_graph(g.scales.SubOrgan)
     g.convert_properties_to_arraydict()
     return MPGDataStructure(g, from_scale=g.scales.SubOrgan)

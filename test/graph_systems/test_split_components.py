@@ -12,7 +12,7 @@ from openalea.metafspm.coupling.choregrapher import Choregrapher
 from openalea.metafspm.coupling.component import FunctionalComponent, parameter, state_variable
 from openalea.metafspm.data_structure.configs import ScalesConfig as scales
 from openalea.metafspm.data_structure.data_api import MPGDataStructure
-from openalea.metafspm.scene.population import build_population
+from openalea.metafspm.scene.population import _build_population
 from openalea.metafspm.solve.decorator import edge_law, graph_system, node_balance
 from growth import DOC, RootGrowthProbe
 
@@ -73,7 +73,7 @@ class ActiveSplitDiffusion(FunctionalComponent):
 def _population(n_segments, conductances):
     table = pd.DataFrame([dict(plant=f"p{i}", model=None, x=0.1 * i, y=0., z=0., rotation=0.,
                                scenario={"n_segments": n}) for i, n in enumerate(n_segments)])
-    g, plants = build_population(table, initiators=(RootGrowthProbe,))
+    g, plants = _build_population(table, initiators=(RootGrowthProbe,))
     g.populate_graph(g.scales.SubOrgan)
     g.convert_properties_to_arraydict()
     ds = MPGDataStructure(g, from_scale=g.scales.SubOrgan)

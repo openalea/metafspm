@@ -85,14 +85,14 @@ scene.simulate(48)
   `events=[(time, action)]` stay for one-off actions, such as a cut or an irrigation.
 - **The recorder** decides what is written, every output switched on or off on its own:
   - summaries every `summary_period` steps (on by default);
-  - the `log_plants`' segments every `segment_period` steps;
+  - the `segment_plants`' segments every `segment_period` steps;
   - frames every `frame_period` steps;
   - checkpoints every `checkpoint_period` steps;
   - tables of your own, `tables={name: function(scene)}`, each function returning a row.
 
   Without a folder, it keeps its tables in memory.
 - **`simulate(n)`** runs *n* steps, or fewer if `stop_when=` holds. It then records the last state and the run's
-  status: finished, stopped, or failed with its error. A loop of `scene.run()` ends with `scene.stop()`.
+  status: finished, stopped, or failed with its error. A loop of `scene.run()` ends with `scene.finish()`.
 
 The folder then holds:
 

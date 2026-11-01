@@ -8,7 +8,7 @@ from openalea.metafspm.coupling.component import NewNodes, StructuralComponent, 
 from openalea.metafspm.data_structure.configs import PropsConfig
 from openalea.metafspm.data_structure.configs import ScalesConfig as scales
 from openalea.metafspm.data_structure.data_api import MPGDataStructure
-from openalea.metafspm.scene.population import Planting, build_population, planting
+from openalea.metafspm.scene.population import Planting, _build_population, planting
 from openalea.metafspm.solve.decorator import segmentation
 
 
@@ -34,7 +34,7 @@ class OneApex(StructuralComponent):
 
 
 def test_a_single_element_plant_grows_with_its_edges():
-    g, _ = build_population(planting([Planting()], model=None), initiators=(OneApex,))
+    g, _ = _build_population(planting([Planting()], model=None), initiators=(OneApex,))
     g.populate_graph(g.scales.SubOrgan)
     g.convert_properties_to_arraydict()
     ds = MPGDataStructure(g, from_scale=g.scales.SubOrgan)

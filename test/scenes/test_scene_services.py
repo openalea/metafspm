@@ -46,21 +46,21 @@ class LitPlants:
 
 
 class CountingSoil(SceneSoil):
-    """Records its runs, the exudation it received each time, and its spin-up."""
-    run_every = 2
+    """Records its full runs (every 2 steps), the exudation it received each time, and its spin-up."""
+    interval = 2 * DT
 
-    def __init__(self, populations, scene_xrange, scene_yrange, time_step):
-        super().__init__(populations, scene_xrange, scene_yrange, time_step)
+    def __init__(self, plant_data_structures, xrange, yrange, time_step):
+        super().__init__(plant_data_structures, xrange, yrange, time_step)
         self.runs, self.received, self.spun_up = [], [], 0
 
     def spin_up(self, scene):
         self.spun_up += 1
         assert scene.iteration == 0
 
-    def run(self):
+    def full_run(self):
         self.runs.append(None)
         self.received.append(self.grid.get("exudation").sum())
-        super().run()
+        super().full_run()
 
 
 def _scene(**options):
@@ -92,7 +92,7 @@ def test_declared_forcings():
         Scene(doubles_planting([LitPlants]), time_step=DT, forcings=pd.DataFrame({"wind": [1., 1.]}, index=[0., DT]))
 
 
-def test_models_run_every_n_steps_and_spin_up_once():
+def test_models_run_every_interval_and_spin_up_once():
     scene = _scene()
     soil = scene.environment[0]
     assert soil.spun_up == 1
@@ -140,8 +140,8 @@ class CadencedSoil(SceneSoil):
     """A full run every 3 steps, a light update in between, a hook after each full run."""
     interval = 3 * DT
 
-    def __init__(self, populations, scene_xrange, scene_yrange, time_step):
-        super().__init__(populations, scene_xrange, scene_yrange, time_step)
+    def __init__(self, plant_data_structures, xrange, yrange, time_step):
+        super().__init__(plant_data_structures, xrange, yrange, time_step)
         self.calls = []
 
     def full_run(self):
@@ -167,6 +167,6 @@ def test_environment_model_cadence_and_helpers():
         scene.run()
     assert soil.calls == ["full", "after", "between", "between", "full", "after", "between", "between", "full", "after"]
     assert soil.last_run == 6 * DT and soil.checkpoint_state() == {"last_run": 6 * DT}
-    assert soil.plants() is scene.populations[0].data_structure                  # one population: its own
+    assert soil.plant_data_structure() is scene.populations[0].data_structure    # one population: its own
     grid = soil.build_grid(voxel=0.1, depth=0.3)
     assert grid.shape == (8, 4, 3) and soil.pattern == (0., 0., 0.8, 0.4)

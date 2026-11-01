@@ -310,7 +310,7 @@ formula=)`, or a nested YAML/Python dictionary. Links become aliases (same value
 (factors, sums, formulas, mappings between scales), computed when read.
 
 ```python
-self.declare_data_and_couple_components(translator_path="translator.py", components=self.components)
+self.couple(*self.components, translator="translator.py")
 ```
 
 `openalea.metafspm.testing.assert_component_couplable(Component, translator)` checks a component against a
@@ -349,7 +349,7 @@ from openalea.metafspm import Scene, SceneRecorder, planting, stand
 table = planting(stand(xrange=0.3, yrange=0.3, sowing_density=250, row_spacing=0.15, seed=1), Wheat, scenario)
 scene = Scene(table, environment=[RhizoSoil, LightModel], environment_scenarios=[soil_scenario, light_scenario],
               translator="scene_translator.py", time_step=3600, forcings=meteo,
-              recorder=SceneRecorder("outputs", log_plants=["p0"], frame_period=24, checkpoint_period=240))
+              recorder=SceneRecorder("outputs", segment_plants=["p0"], frame_period=24, checkpoint_period=240))
 scene.simulate(n_iterations=2500)
 ```
 
@@ -358,15 +358,15 @@ scene.simulate(n_iterations=2500)
   depth) or sown: `stand(xrange, yrange, sowing_density, row_spacing, sowing_depth, models=, frequencies=, seed=)`
   lays out rows at a density, the stand's size adjusted to the rows, and with several models draws one per position
   (`planting(sown, sown.models, {Wheat: ..., Pea: ...})`). The plants are named `p0`, `p1`, ... in the table's
-  order: those names are the `log_plants=`, the frames' `entities=` and the summaries' `plant` column.
+  order: those names are the `segment_plants=`, the frames' `entities=` and the summaries' `plant` column.
 - **Plant models** are built once per model of the planting table, on an MPG holding all its plants:
   `Model(data_structure, time_step, <its own arguments>)`, with a class attribute `initiators` (the structural components
   building each plant). In anatomy mode (`nodes = "Compartment"`) the initiators build the anatomies, and a `wiring`
   attribute gives the junction rules between them. Numeric parameters may differ per plant (one scenario per plant); an `emergence_time` column
   keeps a plant frozen until then.
-- **Environment models** are built as `Model(populations, scene_xrange, scene_yrange, time_step, <its own arguments>)` and
+- **Environment models** are built as `Model(plant_data_structures, xrange, yrange, time_step, <its own arguments>)` and
   create their own DataStructures (a grid, a union of the populations). `scene.environment.EnvironmentModel` is
-  their base: `self.plants()` (the population's DataStructure, or the union of several), `self.build_grid(voxel,
+  their base: `self.plant_data_structure()` (the population's DataStructure, or the union of several), `self.build_grid(voxel,
   depth, adaptive=False)` (a grid over the scene's pattern, z down, periodic in x and y), a cadence (`interval` in s,
   or an overridden `due(time)`; at the other steps `between()`, e.g. `self.light.run_stage("state")`),
   `after_run()` (an adaptive grid refined), the time of the last full run kept by checkpoints. A light model and a
@@ -389,13 +389,14 @@ scene.simulate(n_iterations=2500)
   supply). A forcing nothing takes raises. `as_forcing(value, time_unit=86400.)` turns an input given by day (a
   number, a function of the day, a Series indexed by day, one value per day) into one. `events=[(time, action)]`
   stay for one-off actions.
-- **Services.** `run_every` / `run_when(scene)` on a model (skipped steps keep its outputs), `spin_up(scene)`,
+- **Services.** An environment model's `interval` (s) is its cadence (`between()` runs at the other steps);
+  `run_when(scene)` on a model is a condition, not a cadence (skipped steps keep its outputs); `spin_up(scene)`,
   `stop_when=condition`.
 - **Outputs: the SceneRecorder.** `recorder=SceneRecorder(folder, ...)` (or `recorder=folder`) writes:
   - `run.json`: status (running, finished, stopped, failed with its error), times, wall time per model, versions;
   - `scenario.json`: the planting, the scenarios, the environment models, the forcings (tables in `forcings/`);
   - `Plant/<Model>/summaries.csv`: one row per plant and step, its state variables summed (extensive) or averaged;
-  - `Plant/<Model>/segments.csv`: the `log_plants`' nodes every `segment_period` steps;
+  - `Plant/<Model>/segments.csv`: the `segment_plants`' nodes every `segment_period` steps;
   - `Soil/<Model>/summaries.csv` and `Atmosphere/<Model>/summaries.csv`: each environment model's grid, by its
     `compartment` attribute;
   - your own tables, `tables={name: function(scene) -> row}`, as `<name>.csv`;
@@ -405,7 +406,7 @@ scene.simulate(n_iterations=2500)
   Each output is switched on its own (`summaries=False`, `frame_period=None`, ...); the initial state is recorded
   at the first step and the last one at the end. Without a folder the tables stay in memory, and
   `recorder.table(name)` reads any of them back. `Scene.simulate` sets the run's status; a loop of `scene.run()`
-  ends with `scene.stop()`.
+  ends with `scene.finish()` (a recording scene dropped without it warns).
 - **Restarts.** `scene.checkpoint(path)` and `Scene.restore(path, **arguments)` continue a run bit for bit; models
   keep non-variable state through `checkpoint_state()` / `restore_state(state)`. A restored scene cuts its
   recorder's tables and frames back to the checkpoint's step, so a run that went past its checkpoint leaves no

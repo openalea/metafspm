@@ -691,22 +691,9 @@ def scene_to_frame(scene, geometry: bool = True, standard_names: dict = None, da
 
     For logging: *data_structures*, the ids of those to write (default: all); *scales*, *entities* and *variables*,
     as in to_frame (filter_frame), *entities* also given by the planting table's plant names (e.g. "p0")."""
-    written, components = {}, {}
-    for population in scene.populations:
-        written[population.name] = population.data_structure
-        components[population.name] = population.components
-    for model in scene.environment:
-        found = []
-        for ds in scene._data_structures(model):
-            shared = next((identifier for identifier, other in written.items() if other is ds), None)
-            if shared is None:
-                found.append(ds)
-            else:                                   # a population's, written once, with this model's declarations too
-                components[shared] = components[shared] + list(model.components)
-        for number, ds in enumerate(found):
-            identifier = type(model).__name__ + (f"_{number}" if len(found) > 1 else "")
-            written[identifier] = ds
-            components[identifier] = list(model.components)
+    found = scene.data_structures()
+    written = {identifier: entry[0] for identifier, entry in found.items()}
+    components = {identifier: entry[2] for identifier, entry in found.items()}
     identifier_of = {id(ds): identifier for identifier, ds in written.items()}
     mappings = {}
     for mapping in getattr(scene, "mappings", ()):

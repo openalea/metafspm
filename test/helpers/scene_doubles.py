@@ -99,9 +99,10 @@ class SceneSoilNitrate(FunctionalComponent):
 
 class SceneSoil(EnvironmentModel):
     """An environment model building its grid."""
+    compartment = "Soil"
 
-    def __init__(self, populations, scene_xrange, scene_yrange, time_step):
-        super().__init__(populations, scene_xrange, scene_yrange, time_step)
+    def __init__(self, plant_data_structures, xrange, yrange, time_step):
+        super().__init__(plant_data_structures, xrange, yrange, time_step)
         self.grid = ArrayDataStructure(shape=(2, 1, 4), dx=0.4)
         self.nitrate = SceneSoilNitrate(data_structure=self.grid)
         self.components = [self.nitrate]

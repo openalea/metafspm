@@ -41,8 +41,7 @@ class SeedlingWater(CompositeModel):
     def __init__(self, data_structure, time_step):
         self.structure = SeedlingStructure(data_structure=data_structure, time_step=time_step)
         self.transport = PlantWaterTransport(data_structure=data_structure, time_step=time_step)
-        self.declare_data_and_couple_components(translator_path=PLANT_TRANSLATOR,
-                                                components=(self.structure, self.transport))
+        self.couple(self.structure, self.transport, translator=PLANT_TRANSLATOR)
 
     def run(self):
         self.structure()
@@ -54,15 +53,15 @@ class Soil(EnvironmentModel):
     The soil environment model: a grid over the stand, z pointing down from the surface, its conductivity varying
     by layer (a denser subsoil), the water table at the bottom.
     """
+    compartment = "Soil"
 
-    def __init__(self, populations, scene_xrange, scene_yrange, time_step, depth=0.4, voxel=0.025,
+    def __init__(self, plant_data_structures, xrange, yrange, time_step, depth=0.4, voxel=0.025,
                  topsoil_K=1.5, subsoil_K=0.6, topsoil_depth=0.2):
-        super().__init__(populations, scene_xrange, scene_yrange, time_step)
+        super().__init__(plant_data_structures, xrange, yrange, time_step)
         self.grid = self.build_grid(voxel, depth)
         self.structure = SoilStructure(data_structure=self.grid, time_step=time_step)
         self.transport = SoilWaterTransport(data_structure=self.grid, time_step=time_step)
-        self.declare_data_and_couple_components(translator_path=SOIL_TRANSLATOR,
-                                                components=(self.structure, self.transport))
+        self.couple(self.structure, self.transport, translator=SOIL_TRANSLATOR)
         self.layers = dict(topsoil_K=topsoil_K, subsoil_K=subsoil_K, topsoil_depth=topsoil_depth)
         set_conductivity(self.grid, **self.layers)
 
@@ -81,15 +80,15 @@ class AdaptiveSoil(EnvironmentModel):
     cell errs (a linear profile is exact at any size, however large the flux). The coupling being lagged, the grid
     settles with Ψ: the scene's stop_when sees the change of grid as a change of Ψ.
     """
+    compartment = "Soil"
 
-    def __init__(self, populations, scene_xrange, scene_yrange, time_step, depth=0.4, voxel=0.025, max_level=2,
+    def __init__(self, plant_data_structures, xrange, yrange, time_step, depth=0.4, voxel=0.025, max_level=2,
                  refine_fraction=0.05, coarsen_fraction=0.005, topsoil_K=1.5, subsoil_K=0.6, topsoil_depth=0.2):
-        super().__init__(populations, scene_xrange, scene_yrange, time_step)
+        super().__init__(plant_data_structures, xrange, yrange, time_step)
         self.grid = self.build_grid(voxel, depth, adaptive=True, max_level=max_level)
         self.structure = SoilStructure(data_structure=self.grid, time_step=time_step)
         self.transport = SoilWaterTransport(data_structure=self.grid, time_step=time_step)
-        self.declare_data_and_couple_components(translator_path=SOIL_TRANSLATOR,
-                                                components=(self.structure, self.transport))
+        self.couple(self.structure, self.transport, translator=SOIL_TRANSLATOR)
         self.layers = dict(topsoil_K=topsoil_K, subsoil_K=subsoil_K, topsoil_depth=topsoil_depth)
         set_conductivity(self.grid, **self.layers)
         self.refine_fraction, self.coarsen_fraction = refine_fraction, coarsen_fraction
@@ -131,7 +130,7 @@ def largest_change(tolerance=1e-4):
 
     def condition(scene):
         change = 0.
-        for key, ds in enumerate(scene._all_data_structures()):
+        for key, (ds, _, _) in scene.data_structures().items():
             if not ds.has("water_potential"):
                 continue
             values = np.array(ds.get("water_potential"), dtype=float).reshape(-1)

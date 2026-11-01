@@ -9,6 +9,8 @@ the same objects, their string factors being parsed by a restricted arithmetic p
 import ast
 import importlib.util
 import operator
+import os
+import types
 from dataclasses import dataclass, field
 from typing import Callable, Mapping, Optional, Union
 
@@ -208,12 +210,34 @@ class Translator:
         return translator
 
     @classmethod
-    def from_yaml(cls, path) -> "Translator":
+    def load(cls, source=None) -> "Translator":
+        """
+        A Translator from *source*: a Translator (as is), a nested dict (from_dict), a Python module or the path of
+        one (.py) defining ``translator = Translator(...)``, or the path of a YAML file of the nested format. None:
+        no link.
+        """
+        if source is None:
+            return cls()
+        if isinstance(source, cls):
+            return source
+        if isinstance(source, Mapping):
+            return cls.from_dict(source)
+        if isinstance(source, types.ModuleType):
+            return cls._from_module(source)
+        path = os.fspath(source)
+        if os.path.isdir(path):                          # Windows' open() raises PermissionError on a directory
+            raise IsADirectoryError(f"the translator path is a directory: {path}")
+        if not os.path.isfile(path):
+            raise FileNotFoundError(f"no translator at '{path}' (a .py module or a YAML file; None for no link)")
+        return cls._from_module(path) if path.endswith(".py") else cls._from_yaml(path)
+
+    @classmethod
+    def _from_yaml(cls, path) -> "Translator":
         with open(path) as f:
             return cls.from_dict(yaml.safe_load(f) or {})
 
     @classmethod
-    def from_module(cls, path_or_module) -> "Translator":
+    def _from_module(cls, path_or_module) -> "Translator":
         """Translator exposed as ``translator`` by a Python module (file path or imported module)."""
         module = path_or_module
         if isinstance(path_or_module, str):
@@ -224,7 +248,3 @@ class Translator:
         if not isinstance(translator, cls):
             raise ValueError(f"{path_or_module} must define `translator = Translator(...)`")
         return translator
-
-    @classmethod
-    def load(cls, path) -> "Translator":
-        return cls.from_module(path) if str(path).endswith(".py") else cls.from_yaml(path)

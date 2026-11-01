@@ -96,8 +96,7 @@ class GrassBRIDGES(CompositeModel):
     def __init__(self, data_structure, time_step, translator_path=...):
         self.components = (RootGrowth(data_structure=data_structure, time_step=time_step),
                            RootCNUnified(data_structure=data_structure, time_step=time_step), ...)
-        self.declare_data_and_couple_components(translator_path=translator_path,
-                                                components=self.components)
+        self.couple(*self.components, translator=translator_path)
 
     def run(self):
         for component in self.components:
@@ -126,7 +125,7 @@ class GrassBRIDGES(CompositeModel):
   - Axes are `(x, y, z)`. Legacy `(ny, nz, nx)` voxel arrays convert with `legacy.transpose(2, 0, 1)`.
   - Fields are declared with `location="cell"`, or `"scalar"` for uniform drivers such as rain.
   - The grid gives `cell_centers()`, `cell_volume()` and `locate(points, periodic=, clip=)`.
-- **Environment model:** `Model(populations, scene_xrange, scene_yrange, time_step, <its own arguments>)` builds its DataStructures and exposes `components` and `run()`; it applies its input tables itself. Its DataStructure can be:
+- **Environment model:** `Model(plant_data_structures, xrange, yrange, time_step, <its own arguments>)` builds its DataStructures and exposes `components` and `run()`; it applies its input tables itself. Its DataStructure can be:
   - a grid (soil, RATP-like light);
   - a `UnionDataStructure(populations)` for a model that must see every population (CARIBU-like light);
   - a population's MPG.
@@ -148,7 +147,7 @@ class GrassBRIDGES(CompositeModel):
 - **The SceneRecorder replaces fspm-utility's Logger** (`Scene(..., recorder=SceneRecorder(folder, ...))`):
   - `summaries.csv` (sums and means per plant, and per environment grid in `Soil/` or `Atmosphere/`) replaces the
     summed CSV;
-  - `segments.csv` for the `log_plants` and the fspm-TF frames replace the NetCDF raw logs and the MTG pickles;
+  - `segments.csv` for the `segment_plants` and the fspm-TF frames replace the NetCDF raw logs and the MTG pickles;
   - `run.json` (status, timing) and `scenario.json` replace the simulation log and the saved scenario;
   - `checkpoints/` restart a run;
   - `tables={name: function(scene)}` adds a package's own summary.

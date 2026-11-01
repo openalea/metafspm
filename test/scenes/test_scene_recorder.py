@@ -65,7 +65,7 @@ def test_a_stopped_run_and_a_loop_of_steps(tmp_path):
     for _ in range(3):
         scene.run()
     assert _json(tmp_path / "b" / "run.json")["status"] == "running"
-    scene.stop()                                              # the last state, then the status
+    scene.finish()                                            # the last state, then the status
     times = sorted(set(pd.read_csv(tmp_path / "b" / "Plant" / "Seedlings" / "summaries.csv")["time"]))
     assert times == [0., 2 * DT, 3 * DT] and _json(tmp_path / "b" / "run.json")["status"] == "finished"
 
@@ -83,7 +83,7 @@ def test_tables_of_ones_own_in_memory():
     assert set(recorder.table_names()) == {"soil", "Plant/RootPopulation/summaries", "Plant/Seedlings/summaries",
                                            "Soil/SceneSoil/summaries"}
     assert len(recorder.table("Plant/RootPopulation/summaries")) == 4                 # one plant, 4 states
-    with pytest.raises(ValueError, match="output_dirpath"):
+    with pytest.raises(ValueError, match="folder"):
         SceneRecorder(frame_period=2)
 
 
@@ -98,12 +98,14 @@ class Air(SceneSoil):
 
 
 class Weather(SceneSoil):
-    """No compartment given, no "soil" in its name: Atmosphere."""
+    """No compartment given."""
+    compartment = None
 
 
 def test_compartments():
     assert compartment(SceneSoil.__new__(SceneSoil)) == "Soil" and compartment(Air.__new__(Air)) == "Atmosphere"
-    assert compartment(Weather.__new__(Weather)) == "Atmosphere"
+    with pytest.raises(ValueError, match="'Soil' or 'Atmosphere'"):
+        compartment(Weather.__new__(Weather))                # required, not guessed from the class name
     recorder = SceneRecorder()
     Scene(doubles_planting([Seedlings]), environment=[Air], translator=soil_translator("SeedlingExudation"),
           time_step=DT, recorder=recorder).simulate(1)

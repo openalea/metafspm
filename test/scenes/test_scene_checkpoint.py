@@ -27,8 +27,8 @@ from scene_doubles import DT, RootPopulation, SceneGeometry, SceneSoil, Seedling
 class ExternalSolverSoil(SceneSoil):
     """A soil model wrapping an opaque solver whose state is not a DataStructure variable (e.g. a cmf project)."""
 
-    def __init__(self, populations, scene_xrange, scene_yrange, time_step):
-        super().__init__(populations, scene_xrange, scene_yrange, time_step)
+    def __init__(self, plant_data_structures, xrange, yrange, time_step):
+        super().__init__(plant_data_structures, xrange, yrange, time_step)
         self.solver = {"steps": 0, "storage": 1.}
 
     def run(self):
@@ -43,21 +43,21 @@ class ExternalSolverSoil(SceneSoil):
         self.solver = dict(state)
 
 
-def _scene_arguments(output_dirpath=None, **recorder):
+def _scene_arguments(folder=None, **recorder):
     """The arguments of the checkpointed scene, given again to Scene.restore."""
     table = doubles_planting([RootPopulation, Seedlings, RootPopulation, Seedlings], emergence_time=[0., 0., 2 * DT, 0.])
     return dict(planting=table, environment=[ExternalSolverSoil],
                 translator=soil_translator("SceneExudation", "SeedlingExudation"), time_step=DT,
-                recorder=SceneRecorder(output_dirpath, log_plants=["p0"], segment_period=1, **recorder)
-                if output_dirpath is not None else None)
+                recorder=SceneRecorder(folder, segment_plants=["p0"], segment_period=1, **recorder)
+                if folder is not None else None)
 
 
-def _scene(output_dirpath=None, **recorder):
-    return Scene(**_scene_arguments(output_dirpath, **recorder))
+def _scene(folder=None, **recorder):
+    return Scene(**_scene_arguments(folder, **recorder))
 
 
 def _state(scene):
-    return [{name: np.array(ds.get(name)) for name in ds.available_vars()} for ds in scene._all_data_structures()]
+    return [{name: np.array(ds.get(name)) for name in ds.available_vars()} for ds, _, _ in scene.data_structures().values()]
 
 
 def test_a_restored_scene_continues_bit_for_bit(tmp_path):
@@ -176,7 +176,9 @@ class Mimics(FunctionalComponent):
 
 
 class MimicsSoil:
-    def __init__(self, populations, scene_xrange, scene_yrange, time_step):
+    compartment = "Soil"
+
+    def __init__(self, plant_data_structures, xrange, yrange, time_step):
         self.grid = ArrayDataStructure(shape=(2, 1, 4), dx=0.4)
         self.mimics = Mimics(data_structure=self.grid)
         self.components = [self.mimics]

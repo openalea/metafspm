@@ -170,3 +170,14 @@ class DirichletWithExplicit(FunctionalComponent):
 def test_explicit_solvers_refuse_dirichlet_conditions():
     with pytest.raises(ValueError, match="Dirichlet conditions"):
         DirichletWithExplicit(data_structure=_ds())()
+
+
+def test_the_ivp_solvers_take_the_graph_systems_error_control():
+    """rtol, atol and max_step of @graph_system reach the IVP solvers (they always ran at their own defaults)."""
+    exact = None
+    errors = {}
+    for rtol in (1e-3, 1e-10):
+        ds, u0, u = _run("scipy_ivp_bdf", rtol=rtol, atol=rtol * 1e-3)
+        exact = expm(-DT * K * _laplacian(ds)) @ u0
+        errors[rtol] = np.abs(u - exact).max()
+    assert errors[1e-10] < 1e-8 < errors[1e-3]

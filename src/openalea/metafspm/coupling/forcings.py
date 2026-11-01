@@ -5,7 +5,9 @@ Forcings, the time-varying inputs of a scene (meteo, a measured temperature, a s
   Scene(..., forcings=table)                  a DataFrame indexed by time (s), one column per forcing
 
 A forcing is a number; a callable of the scene time (s); a pandas Series indexed by time (s); or a (times, values)
-pair. Tables are linearly interpolated (and held constant beyond their ends). A component declaring the name with
+pair. Tables are linearly interpolated (and held constant beyond their ends). A callable of the time and the entity
+ids, (time, ids) -> one value per entity, varies in space (a soil temperature by depth, an input per segment): the
+Scene writes it into the input or parameter of that name, on the entities of its location. A component declaring the name with
 forcing_variable reads it with self.forcing(name); otherwise the Scene writes it, at the start of each step, into
 the input or parameter of that name of every component declaring it (not provided by a coupling).
 
@@ -13,6 +15,7 @@ the input or parameter of that name of every component declaring it (not provide
                                               indexed by day, one value per day from day 0) as a forcing
   forcing_value(forcing, time)                its value at *time* (s)
 """
+import inspect
 from typing import Mapping
 
 import numpy as np
@@ -20,6 +23,19 @@ import numpy as np
 
 def _series(value) -> bool:
     return hasattr(value, "index") and hasattr(value, "to_numpy")
+
+
+def is_spatial(forcing) -> bool:
+    """Whether *forcing* varies in space: a callable of two required arguments, (time, ids)."""
+    if not callable(forcing) or isinstance(forcing, _InUnit):
+        return False
+    try:
+        parameters = inspect.signature(forcing).parameters.values()
+    except (TypeError, ValueError):
+        return False
+    required = [p for p in parameters if p.default is p.empty and p.kind in (p.POSITIONAL_ONLY,
+                                                                             p.POSITIONAL_OR_KEYWORD)]
+    return len(required) >= 2
 
 
 def forcing_value(forcing, time: float) -> float:

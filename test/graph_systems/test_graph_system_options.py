@@ -16,7 +16,7 @@ from openalea.metafspm.coupling.choregrapher import Choregrapher
 from openalea.metafspm.coupling.component import FunctionalComponent, input_variable, parameter, state_variable
 from openalea.metafspm.data_structure.configs import ScalesConfig as scales
 from openalea.metafspm.data_structure.data_api import MPGDataStructure
-from openalea.metafspm.scene.population import build_population
+from openalea.metafspm.scene.population import _build_population
 from openalea.metafspm.solve.decorator import (boundary_condition, boundary_set, edge_law, graph_output, graph_system, node_balance,
                                                pool_balance)
 from openalea.metafspm.solve.solver import NewtonSolver
@@ -372,7 +372,7 @@ EXCHANGE = 0.8
 def _population(sizes=(3, 4)):
     table = pd.DataFrame([dict(plant=f"p{i}", model=None, x=0.1 * i, y=0., z=0., rotation=0.,
                                scenario={"n_segments": n}) for i, n in enumerate(sizes)])
-    g, _ = build_population(table, initiators=(RootGrowthProbe,))
+    g, _ = _build_population(table, initiators=(RootGrowthProbe,))
     g.populate_graph(g.scales.SubOrgan)
     g.convert_properties_to_arraydict()
     return MPGDataStructure(g, from_scale=g.scales.SubOrgan)
@@ -479,7 +479,7 @@ class Supplied(FunctionalComponent):
 def test_forcings_given_as_callables_or_times_and_values(supply):
     ds = _ds()
     model = Supplied(data_structure=ds)
-    model.forcings = {"supply": supply}
+    model.__dict__["_scene_forcings"] = {"supply": supply}
     model()
     np.testing.assert_allclose(ds.get("u"), DT * 3. * DT)                   # read at the end of the step, t = DT
 

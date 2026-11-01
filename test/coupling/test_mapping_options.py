@@ -16,7 +16,6 @@ from openalea.metafspm.coupling.declaration import DeclarationError
 from openalea.metafspm.coupling.translator import Translator
 from openalea.metafspm.data_structure.configs import ScalesConfig as scales
 from openalea.metafspm.data_structure.data_api import ArrayDataStructure, MPGDataStructure
-from openalea.metafspm.scene.scene import load_translator
 
 import doubles_ds
 from growth import DOC
@@ -146,16 +145,16 @@ NESTED = {"SoilSide": {"PlantSide": {"exudation": {"exudation": "1 + 1"}}}}
 
 def test_a_scene_accepts_every_translator_form(tmp_path):
     translator = Translator().link("SoilSide", "exudation", "PlantSide", {"exudation": 2.})
-    assert load_translator(translator) is translator
-    assert _links(load_translator(NESTED)) == EXPECTED
+    assert Translator.load(translator) is translator
+    assert _links(Translator.load(NESTED)) == EXPECTED
     module = tmp_path / "scene_translator.py"
     module.write_text("from openalea.metafspm.coupling.translator import Translator\n"
                       "translator = Translator().link('SoilSide', 'exudation', 'PlantSide', {'exudation': 2.})\n")
-    assert _links(load_translator(str(module))) == EXPECTED
+    assert _links(Translator.load(str(module))) == EXPECTED
     path = tmp_path / "scene_translator.yaml"
     path.write_text(yaml.safe_dump(NESTED))
-    assert _links(load_translator(path)) == EXPECTED
-    assert load_translator(None).links == []
+    assert _links(Translator.load(path)) == EXPECTED
+    assert Translator.load(None).links == []
 
 
 # ---------------------------------------------------------------- long-form links
@@ -186,7 +185,7 @@ def test_long_form_links_round_trip_through_the_nested_and_yaml_formats(tmp_path
     assert _options(Translator.from_dict(translator.to_nested())) == _options(translator)
     path = tmp_path / "translator.yaml"
     path.write_text(yaml.safe_dump(translator.to_nested()))
-    assert _options(Translator.from_yaml(path)) == _options(translator)
+    assert _options(Translator.load(path)) == _options(translator)
 
 
 # ---------------------------------------------------------------- a same-name link stating its scale

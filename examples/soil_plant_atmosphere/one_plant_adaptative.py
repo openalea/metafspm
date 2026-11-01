@@ -16,7 +16,7 @@ from models import SCENE_TRANSLATOR, AdaptiveSoil, SeedlingWater, Soil, largest_
 import plotting
 
 
-def scene(soil=AdaptiveSoil, soil_scenario=None, output_dirpath=None, tolerance=1e-6):
+def scene(soil=AdaptiveSoil, soil_scenario=None, folder=None, tolerance=1e-6):
     """
     The one-plant scene on the soil model *soil* (AdaptiveSoil; Soil for the uniform grids compared with it), and its
     stop condition: the seedling at the centre of a 0.2 m x 0.2 m soil column, a lagged plant-soil coupling through
@@ -26,13 +26,13 @@ def scene(soil=AdaptiveSoil, soil_scenario=None, output_dirpath=None, tolerance=
     stop = largest_change(tolerance)
     built = Scene(table, environment=[soil], environment_scenarios=[soil_scenario or {}],
                   translator=SCENE_TRANSLATOR, time_step=3600, mappings=root_surface_mappings, stop_when=stop,
-                  recorder=SceneRecorder(output_dirpath, log_plants=["p0"], segment_period=1) if output_dirpath else None)
+                  recorder=SceneRecorder(folder, segment_plants=["p0"], segment_period=1) if folder else None)
     return built, stop
 
 
-def run(soil=AdaptiveSoil, soil_scenario=None, output_dirpath=None, tolerance=1e-6, max_iterations=100):
+def run(soil=AdaptiveSoil, soil_scenario=None, folder=None, tolerance=1e-6, max_iterations=100):
     """Build and run the scene on *soil*; returns (scene, stop condition, seconds)."""
-    built, stop = scene(soil, soil_scenario, output_dirpath, tolerance)
+    built, stop = scene(soil, soil_scenario, folder, tolerance)
     start = time.perf_counter()
     built.simulate(max_iterations)
     return built, stop, time.perf_counter() - start
@@ -74,7 +74,7 @@ def summary(built, stop):
 
 if __name__ == "__main__":
     folder = sys.argv[1] if len(sys.argv) > 1 else "outputs/one_plant_adaptative"
-    built, stop, seconds = run(output_dirpath=folder)
+    built, stop, seconds = run(folder=folder)
     summary(built, stop)
     plots(built, folder)
     discretization_comparisions = False

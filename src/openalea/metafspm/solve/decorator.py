@@ -1194,6 +1194,9 @@ class GraphSystemBuilder:
             fd_eps       = sd["fd_eps"],
             prefer_sparse= sd["prefer_sparse"],
             linesearch   = sd["linesearch"],
+            rtol         = sd["rtol"],
+            atol         = sd["atol"],
+            max_step     = np.inf if sd["max_step"] is None else sd["max_step"],
         )
 
     def inject_result(self, packed: np.ndarray, spec: GraphDAESpec) -> None:
@@ -1571,8 +1574,8 @@ def graph_system(
     transient      = None,
     integrate      = "step",
     n_substeps     = 1,
-    rtol           = 1e-4,
-    atol           = 1e-8,
+    rtol           = 1e-6,
+    atol           = 1e-9,
     min_step       = None,
     max_step       = None,
     split          = "whole",
@@ -1630,6 +1633,7 @@ def graph_system(
         "step": one solve of the component's time_step (default); "substeps": n_substeps solves of
         time_step / n_substeps; "adaptive": step doubling with rtol / atol, min_step / max_step. Equations must
         write their time terms with self.dt and self.previous().
+    rtol, atol, max_step : the error control of "adaptive" and of the IVP solvers (scipy_ivp_bdf, scipy_ivp_radau).
     pool_unknowns  : {name: location} | {name: {"location": ..., "exchange": boundary set name}} | None
         Unknowns at a coarse scale, one per entity (e.g. the shoot phloem pool of each plant, location "Plant"),
         solved with the node and edge unknowns. Their residual is a @pool_balance method; equations exchange

@@ -16,7 +16,7 @@ from models import SCENE_TRANSLATOR, SeedlingWater, Soil, largest_change, root_s
 from one_plant import plots, summary
 
 
-def scene(output_dirpath=None, tolerance=1e-6, root_radial_k=(0.4, 0.5, 0.6), soil_scenario=None):
+def scene(folder=None, tolerance=1e-6, root_radial_k=(0.4, 0.5, 0.6), soil_scenario=None):
     """
     A stand laid out by stand() (rows every 0.1 m at 100 plants m-2, the stand's size adjusted to the rows and
     kept in the planting table, which sizes the soil grid); the root radial conductance of each
@@ -29,7 +29,7 @@ def scene(output_dirpath=None, tolerance=1e-6, root_radial_k=(0.4, 0.5, 0.6), so
     stop = largest_change(tolerance)
     built = Scene(table, environment=[Soil], environment_scenarios=[soil_scenario or {}],
                   translator=SCENE_TRANSLATOR, time_step=3600, mappings=root_surface_mappings, stop_when=stop,
-                  recorder=SceneRecorder(output_dirpath, log_plants=["p0"], segment_period=1) if output_dirpath else None)
+                  recorder=SceneRecorder(folder, segment_plants=["p0"], segment_period=1) if folder else None)
     return built, stop
 
 
@@ -44,7 +44,7 @@ def per_plant(built):
 
 if __name__ == "__main__":
     folder = sys.argv[1] if len(sys.argv) > 1 else "outputs/population"
-    built, stop = scene(output_dirpath=folder)
+    built, stop = scene(folder=folder)
     built.simulate(100)
     summary(built, stop)
     per_plant(built)

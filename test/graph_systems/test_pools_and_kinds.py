@@ -13,7 +13,7 @@ from openalea.metafspm.coupling.choregrapher import Choregrapher
 from openalea.metafspm.coupling.component import FunctionalComponent, state_variable
 from openalea.metafspm.data_structure.configs import ScalesConfig as scales
 from openalea.metafspm.data_structure.data_api import MPGDataStructure
-from openalea.metafspm.scene.population import build_population
+from openalea.metafspm.scene.population import _build_population
 from openalea.metafspm.solve.decorator import boundary_set, graph_system, node_balance, pool_balance
 from growth import DOC, RootGrowthProbe
 
@@ -28,7 +28,7 @@ def _simulation_time_step():
 def _population(sizes=(3, 5)):
     table = pd.DataFrame([dict(plant=f"p{i}", model=None, x=0.1 * i, y=0., z=0., rotation=0.,
                                scenario={"n_segments": n}) for i, n in enumerate(sizes)])
-    g, plants = build_population(table, initiators=(RootGrowthProbe,))
+    g, plants = _build_population(table, initiators=(RootGrowthProbe,))
     g.populate_graph(g.scales.SubOrgan)
     g.convert_properties_to_arraydict()
     ds = MPGDataStructure(g, from_scale=g.scales.SubOrgan)
@@ -181,7 +181,7 @@ class Forced(FunctionalComponent):
 def test_forcings_are_read_at_the_end_of_each_substep():
     ds, _ = _population()
     model = Forced(data_structure=ds)
-    model.forcings = {"supply": pd.Series([0., 10.], index=[0., 10.])}           # supply(t) = t
+    model.__dict__["_scene_forcings"] = {"supply": pd.Series([0., 10.], index=[0., 10.])}           # supply(t) = t
     Forced.seen = set()
     model()
     model()

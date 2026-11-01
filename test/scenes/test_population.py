@@ -13,7 +13,7 @@ from numba import njit
 from openalea.metafspm.coupling.component import FunctionalComponent, parameter, state_variable
 from openalea.metafspm.data_structure.configs import ScalesConfig as scales
 from openalea.metafspm.data_structure.data_api import ArrayDataStructure, MPGDataStructure
-from openalea.metafspm.scene.population import Planting, apply_plant_scenarios, build_population, planting, stand
+from openalea.metafspm.scene.population import Planting, _apply_plant_scenarios, _build_population, planting, stand
 from openalea.metafspm.solve.decorator import rate
 
 from growth import DOC, CarbonProbe, RootGrowthProbe
@@ -28,12 +28,12 @@ def _table(scenarios):
 def _run(scenarios, steps=3):
     """Grow and feed a population; returns {plant index: (sorted lengths, sorted C_hexose_root)}."""
     table = _table(scenarios)
-    g, plants = build_population(table, initiators=(RootGrowthProbe,))
+    g, plants = _build_population(table, initiators=(RootGrowthProbe,))
     g.populate_graph(g.scales.SubOrgan)
     g.convert_properties_to_arraydict()
     ds = MPGDataStructure(g, from_scale=g.scales.SubOrgan)
     growth, carbon = RootGrowthProbe(data_structure=ds), CarbonProbe(data_structure=ds)
-    apply_plant_scenarios(ds, (growth, carbon), table, plants)
+    _apply_plant_scenarios(ds, (growth, carbon), table, plants)
     for _ in range(steps):
         growth()
         carbon()
@@ -59,7 +59,7 @@ def test_per_plant_scenarios_give_each_plant_its_own_parameters():
 
 
 def test_initial_structures_follow_the_plant_scenarios():
-    g, plants = build_population(_table([{"n_segments": 2}, {"n_segments": 5}]),
+    g, plants = _build_population(_table([{"n_segments": 2}, {"n_segments": 5}]),
                                  initiators=(RootGrowthProbe,))
     counts = [sum(1 for v in g.vertices(scale=g.scales.SubOrgan) if g.complex_at_scale(v, g.scales.Plant) == p)
               for p in plants]
@@ -124,7 +124,7 @@ class ReadsSelf(FunctionalComponent):
 
 def _two_plants():
     table = _table([{}, {}])
-    g, plants = build_population(table, initiators=(RootGrowthProbe,))
+    g, plants = _build_population(table, initiators=(RootGrowthProbe,))
     g.populate_graph(g.scales.SubOrgan)
     g.convert_properties_to_arraydict()
     return MPGDataStructure(g, from_scale=g.scales.SubOrgan), plants

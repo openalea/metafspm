@@ -101,9 +101,9 @@ class ToyCaribuModel(EnvironmentModel):
     """Runs every 4 steps (e.g. every 4 h); its outputs are kept in between."""
     interval = 4 * DT
 
-    def __init__(self, populations, scene_xrange, scene_yrange, time_step):
-        super().__init__(populations, scene_xrange, scene_yrange, time_step)
-        self.scene = self.plants()                          # the union of the two populations
+    def __init__(self, plant_data_structures, xrange, yrange, time_step):
+        super().__init__(plant_data_structures, xrange, yrange, time_step)
+        self.scene = self.plant_data_structure()                          # the union of the two populations
         self.light = ToyCaribu(data_structure=self.scene)
         self.components = [self.light]
         self.runs = 0

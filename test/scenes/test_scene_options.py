@@ -16,7 +16,7 @@ from openalea.metafspm.coupling.cross import CrossMapping, LayerMapping
 from openalea.metafspm.coupling.translator import Translator
 from openalea.metafspm.data_structure.configs import PropsConfig, ScalesConfig as scales
 from openalea.metafspm.data_structure.data_api import ArrayDataStructure
-from openalea.metafspm.scene.population import build_population
+from openalea.metafspm.scene.population import _build_population
 from openalea.metafspm.scene.scene import Scene
 from openalea.metafspm.solve.decorator import actual, segmentation
 
@@ -46,7 +46,7 @@ class GridHeat(FunctionalComponent):
 class ColumnModel:
     """A 1-D column model; its DataStructure is given by its scenario, or built."""
 
-    def __init__(self, populations, scene_xrange, scene_yrange, time_step, column=None):
+    def __init__(self, plant_data_structures, xrange, yrange, time_step, column=None):
         self.column = column if column is not None else ArrayDataStructure(shape=(4,), dx=0.4)
         self.heat = ColumnHeat(data_structure=self.column)
         self.column.set("temperature", [10., 12., 14., 16.])
@@ -59,8 +59,8 @@ class ColumnModel:
 class GridModel:
     """A grid model, with the four 0.4 m layers of the column along z."""
 
-    def __init__(self, populations, scene_xrange, scene_yrange, time_step, grid=None):
-        self.scene_xrange, self.scene_yrange = scene_xrange, scene_yrange
+    def __init__(self, plant_data_structures, xrange, yrange, time_step, grid=None):
+        self.xrange, self.yrange = xrange, yrange
         self.grid = grid if grid is not None else ArrayDataStructure(shape=(2, 1, 4), dx=0.4)
         self.heat = GridHeat(data_structure=self.grid)
         self.components = [self.heat]
@@ -128,11 +128,11 @@ def test_environment_scenarios_must_match_the_environment_models():
 
 def test_the_stand_size_defaults_to_the_planting_table_and_can_be_overridden():
     default = Scene(doubles_planting([Seedlings]), environment=[GridModel], time_step=DT)
-    assert (default.scene_xrange, default.scene_yrange) == (0.8, 0.4)
+    assert (default.xrange, default.yrange) == (0.8, 0.4)
     Choregrapher().reset()
-    scene = Scene(doubles_planting([Seedlings]), environment=[GridModel], time_step=DT, scene_xrange=2., scene_yrange=3.)
-    assert (scene.scene_xrange, scene.scene_yrange) == (2., 3.)
-    assert (scene.environment[0].scene_xrange, scene.environment[0].scene_yrange) == (2., 3.)
+    scene = Scene(doubles_planting([Seedlings]), environment=[GridModel], time_step=DT, xrange=2., yrange=3.)
+    assert (scene.xrange, scene.yrange) == (2., 3.)
+    assert (scene.environment[0].xrange, scene.environment[0].yrange) == (2., 3.)
 
 
 # ---------------------------------------------------------------- initiators and anatomy mode
@@ -162,12 +162,12 @@ def _rows(n, **parameters):
 
 def test_a_structural_component_without_initiate_plant_cannot_initiate_plants():
     with pytest.raises(NotImplementedError, match="BareStructure does not initiate plants"):
-        build_population(_rows(1), initiators=(BareStructure,))
+        _build_population(_rows(1), initiators=(BareStructure,))
 
 
 def test_initiators_run_in_order_each_on_every_plant():
     ORDER.clear()
-    g, plants = build_population(_rows(2, n_segments=4), initiators=(RootGrowthProbe, AnatomyInitiator))
+    g, plants = _build_population(_rows(2, n_segments=4), initiators=(RootGrowthProbe, AnatomyInitiator))
     assert ORDER == [("anatomy", plants[0], 4), ("anatomy", plants[1], 4)]     # after the roots of every plant
     anchors = set(g.scales.anchors.values())
     assert len([v for v in g.vertices(scale=g.scales.Compartment) if v not in anchors]) == 2 * 4 * 4
