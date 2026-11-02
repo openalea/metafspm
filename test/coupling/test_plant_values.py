@@ -47,3 +47,14 @@ def test_plant_scenarios_set_object_and_boolean_parameters_per_plant():
     records[:] = [(2., 0.5)] * records.size                         # e.g. an organ's class key
     ds.set("record", records)
     assert ds.location("record") == "Organ" and ds.get("record")[0] == (2., 0.5)
+
+
+def test_a_scene_takes_them_per_plant_too():
+    """The Scene's check of the plants' scenarios lets an initiator's Plant-scale parameters differ, objects too."""
+    from openalea.metafspm.scene.scene import Scene
+    scenarios = [{"anatomy": {"cortex": {"n_layers": 3}}}, {"anatomy": {"seed": 4}}]
+    table = pd.DataFrame([dict(plant=f"p{i}", model=Model, x=float(i), y=0., z=0., rotation=0., scenario=s)
+                          for i, s in enumerate(scenarios)])
+    table.attrs.update(xrange=2., yrange=1.)
+    scene = Scene(table)
+    assert list(scene.populations[0].data_structure.get("anatomy")) == [{"cortex": {"n_layers": 3}}, {"seed": 4}]

@@ -242,11 +242,16 @@ class Scene:
     def _shared_scenario(model, rows: pd.DataFrame) -> dict:
         """
         The scenario the model is built with (its first plant's): only numeric parameters may differ between the
-        plants of one population, being stored per plant, and the keys its initiators read per plant (their
-        scenario_keys: each plant's own is given to initiate_plant). The model's own arguments are the same for all.
+        plants of one population, being stored per plant, the parameters its initiators declare at the Plant scale
+        (any value: a dict, a boolean), and the keys its initiators read per plant (their scenario_keys: each plant's
+        own is given to initiate_plant). The model's own arguments are the same for all.
         """
-        per_plant = {key for initiator in getattr(model, "initiators", ()) for key in getattr(initiator, "scenario_keys",
-                                                                                              ())}
+        from dataclasses import fields, is_dataclass
+        from openalea.metafspm.data_structure.configs import ScalesConfig
+        initiators = getattr(model, "initiators", ())
+        per_plant = {key for initiator in initiators for key in getattr(initiator, "scenario_keys", ())}
+        per_plant |= {f.name for initiator in initiators if is_dataclass(initiator) for f in fields(initiator)
+                      if f.metadata.get("variable_type") == "parameter" and f.metadata.get("scale") == ScalesConfig.Plant}
         named = _model_arguments(model)
         scenarios = [_flat_scenario(s) for s in rows["scenario"]]
         first = scenarios[0]
