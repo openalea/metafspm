@@ -56,7 +56,7 @@ _ROLES = {"state_variable": "state", "input": "input", "parameter": "parameter",
           "setting": "setting", "forcing": "input"}
 _DIMENSIONLESS = {"", "adim", "-", "1", "dimensionless", "adimensional", "unitless"}
 _SYMBOLS = {"°C": "Cel", "°": "deg", "day": "d", "days": "d", "yr": "a", "°Cd": "K.d", "°C.d": "K.d"}
-_GRAPH_RESERVED = ("id", "label", "complex", "parent", "edge_type", "level", "index")
+_GRAPH_RESERVED = ("id", "label", "complex", "parent", "edge_type", "sibling_order", "level", "index")
 _RELATION_RESERVED = ("id", "source", "target", "relation")
 
 
@@ -517,7 +517,10 @@ def _mpg_data_structure(identifier: str, ds, metadata: dict, standard_names: dic
             relations.append(fspm_tf.Relation(names[scale], columns=columns, source_set=endpoint,
                                               target_set=endpoint))
         else:
-            entity_sets.append(fspm_tf.EntitySet(names[scale], columns=columns, rank=int(scale)))
+            base_scales = fspm_tf.model.BASE_SCALES             # a base scale at its position: declared as such
+            declared = names[scale] if names[scale] in base_scales and base_scales.index(names[scale]) + 1 == int(scale) \
+                else None
+            entity_sets.append(fspm_tf.EntitySet(names[scale], columns=columns, rank=int(scale), scale=declared))
     derived = set(ds.derived())
     for table in entity_sets + relations + ([scalars] if scalars is not None else []):
         _declare(table, metadata, standard_names, derived)

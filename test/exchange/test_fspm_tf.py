@@ -181,12 +181,25 @@ def test_the_frame_reads_as_the_data_model():
     segments = structure.entity_set("SubOrgan")
     assert set(segments.columns["id"]) >= set(ds.entity_ids("node").tolist())
     assert set(segments.columns["edge_type"]) <= {"none", "successor", "branch"}
+    assert all(entity_set.scale == entity_set.name for entity_set in structure.entity_sets)   # base scales, declared
     declared = {field.name: field.metadata for field in fields(RootGrowthProbe)}
     assert segments.variables["length"].unit == ucum_unit(declared["length"]["unit"])
     assert segments.variables["length"].description == (declared["length"]["description"] or None)
     connections = structure.relations[0]
     assert connections.source_set == connections.target_set == "SubOrgan"
     assert not structure.meshes                          # no component draws these segments
+
+
+def test_a_variable_named_as_a_reserved_column_keeps_its_values():
+    """A variable named as one of fspm-TF's reserved columns (sibling_order) is written under another column and read
+    back under its name."""
+    ds = _population()
+    ds.register("sibling_order", np.arange(ds.n_nodes(), dtype=float), location="node")
+    frame = to_frame({"plants": ds})
+    assert "sibling_order" not in frame.data_structures[0].entity_set("SubOrgan").columns
+    assert validate_bytes(fspm_tf.to_bytes(frame)).ok
+    again = from_frame(fspm_tf.from_bytes(fspm_tf.to_bytes(frame)))["plants"]
+    np.testing.assert_array_equal(ds.get("sibling_order"), again.get("sibling_order"))
 
 
 def test_standard_names_come_from_the_vocabulary():
