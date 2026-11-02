@@ -337,6 +337,39 @@ def graph_jacobian(func):
     return func
 
 
+def explicit_term(field=None, jacobian=None):
+    """
+    Tag a method as a term of *field*'s node balance kept explicit by a reduction (solve.reduction): a nonlinear
+    term, never eliminated with a group's interior, its nodes kept. The method returns its residual contribution;
+    *jacobian*: the name of the method giving its Jacobian (the system's @graph_jacobian then covers the other terms
+    only). Without a reduction it is one more term of the balance.
+    """
+    def decorator(func):
+        func.__graph_tag__ = {"kind": "node_balance", "field": field, "filters": None, "explicit": False,
+                              "explicit_term": True, "term_jacobian": jacobian}
+        return func
+    return decorator
+
+
+def input_jacobian(name):
+    """
+    Tag a method as the derivative of the system's node balance with respect to the DataStructure node variable
+    *name* (a sparse matrix, nodes × nodes), for a reduction's per-group inputs (solve.reduction): a group's input
+    changes act through it, carried to the kept nodes.
+    """
+    def decorator(func):
+        func.__graph_tag__ = {"kind": "input_jacobian", "name": name}
+        return func
+    return decorator
+
+
+# Reading a kind's operator (solve.reduction): the system's equations alone, without its boundary sets, explicit
+# terms and reduced terms
+_EXTRACTING = []
+# The graph systems not solved while a reduction's library runs (their operators are read, not their solutions)
+_SKIPPED = set()
+
+
 def graph_output(name, location: str = None, filters=None):
     """
     Tag a method as a named post-solve output hook. *location* ("node" or "edge") is required when *name* is not a
@@ -673,6 +706,8 @@ class _GraphSystemBuilder:
         edge_law_items     = []   # (field, types, attr_name, bound, raw, explicit, integrate)
         bc_items           = []   # (field, types, bc_kind, attr_name, bound, raw, explicit)
         jacobian_raw       = None
+        explicit_items     = []   # (field, bound method, its Jacobian's method name): @explicit_term
+        self.input_jacobians = {} # {variable: (bound, raw)}: @input_jacobian
         output_items       = []   # (out_name, bound, raw, selection or None)
         boundary_sets      = []   # boundary_set objects
         pool_items         = []   # (field, bound, raw): pool balances
@@ -697,11 +732,18 @@ class _GraphSystemBuilder:
                 selection = None
                 if tag.get("filters") is not None:
                     selection = _Filters(tag["filters"], key, "edge" if kind == "edge_law" else "node")
-                if kind in ("node_balance", "node_rate"):
+                if kind in ("node_balance", "node_rate") and tag.get("explicit_term"):
+                    explicit_items.append((tag["field"], bound, tag.get("term_jacobian")))
+                    if _EXTRACTING:
+                        continue                       # the kind's operator: the equations alone
+                    node_balance_items.append((tag["field"], selection, attr_name, bound, obj, False))
+                elif kind in ("node_balance", "node_rate"):
                     node_balance_items.append((
                         tag["field"], selection, attr_name, bound, obj,
                         "rate" if kind == "node_rate" else tag.get("explicit", False)
                     ))
+                elif kind == "input_jacobian":
+                    self.input_jacobians[tag["name"]] = (bound, obj)
                 elif kind == "edge_law":
                     edge_law_items.append((
                         tag.get("field"), selection, attr_name, bound, obj,
@@ -780,6 +822,8 @@ class _GraphSystemBuilder:
             + ([jacobian_raw[1]] if jacobian_raw else [])
             + [r for _, _, r, _ in output_items]
             + [r for _, _, r in pool_items]
+            + [getattr(inner_cls, name) for _, _, name in explicit_items if name is not None]
+            + [raw for _, raw in self.input_jacobians.values()]
         )
         required: set[str] = set()
         for raw in all_raws:
@@ -796,6 +840,8 @@ class _GraphSystemBuilder:
 
         # Boundary sets: members on the solved graph, values and weights read now
         set_terms = defaultdict(list)    # field -> [(kind, idx, value, weight)]
+        if _EXTRACTING:                  # a kind's operator: the equations alone (the groups' conditions stay live)
+            boundary_sets, bc_items = [], []
         for bset in boundary_sets:
             if bset.kind is None:
                 continue                      # a selection only (e.g. a pool's exchange set)
@@ -1005,6 +1051,13 @@ class _GraphSystemBuilder:
         for field_name, tf, bc_kind, _, bound, raw, ex in bc_items:
             bc_groups[field_name].append((tf, bc_kind, bound, raw, ex))
 
+        reduced = None if _EXTRACTING else _reduced_terms(instance, spec_def, ds, gv)
+        if reduced is not None:
+            if len(node_unknowns) != 1 or edge_unknowns:
+                raise ValueError(f"{system_name}: a reduction needs one node unknown and no edge unknowns")
+            node_groups[node_unknowns[0]].append(
+                (None, None, None, ("reduced", reduced)))
+
         equation_blocks = []
         for field_name in node_unknowns:
             grp    = node_groups.get(field_name, [])
@@ -1014,6 +1067,11 @@ class _GraphSystemBuilder:
             bulk_wrapped = []
             any_explicit = any(ex is True for _, _, _, ex in grp)
             for tf, b, r, ex in grp:
+                if isinstance(ex, tuple) and ex[0] == "reduced":   # the reduced groups' interiors (solve.reduction)
+                    D, e = ex[1]
+                    bulk_wrapped.append(lambda ctx, _f=field_name, _D=D, _e=e:
+                                        np.asarray(_D @ ctx.node_unknowns[_f]).reshape(-1) + _e)
+                    continue
                 inner = make_evaluator(r, b, tf, "node")
                 if ex == "rate" and rate_solver:
                     # explicit and IVP solvers read du/dt as -R
@@ -1099,6 +1157,25 @@ class _GraphSystemBuilder:
             make_evaluator(jacobian_raw[1], jacobian_raw[0], None, "node")
             if jacobian_raw else None
         )
+        self.input_jacobian_evaluators = {name: make_evaluator(raw, bound, None, "node")
+                                          for name, (bound, raw) in self.input_jacobians.items()}
+        added_jacobians = []             # the explicit terms' own, and the reduced terms'
+        if not _EXTRACTING:
+            for _, _, name in explicit_items:
+                if name is not None:
+                    method = getattr(inner_cls, name)
+                    added_jacobians.append(make_evaluator(method, method.__get__(instance, type(instance)), None,
+                                                          "node"))
+        if reduced is not None:
+            added_jacobians.append(lambda ctx, _D=reduced[0]: _D)
+        if jac_evaluator is not None and added_jacobians:
+            equations_jacobian = jac_evaluator
+
+            def jac_evaluator(ctx, _base=equations_jacobian, _added=tuple(added_jacobians)):
+                J = _base(ctx)
+                for add in _added:
+                    J = J + add(ctx)
+                return J.tocsr() if issparse(J) else J
         if jac_evaluator is not None and any(set_terms.values()):
             # The user's Jacobian covers the equations; the framework adds the boundary sets' terms
             user_jacobian = jac_evaluator
@@ -1230,6 +1307,18 @@ class _GraphSystemBuilder:
 # Core lifecycle — called by the Choregrapher trampoline each timestep
 # ═══════════════════════════════════════════════════════════════════════════════
 
+def _reduced_terms(instance, spec_def, ds, gv):
+    """(D, e) of the reduced groups among the solved nodes (solve.reduction: their interiors' terms, a sparse
+    matrix and a vector on the solved nodes), or None."""
+    reduction = getattr(getattr(ds, "structure", None), "reduction", None)
+    if reduction is None:
+        return None
+    name = f"{type(instance).__name__}.{spec_def['inner_class'].__name__}"
+    if name not in reduction.systems:
+        return None
+    return reduction.terms(instance, name, ds, np.asarray(gv.node_ids, dtype=np.int64))
+
+
 def _invoke_graph_system(self, method_name: str) -> None:
     """
     Build, solve, and write back one named graph-system.
@@ -1244,6 +1333,8 @@ def _invoke_graph_system(self, method_name: str) -> None:
     if hasattr(self, "_refresh_from_bio_scale"):
         self._refresh_from_bio_scale()
     spec_def = type(self)._graph_system_specs[method_name]
+    if _SKIPPED and f"{type(self).__name__}.{spec_def['inner_class'].__name__}" in _SKIPPED:
+        return
     filters = spec_def.get("filters")
     # The active subgraph: the DataStructure mask of the system's filters
     where = (None if filters is None

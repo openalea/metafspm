@@ -155,7 +155,7 @@ def population_data_structure(table: pd.DataFrame, model, time_step: float = 360
     scenario = _flat_scenario(table["scenario"].iloc[0] if scenario is None and len(table) else scenario)
     read_by_initiators = set()
     g, plants = _build_population(table, initiators=getattr(model, "initiators", ()),
-                                  read_by_initiators=read_by_initiators)
+                                  read_by_initiators=read_by_initiators, reduction=getattr(model, "reduction", None))
     scale = getattr(model, "from_scale", None) or "SubOrgan"
     scale = getattr(g.scales, scale) if isinstance(scale, str) else scale
     nodes = getattr(model, "nodes", None)
@@ -166,6 +166,8 @@ def population_data_structure(table: pd.DataFrame, model, time_step: float = 360
     wiring = wiring(g) if callable(wiring) else wiring
     ds = MPGDataStructure(g, from_scale=scale, nodes=nodes, wiring=wiring)
     instance = model(data_structure=ds, time_step=time_step, **_model_keywords(model, scenario))
+    if getattr(g, "reduction", None) is not None:
+        g.reduction.bind(model, instance)
     population = Population(model, table, plants, ds, instance)
     _apply_model_scenario(model, instance, scenario, read_by_initiators)
     _apply_plant_scenarios(ds, population.components, table, plants)
@@ -181,13 +183,16 @@ def _flat_scenario(scenario) -> dict:
     return scenario
 
 
-def _build_population(table: pd.DataFrame, initiators=(), read_by_initiators: set = None) -> tuple:
+def _build_population(table: pd.DataFrame, initiators=(), read_by_initiators: set = None, reduction=None) -> tuple:
     """
     A new MPG with one Plant-scale vertex per row of *table* (Plant properties x, y, z, rotation), each plant's
     initial structure built by every StructuralComponent class of *initiators*, in order. Returns (g, plant vids in
-    table order). The scenario keys the initiators read are added to *read_by_initiators* when given.
+    table order). The scenario keys the initiators read are added to *read_by_initiators* when given. *reduction*
+    (the model's, solve.reduction): the MPG's, before the initiators build (they ask it for the reduced templates).
     """
     g = MPG()
+    if reduction is not None:
+        g.reduction = reduction.for_population(g)
     plants = []
     for row in table.itertuples(index=False):
         plant = g.add_component(g.root, **PropsConfig(scale=g.scales.Plant, edge_type='/'))

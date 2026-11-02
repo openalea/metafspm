@@ -103,6 +103,8 @@ class SectionTemplate:
         properties = {}
         for name, (where, values) in self.properties.items():
             keep = new[where] >= 0
+            if not keep.any():
+                continue                                  # no kept vertex carries it
             values = values[keep]
             if name in self.links:
                 targets = values.astype(np.int64)
@@ -331,7 +333,7 @@ class Instances:
         for key, at in groups:
             template = self.templates[key]
             entry = template.properties.get(name)
-            if entry is None:
+            if entry is None or entry[0].size == 0:
                 continue
             rows, stored = entry
             position = np.searchsorted(rows, local[at]).clip(0, max(rows.size - 1, 0))

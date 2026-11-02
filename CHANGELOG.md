@@ -2,6 +2,12 @@
 
 ## Unreleased (release2026)
 
+### Reduction of graph systems by groups
+
+- `solve.reduction.Reduction`, declared on a plant model (`reduction = Reduction(location=, labels=, ports=, keep=, explicit_edges=, kind=, inputs=, systems=)`): each group of the location holds only its kept nodes (its ports and the nodes the model keeps), its interior eliminated exactly, once per kind (its full template, its kind variables' values or `Relative` classes, the plant's parameters, the settings), from a library population of the plant model's own components; the group's term is the full instance's Kron reduction minus what the model computes on the reduced structure. `Reduction.template_for` (a structural model's reduced templates), `recover` (a group's interior), per-group inputs through the graph system's `@input_jacobian`.
+- `@explicit_term(field, jacobian=)`: a graph system's term kept explicit (a nonlinear one, its nodes kept); `@input_jacobian(name)`: the balance's derivative with respect to a node variable.
+- `solve.network.kron_reduction` / `KronReduction` (`reduced`, `pairs`, `shunts`, `inject`, `injection`, `recover`); `SectionTemplate.restricted` and `extended`.
+
 ### Instanced sections and condensed solves (memory and time at the size of a plant)
 
 - `data_structure.instances`: a section's vertices (e.g. an anatomy's Layers, Cells, Compartments and Connections) held once in a `SectionTemplate` (`SectionTemplate.capture` from one copy), each segment carrying an instance: `MPG.add_instance(owner, template)` reserves the ids a copy would get, with no MTG vertex; `MPG.remove_instance`. The MPG's array queries (`topology_arrays`, `_property_at`, `array_filtering`, the vertices of a scale), the DataStructures (nodes, edges, owners, labels, reads, junction wiring, updates, checkpoints) and the fspm-TF frames see an instance as its copy: the same results, bit for bit. A property written at an instanced vertex overrides its template's value; the write-back skips instanced vertices (the DataStructure is their reference). `MPG.view(name)` reads a property vertex by vertex, instanced vertices included; `MPG.values_of(name, vids)` in bulk.
