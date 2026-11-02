@@ -22,7 +22,7 @@ from openalea.metafspm.io.fspm_tf import from_frame, to_frame, ucum_unit
 from openalea.metafspm.scene.population import _build_population
 
 from growth import DOC, CarbonProbe, RootGrowthProbe
-from layered_anatomy import make_layered_anatomy, wiring
+from layered_anatomy import make_instanced_anatomy, make_layered_anatomy, wiring
 
 
 def _population():
@@ -146,6 +146,30 @@ def test_an_anatomy_is_rebuilt_exactly():
     _same_mpg(ds.structure, again.structure)
     _same_variables(ds, again)
     np.testing.assert_array_equal(ds.entity_ids("edge"), again.entity_ids("edge"))
+
+
+def test_an_instanced_anatomy_is_framed_as_its_copy_and_read_back_as_one():
+    """The frame of an instanced anatomy holds the same tables as its copy's; read back, it is the copy."""
+    data = {}
+    for name, build in (("copied", make_layered_anatomy), ("instanced", make_instanced_anatomy)):
+        g, _, _ = build(n_segments=2)
+        ds = MPGDataStructure(g, from_scale=g.scales.SubOrgan, nodes="Compartment", wiring=wiring(g))
+        ds.register("water_potential", np.linspace(-0.3, -0.1, ds.n_nodes()), location="node")
+        ds.register("flux", np.arange(ds.n_edges(), dtype=float), location="edge")
+        data[name] = ds
+    tables = {}
+    for name, ds in data.items():
+        frame = to_frame({"section": ds}).data_structures[0]
+        tables[name] = {table.name: table.columns for table in frame.entity_sets + frame.relations}
+    assert tables["copied"].keys() == tables["instanced"].keys()
+    for table, columns in tables["copied"].items():
+        other = tables["instanced"][table]
+        assert set(columns) == set(other), table
+        for column, values in columns.items():
+            np.testing.assert_array_equal(np.asarray(values), np.asarray(other[column]), err_msg=f"{table}.{column}")
+    copied, again = data["copied"], _round_trip({"section": data["instanced"]})["section"]
+    _same_mpg(copied.structure, again.structure)
+    _same_variables(copied, again)
 
 
 def test_the_frame_reads_as_the_data_model():

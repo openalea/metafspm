@@ -268,6 +268,8 @@ _MISSING = object()
 def _lookup(prop, vids: np.ndarray) -> tuple:
     """(present, values) of the MPG property *prop* at *vids*: a mask, and the values (a float array, NaN where
     absent, for an ArrayDict, read in bulk from its sorted keys; a list, None where absent, for a dict)."""
+    if isinstance(prop, _InstancedProperty):
+        return prop.lookup(np.asarray(vids, dtype=np.int64))
     if isinstance(prop, ArrayDict):
         keys, stored = prop.order[:prop.size], prop.arr[:prop.size]
         if keys.size == 0:
@@ -279,6 +281,41 @@ def _lookup(prop, vids: np.ndarray) -> tuple:
     values = [get(v, _MISSING) for v in vids.tolist()]
     present = np.array([value is not _MISSING for value in values], dtype=bool)
     return present, [None if value is _MISSING else value for value in values]
+
+
+class _InstancedProperty:
+    """An MPG property read with its instanced vertices' template values (MPG._property_at): a stand-in for the
+    property in _lookup, ArrayDict-like when its values are numbers."""
+
+    def __init__(self, g, name: str):
+        self.g, self.name = g, name
+        prop = g.properties().get(name)
+        if prop is not None and len(prop):
+            self.numeric = isinstance(prop, ArrayDict)
+        else:
+            self.numeric = all(template.properties[name][1].dtype != object
+                               for template in g.instances.templates.values() if name in template.properties)
+
+    def lookup(self, vids: np.ndarray) -> tuple:
+        found, values = self.g._property_at(self.name, vids)
+        position = np.searchsorted(found, vids).clip(0, max(found.size - 1, 0))
+        present = (found[position] == vids) if found.size else np.zeros(vids.size, dtype=bool)
+        if self.numeric:
+            out = np.full(vids.size, np.nan)
+            out[present] = np.asarray(values, dtype=np.float64)[position[present]]
+            return present, out
+        listed = values.tolist()
+        return present, [listed[i] if here else None for here, i in zip(present.tolist(), position.tolist())]
+
+
+def _mpg_properties(g) -> dict:
+    """{name: property} of *g*, with the template-only properties of its instances, each read with the instanced
+    vertices' values (_InstancedProperty) when *g* has instances."""
+    if not g._instanced():
+        return dict(g.properties())
+    names = list(g.properties()) + sorted({name for template in g.instances.templates.values()
+                                           for name in template.properties} - set(g.properties()))
+    return {name: _InstancedProperty(g, name) for name in names}
 
 
 def _arraydict(keys: np.ndarray, values: np.ndarray) -> ArrayDict:
@@ -319,9 +356,22 @@ def _mpg_data_structure(identifier: str, ds, metadata: dict, standard_names: dic
     for vid in sorted(g._scale):
         if vid not in anchors:
             by_scale.setdefault(g._scale[vid], []).append(vid)
+    instanced = g._instanced()
+    if instanced:                                  # the instanced vertices, as their copies would be listed
+        blocks = [np.arange(f, f + n, dtype=np.int64)
+                  for f, n in zip(g.instances.first.tolist(), g.instances.size.tolist())]
+        virtual = np.concatenate(blocks)
+        for scale in np.unique(arrays["scale"][virtual]).tolist():
+            here = virtual[arrays["scale"][virtual] == scale]
+            by_scale[scale] = np.union1d(np.asarray(by_scale.get(scale, []), dtype=np.int64), here).tolist()
+        _, own_complex, own_parent = g.instances.structure(virtual)
+        anchored = own_complex <= -2
+        own_complex[anchored] = [g.scales.anchors[int(-2 - c)] for c in own_complex[anchored].tolist()]
+        own_links = (dict(zip(virtual.tolist(), own_complex.tolist())),
+                     dict(zip(virtual.tolist(), own_parent.tolist())))
     connection = g.scales.Connection
     translator = dict(g.labels.translator)
-    properties = g.properties()                    # read only: g.property() would create a missing property
+    properties = _mpg_properties(g)                # read only: g.property() would create a missing property
     label_property, edge_property = properties.get("label", {}), properties.get("edge_type", {})
     extras = {"class": "MPGDataStructure", "construction": ds._construction(), "last_id": int(g._id),
               "anchors": sorted(int(v) for v in anchors), "scales": {}, "label_codes": {}, "properties": {},
@@ -335,8 +385,14 @@ def _mpg_data_structure(identifier: str, ds, metadata: dict, standard_names: dic
         relation = scale == connection
         reserved = _RELATION_RESERVED if relation else _GRAPH_RESERVED
         listed = vids.tolist()
-        raw_complex = np.array([g._complex.get(v, -1) for v in listed], dtype=np.int64)
-        raw_parent = np.array([-1 if g._parent.get(v) is None else g._parent[v] for v in listed], dtype=np.int64)
+        if instanced:
+            raw_complex = np.array([own_links[0].get(v, g._complex.get(v, -1)) for v in listed], dtype=np.int64)
+            raw_parent = np.array([own_links[1][v] if v in own_links[1] else
+                                   (-1 if g._parent.get(v) is None else g._parent[v]) for v in listed], dtype=np.int64)
+        else:
+            raw_complex = np.array([g._complex.get(v, -1) for v in listed], dtype=np.int64)
+            raw_parent = np.array([-1 if g._parent.get(v) is None else g._parent[v] for v in listed],
+                                  dtype=np.int64)
         columns = {"id": vids}
         present, codes = _lookup(label_property, vids)
         codes = np.array([np.nan if code is None else code for code in codes], dtype=float)
@@ -368,13 +424,14 @@ def _mpg_data_structure(identifier: str, ds, metadata: dict, standard_names: dic
             columns["edge_type"] = np.array(["none" if not same else ("branch" if code == 3 else "successor")
                                              for same, code in zip(same_scale, edge_codes)], dtype=object)
         columns["metafspm_complex"], columns["metafspm_parent"] = raw_complex, raw_parent
-        raw_edges = [edge_property.get(v) for v in listed]
+        raw_edges = (_lookup(edge_property, vids)[1] if isinstance(edge_property, _InstancedProperty)
+                     else [edge_property.get(v) for v in listed])
         if not set(raw_edges) <= {None, "/", "<", "+"}:
             raise ValueError(f"{name}: edge types other than '/', '<' and '+' cannot be exchanged")
         columns["metafspm_edge_type"] = np.array([{"/": 1, "<": 2, "+": 3}.get(edge, 0) for edge in raw_edges],
                                                  dtype=np.uint8)
 
-        for property_name, prop in g.properties().items():
+        for property_name, prop in properties.items():
             if property_name in ("label", "edge_type") or (relation and property_name in ("n_id_a", "n_id_b")):
                 continue
             present, values = _lookup(prop, vids)
@@ -385,7 +442,7 @@ def _mpg_data_structure(identifier: str, ds, metadata: dict, standard_names: dic
             if not re.fullmatch(r"[a-zA-Z_][a-zA-Z0-9_]*", column):
                 warnings.warn(f"MPG property '{property_name}' is not exchanged: its name is not an identifier")
                 continue
-            if isinstance(prop, ArrayDict):
+            if isinstance(prop, ArrayDict) or (isinstance(prop, _InstancedProperty) and prop.numeric):
                 kind, data = "float64", values
             else:
                 assigned = [value for value in values if value is not None]
@@ -407,12 +464,13 @@ def _mpg_data_structure(identifier: str, ds, metadata: dict, standard_names: dic
                     except TypeError as error:
                         warnings.warn(f"MPG property '{property_name}' is not exchanged at {name}: {error}")
                         continue
+            numeric = isinstance(prop, ArrayDict) or (isinstance(prop, _InstancedProperty) and prop.numeric)
             entry = extras["properties"].setdefault(property_name, {
-                "container": "ArrayDict" if isinstance(prop, ArrayDict) else "dict", "column": column})
+                "container": "ArrayDict" if numeric else "dict", "column": column})
             entry.setdefault("dtypes", {})[name] = kind
             if not present.all():
                 extras["absent"][f"{name}.{property_name}"] = vids[~present].tolist()
-            none = ([] if isinstance(prop, ArrayDict) else
+            none = ([] if numeric else
                     [v for v, here, value in zip(listed, present, values) if here and value is None])
             if none:
                 extras["none"][f"{name}.{property_name}"] = none
@@ -453,7 +511,8 @@ def _mpg_data_structure(identifier: str, ds, metadata: dict, standard_names: dic
     entity_sets, relations = [], []
     for scale, columns in sorted(tables.items()):
         if scale == connection:
-            endpoints = {g._scale.get(int(v)) for v in np.concatenate([columns["source"], columns["target"]])}
+            ends = np.concatenate([columns["source"], columns["target"]])
+            endpoints = set(arrays["scale"][ends[(ends >= 0) & (ends < arrays["scale"].size)]].tolist())
             endpoint = names[endpoints.pop()] if len(endpoints) == 1 else names[g.scales.Compartment]
             relations.append(fspm_tf.Relation(names[scale], columns=columns, source_set=endpoint,
                                               target_set=endpoint))

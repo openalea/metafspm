@@ -69,3 +69,162 @@ def equivalent_conductance(view, edge_conductance, sources, sinks, source_conduc
     else:
         inflow = np.where(sources, np.asarray(laplacian @ potential).reshape(-1), 0.)
     return float(inflow.sum()), inflow
+
+
+# ── Static condensation: a sparse system solved through its groups' interiors, factorised once per kind of group ──
+
+def condensed_solve(matrix, rhs, groups, kept=None, cache: dict = None, _local: bool = True) -> np.ndarray:
+    """
+    The solution of *matrix* x = *rhs* by static condensation on node *groups* (an integer per node, e.g. each
+    node's segment; < 0: in no group).
+
+    A node of a group is interior unless it is *kept* (a mask, e.g. the nodes a boundary condition holds or joins to
+    a reservoir) or coupled to a node outside its group. Each group's interior is eliminated: one sparse
+    factorisation per kind of group, the groups whose interior block (and its coupling to their kept nodes) is the
+    same, up to a positive factor, sharing it; the system on the kept and ungrouped nodes is then solved, and the
+    interiors recovered from it. Exact up to round-off (an inexact solve within Newton iterations is corrected by the
+    next one).
+
+    The kept nodes of a group coupled to nothing outside it (e.g. a section's nodes joined to its soil, their terms
+    the group's own) are then eliminated within their group, at each call (no factorisation kept: their terms may
+    differ from group to group and from call to call); the system left holds the nodes coupled across groups and
+    those in none.
+
+    *cache*: a dict kept between calls (e.g. by the graph system): the partition of the matrix's pattern (computed
+    once per pattern) and the factorisations of the kinds of group, reused while their blocks are unchanged (each
+    block is compared with its kind's at every call).
+    """
+    from scipy.sparse import coo_matrix
+    A = csr_matrix(matrix)
+    A.sort_indices()
+    b = np.asarray(rhs, dtype=np.float64).reshape(-1)
+    n = A.shape[0]
+    groups = np.asarray(groups, dtype=np.int64).reshape(-1)
+    kept = np.zeros(n, dtype=bool) if kept is None else np.asarray(kept, dtype=bool).reshape(-1)
+    cache = {} if cache is None else cache
+    plan = _condensation_plan(A, groups, kept, cache.setdefault("plans", {}))
+    if plan is None:
+        return np.asarray(spsolve(A.tocsc(), b), dtype=np.float64)
+    kinds = cache.setdefault("kinds", {})
+    interior, kept_nodes, position = plan["interior"], plan["kept_nodes"], plan["position"]
+    data = A.data
+    reduced_values = []
+    b_K = b[kept_nodes].copy()
+    pending = {}                                          # kind -> [(group, factor)]
+    for g, (block_s, coupling_s, back_s) in enumerate(plan["structures"]):
+        block, coupling, back = (csr_matrix((data[where], indices, indptr), shape=shape)
+                                 for where, indices, indptr, shape in (block_s, coupling_s, back_s))
+        factor = float(block.data[0]) if block.nnz and block.data[0] != 0 else 1.
+        pending.setdefault(_condensation_kind(block, coupling, back, factor, kinds), []).append((g, factor))
+    starts, ends, columns = plan["starts"], plan["ends"], plan["columns"]
+    solutions = {}
+    reduction_order = []
+    for kind, members in pending.items():
+        entry = kinds[kind]
+        Z = entry["lu"].solve(np.stack([b[interior[starts[g]:ends[g]]] for g, _ in members], axis=1))
+        for j, (g, factor) in enumerate(members):
+            reduction_order.append(g)
+            reduced_values.append(-(factor * entry["S"]).ravel())    # minus A_KI A_II⁻¹ A_IK, scaled
+            b_K[position[kept_nodes[columns[g]]]] -= entry["back"] @ Z[:, j]   # (c A_KI_ref) (A_ref⁻¹ b_I / c)
+        solutions[kind] = (members, Z)
+    rows = np.concatenate([plan["reduced_rows"][g] for g in reduction_order])
+    cols = np.concatenate([plan["reduced_cols"][g] for g in reduction_order])
+    where_KK, indices_KK, indptr_KK, shape_KK = plan["A_KK"]
+    A_KK = csr_matrix((data[where_KK], indices_KK, indptr_KK), shape=shape_KK)
+    reduced = (A_KK + coo_matrix((np.concatenate(reduced_values), (rows, cols)), shape=shape_KK).tocsr()).tocsr()
+    shared = plan["shared"]
+    if _local and not shared[kept_nodes].all():           # the groups' own kept nodes, eliminated within each
+        local = cache.setdefault("local", {})
+        local["kinds"] = {}                               # their terms change between calls: nothing kept
+        x_K = condensed_solve(reduced, b_K, groups[kept_nodes], shared[kept_nodes], cache=local, _local=False)
+    else:
+        x_K = np.asarray(spsolve(reduced.tocsc(), b_K), dtype=np.float64).reshape(-1)
+    x = np.empty(n, dtype=np.float64)
+    x[kept_nodes] = x_K
+    for kind, (members, Z) in solutions.items():
+        X = kinds[kind]["X"]
+        for j, (g, factor) in enumerate(members):
+            x[interior[starts[g]:ends[g]]] = Z[:, j] / factor - X @ x_K[position[kept_nodes[columns[g]]]]
+    return x
+
+
+def _condensation_plan(A, groups, kept, plans: dict):
+    """The partition of *A*'s pattern by *groups* (computed once per pattern, groups and kept nodes): the interior
+    nodes by group, the kept ones, and each group's blocks as (where in A.data, indices, indptr, shape); None when
+    no node is interior."""
+    import hashlib
+    digest = hashlib.blake2b(digest_size=16)
+    for array in (A.indptr, A.indices, groups, kept):
+        digest.update(np.ascontiguousarray(array).tobytes())
+    key = (A.shape, digest.hexdigest())
+    if key in plans:
+        return plans[key]
+    n = A.shape[0]
+    keep = kept.copy()
+    rows = np.repeat(np.arange(n), np.diff(A.indptr))
+    outside = groups[rows] != groups[A.indices]
+    shared = groups < 0                                    # the nodes of the final system: in no group, or coupled
+    shared[rows[outside]] = True                           # across groups
+    shared[A.indices[outside]] = True
+    keep |= shared
+    interior = np.flatnonzero(~keep)
+    if interior.size == 0:
+        plans[key] = None
+        return None
+    interior = interior[np.lexsort((interior, groups[interior]))]       # by group, then by node
+    kept_nodes = np.flatnonzero(keep)
+    position = np.full(n, -1, dtype=np.int64)
+    position[kept_nodes] = np.arange(kept_nodes.size)
+    where = csr_matrix((np.arange(1, A.nnz + 1, dtype=np.float64), A.indices, A.indptr), shape=A.shape)
+
+    def structure(m):
+        m = m.tocsr()
+        m.sort_indices()
+        return (m.data.astype(np.int64) - 1, m.indices.copy(), m.indptr.copy(), m.shape)
+
+    W_II = where[interior][:, interior].tocsr()
+    W_IK = where[interior][:, kept_nodes].tocsr()
+    W_KI = where[kept_nodes][:, interior].tocsc()
+    owner = groups[interior]
+    _, starts = np.unique(owner, return_index=True)
+    ends = np.r_[starts[1:], interior.size]
+    structures, columns, reduced_rows, reduced_cols = [], [], [], []
+    for start, end in zip(starts.tolist(), ends.tolist()):
+        coupling = W_IK[start:end]                         # the group's interior to its kept nodes
+        here = np.unique(coupling.indices)
+        structures.append((structure(W_II[start:end, start:end]), structure(coupling[:, here]),
+                           structure(W_KI[:, start:end].tocsr()[here])))
+        columns.append(here)
+        grid_r, grid_c = np.meshgrid(here, here, indexing="ij")
+        reduced_rows.append(grid_r.ravel())
+        reduced_cols.append(grid_c.ravel())
+    plan = {"interior": interior, "kept_nodes": kept_nodes, "position": position, "shared": shared,
+            "starts": starts.tolist(), "ends": ends.tolist(), "columns": columns, "structures": structures,
+            "reduced_rows": reduced_rows, "reduced_cols": reduced_cols,
+            "A_KK": structure(where[kept_nodes][:, kept_nodes])}
+    if len(plans) > 8:
+        plans.clear()
+    plans[key] = plan
+    return plan
+
+
+def _condensation_kind(block, coupling, back, factor, kinds: dict):
+    """The kind of a group (its key in *kinds*): its blocks divided by *factor*, matched with a kind's within
+    round-off; a new kind is factorised (its interior LU, X = A_II⁻¹ A_IK and S = A_KI X, for factor 1)."""
+    from scipy.sparse.linalg import splu
+    scaled = [m.multiply(1. / factor).tocsr() for m in (block, coupling, back)]
+    structure = tuple(bytes(m.indptr.tobytes()) + bytes(m.indices.tobytes()) + bytes(np.int64(m.shape[1]).tobytes())
+                      for m in scaled)
+    signature = hash(structure + tuple(np.round(m.data, 9).tobytes() for m in scaled))
+    slot = 0
+    while (signature, slot) in kinds:                     # the kinds of that signature (a collision: the next slot)
+        entry = kinds[(signature, slot)]
+        if all(np.allclose(m.data, r.data, rtol=1e-11, atol=0.) for m, r in zip(scaled, entry["blocks"])):
+            return signature, slot
+        slot += 1
+    key = (signature, slot)
+    block, coupling, back = scaled
+    lu = splu(block.tocsc())
+    X = lu.solve(coupling.toarray()) if coupling.shape[1] else np.zeros((block.shape[0], 0))
+    kinds[key] = {"blocks": scaled, "lu": lu, "X": X, "S": np.asarray(back @ X), "back": back}
+    return key

@@ -28,7 +28,7 @@
              boundary_set, pool_balance, graph_output, graph_jacobian
 
 .. automodule:: openalea.metafspm.solve.network
-   :members: equivalent_conductance
+   :members: equivalent_conductance, condensed_solve
 
 .. automodule:: openalea.metafspm.coupling.choregrapher
    :members: Choregrapher, family_of
@@ -48,6 +48,9 @@ The solvers are chosen by key in `graph_system(solver=...)`: `"newton"`, `"newto
 
 .. automodule:: openalea.metafspm.data_structure.mpg
    :members: MPG
+
+.. automodule:: openalea.metafspm.data_structure.instances
+   :members: SectionTemplate, Instances, InstancedView
 
 .. automodule:: openalea.metafspm.data_structure.tree_kernels
    :members:

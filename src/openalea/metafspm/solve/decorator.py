@@ -1156,6 +1156,22 @@ class _GraphSystemBuilder:
         )
         # IVP solvers report their evaluation time, at which equations read forcings
         spec.parameters["time_hook"] = lambda t, _i=instance: _i.__dict__.__setitem__("_ivp_time", t)
+        condense = spec_def.get("condense")
+        location = condense(instance) if callable(condense) else condense
+        if location is not None:
+            owner = np.asarray(ds.owner(location), dtype=np.int64)
+            take = _take(instance, "node")
+            kept = np.zeros(n, dtype=bool)
+            for _, tf, bc_kind, _, _, _, _ in bc_items:
+                if bc_kind == "dirichlet":
+                    kept |= tf.mask(ds, take) if tf is not None else True
+            for terms in set_terms.values():
+                for kind, idx, _, weight in terms:
+                    if kind in ("dirichlet", "robin"):
+                        kept[idx] = True
+            cache = instance.__dict__.setdefault("_condensation_kinds", {}).setdefault(spec_def["inner_class"].__name__,
+                                                                                      {})
+            spec.parameters["condensation"] = (owner if take is None else owner[take], kept, cache)
         return spec, node_snap, edge_snap
 
     # ── Solve + inject ────────────────────────────────────────────────────────
@@ -1562,6 +1578,7 @@ def graph_system(
     max_step               = None,
     split                  = "whole",
     pool_unknowns          = None,
+    condense               = None,
     **renamed,
 ):
     """
@@ -1615,6 +1632,11 @@ def graph_system(
         of a population, is solved on its own, with its own Newton convergence and integration steps. "whole": one
         system (default).
 
+    condense: the linear solves by static condensation (solve.network.condensed_solve) on the nodes' entities at a
+        coarse location (e.g. "SubOrgan": each section's interior eliminated, one factorisation per kind of section),
+        or a function of the component giving that location or None (e.g. a setting choosing the solver). The nodes
+        of a Robin or Dirichlet condition are kept. Newton solvers, one node unknown, no edge or pool unknowns.
+
     The former names max_iter, tol, fd_eps, n_substeps and integrate="step" are accepted with a warning for one
     release.
     """
@@ -1662,6 +1684,8 @@ def graph_system(
         raise ValueError(f"Unknown solver {solver!r}. Valid keys: {sorted(_SOLVER_REGISTRY)}.")
     method_str = solver
     rate_solver = issubclass(solver_cls, (ExplicitEulerSolver, ScipyIVPSolver))
+    if condense is not None and (len(list(node_unknowns)) != 1 or list(edge_unknowns) or pools or rate_solver):
+        raise ValueError("graph_system: condense= needs a Newton solver, one node unknown and no edge or pool unknowns")
 
     if pools and rate_solver:
         raise ValueError("graph_system: pool unknowns need a Newton solver (write their time terms in @pool_balance)")
@@ -1688,6 +1712,7 @@ def graph_system(
         "pool_unknowns" : pools,
         "transient"     : rate_solver if transient is None else bool(transient),
         "rate_solver"   : rate_solver,
+        "condense"      : condense,
     }
 
     def decorator(cls):

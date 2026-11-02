@@ -100,3 +100,49 @@ def grow_layered_segment(g, parent):
     segment = g.add_child(parent, **PropsConfig(scale=g.scales.SubOrgan, edge_type='<',
                                                 label=g.labels.SubOrgan.RootSegment))
     return segment, add_section(g, segment)
+
+
+def section_template(key="toy section"):
+    """The SectionTemplate of add_section's section, captured from one copy in a scratch MPG; and each named
+    vertex's local index in it."""
+    from openalea.metafspm.data_structure.instances import SectionTemplate
+    scratch = MPG()
+    segment = scratch._add_system_root_at_scale(scratch.scales.SubOrgan, label=scratch.labels.SubOrgan.RootSegment)
+    first = scratch._id + 1
+    names = add_section(scratch, segment)
+    scratch.convert_properties_to_arraydict()
+    template = SectionTemplate.capture(scratch, segment, range(first, scratch._id + 1), key=key)
+    return template, {name: vid - first for name, vid in names.items()}
+
+
+_TEMPLATE = None
+
+
+def add_instanced_section(g, segment):
+    """add_section as an instance of the section's template: the same vids, no MTG vertex; returns {name: vid}."""
+    global _TEMPLATE
+    if _TEMPLATE is None:
+        _TEMPLATE = section_template()
+    template, local = _TEMPLATE
+    vids = g.add_instance(segment, template)
+    return {name: vids[index] for name, index in local.items()}
+
+
+def make_instanced_anatomy(n_segments=2):
+    """make_layered_anatomy with instanced sections."""
+    g = MPG()
+    scale = g.scales.SubOrgan
+    props = dict(label=g.labels.SubOrgan.RootSegment)
+    segments = [g._add_system_root_at_scale(scale, **props)]
+    for _ in range(n_segments - 1):
+        segments.append(g.add_component_with_topo(g.scales.anchors[scale], segments[-1],
+                                                  **PropsConfig(scale=scale, edge_type='<', **props)))
+    sections = {segment: add_instanced_section(g, segment) for segment in segments}
+    g.convert_properties_to_arraydict()
+    return g, segments, sections
+
+
+def grow_instanced_segment(g, parent):
+    segment = g.add_child(parent, **PropsConfig(scale=g.scales.SubOrgan, edge_type='<',
+                                                label=g.labels.SubOrgan.RootSegment))
+    return segment, add_instanced_section(g, segment)

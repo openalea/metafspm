@@ -1323,13 +1323,14 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
         consistent: ascending Connection vertex ID.  Connection anchor is
         excluded because it has no n_id_a entry.
         """
-        return list(self._edges_cached())
+        return [tuple(pair) for pair in self._edges_cached().tolist()]
 
-    def _edges_cached(self) -> list:
-        """edges(), cached until the topology version or the MTG (vertex count, last vid) changes; not to be modified."""
+    def _edges_cached(self) -> np.ndarray:
+        """edges() as an (edges, 2) array, cached until the topology version or the MTG (vertex count, last vid)
+        changes; read-only."""
         if self._mtg is None:
-            return []
-        signature = (self.topology_version, self._mtg.nb_vertices(), getattr(self._mtg, "_id", None))
+            return np.zeros((0, 2), dtype=np.int64)
+        signature = self._topology_stamp()
         cache = self.__dict__.get("_edges_cache")
         if cache is not None and cache[0] == signature:
             return cache[1]
@@ -1339,7 +1340,9 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
         n_id_b = self._mtg.array_filtering(
             "n_id_b", filter_in={"scale": self._mtg.scales.Connection}
         )
-        edges = list(zip(np.asarray(n_id_a, dtype=np.int64).tolist(), np.asarray(n_id_b, dtype=np.int64).tolist()))
+        edges = np.stack([np.asarray(n_id_a, dtype=np.int64), np.asarray(n_id_b, dtype=np.int64)], axis=1) \
+            if len(n_id_a) else np.zeros((0, 2), dtype=np.int64)
+        edges.setflags(write=False)
         self.__dict__["_edges_cache"] = (signature, edges)
         return edges
 
@@ -1632,9 +1635,15 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
         if kept is None or kept[0] != self.topology_version:
             g = self.structure
             names = g.labels.translator                   # the MPG's label codes → names
-            ids = self.entity_ids("node" if location is None else location).tolist()
+            ids = self.entity_ids("node" if location is None else location)
+            if getattr(g, "_instanced", lambda: False)():
+                found, codes = g._property_at("label", ids)
+                by_vid = dict(zip(found.tolist(), codes.tolist()))
+                labels = [by_vid.get(v) for v in ids.tolist()]
+            else:
+                labels = [g.label(v) for v in ids.tolist()]
             kept = cache[location] = (self.topology_version,
-                                      np.array([_label_name(g.label(v), names) for v in ids], dtype=object))
+                                      np.array([_label_name(label, names) for label in labels], dtype=object))
         values = kept[1]
         return values[self.owner(location)] if location is not None and per_node else values
 
@@ -1787,7 +1796,7 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
 
     def _connection_vids(self) -> np.ndarray:
         """Connection vertices carrying endpoints, ascending (the order of edges()); cached as edges() is."""
-        signature = (self.topology_version, self._mtg.nb_vertices(), getattr(self._mtg, "_id", None))
+        signature = self._topology_stamp()
         cache = self.__dict__.get("_connection_vids_cache")
         if cache is not None and cache[0] == signature:
             return cache[1]
@@ -1800,7 +1809,10 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
         scale_prop, n_id_a = self._mtg.property("scale"), self._mtg.property("n_id_a")
         connections = scale_prop.order[:scale_prop.size][scale_prop.values_array() == self._mtg.scales.Connection]
         keys = n_id_a.keys_array() if hasattr(n_id_a, "keys_array") else np.array(sorted(n_id_a), dtype=np.int64)
-        return np.intersect1d(np.asarray(connections, dtype=np.int64), np.asarray(keys, dtype=np.int64))
+        vids = np.intersect1d(np.asarray(connections, dtype=np.int64), np.asarray(keys, dtype=np.int64))
+        if getattr(self._mtg, "_instanced", lambda: False)():
+            vids = np.union1d(vids, self._mtg.instances.vids_having("n_id_a", self._mtg.scales.Connection))
+        return vids
 
     def entity_ids(self, location: str) -> np.ndarray:
         """
@@ -1909,7 +1921,7 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
         on_nodes = self._map(values, location, "node", "broadcast", fill=fill) if location != "node" else values
         if to == "edge":
             return on_nodes[self.index_of(self.entity_ids("edge"))] if not getattr(self, "_anatomy", False) \
-                else on_nodes[self.index_of(np.array([b for _, b in self.edges()], dtype=np.int64))]
+                else on_nodes[self.index_of(self._edges_cached()[:, 1])]
         return on_nodes
 
     def _node_property(self, name: str) -> np.ndarray:
@@ -1964,6 +1976,8 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
         Vertices without a value get *fill* (a declared default); without one, they raise ValueError (partial
         coverage used to fall back silently).
         """
+        if getattr(self._mtg, "_instanced", lambda: False)():
+            return self._instanced_mtg_values(name, vids, scale, fill)
         prop = self._mtg.properties().get(name)
         if prop is None or len(prop) == 0:
             return None
@@ -1994,6 +2008,56 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
             return np.array([float(prop[k]) if k in prop else float(fill) for k in keys], dtype=np.float64)
         except (TypeError, ValueError) as e:
             raise ValueError(f"MTG property '{name}' has non-numeric values: {e}") from None
+
+    def _instanced_mtg_values(self, name: str, vids, scale=None, fill=None):
+        """_mtg_values on an MPG with instances: each vertex's own entry, else its template's value."""
+        g = self._mtg
+        prop = g.properties().get(name)
+        if (prop is None or not len(prop)) and not g.instances.vids_having(name).size:
+            return None
+        unique, inverse, plan = self._read_plan(vids, scale)
+        known = np.zeros(unique.size, dtype=bool)
+        out = np.full(unique.size, np.nan if fill is None else float(fill))
+        try:
+            if prop is not None and len(prop):                        # the vertices' own entries
+                if isinstance(prop, ArrayDict):
+                    order = prop.order[:prop.size]
+                    position = np.searchsorted(order, unique).clip(0, prop.size - 1)
+                    known = order[position] == unique
+                    out[known] = prop.values_array()[position[known]]
+                else:
+                    known = np.array([int(v) in prop for v in unique.tolist()], dtype=bool)
+                    out[known] = [float(prop[int(v)]) for v in unique[known].tolist()]
+            has, values = g.instances.values(name, unique, plan)      # else their templates' values
+            fresh = has & ~known
+            out[fresh] = np.asarray(values[fresh], dtype=np.float64)
+        except (TypeError, ValueError) as e:
+            raise ValueError(f"MTG property '{name}' has non-numeric values: {e}") from None
+        known |= has
+        if not known.any() and fill is None:
+            return None
+        if not known.all() and fill is None:
+            missing = unique[~known]
+            raise ValueError(f"MTG property '{name}' has no value for vertices {missing[:10].tolist()} "
+                             f"({missing.size} missing).")
+        return out[inverse]
+
+    def _read_plan(self, vids, scale) -> tuple:
+        """(unique keys, inverse, the instances' plan of the keys) of a read at *vids* (mapped to *scale*), kept
+        for the reads at the same vids until the topology changes (every variable read back after a step)."""
+        cache = self.__dict__.setdefault("_read_plans", {})
+        stamp = (self.topology_version, self._mtg._structure_signature())
+        hit = cache.get((id(vids), scale))
+        if hit is not None and hit[0] == stamp and hit[1] is vids:
+            return hit[2]
+        keys = (np.asarray(vids, dtype=np.int64) if scale is None or scale == self._node_scale()
+                else self._owners_at(vids, scale))
+        unique, inverse = np.unique(keys, return_inverse=True)
+        plan = (unique, inverse, self._mtg.instances.plan(unique))
+        if len(cache) > 16:
+            cache.clear()
+        cache[(id(vids), scale)] = (stamp, vids, plan)
+        return plan
 
     def _mtg_to_node_array(self, name: str, scale=None, fill=None) -> np.ndarray | None:
         """Per-node array from MTG property *name* defined at *scale* (default: the nodes' scale).
@@ -2140,6 +2204,9 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
         if dtype is object:
             if spec.location != "node" or spec.mapping is not None:
                 raise ValueError(f"'{spec.name}' holds objects: only node variables at their own scale are read")
+            if getattr(self._mtg, "_instanced", lambda: False)():
+                values = self._mtg.values_of(spec.name, self._idx_to_vid)
+                return [values.get(int(v)) for v in self._idx_to_vid] if values else None
             prop = self._mtg.properties().get(spec.name)
             if prop is None or len(prop) == 0:
                 return None
@@ -2213,6 +2280,9 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
         if not spec.mtg_backed or self._mtg is None:
             return
         values = self.get(spec.name)
+        if getattr(self._mtg, "_instanced", lambda: False)() and spec.location in ("node", "edge"):
+            self._write_explicit_to_mtg(spec, values)
+            return
         if values.dtype == object:
             prop = self._mtg_property_for_write(spec.name, numeric=False)
             for vid, value in zip(self._idx_to_vid, values):
@@ -2334,6 +2404,31 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
 
     # ── Anatomy mode: incremental junction rewiring ──
 
+    def _write_explicit_to_mtg(self, spec, values) -> None:
+        """The write-back of a node or edge variable on an MPG with instances: at the vertices of its scale that
+        are not instanced (junctions, a leaf's surface, ...), not at the instanced ones (held by the DataStructure
+        only). Variables mapped to a coarse scale are written there as without instances."""
+        g = self._mtg
+        if spec.location == "node" and spec.mapping is not None:
+            coarse = self._scale_name(spec.scale)
+            weights = self.get(spec.weight) if spec.weight else None
+            means = self._map(values, "node", coarse, "weighted_mean" if weights is not None else "mean", weights)
+            self._write_at(spec.name, self.entity_ids(coarse), means)
+            return
+        if spec.location == "edge" and not (self._anatomy and spec.scale == g.scales.Connection):
+            self._write_edge_to_mtg(spec.name, values, convention=spec.mapping)
+            return
+        vids = np.asarray(self._idx_to_vid if spec.location == "node" else self.entity_ids("edge"), dtype=np.int64)
+        explicit = ~g._instanced_mask(vids)
+        if not explicit.any():
+            return
+        if values.dtype == object:
+            prop = self._mtg_property_for_write(spec.name, numeric=False)
+            for vid, value in zip(vids[explicit].tolist(), values[explicit].tolist()):
+                prop[int(vid)] = value
+            return
+        self._write_at(spec.name, vids[explicit], values[explicit])
+
     def _anatomy_signatures(self) -> dict:
         """
         The anatomy of every from_scale vertex, to find what a topology update changed: each one's linked parent
@@ -2352,7 +2447,10 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
         for name in names:
             prop = g.properties().get(name, {})
             column = np.empty(vids.size, dtype=object)
-            if isinstance(prop, ArrayDict) and prop.size:                  # in bulk: None where there is no value
+            if getattr(g, "_instanced", lambda: False)():
+                found, values = g._property_at(name, vids)
+                column[np.searchsorted(vids, found)] = values.tolist()
+            elif isinstance(prop, ArrayDict) and prop.size:                  # in bulk: None where there is no value
                 order, values = prop.order[:prop.size], prop.values_array()
                 position = np.searchsorted(order, vids).clip(0, prop.size - 1)
                 found = order[position] == vids
@@ -2439,17 +2537,21 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
         anatomy of its owner's linked ancestors; None when there is none (edges, or no such Compartment).
         """
         g = self._mtg
-        if g.scale(key) != g.scales.Compartment:
+        scales = g.topology_arrays()["scale"]
+        if key >= scales.size or scales[key] != g.scales.Compartment:
             return None
-        label = g.property("label").get(key)
+        labels = g.values_of("label", [key]) if g._instanced() else g.property("label")
+        label = labels.get(key)
         owners = g.compartments_by_owner(self._from_scale)
         section = int(self._sections_of([key])[0])
         if section < 0:
             return None
         vertex = g.linked_parent(section, self._from_scale)
         while vertex is not None:
-            for nv in owners.get(vertex, []):
-                if nv in values_by_key and g.property("label").get(nv) == label:
+            candidates = owners.get(vertex, [])
+            labels = g.values_of("label", candidates) if g._instanced() else g.property("label")
+            for nv in candidates:
+                if nv in values_by_key and labels.get(nv) == label:
                     return nv
             vertex = g.linked_parent(vertex, self._from_scale)
         return None
@@ -2514,6 +2616,42 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
 
     # ── Solver interface ──────────────────────────────────────────────────────
 
+    def _topology_stamp(self) -> tuple:
+        """Changes with the topology version and any structural edit of the MPG (vertices, complexes, instances)."""
+        g = self._mtg
+        structure = g._structure_signature() if hasattr(g, "_structure_signature") else \
+            (g.nb_vertices(), getattr(g, "_id", None))
+        n_id = g.properties()
+        return (self.topology_version, structure, len(n_id.get("n_id_a", ())), len(n_id.get("n_id_b", ())))
+
+    def _graph_topology(self) -> tuple:
+        """(node ids, edge tails, edge heads, incidence) of the graph, cached until the topology changes (read-only:
+        every GraphView of the topology shares them)."""
+        stamp = self._topology_stamp()
+        cache = self.__dict__.get("_graph_topology_cache")
+        if cache is not None and cache[0] == stamp:
+            return cache[1]
+        node_ids = np.array(self._idx_to_vid, dtype=np.int64)
+        n = len(node_ids)
+        n_id_a_arr = np.asarray(self._mtg.array_filtering("n_id_a", filter_in={"scale": self._mtg.scales.Connection}),
+                                dtype=np.int64)
+        n_id_b_arr = np.asarray(self._mtg.array_filtering("n_id_b", filter_in={"scale": self._mtg.scales.Connection}),
+                                dtype=np.int64)
+        m = len(n_id_a_arr)
+        if m > 0:
+            tails, heads = self._vid_index(n_id_a_arr), self._vid_index(n_id_b_arr)
+            ec = np.arange(m, dtype=np.int64)
+            inc = coo_matrix((np.r_[np.ones(m), -np.ones(m)], (np.r_[tails, heads], np.r_[ec, ec])),
+                             shape=(n, m)).tocsc()
+        else:
+            tails, heads = np.empty(0, dtype=np.int64), np.empty(0, dtype=np.int64)
+            inc = csc_matrix((n, 0), dtype=np.float64)
+        for array in (node_ids, tails, heads, inc.data, inc.indices, inc.indptr):
+            array.setflags(write=False)
+        topology = (node_ids, tails, heads, inc)
+        self.__dict__["_graph_topology_cache"] = (stamp, topology)
+        return topology
+
     def to_graph_view(self,
                       boundary_ports: tuple = (),
                       node_properties: tuple = (),
@@ -2526,33 +2664,8 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
         Sign convention: B[tail/parent, e] = +1, B[head/child, e] = -1
         (as GraphView.incidence everywhere).
         """
-        node_ids = np.array(self._idx_to_vid, dtype=np.int64)
-        n        = len(node_ids)
-
-        n_id_a_arr = np.asarray(
-            self._mtg.array_filtering(
-                "n_id_a", filter_in={"scale": self._mtg.scales.Connection}
-            ), dtype=np.int64
-        )
-        n_id_b_arr = np.asarray(
-            self._mtg.array_filtering(
-                "n_id_b", filter_in={"scale": self._mtg.scales.Connection}
-            ), dtype=np.int64
-        )
-        m = len(n_id_a_arr)
-
-        if m > 0:
-            tails, heads = self._vid_index(n_id_a_arr), self._vid_index(n_id_b_arr)
-            ec    = np.arange(m, dtype=np.int64)
-            inc   = coo_matrix(
-                (np.r_[np.ones(m), -np.ones(m)],
-                 (np.r_[tails, heads], np.r_[ec, ec])),
-                shape=(n, m),
-            ).tocsc()
-        else:
-            tails = np.empty(0, dtype=np.int64)
-            heads = np.empty(0, dtype=np.int64)
-            inc   = csc_matrix((n, 0), dtype=np.float64)
+        node_ids, tails, heads, inc = self._graph_topology()
+        n, m = len(node_ids), len(tails)
 
         if boundary_ports:
             brows = np.array([self._vid_to_idx[p.node_id] for p in boundary_ports], dtype=np.int64)

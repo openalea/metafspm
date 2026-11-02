@@ -156,6 +156,11 @@ class AbstractSolver(ABC):
         and fill in (25 s against 0.1 s on a 16 x 16 x 32 soil grid).
         Dense J  → numpy.linalg.solve (O(N³)).
         """
+        condensation = getattr(spec, "parameters", {}).get("condensation") if spec is not None else None
+        if issparse(jac) and condensation is not None:
+            from openalea.metafspm.solve.network import condensed_solve
+            groups, kept, cache = condensation
+            return condensed_solve(jac, -residual, groups, kept, cache=cache)
         if issparse(jac):
             edges = _edge_unknowns(spec, jac.shape[0])
             if edges is not None:
