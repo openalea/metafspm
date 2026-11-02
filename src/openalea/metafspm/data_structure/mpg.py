@@ -254,8 +254,9 @@ class MPG(MTG):
         return instances is not None and len(instances) > 0
 
     def _instance_edits(self) -> int:
+        """The instances' removals (an addition reserves new ids: the last id tells it)."""
         instances = self.__dict__.get("_instances")
-        return 0 if instances is None else instances.edits
+        return 0 if instances is None else getattr(instances, "removals", instances.edits)
 
     def add_instance(self, owner: int, template) -> list:
         """
@@ -1032,6 +1033,11 @@ class MPG(MTG):
             others = [v for v in range(last + 1, signature[1] + 1) if v not in covered and v in self._scale]
             if signature[0] == count + len(others) + len(covered):
                 arrays = self._extended_topology_arrays(arrays, others, signature[1] + 1, bulk)
+                if self._instanced():                  # the instances added since: their blocks only
+                    rows = np.flatnonzero(self.instances.first > last)
+                    if rows.size:
+                        self._instanced_topology(arrays["parent"], arrays["complex"], arrays["scale"],
+                                                 arrays["edge_type"], rows)
                 self.__dict__["_topology_arrays"] = (signature, arrays)
                 return arrays
         self.__dict__.pop("_bulk_created", None)
@@ -1153,11 +1159,13 @@ class MPG(MTG):
             self._instanced_topology(parent, complex_, scale, edge_type)
         return {"parent": parent, "complex": complex_, "scale": scale, "edge_type": edge_type, "is_anchor": is_anchor}
 
-    def _instanced_topology(self, parent, complex_, scale, edge_type) -> None:
-        """The instanced vertices' entries of the topology arrays (their scale, complex, parent, edge type)."""
+    def _instanced_topology(self, parent, complex_, scale, edge_type, rows=None) -> None:
+        """The instanced vertices' entries of the topology arrays (their scale, complex, parent, edge type): every
+        instance's, or those of the instances *rows*."""
         instances = self.instances
+        rows = np.arange(len(instances)) if rows is None else np.asarray(rows, dtype=np.int64)
         vids = np.concatenate([np.arange(f, f + n, dtype=np.int64)
-                               for f, n in zip(instances.first.tolist(), instances.size.tolist())])
+                               for f, n in zip(instances.first[rows].tolist(), instances.size[rows].tolist())])
         their_scale, their_complex, their_parent = instances.structure(vids)
         anchored = their_complex <= -2
         anchors = self.scales.anchors

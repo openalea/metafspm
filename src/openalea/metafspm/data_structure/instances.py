@@ -211,7 +211,8 @@ class Instances:
         self.first = np.zeros(0, dtype=np.int64)
         self.size = np.zeros(0, dtype=np.int64)
         self.template = []                                # the template key of each row
-        self.edits = 0
+        self.edits = 0                                    # additions and removals
+        self.removals = 0                                 # removals alone (an addition extends, a removal rebuilds)
         self._cache = {}
 
     def __len__(self) -> int:
@@ -252,6 +253,7 @@ class Instances:
         self.owner, self.first, self.size, self.code = (np.delete(a, row) for a in (self.owner, self.first,
                                                                                    self.size, self.code))
         del self.template[row]
+        self.removals = getattr(self, "removals", 0) + 1
         self._changed()
         return block
 
