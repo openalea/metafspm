@@ -13,7 +13,11 @@ class CompositeModel:
     Components sharing one DataStructure, coupled by couple(): an input with the name of another component's
     variable reads it (the DataStructure is the coupling); the translator's links state the rest, a rename, a
     conversion factor, a change of scale or a formula. couplings() lists how each input is coupled.
+
+    translator: the model's coupling contract (a class attribute, anything Translator.load reads): couple() uses it
+    when given none, and its links between initiators apply while they build each plant (coupling.initiation).
     """
+    translator = None
 
     def couple(self, *components, translator=None) -> None:
         """
@@ -28,7 +32,7 @@ class CompositeModel:
             if _live_data_structure(component) is None:
                 raise TypeError(f"{type(component).__name__} is not DataStructure-backed: props-based components were "
                                 "removed, see docs/migration.md")
-        self.translator = Translator.load(translator)
+        self.translator = Translator.load(translator if translator is not None else type(self).translator)
         self._couple_on_data_structures(self.translator)
         checked = []
         for component in self.components:
@@ -93,8 +97,10 @@ class CompositeModel:
             if link.receiver not in by_name or link.provider not in by_name or link.receiver == link.provider:
                 continue
             receiver, provider = by_name[link.receiver], by_name[link.provider]
-            ds = receiver.data_structure
-            if provider.data_structure is not ds:
+            # views of one DataStructure at the components' scales (LocatedView) are that DataStructure: linked on it,
+            # their locations named as there
+            ds = _base_of(receiver.data_structure)
+            if _base_of(provider.data_structure) is not ds:
                 raise NotImplementedError(f"{link.receiver}.{link.variable} <- {link.provider}: coupling across "
                                           "DataStructures goes through the Scene (coupling.cross.Exchanges)")
             check_link(link, receiver, provider)
@@ -177,3 +183,8 @@ class CompositeModel:
             return default_mapping(kind, direction, name, weight=weight), weight
         except DeclarationError as error:
             raise DeclarationError(f"{error} (link from {source_location} to {location})") from None
+
+
+def _base_of(data_structure):
+    """The DataStructure a view (LocatedView) is of, or *data_structure* itself."""
+    return data_structure.__dict__.get("_base", data_structure)

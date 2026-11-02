@@ -155,7 +155,8 @@ def population_data_structure(table: pd.DataFrame, model, time_step: float = 360
     scenario = _flat_scenario(table["scenario"].iloc[0] if scenario is None and len(table) else scenario)
     read_by_initiators = set()
     g, plants = _build_population(table, initiators=getattr(model, "initiators", ()),
-                                  read_by_initiators=read_by_initiators, reduction=getattr(model, "reduction", None))
+                                  read_by_initiators=read_by_initiators, reduction=getattr(model, "reduction", None),
+                                  translator=getattr(model, "translator", None))
     scale = getattr(model, "from_scale", None) or "SubOrgan"
     scale = getattr(g.scales, scale) if isinstance(scale, str) else scale
     nodes = getattr(model, "nodes", None)
@@ -183,13 +184,18 @@ def _flat_scenario(scenario) -> dict:
     return scenario
 
 
-def _build_population(table: pd.DataFrame, initiators=(), read_by_initiators: set = None, reduction=None) -> tuple:
+def _build_population(table: pd.DataFrame, initiators=(), read_by_initiators: set = None, reduction=None,
+                      translator=None) -> tuple:
     """
     A new MPG with one Plant-scale vertex per row of *table* (Plant properties x, y, z, rotation), each plant's
     initial structure built by every StructuralComponent class of *initiators*, in order. Returns (g, plant vids in
     table order). The scenario keys the initiators read are added to *read_by_initiators* when given. *reduction*
     (the model's, solve.reduction): the MPG's, before the initiators build (they ask it for the reduced templates).
+    *translator* (the model's class attribute): its links between initiators applied before each initiator builds a
+    plant (coupling.initiation).
     """
+    from openalea.metafspm.coupling.initiation import apply_link, initiation_links
+    links = initiation_links(translator, initiators)
     g = MPG()
     if reduction is not None:
         g.reduction = reduction.for_population(g)
@@ -203,6 +209,8 @@ def _build_population(table: pd.DataFrame, initiators=(), read_by_initiators: se
     for k, initiator in enumerate(initiators):
         for plant, row in zip(plants, table.itertuples(index=False)):
             scenario = _ReadScenario(_flat_scenario(row.scenario))
+            for link, provider in links.get(k, ()):     # its inputs linked from earlier initiators
+                apply_link(g, plant, link, initiator, provider)
             try:
                 initiator.initiate_plant(g, plant, scenario)
             except AnchorError as error:            # the anchors' contract: an earlier initiator builds the anchor
