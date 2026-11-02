@@ -25,6 +25,8 @@ Declared on the plant model, before its structure is built (as nodes= and wiring
                      over the interior), "group": the group's {category: value} input, "kept": the kept nodes' input
                      (NaN: the kind's)}}, acting through the graph system's @input_jacobian(variable)
   systems            the graph systems reduced, "Component._system"
+  outputs            the group variables a kind gives its groups (their values on its library's full group, e.g. a
+                     section's kr): Reduction.outputs(ds, name)
 
 The structural model asks for a group's reduced template (Reduction.template_for) when it instances its anatomy:
 the full cells never enter the plant's DataStructure. A kind: (the full template, the kind variables' values or
@@ -77,17 +79,21 @@ class Kind:
     kept_rows: np.ndarray
     interior_rows: np.ndarray
     inputs: dict
+    outputs: dict = None
 
 
 class Reduction:
     def __init__(self, location: str = "SubOrgan", labels=(), ports=None, keep=None, explicit_edges=None,
-                 kind: dict = None, inputs: dict = None, systems=()):
+                 kind: dict = None, inputs: dict = None, systems=(), outputs=()):
         self.location, self.labels = location, tuple(labels)
         self.ports, self.keep, self.explicit_edges = ports, keep, explicit_edges
         self.kind, self.inputs, self.systems = dict(kind or {}), dict(inputs or {}), tuple(systems)
+        self.output_names = tuple(outputs)
         self._reduced, self._full, self._kept = {}, {}, {}
         self._kinds = {}
         self.model, self.instance, self.g = None, None, None
+        self.library = False                     # a library's: its groups' kinds are not evaluated (no library of
+                                                 # its own)
 
     def __getstate__(self):
         state = dict(self.__dict__)                       # a checkpoint: the declaration and the templates only
@@ -158,7 +164,7 @@ class Reduction:
         """(D, e) on the solved nodes *node_ids*: the reduced groups' interiors' terms (sparse, nodes × nodes, and a
         vector), or None when no solved group is reduced."""
         groups = self.reduced_groups(ds)
-        if not groups:
+        if not groups or self.library:
             return None
         n = node_ids.size
         position = {int(v): i for i, v in enumerate(node_ids.tolist())}
@@ -179,6 +185,31 @@ class Reduction:
             return None
         D = coo_matrix((np.concatenate(values), (np.concatenate(rows), np.concatenate(cols))), shape=(n, n)).tocsr()
         return D, e
+
+    def term_values(self, component, system: str, ds, values) -> np.ndarray:
+        """D x + e of *system*'s reduced groups for the node values *values* (DataStructure order): the interiors'
+        part of each kept node's balance (e.g. a soil node's uptake), 0 elsewhere."""
+        out = np.zeros(ds.n_nodes())
+        if self.library:
+            return out
+        terms = self.terms(component, system, ds, ds.entity_ids("node"))
+        if terms is not None:
+            D, e = terms
+            out = np.asarray(D @ np.asarray(values, dtype=float)).reshape(-1) + e
+        return out
+
+    def outputs(self, ds, name: str) -> np.ndarray:
+        """Group variable *name* of each group of the location: its kind's (its library full group's value) for a
+        reduced group, NaN elsewhere."""
+        out = np.full(len(ds.entity_ids(self.location)), np.nan)
+        groups = self.reduced_groups(ds)
+        if not groups or self.library:
+            return out
+        kinds = self.group_kinds(ds, groups)
+        for i, by_system in kinds.items():
+            kind = next(iter(by_system.values()))
+            out[i] = (kind.outputs or {}).get(name, np.nan)
+        return out
 
     def _reduced_scale(self, key):
         return self._reduced[self._full[key].key].scale
@@ -315,6 +346,10 @@ def _evaluate(reduction: Reduction, parameters: dict, requests: dict) -> dict:
     population = population_data_structure(planting([Planting()], model, {}), model)
     ds = population.data_structure
     instance = population.instance
+    library = reduction.for_population(ds.structure)       # the library knows its reduced groups, evaluates none
+    library.library = True
+    library.bind(model, instance)
+    ds.structure.reduction = library
     from dataclasses import fields
     for component in instance.components:                    # the plant's parameters and the settings
         own = {f.name for f in fields(component) if f.metadata.get("variable_type") in ("setting", "parameter")}
@@ -396,7 +431,15 @@ def _evaluate(reduction: Reduction, parameters: dict, requests: dict) -> dict:
                         categories[category] = (response[:, cells].sum(axis=1), response[:, cells] @ base_full[cells])
                 inputs[name] = {"kept": response[:, K] - own, "base_kept": base_full[K],
                                 "categories": categories, "interior": J_full[I]}
+            full_group = group_of[(k, "full")]
+            group_outputs = {}
+            for name in reduction.output_names:
+                if ds.has(name):
+                    values = np.asarray(ds.get(name), dtype=float)
+                    group_outputs[name] = float(values[full_group] if ds.location(name) == reduction.location else
+                                                values[np.flatnonzero(owner == full_group)[0]])
             out[kind_key][system] = Kind(D=S - A_red, e=s - c_red, reduction=kron, interior_source=c_full[I],
-                                         kept_rows=compartments[K], interior_rows=compartments[I], inputs=inputs)
+                                         kept_rows=compartments[K], interior_rows=compartments[I], inputs=inputs,
+                                         outputs=group_outputs)
     return out
 

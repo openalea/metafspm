@@ -25,7 +25,7 @@ def _mask(nodes, n: int, name: str) -> np.ndarray:
 
 
 def equivalent_conductance(view, edge_conductance, sources, sinks, source_conductance=None, groups=None,
-                           cache: dict = None) -> tuple:
+                           cache: dict = None, extra=None) -> tuple:
     """
     The equivalent conductance of a network between two sets of nodes: (conductance, inflow).
 
@@ -40,7 +40,8 @@ def equivalent_conductance(view, edge_conductance, sources, sinks, source_conduc
     collar. Nodes in a piece of the graph that touches no source or sink carry no flow.
 
     *groups* (an integer per node, e.g. each node's segment; *cache* kept between calls): the solve by static
-    condensation on them (condensed_solve), the sources and sinks kept.
+    condensation on them (condensed_solve), the sources and sinks kept. *extra*: a matrix (nodes × nodes) added to
+    the network's (e.g. a reduction's groups' interiors, solve.reduction).
     """
     incidence = csr_matrix(view.incidence)
     n = incidence.shape[0]
@@ -51,6 +52,8 @@ def equivalent_conductance(view, edge_conductance, sources, sinks, source_conduc
     if not sources.any() or not sinks.any():
         raise ValueError("equivalent_conductance: give at least one source and one sink")
     laplacian = (incidence @ diags(k) @ incidence.T).tocsr()
+    if extra is not None:
+        laplacian = (laplacian + csr_matrix(extra)).tocsr()
     robin = None
     if source_conductance is not None:
         robin = np.where(sources, np.broadcast_to(np.asarray(source_conductance, dtype=float), (n,)), 0.)
