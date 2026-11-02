@@ -199,10 +199,16 @@ def _build_population(table: pd.DataFrame, initiators=(), read_by_initiators: se
         for name in ("x", "y", "z", "rotation"):
             g.property(name)[plant] = float(getattr(row, name))
         plants.append(plant)
-    for initiator in initiators:
+    from openalea.metafspm.data_structure.mpg import AnchorError
+    for k, initiator in enumerate(initiators):
         for plant, row in zip(plants, table.itertuples(index=False)):
             scenario = _ReadScenario(_flat_scenario(row.scenario))
-            initiator.initiate_plant(g, plant, scenario)
+            try:
+                initiator.initiate_plant(g, plant, scenario)
+            except AnchorError as error:            # the anchors' contract: an earlier initiator builds the anchor
+                order = [getattr(i, "__name__", str(i)) for i in initiators]
+                raise AnchorError(f"{order[k]}: {error}. The initiators build in order, {order}: its anchor must be "
+                                  f"built by one before it ({order[:k] or 'none'})") from None
             if read_by_initiators is not None:
                 read_by_initiators |= scenario.read
     return g, plants

@@ -1393,32 +1393,94 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
         self.__dict__["_traversal_cache"] = ((self.topology_version, n, self.n_edges()), result)
         return result
 
-    def parents(self) -> np.ndarray:
-        """Local index of each node's parent, -1 at a root."""
-        return self._traversal()["parents"]
+    def parents(self, location: str = None) -> np.ndarray:
+        """Local index of each node's parent, -1 at a root; with *location* (a coarse scale, e.g. "SubOrgan" when the
+        nodes are Compartments), each entity's parent entity at that scale, in entity_ids' order."""
+        return self._traversal_at(location)["parents"]
 
-    def children(self) -> tuple:
-        """Children in CSR form, (indptr, indices): the children of node i are indices[indptr[i]:indptr[i + 1]]."""
-        return self._traversal()["children"]
+    def children(self, location: str = None) -> tuple:
+        """Children in CSR form, (indptr, indices): the children of node i are indices[indptr[i]:indptr[i + 1]];
+        with *location*, of its entities."""
+        return self._traversal_at(location)["children"]
 
-    def roots(self) -> np.ndarray:
-        return self._traversal()["roots"]
+    def roots(self, location: str = None) -> np.ndarray:
+        return self._traversal_at(location)["roots"]
 
-    def tips(self) -> np.ndarray:
-        """Nodes without children."""
-        return self._traversal()["tips"]
+    def tips(self, location: str = None) -> np.ndarray:
+        """Nodes (or *location*'s entities) without children."""
+        return self._traversal_at(location)["tips"]
 
-    def order(self, kind: str = "pre", traversal: str = None) -> np.ndarray:
+    def _traversal_at(self, location):
+        return self._traversal() if location in (None, "node") else self._coarse_traversal(location)
+
+    def _coarse_traversal(self, location: str) -> dict:
+        """_traversal's arrays for the entities of a coarse *location*, from the MPG's topology at its scale (each
+        entity's topological parent of the same scale), cached per topology."""
+        cache = self.__dict__.setdefault("_coarse_traversal_cache", {})
+        hit = cache.get(location)
+        stamp = self._topology_stamp() if hasattr(self, "_topology_stamp") else self.topology_version
+        if hit is not None and hit[0] == stamp:
+            return hit[1]
+        ids = np.asarray(self.entity_ids(location), dtype=np.int64)
+        arrays = self._mtg.topology_arrays()
+        raw = arrays["parent"][ids]
+        position = np.searchsorted(ids, raw).clip(0, max(ids.size - 1, 0))
+        known = (raw >= 0) & (ids.size > 0) & (ids[position] == raw)
+        parent = np.where(known, position, -1)
+        n = ids.size
+        order = np.argsort(parent, kind="stable")
+        has = parent[order] >= 0
+        indices = order[has]
+        indptr = np.searchsorted(parent[order][has], np.arange(n + 1))
+        roots = np.flatnonzero(parent < 0)
+        tips = np.flatnonzero(np.diff(indptr) == 0)
+        pre, post = [], []
+        stack = [(int(r), False) for r in roots[::-1]]
+        while stack:
+            node, done = stack.pop()
+            if done:
+                post.append(node)
+                continue
+            pre.append(node)
+            stack.append((node, True))
+            for child in indices[indptr[node]:indptr[node + 1]][::-1]:
+                stack.append((int(child), False))
+        result = {"parents": parent, "children": (indptr, indices), "roots": roots, "tips": tips,
+                  "pre": np.array(pre, dtype=np.int64), "post": np.array(post, dtype=np.int64)}
+        cache[location] = (stamp, result)
+        return result
+
+    def bearer(self, location: str, ids=None, at: str = "SubOrgan") -> np.ndarray:
+        """
+        The bearer of each entity of a coarse *location* (*ids*: some of them, default all): its topologically first
+        vertex at the scale *at* (the first SubOrgan of a Phytomer, say), where a model grows the axes it bears (a
+        site, e.g. a nodal root on its phytomer); -1 for an entity without one.
+        """
+        g = self._mtg
+        ids = np.asarray(self.entity_ids(location) if ids is None else ids, dtype=np.int64)
+        scale = getattr(g.scales, at)
+        out = np.full(ids.size, -1, dtype=np.int64)
+        for k, entity in enumerate(ids.tolist()):
+            vertices = [int(v) for v in g.components_at_scale(entity, scale=scale)]
+            if not vertices:
+                continue
+            inside = set(vertices)
+            first = [v for v in vertices if g.parent(v) not in inside]
+            out[k] = min(first or vertices)
+        return out
+
+    def order(self, kind: str = "pre", traversal: str = None, location: str = None) -> np.ndarray:
         """
         Node permutation: "pre" lists every parent before its children, "post" every child before its parent.
         traversal="openalea": the post order of openalea.mtg.traversal.post_order2 (children taken from the MTG, the
         successor '<' subtree first, then the branches in reverse insertion order), the visiting order of models
-        written with it, e.g. rhizodep. Segment mode only.
+        written with it, e.g. rhizodep. Segment mode only. *location*: the order of a coarse location's entities (e.g.
+        the SubOrgans when the nodes are Compartments).
         """
         if kind not in ("pre", "post"):
             raise ValueError(f"order must be 'pre' or 'post', got '{kind}'")
         if traversal is None:
-            return self._traversal()[kind]
+            return self._traversal_at(location)[kind]
         if traversal != "openalea" or kind != "post":
             raise ValueError("traversal='openalea' is available for kind='post' only")
         return self._openalea_post_order()

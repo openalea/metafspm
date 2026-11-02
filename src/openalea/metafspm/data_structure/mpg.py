@@ -8,6 +8,10 @@ from typing import Literal
 
 
 
+class AnchorError(LookupError):
+    """An initiator's anchor (MPG.find_anchor) missing or ambiguous."""
+
+
 class MPG(MTG):
     """
     Multiscale Plant Graph (MPG)
@@ -237,6 +241,43 @@ class MPG(MTG):
             prop.extend(vids, values)
         else:
             prop.update(zip(vids, values))
+
+    # ── Anchors: an initiator building onto another's structure ──
+
+    def find_anchor(self, plant: int, label: str, scale: str = None, where: dict = None, first: bool = False) -> int:
+        """
+        The vertex of *plant* an initiator builds onto (its anchor), chosen by its *label* name (e.g. "Seed") at
+        *scale* (a scale name, e.g. "SubOrgan"; found from the label when only one scale has it), among those whose
+        MPG properties equal *where*'s ({name: value}). Several: an AnchorError, unless *first* (the topologically
+        first: one without a candidate parent, the smallest vid among them). None: an AnchorError naming what the
+        plant has at that scale.
+        """
+        groups = {name: group for name, group in vars(self.labels).items()
+                  if isinstance(group, type) and hasattr(group, label) and hasattr(group, "scale")}
+        if scale is not None:
+            groups = {name: group for name, group in groups.items() if name == scale}
+        if len(groups) != 1:
+            raise AnchorError(f"anchor label '{label}': " + (f"no scale has it{f' at {scale}' if scale else ''}"
+                                                             if not groups else
+                                                             f"several scales have it ({sorted(groups)}): give scale="))
+        (scale_name, group), = groups.items()
+        code = getattr(group, label)
+        labels = self.property("label")
+        candidates = [int(v) for v in self.components_at_scale(plant, scale=group.scale) if labels.get(v) == code]
+        for name, value in (where or {}).items():
+            values = self.property(name)
+            candidates = [v for v in candidates if values.get(v) == value]
+        selector = f"{scale_name} '{label}'" + (f" with {where}" if where else "")
+        if not candidates:
+            present = sorted({self.labels.translator.get(int(labels.get(v, -1)), "?")
+                              for v in self.components_at_scale(plant, scale=group.scale)})
+            raise AnchorError(f"plant {plant} has no {selector} to build onto (its {scale_name}s: {present or 'none'})")
+        if len(candidates) > 1 and not first:
+            raise AnchorError(f"plant {plant} has {len(candidates)} {selector}s ({candidates[:5]}): give a where= "
+                              "that selects one, or first=True")
+        inside = set(candidates)
+        roots = [v for v in candidates if self.parent(v) not in inside]
+        return min(roots or candidates)
 
     # ── Instanced sections (data_structure.instances) ──
 

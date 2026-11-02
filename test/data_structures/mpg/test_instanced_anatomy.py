@@ -222,3 +222,19 @@ def test_a_restricted_and_extended_template_is_instanced_as_its_vertices():
     assert (owner[np.isin(nodes, vids)] == segment).all()
     edge = vids[-1]
     assert g.values_of("n_id_a", [edge]) == {edge: float(vids[a])} and g.values_of("kind", [edge])[edge] == 8.
+
+
+def test_the_segments_topology_when_the_nodes_are_compartments():
+    """parents, children, roots, tips and order at a coarse location (the SubOrgans of an anatomy-mode
+    DataStructure); bearer: a coarse entity's first SubOrgan."""
+    g, segments, sections = make_instanced_anatomy(3)
+    ds = MPGDataStructure(g, from_scale=g.scales.SubOrgan, nodes="Compartment", wiring=wiring(g))
+    ids = ds.entity_ids("SubOrgan").tolist()
+    assert ids == sorted(segments)
+    np.testing.assert_array_equal(ds.parents(location="SubOrgan"), [-1, 0, 1])
+    indptr, indices = ds.children(location="SubOrgan")
+    assert indices[indptr[0]:indptr[1]].tolist() == [1]
+    assert ds.roots(location="SubOrgan").tolist() == [0] and ds.tips(location="SubOrgan").tolist() == [2]
+    assert ds.order("pre", location="SubOrgan").tolist() == [0, 1, 2]
+    assert ds.order("post", location="SubOrgan").tolist() == [2, 1, 0]
+    assert ds.bearer("SubOrgan", ids).tolist() == ids                     # a SubOrgan bears itself

@@ -146,6 +146,7 @@ class LabelsConfig:
         RootSegment: int = "RootSegment"
         RootApex: int = "RootApex"                  # a root axis' tip, a SubOrgan of its own (rhizodep's apex)
         HiddenElement: int = "HiddenElement"        # the part of a shoot organ hidden in the sheaths' tube (Adel's)
+        Seed: int = "Seed"                          # a seed (a grass's caryopsis), the seminal roots' bearer
 
     class Layer:
         scale = ScalesConfig.Layer
