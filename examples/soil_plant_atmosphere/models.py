@@ -16,11 +16,13 @@ from openalea.metafspm.coupling.cross import CrossMapping
 from openalea.metafspm.coupling.translator import Translator
 from openalea.metafspm.scene.environment import EnvironmentModel
 
-from components import PlantWaterTransport, SeedlingStructure, SoilStructure, SoilWaterTransport
+from openalea.metafspm.testing import soil as test_soil
+from openalea.metafspm.testing.soil import SOIL_TRANSLATOR, SoilStructure, SoilWaterTransport, set_conductivity
+
+from components import PlantWaterTransport, SeedlingStructure
 
 
 PLANT_TRANSLATOR = Translator().link("PlantWaterTransport", "conductance", "SeedlingStructure", {"k": 1.})
-SOIL_TRANSLATOR = Translator().link("SoilWaterTransport", "conductance", "SoilStructure", {"k": 1.})
 
 SCENE_TRANSLATOR = (
     Translator()
@@ -48,27 +50,16 @@ class SeedlingWater(CompositeModel):
         self.transport()
 
 
-class Soil(EnvironmentModel):
+class Soil(test_soil.Soil):
     """
-    The soil environment model: a grid over the stand, z pointing down from the surface, its conductivity varying
-    by layer (a denser subsoil), the water table at the bottom.
+    The soil environment model: metafspm's test soil (openalea.metafspm.testing.soil: a grid over the stand, z pointing
+    down from the surface, its conductivity by layer, the water table at the bottom), 2.5 cm cells here.
     """
-    compartment = "Soil"
 
     def __init__(self, plant_data_structures, xrange, yrange, time_step, depth=0.4, voxel=0.025,
                  topsoil_K=1.5, subsoil_K=0.6, topsoil_depth=0.2):
-        super().__init__(plant_data_structures, xrange, yrange, time_step)
-        self.grid = self.build_grid(voxel, depth)
-        self.structure = SoilStructure(data_structure=self.grid, time_step=time_step)
-        self.transport = SoilWaterTransport(data_structure=self.grid, time_step=time_step)
-        self.couple(self.structure, self.transport, translator=SOIL_TRANSLATOR)
-        self.layers = dict(topsoil_K=topsoil_K, subsoil_K=subsoil_K, topsoil_depth=topsoil_depth)
-        set_conductivity(self.grid, **self.layers)
-
-
-def set_conductivity(grid, topsoil_K, subsoil_K, topsoil_depth):
-    """K_sat by layer, from the depth of each cell's centre (any grid)."""
-    grid.set("K_sat", np.where(grid.cell_centers()[:, 2] < topsoil_depth, topsoil_K, subsoil_K))
+        super().__init__(plant_data_structures, xrange, yrange, time_step, depth=depth, voxel=voxel,
+                         topsoil_K=topsoil_K, subsoil_K=subsoil_K, topsoil_depth=topsoil_depth)
 
 
 class AdaptiveSoil(EnvironmentModel):

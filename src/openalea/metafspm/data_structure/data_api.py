@@ -1688,12 +1688,20 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
         from openalea.metafspm.data_structure import tree_kernels
         return tree_kernels.path_compose(transforms, self.parents())
 
-    def owner(self, location: str) -> np.ndarray:
-        """Index, in entity_ids(location), of the entity owning each node at a coarse location."""
+    def owner(self, location: str, of: str = "node") -> np.ndarray:
+        """Index, in entity_ids(location), of the entity owning each node at a coarse location; with *of* a finer
+        coarse location (e.g. owner("Axis", of="Organ")), each entity of *of*'s (-1: none)."""
         if location == "node":
             return np.arange(self.n_nodes(), dtype=np.int64)
         if location not in self._coarse_scale_names():
             raise ValueError(f"'{location}' is not a coarse location ({self._coarse_scale_names()})")
+        if of != "node":
+            g = self._mtg
+            coarse = np.asarray(self.entity_ids(location), dtype=np.int64)
+            owners = np.asarray(g.complex_at_scale_array(np.asarray(self.entity_ids(of), dtype=np.int64),
+                                                         getattr(g.scales, location)), dtype=np.int64)
+            position = np.searchsorted(coarse, owners).clip(0, max(coarse.size - 1, 0))
+            return np.where((coarse.size > 0) & (coarse[position] == owners), position, -1)
         return self._membership(location)[1]
 
     def labels(self, location: str = None, per_node: bool = True) -> np.ndarray:
@@ -1997,10 +2005,13 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
 
     def _broadcast_to_entities(self, values, location: str, to: str, name: str = None) -> np.ndarray:
         """
-        Owner values for nodes, and for edges the value of their child node (edges never join two plants). Nodes
-        without an entity at *location* (anatomy walls and junctions at the Cell scale) read *name*'s default.
+        Owner values for nodes, and for edges the value of their child node (edges never join two plants); at a
+        coarse location *to* (e.g. a plant's value for each of its Axes), each entity's owner's. Nodes without an
+        entity at *location* (anatomy walls and junctions at the Cell scale) read *name*'s default.
         """
         fill = self._default_of(name)
+        if to not in ("node", "edge"):                # between two coarse locations (Plant -> Axis, Organ)
+            return self._map(values, location, to, "broadcast", fill=fill)
         on_nodes = self._map(values, location, "node", "broadcast", fill=fill) if location != "node" else values
         if to == "edge":
             return on_nodes[self.index_of(self.entity_ids("edge"))] if not getattr(self, "_anatomy", False) \
@@ -3275,10 +3286,13 @@ class LocatedView(DataStructure):
                                  f"registered at {target} too: one variable per name on one DataStructure")
         return base.register(name, values, location=target, **options)
 
-    def owner(self, location: str) -> np.ndarray:
-        """Index, in entity_ids(location), of the entity owning each node (each entity of the view's location)."""
+    def owner(self, location: str, of: str = "node") -> np.ndarray:
+        """Index, in entity_ids(location), of the entity owning each node (each entity of the view's location), or
+        of each entity of *of*."""
         if location == "node":
             return np.arange(self.n_nodes(), dtype=np.int64)
+        if of != "node":
+            return self._base.owner(location, of=of)
         g = self._base.structure
         coarse = np.asarray(self._base.entity_ids(location), dtype=np.int64)
         owners = g.complex_at_scale_array(self.entity_ids("node"), getattr(g.scales, location))

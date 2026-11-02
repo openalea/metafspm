@@ -217,8 +217,8 @@ def _rows_of(ids: np.ndarray, wanted) -> np.ndarray:
 
 
 def _round_trip(value):
-    """*value* as JSON values, tuples, arrays, non-text keys and non-finite floats marked, so that _decoded gives it
-    back; TypeError for what JSON cannot hold."""
+    """*value* as JSON values, tuples, arrays, tables (pandas DataFrames), non-text keys and non-finite floats marked,
+    so that _decoded gives it back; TypeError for what JSON cannot hold."""
     if value is None or isinstance(value, (bool, str)):
         return value
     if isinstance(value, np.generic):
@@ -237,6 +237,9 @@ def _round_trip(value):
         if all(isinstance(key, str) and not key.startswith("__") for key in value):
             return {key: _round_trip(item) for key, item in value.items()}
         return {"__dict__": [[_round_trip(key), _round_trip(item)] for key, item in value.items()]}
+    if type(value).__name__ == "DataFrame" and hasattr(value, "to_dict"):      # a table (Adel's plants' tables)
+        return {"__table__": {column: _round_trip(list(value[column])) for column in value.columns},
+                "index": _round_trip(list(value.index))}
     raise TypeError(f"a {type(value).__name__} cannot be written as JSON")
 
 
@@ -254,6 +257,9 @@ def _decoded(text: str):
             return np.array(item["__array__"], dtype=item["dtype"])
         if "__dict__" in item:
             return {_hashable(key): value for key, value in item["__dict__"]}
+        if "__table__" in item:
+            import pandas as pd
+            return pd.DataFrame(item["__table__"], index=item["index"])
         return item
     return json.loads(text, object_hook=hook)
 

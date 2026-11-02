@@ -98,16 +98,23 @@ class Functor:
         """
         specs = getattr(instance, "_variable_specs", {})
         settings = set(type(instance).declared_settings()) if hasattr(type(instance), "declared_settings") else set()
+        optional = getattr(type(instance), "_optional", lambda name: False)
+        missing = {name for name in self.input_names if name in specs and not ds.has(name) and optional(name)}
+
+        def where(name):                       # an optional input nothing provides: at its declared location
+            return specs[name].location if name in missing else ds.location(name)
+
         is_parameter = [name not in settings and getattr(specs.get(name), "variable_type", None) == "parameter"
-                        and ds.location(name) not in ("node", "edge", "cell") for name in self.input_names]
+                        and where(name) not in ("node", "edge", "cell") for name in self.input_names]
         from openalea.metafspm.coupling.declaration import held_at_scale, mapped_read
         mapped = [name not in settings and not p and held_at_scale(specs.get(name), ds)
                   for name, p in zip(self.input_names, is_parameter)]
-        others = [specs[name].location if m else ds.location(name)
+        others = [specs[name].location if m else where(name)
                   for name, p, m in zip(self.input_names, is_parameter, mapped) if not p and name not in settings]
         stores = ds._var_stores()
-        step_location = next((loc for loc in others if loc in ("node", "edge", "cell")),
-                             "node" if "node" in stores else "cell")
+        step_location = next((loc for loc in others if loc in ("node", "edge", "cell")), None)
+        if step_location is None:              # no argument per node: its outputs' location (e.g. the plants'), else nodes
+            step_location = self._outputs_location(instance, specs, stores) or ("node" if "node" in stores else "cell")
         args, locations = [], []
         for name, parameter, down in zip(self.input_names, is_parameter, mapped):
             if name in settings:                        # a setting: the value itself
@@ -116,6 +123,11 @@ class Functor:
             elif down:
                 args.append(mapped_read(ds, specs[name]))
                 locations.append(specs[name].location)
+            elif name in missing:
+                spec = specs[name]                        # an optional input nothing provides: its default
+                args.append(np.full(tuple(ds._location_shape(spec.location)) + tuple(spec.shape or ()),
+                                    np.nan if spec.default is None else spec.default))
+                locations.append(spec.location)
             elif parameter:
                 args.append(ds.parameter_view(name, step_location))
                 locations.append(step_location)
@@ -123,6 +135,18 @@ class Functor:
                 args.append(ds.get(name))
                 locations.append(ds.location(name))
         return args, locations
+
+    def _outputs_location(self, instance, specs, stores):
+        """The one location of the step's declared outputs (its method's name, its declared output locations), or None:
+        a step of coarse outputs (a plant's) gets its parameters there."""
+        declared = getattr(self.fun, "__output_locations__", {})
+        locations = {specs[name].location for name in [self.name, *declared] if name in specs}
+        locations |= set(declared.values())
+        if len(locations) == 1:
+            (location,) = locations
+            if location in stores:
+                return location
+        return None
 
     def _evaluate(self, instance, args):
         if getattr(self.fun, "__vectorized__", True):
@@ -167,7 +191,7 @@ class Functor:
         before = instance._before_new_nodes() if new_nodes else None
         declared = getattr(self.fun, "__output_locations__", {})
         for name, values in outputs:
-            values = np.asarray(values, dtype=float)
+            values = _output_array(values, ds.get(name).dtype if ds.has(name) else None)
             masked = (mask is not None and values.ndim >= 1 and values.shape[0] == int(mask.sum())
                       and (values.ndim == 1 or (ds.has(name) and ds.get(name).shape[1:] == values.shape[1:])))
             if not ds.has(name):
@@ -179,7 +203,7 @@ class Functor:
                     location = self._output_location(instance, ds, name, values, declared)
                 ds.register(name, location=location)
             if masked and ds.location(name) == mask_location:
-                full = np.array(ds.get(name), dtype=float)
+                full = np.array(ds.get(name), dtype=object if values.dtype == object else float)
                 full[mask] = values
                 values = full
             ds.set(name, values)
@@ -259,3 +283,15 @@ def _copied(out):
     if isinstance(out, tuple):
         return tuple(_copied(value) for value in out)
     return out
+
+
+def _output_array(values, stored_dtype=None) -> np.ndarray:
+    """A step's output as an array: floats, or objects (one record per entity: a tuple, a string, a dict) for a
+    variable of dtype object or values that are objects."""
+    if stored_dtype == object or (isinstance(values, np.ndarray) and values.dtype == object):
+        if isinstance(values, np.ndarray) and values.dtype == object:
+            return values
+        out = np.empty(len(values), dtype=object)
+        out[:] = list(values)
+        return out
+    return np.asarray(values, dtype=float)

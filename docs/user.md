@@ -152,6 +152,13 @@ carbon()                                  # one time step: every step, in the sc
   (`ds.define_mask`) or a callable `ds -> boolean array` select as well, for geometry or masks shared with mappings.
   When the DataStructure defines an `"active"` mask (emergence, dead tissues), steps also compute on its entities
   only; `include_inactive=True` lifts it.
+- **Where a step works.** A step's arguments come at their locations, its parameters at the step's: the location of
+  its per-node arguments, or, without any, that of its declared outputs (a plant's step taking a per-plant parameter
+  and returning one value per plant). Its outputs are floats, or records (`dtype="object"`: a tuple, a string per
+  entity) for a variable of that type. `self.dt` is the time step in every component's steps.
+- **Optional inputs.** `input_variable(..., optional=True)`: when nothing provides it (no other component, no MTG
+  property), it is not registered on the DataStructure (coordinates read for a display only, which a geometry
+  provider would take for its own), and a step naming it gets its default: the component runs on its own.
 - **Memoized steps.** `@rate(memo=True)` (any step): its outputs are computed again only when its arguments' values,
   its component's parameters or settings, the active mask or the structure changed; otherwise its last outputs are
   written again (a network's conductances, recomputed only when a barrier or a length changed). The step's
@@ -176,6 +183,8 @@ carbon()                                  # one time step: every step, in the sc
   default, provider); `Component.schedule()` its steps in the order they run, grouped by stage;
   `component.variable_specs` their resolved places on its DataStructure; `component.active_ids(location)` the active
   entities (at a coarse location: those of the plants emerged), for MPG-style steps.
+- **Owners.** `ds.owner(location)`: each node's entity at a coarse location (an index in `ds.entity_ids(location)`);
+  `ds.owner("Axis", of="Organ")`: each Organ's Axis, between two coarse locations.
 - **Public accessors** (rather than the private names behind them): `ds.from_scale`, `ds.sections_of(vids)`,
   `ds.reduction`, `ds.structure_stamp()`, `ds.default(name)`; `MPG.values_at(name, vids)` (bulk, instances
   included), `MPG.anchored(vid)` (its anchored Compartments and Connections), `MPG.has_instances()`, `MPG.last_vid`,
@@ -449,6 +458,9 @@ scene = Scene.from_scenario(scenario, stand(...), Wheat, environment=[RhizoSoil,
   steps), also its scenario's `"interval"`; a component reading the plants' geometry declares it,
   `geometry: object = geometry_input(relight="topology" | "geometry")`, listed by `couplings()`, and its model runs
   fully when the elements (or their triangles) changed too; `spin_up(scene)`, `stop_when=condition`.
+- **A soil for tests and examples.** `openalea.metafspm.testing.soil.Soil` (not one of metafspm's models, a
+  fixture): the steady water flow in a coarse fixed grid (5 cm cells), its conductivity by layer, the water table at
+  the bottom, the surface evaporating; a plant model takes up water from it through scene links.
 - **Calendar.** `Scene(start=(day_of_year, hour))`: the calendar of the scene's time 0 (UTC); every component's
   `self.calendar()` gives the (day of year, hour) of its forcing time (a light model's sun), and a forcing given by
   the hour of the day (or by the day of the year) takes it with `as_forcing(value, time_unit="h", origin="calendar")`.

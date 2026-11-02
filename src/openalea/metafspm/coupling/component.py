@@ -125,7 +125,7 @@ def state_variable(unit: str = "", description: str = "", default=None, kind=Non
 def input_variable(unit: str = "", description: str = "", default=None, kind=None, by: str = None, scale=None,
                    location=None, aggregation=None, weight=None, on_grow="default", dtype=None, shape=None,
                    min_value=None, max_value=None, unit_comment: str = "", value_comment: str = "",
-                   references: str = "", DOI=None, **renamed):
+                   references: str = "", DOI=None, optional: bool = False, **renamed):
     return _declare("input", **_merge(locals(), "input_variable"))
 
 
@@ -187,7 +187,9 @@ state_variable.__doc__ = """Declare a state variable, computed by this component
 input_variable.__doc__ = """Declare an input: a variable another component provides (an input named as another
     component's variable of the same DataStructure reads it; a translator link states a rename, a factor or a change
     of scale). *default*: its value when nothing provides it. *by*: the provider, for the documentation. *kind*:
-    optional, checked against the provider's.""" + _PLACE + _DOCUMENTATION
+    optional, checked against the provider's. *optional*: when nothing provides it (no other component, no MTG
+    property), it is not registered on the DataStructure (e.g. coordinates read for a display, which a geometry
+    provider would otherwise take for its own); a step naming it gets its default.""" + _PLACE + _DOCUMENTATION
 parameter.__doc__ = """Declare a parameter: a constant of the equations, set by constructor keywords and
     scenarios. A numeric parameter without a place is stored per plant (each plant's scenario may change it); with
     *scale* or *location*, one value per entity. *by*: its owner, for the documentation. *sections*: for a parameter
@@ -392,6 +394,16 @@ class DataStructureComponent(Component):
     MTG-backed parameters are re-read before each graph solve.
     """
 
+    @property
+    def dt(self) -> float:
+        """Length of the current (sub-)step of a graph-system solve; the time step outside sub-stepping (every component's steps)."""
+        step = self.__dict__.get("_current_dt", getattr(self, "time_step", None))
+        if step is None:
+            raise AttributeError(f"{type(self).__name__} has no time step: give its time_step= (s), or build it in a "
+                                 "Scene (its time_step=)")
+        return step
+
+
     data_structure: Optional[DataStructure] = None
     # Time step of the component (s): the dt of its equations, and its sub-step: it runs (the scene's time step) /
     # time_step times per scene step, once when run alone. Default: its class's time_step when it sets one, else the
@@ -444,6 +456,12 @@ class DataStructureComponent(Component):
         for name in getattr(self, "_derived_inputs", []):
             ds.get(name)
 
+    @classmethod
+    def _optional(cls, name) -> bool:
+        """Whether *name* is an optional input (input_variable(optional=True))."""
+        field = cls.__dataclass_fields__.get(name)
+        return field is not None and bool(field.metadata.get("optional"))
+
     @property
     def variable_specs(self) -> dict:
         """{name: VariableSpec} of the component's declared variables as resolved on its DataStructure (location, MTG
@@ -472,6 +490,8 @@ class DataStructureComponent(Component):
                     ds.set(name, pending[name])          # a value given to the constructor
             else:
                 values = ds._read_mtg(spec) if hasattr(ds, "_read_mtg") else None
+                if values is None and self._optional(name):
+                    continue                     # an optional input nothing provides: its default, not registered
                 default = pending.get(name, spec.default) if spec.dtype is not object else spec.default
                 ds.register(name, values, location=spec.location, default=default, on_grow=spec.on_grow,
                             dtype=spec.dtype, shape=spec.shape)
@@ -771,15 +791,6 @@ class FunctionalComponent(DataStructureComponent):
         if name not in maps:
             raise KeyError(f"'{name}' is not a pool unknown of the graph system being solved")
         return maps[name]
-
-    @property
-    def dt(self) -> float:
-        """Length of the current (sub-)step of a graph-system solve; the time step outside sub-stepping."""
-        step = self.__dict__.get("_current_dt", getattr(self, "time_step", None))
-        if step is None:
-            raise AttributeError(f"{type(self).__name__} has no time step: give its time_step= (s), or build it in a "
-                                 "Scene (its time_step=)")
-        return step
 
     def previous(self, name: str, at: str = "substep") -> np.ndarray:
         """
