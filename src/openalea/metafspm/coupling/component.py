@@ -252,8 +252,17 @@ class Component:
     choregrapher = Choregrapher()
 
     def __call__(self):
+        context = self._before_call()
         self.pull_available_inputs()
         self.choregrapher(instance=self)
+        self._after_call(context)
+
+    def _before_call(self):
+        """What a call needs to keep before its steps (the end-of-call repartition's basis): None here."""
+        return None
+
+    def _after_call(self, context) -> None:
+        """A call's work after its steps (also run once by CompositeModel.run_together)."""
         # State variables reach the MTG after every call with mtg_sync = "after_call"; by default ("lazy") the
         # DataStructure writes them when the MTG is read
         if hasattr(self, "mtg_sync"):
@@ -932,16 +941,21 @@ class StructuralComponent(DataStructureComponent):
         values = self.partition_weight(ds) if callable(self.partition_weight) else ds.get(self.partition_weight)
         return np.array(values, dtype=float)
 
-    def __call__(self):
+    def _before_call(self):
         if self.repartition not in ("after_mpg_steps", "end_of_call"):
             raise ValueError(f"{type(self).__name__}.repartition must be 'after_mpg_steps' or 'end_of_call', got "
                              f"'{self.repartition}'")
         if self.repartition != "end_of_call" or self.partition_weight is None:
-            return super().__call__()
+            return None
+        start = self.data_structure.entity_ids("node").tolist()
+        return start, (self._weights() if self.partition_basis is None else None)
+
+    def _after_call(self, context) -> None:
+        super()._after_call(context)
+        if context is None:
+            return
         ds = self.data_structure
-        start = ds.entity_ids("node").tolist()
-        start_weights = self._weights() if self.partition_basis is None else None
-        super().__call__()
+        start, start_weights = context
         ids = ds.entity_ids("node").tolist()
         if start_weights is not None:
             basis = dict(zip(start, start_weights.tolist()))

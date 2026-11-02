@@ -385,7 +385,10 @@ scene = Scene.from_scenario(scenario, stand(...), Wheat, environment=[RhizoSoil,
   `Model(data_structure, time_step, <its own arguments>)`, with a class attribute `initiators` (the structural components
   building each plant) and a class attribute `translator` (its coupling contract: `couple()` uses it, and its links
   between initiators apply while they build each plant, a later initiator's linked inputs written before it builds;
-  a link from a later initiator raises). In anatomy mode (`nodes = "Compartment"`) the initiators build the anatomies, and a `wiring`
+  a link from a later initiator raises). Its `run()` calls its components in turn, or as one with
+  `self.run_together(a, b)`: their steps in one schedule, each at its schedule position and the components in the
+  given order within one (e.g. a development's potential lengths, the architecture's segmentation, the development's
+  postsegmentation giving the new organs their lengths, then the architecture's postsegmentation). In anatomy mode (`nodes = "Compartment"`) the initiators build the anatomies, and a `wiring`
   attribute gives the junction rules between them. Numeric parameters may differ per plant (one scenario per plant); an `emergence_time` column
   keeps a plant frozen until then. Without a Scene, `population_data_structure(table, Model, time_step=)` builds
   the same: the plants' MPG and MPGDataStructure, the model on it, every plant's scenario applied

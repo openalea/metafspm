@@ -41,6 +41,21 @@ class CompositeModel:
                 ds.validate_variables()
                 checked.append(ds)
 
+    def run_together(self, *components) -> None:
+        """
+        Call *components* as one: their steps in one schedule (each step group at its schedule position, the
+        components in the given order within a position), e.g. a development's potential lengths, the architecture's
+        segmentation, then the development's postsegmentation (the new organs' lengths) before the architecture's.
+        Each component's inputs are pulled first and its after-call work (write-back, clock, repartition) done last.
+        """
+        components = components or tuple(self.components)
+        contexts = [component._before_call() for component in components]
+        for component in components:
+            component.pull_available_inputs()
+        components[0].choregrapher.run_together(components)
+        for component, context in zip(components, contexts):
+            component._after_call(context)
+
     def couplings(self):
         """
         A pandas DataFrame, one row per input of the coupled components: receiver, variable, provider and coupling,

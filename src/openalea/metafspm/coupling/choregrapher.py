@@ -134,6 +134,32 @@ class Choregrapher(Singleton):
         instance.__dict__["_clock"] = start
 
 
+    def run_together(self, instances) -> None:
+        """
+        Run the bound schedules of several components as one: their step groups by schedule position (e.g. one's
+        potential, the other's segmentation, then both postsegmentations), the components in the given order within a
+        position; once per sub time step, which they must share.
+        """
+        names = "+".join(type(instance).__name__ for instance in instances)
+        sub_time_steps = {instance.__dict__["_choregraphy"][0] for instance in instances}
+        if len(sub_time_steps) > 1:
+            raise ValueError(f"{names}: components run together need the same sub time step, got {sub_time_steps}")
+        sub_time_step = sub_time_steps.pop()
+        simulation_step = self.simulation_step() or sub_time_step
+        increments = 1 if sub_time_step is None else sub_steps(simulation_step, sub_time_step, names)
+        starts = [instance.__dict__.get("_clock", 0.) for instance in instances]
+        priorities = sorted({priority for instance in instances for priority in instance.__dict__["_choregraphy"][1]},
+                            key=lambda priority: tuple(ast.literal_eval(priority)))
+        for increment in range(increments):
+            for instance, start in zip(instances, starts):
+                instance.__dict__["_clock"] = start + increment * (sub_time_step or 0.)
+            for priority in priorities:
+                for instance in instances:
+                    for functor in instance.__dict__["_choregraphy"][1].get(priority, ()):
+                        functor()
+        for instance, start in zip(instances, starts):
+            instance.__dict__["_clock"] = start
+
     def describe(self, cls) -> list:
         """[(stages, [step names])] of class *cls*, in the order its steps run: each group of steps with the stage it
         has in each row of the schedule (e.g. ("rate",) or ("postsegmentation",))."""
