@@ -236,3 +236,65 @@ def _condensation_kind(block, coupling, back, factor, kinds: dict):
     X = lu.solve(coupling.toarray()) if coupling.shape[1] else np.zeros((block.shape[0], 0))
     kinds[key] = {"blocks": scaled, "lu": lu, "X": X, "S": np.asarray(back @ X), "back": back}
     return key
+
+
+# ── Kron reduction: a network's equivalent network on chosen nodes ──
+
+class KronReduction:
+    """
+    A network's matrix *A* (nodes × nodes, e.g. a conductance Laplacian with its diagonal terms) reduced onto its
+    *kept* nodes: the Schur complement S = A_KK − A_KI A_II⁻¹ A_IK, exact for every potential of the kept nodes.
+
+      reduced           S (kept × kept, dense)
+      pairs()           (i, j, conductance) of the equivalent network: −S_ij for each pair of kept nodes i < j
+      shunts()          each kept node's diagonal term left (S_ii + Σ_j S_ij: 0 for a network of conductances alone)
+      inject(b_I)       the interior sources *b_I* as sources at the kept nodes (−A_KI A_II⁻¹ b_I)
+      recover(x_K, b_I) the interior's potentials (A_II⁻¹ (b_I − A_IK x_K)), from the kept nodes' and the sources
+
+    Kept and interior nodes are local indices of *A* (kept_nodes, interior_nodes). The interior is factorised once.
+    """
+
+    def __init__(self, matrix, kept):
+        from scipy.sparse.linalg import splu
+        A = csr_matrix(matrix)
+        n = A.shape[0]
+        kept = _mask(kept, n, "kept")
+        self.kept_nodes, self.interior_nodes = np.flatnonzero(kept), np.flatnonzero(~kept)
+        K, I = self.kept_nodes, self.interior_nodes
+        self._A_KI = A[K][:, I].tocsr()
+        A_IK = A[I][:, K].tocsc()
+        if I.size:
+            self._lu = splu(A[I][:, I].tocsc())
+            self._X = self._lu.solve(A_IK.toarray()) if K.size else np.zeros((I.size, 0))
+        else:
+            self._lu, self._X = None, np.zeros((0, K.size))
+        self.reduced = np.asarray(A[K][:, K].toarray() - self._A_KI @ self._X)
+
+    def pairs(self) -> tuple:
+        """(i, j, conductance) of the equivalent network's pairs i < j (local indices among the kept nodes)."""
+        i, j = np.triu_indices(self.kept_nodes.size, k=1)
+        return i, j, -0.5 * (self.reduced[i, j] + self.reduced[j, i])
+
+    def shunts(self) -> np.ndarray:
+        """Each kept node's diagonal term left once its pairs are counted (its Robin terms, carried through)."""
+        return self.reduced.sum(axis=1)
+
+    def inject(self, interior_sources) -> np.ndarray:
+        """The interior's sources (one per interior node, or a matrix of columns) as sources at the kept nodes."""
+        b = np.asarray(interior_sources, dtype=float)
+        if self._lu is None:
+            return np.zeros((self.kept_nodes.size,) + b.shape[1:])
+        return -(self._A_KI @ self._lu.solve(b))
+
+    def recover(self, kept_values, interior_sources=None) -> np.ndarray:
+        """The interior's values for the kept nodes' *kept_values* (and the interior's sources, if any)."""
+        x = np.asarray(kept_values, dtype=float)
+        out = -(self._X @ x)
+        if interior_sources is not None and self._lu is not None:
+            out = out + self._lu.solve(np.asarray(interior_sources, dtype=float))
+        return out
+
+
+def kron_reduction(matrix, kept) -> KronReduction:
+    """The Kron reduction of *matrix* onto its *kept* nodes (a mask or local indices): KronReduction."""
+    return KronReduction(matrix, kept)

@@ -144,7 +144,7 @@ from dataclasses import dataclass
 from scipy.sparse import diags
 
 from openalea.metafspm.coupling.component import FunctionalComponent, parameter, state_variable
-from openalea.metafspm.data_structure.configs import ScalesConfig as scales
+from openalea.metafspm.data_structure.configs import PropsConfig, ScalesConfig as scales
 from openalea.metafspm.solve.decorator import boundary_set, graph_jacobian, graph_system, node_balance
 
 from growth import DOC
@@ -194,3 +194,31 @@ def test_a_graph_system_condensed_on_its_sections_solves_as_the_direct_solve():
     np.testing.assert_allclose(results[1][0], results[0][0], rtol=1e-10, atol=1e-12)
     kinds = results[1][1].__dict__["_condensation_kinds"]["_hydraulics"]
     assert 1 <= len(kinds["kinds"]) <= 3
+
+
+def test_a_restricted_and_extended_template_is_instanced_as_its_vertices():
+    """A template restricted to some vertices (the xylem protoplasts, their Cells and Layers) and extended with an
+    equivalent Connection between them: instanced, its nodes, edge and owners."""
+    from openalea.metafspm.data_structure.instances import ANCHOR, OWNER
+    from layered_anatomy import section_template
+    template, local = section_template(key="full")
+    s = scales
+    xylem = [local["x0"], local["x1"]]
+    rows = np.flatnonzero(template.scale < s.Compartment).tolist() + xylem
+    small = template.restricted(rows, key="xylem only")
+    renumbered = {v: i for i, v in enumerate(sorted(rows))}
+    a, b = renumbered[xylem[0]], renumbered[xylem[1]]
+    small = small.extended("xylem and its link", scale=[s.Connection], complex_=[ANCHOR], parent=[OWNER],
+                           properties={"n_id_a": [a], "n_id_b": [b], "kind": [8.],
+                                       "edge_type": np.array(["/"], dtype=object)})
+    g, segments, _ = make_instanced_anatomy(1)
+    segment = g.add_child(segments[0], **PropsConfig(scale=s.SubOrgan, edge_type='<',
+                                                     label=g.labels.SubOrgan.RootSegment))
+    vids = g.add_instance(segment, small)
+    ds = MPGDataStructure(g, from_scale=g.scales.SubOrgan, nodes="Compartment")
+    nodes = ds.entity_ids("node")
+    assert set(vids[a:b + 1]) <= set(nodes.tolist()) and ds.n_nodes() == 10 + 2
+    owner = ds.entity_ids("SubOrgan")[ds.owner("SubOrgan")]
+    assert (owner[np.isin(nodes, vids)] == segment).all()
+    edge = vids[-1]
+    assert g.values_of("n_id_a", [edge]) == {edge: float(vids[a])} and g.values_of("kind", [edge])[edge] == 8.

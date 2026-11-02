@@ -80,6 +80,63 @@ class SectionTemplate:
                 return False
         return True
 
+    def restricted(self, rows, key) -> "SectionTemplate":
+        """
+        The template of the vertices *rows* only (local indices or a mask; e.g. a section's kept nodes and their
+        Cells): renumbered in their order, their properties and links kept. A kept vertex's complex, parent or link
+        must be kept too (or be the owner or an anchor).
+        """
+        rows = np.asarray(rows)
+        rows = np.flatnonzero(rows) if rows.dtype == bool else np.unique(rows.astype(np.int64))
+        new = np.full(self.size, -1, dtype=np.int64)
+        new[rows] = np.arange(rows.size)
+
+        def remap(codes, what):
+            codes = codes[rows]
+            inside = codes >= 0
+            if (new[codes[inside]] < 0).any():
+                raise ValueError(f"SectionTemplate.restricted: a kept vertex's {what} is not kept")
+            out = codes.copy()
+            out[inside] = new[codes[inside]]
+            return out
+
+        properties = {}
+        for name, (where, values) in self.properties.items():
+            keep = new[where] >= 0
+            values = values[keep]
+            if name in self.links:
+                targets = values.astype(np.int64)
+                if (new[targets] < 0).any():
+                    raise ValueError(f"SectionTemplate.restricted: a kept vertex's '{name}' is not kept")
+                values = new[targets].astype(np.float64)
+            properties[name] = (new[where[keep]], values)
+        return SectionTemplate(key=key, scale=self.scale[rows], complex=remap(self.complex, "complex"),
+                               parent=remap(self.parent, "parent"), properties=properties, links=self.links)
+
+    def extended(self, key, scale, complex_, parent, properties: dict) -> "SectionTemplate":
+        """
+        The template with vertices added after its own: their *scale*, *complex_* and *parent* (codes, as the
+        template's: local indices, OWNER, ANCHOR, NONE), and *properties* {name: one value per added vertex} (links
+        as local indices).
+        """
+        scale, complex_, parent = (np.atleast_1d(np.asarray(x, dtype=np.int64)) for x in (scale, complex_, parent))
+        n = scale.size
+        rows = np.arange(self.size, self.size + n)
+        out = {name: (where.copy(), values.copy()) for name, (where, values) in self.properties.items()}
+        for name, values in properties.items():
+            values = np.asarray(values)
+            values = values.astype(np.float64) if values.dtype != object and name in self.links else values
+            if values.dtype != object and name in out and out[name][1].dtype == object:
+                values = values.astype(object)
+            if name in out:
+                where, old = out[name]
+                merged = np.concatenate((old.astype(object) if values.dtype == object else old, values))
+                out[name] = (np.concatenate((where, rows)), merged)
+            else:
+                out[name] = (rows.copy(), values if values.dtype == object else values.astype(np.float64))
+        return SectionTemplate(key=key, scale=np.r_[self.scale, scale], complex=np.r_[self.complex, complex_],
+                               parent=np.r_[self.parent, parent], properties=out, links=self.links)
+
     @classmethod
     def capture(cls, g, owner: int, vids, key, links=LINKS) -> "SectionTemplate":
         """
