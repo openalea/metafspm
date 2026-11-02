@@ -288,7 +288,7 @@ def _arraydict(keys: np.ndarray, values: np.ndarray) -> ArrayDict:
     out = ArrayDict(init_capacity=keys.size)
     out.order[:keys.size], out.arr[:keys.size] = keys[order], values[order]
     out.size = int(keys.size)
-    out.vid2idx = dict(zip(out.order[:out.size].tolist(), range(out.size)))
+    out.vid2idx = None                                   # rebuilt at its first use
     return out
 
 

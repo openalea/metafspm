@@ -2595,7 +2595,9 @@ def _scatter(prop, vids: np.ndarray, values: np.ndarray, integer: bool = False) 
         found = order[position] == vids
         prop.arr[position[found]] = values[found]
         vids, values = vids[~found], values[~found]
-    if vids.size:
+    if vids.size and isinstance(prop, ArrayDict) and not integer:
+        prop.insert_many(vids, values)
+    elif vids.size:
         convert = int if integer else float
         prop.update(dict(zip(vids.tolist(), (convert(v) for v in values.tolist()))))
 

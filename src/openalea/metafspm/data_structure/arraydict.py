@@ -7,14 +7,16 @@ class ArrayDict(MutableMapping):
     Mapping[int -> float] backed by two aligned arrays:
       - order[i] = key at logical position i  (sorted ascending, invariant)
       - arr[i]   = value for order[i]
-    Also keeps a dict key -> current index for O(1) lookups/updates.
+    Keys are found by binary search on order in the bulk operations; a dict key -> index (vid2idx) for O(1) lookups
+    one key at a time is built at the first one, and dropped when the keys change in bulk: a property only written
+    and read in bulk (a DataStructure's write-back) holds no dict, a Python object per key.
     """
 
     def __init__(self, init=None, dtype=np.float64, init_capacity=0):
         cap = max(int(init_capacity), 16)
         self.arr   = np.empty(cap, dtype=dtype)
         self.order = np.empty(cap, dtype=np.int64)
-        self.vid2idx = {}
+        self._index = None
         self.size = 0
 
         if init:
@@ -39,7 +41,39 @@ class ArrayDict(MutableMapping):
         self.order[:keys.size] = keys[order]
         self.arr[:keys.size] = values[order]
         self.size = int(keys.size)
-        self.vid2idx = dict(zip(self.order[:self.size].tolist(), range(self.size)))
+        self._index = None
+
+    # --- key positions ---------------------------------------------------------
+
+    @property
+    def vid2idx(self) -> dict:
+        """{key: index}, built at its first use."""
+        if self._index is None:
+            self._index = dict(zip(self.order[:self.size].tolist(), range(self.size)))
+        return self._index
+
+    @vid2idx.setter
+    def vid2idx(self, mapping: dict) -> None:
+        self._index = mapping
+
+    def _positions(self, keys) -> tuple:
+        """(positions, found) of *keys* (an int64 array) in order, by binary search."""
+        keys = np.asarray(keys, dtype=np.int64)
+        order = self.order[:self.size]
+        positions = np.searchsorted(order, keys)
+        found = positions < self.size
+        found[found] = order[positions[found]] == keys[found]
+        return positions, found
+
+    def __contains__(self, k) -> bool:
+        if self._index is not None:
+            return k in self._index
+        try:
+            key = int(k)
+        except (TypeError, ValueError):
+            return False
+        position = int(np.searchsorted(self.order[:self.size], key))
+        return position < self.size and int(self.order[position]) == key
 
     # --- capacity management -------------------------------------------------
 
@@ -89,13 +123,14 @@ class ArrayDict(MutableMapping):
         self.arr[pos]   = v
         self.size += 1
 
-        # rebuild mapping for moved suffix (including new key)
-        for i in range(pos, self.size):
-            self.vid2idx[int(self.order[i])] = i
+        # the mapping of the moved suffix (including the new key)
+        if self._index is not None:
+            for i in range(pos, self.size):
+                self._index[int(self.order[i])] = i
 
 
     def __delitem__(self, k: int):
-        idx = self.vid2idx.pop(k)  # KeyError if absent
+        idx = self.vid2idx.pop(k)  # KeyError if absent; the dict is kept (a deletion one key at a time)
 
         if idx < self.size - 1:
             # shift left suffix (idx+1:size)
@@ -111,7 +146,8 @@ class ArrayDict(MutableMapping):
 
     def delete_many(self, keys) -> int:
         """Delete every key of *keys* present, in one compaction (del per key shifts the suffix each time)."""
-        doomed = np.fromiter((self.vid2idx.pop(int(k)) for k in keys if int(k) in self.vid2idx), dtype=np.int64)
+        positions, found = self._positions(np.fromiter((int(k) for k in keys), dtype=np.int64))
+        doomed = np.unique(positions[found])
         if doomed.size == 0:
             return 0
         keep = np.ones(self.size, dtype=bool)
@@ -120,7 +156,7 @@ class ArrayDict(MutableMapping):
         self.arr[:kept] = self.arr[:self.size][keep]
         self.order[:kept] = self.order[:self.size][keep]
         self.size = kept
-        self.vid2idx = {int(k): i for i, k in enumerate(self.order[:kept].tolist())}
+        self._index = None
         return int(doomed.size)
 
     # --- handy array views ---------------------------------------------------
@@ -136,8 +172,12 @@ class ArrayDict(MutableMapping):
     # --- indexed / scatter ops ----------------------------------------------
 
     def indices_of(self, vids):
-        return np.fromiter((self.vid2idx[v] for v in vids),
-                           count=len(vids), dtype=np.int64)
+        if self._index is not None:
+            return np.fromiter((self._index[v] for v in vids), count=len(vids), dtype=np.int64)
+        positions, found = self._positions(np.fromiter((int(v) for v in vids), count=len(vids), dtype=np.int64))
+        if not found.all():
+            raise KeyError(int(np.asarray(vids)[~found][0]) if np.ndim(vids) else vids)
+        return positions
 
     def assign_at(self, idxs, values):
         self.arr[np.asarray(idxs, np.int64)] = np.asarray(values, dtype=self.arr.dtype)
@@ -164,8 +204,30 @@ class ArrayDict(MutableMapping):
         start, end = self.size, self.size + keys.size
         self.order[start:end] = keys
         self.arr[start:end] = values
-        self.vid2idx.update(zip(keys.tolist(), range(start, end)))
+        if self._index is not None:
+            self._index.update(zip(keys.tolist(), range(start, end)))
         self.size = end
+
+    def insert_many(self, keys, values) -> None:
+        """Insert *keys* (unique, none present) -> *values* (aligned arrays), the order kept, in one merge."""
+        keys = np.asarray(keys, dtype=np.int64)
+        if keys.size == 0:
+            return
+        values = np.asarray(values, dtype=self.arr.dtype)
+        if keys.size > 1 and not (keys[1:] > keys[:-1]).all():
+            order = np.argsort(keys, kind="stable")
+            keys, values = keys[order], values[order]
+        if self.size == 0 or keys[0] > self.order[self.size - 1]:
+            self.extend(keys, values)
+            return
+        total = self.size + keys.size
+        merged = np.concatenate((self.order[:self.size], keys))
+        order = np.argsort(merged, kind="stable")
+        merged_values = np.concatenate((self.arr[:self.size], values))
+        self._ensure(total)
+        self.order[:total], self.arr[:total] = merged[order], merged_values[order]
+        self.size = total
+        self._index = None
 
     def update(self, d: dict):
         if not d:
@@ -175,10 +237,10 @@ class ArrayDict(MutableMapping):
         if self.size == 0 or keys.min() > int(self.order[self.size - 1]):
             existing, new_items = [], list(d.items())       # every key above the last: all new
         else:
-            has = self.vid2idx.__contains__
-            existing, new_items = [], []
-            for k, v in d.items():
-                (existing if has(k) else new_items).append((k, v))
+            _, found = self._positions(keys)
+            items = list(d.items())
+            existing = [item for item, present in zip(items, found.tolist()) if present]
+            new_items = [item for item, present in zip(items, found.tolist()) if not present]
 
         # 1) existing keys -> scatter in place
         if existing:
@@ -200,7 +262,8 @@ class ArrayDict(MutableMapping):
             start, end = self.size, self.size + nk.size
             self.order[start:end] = nk
             self.arr[start:end]   = nv
-            self.vid2idx.update(zip(nk.tolist(), range(start, end)))  # mapping for the appended
+            if self._index is not None:
+                self._index.update(zip(nk.tolist(), range(start, end)))  # mapping for the appended
             self.size = end
             return
 
@@ -215,8 +278,7 @@ class ArrayDict(MutableMapping):
         self.order[:total] = keys[p]
         self.arr[:total] = np.concatenate((ov, nv))[p]
         self.size = total
-        # rebuild full mapping
-        self.vid2idx = dict(zip(self.order[:total].tolist(), range(total)))
+        self._index = None
 
 
 

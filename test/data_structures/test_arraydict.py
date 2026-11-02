@@ -51,3 +51,34 @@ def test_bulk_construction_equals_inserting_each_key():
     bulk[1000] = 2.                                             # and it keeps working as an ArrayDict
     del bulk[keys[0]]
     assert bulk[1000] == 2. and keys[0] not in bulk
+
+
+def test_bulk_operations_hold_no_key_dict():
+    """Bulk writes and reads find keys by binary search: no dict of the keys until a key is used on its own."""
+    import numpy as np
+    keys = np.arange(0, 3000, 3)
+    d = ArrayDict.from_items(keys, keys / 2.)
+    d.scatter(keys[::5].tolist(), np.zeros(keys[::5].size))
+    d.insert_many(np.array([1, 4, 7000]), np.array([1., 4., 7.]))
+    d.update({10: 5., 9: 4.5})
+    assert d._index is None
+    assert 4 in d and 5 not in d and "x" not in d and d._index is None
+    assert d[4] == 4. and d._index is not None                 # a key on its own: the dict, built once
+    assert d._check_invariant()
+
+
+def test_insert_many_equals_inserting_each_key():
+    import numpy as np
+    rng = np.random.default_rng(0)
+    existing = np.unique(rng.integers(0, 1000, 200))
+    new = np.setdiff1d(np.unique(rng.integers(0, 1200, 150)), existing)
+    rng.shuffle(new)
+    bulk = ArrayDict.from_items(existing, existing * 1.)
+    single = ArrayDict.from_items(existing, existing * 1.)
+    bulk.insert_many(new, new * 2.)
+    for k in new.tolist():
+        single[k] = k * 2.
+    assert list(bulk.items()) == list(single.items())
+    assert bulk._check_invariant() and single._check_invariant()
+    with __import__("pytest").raises(KeyError):
+        bulk.indices_of([-1])

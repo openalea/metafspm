@@ -869,8 +869,10 @@ class StructuralComponent(DataStructureComponent):
         return Triangles(vertices[drawn].reshape(-1, 3, 3), np.repeat(nodes[drawn], vertices.shape[1]))
 
     def _mpg_signature(self) -> tuple:
-        """Cheap topology signature of the MPG: vertex count and last allocated vertex id."""
-        g = self.mtg
+        """Cheap topology signature of the MPG: vertex count and last allocated vertex id (the MPG read without
+        flushing the tracked variables to it: the topology does not need them)."""
+        ds = self.data_structure
+        g = getattr(ds, "_mtg", None) or self.mtg
         return g.nb_vertices(), getattr(g, "_id", None)
 
     # Repartition of the other components' variables when the structure changes. partition_weight: a node variable name, or a callable ds -> array;
