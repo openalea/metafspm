@@ -54,3 +54,11 @@ def test_a_network_of_conductances_alone_has_no_shunt():
     A, _ = _network(rng, robin=())
     reduction = kron_reduction(A, [0, 10, 20])
     np.testing.assert_allclose(reduction.shunts(), 0., atol=1e-10)
+
+
+def test_the_injection_matrix_is_inject():
+    rng = np.random.default_rng(2)
+    A, _ = _network(rng)
+    reduction = kron_reduction(A, [1, 9, 30])
+    b = rng.normal(size=reduction.interior_nodes.size)
+    np.testing.assert_allclose(reduction.injection() @ b, reduction.inject(b), rtol=1e-10, atol=1e-13)

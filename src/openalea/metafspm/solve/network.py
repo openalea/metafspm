@@ -286,6 +286,13 @@ class KronReduction:
             return np.zeros((self.kept_nodes.size,) + b.shape[1:])
         return -(self._A_KI @ self._lu.solve(b))
 
+    def injection(self) -> np.ndarray:
+        """inject's matrix (kept × interior, dense): −A_KI A_II⁻¹, from one transposed solve with the kept nodes'
+        columns (not one per interior source)."""
+        if self._lu is None:
+            return np.zeros((self.kept_nodes.size, 0))
+        return -np.asarray(self._lu.solve(self._A_KI.T.toarray(), trans="T")).T
+
     def recover(self, kept_values, interior_sources=None) -> np.ndarray:
         """The interior's values for the kept nodes' *kept_values* (and the interior's sources, if any)."""
         x = np.asarray(kept_values, dtype=float)

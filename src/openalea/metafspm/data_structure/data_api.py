@@ -2202,8 +2202,14 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
             return None
         dtype = getattr(spec, "dtype", float)
         if dtype is object:
-            if spec.location != "node" or spec.mapping is not None:
-                raise ValueError(f"'{spec.name}' holds objects: only node variables at their own scale are read")
+            if spec.mapping is not None or spec.location == "edge":
+                raise ValueError(f"'{spec.name}' holds objects: only node or coarse variables at their own scale are "
+                                 "read")
+            if spec.location != "node":                 # one object per entity of a coarse location (e.g. SubOrgan)
+                prop = self._mtg.properties().get(spec.name)
+                if prop is None or len(prop) == 0:
+                    return None
+                return [prop.get(int(v)) for v in self.entity_ids(spec.location).tolist()]
             if getattr(self._mtg, "_instanced", lambda: False)():
                 values = self._mtg.values_of(spec.name, self._idx_to_vid)
                 return [values.get(int(v)) for v in self._idx_to_vid] if values else None
