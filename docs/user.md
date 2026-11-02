@@ -377,10 +377,15 @@ scene = Scene.from_scenario(scenario, stand(...), Wheat, environment=[RhizoSoil,
   depth) or sown: `stand(xrange, yrange, sowing_density, row_spacing, sowing_depth, models=, frequencies=, seed=)`
   lays out rows at a density, the stand's size adjusted to the rows, and with several models draws one per position
   (`planting(sown, sown.models, {Wheat: ..., Pea: ...})`). The plants are named `p0`, `p1`, ... in the table's
-  order: those names are the `segment_plants=`, the frames' `entities=` and the summaries' `plant` column.
+  order: those names are the `segment_plants=`, the frames' `entities=` and the summaries' `plant` column. A
+  component placing its plants' elements declares the planting's variables it reads, `x: float =
+  planting_variable("x")` (x, y, z, rotation: Plant-scale inputs the planting provides, `couplings()` listing them)
+  and takes them as step arguments.
 - **Plant models** are built once per model of the planting table, on an MPG holding all its plants:
   `Model(data_structure, time_step, <its own arguments>)`, with a class attribute `initiators` (the structural components
-  building each plant). In anatomy mode (`nodes = "Compartment"`) the initiators build the anatomies, and a `wiring`
+  building each plant) and a class attribute `translator` (its coupling contract: `couple()` uses it, and its links
+  between initiators apply while they build each plant, a later initiator's linked inputs written before it builds;
+  a link from a later initiator raises). In anatomy mode (`nodes = "Compartment"`) the initiators build the anatomies, and a `wiring`
   attribute gives the junction rules between them. Numeric parameters may differ per plant (one scenario per plant); an `emergence_time` column
   keeps a plant frozen until then. Without a Scene, `population_data_structure(table, Model, time_step=)` builds
   the same: the plants' MPG and MPGDataStructure, the model on it, every plant's scenario applied

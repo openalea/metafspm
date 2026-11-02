@@ -46,8 +46,8 @@ class CompositeModel:
         A pandas DataFrame, one row per input of the coupled components: receiver, variable, provider and coupling,
         "shared" (another component of the composite declares it: the same array), "alias" or "derived" (a link of
         the translator: a rename, or a factor, change of scale or formula), "scene" (a link with a component on
-        another DataStructure, exchanged by the Scene) or "not provided" (its initial value, or what the Scene
-        writes: a forcing, an event).
+        another DataStructure, exchanged by the Scene), "planting" (a planting variable: planting_variable) or "not
+        provided" (its initial value, or what the Scene writes: a forcing, an event).
         """
         import pandas as pd
         components = getattr(self, "components", [])
@@ -79,6 +79,9 @@ class CompositeModel:
                                      coupling=coupling, sources=sources))
                 elif name in provided and provided[name] != receiver:
                     rows.append(dict(receiver=receiver, variable=name, provider=provided[name], coupling="shared",
+                                     sources=name))
+                elif _is_planting(type(component), name):
+                    rows.append(dict(receiver=receiver, variable=name, provider="Planting", coupling="planting",
                                      sources=name))
                 else:
                     rows.append(dict(receiver=receiver, variable=name, provider=None, coupling="not provided",
@@ -188,3 +191,10 @@ class CompositeModel:
 def _base_of(data_structure):
     """The DataStructure a view (LocatedView) is of, or *data_structure* itself."""
     return data_structure.__dict__.get("_base", data_structure)
+
+
+def _is_planting(cls, name) -> bool:
+    """Whether *name* is one of *cls*'s planting variables (planting_variable: an input by the planting)."""
+    from dataclasses import fields
+    field = next((f for f in fields(cls) if f.name == name), None)
+    return field is not None and field.metadata.get("by") == "Planting"

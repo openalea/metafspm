@@ -136,6 +136,27 @@ def parameter(unit: str = "", description: str = "", default=None, kind=None, by
     return _declare("parameter", **_merge(locals(), "parameter"))
 
 
+_PLANTING = {"x": ("m", "the plant's x in the scene (its planting)"),
+             "y": ("m", "the plant's y in the scene (its planting)"),
+             "z": ("m", "the plant's z in the scene (its planting: minus its sowing depth for a sown plant)"),
+             "rotation": ("°", "the plant's rotation about the vertical (its planting)")}
+
+
+def planting_variable(name: str, **options):
+    """
+    Declare one of the planting's variables, *name* one of x, y, z, rotation: an input at the Plant scale, provided by
+    the planting (each Plant vertex gets its row's values before any initiator builds it). A component placing its
+    plants declares those it reads and takes them as step arguments. *options*: input_variable's (e.g. default).
+    """
+    if name not in _PLANTING:
+        raise ValueError(f"planting_variable: '{name}' is not a planting variable ({sorted(_PLANTING)})")
+    unit, description = _PLANTING[name]
+    arguments = dict(unit=unit, description=description, default=0., kind="descriptor", by="Planting",
+                     scale=_ScalesConfig.Plant, references="metafspm")
+    arguments.update(options)
+    return input_variable(**arguments)
+
+
 def _merge(arguments: dict, function: str) -> dict:
     arguments = dict(arguments)
     renamed = _renamed(function, arguments.pop("renamed"))
@@ -849,8 +870,11 @@ class StructuralComponent(DataStructureComponent):
         """
         Build the initial structure of one plant under its Plant-scale vertex *plant* in the population MPG *g*,
         from that plant's *scenario* ({name: value}), before any component is constructed. Several structural components
-        may each add their part, in order (e.g. roots, then anatomies). The plant's position is in
-        g.property("x"/"y"/"z"/"rotation")[plant]; the component computes its elements' coordinates from it.
+        may each add their part, in order (e.g. roots, then anatomies). The planting writes the plant's position
+        before any initiator builds: g.property("x"/"y"/"z"/"rotation")[plant], which the initiator may read to place
+        its initial elements; a step placing the elements later declares them (planting_variable) and takes them as
+        arguments. An initiator's inputs linked from an earlier initiator are written before it builds (the plant
+        model's translator, coupling.initiation).
         """
         raise NotImplementedError(f"{cls.__name__} does not initiate plants")
 
