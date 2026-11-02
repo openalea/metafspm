@@ -221,6 +221,29 @@ def location_of_scale(ds, scale: int) -> str:
     return scale_names(ds)[scale]
 
 
+def held_at_scale(spec, ds) -> bool:
+    """
+    Whether *spec*, an input or parameter read at the nodes from a coarser scale (mapped down: broadcast or split),
+    is held by another component at that scale's own location on *ds* (one DataStructure for every scale, e.g. a
+    SubOrgan-scale architecture's length read at the Compartments): it is then that variable, read through its
+    mapping (mapped_read), not a node variable of its own.
+    """
+    if spec is None or spec.variable_type == "state_variable" or spec.location != "node" or spec.scale is None \
+            or spec.mapping not in DOWN_MAPPINGS or not ds.has(spec.name):
+        return False
+    return ds.location(spec.name) == location_of_scale(ds, spec.scale) != "node"
+
+
+def mapped_read(ds, spec) -> np.ndarray:
+    """The values at the nodes of a variable held at a coarser scale (held_at_scale), through *spec*'s mapping."""
+    if spec.mapping == "broadcast":
+        return ds.parameter_view(spec.name, "node")
+    held = ds.location(spec.name)
+    out = ds.map_to(ds.get(spec.name), held, "node", spec.mapping, weights=ds.get(spec.weight))
+    out.flags.writeable = False
+    return out
+
+
 def resolve_location(ds, location: str) -> str:
     """Location name as stored: scale names are accepted and resolved against the graph."""
     if location in SOLVER_LOCATIONS:

@@ -72,22 +72,30 @@ class Functor:
     def _arguments(self, instance, ds):
         """
         The step's arguments and their locations. Parameters stored per plant (or as scalars) come broadcast to the
-        step's location, the location of its other arguments (nodes, or cells on grids), as read-only views.
+        step's location, the location of its other arguments (nodes, or cells on grids), as read-only views. A
+        variable the component reads at the nodes from a coarser scale (declared mapped down, e.g. a SubOrgan's
+        length broadcast to its Compartments) while another component holds it at that scale comes mapped too.
         """
         specs = getattr(instance, "_variable_specs", {})
         settings = set(type(instance).declared_settings()) if hasattr(type(instance), "declared_settings") else set()
         is_parameter = [name not in settings and getattr(specs.get(name), "variable_type", None) == "parameter"
                         and ds.location(name) not in ("node", "edge", "cell") for name in self.input_names]
-        others = [ds.location(name) for name, p in zip(self.input_names, is_parameter)
-                  if not p and name not in settings]
+        from openalea.metafspm.coupling.declaration import held_at_scale, mapped_read
+        mapped = [name not in settings and not p and held_at_scale(specs.get(name), ds)
+                  for name, p in zip(self.input_names, is_parameter)]
+        others = [specs[name].location if m else ds.location(name)
+                  for name, p, m in zip(self.input_names, is_parameter, mapped) if not p and name not in settings]
         stores = ds._var_stores()
         step_location = next((loc for loc in others if loc in ("node", "edge", "cell")),
                              "node" if "node" in stores else "cell")
         args, locations = [], []
-        for name, parameter in zip(self.input_names, is_parameter):
+        for name, parameter, down in zip(self.input_names, is_parameter, mapped):
             if name in settings:                        # a setting: the value itself
                 args.append(getattr(instance, name))
                 locations.append(None)
+            elif down:
+                args.append(mapped_read(ds, specs[name]))
+                locations.append(specs[name].location)
             elif parameter:
                 args.append(ds.parameter_view(name, step_location))
                 locations.append(step_location)

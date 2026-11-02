@@ -8,10 +8,11 @@ from dataclasses import dataclass
 import numpy as np
 import pytest
 
-from openalea.metafspm.coupling.component import FunctionalComponent, parameter, state_variable
+from openalea.metafspm.coupling.component import FunctionalComponent, input_variable, parameter, state_variable
 from openalea.metafspm.data_structure.configs import ScalesConfig as scales
+from openalea.metafspm.data_structure.configs import PropsConfig
 from openalea.metafspm.data_structure.data_api import MPGDataStructure
-from openalea.metafspm.solve.decorator import boundary_set, edge_law, graph_system, node_balance
+from openalea.metafspm.solve.decorator import boundary_set, edge_law, graph_system, node_balance, state
 
 from anatomy import grow_segment, make_rooted_anatomy, wiring
 from growth import DOC
@@ -122,17 +123,80 @@ def test_differentiation_rewires_only_the_junctions_it_touches():
     assert len(xylem_pairs) == 1 + 1       # vessel 5 of the middle segment matches neither its parent nor its child
 
 
-def test_traversal_and_repartition_are_not_available_on_an_anatomy_graph():
+def test_the_cells_traversal_is_not_available_but_a_suborgan_component_works_on_its_segments():
+    """The cells' graph is no tree (no traversal); a component declared at the SubOrgan scale works on the view at
+    its scale (data_structure.LocatedView): its nodes the segments, its traversal and repartition theirs."""
     from growth import RootGrowthProbe
-    _, _, _, ds = _plant()
+    from openalea.metafspm.data_structure.data_api import LocatedView
+    _, segments, _, ds = _plant()
     with pytest.raises(ValueError, match="not a tree|cycle"):
         ds.parents()
     with pytest.raises(ValueError, match="needs from_scale"):
         MPGDataStructure(ds.mtg, nodes="Compartment")
     growth = RootGrowthProbe(data_structure=ds)
+    assert isinstance(growth.data_structure, LocatedView)
+    assert growth.data_structure.entity_ids("node").tolist() == sorted(segments)
+    assert growth.data_structure.parents().tolist() == list(range(-1, len(segments) - 1))
     growth.partition_weight = "struct_mass"
-    with pytest.raises(NotImplementedError, match="not available in anatomy mode yet"):
-        growth._repartition({}, {})
+    growth._repartition({}, {})                                     # no growth: nothing to repartition
+
+
+
+def test_a_suborgan_without_compartments_is_an_entity_of_its_location():
+    """A segment without an anatomy (a root apex, a seed) holds the SubOrgan variables too; the MPG's anchors not."""
+    g, segments, anatomies = make_rooted_anatomy(3)
+    apex = g.add_child(segments[-1], **PropsConfig(scale=g.scales.SubOrgan, edge_type='<',
+                                                   label=g.labels.SubOrgan.RootApex))
+    ds = MPGDataStructure(g, from_scale=g.scales.SubOrgan, nodes="Compartment", wiring=wiring(g))
+    assert ds.entity_ids("SubOrgan").tolist() == segments + [apex]
+    assert ds.at("SubOrgan").parents().tolist() == [-1, 0, 1, 2]
+    assert (ds.owner("SubOrgan") < 3).all()                        # no Compartment in the apex
+
+
+@dataclass
+class SegmentLength(FunctionalComponent):
+    """A SubOrgan-scale component: it holds the segments' length (at the view of its scale)."""
+    length: float = state_variable(**DOC, default=0., scale=scales.SubOrgan, kind="descriptor")
+
+    @state
+    def _length(self, length):
+        return {"length": 2. * length}
+
+
+@dataclass
+class SectionVolume(FunctionalComponent):
+    """A Compartment-scale component reading the segments' length broadcast to their Compartments."""
+    length: float = input_variable(**DOC, by="SegmentLength", default=0., scale=scales.SubOrgan, location="node",
+                                   kind="intensive")
+    section_volume: float = state_variable(**DOC, default=0., location="node")
+
+    @state
+    def _section_volume(self, length):
+        return {"section_volume": 3. * length}
+
+
+@pytest.mark.parametrize("holder_first", [True, False])
+def test_a_variable_held_at_its_scale_is_read_at_the_nodes_through_its_mapping(holder_first):
+    """One DataStructure: the SubOrgan component's length (at the SubOrgans) is the one the Compartment component
+    reads at its nodes (declared mapped down), whichever is built first, and it follows the holder's steps."""
+    g, segments, anatomies, ds = _plant()
+    g.properties()["length"] = {int(v): 0.01 * (i + 1) for i, v in enumerate(segments)}
+    holder = SegmentLength(data_structure=ds) if holder_first else None
+    reader = SectionVolume(data_structure=ds)
+    holder = holder or SegmentLength(data_structure=ds)
+    assert ds.location("length") == "SubOrgan" and holder.data_structure.location("length") == "node"
+    owner = ds.owner("SubOrgan")
+    for factor in (1., 2.):
+        reader()
+        np.testing.assert_allclose(ds.get("section_volume"), 3. * factor * 0.01 * (owner + 1))
+        holder()
+
+
+def test_a_name_held_at_another_location_cannot_be_registered_at_a_view():
+    g, segments, anatomies, ds = _plant()
+    ds.register("water_potential", 0., location="node")
+    with pytest.raises(ValueError, match="one variable per name"):
+        ds.at("SubOrgan").register("water_potential", 0.)
 
 
 # ---------------------------------------------------------------- a graph system on the assembled graph

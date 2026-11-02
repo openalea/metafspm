@@ -6,7 +6,7 @@ from openalea.metafspm.solve.decorator import *
 from openalea.metafspm.data_structure.mpg import MPG
 from openalea.metafspm.data_structure.data_api import DataStructure, MPGDataStructure, GraphDataStructure
 from openalea.metafspm.data_structure.configs import ScalesConfig as _ScalesConfig
-from openalea.metafspm.coupling.declaration import declared_specs, DeclarationError
+from openalea.metafspm.coupling.declaration import declared_specs, DeclarationError, held_at_scale
 from openalea.metafspm.coupling.declaration import scale_names as declared_scale_names
 
 # Map integer MPG scale constants to the generic "node"/"edge" vocabulary used
@@ -361,6 +361,7 @@ class DataStructureComponent(Component):
                 f"{type(self).__name__}() data_structure must be a DataStructure with a variable store "
                 f"(MPGDataStructure, ArrayDataStructure), got {type(self.data_structure).__name__}."
             )
+        self.data_structure = _working_data_structure(self, self.data_structure)
         ds = self.data_structure
         self._auto_declare_on_ds(ds)
         if not hasattr(self, "pullable_inputs"):
@@ -402,7 +403,7 @@ class DataStructureComponent(Component):
             pending = self.__dict__.get("_pending_parameters", {})
             if ds.has(name):
                 registered = ds.location(name)
-                if registered != spec.location and name not in ds.aliases():
+                if registered != spec.location and name not in ds.aliases() and not held_at_scale(spec, ds):
                     raise DeclarationError(f"{type(self).__name__}.{name} is declared at {spec.location} but is "
                                            f"already registered at {registered}")
                 if name in pending and pending[name] != spec.default:
@@ -573,8 +574,8 @@ class DataStructureComponent(Component):
         if not hasattr(ds, "_read_mtg"):
             return
         for spec in getattr(self, "_variable_specs", {}).values():
-            if spec.variable_type != "parameter" or not spec.mtg_backed:
-                continue
+            if spec.variable_type != "parameter" or not spec.mtg_backed or held_at_scale(spec, ds):
+                continue                             # (one held at its scale by another component: its own)
             if hasattr(ds, "flush_mtg"):
                 ds.flush_mtg([spec.name])            # a value set on the DataStructure is not lost to a stale MTG one
             values = ds._read_mtg(spec)
@@ -933,7 +934,8 @@ class StructuralComponent(DataStructureComponent):
     def _run_mpg_step(self, run) -> None:
         """Run an MPG-style step with the synchronisation of the DataStructure around it, then the repartition."""
         ds = self.data_structure
-        specs = [spec for spec in getattr(self, "_variable_specs", {}).values() if spec.mtg_backed and ds.has(spec.name)]
+        specs = [spec for spec in getattr(self, "_variable_specs", {}).values()
+                 if spec.mtg_backed and ds.has(spec.name) and not held_at_scale(spec, ds)]
         if hasattr(ds, "flush_mtg"):
             # The MPG-style code reads the MTG: the variables this component declares (its states, inputs and
             # parameters) changed since their last synchronisation are written first. Others are not: a step
@@ -1206,3 +1208,29 @@ def _property_version(prop):
     if prop is None:
         return 0
     return getattr(prop, "version", None)
+
+
+def _working_data_structure(component, ds):
+    """
+    The DataStructure a component works on: *ds*, or on an anatomy-mode DataStructure (its nodes the Compartments)
+    the view at the component's own scale (data_structure.LocatedView) when the finest scale of its declarations is
+    coarser (a SubOrgan-scale architecture, a light or gas-exchange model): its nodes then those of its scale.
+    """
+    if not getattr(ds, "_anatomy", False) or not hasattr(ds, "at"):
+        return ds
+    g = ds.structure
+    finest = None
+    for f in fields(component):
+        meta = f.metadata
+        if meta.get("variable_type") not in ("state_variable", "input", "parameter"):
+            continue
+        scale = meta.get("scale")
+        if meta.get("location") in ("node", "edge") or (scale is not None and scale >= g.scales.Compartment):
+            return ds                                       # it works on the nodes (the cells)
+        if scale is not None and scale > g.scales.Plant:
+            finest = scale if finest is None else max(finest, scale)
+    if finest is None:
+        return ds
+    name = next(n for n, v in vars(type(g.scales)).items() if isinstance(v, int) and not n.startswith("_")
+                and v == finest)
+    return ds.at(name)

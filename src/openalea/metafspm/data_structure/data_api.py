@@ -1840,6 +1840,15 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
             else:
                 owners = np.array([self._owner_at(int(v), scale) for v in self._idx_to_vid], dtype=np.int64)
             entities = np.unique(owners[owners >= 0])
+            plant = self._mtg.scales.Plant
+            if getattr(self, "_anatomy", False) and scale > plant:
+                # every vertex of the scale in the plants, those without Compartments too (a root apex, a seed):
+                # their variables are held there (a component working at that scale, LocatedView)
+                arrays = self._mtg.topology_arrays()
+                candidates = np.flatnonzero((arrays["scale"] == scale) & ~arrays["is_anchor"])
+                plants = np.unique(self._mtg.owners_at_scale(self._node_owners(), plant))
+                in_plants = np.isin(self._mtg.owners_at_scale(candidates, plant), plants[plants >= 0])
+                entities = np.union1d(entities, candidates[in_plants])
             index = np.full(owners.size, -1, dtype=np.int64)
             index[owners >= 0] = np.searchsorted(entities, owners[owners >= 0])
             cache[scale_name] = (entities, index)
@@ -2312,7 +2321,9 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
         if not spec.mtg_backed or self._mtg is None:
             return
         tracked = self.__dict__.setdefault("_mtg_tracked", {})
-        if spec.name not in tracked:
+        here = self.location(spec.name) if self.has(spec.name) else spec.location
+        if spec.location == here and (spec.name not in tracked or tracked[spec.name].location != here):
+            # the spec of the component holding it (another's, reading it mapped from its scale, is replaced)
             tracked[spec.name] = spec
             self.__dict__.setdefault("_mtg_synced", {})[spec.name] = None
 
@@ -2323,8 +2334,8 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
             return
         synced = self.__dict__["_mtg_synced"]
         for name in (tracked if names is None else [n for n in names if n in tracked]):
-            if not self.has(name):
-                continue
+            if not self.has(name) or tracked[name].location != self.location(name):
+                continue                             # gone, or now held at another location (its holder tracks it)
             count = self.write_count(name)
             if synced.get(name) != (count, self.topology_version):
                 self._write_mtg(tracked[name])
@@ -3122,3 +3133,234 @@ class ArrayDataStructure(VariableStoreMixin, FieldDataStructure):
         """
         self._L = None
 
+
+
+class LocatedView(DataStructure):
+    """
+    A DataStructure whose nodes are the entities of a coarse location of an anatomy-mode MPGDataStructure (its
+    SubOrgans, say), sharing its store: a component working at that scale reads and writes its variables, walks its
+    topology (parents, children, order, folds, levels, chains along the SubOrgans' own links) and creates its nodes
+    (NewNodes: SubOrgan vertices) as on a DataStructure of that scale, while the cells stay the base's nodes.
+    MPGDataStructure.at(location) gives it; a component declared at that scale gets it (DataStructureComponent).
+    """
+    _default_location = "node"
+
+    def __init__(self, base, location: str):
+        self.__dict__["_base"], self.__dict__["_at"] = base, location
+
+    def __getattr__(self, name):
+        return getattr(self.__dict__["_base"], name)
+
+    def __setattr__(self, name, value):
+        self.__dict__[name] = value
+
+    # ── the location translated ──
+    def _loc(self, location):
+        return self._at if location in (None, "node") else location
+
+    @property
+    def structure(self):
+        return self._base.structure
+
+    @property
+    def topology_version(self):
+        return self._base.topology_version
+
+    @property
+    def _anatomy(self):
+        return False
+
+    @property
+    def _idx_to_vid(self):
+        return self.entity_ids("node").tolist()
+
+    def _node_scale(self):
+        return getattr(self._base.structure.scales, self._at)
+
+    def _coarse_scale_names(self) -> list:
+        scales = self._base.structure.scales
+        mine = self._node_scale()
+        return [name for name in self._base._coarse_scale_names() if getattr(scales, name) < mine]
+
+    def n_nodes(self) -> int:
+        return int(len(self._base.entity_ids(self._at)))
+
+    def n_edges(self) -> int:
+        return int((self.parents() >= 0).sum())
+
+    def entity_ids(self, location: str) -> np.ndarray:
+        if location == "edge":
+            ids = self._base.entity_ids(self._at)
+            return ids[self.parents() >= 0]
+        return self._base.entity_ids(self._loc(location))
+
+    def index_of(self, ids, location: str = "node") -> np.ndarray:
+        if location in ("node", "edge"):
+            known = np.asarray(self.entity_ids(location), dtype=np.int64)
+            ids = np.asarray(ids, dtype=np.int64)
+            position = np.searchsorted(known, ids).clip(0, max(known.size - 1, 0))
+            if ids.size and (known.size == 0 or not (known[position] == ids).all()):
+                raise KeyError(f"ids {ids[known[position] != ids][:5].tolist() if known.size else ids[:5].tolist()} "
+                               f"are not {location}s of the {self._at} view")
+            return position
+        return self._base.index_of(ids, location)
+
+    def location(self, name: str) -> str:
+        try:
+            return VariableStoreMixin._find(self, name)[0]            # in the view's stores (its nodes: its location)
+        except KeyError:
+            where = self._base.location(name)                         # the base's cells: named by their scale
+            return {"node": "Compartment", "edge": "Connection"}.get(where, where)
+
+    def has(self, name: str) -> bool:
+        try:
+            VariableStoreMixin._find(self, name)
+            return True
+        except KeyError:
+            return False
+
+    def _location_shape(self, location):
+        if location in (None, "node"):
+            return (self.n_nodes(),)
+        if location == "edge":
+            return (self.n_edges(),)
+        return self._base._location_shape(location)
+
+    def register(self, name, values=None, location=None, **options):
+        target, base = self._loc(location), self._base
+        if base.has(name) and base.location(name) != target:
+            # the base's nodes may read it mapped down from this scale (held_at_scale), nothing else
+            meta = base._variable_meta().get(name, {})
+            if not (meta.get("scale") == self._node_scale() and meta.get("mapping") in ("broadcast", "split")):
+                raise ValueError(f"'{name}' is registered at the base's {base.location(name)}, it cannot be "
+                                 f"registered at {target} too: one variable per name on one DataStructure")
+        return base.register(name, values, location=target, **options)
+
+    def owner(self, location: str) -> np.ndarray:
+        """Index, in entity_ids(location), of the entity owning each node (each entity of the view's location)."""
+        if location == "node":
+            return np.arange(self.n_nodes(), dtype=np.int64)
+        g = self._base.structure
+        coarse = np.asarray(self._base.entity_ids(location), dtype=np.int64)
+        owners = g.complex_at_scale_array(self.entity_ids("node"), getattr(g.scales, location))
+        position = np.searchsorted(coarse, owners).clip(0, max(coarse.size - 1, 0))
+        return np.where((coarse.size > 0) & (coarse[position] == owners), position, -1)
+
+    def map_to(self, values, from_location, to_location, aggregation=None, weights=None, **options):
+        return self._base.map_to(values, self._loc(from_location), self._loc(to_location), aggregation,
+                                 weights=weights, **options)
+
+    def _map(self, values, from_location, to_location, aggregation, weights=None, fill=0., owner=None):
+        return self._base._map(values, self._loc(from_location), self._loc(to_location), aggregation, weights,
+                               fill=fill, owner=owner)
+
+    def labels(self, location: str = None, per_node: bool = True) -> np.ndarray:
+        if location in (None, "node"):
+            return self._base.labels(location=self._at, per_node=False)
+        values = self._base.labels(location=location, per_node=False)
+        return values[self.owner(location)] if per_node else values
+
+    # ── topology: the coarse location's own links ──
+    def parents(self) -> np.ndarray:
+        return self._base.parents(location=self._at)
+
+    def children(self) -> tuple:
+        return self._base.children(location=self._at)
+
+    def roots(self) -> np.ndarray:
+        return self._base.roots(location=self._at)
+
+    def tips(self) -> np.ndarray:
+        return self._base.tips(location=self._at)
+
+    def order(self, kind: str = "pre", traversal: str = None) -> np.ndarray:
+        if traversal is not None:
+            raise ValueError("a located view's order: traversal=None only")
+        return self._base.order(kind, location=self._at)
+
+    def _edge_codes(self):
+        return self._base.structure.topology_arrays()["edge_type"][self.entity_ids("node")]
+
+    def edges(self) -> list:
+        ids, parents = self.entity_ids("node"), self.parents()
+        child = np.flatnonzero(parents >= 0)
+        return list(zip(ids[parents[child]].tolist(), ids[child].tolist()))
+
+    def to_graph_view(self, boundary_ports=(), node_properties=(), edge_properties=()) -> "GraphView":
+        from scipy.sparse import coo_matrix
+        ids, parents = self.entity_ids("node"), self.parents()
+        child = np.flatnonzero(parents >= 0)
+        n, m = ids.size, child.size
+        edge = np.arange(m)
+        incidence = coo_matrix((np.r_[np.ones(m), -np.ones(m)], (np.r_[parents[child], child], np.r_[edge, edge])),
+                               shape=(n, m)).tocsc()
+        return GraphView(node_ids=ids, edge_ids=edge, tail=parents[child], head=child, incidence=incidence,
+                         boundary_incidence=csc_matrix((n, 0)), boundary_names=(), node_data={}, edge_data={})
+
+    def update_topology(self) -> None:
+        self._base.update_topology()
+
+    # ── the MTG reads and writes: the view's node is the base's location ──
+    def _spec_at(self, spec):
+        import dataclasses
+        return dataclasses.replace(spec, location=self._at) if spec.location == "node" else spec
+
+    def _read_mtg(self, spec):
+        return self._base._read_mtg(self._spec_at(spec))
+
+    def _write_mtg(self, spec):
+        return self._base._write_mtg(self._spec_at(spec))
+
+    def _track_mtg(self, spec):
+        return self._base._track_mtg(self._spec_at(spec))
+
+    def _var_stores(self) -> dict:
+        stores = self._base._var_stores()
+        out = {"node": stores.get(self._at, {}), "scalar": stores.get("scalar", {})}
+        for name in self._coarse_scale_names():
+            out[name] = stores.get(name, {})
+        return out
+
+    # ── the abstract DataStructure's ──
+    def extract_state(self, var_names):
+        return self._base.extract_state(var_names)
+
+    def inject_state(self, x, var_names):
+        return self._base.inject_state(x, var_names)
+
+    def available_vars(self):
+        return self._base.available_vars()
+
+    @property
+    def n_dof(self):
+        return self.n_nodes()
+
+    # the store's helpers, on the view's own nodes
+    mask = VariableStoreMixin.mask
+    define_mask = VariableStoreMixin.define_mask
+    has_mask = VariableStoreMixin.has_mask
+    masks = VariableStoreMixin.masks
+    mask_version = VariableStoreMixin.mask_version
+    _evaluate_mask = VariableStoreMixin._evaluate_mask
+    _CONDITION = VariableStoreMixin._CONDITION
+    random = VariableStoreMixin.random
+    parameter_view = VariableStoreMixin.parameter_view
+    _broadcast_to_entities = VariableStoreMixin._broadcast_to_entities
+    _default_of = VariableStoreMixin._default_of
+    levels = MPGDataStructure.levels
+    accumulate = MPGDataStructure.accumulate
+    fold = MPGDataStructure.fold
+    chain_gather = MPGDataStructure.chain_gather
+    define_chain = MPGDataStructure.define_chain
+    chain = MPGDataStructure.chain
+
+
+def _view_at(self, location: str) -> "LocatedView":
+    """The view of this anatomy-mode DataStructure at a coarse *location* (its nodes: that location's entities)."""
+    views = self.__dict__.setdefault("_located_views", {})
+    if location not in views:
+        views[location] = LocatedView(self, location)
+    return views[location]
+
+
+MPGDataStructure.at = _view_at
