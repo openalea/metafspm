@@ -24,7 +24,8 @@ def _mask(nodes, n: int, name: str) -> np.ndarray:
     return mask
 
 
-def equivalent_conductance(view, edge_conductance, sources, sinks, source_conductance=None) -> tuple:
+def equivalent_conductance(view, edge_conductance, sources, sinks, source_conductance=None, groups=None,
+                           cache: dict = None) -> tuple:
     """
     The equivalent conductance of a network between two sets of nodes: (conductance, inflow).
 
@@ -37,6 +38,9 @@ def equivalent_conductance(view, edge_conductance, sources, sinks, source_conduc
     unit potential difference; *inflow* (one per node, 0 off the sources) each source node's share of it, so that
     inflow / conductance are the standard uptake fractions when the sources are a root's surface and the sinks its
     collar. Nodes in a piece of the graph that touches no source or sink carry no flow.
+
+    *groups* (an integer per node, e.g. each node's segment; *cache* kept between calls): the solve by static
+    condensation on them (condensed_solve), the sources and sinks kept.
     """
     incidence = csr_matrix(view.incidence)
     n = incidence.shape[0]
@@ -62,7 +66,11 @@ def equivalent_conductance(view, edge_conductance, sources, sinks, source_conduc
         matrix = matrix + diags(robin[free])
         rhs = rhs + robin[free]
     potential = value.copy()
-    if free.any():
+    if free.any() and groups is not None:
+        held = sources[free] if robin is not None else np.zeros(int(free.sum()), dtype=bool)
+        potential[free] = condensed_solve(matrix, np.asarray(rhs).reshape(-1), np.asarray(groups)[free], held,
+                                          cache=cache)
+    elif free.any():
         potential[free] = spsolve(matrix.tocsc(), rhs)
     if robin is not None:
         inflow = np.where(sources, robin * (1. - potential), 0.)

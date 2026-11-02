@@ -836,7 +836,12 @@ class StructuralComponent(DataStructureComponent):
 
     @property
     def mtg(self):
-        return self.data_structure.mtg
+        """The MPG: within the component's MPG-style step, as it is (its declared variables were written to it just
+        before); else with every tracked variable written to it first (DataStructure.mtg)."""
+        ds = self.data_structure
+        if self.__dict__.get("_in_mpg_step") and getattr(ds, "_mtg", None) is not None:
+            return ds._mtg
+        return ds.mtg
 
     @classmethod
     def initiate_plant(cls, g, plant: int, scenario: dict) -> None:
@@ -945,19 +950,53 @@ class StructuralComponent(DataStructureComponent):
             weight_before = dict(zip(ids, weights.tolist()))
             active_before = dict(zip(ids, self._active_now(weights).tolist()))
         before = self._mpg_signature()
-        run()
-        if self._mpg_signature() != before:
+        g = getattr(ds, "_mtg", None)
+        states = [spec for spec in specs if spec.variable_type == "state_variable"]
+        properties = g.properties() if g is not None else {}
+        versions = {spec.name: _property_version(properties.get(spec.name)) for spec in states}
+        instanced = g is not None and getattr(g, "_instanced", lambda: False)()
+        known = {location: ds.entity_ids(location) for location in ("node", "edge")} if instanced else {}
+        self.__dict__["_in_mpg_step"] = True
+        try:
+            run()
+        finally:
+            self.__dict__["_in_mpg_step"] = False
+        changed = self._mpg_signature() != before
+        if changed:
             ds.update_topology()
             self.topology_updates = getattr(self, "topology_updates", 0) + 1
-        for spec in specs:
-            if spec.variable_type == "state_variable":
-                values = ds._read_mtg(spec)
-                if values is not None:
-                    ds.set(spec.name, values)
-                    if hasattr(ds, "_mark_mtg_synced"):
-                        ds._mark_mtg_synced(spec.name)
+        for spec in states:
+            version = _property_version(properties.get(spec.name))
+            if not changed and version is not None and version == versions[spec.name]:
+                continue                             # the step left its MPG property as it was: nothing to read
+            values = ds._read_mtg(spec)
+            if values is None:
+                continue
+            if instanced and spec.location in known:
+                values = self._kept_at_instances(spec, values, known[spec.location])
+            ds.set(spec.name, values)
+            if hasattr(ds, "_mark_mtg_synced"):
+                ds._mark_mtg_synced(spec.name)
         if weights is not None:
             self._repartition(weight_before, active_before)
+
+    def _kept_at_instances(self, spec, values, known_ids):
+        """*values* read back from the MPG, except at the instanced vertices known before the step without an entry
+        of their own: there the MPG holds their template's value, not their current one (the DataStructure's, not
+        written back), which is kept."""
+        ds, g = self.data_structure, self.data_structure._mtg
+        ids = ds.entity_ids(spec.location)
+        prop = g.properties().get(spec.name, {})
+        own = np.isin(ids, prop.keys_array()) if hasattr(prop, "keys_array") else \
+            np.array([int(v) in prop for v in ids.tolist()], dtype=bool)
+        keep = ds._instanced_at(spec.location) & np.isin(ids, known_ids) & ~own
+        if not keep.any():
+            return values
+        current = ds.get(spec.name)
+        out = np.array(values, dtype=object) if np.asarray(current).dtype == object else \
+            np.array(values, dtype=float, copy=True)
+        out[keep] = np.asarray(current)[keep]
+        return out.tolist() if isinstance(values, list) else out
 
     def _before_new_nodes(self):
         """The partition weights and active entities before a step's outputs and new nodes (the repartition's basis
@@ -1159,3 +1198,11 @@ class StructuralComponent(DataStructureComponent):
             values[name][dilute] *= basis[dilute] / weights[dilute]
         for name, array in values.items():
             ds.set(name, array)
+
+
+def _property_version(prop):
+    """An MPG property's version (ArrayDict.version), None when it is not versioned (a dict: always read); 0 when
+    absent."""
+    if prop is None:
+        return 0
+    return getattr(prop, "version", None)

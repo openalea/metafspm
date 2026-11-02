@@ -2419,7 +2419,7 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
             self._write_edge_to_mtg(spec.name, values, convention=spec.mapping)
             return
         vids = np.asarray(self._idx_to_vid if spec.location == "node" else self.entity_ids("edge"), dtype=np.int64)
-        explicit = ~g._instanced_mask(vids)
+        explicit = ~self._instanced_at(spec.location)
         if not explicit.any():
             return
         if values.dtype == object:
@@ -2428,6 +2428,16 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
                 prop[int(vid)] = value
             return
         self._write_at(spec.name, vids[explicit], values[explicit])
+
+    def _instanced_at(self, location: str) -> np.ndarray:
+        """Which entities of *location* ("node", "edge") are instanced vertices, cached per topology."""
+        cache = self.__dict__.setdefault("_instanced_cache", {})
+        stamp = self._topology_stamp()
+        hit = cache.get(location)
+        if hit is None or hit[0] != stamp:
+            vids = np.asarray(self._idx_to_vid if location == "node" else self.entity_ids("edge"), dtype=np.int64)
+            hit = cache[location] = (stamp, self._mtg._instanced_mask(vids))
+        return hit[1]
 
     def _anatomy_signatures(self) -> dict:
         """
@@ -2707,6 +2717,7 @@ def _scatter(prop, vids: np.ndarray, values: np.ndarray, integer: bool = False) 
         position = np.searchsorted(order, vids).clip(0, prop.size - 1)
         found = order[position] == vids
         prop.arr[position[found]] = values[found]
+        prop.changed()
         vids, values = vids[~found], values[~found]
     if vids.size and isinstance(prop, ArrayDict) and not integer:
         prop.insert_many(vids, values)

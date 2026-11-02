@@ -18,6 +18,7 @@ class ArrayDict(MutableMapping):
         self.order = np.empty(cap, dtype=np.int64)
         self._index = None
         self.size = 0
+        self.version = 0          # incremented by every change (keys or values): a reader can tell it is unchanged
 
         if init:
             self._load(init.keys(), init.values())
@@ -29,8 +30,13 @@ class ArrayDict(MutableMapping):
         out._load(keys, values)
         return out
 
+    def changed(self) -> None:
+        """Mark a change made to the arrays directly (arr, order)."""
+        self.version = getattr(self, "version", 0) + 1
+
     def _load(self, keys, values) -> None:
         """Replace the contents by *keys* -> *values* (a key repeated keeps its last value, as successive inserts)."""
+        self.changed()
         keys = np.fromiter((int(k) for k in keys), dtype=np.int64)
         values = np.asarray(list(values), dtype=self.arr.dtype)
         if keys.size:
@@ -105,6 +111,7 @@ class ArrayDict(MutableMapping):
     # --- sorted insert / delete ---------------------------------------------
 
     def __setitem__(self, k: int, v: float):
+        self.changed()
         idx = self.vid2idx.get(k)
         if idx is not None:  # existing -> O(1) update
             self.arr[idx] = v
@@ -130,6 +137,7 @@ class ArrayDict(MutableMapping):
 
 
     def __delitem__(self, k: int):
+        self.changed()
         idx = self.vid2idx.pop(k)  # KeyError if absent; the dict is kept (a deletion one key at a time)
 
         if idx < self.size - 1:
@@ -150,6 +158,7 @@ class ArrayDict(MutableMapping):
         doomed = np.unique(positions[found])
         if doomed.size == 0:
             return 0
+        self.changed()
         keep = np.ones(self.size, dtype=bool)
         keep[doomed] = False
         kept = int(keep.sum())
@@ -180,6 +189,7 @@ class ArrayDict(MutableMapping):
         return positions
 
     def assign_at(self, idxs, values):
+        self.changed()
         self.arr[np.asarray(idxs, np.int64)] = np.asarray(values, dtype=self.arr.dtype)
 
     def scatter(self, keys, values):
@@ -200,6 +210,7 @@ class ArrayDict(MutableMapping):
             self.update(dict.fromkeys(keys.tolist(), values) if scalar else dict(zip(keys.tolist(), values)))
             return
         values = np.full(keys.size, values, dtype=self.arr.dtype) if scalar else np.asarray(values, dtype=self.arr.dtype)
+        self.changed()
         self._ensure(self.size + keys.size)
         start, end = self.size, self.size + keys.size
         self.order[start:end] = keys
@@ -214,6 +225,7 @@ class ArrayDict(MutableMapping):
         if keys.size == 0:
             return
         values = np.asarray(values, dtype=self.arr.dtype)
+        self.changed()
         if keys.size > 1 and not (keys[1:] > keys[:-1]).all():
             order = np.argsort(keys, kind="stable")
             keys, values = keys[order], values[order]
@@ -232,6 +244,7 @@ class ArrayDict(MutableMapping):
     def update(self, d: dict):
         if not d:
             return
+        self.changed()
 
         keys = np.fromiter(d.keys(), dtype=np.int64, count=len(d))
         if self.size == 0 or keys.min() > int(self.order[self.size - 1]):
