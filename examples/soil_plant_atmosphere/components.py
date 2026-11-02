@@ -100,12 +100,12 @@ class PlantWaterTransport(FunctionalComponent):
 
         @node_balance(field="water_potential")
         def _balance(self, water_flux):
-            return np.asarray(self._graph_view.incidence @ water_flux).reshape(-1)           # the outflows
+            return np.asarray(self.graph_view.incidence @ water_flux).reshape(-1)           # the outflows
 
         @edge_law(field="water_flux", explicit=True)
         def _darcy(self, water_potential, conductance):
             """The flux through a Connection, j = k (Ψ_a - Ψ_b)."""
-            return conductance * np.asarray(self._graph_view.incidence.T @ water_potential).reshape(-1)
+            return conductance * np.asarray(self.graph_view.incidence.T @ water_potential).reshape(-1)
 
         @boundary_condition("node", "neumann", field="water_potential", filters={"is_evaporating": ">0"})
         def _to_the_air(self, water_potential, air_water_potential, vapour_conductance):
@@ -170,7 +170,7 @@ class SoilWaterTransport(FunctionalComponent):
 
         @node_balance(field="water_potential")
         def _balance(self, water_flux):
-            return np.asarray(self._graph_view.incidence @ water_flux).reshape(-1)           # the outflows
+            return np.asarray(self.graph_view.incidence @ water_flux).reshape(-1)           # the outflows
 
         @edge_law(field="water_flux", explicit=True)
         def _darcy(self, water_potential, conductance):
@@ -178,7 +178,7 @@ class SoilWaterTransport(FunctionalComponent):
             The flux through a face, j = k (Ψ_low - Ψ_high). The grid's edge difference is consistent between cells of
             different sizes (adaptive grids), and the two-point difference on regular ones.
             """
-            return conductance * np.asarray(self._graph_view.edge_difference @ water_potential).reshape(-1)
+            return conductance * np.asarray(self.graph_view.edge_difference @ water_potential).reshape(-1)
 
         @boundary_condition("node", "neumann", field="water_potential", filters={"is_water_table": ">0"})
         def _water_table(self, water_potential, water_table_potential, water_table_conductance):

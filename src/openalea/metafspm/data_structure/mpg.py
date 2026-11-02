@@ -21,6 +21,7 @@ class MPG(MTG):
         2) Unify the multiscale representation of plants in the MTG in order to have a robust graph generation
 
     """
+    reduction = None                # the plant model's reduction (solve.reduction), bound before the initiators build
 
     filters: dict = {}
 
@@ -294,6 +295,25 @@ class MPG(MTG):
         instances = self.__dict__.get("_instances")
         return instances is not None and len(instances) > 0
 
+    def has_instances(self) -> bool:
+        """Whether the MPG holds instanced sections (add_instance): vertices without an entry of their own."""
+        return self._instanced()
+
+    @property
+    def last_vid(self) -> int:
+        """The last vertex id allocated: the vertices added after it are above it (a range to capture)."""
+        return int(self._id)
+
+    def add_root_at_scale(self, scale, **properties) -> int:
+        """A new vertex at *scale* under the MPG's anchor of that scale (a scratch section's segment, a test's)."""
+        return self._add_system_root_at_scale(scale, **properties)
+
+    def anchored(self, vid) -> list:
+        """The Compartments and Connections anchored to *vid* (a section's, a segment's surface or soil node): the
+        links children() leaves out, children() giving those at the vertex's own scale."""
+        fine = (self.scales.Compartment, self.scales.Connection)
+        return [c for c in self._children.get(vid, ()) if self._scale.get(c) in fine]
+
     def _instance_edits(self) -> int:
         """The instances' removals (an addition reserves new ids: the last id tells it)."""
         instances = self.__dict__.get("_instances")
@@ -483,6 +503,11 @@ class MPG(MTG):
         prop = properties.get(name)
         if isinstance(prop, dict) and not isinstance(prop, ArrayDict) and len(prop) > 0:
             properties[name] = ArrayDict.from_items(list(prop.keys()), list(prop.values()))
+
+    def values_at(self, name, vids) -> tuple:
+        """(the vertices of sorted *vids* having property *name*, their values), in bulk; an instanced vertex without
+        an entry of its own has its template's value."""
+        return self._property_at(name, vids)
 
     def _property_at(self, name, vids) -> tuple:
         """(the vertices of sorted *vids* having property *name*, their values); an instanced vertex without an

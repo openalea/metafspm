@@ -65,6 +65,10 @@ class Choregrapher(Singleton):
         instance.__dict__["_choregraphy"] = (time_step, groups)
         self.scheduled_groups[family] = groups      # introspection: the last bound instance of the class
 
+    def set_simulation_time_step(self, simulation_time_step: float) -> None:
+        """The scene's time step (s): what the Scene sets, for components run without one (a test, a script)."""
+        self._set_simulation_time_step(simulation_time_step)
+
     def _set_simulation_time_step(self, simulation_time_step: float) -> None:
         """The scene's time step (s), set by the Scene (and population_data_structure): each component runs
         simulation_time_step / its time_step sub-steps per call."""

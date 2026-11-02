@@ -20,7 +20,7 @@ from simple_seedling import generate_simple_mpg_seedling
 
 @pytest.fixture(autouse=True)
 def _simulation_time_step():
-    Choregrapher()._set_simulation_time_step(DT)
+    Choregrapher().set_simulation_time_step(DT)
 
 
 def _model(component_class=Transport, seed=42):

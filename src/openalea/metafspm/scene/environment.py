@@ -29,6 +29,11 @@ from openalea.metafspm.coupling.composite_wrapper import CompositeModel
 from openalea.metafspm.coupling.cross import UnionDataStructure
 
 
+def _scale_name(ds, scale) -> str:
+    return next(name for name, value in vars(type(ds.structure.scales)).items()
+                if isinstance(value, int) and not name.startswith("_") and value == scale)
+
+
 class EnvironmentModel(CompositeModel):
     """An environment model of a Scene: its DataStructures over the scene's pattern, its components, its cadence."""
 
@@ -49,11 +54,14 @@ class EnvironmentModel(CompositeModel):
     # ── its DataStructures ───────────────────────────────────────────────────
 
     def plant_data_structure(self):
-        """The plants' DataStructure: the population's, or the union of several (a light model seeing every
-        plant); built once."""
+        """The plants' elements, one DataStructure for the model's components: the union of the populations' (of one
+        population too), an anatomy-mode population's elements its sections' owners (its view at that scale); their
+        variables reach the plant models through the scene translator's links (identity ones by default, Scene). Built
+        once."""
         if self._plants is None:
-            self._plants = (self.plant_data_structures[0] if len(self.plant_data_structures) == 1
-                            else UnionDataStructure(self.plant_data_structures))
+            parts = [ds.at(_scale_name(ds, ds.from_scale)) if getattr(ds, "_anatomy", False) else ds
+                     for ds in self.plant_data_structures]
+            self._plants = UnionDataStructure(parts)
         return self._plants
 
     def build_grid(self, voxel, depth, adaptive=False, max_level=2, periodic=(True, True, False)):
@@ -76,14 +84,32 @@ class EnvironmentModel(CompositeModel):
         return float(self.components[0].__dict__.get("_clock", 0.)) if self.components else 0.
 
     def due(self, time) -> bool:
-        """Whether the model runs fully at *time*: every step, or every *interval*."""
-        return self.interval is None or self.last_run is None or time - self.last_run >= self.interval - 1e-9
+        """Whether the model runs fully at *time*: every step, or every *interval* (a scenario key of the model too),
+        and whenever the plants' geometry its components read (geometry_input) changed as they ask."""
+        if self.interval is None or self.last_run is None or time - self.last_run >= self.interval - 1e-9:
+            return True
+        return self._geometry_stamp() != self.__dict__.get("_lit_geometry")
+
+    def _geometry_stamp(self):
+        """What the components' geometry_input(relight=...) follow: the elements (topology), or the triangles."""
+        from dataclasses import fields
+        relights = {f.metadata.get("relight") for component in self.components if hasattr(component, "__dataclass_fields__")
+                    for f in fields(component) if f.metadata.get("variable_type") == "geometry"}
+        if not relights - {None} or self._plants is None:
+            return None
+        parts = self._plants.parts
+        stamp = tuple((part.topology_version, part.n_nodes()) for part in parts)
+        if "geometry" in relights:
+            from openalea.metafspm.solve.memo import content_key
+            stamp += (content_key(*(part.triangles().vertices for part in parts)),)
+        return stamp
 
     def run(self) -> None:
         time = self.time()                  # before the components' calls, which advance their clocks
         if self.due(time):
             self.full_run()
             self.last_run = time
+            self.__dict__["_lit_geometry"] = self._geometry_stamp()
             self.after_run()
         else:
             self.between()

@@ -170,12 +170,12 @@ def _hydraulics(condense):
 
             @node_balance(field="water_potential")
             def _balance(self, water_potential, K):
-                B = self._graph_view.incidence
+                B = self.graph_view.incidence
                 return np.asarray(B @ (K * np.asarray(B.T @ water_potential).reshape(-1))).reshape(-1)
 
             @graph_jacobian
             def _jacobian(self, K):
-                B = self._graph_view.incidence
+                B = self.graph_view.incidence
                 return (B @ diags(K) @ B.T).tocsr()
     return NodeHydraulics
 

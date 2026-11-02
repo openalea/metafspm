@@ -22,7 +22,7 @@ DOC = dict(unit="", unit_comment="", description="", min_value=-1e9, max_value=1
 
 @pytest.fixture(autouse=True)
 def _simulation_time_step():
-    Choregrapher()._set_simulation_time_step(1)
+    Choregrapher().set_simulation_time_step(1)
 
 
 def _ds():

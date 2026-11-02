@@ -123,7 +123,7 @@ def test_links_become_aliases_and_derived_variables(tmp_path):
 
 def test_link_values_seen_by_receivers(tmp_path):
     model, carbon, nitrogen, ds = _coupled_plant(tmp_path)
-    Choregrapher()._set_simulation_time_step(1)
+    Choregrapher().set_simulation_time_step(1)
     for name in ("soil_temperature", "C_hexose_soil"):   # the soil values of that contract, given by the scene
         ds.set(name, 0.)
 
@@ -156,7 +156,7 @@ def test_python_translator_module(tmp_path):
 
 def test_functional_components_run_once_per_simulation_step(tmp_path):
     """A FunctionalComponent used to register a sub time step of 1: with a 3600 s step it ran 3600 times per call."""
-    Choregrapher()._set_simulation_time_step(3600)
+    Choregrapher().set_simulation_time_step(3600)
     ds = doubles_ds.make_plant_ds()
     carbon = doubles_ds.PlantCarbon(data_structure=ds)
     ds.set("soil_temperature", 0.)

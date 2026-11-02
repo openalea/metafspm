@@ -129,7 +129,12 @@ carbon()                                  # one time step: every step, in the sc
   accepted with a warning for one release.
 - **Parameters** without a place are stored per plant (`"Plant"`) on plant DataStructures, as a scalar elsewhere.
   Plants of a population may then differ. Steps and equations take parameters **as arguments**; reading
-  `self.<parameter>` inside a step raises, while outside steps `model.k = value` sets every plant.
+  `self.<parameter>` inside a step raises, while outside steps `model.k = value` sets every plant. Declared
+  `scale=Plant`, a boolean or an object (`dtype="object"`: a dict, a record) is per plant too, set by each plant's
+  scenario. A parameter whose value is `{section: {field: value}}` (an anatomy's parametrization) declares its
+  fields with `sections=` (a function giving `{"section.field": {default, unit, description, min_value,
+  max_value}}`): `parameter_table` and `variants` list each as `name.section.field`, and a scenario may give one
+  dotted, `{"root_anatomy.cortex.n_layers": 4}`, or nested.
 - **Steps** are methods decorated by their place in the schedule: `@stepinit`, `@rate`, `@totalrate`, `@state`,
   `@totalstate`, `@deficit`, `@axial`, then the growth rows `@potential`, `@allocation`, `@actual`,
   `@segmentation`, `@postsegmentation` (a structural component's steps, in that order: before, while and after it
@@ -147,12 +152,19 @@ carbon()                                  # one time step: every step, in the sc
   (`ds.define_mask`) or a callable `ds -> boolean array` select as well, for geometry or masks shared with mappings.
   When the DataStructure defines an `"active"` mask (emergence, dead tissues), steps also compute on its entities
   only; `include_inactive=True` lifts it.
+- **Memoized steps.** `@rate(memo=True)` (any step): its outputs are computed again only when its arguments' values,
+  its component's parameters or settings, the active mask or the structure changed; otherwise its last outputs are
+  written again (a network's conductances, recomputed only when a barrier or a length changed). The step's
+  dependencies are its arguments: a memoized step reads nothing else.
 - **Inheritance.** A subclass runs its bases' steps, a redefined step replacing its base's; `steps_removed =
   ("name",)` removes inherited ones.
 - **Compiled steps.** A step may call a `numba.njit` function on its arrays; parameters reach it as arrays (zero-stride
   views when uniform).
 - **Random draws.** `self.random(stream, distribution="uniform", **parameters)` gives one reproducible draw per entity
-  per call, independent of the visiting order.
+  per call, independent of the visiting order. Draws that must not depend on the rest of the population (an
+  element's angles, whatever other plants exist) are keyed by lineage instead of entity id: `random_streams.plant_keys(
+  seeds)` for a plant's first element, `child_keys(parent_keys, edge, rank)` for each new one, drawn with
+  `random_streams.normal(keys, ...)` (or `ds.random(..., ids=keys)`).
 - **Settings** (`setting(unit=, description=, default=, choices=)`): values of the model, not of the plants (a
   latitude, a light model, a solver, a grid's voxel). One value for all, never stored on the DataStructure: read as
   `self.name` anywhere, passed as the value itself to a step naming it, set by constructor keywords and scenarios
@@ -161,7 +173,14 @@ carbon()                                  # one time step: every step, in the sc
   lighting), saved by the Scene's checkpoints; `keep(..., saved=False)` for a cache rebuilt when missing (a kept
   canopy, incremental meshes); `self.cached(name, build, key)` for a value derived from the structure.
 - **Reading a component:** `Component.declarations()` lists its variables as a table (kind, scale, unit, description,
-  default, provider); `Component.schedule()` its steps in the order they run, grouped by stage.
+  default, provider); `Component.schedule()` its steps in the order they run, grouped by stage;
+  `component.variable_specs` their resolved places on its DataStructure; `component.active_ids(location)` the active
+  entities (at a coarse location: those of the plants emerged), for MPG-style steps.
+- **Public accessors** (rather than the private names behind them): `ds.from_scale`, `ds.sections_of(vids)`,
+  `ds.reduction`, `ds.structure_stamp()`, `ds.default(name)`; `MPG.values_at(name, vids)` (bulk, instances
+  included), `MPG.anchored(vid)` (its anchored Compartments and Connections), `MPG.has_instances()`, `MPG.last_vid`,
+  `MPG.add_root_at_scale(scale)`; `self.graph_view` in graph-system terms; `Choregrapher().set_simulation_time_step(dt)`
+  for components run without a Scene.
 - **Outside steps** (structural code, helpers, harnesses): `self.parameter_value(name)` is a parameter's single
   value for the population (it raises when plants differ; `parameter_values(name, location)` gives one per entity);
   `self.cached(name, build, key=None)` keeps a value until *key* changes (by default the topology version), e.g. a
@@ -192,13 +211,13 @@ class SoilDiffusion(FunctionalComponent):
 
         @node_balance(field="solute")
         def _balance(self, solute, solute_flux):
-            B = self._graph_view.incidence
+            B = self.graph_view.incidence
             return (solute - self.previous("solute")) / self.dt \
                 + (B @ solute_flux) / self.data_structure.cell_volume()
 
         @edge_law(field="solute_flux")
         def _fick(self, solute, solute_flux, diffusivity, face_area, face_distance):
-            B = self._graph_view.incidence
+            B = self.graph_view.incidence
             return solute_flux - diffusivity * face_area / face_distance * (B.T @ solute)
 ```
 
@@ -395,7 +414,10 @@ scene = Scene.from_scenario(scenario, stand(...), Wheat, environment=[RhizoSoil,
   (`population.data_structure`, `population.instance`).
 - **Environment models** are built as `Model(plant_data_structures, xrange, yrange, time_step, <its own arguments>)` and
   create their own DataStructures (a grid, a union of the populations). `scene.environment.EnvironmentModel` is
-  their base: `self.plant_data_structure()` (the population's DataStructure, or the union of several), `self.build_grid(voxel,
+  their base: `self.plant_data_structure()` (the populations' union, of one population too; an anatomy-mode
+  population's elements its sections' owners; its variables reach the plant models through the scene translator,
+  whose identity links are added by default for the outputs a plant model reads as inputs of the same name, and
+  for the inputs a plant model holds as states of the same name, one per population), `self.build_grid(voxel,
   depth, adaptive=False)` (a grid over the scene's pattern, z down, periodic in x and y), a cadence (`interval` in s,
   or an overridden `due(time)`; at the other steps `between()`, e.g. `self.light.run_stage("state")`),
   `after_run()` (an adaptive grid refined), the time of the last full run kept by checkpoints. A light model and a
@@ -424,7 +446,12 @@ scene = Scene.from_scenario(scenario, stand(...), Wheat, environment=[RhizoSoil,
   number, a function of the day, a Series indexed by day, one value per day) into one. `events=[(time, action)]`
   stay for one-off actions.
 - **Services.** An environment model's `interval` (s) is its cadence (`due()`, and `between()` at the other
-  steps); `spin_up(scene)`, `stop_when=condition`.
+  steps), also its scenario's `"interval"`; a component reading the plants' geometry declares it,
+  `geometry: object = geometry_input(relight="topology" | "geometry")`, listed by `couplings()`, and its model runs
+  fully when the elements (or their triangles) changed too; `spin_up(scene)`, `stop_when=condition`.
+- **Calendar.** `Scene(start=(day_of_year, hour))`: the calendar of the scene's time 0 (UTC); every component's
+  `self.calendar()` gives the (day of year, hour) of its forcing time (a light model's sun), and a forcing given by
+  the hour of the day (or by the day of the year) takes it with `as_forcing(value, time_unit="h", origin="calendar")`.
 - **Outputs: the SceneRecorder.** `recorder=SceneRecorder(folder, ...)` (or `recorder=folder`) writes:
   - `run.json`: status (running, finished, stopped, failed with its error), times, wall time per model, versions;
   - `scenario.json`: the planting, the scenarios, the environment models, the forcings (tables in `forcings/`);

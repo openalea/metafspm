@@ -81,6 +81,9 @@ class CompositeModel:
             table = type(component).declarations()
             if table.empty:
                 continue
+            for name in table.loc[table["role"] == "geometry", "name"]:
+                rows.append(dict(receiver=receiver, variable=name, provider="the plants' structural components",
+                                 coupling="geometry", sources="triangles()"))
             for name in table.loc[table["role"] == "input", "name"]:
                 links = [link for link in translator.links_of(receiver) if link.variable == name
                          and link.provider != receiver]

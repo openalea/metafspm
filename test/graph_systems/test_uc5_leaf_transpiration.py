@@ -38,17 +38,17 @@ def _water(jacobian=False, **options):
 
         @node_balance(field="water_potential")
         def _balance(self, axial_flux):
-            return np.asarray(self._graph_view.incidence @ axial_flux).reshape(-1)
+            return np.asarray(self.graph_view.incidence @ axial_flux).reshape(-1)
 
         @edge_law(field="axial_flux")
         def _darcy(self, water_potential, axial_flux, K_axial):
-            return axial_flux - K_axial * np.asarray(self._graph_view.incidence.T @ water_potential).reshape(-1)
+            return axial_flux - K_axial * np.asarray(self.graph_view.incidence.T @ water_potential).reshape(-1)
 
         if jacobian:
             @graph_jacobian
             def _jacobian(self, K_axial):
                 """The equations only: the framework adds the boundary sets' terms."""
-                B = self._graph_view.incidence.toarray()
+                B = self.graph_view.incidence.toarray()
                 n, m = B.shape
                 J = np.zeros((n + m, n + m))
                 J[:n, n:] = B

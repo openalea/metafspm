@@ -54,10 +54,21 @@ def forcing_value(forcing, time: float) -> float:
 class _InUnit:
     """A user's input in their time unit, read at the scene time (picklable, for checkpoints)."""
 
-    def __init__(self, value, time_unit: float, origin: float):
-        self.value, self.time_unit, self.origin = value, float(time_unit), float(origin)
+    def __init__(self, value, time_unit: float, origin):
+        self.value, self.time_unit = value, float(time_unit)
+        self.origin = origin if origin == "calendar" else float(origin)
+
+    def at_calendar(self, start) -> None:
+        """Resolve origin "calendar" from the Scene's start (day of year, hour): the day of year for an input in days,
+        the time of day otherwise."""
+        if self.origin == "calendar":
+            day, hour = start
+            self.origin = (float(day) + float(hour) / 24.) if self.time_unit >= 86400. else \
+                float(hour) * 3600. / self.time_unit
 
     def __call__(self, time: float) -> float:
+        if self.origin == "calendar":
+            raise ValueError("a forcing of origin 'calendar' needs the Scene's start=(day_of_year, hour)")
         when = self.origin + time / self.time_unit
         value = self.value
         if callable(value):
@@ -98,7 +109,9 @@ def as_forcing(value, time_unit=1., origin: float = 0.):
     A forcing of the scene time from a user's input given in *time_unit* (s, or "s", "min", "h", "d"; 86400 or "d"
     for days): a number, a function
     of that unit, a pandas Series indexed by it, or a sequence (one value per unit from 0), linearly interpolated.
-    *origin*: the input's time at the scene's time 0 (e.g. the hour of the day the scene starts).
+    *origin*: the input's time at the scene's time 0 (e.g. the hour of the day the scene starts), or "calendar": the
+    Scene's start (Scene(start=(day_of_year, hour))), its time of day for an input by the hour (a daily course),
+    its day of year for an input by the day.
     """
     if np.ndim(value) == 0 and not callable(value) and not _series(value):
         return float(value)

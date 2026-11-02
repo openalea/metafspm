@@ -156,11 +156,11 @@ class BenchPhloem(FunctionalComponent):
         @node_balance(field="sucrose")
         def _balance(self, sucrose, sucrose_flux):
             return (sucrose - self.previous("sucrose")) / self.dt \
-                + np.asarray(self._graph_view.incidence @ sucrose_flux).reshape(-1)
+                + np.asarray(self.graph_view.incidence @ sucrose_flux).reshape(-1)
 
         @edge_law(field="sucrose_flux")
         def _law(self, sucrose, sucrose_flux, conductance):
-            return sucrose_flux - conductance * np.asarray(self._graph_view.incidence.T @ sucrose).reshape(-1)
+            return sucrose_flux - conductance * np.asarray(self.graph_view.incidence.T @ sucrose).reshape(-1)
 
 
 class BenchPlant:
@@ -261,7 +261,7 @@ def bench_anatomy(n_segments, steps):
     from anatomy import make_rooted_anatomy, wiring
     from openalea.metafspm.data_structure.data_api import MPGDataStructure
     Choregrapher().reset()
-    Choregrapher()._set_simulation_time_step(DT)
+    Choregrapher().set_simulation_time_step(DT)
     start = time.perf_counter()
     g, _, _ = make_rooted_anatomy(n_segments)
     ds = MPGDataStructure(g, from_scale=g.scales.SubOrgan, nodes="Compartment", wiring=wiring(g))
@@ -306,11 +306,11 @@ class AnatomyPhloem(FunctionalComponent):
         @node_balance(field="solute")
         def _balance(self, solute, solute_flux):
             return (solute - self.previous("solute")) / self.time_step \
-                + np.asarray(self._graph_view.incidence @ solute_flux).reshape(-1)
+                + np.asarray(self.graph_view.incidence @ solute_flux).reshape(-1)
 
         @edge_law(field="solute_flux")
         def _law(self, solute, solute_flux, conductance):
-            return solute_flux - conductance * np.asarray(self._graph_view.incidence.T @ solute).reshape(-1)
+            return solute_flux - conductance * np.asarray(self.graph_view.incidence.T @ solute).reshape(-1)
 
 
 # ---------------------------------------------------------------- main

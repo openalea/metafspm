@@ -30,7 +30,7 @@ DT, K = 2., 0.3
 
 @pytest.fixture(autouse=True)
 def _simulation_time_step():
-    Choregrapher()._set_simulation_time_step(DT)
+    Choregrapher().set_simulation_time_step(DT)
 
 
 def _ds():
@@ -50,7 +50,7 @@ def _laplacian(ds):
 
 
 def _diffusion_residual(self, u):
-    B = self._graph_view.incidence
+    B = self.graph_view.incidence
     return (u - self.previous("u")) / self.dt + K * np.asarray(B @ (B.T @ u)).reshape(-1)
 
 
@@ -91,7 +91,7 @@ def test_the_former_option_names_warn():
 class _SteadyEquations:
     @node_balance(field="u")
     def _balance(self, u, source):
-        B = self._graph_view.incidence
+        B = self.graph_view.incidence
         return K * np.asarray(B @ (B.T @ u)).reshape(-1) + u + 0.1 * u ** 3 - source
 
 
@@ -244,7 +244,7 @@ class TwoUnknowns(FunctionalComponent):
 
         @node_balance(field="w")
         def _w(self, w):
-            B = self._graph_view.incidence
+            B = self.graph_view.incidence
             return (w - self.previous("w")) / self.dt + K * np.asarray(B @ (B.T @ w)).reshape(-1)
 
 
@@ -527,11 +527,11 @@ class ActiveOutputs(FunctionalComponent):
     class _solve:
         @node_balance(field="u")
         def _balance(self, u, flux):
-            return (u - self.previous("u")) / self.dt + np.asarray(self._graph_view.incidence @ flux).reshape(-1)
+            return (u - self.previous("u")) / self.dt + np.asarray(self.graph_view.incidence @ flux).reshape(-1)
 
         @edge_law(field="flux", integrate=True)
         def _fick(self, u, flux):
-            return flux - K * np.asarray(self._graph_view.incidence.T @ u).reshape(-1)
+            return flux - K * np.asarray(self.graph_view.incidence.T @ u).reshape(-1)
 
         @graph_output("doubled")
         def _doubled(self, u):

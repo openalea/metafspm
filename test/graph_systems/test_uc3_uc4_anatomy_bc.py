@@ -27,7 +27,7 @@ SOIL_WEIGHT, XYLEM_WEIGHT = 0.6, 1.0
 
 @pytest.fixture(autouse=True)
 def _simulation_time_step():
-    Choregrapher()._set_simulation_time_step(1)
+    Choregrapher().set_simulation_time_step(1)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -41,7 +41,7 @@ def _total_conductance(K_membrane, K_symplastic, K_apoplastic):
 class _Hydraulics:
     @node_balance(field="water_potential")
     def _balance(self, water_potential, K_membrane, K_symplastic, K_apoplastic):
-        B = self._graph_view.incidence
+        B = self.graph_view.incidence
         K = _total_conductance(K_membrane, K_symplastic, K_apoplastic)
         return np.asarray((B @ diags(K) @ B.T) @ water_potential).reshape(-1)
 
@@ -51,14 +51,14 @@ class _Hydraulics:
 
     @graph_output(name="edge_water_flux", location="edge")
     def _edge_flux(self, water_potential, K_membrane, K_symplastic, K_apoplastic):
-        B = self._graph_view.incidence
+        B = self.graph_view.incidence
         return _total_conductance(K_membrane, K_symplastic, K_apoplastic) * np.asarray(B.T @ water_potential).reshape(-1)
 
 
 class _HydraulicsWithJacobian(_Hydraulics):
     @graph_jacobian
     def _jacobian(self, K_membrane, K_symplastic, K_apoplastic):
-        B = self._graph_view.incidence
+        B = self.graph_view.incidence
         return (B @ diags(_total_conductance(K_membrane, K_symplastic, K_apoplastic)) @ B.T).toarray()
 
 
@@ -161,7 +161,7 @@ def test_uc3_the_analytic_jacobian_gives_the_solution_in_one_newton_step():
 class _HydraulicsWithSparseJacobian(_Hydraulics):
     @graph_jacobian
     def _jacobian(self, K_membrane, K_symplastic, K_apoplastic):
-        B = self._graph_view.incidence
+        B = self.graph_view.incidence
         return (B @ diags(_total_conductance(K_membrane, K_symplastic, K_apoplastic)) @ B.T).tocsr()
 
 
@@ -186,7 +186,7 @@ def test_uc3_a_sparse_analytic_jacobian_gives_the_same_solution():
 # ══════════════════════════════════════════════════════════════════════════════
 
 def _laplacian(self, pressure, K):
-    B = self._graph_view.incidence
+    B = self.graph_view.incidence
     return np.asarray((B @ diags(K) @ B.T) @ pressure).reshape(-1)
 
 
@@ -261,7 +261,7 @@ class ChainDirichletSparse(ChainFields):
 
         @graph_jacobian
         def _jacobian(self, K):
-            B = self._graph_view.incidence
+            B = self.graph_view.incidence
             return (B @ diags(K) @ B.T).tocsr()
 
 

@@ -640,6 +640,10 @@ class VariableStoreMixin:
     def _broadcast_to_entities(self, values, location: str, to: str, name: str = None) -> np.ndarray:
         return self._map(values, location, to, "broadcast", fill=self._default_of(name))
 
+    def default(self, name):
+        """The declared default of variable *name* (0 when unknown): e.g. the value of entities a step creates."""
+        return self._default_of(name)
+
     def _default_of(self, name) -> float:
         """The declared default of variable *name* (0 when unknown): what entities without an owner read."""
         if name is None:
@@ -837,6 +841,10 @@ class VariableStoreMixin:
             if weights is None:
                 raise ValueError("weighted_mean needs a weight variable")
             return np.sum(values * weights, axis=axis) / np.sum(weights, axis=axis)
+        if aggregation == "max":
+            return np.max(values, axis=axis)
+        if aggregation == "min":
+            return np.min(values, axis=axis)
         raise ValueError(f"unknown aggregation '{aggregation}'")
 
     # ── Export for loggers ────────────────────────────────────
@@ -1930,6 +1938,8 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
             if aggregation == "weighted_mean":
                 return (np.bincount(owner, weights=values * weights, minlength=entities.size)
                         / np.bincount(owner, weights=weights, minlength=entities.size))
+            if aggregation in ("max", "min"):
+                return _grouped_extreme(values, owner, entities.size, aggregation)
             total = np.bincount(owner, weights=values, minlength=entities.size)
             if aggregation == "sum":
                 return total
@@ -1969,6 +1979,8 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
                 if aggregation == "weighted_mean":
                     return (np.bincount(owner, weights=values * weights, minlength=coarse_ids.size)
                             / np.bincount(owner, weights=weights, minlength=coarse_ids.size))
+                if aggregation in ("max", "min"):
+                    return _grouped_extreme(values, owner, coarse_ids.size, aggregation)
                 total = np.bincount(owner, weights=values, minlength=coarse_ids.size)
                 if aggregation == "sum":
                     return total
@@ -2562,6 +2574,20 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
             differ |= np.asarray(old_column[a] != new_column[b], dtype=bool)
         return changed | set(old["owners"][a][differ].tolist()) | set(new["owners"][b][differ].tolist())
 
+    @property
+    def from_scale(self) -> int:
+        """The scale whose vertices the nodes come from (anatomy mode: the sections' owners, e.g. SubOrgan)."""
+        return self._from_scale
+
+    @property
+    def reduction(self):
+        """The plant model's reduction of its graph systems (solve.reduction, bound to the MPG), or None."""
+        return getattr(self._mtg, "reduction", None)
+
+    def sections_of(self, vids) -> np.ndarray:
+        """Anatomy mode: the from_scale vertex (e.g. SubOrgan) of each Compartment vid, -1 for none or -1 vids."""
+        return self._sections_of(vids)
+
     def _sections_of(self, vids) -> np.ndarray:
         """Anatomy mode: the from_scale vertex (e.g. SubOrgan) of each Compartment vid, -1 for none or -1 vids."""
         g = self._mtg
@@ -2704,6 +2730,11 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
         return out
 
     # ── Solver interface ──────────────────────────────────────────────────────
+
+    def structure_stamp(self) -> tuple:
+        """A key changing with the topology version and any structural edit of the MPG (vertices, complexes,
+        instances, connections): e.g. a cache of what the structure determines."""
+        return self._topology_stamp()
 
     def _topology_stamp(self) -> tuple:
         """Changes with the topology version and any structural edit of the MPG (vertices, complexes, instances)."""
@@ -3133,6 +3164,14 @@ class ArrayDataStructure(VariableStoreMixin, FieldDataStructure):
         """
         self._L = None
 
+
+
+def _grouped_extreme(values, owner, size: int, aggregation: str) -> np.ndarray:
+    """The largest ("max") or smallest ("min") of *values* per owner (NaN for an owner of none, NaNs ignored)."""
+    out = np.full(size, np.nan)
+    values = np.asarray(values, dtype=float)
+    (np.fmax if aggregation == "max" else np.fmin).at(out, np.asarray(owner, dtype=np.int64), values)
+    return out
 
 
 class LocatedView(DataStructure):

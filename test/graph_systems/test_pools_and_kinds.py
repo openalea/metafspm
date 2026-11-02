@@ -22,7 +22,7 @@ DT, K, EXCHANGE = 2., 0.3, 0.8
 
 @pytest.fixture(autouse=True)
 def _simulation_time_step():
-    Choregrapher()._set_simulation_time_step(DT)
+    Choregrapher().set_simulation_time_step(DT)
 
 
 def _population(sizes=(3, 5)):
@@ -41,7 +41,7 @@ class _Equations:
 
     @node_balance(field="sugar")
     def _balance(self, sugar, shoot_sugar):
-        B, P = self._graph_view.incidence, self.pool_exchange("shoot_sugar")
+        B, P = self.graph_view.incidence, self.pool_exchange("shoot_sugar")
         exchange = P @ shoot_sugar - np.asarray(P.sum(axis=1)).reshape(-1) * sugar
         return (sugar - self.previous("sugar")) / self.dt + K * np.asarray(B @ (B.T @ sugar)).reshape(-1) \
             - EXCHANGE * exchange
@@ -139,7 +139,7 @@ class SwitchingCollar(FunctionalComponent):
 
         @node_balance(field="sugar")
         def _balance(self, sugar):
-            B = self._graph_view.incidence
+            B = self.graph_view.incidence
             return (sugar - self.previous("sugar")) / self.dt + K * np.asarray(B @ (B.T @ sugar)).reshape(-1)
 
 

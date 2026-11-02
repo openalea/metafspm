@@ -760,7 +760,8 @@ def scene_to_frame(scene, geometry: bool = True, standard_names: dict = None, da
     mappings = {}
     for mapping in getattr(scene, "mappings", ()):
         if not hasattr(mapping, "incidence"):
-            warnings.warn(f"a {type(mapping).__name__} is not exchanged (CrossMappings are)")
+            if type(mapping).__name__ != "UnionMapping":         # a union's elements are its parts': nothing to map
+                warnings.warn(f"a {type(mapping).__name__} is not exchanged (CrossMappings are)")
             continue
         source, target = identifier_of.get(id(mapping.source)), identifier_of.get(id(mapping.target))
         if source is None or target is None:

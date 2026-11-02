@@ -25,7 +25,7 @@ def test_chain_plant_segments_fall_in_known_voxels():
 
 
 def test_plant_components_build_and_run_standalone():
-    Choregrapher()._set_simulation_time_step(doubles.TIME_STEP)
+    Choregrapher().set_simulation_time_step(doubles.TIME_STEP)
     ds = doubles_ds.make_chain_plant_ds()
     carbon = doubles_ds.PlantCarbon(data_structure=ds)
     doubles_ds.PlantNitrogen(data_structure=ds)

@@ -23,7 +23,7 @@ DT, K = 0.5, 0.3
 
 @pytest.fixture(autouse=True)
 def _simulation_time_step():
-    Choregrapher()._set_simulation_time_step(DT)
+    Choregrapher().set_simulation_time_step(DT)
 
 
 def _ds():
@@ -42,7 +42,7 @@ def _laplacian(ds):
 class _Rate:
     @node_rate(field="u")
     def _diffusion(self, u):
-        B = self._graph_view.incidence
+        B = self.graph_view.incidence
         return -K * np.asarray(B @ (B.T @ u)).reshape(-1)
 
 
@@ -118,7 +118,7 @@ def test_a_neumann_inflow_adds_to_the_rate():
 # ---------------------------------------------------------------- errors
 
 def _residual_balance(self, u):
-    B = self._graph_view.incidence
+    B = self.graph_view.incidence
     return (u - self.previous("u")) / self.dt + K * np.asarray(B @ (B.T @ u)).reshape(-1)
 
 

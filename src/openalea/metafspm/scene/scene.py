@@ -114,15 +114,20 @@ class Scene:
                                the soil grid), or a callable scene -> mappings, called once the models are built. A
                                CrossMapping given here replaces the inferred one between its two DataStructures (e.g.
                                to map only the root surface, mask=).
+        start:                 the calendar of the scene's time 0, (day of year, hour, UTC): every component's
+                               calendar() (e.g. a light model's sun), and the forcings of origin "calendar".
 
-    A model's cadence is an environment model's interval (s, EnvironmentModel: due() and between()). An environment
-    model's spin_up(scene) runs once, after the scene is built.
+    A model's cadence is an environment model's interval (s, EnvironmentModel: due() and between(); its scenario's
+    "interval" too). An environment model's spin_up(scene) runs once, after the scene is built. An environment model's
+    components work on the plants' union (EnvironmentModel.plant_data_structure), its variables exchanged with the
+    plant models through the translator: its outputs a plant model reads as inputs of the same name, and its inputs a
+    plant model holds as states of the same name, are linked by default (identity links).
     """
 
     def __init__(self, planting: pd.DataFrame, environment=(), environment_scenarios=None, translator=None,
                  time_step: float = 3600., mapping_method: str = "barycentre", periodic=(True, True, False),
                  flip_z: bool = True, xrange: float = None, yrange: float = None, forcings=None,
-                 events=(), stop_when=None, mappings=(), recorder=None):
+                 events=(), stop_when=None, mappings=(), recorder=None, start=None):
         Choregrapher()._set_simulation_time_step(time_step)
         self.time_step, self.time, self.iteration = time_step, 0., 0
         self.xrange = xrange if xrange is not None else planting.attrs.get("xrange")
@@ -142,6 +147,10 @@ class Scene:
                                   time_step=time_step, **_model_keywords(model, scenario))
                             for model, scenario in zip(environment, environment_scenarios)]
         for model, instance, scenario in zip(environment, self.environment, environment_scenarios):
+            if "interval" in scenario and hasattr(instance, "interval"):      # the model's cadence (EnvironmentModel)
+                scenario = dict(scenario)
+                interval = scenario.pop("interval")
+                instance.interval = None if interval is None else float(interval)
             _apply_model_scenario(model, instance, scenario, per_plant=False)
 
         self.components = [c for p in self.populations for c in p.components]
@@ -152,7 +161,7 @@ class Scene:
             raise ValueError(f"component classes {duplicated} appear in several models of the scene: "
                              "the scene translator identifies components by class name (one population per model)")
 
-        self.translator = Translator.load(translator)
+        self.translator = _with_identity_links(Translator.load(translator), self.populations, self.environment)
         self.mapping_method, self.periodic, self.flip_z = mapping_method, periodic, flip_z
         # Explicit mappings (e.g. a LayerMapping column <-> grid, or a CrossMapping with a mask), then the inferred
         # population <-> grid / union ones for the pairs the explicit ones do not link
@@ -163,8 +172,15 @@ class Scene:
         self.exchanges = Exchanges(self.translator, self.components, self.mappings)
         self._update_emergence()
         self.forcings = forcing_table(forcings)
+        self.start = None if start is None else (float(start[0]), float(start[1]))
+        for forcing in self.forcings.values():
+            if getattr(forcing, "origin", None) == "calendar":
+                if self.start is None:
+                    raise ValueError("a forcing of origin 'calendar' needs the Scene's start=(day_of_year, hour)")
+                forcing.at_calendar(self.start)
         for component in self.components:
             component.__dict__["_scene_forcings"] = self.forcings
+            component.__dict__["_scene_calendar"] = self.start
         self._check_forcings()
         self._forced = self._forced_variables()
         self.events = sorted(list(events), key=lambda event: event[0])
@@ -280,6 +296,7 @@ class Scene:
                 continue
             for a, b in ((link.receiver, link.provider), (link.provider, link.receiver)):
                 plant_ds, other = by_name[a].data_structure, by_name[b].data_structure
+                plant_ds = plant_ds.__dict__.get("_base", plant_ds)         # a view of the population's
                 if id(plant_ds) not in populations or other is plant_ds or (id(plant_ds), id(other)) in done:
                     continue
                 if isinstance(other, UnionDataStructure):
@@ -532,3 +549,51 @@ def _own_data_structures(model) -> list:
         if ds is not None and not any(ds is other for other in found):
             found.append(ds)
     return found
+
+
+def _with_identity_links(translator, populations, environment):
+    """
+    *translator* with, for every environment component on the plants' union (EnvironmentModel.plant_data_structure),
+    an identity link for each of its state variables a plant model's component reads as an input of the same name
+    (e.g. a photosynthesis' PARa from the light), and for each of its inputs a plant model's component holds as a
+    state of the same name (e.g. the elements' PAR_reflectance, one link per population: each gives its part of the
+    union), unless *translator* links that input already (from that provider, for the union's inputs).
+    """
+    from openalea.metafspm.coupling.cross import UnionDataStructure
+    from openalea.metafspm.coupling.translator import Translator
+
+    def roles(component):
+        table = type(component).declarations()
+        if table.empty:
+            return set(), set()
+        return (set(table.loc[table["role"] == "input", "name"]),
+                set(table.loc[table["role"] == "state_variable", "name"]))
+
+    linked = {(link.receiver, link.variable) for link in translator.links}
+    linked_from = {(link.receiver, link.variable, link.provider) for link in translator.links}
+    added = []
+    plants = [component for population in populations for component in population.components]
+    for model in environment:
+        for light in getattr(model, "components", ()):
+            if not isinstance(getattr(light, "data_structure", None), UnionDataStructure):
+                continue
+            light_inputs, light_states = roles(light)
+            for plant in plants:
+                plant_inputs, plant_states = roles(plant)
+                for name in sorted(plant_inputs & light_states):            # into a plant model: one provider
+                    key = (type(plant).__name__, name)
+                    if key not in linked:
+                        added.append((key[0], name, type(light).__name__))
+                        linked.add(key)
+                for name in sorted(light_inputs & plant_states):            # into the union: one per population
+                    key = (type(light).__name__, name, type(plant).__name__)
+                    if key not in linked_from:
+                        added.append(key)
+                        linked_from.add(key)
+    if not added:
+        return translator
+    out = Translator()
+    out.links.extend(translator.links)
+    for receiver, name, provider in added:
+        out.link(receiver, name, provider, {name: 1.})
+    return out

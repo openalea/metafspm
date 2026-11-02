@@ -62,6 +62,8 @@ flux:    float = state_variable(..., location="edge")                       # so
 | `sum` | up: total over the nodes of each coarse entity |
 | `mean` | up: average over the nodes of each coarse entity; on edges, the mean of both ends |
 | `weighted_mean` | up: average weighted by `weight=` |
+| `max` | up: the largest (e.g. a plant's height from its elements' tops; not across DataStructures) |
+| `min` | up: the smallest (not across DataStructures) |
 | `split` | down: each node gets its share of its owner's amount, in proportion to `weight=` (the total conserved) |
 | `child` | to edges: the child's value |
 | `parent` | to edges: the parent's value |
@@ -210,7 +212,7 @@ leaves = boundary_set(filters={"label": "LeafElement"}, kind="robin", value="air
 ## Grids
 
 - **Regular grids:** `ArrayDataStructure`.
-- **Adaptive grids:** `AdaptiveGridDataStructure` (an octree over a base grid), with the same contract: location `"cell"`, faces as edges with `face_area` and `face_distance`, `cell_volume()` and `cell_sizes()` per cell, `locate`, `layer_mask(axis=0 | -1)`. Mappings to plants follow its refinements. Between cells of different sizes, write edge laws with the view's `edge_difference` (`k * (self._graph_view.edge_difference @ u)`), consistent there; `incidence.T @ u` is the two-point difference, exact only between equal cells.
+- **Adaptive grids:** `AdaptiveGridDataStructure` (an octree over a base grid), with the same contract: location `"cell"`, faces as edges with `face_area` and `face_distance`, `cell_volume()` and `cell_sizes()` per cell, `locate`, `layer_mask(axis=0 | -1)`. Mappings to plants follow its refinements. Between cells of different sizes, write edge laws with the view's `edge_difference` (`k * (self.graph_view.edge_difference @ u)`), consistent there; `incidence.T @ u` is the two-point difference, exact only between equal cells.
 - **Refinement:** refine and coarsen between steps with a criterion of the grid; values are carried over conservatively.
 - **Equations** written with `cell_volume()`, `face_area` and `face_distance` run on both.
 

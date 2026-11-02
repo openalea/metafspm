@@ -24,13 +24,13 @@ def _diffusion(**options):
     class _diffusion:
         @node_balance(field="concentration")
         def _balance(self, concentration, flux, source):
-            B = self._graph_view.incidence
+            B = self.graph_view.incidence
             return (concentration - self.previous("concentration")) / self.dt \
                 + np.asarray(B @ flux).reshape(-1) - source
 
         @edge_law(field="flux")
         def _fick(self, concentration, flux, K):
-            B = self._graph_view.incidence
+            B = self.graph_view.incidence
             return flux - K * np.asarray(B.T @ concentration).reshape(-1)
 
     return _diffusion
@@ -133,13 +133,13 @@ class SteadyPotential(FunctionalComponent):
     class _steady:
         @node_balance(field="potential")
         def _balance(self, water_flux):
-            return np.asarray(self._graph_view.incidence @ water_flux).reshape(-1)
+            return np.asarray(self.graph_view.incidence @ water_flux).reshape(-1)
 
         collar = boundary_set(filters={"is_collar": [1]}, kind="dirichlet", value=-0.1)
 
         @edge_law(field="water_flux")
         def _darcy(self, potential, water_flux, K):
-            return water_flux - K * np.asarray(self._graph_view.incidence.T @ potential).reshape(-1)
+            return water_flux - K * np.asarray(self.graph_view.incidence.T @ potential).reshape(-1)
 
 
 def s_vid(name):

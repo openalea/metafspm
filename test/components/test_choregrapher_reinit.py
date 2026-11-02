@@ -38,7 +38,7 @@ def test_reset_keeps_instance_and_registered_processes():
 
 def test_component_defined_before_reset_still_runs():
     Choregrapher().reset()
-    Choregrapher()._set_simulation_time_step(3600)
+    Choregrapher().set_simulation_time_step(3600)
     grid = ArrayDataStructure(shape=(1,))
     probe = ReinitProbe(data_structure=grid)
 

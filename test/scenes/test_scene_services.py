@@ -167,6 +167,7 @@ def test_environment_model_cadence_and_helpers():
         scene.run()
     assert soil.calls == ["full", "after", "between", "between", "full", "after", "between", "between", "full", "after"]
     assert soil.last_run == 6 * DT and soil.checkpoint_state() == {"last_run": 6 * DT}
-    assert soil.plant_data_structure() is scene.populations[0].data_structure    # one population: its own
+    union = soil.plant_data_structure()                                       # one population: a union of one
+    assert type(union).__name__ == "UnionDataStructure" and union.parts == [scene.populations[0].data_structure]
     grid = soil.build_grid(voxel=0.1, depth=0.3)
     assert grid.shape == (8, 4, 3) and soil.pattern == (0., 0., 0.8, 0.4)

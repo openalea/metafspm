@@ -60,14 +60,34 @@ class Functor:
         mask, mask_location = self._mask(instance, ds)
         if mask is not None:
             args = [a[mask] if location == mask_location else a for a, location in zip(args, locations)]
-        instance.__dict__["_in_equation"] = True        # self.<parameter> is refused inside steps
-        try:
-            out = self._evaluate(instance, args)
-        finally:
-            instance.__dict__["_in_equation"] = False
+        key = self._memo_key(instance, ds, args, mask) if getattr(self.fun, "__memo__", False) else None
+        kept = instance.__dict__.get("_step_memos", {}).get(self.name) if key is not None else None
+        if kept is not None and kept[0] == key:
+            out = _copied(kept[1])                      # the same values: the last outputs
+        else:
+            instance.__dict__["_in_equation"] = True        # self.<parameter> is refused inside steps
+            try:
+                out = self._evaluate(instance, args)
+            finally:
+                instance.__dict__["_in_equation"] = False
+            if key is not None:
+                instance.__dict__.setdefault("_step_memos", {})[self.name] = (key, _copied(out))
         if out is None:            # a step returning None writes nothing (e.g. an inherited step disabled)
             return
         self._write_outputs(instance, ds, out, args, mask, mask_location)
+
+    def _memo_key(self, instance, ds, args, mask) -> str:
+        """A memoized step's key: the structure, its component's parameters (their versions) and settings, the mask
+        and its arguments' values."""
+        from openalea.metafspm.solve.memo import content_key
+        cls = type(instance)
+        structure = ds.structure_stamp() if hasattr(ds, "structure_stamp") else getattr(ds, "topology_version", None)
+        parameters = tuple(ds.write_count(name) if ds.has(name) else -1
+                           for name in (cls.declared_parameters() if hasattr(cls, "declared_parameters") else ()))
+        settings = tuple(repr(getattr(instance, name)) for name in (
+            cls.declared_settings() if hasattr(cls, "declared_settings") else ()))
+        return content_key(repr((structure, parameters, settings)), 0 if mask is None else mask,
+                           *(a for a in args if a is not None))
 
     def _arguments(self, instance, ds):
         """
@@ -228,3 +248,14 @@ class Functor:
         else:
             raise TypeError(f"Step {self.class_name}.{self.name} needs a DataStructure (got {type(data).__name__}); "
                             "props-based components were removed, see docs/migration.md")
+
+
+def _copied(out):
+    """A step's outputs with their arrays copied (kept, or given again, without sharing them)."""
+    if isinstance(out, np.ndarray):
+        return out.copy()
+    if isinstance(out, dict):
+        return {name: _copied(value) for name, value in out.items()}
+    if isinstance(out, tuple):
+        return tuple(_copied(value) for value in out)
+    return out

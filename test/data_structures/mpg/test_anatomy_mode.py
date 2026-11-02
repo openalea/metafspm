@@ -227,11 +227,11 @@ class AnatomyHydraulics(FunctionalComponent):
 
         @node_balance(field="water_potential")
         def _balance(self, water_flux):
-            return np.asarray(self._graph_view.incidence @ water_flux).reshape(-1)
+            return np.asarray(self.graph_view.incidence @ water_flux).reshape(-1)
 
         @edge_law(field="water_flux")
         def _flow(self, water_potential, water_flux, K):
-            return water_flux - K * np.asarray(self._graph_view.incidence.T @ water_potential).reshape(-1)
+            return water_flux - K * np.asarray(self.graph_view.incidence.T @ water_potential).reshape(-1)
 
 
 def test_a_graph_system_solves_on_the_assembled_anatomy_graph():

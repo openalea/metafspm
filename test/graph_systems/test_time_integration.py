@@ -27,12 +27,12 @@ class _Diffusion:
     def _balance(self, solute, solute_flux):
         volume = self.data_structure.cell_volume()
         return (solute - self.previous("solute")) / self.dt \
-            + np.asarray(self._graph_view.incidence @ solute_flux).reshape(-1) / volume
+            + np.asarray(self.graph_view.incidence @ solute_flux).reshape(-1) / volume
 
     @edge_law(field="solute_flux")
     def _fick(self, solute, solute_flux, diffusivity, face_area, face_distance):
         return solute_flux - diffusivity * face_area / face_distance \
-            * np.asarray(self._graph_view.incidence.T @ solute).reshape(-1)
+            * np.asarray(self.graph_view.incidence.T @ solute).reshape(-1)
 
 
 def _system(**options):

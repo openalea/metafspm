@@ -21,17 +21,17 @@ DT = 10.
 
 @pytest.fixture(autouse=True)
 def _simulation_time_step():
-    Choregrapher()._set_simulation_time_step(DT)
+    Choregrapher().set_simulation_time_step(DT)
 
 
 class _Diffusion:
     @node_balance(field="sugar")
     def _balance(self, sugar, sugar_flux):
-        return (sugar - self.previous("sugar")) / self.dt + np.asarray(self._graph_view.incidence @ sugar_flux).reshape(-1)
+        return (sugar - self.previous("sugar")) / self.dt + np.asarray(self.graph_view.incidence @ sugar_flux).reshape(-1)
 
     @edge_law(field="sugar_flux")
     def _law(self, sugar, sugar_flux, conductance):
-        return sugar_flux - conductance * np.asarray(self._graph_view.incidence.T @ sugar).reshape(-1)
+        return sugar_flux - conductance * np.asarray(self.graph_view.incidence.T @ sugar).reshape(-1)
 
 
 def _fields():

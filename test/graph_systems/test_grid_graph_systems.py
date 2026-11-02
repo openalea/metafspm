@@ -23,7 +23,7 @@ SHAPE, DX, DT, D = (4, 3, 5), (0.1, 0.2, 0.05), 0.5, 1e-3
 def _simulation_time_step():
     """The scene's step is the components' (one solve per call)."""
     from openalea.metafspm.coupling.choregrapher import Choregrapher
-    Choregrapher()._set_simulation_time_step(DT)
+    Choregrapher().set_simulation_time_step(DT)
 
 
 
@@ -34,12 +34,12 @@ class _DiffusionEquations:
     def _balance(self, solute, solute_flux, uptake):
         volume = self.data_structure.cell_volume()
         return (solute - self.previous("solute")) / self.dt \
-            + np.asarray(self._graph_view.incidence @ solute_flux).reshape(-1) / volume - uptake
+            + np.asarray(self.graph_view.incidence @ solute_flux).reshape(-1) / volume - uptake
 
     @edge_law(field="solute_flux")
     def _fick(self, solute, solute_flux, diffusivity, face_area, face_distance):
         return solute_flux - diffusivity * face_area / face_distance \
-            * np.asarray(self._graph_view.incidence.T @ solute).reshape(-1)
+            * np.asarray(self.graph_view.incidence.T @ solute).reshape(-1)
 
 
 def _diffusion(groundwater=False, **options):
@@ -151,7 +151,7 @@ class DiffusionWithDivergence(SoilFields):
     class _diffusion(_DiffusionEquations):
         @graph_output("divergence", location="node")                     # "node": the grid's cells
         def _divergence(self, solute_flux):
-            return np.asarray(self._graph_view.incidence @ solute_flux).reshape(-1)
+            return np.asarray(self.graph_view.incidence @ solute_flux).reshape(-1)
 
 
 def test_a_node_output_on_a_grid_is_written_on_the_cells():

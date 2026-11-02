@@ -176,12 +176,28 @@ def population_data_structure(table: pd.DataFrame, model, time_step: float = 360
 
 
 def _flat_scenario(scenario) -> dict:
-    """*scenario* as given ({name: value}); the former {"parameters": {...}} nesting raises."""
+    """*scenario* as given ({name: value}), its dotted entries folded into their sectioned parameter
+    ({"root_anatomy.cortex.n_layers": 4} into root_anatomy's {"cortex": {"n_layers": 4}}, over a nested value given
+    too); the former {"parameters": {...}} nesting raises."""
     scenario = dict(scenario or {})
     if "parameters" in scenario:
         raise ValueError("a scenario is flat, {name: value}: write the entries of its 'parameters' dict at its top "
                          "level")
+    for key in [key for key in scenario if isinstance(key, str) and "." in key and key != "forcings"]:
+        name, *path = key.split(".")
+        target = scenario.get(name)
+        target = {} if target is None else _nested_copy(target)
+        node = target
+        for part in path[:-1]:
+            node = node.setdefault(part, {})
+        node[path[-1]] = scenario.pop(key)
+        scenario[name] = target
     return scenario
+
+
+def _nested_copy(value):
+    """A copy of nested dicts (a sectioned parameter's value), so that folding leaves the given one as it was."""
+    return {k: _nested_copy(v) for k, v in value.items()} if isinstance(value, dict) else value
 
 
 def _build_population(table: pd.DataFrame, initiators=(), read_by_initiators: set = None, reduction=None,
@@ -268,8 +284,11 @@ def _apply_plant_scenarios(ds, components, table: pd.DataFrame, plants: list) ->
                                      f"is stored at '{ds.location(name)}', not per plant: give every plant the same "
                                      "value")
                 continue
-            current = np.asarray(ds.get(name), dtype=float)
-            values = [by_plant[int(e)].get(name, current[i]) for i, e in enumerate(entities)]
+            stored = np.asarray(ds.get(name))
+            current = stored if stored.dtype == object else stored.astype(float)
+            values = np.empty(len(entities), dtype=object) if stored.dtype == object else [None] * len(entities)
+            for i, e in enumerate(entities):             # a record per plant (dtype object) taken as it is
+                values[i] = by_plant[int(e)].get(name, current[i])
             ds.set(name, values)
 
 

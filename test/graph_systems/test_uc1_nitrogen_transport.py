@@ -27,7 +27,7 @@ from nitrogen import (DOC, DT, K, SCALES, NitrogenFields, Transport, TransportDi
 
 @pytest.fixture(autouse=True)
 def _simulation_time_step():
-    Choregrapher()._set_simulation_time_step(DT)
+    Choregrapher().set_simulation_time_step(DT)
 
 
 @pytest.fixture(params=list(SCALES))

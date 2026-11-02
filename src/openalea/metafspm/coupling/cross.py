@@ -18,7 +18,7 @@ from typing import Mapping, Optional
 import numpy as np
 from numba import njit
 
-from openalea.metafspm.coupling.declaration import (DOWN_MAPPINGS, INTENSIVE_KINDS, MASSIC_KINDS, UP_MAPPINGS,
+from openalea.metafspm.coupling.declaration import (DOWN_MAPPINGS, INTENSIVE_KINDS, MASSIC_KINDS, POOLED_UP_MAPPINGS,
                                                     check_link, declared_kind, default_mapping)
 from openalea.metafspm.data_structure.data_api import DataStructure, VariableStoreMixin
 
@@ -179,7 +179,7 @@ class CrossMapping:
                 raise ValueError("weighted_mean needs a weight variable")
             share = fractions * np.asarray(weights, dtype=float).reshape(-1)[rows]
         else:
-            raise ValueError(f"unknown aggregation '{aggregation}' towards cells, expected one of {UP_MAPPINGS}")
+            raise ValueError(f"unknown aggregation '{aggregation}' towards cells, expected one of {POOLED_UP_MAPPINGS}")
         return (np.bincount(columns, weights=share * values[rows], minlength=n),
                 np.bincount(columns, weights=share, minlength=n))
 
@@ -238,7 +238,7 @@ class _ScalarMapping:
         if aggregation == "weighted_mean":
             weights = np.asarray(weights, dtype=float).reshape(-1)
             return np.array([(values * weights).sum()]), np.array([weights.sum()])
-        raise ValueError(f"unknown aggregation '{aggregation}' towards a scalar, expected one of {UP_MAPPINGS}")
+        raise ValueError(f"unknown aggregation '{aggregation}' towards a scalar, expected one of {POOLED_UP_MAPPINGS}")
 
     def weight_totals(self, weights) -> np.ndarray:
         return np.array([np.asarray(weights, dtype=float).sum()])
@@ -547,7 +547,7 @@ class Exchanges:
                         aggregation = "mean"              # an environment scalar: the plain mean
                     else:
                         aggregation = default_mapping(kind, direction, name, weight=link.weight)
-                allowed = UP_MAPPINGS if direction == "up" else DOWN_MAPPINGS
+                allowed = POOLED_UP_MAPPINGS if direction == "up" else DOWN_MAPPINGS
                 if aggregation not in allowed:
                     raise ValueError(f"{name}: aggregation '{aggregation}' does not go {direction}, expected one of "
                                      f"{allowed}")

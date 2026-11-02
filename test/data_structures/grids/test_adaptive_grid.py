@@ -23,7 +23,7 @@ DT, D = 0.5, 1e-3
 
 @pytest.fixture(autouse=True)
 def _simulation_time_step():
-    Choregrapher()._set_simulation_time_step(DT)
+    Choregrapher().set_simulation_time_step(DT)
 
 
 def _grid(**options):
@@ -83,12 +83,12 @@ class _Diffusion:
     def _balance(self, solute, solute_flux):
         volume = self.data_structure.cell_volume()
         return (solute - self.previous("solute")) / self.dt \
-            + np.asarray(self._graph_view.incidence @ solute_flux).reshape(-1) / volume
+            + np.asarray(self.graph_view.incidence @ solute_flux).reshape(-1) / volume
 
     @edge_law(field="solute_flux")
     def _fick(self, solute, solute_flux, diffusivity, face_area, face_distance):
         return solute_flux - diffusivity * face_area / face_distance \
-            * np.asarray(self._graph_view.incidence.T @ solute).reshape(-1)
+            * np.asarray(self.graph_view.incidence.T @ solute).reshape(-1)
 
 
 @dataclass

@@ -71,7 +71,7 @@ def _step(name: str, *, total: bool = False, iterating: bool = False):
     for functions written with scalar logic.
     """
     def decorator(func=None, *, vectorized: bool = True, location: str = None, locations: dict = None,
-                  filters=None, include_inactive: bool = False):
+                  filters=None, include_inactive: bool = False, memo: bool = False):
         """
         location:  of the step's output when it is not a declared field ("node", "edge", "scalar", "cell", or a
                    coarse scale name); locations: {output name: location} for the supplementary outputs.
@@ -80,13 +80,17 @@ def _step(name: str, *, total: bool = False, iterating: bool = False):
         include_inactive:
                    the step also computes on the entities outside the DataStructure's "active" mask (emergence,
                    dead tissues), which it skips by default.
+        memo:      the step's outputs are computed again only when its arguments' values, its component's
+                   parameters or settings, the active mask or the structure changed (an expensive step whose inputs
+                   rarely change: a network's conductances); else its last outputs are written again.
         """
         if func is None:
             return lambda f: decorator(f, vectorized=vectorized, location=location, locations=locations,
-                                       filters=filters, include_inactive=include_inactive)
+                                       filters=filters, include_inactive=include_inactive, memo=memo)
         _check_filters(filters, f"@{name} {func.__name__}")
         func.__filters__ = filters
         func.__include_inactive__ = include_inactive
+        func.__memo__ = memo
         func.__step_tag__ = {"name": name, "total": total, "iterating": iterating, "vectorized": vectorized}
         func.__vectorized__ = vectorized
         func.__output_locations__ = dict(locations or {})

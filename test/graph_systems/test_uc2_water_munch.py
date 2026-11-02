@@ -51,7 +51,7 @@ def _segment_chain(n_segments=3) -> MPGDataStructure:
 class _WaterBalances:
     @node_balance(field="xylem_pressure")
     def _xylem_balance(self, xylem_pressure, phloem_pressure, K_xylem, sigma_xph, sigma_soil, soil_water_potential):
-        B   = self._graph_view.incidence
+        B   = self.graph_view.incidence
         L_x = B @ diags(K_xylem) @ B.T
         return (np.asarray(L_x @ xylem_pressure).reshape(-1)
                 + sigma_xph * (xylem_pressure - phloem_pressure)
@@ -59,7 +59,7 @@ class _WaterBalances:
 
     @node_balance(field="phloem_pressure")
     def _phloem_balance(self, xylem_pressure, phloem_pressure, K_phloem, sigma_xph, phloem_assimilate_loading):
-        B    = self._graph_view.incidence
+        B    = self.graph_view.incidence
         L_ph = B @ diags(K_phloem) @ B.T
         return (np.asarray(L_ph @ phloem_pressure).reshape(-1)
                 - sigma_xph * (xylem_pressure - phloem_pressure)
@@ -69,10 +69,10 @@ class _WaterBalances:
 class _WaterBalancesWithJacobian(_WaterBalances):
     @graph_jacobian
     def _analytic_jacobian(self, K_xylem, K_phloem, sigma_xph, sigma_soil):
-        B    = self._graph_view.incidence
+        B    = self.graph_view.incidence
         L_x  = (B @ diags(K_xylem)  @ B.T).toarray()
         L_ph = (B @ diags(K_phloem) @ B.T).toarray()
-        n    = self._graph_view.n_nodes
+        n    = self.graph_view.n_nodes
         J    = np.zeros((2 * n, 2 * n))
         J[:n, :n] = L_x  + np.diag(sigma_xph + sigma_soil)
         J[:n, n:] = -np.diag(sigma_xph)

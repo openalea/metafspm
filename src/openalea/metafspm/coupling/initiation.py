@@ -85,6 +85,9 @@ def apply_link(g, plant: int, link, receiver, provider) -> None:
             total = np.bincount(owner[kept], weights=(values * weight)[kept], minlength=vids.size)
             count = np.bincount(owner[kept], weights=weight[kept], minlength=vids.size)
             out = total if aggregation == "sum" else np.where(count > 0, total / np.where(count > 0, count, 1.), np.nan)
+            if aggregation in ("max", "min"):
+                out = np.full(vids.size, np.nan)
+                (np.fmax if aggregation == "max" else np.fmin).at(out, owner[kept], values[kept])
             out = np.where(np.bincount(owner[kept], minlength=vids.size) > 0, out, np.nan)
     prop = g.property(link.variable)
     for vid, value in zip(vids.tolist(), np.asarray(out, dtype=float).tolist()):

@@ -132,8 +132,21 @@ def input_variable(unit: str = "", description: str = "", default=None, kind=Non
 def parameter(unit: str = "", description: str = "", default=None, kind=None, by: str = None, scale=None,
               location=None, aggregation=None, weight=None, on_grow="default", dtype=None, min_value=None,
               max_value=None, unit_comment: str = "", value_comment: str = "", references: str = "", DOI=None,
-              **renamed):
+              sections=None, **renamed):
     return _declare("parameter", **_merge(locals(), "parameter"))
+
+
+def geometry_input(description: str = "the plants' elements' geometry (DataStructure.triangles)",
+                   relight: str = "topology"):
+    """
+    Declare that the component reads the plants' geometry (ds.triangles(): every structural component's), listed by
+    declarations() and couplings() (provided by the plants' structural components). *relight*: when an environment
+    model holding it runs fully besides its interval: "topology" when elements appeared or went, "geometry" when the
+    triangles changed too, None never.
+    """
+    if relight not in ("topology", "geometry", None):
+        raise ValueError(f"geometry_input(relight=...): 'topology', 'geometry' or None, got '{relight}'")
+    return _declare("geometry", description=description, default=None, relight=relight)
 
 
 _PLANTING = {"x": ("m", "the plant's x in the scene (its planting)"),
@@ -177,8 +190,12 @@ input_variable.__doc__ = """Declare an input: a variable another component provi
     optional, checked against the provider's.""" + _PLACE + _DOCUMENTATION
 parameter.__doc__ = """Declare a parameter: a constant of the equations, set by constructor keywords and
     scenarios. A numeric parameter without a place is stored per plant (each plant's scenario may change it); with
-    *scale* or *location*, one value per entity. *by*: its owner, for the documentation.""" + _KINDS + _PLACE \
-    + _DOCUMENTATION
+    *scale* or *location*, one value per entity. *by*: its owner, for the documentation. *sections*: for a parameter
+    whose value is {section: {field: value}} (dtype object, e.g. an anatomy's parametrization), a function returning
+    its fields, {"section.field": {"default", "unit", "description", "min_value", "max_value"}}: each is listed by
+    declarations() (and parameter_table, variants) as "name.section.field", and a scenario may give it dotted
+    ({"root_anatomy.cortex.n_layers": 4}) or nested ({"root_anatomy": {"cortex": {"n_layers": 4}}}).""" + _KINDS \
+    + _PLACE + _DOCUMENTATION
 
 
 def setting(unit: str = "", description: str = "", default=None, choices=None, unit_comment: str = "",
@@ -340,7 +357,15 @@ class Component:
                              max_value=_bound(meta.get("max_value")), references=meta.get("references") or "",
                              DOI=list(meta.get("DOI") or []), unit_comment=meta.get("unit_comment") or "",
                              value_comment=meta.get("value_comment") or "", upscaling=meta.get("upscaling")))
+            for suffix, entry in (meta.get("sections")() if callable(meta.get("sections")) else {}).items():
+                rows.append(dict(name=f"{f.name}.{suffix}", role=role, kind=None, scale=place,
+                                 unit=entry.get("unit", ""), description=entry.get("description", ""),
+                                 default=entry.get("default"), by=meta.get("by"),
+                                 min_value=_bound(entry.get("min_value")), max_value=_bound(entry.get("max_value")),
+                                 references=meta.get("references") or "", DOI=list(meta.get("DOI") or []),
+                                 unit_comment="", value_comment="", upscaling=None))
         table = pd.DataFrame(rows, columns=DECLARATION_COLUMNS)
+        table["default"] = pd.Series([row["default"] for row in rows], index=table.index, dtype=object)  # ints kept
         for column in ("kind", "min_value", "max_value", "upscaling"):
             table[column] = table[column].astype(object).where(table[column].notna(), None)
         return table
@@ -418,6 +443,13 @@ class DataStructureComponent(Component):
         ds = self.data_structure
         for name in getattr(self, "_derived_inputs", []):
             ds.get(name)
+
+    @property
+    def variable_specs(self) -> dict:
+        """{name: VariableSpec} of the component's declared variables as resolved on its DataStructure (location, MTG
+        scale, mapping, default, kind...), read-only."""
+        from types import MappingProxyType
+        return MappingProxyType(self.__dict__.get("_variable_specs", {}))
 
     def _auto_declare_on_ds(self, ds: DataStructure) -> None:
         """
@@ -566,14 +598,23 @@ class DataStructureComponent(Component):
         return self.data_structure.random(distribution, stream=name, step=step, ids=ids, location=location,
                                           seed=int(self.random_seed), **parameters)
 
-    def active_ids(self) -> np.ndarray:
+    def active_ids(self, location: str = "node") -> np.ndarray:
         """
-        Node ids selected by the DataStructure's "active" mask (every node without one), for MPG-style steps, which
-        loop over vertices themselves: e.g. plants before emergence are skipped.
+        Ids selected by the DataStructure's "active" mask (every one without it), for MPG-style steps, which loop
+        over vertices themselves: e.g. plants before emergence are skipped. At a coarse *location* (e.g. "SubOrgan",
+        whose new entities may have no node yet), the entities of the plants emerged.
         """
         ds = self.data_structure
-        ids = np.asarray(ds.entity_ids("node"))
-        return ids[np.asarray(ds.mask("active"), dtype=bool)] if ds.has_mask("active") else ids
+        ids = np.asarray(ds.entity_ids(location))
+        if location == "node":
+            return ids[np.asarray(ds.mask("active"), dtype=bool)] if ds.has_mask("active") else ids
+        if not ds.has("emerged"):
+            return ids
+        plants = ds.map_to(np.asarray(ds.get("emerged"), dtype=float), "node", "Plant", "max")
+        if location == "Plant":
+            return ids[np.nan_to_num(plants) > 0]
+        emerged = ds.map_to(np.nan_to_num(plants), "Plant", location, "broadcast")
+        return ids[np.asarray(emerged) > 0]
 
     def write_back_to_mtg(self) -> None:
         """
@@ -667,6 +708,23 @@ class FunctionalComponent(DataStructureComponent):
         # Explicit views (e.g. with boundary ports built by hand) are kept until the topology changes
         self.__dict__["_graph_view_cache"] = view
         self.__dict__["_graph_view_version"] = getattr(self.data_structure, "topology_version", None)
+
+    @property
+    def graph_view(self):
+        """The graph the component's graph systems solve on (its incidence, edge_difference...): in a graph system's
+        terms, the active subgraph during its solve."""
+        return self._graph_view
+
+    def calendar(self, time: float = None, default=None) -> tuple:
+        """(day of year, hour) at *time* (default: forcing_time(), the scene time the step's forcings are read at),
+        from the Scene's start (Scene(start=(day_of_year, hour)): the calendar of its time 0), else from *default*
+        (the calendar of time 0 without a Scene start; None: raise)."""
+        start = self.__dict__.get("_scene_calendar") or default
+        if start is None:
+            raise ValueError(f"{type(self).__name__}.calendar(): the Scene has no start=(day_of_year, hour)")
+        time = self.forcing_time() if time is None else float(time)
+        day, hour = float(start[0]), float(start[1])
+        return day + (hour * 3600. + time) // 86400., (hour + time / 3600.) % 24.
 
     def forcing_time(self, at: str = "end") -> float:
         """

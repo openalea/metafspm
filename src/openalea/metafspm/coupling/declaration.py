@@ -19,7 +19,8 @@ from typing import Optional
 from openalea.metafspm.data_structure.configs import ScalesConfig as _ScalesConfig
 
 SOLVER_LOCATIONS = ("node", "edge", "scalar", "cell")
-UP_MAPPINGS = ("sum", "mean", "weighted_mean")
+UP_MAPPINGS = ("sum", "mean", "weighted_mean", "max", "min")
+POOLED_UP_MAPPINGS = ("sum", "mean", "weighted_mean")    # across DataStructures: pooled over the populations
 DOWN_MAPPINGS = ("broadcast", "split")
 EDGE_MAPPINGS = ("child", "parent", "mean")
 

@@ -18,7 +18,7 @@ from growth import DOC, make_chain
 
 @pytest.fixture(autouse=True)
 def _simulation_time_step():
-    Choregrapher()._set_simulation_time_step(1)
+    Choregrapher().set_simulation_time_step(1)
 
 
 @dataclass

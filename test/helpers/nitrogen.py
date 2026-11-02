@@ -36,25 +36,25 @@ def incidence(ds):
 # ---------------------------------------------------------------- the equations
 
 def balance(self, concentration, axial_flux, radial_solute_input):
-    B = self._graph_view.incidence
+    B = self.graph_view.incidence
     return ((concentration - self.previous("concentration")) / self.dt
             + np.asarray(B @ axial_flux).reshape(-1) - radial_solute_input)
 
 
 def concentration_rate(self, axial_flux, radial_solute_input):
     """The rate form: dc/dt = J - B q."""
-    B = self._graph_view.incidence
+    B = self.graph_view.incidence
     return radial_solute_input - np.asarray(B @ axial_flux).reshape(-1)
 
 
 def fick(self, concentration, axial_flux, K_axial):
-    B = self._graph_view.incidence
+    B = self.graph_view.incidence
     return axial_flux - K_axial * np.asarray(B.T @ concentration).reshape(-1)
 
 
 def fick_target(self, concentration, K_axial):
     """explicit=True: the flux itself, K (B^T c)."""
-    B = self._graph_view.incidence
+    B = self.graph_view.incidence
     return K_axial * np.asarray(B.T @ concentration).reshape(-1)
 
 
@@ -104,7 +104,7 @@ class TransportWithOutput(NitrogenFields):
 
         @graph_output("axial_divergence", location="node")
         def _divergence(self, axial_flux):
-            return np.asarray(self._graph_view.incidence @ axial_flux).reshape(-1)
+            return np.asarray(self.graph_view.incidence @ axial_flux).reshape(-1)
 
 
 @dataclass
