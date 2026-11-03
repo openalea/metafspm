@@ -59,6 +59,8 @@ def test_an_anchor_is_found_by_its_label_and_properties():
     stem = g.find_anchor(plant, "StemElement", where={"rank": 1})
     assert g.property("rank")[stem] == 1 and g.parent(stem) == seed
     assert g.find_anchor(plant, "StemElement", first=True) == stem      # the topologically first
+    top = g.find_anchor(plant, "StemElement", last=True)                 # the topologically last: the top
+    assert g.property("rank")[top] == 2 and g.parent(top) == stem
 
 
 def test_a_missing_or_ambiguous_anchor_raises_clearly():
@@ -67,6 +69,8 @@ def test_a_missing_or_ambiguous_anchor_raises_clearly():
         g.find_anchor(plant, "RootSegment")
     with pytest.raises(AnchorError, match="2 SubOrgan 'StemElement's"):
         g.find_anchor(plant, "StemElement")
+    with pytest.raises(AnchorError, match="not both"):
+        g.find_anchor(plant, "StemElement", first=True, last=True)
     with pytest.raises(AnchorError, match="several scales"):
         g.find_anchor(plant, "Shoot")                                    # an Axis, GrowthUnit and Phytomer label
 

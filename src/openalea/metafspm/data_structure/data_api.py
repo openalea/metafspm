@@ -947,7 +947,8 @@ class VariableStoreMixin:
 
     # Caches built on the topology or the values, dropped when a checkpoint is loaded
     _TOPOLOGY_CACHES = ("_parameter_views", "_index_cache", "_traversal_cache", "_levels_cache", "_edges_cache",
-                        "_openalea_post", "_vid_to_idx_dict", "_sorted_to_local", "_chain_cache", "_membership_cache")
+                        "_openalea_post", "_vid_to_idx_dict", "_sorted_to_local", "_chain_cache", "_membership_cache",
+                        "_parent_pairs_cache")
 
     @staticmethod
     def _read_checkpoint(path: str, class_name: str) -> tuple:
@@ -988,6 +989,8 @@ class VariableStoreMixin:
     def _apply_checkpoint(self, path, manifest, saved, arrays) -> None:
         for name in self._TOPOLOGY_CACHES:
             self.__dict__.pop(name, None)
+        for view in self.__dict__.get("_entity_views", {}).values():
+            view._forget()
         for location in {info["location"] for info in manifest["variables"].values()} - {"scalar"}:
             if not np.array_equal(np.asarray(self.entity_ids(location)), arrays[f"_ids::{location}"]):
                 raise ValueError(f"{path}: the entities at {location} differ from the checkpointed ones (another MTG?)")
@@ -1370,10 +1373,12 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
 
     # ── Traversal in local indices ──────
 
-    def _traversal(self) -> dict:
-        """Parents, children (CSR), roots, tips and orders of the graph's nodes, from the Connections; cached."""
-        cache = self.__dict__.get("_traversal_cache")
-        if cache is not None and cache[0] == (self.topology_version, self.n_nodes(), self.n_edges()):
+    def _parent_pairs(self) -> tuple:
+        """(each node's parent index, -1 at a root; the edges' parent and child indices), from the Connections; cached
+        with the traversal (an entity view's parents read them without the orders)."""
+        key = (self.topology_version, self.n_nodes(), self.n_edges())
+        cache = self.__dict__.get("_parent_pairs_cache")
+        if cache is not None and cache[0] == key:
             return cache[1]
         n = self.n_nodes()
         pairs = self.edges()
@@ -1386,6 +1391,16 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
             parent[b] = a
         else:
             a = b = np.empty(0, dtype=np.int64)
+        self.__dict__["_parent_pairs_cache"] = (key, (parent, a, b))
+        return parent, a, b
+
+    def _traversal(self) -> dict:
+        """Parents, children (CSR), roots, tips and orders of the graph's nodes, from the Connections; cached."""
+        cache = self.__dict__.get("_traversal_cache")
+        if cache is not None and cache[0] == (self.topology_version, self.n_nodes(), self.n_edges()):
+            return cache[1]
+        n = self.n_nodes()
+        parent, a, b = self._parent_pairs()
         by_parent = np.argsort(a, kind="stable")
         indices = b[by_parent]
         indptr = np.zeros(n + 1, dtype=np.int64)
@@ -3438,13 +3453,15 @@ MPGDataStructure.at = _view_at
 
 class _RestrictedStore:
     """A store of a location's arrays (one value per entity of the location) seen at some of its entities, *take()*
-    their indices: each read is a copy of those entities' values."""
+    their indices (or a slice of them): each read is a copy of those entities' values."""
 
     def __init__(self, store, take):
         self._store, self._take = store, take
 
     def __getitem__(self, name):
-        return self._store[name][self._take()]
+        take = self._take()
+        values = self._store[name][take]
+        return values.copy() if isinstance(take, slice) else values
 
     def __contains__(self, name):
         return name in self._store
@@ -3543,7 +3560,12 @@ class EntityView(DataStructure):
         other entities, or their MTG values); the coarse locations (Plant, Axis, ...) and the scalars are the base's;
       * mappings between its nodes and coarse locations aggregate over its entities only (map_to, owner, labels);
       * growth: a component's NewNodes may name a parent outside the view (a bearer: any entity of the location);
-        the view follows the topology, the new entities matching the declaration joining it.
+        the view follows the topology, the new entities matching the declaration joining it;
+      * selection: lazily, at the next read after the topology or the labels changed, or after a variable the
+        declaration reads was written (its names in the filters' syntax; a callable's attribute `variables`, else
+        none: a callable is evaluated again on a topology or label change only); its index maps, traversal and stores
+        are cached on it, a step costing about what it costs on the base;
+      * the base: `base`, for what lies outside the view (read only).
 
     Its masks and caches are its own; the base's "active" mask is not seen (define it on the view: the component's
     `active`). MPGDataStructure.entity_view(entities, at) gives it; a component declaring `entities` gets it.
@@ -3566,6 +3588,13 @@ class EntityView(DataStructure):
         """The declaration selecting the view's entities."""
         return self._entities
 
+    @property
+    def base(self):
+        """The DataStructure the view is of (an MPGDataStructure): a variable at every entity of the location (get),
+        the base's indices (index_of). A component reads through it what lies outside its entities (the bearer of a
+        root it creates, its end); it does not write there, another model's entities being that model's."""
+        return self._base
+
     # ── the view's entities ──
     def _label_names(self, condition) -> set:
         """Label names of *condition* (a label name or code, or a sequence of them), as labels() gives them."""
@@ -3576,6 +3605,24 @@ class EntityView(DataStructure):
             code = int(value) if isinstance(value, (int, np.integer)) else self._base.label_code(value)
             names.add(translator.get(code, value))
         return names
+
+    def _with_labels(self, wanted: set) -> np.ndarray:
+        """Whether each entity of the location has one of the label names *wanted*: from the MPG's label codes at
+        once (an ArrayDict of codes), else from labels()."""
+        inner, g = self._inner, self._base.structure
+        if not isinstance(g.properties().get("label"), ArrayDict):
+            return np.array([name in wanted for name in inner.labels().tolist()], dtype=bool)
+        ids = np.asarray(inner.entity_ids("node"), dtype=np.int64)
+        order = np.argsort(ids, kind="stable")
+        found, codes = g._property_at("label", ids[order])
+        if codes.dtype == object:
+            return np.array([name in wanted for name in inner.labels().tolist()], dtype=bool)
+        translator = g.labels.translator
+        wanted_codes = np.array([code for code, name in translator.items() if name in wanted]
+                                + [code for code in wanted if isinstance(code, (int, np.integer))], dtype=float)
+        has = np.zeros(ids.size, dtype=bool)
+        has[order[np.isin(ids[order], found, assume_unique=False)]] = np.isin(codes, wanted_codes)
+        return has
 
     def _selected(self) -> np.ndarray:
         """Whether each entity of the location belongs to the view."""
@@ -3588,36 +3635,107 @@ class EntityView(DataStructure):
             return selected
         selected = np.ones(inner.n_nodes(), dtype=bool)
         if "label" in rule:
-            wanted = self._label_names(rule["label"])
-            selected &= np.array([name in wanted for name in inner.labels().tolist()], dtype=bool)
+            selected &= self._with_labels(self._label_names(rule["label"]))
         others = {key: condition for key, condition in rule.items() if key != "label"}
         if others:
             selected &= np.asarray(inner._evaluate_mask("entities", others, "node"), dtype=bool)
         return selected
 
-    def _selection_stamp(self) -> tuple:
-        inner = self._inner
-        label = self._base.structure.properties().get("label")
-        return inner.topology_version, inner.n_nodes(), getattr(label, "version", None)
+    def _filter_variables(self) -> tuple:
+        """The variables the declaration reads, whose writes select the entities again: in the filters' syntax its
+        names but the label; a callable's attribute `variables` (a name or a sequence of names), else none."""
+        rule = self._entities
+        if callable(rule):
+            declared = getattr(rule, "variables", ())
+            return (declared,) if isinstance(declared, str) else tuple(declared)
+        return tuple(name for name in rule if name != "label")
 
-    def _selection(self) -> tuple:
-        """(the view's entities as indices among the location's, each entity's index in the view or -1), rebuilt when
-        the topology (or the labels) changed."""
+    def _filter_writes(self) -> tuple:
+        """The write counts of the declaration's variables (and of the sources of a derived one)."""
+        variables = self.__dict__.get("_watched")
+        if variables is None:
+            variables = self.__dict__["_watched"] = self._filter_variables()
+        if not variables:
+            return ()
+        base, counts = self._base, []
+        derived = base.__dict__.get("_derived", {})
+        for name in variables:
+            target = base._resolve(name)
+            counts.append(base.write_count(target))
+            if target in derived:
+                counts.extend(base.write_count(source) for source in base._derived_sources(target))
+        return tuple(counts)
+
+    def _selection_stamp(self) -> tuple:
+        """(the topology's stamp: its version, the location's size, the labels' version; the write counts of the
+        declaration's variables)."""
+        held = self.__dict__
+        inner = held["_inner"]
+        label = held["_base"]._mtg.properties().get("label")
+        topology = (inner.topology_version, inner.n_nodes(), getattr(label, "version", None))
+        return topology, self._filter_writes()
+
+    def _membership(self) -> tuple:
+        """(the view's entities as indices among the location's, each entity's index in the view or -1, a key
+        changing when they change): selected again when the topology, the labels or a variable the declaration reads
+        changed (lazily, at the next read); a selection found unchanged keeps its key, and the caches built on it."""
         stamp = self._selection_stamp()
         kept = self.__dict__.get("_selection_cache")
-        if kept is None or kept[0] != stamp:
-            selected = self._selected()
+        if kept is not None and kept[0] == stamp:
+            return kept[1]
+        selected = self._selected()
+        if kept is not None and kept[0][0] == stamp[0] and np.array_equal(kept[2], selected):
+            membership = kept[1]                                # the same entities: only a filter variable written
+        else:
             index = np.flatnonzero(selected)
             position = np.full(selected.size, -1, dtype=np.int64)
             position[index] = np.arange(index.size)
-            kept = self.__dict__["_selection_cache"] = (stamp, index, position)
-        return kept[1], kept[2]
+            version = self.__dict__.get("_membership_version", 0) + 1
+            self.__dict__["_membership_version"] = version
+            membership = (index, position, (stamp[0], version))
+        self.__dict__["_selection_cache"] = (stamp, membership, selected)
+        return membership
+
+    def _selection(self) -> tuple:
+        """(the view's entities as indices among the location's, each entity's index in the view or -1)."""
+        membership = self._membership()
+        return membership[0], membership[1]
+
+    def _membership_key(self) -> tuple:
+        """A key changing with the view's entities (and the topology): the caches built on them."""
+        return self._membership()[2]
+
+    def _cached(self, name: str, build):
+        """*build()*, kept until the view's entities (or the topology) change."""
+        key = self._membership_key()
+        caches = self.__dict__.setdefault("_membership_caches", {})
+        kept = caches.get(name)
+        if kept is None or kept[0] != key:
+            kept = caches[name] = (key, build())
+        return kept[1]
+
+    _CACHES = ("_selection_cache", "_membership_caches", "_stores_cache", "_mtg_read")
+
+    def _forget(self) -> None:
+        """Drop the view's caches (its base loaded a checkpoint)."""
+        for name in self._CACHES:
+            self.__dict__.pop(name, None)
 
     def _take(self, location: str) -> np.ndarray:
         """Indices of the view's entities of *location* ("node" or "edge") among the base's of that location."""
         if location == "node":
             return self._selection()[0]
-        return np.asarray(self._base.index_of(self.entity_ids("edge"), "edge"), dtype=np.int64)
+        return self._cached("edge_take", lambda: np.asarray(self._base.index_of(self.entity_ids("edge"), "edge"),
+                                                            dtype=np.int64))
+
+    def _take_values(self, location: str):
+        """_take(location), or the slice it is when contiguous (the reads and writes of the view's values)."""
+        def build():
+            take = self._take(location)
+            if take.size and (np.diff(take) == 1).all():
+                return slice(int(take[0]), int(take[-1]) + 1)
+            return take
+        return self._cached(f"{location}_take_values", build)
 
     def _bearer_ids(self) -> np.ndarray:
         """The entities a new node may be borne by (NewNodes' parents): every entity of the location."""
@@ -3647,7 +3765,8 @@ class EntityView(DataStructure):
 
     def entity_ids(self, location: str) -> np.ndarray:
         if location == "node":
-            return np.asarray(self._inner.entity_ids("node"), dtype=np.int64)[self._selection()[0]]
+            return self._cached("node_ids", lambda: np.asarray(self._inner.entity_ids("node"),
+                                                               dtype=np.int64)[self._selection()[0]]).copy()
         if location == "edge":
             return self.entity_ids("node")[self.parents() >= 0]
         return self._inner.entity_ids(location)
@@ -3656,13 +3775,12 @@ class EntityView(DataStructure):
         location = location or "node"
         if location not in ("node", "edge"):
             return self._inner.index_of(ids, location)
-        key = (location, self._selection_stamp())
-        kept = self.__dict__.get("_index_cache")
-        if kept is None or kept[0] != key:
+
+        def build():
             known = np.asarray(self.entity_ids(location), dtype=np.int64)
             order = np.argsort(known, kind="stable")
-            kept = self.__dict__["_index_cache"] = (key, known[order], order)
-        _, sorted_ids, order = kept
+            return known[order], order
+        sorted_ids, order = self._cached(f"{location}_index", build)
         scalar = np.ndim(ids) == 0
         query = np.atleast_1d(np.asarray(ids, dtype=np.int64))
         position = np.searchsorted(sorted_ids, query)
@@ -3675,22 +3793,38 @@ class EntityView(DataStructure):
         return int(result[0]) if scalar else result
 
     # ── variables: the base's, at the view's entities ──
+    def _lookup(self) -> tuple:
+        """(the view's stores, the variables found in them {name: (location, store, target)}), kept until the base's
+        variables (registered, removed, aliased: its version), its topology or its stores change."""
+        held = self.__dict__["_base"].__dict__                  # version and topology_version, read directly
+        kept = self.__dict__.get("_stores_cache")
+        if (kept is None or kept[0] != held.get("_version", 0) or kept[1] != held.get("_topology_version", 0)
+                or kept[2] is not held.get("_node_data") or kept[3] is not held.get("_scale_data")):
+            stores = dict(self._inner._var_stores())
+            stores["node"] = _RestrictedStore(stores.get("node", {}), lambda: self._take_values("node"))
+            if "edge" in stores:
+                stores["edge"] = _RestrictedStore(stores["edge"], lambda: self._take_values("edge"))
+            kept = self.__dict__["_stores_cache"] = (held.get("_version", 0), held.get("_topology_version", 0),
+                                                     held.get("_node_data"), held.get("_scale_data"), stores, {})
+        return kept[4], kept[5]
+
     def _var_stores(self) -> dict:
-        stores = dict(self._inner._var_stores())
-        stores["node"] = _RestrictedStore(stores.get("node", {}), lambda: self._take("node"))
-        if "edge" in stores:
-            stores["edge"] = _RestrictedStore(stores["edge"], lambda: self._take("edge"))
-        return stores
+        return self._lookup()[0]
 
     @property
     def _node_data(self):
         return self._var_stores()["node"]
 
     def _find(self, name: str):
+        stores, found = self._lookup()
+        entry = found.get(name)
+        if entry is not None and entry[2] in entry[1]:
+            return entry
         target = self._resolve(name)
-        for location, store in self._var_stores().items():
+        for location, store in stores.items():
             if target in store:
-                return location, store, target
+                entry = found[name] = (location, store, target)
+                return entry
         raise KeyError(f"Variable '{name}' is not registered. Available: {self.available_vars()}.")
 
     def has(self, name: str) -> bool:
@@ -3709,11 +3843,11 @@ class EntityView(DataStructure):
     def get(self, name: str) -> np.ndarray:
         """The values of *name*: at the nodes (or edges) a copy of the view's entities' values; elsewhere the base's."""
         location, store, target = self._find(name)
-        if location not in ("node", "edge"):
+        if location not in ("node", "edge") and self._inner is not self._base:
             return self._inner.get(name)
         if target in self._base.__dict__.get("_derived", {}):
             self._base._update_derived([target])
-        return store[target]
+        return store[target]                      # elsewhere in segment mode, the base's live array (its get)
 
     def set(self, name: str, values) -> None:
         """Write *values* (one per entity of the view, or broadcast) into the base's array at the view's entities."""
@@ -3723,7 +3857,7 @@ class EntityView(DataStructure):
         if target in self._base.__dict__.get("_derived", {}):
             raise ValueError(f"'{name}' is derived from {list(self._base._derived_sources(target))} and recomputed "
                              "when read: write its sources instead")
-        array, take = store._store[target], self._take(location)
+        array, take = store._store[target], self._take_values(location)
         array[take] = _converted(values, array[take], name)
         self._base.mark_written(target)
 
@@ -3744,7 +3878,7 @@ class EntityView(DataStructure):
         current, read = None, self.__dict__.pop("_mtg_read", None)
         if inner.has(name) and inner.location(name) == target and name not in self._base.aliases():
             current = np.array(inner.get(name), copy=True)
-        elif read is not None and read[0] == (name, target, self._selection_stamp()):
+        elif read is not None and read[0] == (name, target, self._membership_key()):
             current = read[1]                            # the MTG's values of every entity of the location
         array = inner.register(name, current, location=target, default=default, on_grow=on_grow, dtype=dtype,
                                shape=shape)
@@ -3775,7 +3909,7 @@ class EntityView(DataStructure):
             return values
         take = self._take(spec.location)
         # kept for register(): a variable created here gets the MTG's values on the other entities too
-        self.__dict__["_mtg_read"] = ((spec.name, spec.location, self._selection_stamp()), values)
+        self.__dict__["_mtg_read"] = ((spec.name, spec.location, self._membership_key()), values)
         if isinstance(values, list):
             return [values[i] for i in take.tolist()]
         return np.asarray(values)[take]
@@ -3788,16 +3922,14 @@ class EntityView(DataStructure):
 
     # ── topology within the view ──
     def _traversal(self) -> dict:
-        stamp = self._selection_stamp()
-        kept = self.__dict__.get("_traversal_cache")
-        if kept is not None and kept[0] == stamp:
-            return kept[1]
-        selection, position = self._selection()
-        parent = np.asarray(self._inner.parents(), dtype=np.int64)[selection]
-        parent = np.where(parent >= 0, position[np.maximum(parent, 0)], -1)      # outside the view: a base
-        result = _tree_traversal(parent)
-        self.__dict__["_traversal_cache"] = (stamp, result)
-        return result
+        def build():
+            selection, position = self._selection()
+            inner = self._inner
+            parent = inner._parent_pairs()[0] if inner is self._base else inner.parents()
+            parent = np.asarray(parent, dtype=np.int64)[selection]
+            parent = np.where(parent >= 0, position[np.maximum(parent, 0)], -1)      # outside the view: a base
+            return _tree_traversal(parent)
+        return self._cached("traversal", build)
 
     def parents(self) -> np.ndarray:
         """Each node's parent in the view, -1 at a base (its parent is outside the view, or it has none)."""

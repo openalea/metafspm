@@ -10,8 +10,8 @@ from dataclasses import dataclass
 import numpy as np
 import pytest
 
-from openalea.metafspm.coupling.component import (FunctionalComponent, NewNodes, StructuralComponent, input_variable,
-                                                   state_variable)
+from openalea.metafspm.coupling.component import (FunctionalComponent, NewComplexes, NewNodes, StructuralComponent,
+                                                   input_variable, state_variable)
 from openalea.metafspm.coupling.composite_wrapper import CompositeModel
 from openalea.metafspm.data_structure.configs import PropsConfig, ScalesConfig as scales
 from openalea.metafspm.data_structure.data_api import EntityView, LocatedView, MPGDataStructure
@@ -358,6 +358,77 @@ def test_both_run_in_a_scene():
     assert model.shoot.data_structure.n_nodes() == 6 and ds.n_nodes() == 14
     np.testing.assert_allclose(roots.get("root_mass"), 3. * roots.get("length"))
     np.testing.assert_allclose(ds.get("root_mass")[np.isin(ds.labels(), ["Seed", "StemElement"])], 0.)
+
+
+@dataclass
+class Tillers(StructuralComponent):
+    """Its entities: the elements of the axes with a row (axis_row >= 0, read at their Axis), none at first; a tiller
+    grows '+' on the plant's first stem element (outside the view), in a new Axis whose row its NewComplexes gives."""
+    entities = {"axis_row": ">=0"}
+    axis_row: int = state_variable(**DOC, default=-1, scale=scales.Axis, kind="descriptor", dtype="int")
+
+    @segmentation
+    def _tiller(self, axis_row) -> dict:
+        ds = self.data_structure
+        g = ds.structure
+        s, labels = g.scales, g.labels
+        plant = int(ds.entity_ids("Plant")[0])
+        stem = int(ds.base.entity_ids("node")[np.asarray(ds.base.labels()) == "StemElement"][0])
+        complexes = NewComplexes(anchor=[plant, -1, -2, -3], scale=[s.Axis, s.GrowthUnit, s.Phytomer, s.Organ],
+                                 label=[labels.Axis.Shoot, labels.GrowthUnit.Shoot, labels.Phytomer.Shoot,
+                                        labels.Organ.StemInternode], values={"axis_row": 1})
+        return {"new_tiller": NewNodes(parent=[stem], edge="+", label=labels.SubOrgan.StemElement,
+                                       complexes=complexes, complex=[-4])}
+
+
+class TilleredPlant(CompositeModel):
+    initiators = (Shoot,)
+
+    def __init__(self, data_structure, time_step):
+        self.shoot = Shoot(data_structure=data_structure, time_step=time_step)
+        self.tillers = Tillers(data_structure=data_structure, time_step=time_step)
+        self.couple(self.shoot, self.tillers)
+
+    def run(self):
+        self.tillers()
+
+
+def test_a_declaration_on_a_coarse_variable_sees_a_new_complex_s_value():
+    population = population_data_structure(planting([Planting()], TilleredPlant, {}), TilleredPlant, time_step=DT)
+    model, ds = population.instance, population.data_structure
+    view = model.tillers.data_structure
+    assert isinstance(view, EntityView) and view.base is ds and view.n_nodes() == 0
+    model.run()
+    assert view.n_nodes() == 1 and view.labels().tolist() == ["StemElement"]
+    (tiller,) = view.entity_ids("node").tolist()
+    g = ds.structure
+    assert g.edge_type(tiller) == '+' and g.label(g.parent(tiller)) == g.labels.SubOrgan.StemElement
+    assert view.parents().tolist() == [-1]                         # its bearer outside the view
+    rows = np.asarray(ds.get("axis_row"))
+    assert sorted(rows.tolist()) == [-1, 1] and rows[ds.owner("Axis")[ds.index_of(tiller)]] == 1
+
+
+def test_the_selection_follows_a_write_of_a_variable_it_reads():
+    population = population_data_structure(planting([Planting()], TilleredPlant, {}), TilleredPlant, time_step=DT)
+    ds = population.data_structure
+    view = population.instance.tillers.data_structure
+    assert view.n_nodes() == 0 and view.entity_ids("node").size == 0
+    ds.set("axis_row", 0)                                          # the shoot's axis gets a row: its elements join
+    assert view.n_nodes() == 3 and sorted(_labels(view)) == ["Seed", "StemElement", "StemElement"]
+    assert sorted(view.get("length").tolist()) == [SEED_LENGTH, STEM_LENGTH, STEM_LENGTH]
+    assert _parent_ids(view) == _expected_parent_ids(view) and (view.parents() == -1).sum() == 1
+
+    def untracked(base):
+        return np.asarray(base.get("axis_row"))[base.owner("Axis")] >= 1
+
+    def tracked(base):
+        return untracked(base)
+    tracked.variables = ("axis_row",)
+    blind, seeing = ds.entity_view(untracked), ds.entity_view(tracked)
+    assert blind.n_nodes() == seeing.n_nodes() == 0
+    ds.set("axis_row", 1)
+    assert seeing.n_nodes() == 3                                   # it declares what it reads
+    assert blind.n_nodes() == 0                                    # evaluated again on a topology change only
 
 
 # ── anatomy mode: the SubOrgans of a Compartment graph ──

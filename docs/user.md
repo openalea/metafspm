@@ -362,8 +362,14 @@ class Roots(StructuralComponent):
 
 - Its nodes are the entities of its location matching the declaration, in the base's order (the nodes in segment
   mode; the SubOrgans of an anatomy-mode DataStructure, for a component declared at that scale or coarser):
-  `n_nodes()`, `entity_ids("node")`, `index_of` and its steps' arrays are theirs. They are selected again when the
-  topology changes (new entities matching the declaration join it).
+  `n_nodes()`, `entity_ids("node")`, `index_of` and its steps' arrays are theirs. They are selected again, at the
+  next read, when the topology or the labels change (new entities matching the declaration join it) and when a
+  variable the declaration reads is written (`{"axis_row": ">=0"}`, read at each node's Axis: an axis a
+  `NewComplexes` creates with its `axis_row` is seen with it, the new nodes' and complexes' values being written
+  before the new nodes are checked against the declaration). A callable is evaluated again on a topology or label
+  change only, unless it lists the variables it reads in its attribute `variables` (`shoot.variables =
+  ("axis_row",)`); it may read MPG properties (`ds.structure`), which are not tracked. The selection, its index
+  maps and the view's stores are cached on these: a step costs about what it costs on the base.
 - Its topology is theirs: a node's parent is its parent when that one is in the view, else -1 (a base: a seminal root
   on the seed another model owns). `children()`, `roots()`, `tips()`, `order()`, `levels()`, the folds, chains and
   `to_graph_view()` follow from these parents.
@@ -376,7 +382,17 @@ class Roots(StructuralComponent):
 - Its `NewNodes` may name a parent outside the view (a nodal root `'+'` on a stem element): any entity of the
   location; the new nodes must match its declaration. Its masks (and `active`) are its own; the base's triangles are
   those of every component drawing its entities, together.
+- `view.base` is the DataStructure the view is of (the MPGDataStructure): its `get(name)` gives a variable at every
+  entity of the location, `index_of` the base's indices. A component reads through it what lies outside its
+  entities and its steps' arguments cannot give: the end (`x2`, `y2`, `z2`) of the stem element a nodal root is borne
+  by, its bearers' values. It does not write there: another model's entities are that model's.
 - `couplings()` and `declarations()` are unchanged: the components still share one DataStructure.
+- **Anchors.** An initiator builds onto another's vertex (a root model on the seed a shoot model created) through
+  `g.find_anchor(plant, label, scale=None, where=None, first=False, last=False)`: the plant's vertex of that label
+  (at that scale: found from the label when only one scale has it) whose MPG properties equal `where`'s. Several
+  match: an `AnchorError`, unless `first=True` (the topologically first: the bottom of a chain of them) or
+  `last=True` (the topologically last: its top, a crown's top stem element). None: an `AnchorError` naming what the
+  plant has; an anchor must be built by an earlier initiator.
 
 ### Tree kernels
 

@@ -1211,32 +1211,35 @@ class StructuralComponent(DataStructureComponent):
         assert created[0] == first
         ds.update_topology()
         self.topology_updates = getattr(self, "topology_updates", 0) + 1
+        # an entity view's new nodes get their values (and their complexes' values) at the location's entities, before
+        # they are selected: a declaration may read them (an axis' axis_row a NewComplexes gives)
+        holder = ds._inner if isinstance(ds, EntityView) else ds
+        if new.complexes is not None and new.complexes.values:
+            scale_names = declared_scale_names(g)
+            for name, values in new.complexes.values.items():
+                if not holder.has(name):
+                    raise KeyError(f"NewComplexes: '{name}' is not a variable of the DataStructure")
+                location = holder.location(name)
+                these = np.array([scale_names.get(int(scale)) == location for scale in new.complexes.scale])
+                if not these.any():
+                    raise ValueError(f"NewComplexes: '{name}' is at {location}, no new complex is")
+                current = np.array(holder.get(name))
+                current[holder.index_of(complex_vids[these], location=location)] = np.broadcast_to(
+                    np.asarray(values), (len(new.complexes),))[these]
+                holder.set(name, current)
+        index = holder.index_of(vids)
+        for name, values in new.values.items():
+            if not holder.has(name):
+                raise KeyError(f"NewNodes: '{name}' is not a variable of the DataStructure")
+            current = np.array(holder.get(name))
+            current[index] = values
+            holder.set(name, current)
         if isinstance(ds, EntityView):
             outside = ~np.isin(vids, ds.entity_ids("node"))
             if outside.any():
                 raise ValueError(f"NewNodes: {int(outside.sum())} new nodes (labels "
                                  f"{sorted(set(map(str, new.label[outside].tolist())))}) are not among "
                                  f"{type(self).__name__}'s entities {self.entities!r}")
-        index = ds.index_of(vids)
-        for name, values in new.values.items():
-            if not ds.has(name):
-                raise KeyError(f"NewNodes: '{name}' is not a variable of the DataStructure")
-            current = np.array(ds.get(name))
-            current[index] = values
-            ds.set(name, current)
-        if new.complexes is not None and new.complexes.values:
-            scale_names = declared_scale_names(g)
-            for name, values in new.complexes.values.items():
-                if not ds.has(name):
-                    raise KeyError(f"NewComplexes: '{name}' is not a variable of the DataStructure")
-                location = ds.location(name)
-                these = np.array([scale_names.get(int(scale)) == location for scale in new.complexes.scale])
-                if not these.any():
-                    raise ValueError(f"NewComplexes: '{name}' is at {location}, no new complex is")
-                current = np.array(ds.get(name))
-                current[ds.index_of(complex_vids[these], location=location)] = np.broadcast_to(
-                    np.asarray(values), (len(new.complexes),))[these]
-                ds.set(name, current)
         if before is not None:
             self._repartition(*before)
         return vids
