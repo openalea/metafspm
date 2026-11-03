@@ -176,8 +176,6 @@ def test_a_reduction_chosen_by_the_scenario():
             {"reduced": True}, {"reduced": False}]), model)
 
 
-@pytest.mark.xfail(strict=True, reason="a reduced component with a per-plant parameter: its library's solve does not "
-                                      "converge (NaN), a bug older than the object parameters (being fixed)")
 def test_the_library_gets_every_per_plant_parameter_and_keys_its_kinds_by_them():
     """A plant's object parameter (e.g. a component's dict of options) reaches the reduction's library runs and tells
     kinds apart: two plants differing in it only have kinds of their own."""
@@ -200,3 +198,33 @@ def test_the_library_gets_every_per_plant_parameter_and_keys_its_kinds_by_them()
     assert first["options"] == {"suberin": 1} and second["options"] == {"suberin": 2}
     assert _signature(first) != _signature(second)
     assert _signature(first) == _signature(dict(first))                 # by content
+
+
+@pytest.mark.parametrize("n_plants", [1, 2])
+def test_a_subclass_of_the_reduced_component_with_a_per_plant_parameter_gives_the_full_potentials(n_plants):
+    """A reduction declares its systems by their component ("NodeHydraulics._hydraulics"): a subclass of it (here
+    with a per-plant parameter more) runs the same system, reduced (its library reads its operator, not solves it),
+    with the full potentials on its kept nodes."""
+    @dataclass
+    class FactoredHydraulics(NodeHydraulics):
+        unused_factor: float = parameter(**DOC, default=1.)
+
+    def factored(reduced):
+        class FactoredPlant(_model(reduced)):
+            def __init__(self, data_structure, time_step):
+                self.hydraulics = FactoredHydraulics(data_structure=data_structure, time_step=time_step)
+                self.couple(self.hydraulics)
+        return FactoredPlant
+
+    solved = {}
+    for reduced in (False, True):
+        model = factored(reduced)
+        population = population_data_structure(planting([Planting(x=float(i)) for i in range(n_plants)], model,
+                                                        plant_scenarios=[{}] * n_plants), model)
+        population.instance.run()
+        solved[reduced] = population.data_structure
+    full, reduced = solved[False], solved[True]
+    assert reduced.n_nodes() < full.n_nodes()
+    row = {place: i for i, place in enumerate(_places(full))}
+    rows = [row[place] for place in _places(reduced)]
+    np.testing.assert_allclose(reduced.get("water_potential"), full.get("water_potential")[rows], rtol=1e-11)

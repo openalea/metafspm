@@ -322,7 +322,7 @@ def _evaluate(reduction: Reduction, parameters: dict, requests: dict) -> dict:
     reduced instance per kind, isolated."""
     from openalea.metafspm.coupling.component import StructuralComponent
     from openalea.metafspm.scene.population import Planting, planting, population_data_structure
-    from openalea.metafspm.solve.decorator import _GraphSystemBuilder
+    from openalea.metafspm.solve.decorator import _GraphSystemBuilder, declared_system
     items = list(requests.items())
     plant_g = reduction.g
     scale = getattr(plant_g.scales, reduction.location)
@@ -401,7 +401,7 @@ def _evaluate(reduction: Reduction, parameters: dict, requests: dict) -> dict:
     out = {kind_key: {} for kind_key, _ in items}
     for system in reduction.systems:
         component_name, attr = system.split(".")
-        component = next(c for c in instance.components if type(c).__name__ == component_name)
+        component = next(c for c in instance.components if declared_system(c, attr, (system,)) is not None)
         spec_def = type(component)._graph_system_specs[attr]
         with _extracting():
             builder = _GraphSystemBuilder(component, spec_def)

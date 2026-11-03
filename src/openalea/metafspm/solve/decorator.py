@@ -374,6 +374,17 @@ _EXTRACTING = []
 _SKIPPED = set()
 
 
+def declared_system(instance, inner_name: str, systems) -> str:
+    """The name among *systems* ("Component._system") of *instance*'s graph system *inner_name*: its class's or a
+    base class's (a subclass of the declared component, e.g. with a parameter more, runs the same system), or
+    None."""
+    for cls in type(instance).__mro__:
+        name = f"{cls.__name__}.{inner_name}"
+        if name in systems:
+            return name
+    return None
+
+
 def graph_output(name, location: str = None, filters=None):
     """
     Tag a method as a named post-solve output hook. *location* ("node" or "edge") is required when *name* is not a
@@ -1317,8 +1328,8 @@ def _reduced_terms(instance, spec_def, ds, gv):
     reduction = getattr(getattr(ds, "structure", None), "reduction", None)
     if reduction is None:
         return None
-    name = f"{type(instance).__name__}.{spec_def['inner_class'].__name__}"
-    if name not in reduction.systems:
+    name = declared_system(instance, spec_def["inner_class"].__name__, reduction.systems)
+    if name is None:
         return None
     return reduction.terms(instance, name, ds, np.asarray(gv.node_ids, dtype=np.int64))
 
@@ -1337,7 +1348,7 @@ def _invoke_graph_system(self, method_name: str) -> None:
     if hasattr(self, "_refresh_from_bio_scale"):
         self._refresh_from_bio_scale()
     spec_def = type(self)._graph_system_specs[method_name]
-    if _SKIPPED and f"{type(self).__name__}.{spec_def['inner_class'].__name__}" in _SKIPPED:
+    if _SKIPPED and declared_system(self, spec_def["inner_class"].__name__, _SKIPPED) is not None:
         return
     filters = spec_def.get("filters")
     # The active subgraph: the DataStructure mask of the system's filters
