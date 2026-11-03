@@ -81,7 +81,7 @@ model's sites.
   the first phytomers). Each leaf's request is counted once, when it falls due: none is lost, whatever the steps.
 - **Its entities:** Adel's elements (`entities = {"axis_row": ">=0"}`), its phytomers those they belong to.
 
-Their tests are in metafspm's `test/examples/test_use_case_1_plant.py`, on a test plant model (WheatCrown, Adel,
+Their tests are in `test/test_plant.py` (the example's own: `python -m pytest examples/use_case_1/test`, outside metafspm's suite, which needs no port), on a test plant model (WheatCrown, Adel,
 the rule, ArchiSimple):
 
 - the seed and the subcrown internode, at the planting's depth or the scenario's;
@@ -134,7 +134,7 @@ each hour it prints `WaterBalance`'s diagnostics (decision U-6: the plant and th
 With a folder, the SceneRecorder writes the summaries, `water_balance.csv`, and a frame every 6 hours with its
 views (`frame_views="default"`).
 
-Its tests are in metafspm's `test/examples/test_use_case_1_assembly.py`, on one young plant over three hours: the
+Its tests are in `test/test_assembly.py` (the example's own, as the plant's), on one young plant over three hours: the
 links' factors, the assembly's couplings, each model's own entities, the transpiration into MECHA, the steady plant,
 the uptake into the soil, the soil's potential on the roots, the light on the gas exchange, the soil's balance with
 the uptake.
