@@ -8,6 +8,8 @@ and back::
                                                    scene's mappings
     export_frame(path, ...), export_scene(path, scene)       the same, written to a .glb file
     data_structures = from_frame(frame)            {id: DataStructure}, rebuilt: import_frame(path) from a file
+    write_views(path, default_views(scene))        the layers ParaView shows (views.json): the shoots, the roots as
+                                                   tubes, the soil grids
 
 What a frame holds:
 
@@ -797,6 +799,128 @@ def export_frame(path: str, data_structures: dict, **options) -> None:
 def export_scene(path: str, scene, **options) -> None:
     """Write scene_to_frame(scene, \\*\\*options) to the .glb file *path*."""
     _fspm_tf().write(path, scene_to_frame(scene, **options))
+
+
+# ── Views (fspm-TF §8.1: the layers ParaView shows) ─────────────────────────
+
+ROOT_LABELS = ("RootSegment", "RootApex")                       # the vocabulary's root SubOrgan labels
+SHOOT_LABELS = ("LeafElement", "StemElement", "HiddenElement")  # its shoot ones
+SHOOT_COLOR = [0.42, 0.68, 0.3]
+
+
+def _labels_for(data_structure, vocabulary_labels: tuple, others: list = ()) -> list:
+    """The labels a data structure gives the vocabulary's *vocabulary_labels*: those, and its own names for them (its
+    labels map), with *others* (more of its labels), sorted."""
+    aliases = {platform for platform, standard in data_structure.labels.items() if standard in vocabulary_labels}
+    return sorted(set(vocabulary_labels) | aliases | set(others))
+
+
+def _shown_variable(declared: dict, entity_set, scale: str = None, location: str = None) -> str:
+    """The variable a layer is coloured by: the first numeric state variable (not a descriptor) the components
+    declare at *scale* (or *location*) that *entity_set* holds, else the first such input; None without one."""
+    from openalea.metafspm.coupling.declaration import scale_names
+    names = scale_names()
+    for wanted in ("state_variable", "input"):
+        for name, metadata in declared.items():
+            column = entity_set.columns.get(name)
+            if (metadata.get("variable_type") != wanted or metadata.get("kind") == "descriptor" or column is None
+                    or column.dtype == object or column.dtype.kind not in "fiu"):
+                continue
+            at = metadata.get("location") if location is not None else names.get(metadata.get("scale"))
+            if at == (location if location is not None else scale) or (at is None and location is None):
+                return name
+    return None
+
+
+def _draws_triangles(ds) -> bool:
+    try:
+        ds.triangles()
+    except (ValueError, NotImplementedError, AttributeError):
+        return False
+    return True
+
+
+def _plant_layers(data_structure, ds, declared: dict) -> list:
+    """A population's default layers: its shoot mesh coloured by an Organ variable, its root segments as tubes on
+    radius coloured by a SubOrgan variable, each component's display mesh (e.g. sections) hidden."""
+    from openalea.fspm_tf import views
+    sets = {entity_set.name: entity_set for entity_set in data_structure.entity_sets}
+    elements = sets.get("SubOrgan")
+    if elements is None:
+        return []
+    present = sorted({label for label in elements.columns["label"].tolist() if label is not None}) \
+        if "label" in elements.columns else []
+    roots = _labels_for(data_structure, ROOT_LABELS)
+    shoots = _labels_for(data_structure, SHOOT_LABELS, [label for label in present if label not in roots])
+    layers = []
+    meshes = {mesh.name: mesh for mesh in data_structure.meshes}
+    drawn = "triangles" in meshes or (ds is not None and _draws_triangles(ds))
+    if drawn and (set(present) - set(roots) or not present):          # shoot elements, or no element yet
+        organs = sets.get("Organ")
+        variable = _shown_variable(declared, organs, scale="Organ") if organs is not None else None
+        layer = {"name": f"{data_structure.id} shoot",
+                 "source": {"data_structure": data_structure.id, "kind": "mesh", "mesh": "triangles"},
+                 "select": {"entity_set": "SubOrgan", "where": {"label": shoots}}}
+        layer.update({"color_by": {"entity_set": "Organ", "variable": variable}} if variable
+                     else {"color_by": None, "solid_color": SHOOT_COLOR})
+        layers.append(layer)
+    if views.segment_columns(elements):
+        variable = _shown_variable(declared, elements, scale="SubOrgan")
+        layer = {"name": f"{data_structure.id} roots",
+                 "source": {"data_structure": data_structure.id, "kind": "segments", "entity_set": "SubOrgan"},
+                 "select": {"entity_set": "SubOrgan", "where": {"label": roots}},
+                 "color_by": {"entity_set": "SubOrgan", "variable": variable} if variable else None}
+        if "radius" in elements.columns:
+            layer["tube"] = {"radius": "radius", "scale": 1.}
+        layers.append(layer)
+    for name in meshes:
+        if name != "triangles":                       # a component's shapes for display only, e.g. its sections
+            layers.append({"name": f"{data_structure.id} {name}",
+                           "source": {"data_structure": data_structure.id, "kind": "mesh", "mesh": name},
+                           "color_by": None, "visible": False})
+    return layers
+
+
+def default_views(scene, frame=None) -> dict:
+    """
+    The default views of a Scene's frames (fspm-TF's views.json, §8.1), one configuration "default":
+
+    - per population: "<population> shoot", its mesh (the geometry provider's triangles) where the SubOrgans are shoot
+      elements, coloured by the first Organ variable its components declare (a state variable not a descriptor, else
+      an input; a solid green without one); "<population> roots", its SubOrgans with segment ends where they are root
+      elements, as tubes on radius, coloured by the first such SubOrgan variable; each display mesh of a component
+      ("<population> <component>", e.g. sections), hidden;
+    - per environment grid: "<model>", its cells coloured by the first cell variable its components declare, at
+      opacity 0.3.
+
+    *frame*: the scene's frame (default: scene_to_frame(scene)), whose data structures, meshes and labels the layers
+    are of: a population gets its shoot layer when it draws triangles and the frame has shoot elements (or no
+    element yet), its roots layer when its SubOrgans have segment ends. A part that appears later (a shoot from
+    roots-only frames) gets no default layer: give SceneRecorder(frame_views=) a views dict or file then.
+    """
+    frame = frame if frame is not None else scene_to_frame(scene)
+    found = scene.data_structures()
+    populations = {population.name for population in scene.populations}
+    layers = []
+    for data_structure in frame.data_structures:
+        ds, _, components = found.get(data_structure.id, (None, None, ()))
+        declared = _declarations(components)
+        if data_structure.id in populations and data_structure.kind == "graph":
+            layers += _plant_layers(data_structure, ds, declared)
+        elif data_structure.grid is not None and data_structure.id not in populations:
+            cells = data_structure.entity_set(data_structure.grid.cells)
+            variable = _shown_variable(declared, cells, location="cell")
+            layers.append({"name": data_structure.id, "source": {"data_structure": data_structure.id, "kind": "grid"},
+                           "color_by": {"entity_set": cells.name, "variable": variable} if variable else None,
+                           "opacity": 0.3})
+    return {"fspm_tf_views": 1, "active": "default", "configurations": {"default": {"layers": layers}}}
+
+
+def write_views(path: str, views: dict) -> None:
+    """Write *views* (fspm-TF's views.json, §8.1) to *path*, checked against fspm-TF's schema."""
+    _fspm_tf()
+    from openalea.fspm_tf import views as fspm_tf_views
+    fspm_tf_views.write_views(path, views)
 
 
 # ── Logging: filtered frames ────────────────────────────────────────────────

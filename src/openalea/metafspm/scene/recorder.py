@@ -20,6 +20,8 @@ A scene's outputs, written as it runs::
                                       DataFrame, or None for no row}
     frames/frame_<step>.glb, frames/scene.fspm.json
                                       the whole scene (fspm-TF), every frame_period steps
+    frames/views.json                 with frame_views: the layers ParaView shows (fspm-TF's views), written at the
+                                      first frame
     checkpoints/step_<iteration>/     Scene.checkpoint every checkpoint_period steps, the last keep_checkpoints kept
 
 Every output is switched on or off by its own argument (summaries=False, frame_period=None, ...). The initial state
@@ -33,6 +35,7 @@ import os
 import platform
 import shutil
 import sys
+import warnings
 from datetime import datetime
 
 import numpy as np
@@ -99,12 +102,16 @@ class SceneRecorder:
     *summary_period* (steps); *segment_plants* (planting names) and *segment_period*; *frame_period* and *frame_options*
     (io.fspm_tf.scene_to_frame's: geometry, standard_names, data_structures, scales, entities, variables);
     *checkpoint_period* and *keep_checkpoints* (None: all); *tables* {name: function(scene)} and *table_period*.
+    *frame_views*: the frames' views.json (fspm-TF's views: layers for ParaView), written at the first frame: None
+    (none), "default" (io.fspm_tf.default_views: the shoots, the roots as tubes, the soil grids), a views dict, or the
+    path of a views file; its names are checked against that frame, with a warning for each one it lacks. A restored
+    run keeps the views.json it finds.
     """
 
     def __init__(self, folder: str = None, summaries: bool = True, summary_period: int = 1, segment_plants=(),
                  segment_period: int = 24, frame_period: int = None, frame_options: dict = None,
                  checkpoint_period: int = None, keep_checkpoints: int = 2, tables: dict = None,
-                 table_period: int = 1):
+                 table_period: int = 1, frame_views=None):
         self.folder = os.fspath(folder) if folder is not None else None
         self.summaries, self.summary_period = bool(summaries), int(summary_period)
         self.segment_plants, self.segment_period = {str(name) for name in segment_plants}, int(segment_period)
@@ -130,6 +137,8 @@ class SceneRecorder:
         if self.frame_period:
             from openalea.metafspm.io.fspm_tf import _fspm_tf
             _fspm_tf()                 # fails now, not after the first steps, without openalea.fspm_tf
+        self.frame_views = self._views_given(frame_views)
+        self._views_written = False
 
     # ── the run ───────────────────────────────────────────────────────────────
 
@@ -320,6 +329,39 @@ class SceneRecorder:
 
     # ── frames and checkpoints ────────────────────────────────────────────────
 
+    def _views_given(self, frame_views):
+        """frame_views as kept: None, "default", or a views dict (a file read now), checked against the schema."""
+        if frame_views is None:
+            return None
+        if not self.frame_period:
+            raise ValueError("SceneRecorder(frame_views=...) are the frames' views: give it a frame_period")
+        if isinstance(frame_views, str) and frame_views == "default":
+            return frame_views
+        from openalea.metafspm.io.fspm_tf import _fspm_tf
+        _fspm_tf()
+        from openalea.fspm_tf import views
+        if isinstance(frame_views, (str, os.PathLike)):
+            frame_views = views.read_views(os.fspath(frame_views))
+        if not isinstance(frame_views, dict):
+            raise TypeError(f"SceneRecorder(frame_views=...): None, 'default', a views dict or a file's path, got "
+                            f"{type(frame_views).__name__}")
+        report = views.check_views(frame_views)
+        if not report.ok:
+            raise ValueError(f"SceneRecorder(frame_views=...): {report}")
+        return frame_views
+
+    def _write_views(self, scene, frame, folder: str) -> None:
+        """views.json next to the first frame, its names checked against *frame* (a warning for each it lacks)."""
+        from openalea.metafspm.io.fspm_tf import default_views, write_views
+        from openalea.fspm_tf import views
+        path = os.path.join(folder, views.VIEWS_FILE)
+        if not (self.resume and os.path.exists(path)):
+            content = default_views(scene, frame) if self.frame_views == "default" else self.frame_views
+            for issue in views.check_views(content, frame).issues:
+                warnings.warn(f"SceneRecorder(frame_views=...): {issue.where}: {issue.message} (in the first frame)")
+            write_views(path, content)
+        self._views_written = True
+
     def _write_frame(self, scene) -> str:
         """Write the scene's frame now (frames/frame_<step>.glb) and the frames' index; the frame's path."""
         from openalea.metafspm.io.fspm_tf import _fspm_tf, scene_to_frame
@@ -335,7 +377,10 @@ class SceneRecorder:
                 for entry in self._frames:
                     entry.pop("path", None)
         name = f"frame_{scene.iteration:06d}.glb"
-        fspm_tf.write(os.path.join(folder, name), scene_to_frame(scene, **self.frame_options))
+        frame = scene_to_frame(scene, **self.frame_options)
+        fspm_tf.write(os.path.join(folder, name), frame)
+        if self.frame_views is not None and not self._views_written:
+            self._write_views(scene, frame, folder)
         self._frames = [entry for entry in self._frames if entry["step"] != scene.iteration]
         self._frames.append({"time": float(scene.time), "step": int(scene.iteration), "file": name})
         fspm_tf.write_index(index_path, self._frames, time_unit="s")
@@ -438,6 +483,7 @@ class SceneRecorder:
             "recorder": {"summary_period": self.summary_period if self.summaries else None,
                          "segment_plants": sorted(self.segment_plants), "segment_period": self.segment_period,
                          "frame_period": self.frame_period, "frame_options": _described(self.frame_options),
+                         "frame_views": self.frame_views if self.frame_views in (None, "default") else "given",
                          "checkpoint_period": self.checkpoint_period, "tables": sorted(self.tables),
                          "table_period": self.table_period}}
         _write_json(os.path.join(self.folder, "scenario.json"), content)
