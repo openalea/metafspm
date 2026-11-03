@@ -224,19 +224,31 @@ def location_of_scale(ds, scale: int) -> str:
 
 def held_at_scale(spec, ds) -> bool:
     """
-    Whether *spec*, an input or parameter read at the nodes from a coarser scale (mapped down: broadcast or split),
-    is held by another component at that scale's own location on *ds* (one DataStructure for every scale, e.g. a
-    SubOrgan-scale architecture's length read at the Compartments): it is then that variable, read through its
-    mapping (mapped_read), not a node variable of its own.
+    Whether *spec*, an input or parameter, is a variable another component holds at another location of *ds* (one
+    DataStructure for every scale): read at the nodes from a coarser scale (mapped down: broadcast or split) while
+    held at that scale's own location (a SubOrgan-scale architecture's length read at the Compartments), or read at
+    its scale while held at the nodes as a broadcast from it (a segment's coordinates seen by its Compartments). It is
+    then that variable, read through the mapping (mapped_read), not one of its own.
     """
-    if spec is None or spec.variable_type == "state_variable" or spec.location != "node" or spec.scale is None \
-            or spec.mapping not in DOWN_MAPPINGS or not ds.has(spec.name):
+    if spec is None or spec.variable_type == "state_variable" or spec.scale is None or not ds.has(spec.name):
         return False
-    return ds.location(spec.name) == location_of_scale(ds, spec.scale) != "node"
+    held, own = ds.location(spec.name), location_of_scale(ds, spec.scale)
+    if spec.location == "node":                         # read at the nodes, held at its scale
+        return spec.mapping in DOWN_MAPPINGS and held == own != "node"
+    # read at its scale, held at the nodes as a broadcast from that scale (e.g. a segment's coordinates seen by its
+    # Compartments): its entities' values are the nodes' (their mean)
+    meta = ds._variable_meta().get(spec.name, {}) if hasattr(ds, "_variable_meta") else {}
+    return (spec.location == own != "node" and held == "node" and meta.get("scale") == spec.scale
+            and meta.get("mapping") == "broadcast")
 
 
 def mapped_read(ds, spec) -> np.ndarray:
-    """The values at the nodes of a variable held at a coarser scale (held_at_scale), through *spec*'s mapping."""
+    """The values at *spec*'s location of a variable held elsewhere (held_at_scale): at the nodes through *spec*'s
+    mapping, or at its scale from the nodes' broadcast values (their mean)."""
+    if spec.location != "node":
+        out = np.asarray(ds.map_to(ds.get(spec.name), "node", spec.location, "mean"))
+        out.flags.writeable = False
+        return out
     if spec.mapping == "broadcast":
         return ds.parameter_view(spec.name, "node")
     held = ds.location(spec.name)

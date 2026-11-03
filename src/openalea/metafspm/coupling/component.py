@@ -519,6 +519,21 @@ class DataStructureComponent(Component):
         field = cls.__dataclass_fields__.get(name)
         return field is not None and bool(field.metadata.get("optional"))
 
+    def read(self, name: str) -> np.ndarray:
+        """A declared variable's values at the component's own place (its declaration's location), outside steps (a
+        helper, a display): through the mapping when another component holds it elsewhere (held_at_scale), its
+        default when it is an optional input nothing provides; else the DataStructure's."""
+        from openalea.metafspm.coupling.declaration import mapped_read
+        ds, spec = self.data_structure, self.variable_specs.get(name)
+        if spec is None:
+            raise KeyError(f"{type(self).__name__} declares no '{name}'")
+        if held_at_scale(spec, ds):
+            return mapped_read(ds, spec)
+        if not ds.has(name) and self._optional(name):
+            return np.full(tuple(ds._location_shape(spec.location)) + tuple(spec.shape or ()),
+                           np.nan if spec.default is None else spec.default)
+        return ds.get(name)
+
     @property
     def variable_specs(self) -> dict:
         """{name: VariableSpec} of the component's declared variables as resolved on its DataStructure (location, MTG

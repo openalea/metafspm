@@ -296,3 +296,32 @@ def test_a_missing_coarse_input_value_takes_its_declared_default():
     with pytest.raises(ValueError, match="has no value for vertices"):
         ds._read_mtg(VariableSpec(name="supply", location="SubOrgan", scale=g.scales.SubOrgan, default=None,
                                  variable_type="input"))
+
+
+@dataclass
+class SegmentEnds(FunctionalComponent):
+    """Holds each segment's start x at the Compartments, broadcast from its SubOrgan (a soil mapping needs them)."""
+    start_x: float = state_variable(**DOC, default=0., scale=scales.SubOrgan, location="node", aggregation="broadcast",
+                                    kind="descriptor")
+
+
+@dataclass
+class SectionCells(FunctionalComponent):
+    """Works at the Compartments and reads each segment's start x at its SubOrgan."""
+    start_x: float = input_variable(**DOC, by="SegmentEnds", default=-1., scale=scales.SubOrgan, kind="descriptor")
+    cell_x: float = state_variable(**DOC, default=0., location="node")
+
+    @state
+    def _cell_x(self, start_x):
+        return {"cell_x": np.asarray(start_x)[np.asarray(self.data_structure.owner("SubOrgan"))]}
+
+
+def test_a_variable_held_at_the_nodes_as_a_broadcast_is_read_at_its_scale():
+    g, segments, anatomies, ds = _plant()
+    g.properties()["start_x"] = {int(v): 0.1 * (i + 1) for i, v in enumerate(segments)}
+    SegmentEnds(data_structure=ds)
+    reader = SectionCells(data_structure=ds)
+    assert ds.location("start_x") == "node"
+    np.testing.assert_allclose(reader.read("start_x"), [0.1, 0.2, 0.3])
+    reader()
+    np.testing.assert_allclose(ds.get("cell_x"), 0.1 * (np.asarray(ds.owner("SubOrgan")) + 1))

@@ -185,6 +185,10 @@ carbon()                                  # one time step: every step, in the sc
   entities (at a coarse location: those of the plants emerged), for MPG-style steps.
 - **Couplings.** `model.couplings()` lists how each input of the model's components is coupled; in a Scene, the scene
   translator's links too (`"scene"`: with the environment models, the default identity links included).
+- **One variable, two places.** A component reading at the nodes a variable another holds at its scale (a segment's length
+  read at its Compartments), or reading at its scale a variable another holds at the nodes as a broadcast from it
+  (a segment's coordinates seen by its Compartments), reads that variable through the mapping, in its steps and with
+  `component.read(name)` outside them.
 - **Owners.** `ds.owner(location)`: each node's entity at a coarse location (an index in `ds.entity_ids(location)`);
   `ds.owner("Axis", of="Organ")`: each Organ's Axis, between two coarse locations.
 - **Public accessors** (rather than the private names behind them): `ds.from_scale`, `ds.sections_of(vids)`,
