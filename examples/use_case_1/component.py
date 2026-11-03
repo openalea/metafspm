@@ -1,0 +1,747 @@
+"""
+Components of use case 1 (a wheat plant in its soil and its light): the soil, the transient water flow of
+Richards' equation on a grid.
+
+    RichardsSoil        the water in the soil grid: Richards' equation in its mixed form, the pressure head h as the
+                        cells' unknown, van Genuchten-Mualem (or Gardner) soils per cell (per layer), the fluxes on
+                        the faces with gravity, the top a flux (rain minus evaporation, both limited by the soil), the
+                        bottom free drainage, a water table or no flux, the sides periodic (the grid's); the roots'
+                        uptake a sink of the cells
+    RichardsSoilModel   the environment model of a Scene: the grid over the scene's pattern (adaptive by default),
+                        refined where the roots take up water and where h changes steeply, the water carried over as
+                        a volume (θ V, not h) when the grid changes
+    set_soil_layers, LOAM, SOILS
+                        soil hydraulic parameters by layer (Carsel & Parrish 1988's classes, a loam by default)
+    scene_translator    the scene links of the soil with a plant water model (MECHA's): the uptake into the cells,
+                        the soil's water potential back to the roots
+
+Coordinates: z points down from the surface (the depth), as on every metafspm soil grid. The total head is h - z,
+and gravity pulls the water towards increasing z.
+
+Units: lengths in m, times in s, the pressure head in m of water, the water potential in MPa, volumes in m3 (fluxes
+in m3 s-1 on faces and cells; the rainfall and evaporation as m s-1 per area of soil surface), water contents in
+m3 m-3, conductivities in m s-1.
+"""
+from dataclasses import dataclass
+
+import numpy as np
+from scipy.sparse import csr_matrix, diags, identity, bmat
+
+from openalea.metafspm.coupling.component import (FunctionalComponent, input_variable, parameter, setting,
+                                                  state_variable)
+from openalea.metafspm.coupling.translator import Translator
+from openalea.metafspm.scene.environment import EnvironmentModel
+from openalea.metafspm.solve.decorator import (boundary_condition, graph_jacobian, graph_output, graph_system,
+                                               node_balance)
+
+WATER_DENSITY, GRAVITY = 1000., 9.81                          # kg m-3, m s-2
+MPA_PER_METRE = WATER_DENSITY * GRAVITY * 1e-6                # MPa per m of pressure head
+
+VAN_GENUCHTEN_REFERENCES = ("van Genuchten M.Th. (1980) A closed-form equation for predicting the hydraulic "
+                            "conductivity of unsaturated soils. Soil Sci. Soc. Am. J. 44: 892-898; Mualem Y. (1976) "
+                            "A new model for predicting the hydraulic conductivity of unsaturated porous media. "
+                            "Water Resour. Res. 12: 513-522")
+VAN_GENUCHTEN_DOI = ["10.2136/sssaj1980.03615995004400050002x", "10.1029/WR012i003p00513"]
+CARSEL_PARRISH = ("Carsel R.F., Parrish R.S. (1988) Developing joint probability distributions of soil water "
+                  "retention characteristics. Water Resour. Res. 24: 755-769 (the loam's class means)")
+CARSEL_PARRISH_DOI = ["10.1029/WR024i005p00755"]
+GARDNER = ("Gardner W.R. (1958) Some steady-state solutions of the unsaturated moisture flow equation with "
+           "application to evaporation from a water table. Soil Science 85: 228-232")
+GARDNER_DOI = ["10.1097/00010694-195804000-00006"]
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Soil hydraulic properties: θ(h), K(h) and their derivatives
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def van_genuchten_mualem(pressure_head, residual_water_content, saturated_water_content, alpha, n,
+                         saturated_conductivity, pore_connectivity):
+    """
+    van Genuchten's retention curve and Mualem's conductivity, with their derivatives in h, cell by cell:
+
+        Se = (1 + (α |h|)^n)^-m, m = 1 - 1/n,  θ = θr + (θs - θr) Se,  K = Ks Se^l (1 - (1 - Se^(1/m))^m)^2
+
+    for h < 0; θ = θs and K = Ks for h >= 0. Returns (θ, dθ/dh, K, dK/dh). With n < 2, dK/dh grows without bound
+    as h tends to 0 (Mualem's curve), finite at any h < 0.
+    """
+    h = np.asarray(pressure_head, dtype=float)
+    m = 1. - 1. / n
+    unsaturated = h < 0.
+    x = np.where(unsaturated, -alpha * h, 1.)                         # α |h|, 1 where saturated (masked below)
+    x_power_n = x ** n
+    one_plus = 1. + x_power_n
+    effective_saturation = np.where(unsaturated, one_plus ** -m, 1.)
+    saturation_slope = np.where(unsaturated, alpha * m * n * x ** (n - 1.) * one_plus ** (-m - 1.), 0.)
+    mualem = np.where(unsaturated, 1. - (x_power_n / one_plus) ** m, 1.)
+    mualem_slope = np.where(unsaturated, alpha * m * n * x ** (n - 2.) * one_plus ** (-m - 1.), 0.)
+    water_content = residual_water_content + (saturated_water_content - residual_water_content) * effective_saturation
+    capacity = (saturated_water_content - residual_water_content) * saturation_slope
+    conductivity = saturated_conductivity * effective_saturation ** pore_connectivity * mualem ** 2
+    conductivity_slope = saturated_conductivity * (
+        pore_connectivity * effective_saturation ** (pore_connectivity - 1.) * saturation_slope * mualem ** 2
+        + effective_saturation ** pore_connectivity * 2. * mualem * mualem_slope)
+    return water_content, capacity, conductivity, np.where(unsaturated, conductivity_slope, 0.)
+
+
+def gardner(pressure_head, residual_water_content, saturated_water_content, alpha, saturated_conductivity):
+    """
+    Gardner's exponential soil, θ = θr + (θs - θr) e^(α h) and K = Ks e^(α h) for h < 0 (θs and Ks above): the
+    soil whose Richards equation is linear in K, solved exactly by Srivastava & Yeh (1991). Returns (θ, dθ/dh, K,
+    dK/dh).
+    """
+    h = np.asarray(pressure_head, dtype=float)
+    unsaturated = h < 0.
+    relative = np.exp(alpha * np.minimum(h, 0.))
+    water_content = residual_water_content + (saturated_water_content - residual_water_content) * relative
+    capacity = np.where(unsaturated, (saturated_water_content - residual_water_content) * alpha * relative, 0.)
+    conductivity = saturated_conductivity * relative
+    return water_content, capacity, conductivity, np.where(unsaturated, alpha * conductivity, 0.)
+
+
+def pressure_head_of(water_content, residual_water_content, saturated_water_content, alpha, n,
+                     retention_model="van_genuchten"):
+    """The inverse retention curve: h from θ (0 at saturation, θ >= θs); θ is kept above θr."""
+    span = saturated_water_content - residual_water_content
+    effective_saturation = np.clip((np.asarray(water_content, dtype=float) - residual_water_content) / span,
+                                   np.finfo(float).tiny, 1.)
+    if retention_model == "gardner":
+        return np.log(effective_saturation) / alpha
+    m = 1. - 1. / n
+    return -(effective_saturation ** (-1. / m) - 1.) ** (1. / n) / alpha
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# The soil classes and layers
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# Carsel & Parrish (1988)'s class means (α in m-1, Ks in m s-1); the pore connectivity l = 0.5 (Mualem)
+SOILS = {
+    "sand":       dict(residual_water_content=0.045, saturated_water_content=0.43, van_genuchten_alpha=14.5,
+                       van_genuchten_n=2.68, saturated_conductivity=712.8e-2 / 86400.),
+    "loamy_sand": dict(residual_water_content=0.057, saturated_water_content=0.41, van_genuchten_alpha=12.4,
+                       van_genuchten_n=2.28, saturated_conductivity=350.2e-2 / 86400.),
+    "sandy_loam": dict(residual_water_content=0.065, saturated_water_content=0.41, van_genuchten_alpha=7.5,
+                       van_genuchten_n=1.89, saturated_conductivity=106.1e-2 / 86400.),
+    "loam":       dict(residual_water_content=0.078, saturated_water_content=0.43, van_genuchten_alpha=3.6,
+                       van_genuchten_n=1.56, saturated_conductivity=24.96e-2 / 86400.),
+    "silt_loam":  dict(residual_water_content=0.067, saturated_water_content=0.45, van_genuchten_alpha=2.0,
+                       van_genuchten_n=1.41, saturated_conductivity=10.8e-2 / 86400.),
+    "clay_loam":  dict(residual_water_content=0.095, saturated_water_content=0.41, van_genuchten_alpha=1.9,
+                       van_genuchten_n=1.31, saturated_conductivity=6.24e-2 / 86400.),
+}
+LOAM = SOILS["loam"]
+
+
+def set_soil_layers(grid, layers):
+    """
+    The soil's parameters by layer, from the depth of each cell's centre (any grid): *layers* is a sequence of
+    (bottom depth in m, {parameter: value}), from the surface down, the last layer reaching the bottom whatever its
+    depth. A parameter a layer does not give keeps its value.
+    """
+    depth = grid.cell_centers()[:, 2]
+    top = -np.inf
+    for index, (bottom, values) in enumerate(layers):
+        chosen = (depth >= top) & ((depth < bottom) | (index == len(layers) - 1))
+        for name, value in values.items():
+            current = np.array(grid.get(name), dtype=float).reshape(-1)
+            current[chosen] = value
+            grid.set(name, current.reshape(np.shape(grid.get(name))))
+        top = bottom
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# The face fluxes and the boundary fluxes, with their derivatives (shared by the equations and their Jacobian)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def _properties(component, pressure_head, residual_water_content, saturated_water_content, van_genuchten_alpha,
+                van_genuchten_n, saturated_conductivity, pore_connectivity):
+    """(θ, dθ/dh, K, dK/dh) of each cell, by the component's retention model."""
+    if component.retention_model == "gardner":
+        return gardner(pressure_head, residual_water_content, saturated_water_content, van_genuchten_alpha,
+                       saturated_conductivity)
+    return van_genuchten_mualem(pressure_head, residual_water_content, saturated_water_content, van_genuchten_alpha,
+                                van_genuchten_n, saturated_conductivity, pore_connectivity)
+
+
+def _face_fluxes(component, pressure_head, conductivity, conductivity_slope, face_area, face_distance, gravity):
+    """
+    The flux through each face, from its tail cell to its head cell (towards increasing coordinates, down along z),
+
+        q = K_f A (Δh / d + g),  Δh = h_tail - h_head,
+
+    g = 1 on the z faces (gravity), 0 on the others, and its derivatives in h: (q, dq/dh as a faces x cells matrix).
+    Δh is the grid's consistent edge difference (exact for a linear h between cells of different sizes). K_f is the
+    upstream cell's K (the cell the water comes from), or the arithmetic mean of the two cells' K (the
+    face_conductivity setting).
+    """
+    view = component.graph_view
+    difference = component.cached("face_difference", lambda: view.edge_difference)     # per topology
+    tail, head = view.tail, view.head
+    drive = np.asarray(difference @ pressure_head).reshape(-1) / face_distance + gravity
+    faces = np.arange(tail.size)
+    if component.face_conductivity == "upstream":
+        upstream = np.where(drive >= 0., tail, head)
+        face_conductivity = conductivity[upstream]
+        conductivity_derivative = csr_matrix((conductivity_slope[upstream], (faces, upstream)),
+                                             shape=(tail.size, pressure_head.size))
+    else:
+        face_conductivity = 0.5 * (conductivity[tail] + conductivity[head])
+        conductivity_derivative = csr_matrix((np.r_[0.5 * conductivity_slope[tail], 0.5 * conductivity_slope[head]],
+                                              (np.r_[faces, faces], np.r_[tail, head])),
+                                             shape=(tail.size, pressure_head.size))
+    flux = face_conductivity * face_area * drive
+    derivative = (diags(face_conductivity * face_area / face_distance) @ difference
+                  + diags(face_area * drive) @ conductivity_derivative)
+    return flux, derivative.tocsr()
+
+
+def _boundary_conductivity(component, conductivity, conductivity_slope, boundary_conductivity, cell_upstream):
+    """K between a cell and a boundary held at a head whose K is *boundary_conductivity*: the upstream one, or the
+    mean; with its derivative in the cell's h."""
+    if component.face_conductivity == "upstream":
+        return (np.where(cell_upstream, conductivity, boundary_conductivity),
+                np.where(cell_upstream, conductivity_slope, 0.))
+    return 0.5 * (conductivity + boundary_conductivity), 0.5 * conductivity_slope
+
+
+def _surface_inflow(component, pressure_head, conductivity, conductivity_slope, saturated_conductivity,
+                    boundary_area, half_height, rainfall, potential_evaporation, surface_minimum_head,
+                    surface_conductivity):
+    """
+    The water entering a surface cell through the soil surface (m3 s-1, negative when it evaporates), and its
+    derivative in h. The potential flux (rainfall - potential_evaporation) A is limited by what the soil takes or
+    gives, the Darcy flux between the surface and the cell's centre (half a cell below):
+
+      * infiltrating, the surface at most ponded at h = 0 (the excess runs off), K(0) = Ks:
+        capacity = K_f A ((0 - h) / (Δz/2) + 1);
+      * evaporating, the surface at most as dry as surface_minimum_head:
+        capacity = K_f A ((h - h_min) / (Δz/2) - 1).
+
+    Returns (inflow, d inflow / dh, runoff).
+    """
+    potential = (rainfall - potential_evaporation) * boundary_area
+    # infiltration: the water comes from the surface (upstream: the surface's K, at h = 0)
+    infiltration_conductivity, infiltration_slope = _boundary_conductivity(
+        component, conductivity, conductivity_slope, saturated_conductivity, np.zeros(np.shape(conductivity), bool))
+    infiltration_drive = -pressure_head / half_height + 1.
+    infiltration_capacity = infiltration_conductivity * boundary_area * infiltration_drive
+    infiltration_capacity_slope = (-infiltration_conductivity * boundary_area / half_height
+                                   + infiltration_slope * boundary_area * infiltration_drive)
+    # evaporation: the water comes from the cell (upstream: the cell's K)
+    evaporation_conductivity, evaporation_slope = _boundary_conductivity(
+        component, conductivity, conductivity_slope, surface_conductivity, np.ones(np.shape(conductivity), bool))
+    evaporation_drive = (pressure_head - surface_minimum_head) / half_height - 1.
+    evaporation_capacity = evaporation_conductivity * boundary_area * evaporation_drive
+    evaporation_capacity_slope = (evaporation_conductivity * boundary_area / half_height
+                                  + evaporation_slope * boundary_area * evaporation_drive)
+    infiltrating = potential >= 0.
+    limited_infiltration = infiltrating & (infiltration_capacity < potential)
+    limited_evaporation = ~infiltrating & (np.maximum(evaporation_capacity, 0.) < -potential)
+    inflow = np.where(limited_infiltration, infiltration_capacity,
+                      np.where(limited_evaporation, -np.maximum(evaporation_capacity, 0.), potential))
+    slope = np.where(limited_infiltration, infiltration_capacity_slope,
+                     np.where(limited_evaporation & (evaporation_capacity > 0.), -evaporation_capacity_slope, 0.))
+    runoff = np.where(infiltrating, potential - inflow, 0.)
+    return inflow, slope, runoff
+
+
+def _bottom_outflow(component, pressure_head, conductivity, conductivity_slope, boundary_area, half_height,
+                    water_table_head, water_table_conductivity):
+    """
+    The water leaving a bottom cell through the grid's bottom face (m3 s-1), and its derivative in h, by the
+    bottom_boundary setting:
+
+      * "free_drainage": a unit gradient of the total head, q = K(h) A;
+      * "water_table": the bottom face held at water_table_head (0: the water table at the bottom),
+        q = K_f A ((h - h_table) / (Δz/2) + 1);
+      * "no_flux": 0.
+    """
+    if component.bottom_boundary == "free_drainage":
+        return conductivity * boundary_area, conductivity_slope * boundary_area
+    if component.bottom_boundary == "no_flux":
+        return np.zeros(np.shape(pressure_head)), np.zeros(np.shape(pressure_head))
+    drive = (pressure_head - water_table_head) / half_height + 1.
+    face_conductivity, face_slope = _boundary_conductivity(component, conductivity, conductivity_slope,
+                                                           water_table_conductivity, drive >= 0.)
+    return (face_conductivity * boundary_area * drive,
+            face_conductivity * boundary_area / half_height + face_slope * boundary_area * drive)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# The component
+# ═══════════════════════════════════════════════════════════════════════════════
+
+_SOIL = ("residual_water_content", "saturated_water_content", "van_genuchten_alpha", "van_genuchten_n",
+         "saturated_conductivity", "pore_connectivity")
+
+
+@dataclass
+class RichardsSoil(FunctionalComponent):
+    """
+    The transient water flow in a soil grid, Richards' equation in its mixed form (Celia et al. 1990), on an
+    ArrayDataStructure or an AdaptiveGridDataStructure: the cells are the nodes, the faces the edges, the pressure
+    head h each cell's unknown. Over a (sub-)step of length dt, each cell's balance is
+
+        (θ(h) - θ(h_prev)) V + dt (Σ_faces q + uptake - inflow_boundaries) = 0,
+
+    written per cell volume (a change of water content, m3 m-3, so that Newton's tolerance is one on the water
+    contents and the balance closes to it), the face fluxes q = K_f A (Δh/d + g) (gravity along z, pointing down),
+    K_f upstream-weighted or the arithmetic mean (face_conductivity). The soil is van Genuchten-Mualem's (or
+    Gardner's, retention_model) with its parameters per cell, set by layers (set_soil_layers). The top: the rainfall
+    minus the potential evaporation (inputs a Scene's forcings of their names write), limited by what the soil takes
+    or gives (the excess rain runs off); the bottom: free drainage, a water table or no flux (bottom_boundary); the
+    sides: the grid's (periodic over the scene's pattern). The roots' uptake (plant_uptake, summed into the cells
+    by the scene) is a sink.
+
+    Solved by Newton with its analytic Jacobian (dθ/dh, dK/dh) and an Armijo line search (multi-day steps through
+    a dry soil), to 1e-13 of the water contents, over the time step by step doubling (integrate="adaptive",
+    rtol 1e-3 and atol 1e-4 m on h). A second unknown, exchanged_water, integrates over the sub-steps the water each cell
+    gained through the grid's boundaries and lost to the roots (per cell volume, since the start), so that the water
+    balance can be checked over any run: Σ θ V - Σ θ_0 V = Σ exchanged_water V.
+
+    When an adaptive grid changes, the water is carried over as a volume (θ, volume-averaged, so θ V is conserved)
+    and h is recomputed from it (carry_over()): RichardsSoilModel does it after each refinement.
+    """
+    # the unknowns and the water state
+    pressure_head: float = state_variable(unit="m", description="Pressure head of the soil water (negative: "
+                                                                "suction).", default=-1., location="cell",
+                                          kind="intensive")
+    exchanged_water: float = state_variable(unit="m3 m-3", description="Water a cell gained through the grid's "
+                                                                       "boundaries minus what the roots took up, "
+                                                                       "since the start, per cell volume.",
+                                            default=0., location="cell", kind="intensive")
+    water_content: float = state_variable(unit="m3 m-3", description="Volumetric water content θ(h).", default=0.3,
+                                          location="cell", kind="intensive")
+    water_potential: float = state_variable(unit="MPa", description="Matric potential of the soil water, ρ g h.",
+                                            default=-0.00981, location="cell", kind="intensive")
+    hydraulic_conductivity: float = state_variable(unit="m s-1", description="Hydraulic conductivity K(h).",
+                                                   default=0., location="cell", kind="intensive")
+    water_flux: float = state_variable(unit="m3 s-1", description="Flux through a face, towards increasing "
+                                                                  "coordinates (down along z), at the end of the "
+                                                                  "last sub-step.", default=0., location="edge",
+                                       kind="extensive")
+    surface_inflow: float = state_variable(unit="m3 s-1", description="Water entering a surface cell through the "
+                                                                      "soil surface (negative: evaporation).",
+                                           default=0., location="cell", kind="extensive")
+    runoff: float = state_variable(unit="m3 s-1", description="Rain the surface cell could not take.", default=0.,
+                                   location="cell", kind="extensive")
+    drainage: float = state_variable(unit="m3 s-1", description="Water leaving a bottom cell through the grid's "
+                                                                "bottom face.", default=0., location="cell",
+                                     kind="extensive")
+    # the grid's geometry (set_geometry: at construction and after each refinement)
+    volume: float = state_variable(unit="m3", description="Volume of a cell.", default=0., location="cell",
+                                   kind="extensive")
+    is_surface: float = state_variable(unit="adim", description="1 in the cells at the soil surface.", default=0.,
+                                       location="cell", kind="descriptor")
+    is_bottom: float = state_variable(unit="adim", description="1 in the cells at the grid's bottom.", default=0.,
+                                      location="cell", kind="descriptor")
+    boundary_area: float = state_variable(unit="m2", description="Horizontal area of a cell (its face on the soil "
+                                                                 "surface or the bottom).", default=0.,
+                                          location="cell", kind="extensive")
+    half_height: float = state_variable(unit="m", description="Half a cell's height: from its centre to its top or "
+                                                              "bottom face.", default=0., location="cell",
+                                        kind="descriptor")
+    gravity: float = state_variable(unit="adim", description="1 on the z faces (gravity along the face), 0 on the "
+                                                             "others.", default=0., location="edge",
+                                    kind="descriptor")
+    # inputs
+    plant_uptake: float = input_variable(unit="m3 s-1", description="Water taken up by the roots from a cell.",
+                                         by="plants", default=0., location="cell", kind="extensive")
+    rainfall: float = input_variable(unit="m s-1", description="Rain (and irrigation) reaching the soil surface "
+                                                               "(a forcing of this name writes it).",
+                                     by="forcings", default=0.)
+    potential_evaporation: float = input_variable(unit="m s-1", description="Potential evaporation of the soil "
+                                                                            "surface (a forcing of this name writes "
+                                                                            "it).", by="forcings", default=0.)
+    # the soil, per cell (set_soil_layers); a loam by default
+    residual_water_content: float = parameter(unit="m3 m-3", description="Residual water content θr.",
+                                              by="RichardsSoil", default=LOAM["residual_water_content"],
+                                              location="cell", min_value=0., max_value=0.25,
+                                              references=CARSEL_PARRISH, DOI=CARSEL_PARRISH_DOI)
+    saturated_water_content: float = parameter(unit="m3 m-3", description="Saturated water content θs.",
+                                               by="RichardsSoil", default=LOAM["saturated_water_content"],
+                                               location="cell", min_value=0.25, max_value=0.6,
+                                               references=CARSEL_PARRISH, DOI=CARSEL_PARRISH_DOI)
+    van_genuchten_alpha: float = parameter(unit="m-1", description="van Genuchten's α, the inverse of the "
+                                                                   "air-entry head (Gardner's α too).",
+                                           by="RichardsSoil", default=LOAM["van_genuchten_alpha"], location="cell",
+                                           min_value=0.5, max_value=20., references=VAN_GENUCHTEN_REFERENCES,
+                                           DOI=VAN_GENUCHTEN_DOI)
+    van_genuchten_n: float = parameter(unit="adim", description="van Genuchten's n (m = 1 - 1/n).",
+                                       by="RichardsSoil", default=LOAM["van_genuchten_n"], location="cell",
+                                       min_value=1.05, max_value=3., references=VAN_GENUCHTEN_REFERENCES,
+                                       DOI=VAN_GENUCHTEN_DOI)
+    saturated_conductivity: float = parameter(unit="m s-1", description="Saturated hydraulic conductivity Ks.",
+                                              by="RichardsSoil", default=LOAM["saturated_conductivity"],
+                                              location="cell", min_value=1e-8, max_value=1e-4,
+                                              references=CARSEL_PARRISH, DOI=CARSEL_PARRISH_DOI)
+    pore_connectivity: float = parameter(unit="adim", description="Mualem's pore connectivity (tortuosity) l.",
+                                         by="RichardsSoil", default=0.5, location="cell", min_value=-2.,
+                                         max_value=2., references=VAN_GENUCHTEN_REFERENCES, DOI=VAN_GENUCHTEN_DOI)
+    # the boundaries
+    water_table_head: float = parameter(unit="m", description="Pressure head at the grid's bottom face with "
+                                                              "bottom_boundary 'water_table' (0: the water table "
+                                                              "there; positive: above it).", by="RichardsSoil",
+                                        default=0., min_value=-5., max_value=5.)
+    surface_minimum_head: float = parameter(unit="m", description="The driest pressure head of the soil surface: "
+                                                                  "the evaporation is limited to what the soil "
+                                                                  "brings to it (Hydrus' hCritA).",
+                                            by="RichardsSoil", default=-100., min_value=-1000., max_value=-10.,
+                                            references="Šimůnek J., van Genuchten M.Th., Šejna M. (2016) Recent "
+                                                       "developments and applications of the HYDRUS computer "
+                                                       "software packages. Vadose Zone J. 15(7)",
+                                            DOI=["10.2136/vzj2016.04.0033"])
+    # settings
+    face_conductivity: str = setting(description="The conductivity of a face: 'upstream' (the cell the water comes "
+                                                 "from, robust for infiltration fronts) or 'arithmetic' (the mean).",
+                                     default="upstream", choices=("upstream", "arithmetic"),
+                                     references="Forsyth P.A., Wu Y.S., Pruess K. (1995) Robust numerical methods "
+                                                "for saturated-unsaturated flow with dry initial conditions in "
+                                                "heterogeneous media. Adv. Water Resour. 18: 25-38",
+                                     DOI=["10.1016/0309-1708(95)00020-J"])
+    retention_model: str = setting(description="The soil's θ(h) and K(h): 'van_genuchten' (van Genuchten-Mualem) "
+                                               "or 'gardner' (exponential).", default="van_genuchten",
+                                   choices=("van_genuchten", "gardner"), references=GARDNER, DOI=GARDNER_DOI)
+    bottom_boundary: str = setting(description="The grid's bottom: 'free_drainage' (a unit gradient), "
+                                               "'water_table' (held at water_table_head) or 'no_flux'.",
+                                   default="free_drainage", choices=("free_drainage", "water_table", "no_flux"))
+
+    def __post_init__(self):
+        super().__post_init__()
+        self.set_geometry()
+        self.update_water_content()
+
+    # ── the grid ──────────────────────────────────────────────────────────────
+
+    def set_geometry(self):
+        """
+        The surface and bottom cells, their horizontal areas and half heights, the cells' volumes and the z faces,
+        from the grid's geometry: a regular grid or an adaptive one, whose refinement calls it again. The grid has
+        three axes, z the third (a column is a (1, 1, n) grid).
+        """
+        grid = self.data_structure
+        size = grid.cell_sizes()
+        cells = size.shape[0]
+        grid.set("is_surface", np.asarray(grid.layer_mask(z=0), dtype=float).reshape(np.shape(grid.get("is_surface"))))
+        grid.set("is_bottom", np.asarray(grid.layer_mask(z=-1), dtype=float).reshape(np.shape(grid.get("is_bottom"))))
+        shape = np.shape(grid.get("volume"))
+        grid.set("volume", np.broadcast_to(grid.cell_volume(), (cells,)).reshape(shape))
+        grid.set("boundary_area", (size[:, 0] * size[:, 1]).reshape(shape))
+        grid.set("half_height", (size[:, 2] / 2.).reshape(shape))
+        grid.set("gravity", (np.asarray(grid.face_axis()) == grid.axes.index("z")).astype(float))
+
+    def _cell_values(self, *names):
+        return [np.asarray(self.data_structure.get(name), dtype=float).reshape(-1) for name in names]
+
+    def update_water_content(self):
+        """θ, K and the water potential from h (after h or the soil's parameters were set outside a solve)."""
+        grid = self.data_structure
+        (pressure_head,) = self._cell_values("pressure_head")
+        water_content, _, conductivity, _ = _properties(self, pressure_head, *self._cell_values(*_SOIL))
+        shape = np.shape(grid.get("water_content"))
+        grid.set("water_content", water_content.reshape(shape))
+        grid.set("hydraulic_conductivity", conductivity.reshape(shape))
+        grid.set("water_potential", (MPA_PER_METRE * pressure_head).reshape(shape))
+
+    def set_pressure_head(self, values):
+        """h (a number, an array per cell, or a function of the cells' depth), with θ, K and Ψ following."""
+        grid = self.data_structure
+        depth = grid.cell_centers()[:, 2]
+        values = values(depth) if callable(values) else np.broadcast_to(np.asarray(values, dtype=float), depth.shape)
+        grid.set("pressure_head", np.asarray(values, dtype=float).reshape(np.shape(grid.get("pressure_head"))))
+        self.update_water_content()
+
+    def carry_over(self):
+        """
+        After the grid changed (refined or coarsened): the grid carried θ over by volume (θ V conserved), h and the
+        soil parameters by volume averages. h is recomputed from the carried θ by the inverse retention curve, so
+        that the next balance starts from the water the cells hold; a saturated cell (θ = θs) keeps its carried
+        h >= 0. The geometry is set again.
+        """
+        self.set_geometry()
+        grid = self.data_structure
+        water_content, pressure_head, residual, saturated, alpha, n = self._cell_values(
+            "water_content", "pressure_head", "residual_water_content", "saturated_water_content",
+            "van_genuchten_alpha", "van_genuchten_n")
+        unsaturated = water_content < saturated
+        inverse = pressure_head_of(water_content, residual, saturated, alpha, n, self.retention_model)
+        head = np.where(unsaturated, inverse, np.maximum(pressure_head, 0.))
+        grid.set("pressure_head", head.reshape(np.shape(grid.get("pressure_head"))))
+
+    def stored_water(self):
+        """The water the soil holds, Σ θ V (m3)."""
+        water_content, volume = self._cell_values("water_content", "volume")
+        return float((water_content * volume).sum())
+
+    def exchanged_water_volume(self):
+        """The water the soil gained through its boundaries minus the roots' uptake since the start, Σ E V (m3)."""
+        exchanged, volume = self._cell_values("exchanged_water", "volume")
+        return float((exchanged * volume).sum())
+
+    # ── the equations ─────────────────────────────────────────────────────────
+
+    @graph_system(node_unknowns=["pressure_head", "exchanged_water"], solver="newton", transient=True,
+                  integrate="adaptive", rtol=1e-3, atol=1e-4, tolerance=1e-13, max_iterations=30, linesearch=True,
+                  schedule_as="state")
+    class _water:
+        """Richards' equation in mixed form, per cell volume, and the water exchanged at the boundaries."""
+
+        @node_balance(field="pressure_head")
+        def _balance(self, pressure_head, residual_water_content, saturated_water_content, van_genuchten_alpha,
+                     van_genuchten_n, saturated_conductivity, pore_connectivity, face_area, face_distance, gravity,
+                     plant_uptake, volume):
+            """(θ(h) - θ(h_prev)) + dt / V (Σ q + uptake); the boundaries' inflows are subtracted by the conditions."""
+            soil = (residual_water_content, saturated_water_content, van_genuchten_alpha, van_genuchten_n,
+                    saturated_conductivity, pore_connectivity)
+            water_content, _, conductivity, conductivity_slope = _properties(self, pressure_head, *soil)
+            previous_content = _properties(self, self.previous("pressure_head"), *soil)[0]
+            flux, _ = _face_fluxes(self, pressure_head, conductivity, conductivity_slope, face_area, face_distance,
+                                   gravity)
+            outflow = np.asarray(self.graph_view.incidence @ flux).reshape(-1)
+            return water_content - previous_content + self.dt / volume * (outflow + plant_uptake)
+
+        @boundary_condition("node", "neumann", field="pressure_head", filters={"is_surface": ">0"})
+        def _soil_surface(self, pressure_head, residual_water_content, saturated_water_content, van_genuchten_alpha,
+                          van_genuchten_n, saturated_conductivity, pore_connectivity, boundary_area, half_height,
+                          rainfall, potential_evaporation, surface_minimum_head, volume):
+            """The rain minus the evaporation entering through the surface, over the sub-step per cell volume."""
+            return self.dt / volume * _surface(self, pressure_head, residual_water_content, saturated_water_content,
+                                               van_genuchten_alpha, van_genuchten_n, saturated_conductivity,
+                                               pore_connectivity, boundary_area, half_height, rainfall,
+                                               potential_evaporation, surface_minimum_head)[0]
+
+        @boundary_condition("node", "neumann", field="pressure_head", filters={"is_bottom": ">0"})
+        def _grid_bottom(self, pressure_head, residual_water_content, saturated_water_content, van_genuchten_alpha,
+                         van_genuchten_n, saturated_conductivity, pore_connectivity, boundary_area, half_height,
+                         water_table_head, volume):
+            """Free drainage, the water table or no flux, over the sub-step per cell volume (an inflow: minus the
+            outflow)."""
+            return -self.dt / volume * _bottom(self, pressure_head, residual_water_content, saturated_water_content,
+                                               van_genuchten_alpha, van_genuchten_n, saturated_conductivity,
+                                               pore_connectivity, boundary_area, half_height, water_table_head)[0]
+
+        @node_balance(field="exchanged_water")
+        def _exchanged(self, exchanged_water, pressure_head, residual_water_content, saturated_water_content,
+                       van_genuchten_alpha, van_genuchten_n, saturated_conductivity, pore_connectivity,
+                       boundary_area, half_height, rainfall, potential_evaporation, surface_minimum_head,
+                       water_table_head, is_surface, is_bottom, plant_uptake, volume):
+            """E = E_prev + dt / V (surface inflow - bottom outflow - uptake)."""
+            soil = (pressure_head, residual_water_content, saturated_water_content, van_genuchten_alpha,
+                    van_genuchten_n, saturated_conductivity, pore_connectivity, boundary_area, half_height)
+            inflow = _surface(self, *soil, rainfall, potential_evaporation, surface_minimum_head)[0]
+            outflow = _bottom(self, *soil, water_table_head)[0]
+            exchange = (is_surface > 0) * inflow - (is_bottom > 0) * outflow - plant_uptake
+            return exchanged_water - self.previous("exchanged_water") - self.dt / volume * exchange
+
+        @graph_jacobian
+        def _jacobian(self, pressure_head, residual_water_content, saturated_water_content, van_genuchten_alpha,
+                      van_genuchten_n, saturated_conductivity, pore_connectivity, face_area, face_distance, gravity,
+                      boundary_area, half_height, rainfall, potential_evaporation, surface_minimum_head,
+                      water_table_head, is_surface, is_bottom, volume):
+            """
+            The balances' derivatives: in h, dθ/dh on the diagonal, dt / V B dq/dh (dq/dh through Δh and K_f(h)),
+            minus the boundaries' inflow slopes; the exchanged water's, the identity and minus dt / V times the
+            boundaries' slopes.
+            """
+            soil = (residual_water_content, saturated_water_content, van_genuchten_alpha, van_genuchten_n,
+                    saturated_conductivity, pore_connectivity)
+            _, capacity, conductivity, conductivity_slope = _properties(self, pressure_head, *soil)
+            _, flux_derivative = _face_fluxes(self, pressure_head, conductivity, conductivity_slope, face_area,
+                                              face_distance, gravity)
+            arguments = (pressure_head, *soil, boundary_area, half_height)
+            inflow_slope = _surface(self, *arguments, rainfall, potential_evaporation, surface_minimum_head)[1]
+            outflow_slope = _bottom(self, *arguments, water_table_head)[1]
+            exchange_slope = (is_surface > 0) * inflow_slope - (is_bottom > 0) * outflow_slope
+            scale = diags(self.dt / volume)
+            head_rows = (diags(capacity) + scale @ self.graph_view.incidence @ flux_derivative
+                         - diags(self.dt / volume * exchange_slope))
+            cells = pressure_head.size
+            return bmat([[head_rows, None], [diags(-self.dt / volume * exchange_slope), identity(cells)]],
+                        format="csr")
+
+        @graph_output("water_content", location="node")
+        def _water_content(self, pressure_head, residual_water_content, saturated_water_content,
+                           van_genuchten_alpha, van_genuchten_n, saturated_conductivity, pore_connectivity):
+            return _properties(self, pressure_head, residual_water_content, saturated_water_content,
+                               van_genuchten_alpha, van_genuchten_n, saturated_conductivity, pore_connectivity)[0]
+
+        @graph_output("hydraulic_conductivity", location="node")
+        def _hydraulic_conductivity(self, pressure_head, residual_water_content, saturated_water_content,
+                                    van_genuchten_alpha, van_genuchten_n, saturated_conductivity, pore_connectivity):
+            return _properties(self, pressure_head, residual_water_content, saturated_water_content,
+                               van_genuchten_alpha, van_genuchten_n, saturated_conductivity, pore_connectivity)[2]
+
+        @graph_output("water_potential", location="node")
+        def _water_potential(self, pressure_head):
+            return MPA_PER_METRE * pressure_head
+
+        @graph_output("water_flux", location="edge")
+        def _water_flux(self, pressure_head, residual_water_content, saturated_water_content, van_genuchten_alpha,
+                        van_genuchten_n, saturated_conductivity, pore_connectivity, face_area, face_distance,
+                        gravity):
+            _, _, conductivity, conductivity_slope = _properties(
+                self, pressure_head, residual_water_content, saturated_water_content, van_genuchten_alpha,
+                van_genuchten_n, saturated_conductivity, pore_connectivity)
+            return _face_fluxes(self, pressure_head, conductivity, conductivity_slope, face_area, face_distance,
+                                gravity)[0]
+
+        @graph_output("surface_inflow", location="node", filters={"is_surface": ">0"})
+        def _surface_inflow(self, pressure_head, residual_water_content, saturated_water_content,
+                            van_genuchten_alpha, van_genuchten_n, saturated_conductivity, pore_connectivity,
+                            boundary_area, half_height, rainfall, potential_evaporation, surface_minimum_head):
+            return _surface(self, pressure_head, residual_water_content, saturated_water_content, van_genuchten_alpha,
+                            van_genuchten_n, saturated_conductivity, pore_connectivity, boundary_area, half_height,
+                            rainfall, potential_evaporation, surface_minimum_head)[0]
+
+        @graph_output("runoff", location="node", filters={"is_surface": ">0"})
+        def _runoff(self, pressure_head, residual_water_content, saturated_water_content, van_genuchten_alpha,
+                    van_genuchten_n, saturated_conductivity, pore_connectivity, boundary_area, half_height, rainfall,
+                    potential_evaporation, surface_minimum_head):
+            return _surface(self, pressure_head, residual_water_content, saturated_water_content, van_genuchten_alpha,
+                            van_genuchten_n, saturated_conductivity, pore_connectivity, boundary_area, half_height,
+                            rainfall, potential_evaporation, surface_minimum_head)[2]
+
+        @graph_output("drainage", location="node", filters={"is_bottom": ">0"})
+        def _drainage(self, pressure_head, residual_water_content, saturated_water_content, van_genuchten_alpha,
+                      van_genuchten_n, saturated_conductivity, pore_connectivity, boundary_area, half_height,
+                      water_table_head):
+            return _bottom(self, pressure_head, residual_water_content, saturated_water_content, van_genuchten_alpha,
+                           van_genuchten_n, saturated_conductivity, pore_connectivity, boundary_area, half_height,
+                           water_table_head)[0]
+
+
+def _surface(component, pressure_head, residual_water_content, saturated_water_content, van_genuchten_alpha,
+             van_genuchten_n, saturated_conductivity, pore_connectivity, boundary_area, half_height, rainfall,
+             potential_evaporation, surface_minimum_head):
+    """The surface inflow of the cells given (inflow, d inflow / dh, runoff), from their soil."""
+    soil = (residual_water_content, saturated_water_content, van_genuchten_alpha, van_genuchten_n,
+            saturated_conductivity, pore_connectivity)
+    _, _, conductivity, conductivity_slope = _properties(component, pressure_head, *soil)
+    surface_conductivity = _properties(component, np.broadcast_to(surface_minimum_head, np.shape(pressure_head)),
+                                       *soil)[2]
+    return _surface_inflow(component, pressure_head, conductivity, conductivity_slope, saturated_conductivity,
+                           boundary_area, half_height, rainfall, potential_evaporation, surface_minimum_head,
+                           surface_conductivity)
+
+
+def _bottom(component, pressure_head, residual_water_content, saturated_water_content, van_genuchten_alpha,
+            van_genuchten_n, saturated_conductivity, pore_connectivity, boundary_area, half_height,
+            water_table_head):
+    """The bottom outflow of the cells given (outflow, d outflow / dh), from their soil."""
+    soil = (residual_water_content, saturated_water_content, van_genuchten_alpha, van_genuchten_n,
+            saturated_conductivity, pore_connectivity)
+    _, _, conductivity, conductivity_slope = _properties(component, pressure_head, *soil)
+    water_table_conductivity = _properties(component, np.broadcast_to(water_table_head, np.shape(pressure_head)),
+                                           *soil)[2]
+    return _bottom_outflow(component, pressure_head, conductivity, conductivity_slope, boundary_area, half_height,
+                           water_table_head, water_table_conductivity)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# The environment model, and its links with the plants
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class RichardsSoilModel(EnvironmentModel):
+    """
+    The soil of a Scene: RichardsSoil on a grid over the scene's pattern down to *depth*, periodic in x and y (the
+    stand repeated), z down; an AdaptiveGridDataStructure of *voxel* cells refinable max_level times by default
+    (adaptive=False: a regular ArrayDataStructure). The soil by layers (*layers*, set_soil_layers: a loam by default),
+    h starting at *initial_pressure_head* (m: a number or a function of the depth).
+
+    After each run, an adaptive grid is refined where the roots take up water (the uptake per volume above
+    refine_uptake_fraction of its largest value) and where h changes steeply (|∇h| above refine_gradient, m m-1:
+    a front; 1 at hydrostatic equilibrium), and coarsened where both are low (coarsen_uptake_fraction,
+    coarsen_gradient). The water is carried over as a volume (RichardsSoil.carry_over: θ V conserved, h from θ),
+    which no metafspm hook does for derived variables: it is done here, after the refinement.
+
+    Its links with the plants (scene_translator): the plants' uptake summed into the cells (plant_uptake, m3 s-1),
+    the soil's water potential (water_potential, MPa) broadcast back to their roots.
+    """
+    compartment = "Soil"
+
+    def __init__(self, plant_data_structures, xrange, yrange, time_step, depth=1., voxel=0.05, adaptive=True,
+                 max_level=2, layers=((np.inf, LOAM),), initial_pressure_head=-1., refine_uptake_fraction=0.05,
+                 coarsen_uptake_fraction=0.005, refine_gradient=5., coarsen_gradient=2.):
+        super().__init__(plant_data_structures, xrange, yrange, time_step)
+        self.grid = self.build_grid(voxel, depth, adaptive=adaptive, max_level=max_level)
+        self.soil = RichardsSoil(data_structure=self.grid, time_step=time_step)
+        self.components = [self.soil]
+        self.layers = layers
+        set_soil_layers(self.grid, layers)
+        self.soil.set_pressure_head(initial_pressure_head)
+        self.adaptive = adaptive
+        self.refine_uptake_fraction, self.coarsen_uptake_fraction = refine_uptake_fraction, coarsen_uptake_fraction
+        self.refine_gradient, self.coarsen_gradient = refine_gradient, coarsen_gradient
+        self.initial_water = None
+        self.history = []                                    # cells per level after each adaptation
+
+    def full_run(self):
+        if self.initial_water is None:                       # the scenario's parameters are set: θ from h, once
+            self.soil.update_water_content()
+            self.initial_water = self.soil.stored_water()
+        super().full_run()
+
+    def after_run(self):
+        if self.adaptive:
+            self.adapt()
+
+    def water_balance(self) -> dict:
+        """The water stored (Σ θ V), its change since the first run, and the water exchanged through the boundaries
+        and with the roots over the same time (m3): the change and the exchange are equal to the solver's
+        tolerance."""
+        stored = self.soil.stored_water()
+        initial = stored if self.initial_water is None else self.initial_water
+        return {"stored": stored, "change": stored - initial, "exchanged": self.soil.exchanged_water_volume()}
+
+    def uptake_density(self):
+        """The roots' uptake per cell volume (m3 s-1 m-3)."""
+        uptake, volume = self.soil._cell_values("plant_uptake", "volume")
+        return uptake / volume
+
+    def head_gradient(self):
+        """Each cell's largest |Δh / d| over its faces (m m-1)."""
+        grid = self.grid
+        view = grid.to_graph_view()
+        (pressure_head,) = self.soil._cell_values("pressure_head")
+        gradient = np.abs(np.asarray(view.edge_difference @ pressure_head).reshape(-1)
+                          / np.asarray(grid.get("face_distance")).reshape(-1))
+        largest = np.zeros(pressure_head.size)
+        np.maximum.at(largest, view.tail, gradient)
+        np.maximum.at(largest, view.head, gradient)
+        return largest
+
+    def adapt(self):
+        """Refine and coarsen on the uptake density and the head gradient, then carry the water over."""
+        density, gradient = self.uptake_density(), self.head_gradient()
+        top = density.max()
+        refine = gradient > self.refine_gradient
+        coarsen = gradient < self.coarsen_gradient
+        if top > 0.:
+            refine |= density > self.refine_uptake_fraction * top
+            coarsen &= density < self.coarsen_uptake_fraction * top
+        coarsenable = set(self.grid.cell_ids()[coarsen & ~refine].tolist())
+        changed = self.grid.refine(refine) > 0
+        changed |= self.grid.coarsen(np.isin(self.grid.cell_ids(), list(coarsenable))) > 0
+        if changed:
+            self.soil.carry_over()
+        self.history.append(np.bincount(self.grid.refinement_level(), minlength=self.grid.max_level + 1))
+
+    def checkpoint_state(self) -> dict:
+        return {**super().checkpoint_state(), "initial_water": self.initial_water}
+
+    def restore_state(self, state: dict) -> None:
+        super().restore_state(state)
+        self.initial_water = state.get("initial_water")
+
+
+def scene_translator(plant_component="MechaHydraulics", uptake="root_uptake", uptake_factor=1e-6 / 86400.,
+                     soil_potential="soil_psi", potential_factor=1e4) -> Translator:
+    """
+    The scene links of the soil with a plant water model: its *uptake* (MECHA's root_uptake, cm3 d-1, factor
+    1e-6 / 86400 to m3 s-1) summed into the cells' plant_uptake, and the soil's water_potential (MPa, factor 1e4 to
+    MECHA's soil_psi in hPa) back to its *soil_potential*. The Scene maps the root surface onto the grid
+    (CrossMapping, given by its mappings=).
+    """
+    return (Translator()
+            .link(plant_component, soil_potential, "RichardsSoil", {"water_potential": potential_factor})
+            .link("RichardsSoil", "plant_uptake", plant_component, {uptake: uptake_factor}))
