@@ -22,8 +22,8 @@ each turn; its inputs are metafspm's outputs, sent to the session. A subclass de
         remote()                                       # this step's outputs sent, the next turn's inputs applied
 
 Rights per scale: "owns" and "refines", metafspm's own components create (and remove) the scale's entities, which
-are sent to the session; "follows", the entities the other participants create are created in the MPG (under their
-complex, after their parent), and removed when they are. When remote entities appear, metafspm shares its own
+are sent to the session; "follows" (and "refines", where another participant refines too), the entities the other
+participants create are created in the MPG (under their complex, after their parent), and removed when they are. When remote entities appear, metafspm shares its own
 variables over them by its repartition rules (StructuralComponent's), with *partition_weight* (a variable the
 remote model provides, e.g. a length): an extensive quantity split, a concentration diluted.
 
@@ -229,11 +229,12 @@ class RemoteComponent(StructuralComponent):
         return changed
 
     def _create(self, structure, g) -> bool:
-        """The vertices of the remote entities new in the scales metafspm follows."""
+        """The vertices of the remote entities new in the scales metafspm follows or refines (another participant may
+        refine them too)."""
         ds = self.data_structure
         changed = False
         for table in sorted(structure.entity_sets, key=lambda item: item.rank or 0):
-            if self.rights.get(table.name, "follows") != "follows" or "complex" not in table.columns:
+            if self.rights.get(table.name, "follows") == "owns" or "complex" not in table.columns:
                 continue
             scale = getattr(g.scales, table.name, None)
             if scale is None:

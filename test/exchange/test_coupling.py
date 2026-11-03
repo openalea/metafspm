@@ -19,7 +19,7 @@ pytest.importorskip("zmq")
 from openalea import fspm_tf  # noqa: E402
 from openalea.fspm_tf.coupling import (Coordinator, Declaration, EntitySetSpec, Link, Participant,  # noqa: E402
                                        VariableSpec)
-from openalea.metafspm.coupling.component import input_variable, state_variable  # noqa: E402
+from openalea.metafspm.coupling.component import FunctionalComponent, input_variable, state_variable  # noqa: E402
 from openalea.metafspm.data_structure.configs import ScalesConfig as scales  # noqa: E402
 from openalea.metafspm.io.coupling import RemoteComponent  # noqa: E402
 
@@ -172,3 +172,85 @@ def test_virtualplantlab_as_the_carbon_model(transport, tmp_path):
         return []
 
     run_metafspm(ENDPOINTS[transport], start_carbon, tmp_path, removal=False)
+
+
+@dataclass
+class Pool(FunctionalComponent):
+    """An amount per segment, metafspm's own extensive variable."""
+    amount: float = state_variable(**dict(DOC, unit="mol"), default=1., scale=scales.SubOrgan, kind="extensive")
+
+
+@dataclass
+class RemoteGrower(RemoteComponent):
+    """Another platform adding segments after metafspm's (both refine the organs into segments): their lengths come
+    from it, and metafspm shares its amounts over the new segments by those lengths (partition_weight)."""
+    participant = "metafspm"
+    rights = {"Plant": "owns", "Axis": "owns", "GrowthUnit": "owns", "Phytomer": "owns", "Organ": "owns",
+              "SubOrgan": "refines"}
+    partition_weight = "length"
+    length: float = state_variable(**dict(DOC, unit="m"), default=0., scale=scales.SubOrgan, kind="descriptor")
+
+
+def run_grower(endpoint, log):
+    """At each step from the first, one segment after each segment ending a chain, 0.5 m long."""
+    declaration = Declaration("grower", "test", [EntitySetSpec("plant", "Organ"),
+                                                 EntitySetSpec("plant", "SubOrgan", rights="refines")], [
+        VariableSpec("plant", "SubOrgan", "length", "provides", "m", kind="descriptor")])
+    participant = Participant.connect(declaration, endpoint, timeout=120)
+    mine = {}                                       # segment id: (complex, parent)
+    for turn in participant.turns():
+        segments = turn.frame.data_structure("plant").entity_set("SubOrgan")
+        ids = segments.columns["id"].tolist()
+        if turn.step >= 1:
+            parents = set(segments.columns["parent"].tolist())
+            ends = [row for row, identifier in enumerate(ids) if identifier not in parents]
+            for row in ends:
+                new = participant.id_offset + len(mine)
+                mine[new] = (int(segments.columns["complex"][row]), ids[row])
+            log[turn.step] = len(ends)
+        new_ids = list(mine)
+        columns = {"id": np.array(new_ids, dtype=np.int64),
+                   "complex": np.array([mine[segment][0] for segment in new_ids], dtype=np.int64),
+                   "parent": np.array([mine[segment][1] for segment in new_ids], dtype=np.int64),
+                   "edge_type": np.array(["successor"] * len(new_ids), dtype=object),
+                   "label": np.array(["RootSegment"] * len(new_ids), dtype=object),
+                   "length": np.full(len(new_ids), 0.5)}
+        participant.send(fspm_tf.Frame(data_structures=[fspm_tf.DataStructure("plant", entity_sets=[
+            fspm_tf.EntitySet("SubOrgan", rank=6, columns=columns)])]))
+
+
+def test_metafspm_shares_its_amounts_over_remote_segments(tmp_path):
+    """C-5: the remote model's new segments among metafspm's nodes; metafspm splits its own extensive amount between
+    each new segment and its parent by their lengths (StructuralComponent's repartition), the total kept."""
+    ds = _population()
+    pool, remote = Pool(data_structure=ds), RemoteGrower(data_structure=ds)
+    coordinator = Coordinator("tcp://127.0.0.1:*", steps=3, interval=1., expect=["metafspm", "grower"], timeout=120)
+    remote.endpoint = coordinator.endpoint
+    log = {}
+    threads = [threading.Thread(target=coordinator.run, daemon=True),
+               threading.Thread(target=run_grower, args=(coordinator.endpoint, log), daemon=True)]
+    for thread in threads:
+        thread.start()
+    remote.start()
+    total = float(np.sum(ds.get("amount")))
+    nodes = ds.n_nodes()
+    for _ in range(3):
+        before = dict(zip(ds.entity_ids("node").tolist(), np.asarray(ds.get("amount")).tolist()))
+        lengths = dict(zip(ds.entity_ids("node").tolist(), np.asarray(ds.get("length")).tolist()))
+        remote()
+        if remote.stopped is not None:
+            break
+        ids = ds.entity_ids("node").tolist()
+        amount = dict(zip(ids, np.asarray(ds.get("amount")).tolist()))
+        assert np.sum(ds.get("amount")) == pytest.approx(total)          # the amount kept
+        g = ds._mtg
+        for vid in ids:
+            if vid in before:
+                continue                                              # a new segment: its parent's share
+            parent = g.parent(vid)
+            share = 0.5 / (0.5 + lengths[parent])
+            assert amount[vid] == pytest.approx(share * before[parent])
+            assert amount[parent] == pytest.approx((1. - share) * before[parent])
+    assert ds.n_nodes() > nodes
+    for thread in threads:
+        thread.join(60)

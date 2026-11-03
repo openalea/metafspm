@@ -599,8 +599,11 @@ scene = Scene.from_scenario(scenario, stand(...), Wheat, environment=[RhizoSoil,
   couple`, runs models of several platforms step by step), `openalea.metafspm.io.coupling.RemoteComponent` stands for
   the other platform's model: a component computing nothing, whose state variables are that model's outputs and whose
   inputs are sent to it. A subclass declares them as any component does, with `rights` (per scale: `"owns"`, metafspm
-  creates the entities; `"follows"`, the other model's entities are created in the MPG) and `links` (renames, factors,
-  changes of scale between the two models' variables). `remote.start()` joins the session; each `remote()` sends the
+  creates the entities; `"refines"`, metafspm creates some, under the others' entities; `"follows"`, the other model's
+  entities are created in the MPG, as are another refiner's in a scale metafspm refines) and `links` (renames,
+  factors, changes of scale between the two models' variables). With `partition_weight` (e.g. a length the other
+  model provides), metafspm shares its own variables over the other model's new nodes by StructuralComponent's
+  repartition rules: an extensive amount split between a new segment and its parent, the total kept. `remote.start()` joins the session; each `remote()` sends the
   step's outputs and applies the next turn's inputs, so it runs last in a step. The coupling is explicit: metafspm's
   inputs at a step are what the other model gave at its previous turn. `test/exchange/test_coupling.py` couples the
   root growth model with a carbon model written in VirtualPlantLab (`vpl_carbon.jl`).
