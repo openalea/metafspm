@@ -394,6 +394,63 @@ class DataStructureComponent(Component):
     MTG-backed parameters are re-read before each graph solve.
     """
 
+    def calendar(self, time: float = None, default=None) -> tuple:
+        """(day of year, hour) at *time* (default: forcing_time(), the scene time the step's forcings are read at),
+        from the Scene's start (Scene(start=(day_of_year, hour)): the calendar of its time 0), else from *default*
+        (the calendar of time 0 without a Scene start; None: raise)."""
+        start = self.__dict__.get("_scene_calendar") or default
+        if start is None:
+            raise ValueError(f"{type(self).__name__}.calendar(): the Scene has no start=(day_of_year, hour)")
+        time = self.forcing_time() if time is None else float(time)
+        day, hour = float(start[0]), float(start[1])
+        return day + (hour * 3600. + time) // 86400., (hour + time / 3600.) % 24.
+
+    def forcing_time(self, at: str = "end") -> float:
+        """
+        The time at which forcings are read: the end of the current (sub-)step for implicit solves and steps,
+        the evaluation time inside an IVP solve; with *at* "start", the start of the current (sub-)step. Times count
+        from the component's clock (the scene time).
+        """
+        start = self.__dict__.get("_clock", 0.)
+        offset = self.__dict__.get("_solve_offset", 0.)
+        if at == "start":
+            return start + offset
+        if "_ivp_time" in self.__dict__:
+            return start + offset + self.__dict__["_ivp_time"]
+        step = self.__dict__.get("_current_dt", None)
+        if step is None:                                   # outside a solve: the end of the component's sub-step
+            step = float(getattr(self, "time_step", None) or self.choregrapher.simulation_step() or 0.)
+        return start + offset + step
+
+    def forcing(self, name: str, at: str = None):
+        """
+        Forcing *name* at forcing_time() (coupling.forcings): a number, a callable of the time, or a table linearly
+        interpolated, as a Series indexed by time or a (times, values) pair. *at*: "end" or "start" of the step (by
+        default its declaration's, forcing_variable(at=...), else "end").
+        """
+        if at is None:
+            declared = getattr(type(self), "__dataclass_fields__", {}).get(name)
+            at = declared.metadata.get("at", "end") if declared is not None else "end"
+        forcings = self.__dict__.get("_scene_forcings") or {}
+        if name not in forcings:
+            raise KeyError(f"{type(self).__name__} has no forcing '{name}' (the Scene's forcings=)")
+        from openalea.metafspm.coupling.forcings import forcing_value, is_spatial
+        if is_spatial(forcings[name]):
+            raise TypeError(f"forcing '{name}' varies in space ((time, ids) -> values): the Scene writes it into an "
+                            "input or parameter, a component does not read it with forcing()")
+        return forcing_value(forcings[name], self.forcing_time(at))
+
+    def pool_exchange(self, name: str):
+        """
+        During a graph-system solve with pool unknowns: the sparse (n_nodes, n_pools) map between the nodes of
+        the pool's exchange set and the pool of their entity. P @ pool gives each node its pool's value; P.T @ flux
+        sums node fluxes into their pools.
+        """
+        maps = self.__dict__.get("_pool_exchange") or {}
+        if name not in maps:
+            raise KeyError(f"'{name}' is not a pool unknown of the graph system being solved")
+        return maps[name]
+
     @property
     def dt(self) -> float:
         """Length of the current (sub-)step of a graph-system solve; the time step outside sub-stepping (every component's steps)."""
@@ -734,63 +791,6 @@ class FunctionalComponent(DataStructureComponent):
         """The graph the component's graph systems solve on (its incidence, edge_difference...): in a graph system's
         terms, the active subgraph during its solve."""
         return self._graph_view
-
-    def calendar(self, time: float = None, default=None) -> tuple:
-        """(day of year, hour) at *time* (default: forcing_time(), the scene time the step's forcings are read at),
-        from the Scene's start (Scene(start=(day_of_year, hour)): the calendar of its time 0), else from *default*
-        (the calendar of time 0 without a Scene start; None: raise)."""
-        start = self.__dict__.get("_scene_calendar") or default
-        if start is None:
-            raise ValueError(f"{type(self).__name__}.calendar(): the Scene has no start=(day_of_year, hour)")
-        time = self.forcing_time() if time is None else float(time)
-        day, hour = float(start[0]), float(start[1])
-        return day + (hour * 3600. + time) // 86400., (hour + time / 3600.) % 24.
-
-    def forcing_time(self, at: str = "end") -> float:
-        """
-        The time at which forcings are read: the end of the current (sub-)step for implicit solves and steps,
-        the evaluation time inside an IVP solve; with *at* "start", the start of the current (sub-)step. Times count
-        from the component's clock (the scene time).
-        """
-        start = self.__dict__.get("_clock", 0.)
-        offset = self.__dict__.get("_solve_offset", 0.)
-        if at == "start":
-            return start + offset
-        if "_ivp_time" in self.__dict__:
-            return start + offset + self.__dict__["_ivp_time"]
-        step = self.__dict__.get("_current_dt", None)
-        if step is None:                                   # outside a solve: the end of the component's sub-step
-            step = float(getattr(self, "time_step", None) or self.choregrapher.simulation_step() or 0.)
-        return start + offset + step
-
-    def forcing(self, name: str, at: str = None):
-        """
-        Forcing *name* at forcing_time() (coupling.forcings): a number, a callable of the time, or a table linearly
-        interpolated, as a Series indexed by time or a (times, values) pair. *at*: "end" or "start" of the step (by
-        default its declaration's, forcing_variable(at=...), else "end").
-        """
-        if at is None:
-            declared = getattr(type(self), "__dataclass_fields__", {}).get(name)
-            at = declared.metadata.get("at", "end") if declared is not None else "end"
-        forcings = self.__dict__.get("_scene_forcings") or {}
-        if name not in forcings:
-            raise KeyError(f"{type(self).__name__} has no forcing '{name}' (the Scene's forcings=)")
-        from openalea.metafspm.coupling.forcings import forcing_value, is_spatial
-        if is_spatial(forcings[name]):
-            raise TypeError(f"forcing '{name}' varies in space ((time, ids) -> values): the Scene writes it into an "
-                            "input or parameter, a component does not read it with forcing()")
-        return forcing_value(forcings[name], self.forcing_time(at))
-
-    def pool_exchange(self, name: str):
-        """
-        During a graph-system solve with pool unknowns: the sparse (n_nodes, n_pools) map between the nodes of
-        the pool's exchange set and the pool of their entity. P @ pool gives each node its pool's value; P.T @ flux
-        sums node fluxes into their pools.
-        """
-        maps = self.__dict__.get("_pool_exchange") or {}
-        if name not in maps:
-            raise KeyError(f"'{name}' is not a pool unknown of the graph system being solved")
-        return maps[name]
 
     def previous(self, name: str, at: str = "substep") -> np.ndarray:
         """

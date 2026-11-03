@@ -183,6 +183,8 @@ carbon()                                  # one time step: every step, in the sc
   default, provider); `Component.schedule()` its steps in the order they run, grouped by stage;
   `component.variable_specs` their resolved places on its DataStructure; `component.active_ids(location)` the active
   entities (at a coarse location: those of the plants emerged), for MPG-style steps.
+- **Couplings.** `model.couplings()` lists how each input of the model's components is coupled; in a Scene, the scene
+  translator's links too (`"scene"`: with the environment models, the default identity links included).
 - **Owners.** `ds.owner(location)`: each node's entity at a coarse location (an index in `ds.entity_ids(location)`);
   `ds.owner("Axis", of="Organ")`: each Organ's Axis, between two coarse locations.
 - **Public accessors** (rather than the private names behind them): `ds.from_scale`, `ds.sections_of(vids)`,
@@ -458,9 +460,9 @@ scene = Scene.from_scenario(scenario, stand(...), Wheat, environment=[RhizoSoil,
   column each. A forcing is a number, a callable of the scene time (s), a Series indexed by time, or a `(times,
   values)` pair; tables are interpolated linearly; a callable of the time and the entity ids, `(time, ids) -> one
   value per entity`, varies in space (a soil temperature by depth). A component declaring the name
-  (`forcing_variable`) reads it with `self.forcing(name)`. Otherwise the Scene writes it at the start of each step into the input or parameter of that
+  (`forcing_variable`) reads it with `self.forcing(name)` (any component). Otherwise the Scene writes it at the start of each step into the input or parameter of that
   name, on every component declaring it and not coupled to another (a measured soil temperature, a shoot's
-  supply). A forcing nothing takes raises. `as_forcing(value, time_unit=86400.)` (or `time_unit="d"`) turns an input given by day (a
+  supply; an input declared without a place is a plant's value, per plant). A forcing nothing takes raises. `as_forcing(value, time_unit=86400.)` (or `time_unit="d"`) turns an input given by day (a
   number, a function of the day, a Series indexed by day, one value per day) into one. `events=[(time, action)]`
   stay for one-off actions.
 - **Services.** An environment model's `interval` (s) is its cadence (`due()`, and `between()` at the other

@@ -67,6 +67,12 @@ class CompositeModel:
         import pandas as pd
         components = getattr(self, "components", [])
         translator = getattr(self, "translator", None) or Translator()
+        scene = self.__dict__.get("_scene_translator")          # the Scene's links (with the environment models)
+        if scene is not None:
+            merged = Translator()
+            merged.links.extend(translator.links)
+            merged.links.extend(link for link in scene.links if link not in translator.links)
+            translator = merged
         names = {type(component).__name__ for component in components}
         provided = {}
         for component in components:

@@ -162,6 +162,8 @@ class Scene:
                              "the scene translator identifies components by class name (one population per model)")
 
         self.translator = _with_identity_links(Translator.load(translator), self.populations, self.environment)
+        for model in [population.instance for population in self.populations] + list(self.environment):
+            model.__dict__["_scene_translator"] = self.translator        # their couplings() list the scene's links
         self.mapping_method, self.periodic, self.flip_z = mapping_method, periodic, flip_z
         # Explicit mappings (e.g. a LayerMapping column <-> grid, or a CrossMapping with a mask), then the inferred
         # population <-> grid / union ones for the pairs the explicit ones do not link

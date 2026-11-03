@@ -286,11 +286,12 @@ def resolve_declaration(f, ds) -> Optional[VariableSpec]:
     if isinstance(raw_scale, str) and raw_scale in SOLVER_LOCATIONS:
         raise DeclarationError(f"'{f.name}': scale='{raw_scale}' is a location: give location='{raw_scale}'")
     if raw_scale is None and location is None:
-        # A numeric parameter without a place is stored per plant: at the
-        # "Plant" location of plant DataStructures, at "scalar" elsewhere. Other fields are not DataStructure variables.
+        # A numeric parameter or input without a place is stored per plant: at the "Plant" location of plant
+        # DataStructures, at "scalar" elsewhere (an input a forcing writes: a plant's value, or the environment's).
+        # Other fields are not DataStructure variables.
         numeric = (dtype is not object and not isinstance(f.default, bool)
                    and isinstance(f.default, (int, float, np.integer, np.floating)))
-        if meta.get("variable_type") != "parameter" or not numeric or mapping is not None:
+        if meta.get("variable_type") not in ("parameter", "input") or not numeric or mapping is not None:
             return None
         plant = _scales_of(ds).Plant
         on_plants = _is_graph(ds) and "Plant" in getattr(ds, "_coarse_scale_names", lambda: [])()

@@ -11,6 +11,7 @@ import pytest
 
 from openalea.metafspm.coupling.component import (FunctionalComponent, forcing_variable, geometry_input,
                                                   input_variable, state_variable)
+from openalea.metafspm.coupling.composite_wrapper import CompositeModel
 from openalea.metafspm.coupling.forcings import as_forcing
 from openalea.metafspm.scene.environment import EnvironmentModel
 from openalea.metafspm.scene.scene import Scene
@@ -32,12 +33,12 @@ class Absorbing(FunctionalComponent):
         return {"absorbed": np.asarray(PARa)}
 
 
-class Plants:
+class Plants(CompositeModel):
     initiators = (RootGrowthProbe,)
 
     def __init__(self, data_structure, time_step):
         self.absorbing = Absorbing(data_structure=data_structure)
-        self.components = [self.absorbing]
+        self.couple(self.absorbing)
 
     def run(self):
         self.absorbing()
@@ -106,3 +107,47 @@ def test_geometry_input_relights_when_elements_appear():
     assert light.due(DT)
     rows = light.couplings().set_index("variable")
     assert rows.loc["canopy", "coupling"] == "geometry"
+
+
+def test_a_plant_models_couplings_list_the_scenes_links():
+    scene = _scene()
+    rows = scene.populations[0].instance.couplings().set_index("variable")
+    assert rows.loc["PARa", "coupling"] == "scene" and rows.loc["PARa", "provider"] == "Sky"
+
+
+def test_a_structural_component_reads_the_calendar_and_forcings_and_an_unplaced_input_is_forced():
+    """Every component has calendar() and forcing(); an input declared without a place is a plant's value (per plant)
+    that a forcing of its name writes."""
+    from openalea.metafspm.coupling.component import StructuralComponent
+    from openalea.metafspm.data_structure.configs import ScalesConfig as scales
+    seen = {}
+
+    @dataclass
+    class Clocked(RootGrowthProbe):
+        air_temperature: float = input_variable(**DOC, by="the weather", default=-1.)
+        warmth: float = state_variable(**DOC, default=0., scale=scales.Plant, kind="descriptor")
+        PARi: float = forcing_variable(unit="µmol m-2 s-1", description="The incident PAR")
+
+        @state
+        def _warmth(self, air_temperature):
+            seen["calendar"], seen["PARi"] = self.calendar(), self.forcing("PARi")
+            return air_temperature
+
+    class ClockedPlants(CompositeModel):
+        initiators = (Clocked,)
+
+        def __init__(self, data_structure, time_step):
+            self.clocked = Clocked(data_structure=data_structure)
+            self.couple(self.clocked)
+
+        def run(self):
+            self.clocked()
+
+    assert issubclass(Clocked, StructuralComponent)
+    scene = Scene(doubles_planting([ClockedPlants]), time_step=DT, start=(100., 8.),
+                  forcings={"air_temperature": lambda time: 15. + time / DT, "PARi": lambda time: 7.})
+    scene.run()
+    ds = scene.populations[0].data_structure
+    assert ds.location("air_temperature") == "Plant"
+    np.testing.assert_allclose(ds.get("warmth"), 15.)                 # written at the step's start
+    assert seen["calendar"] == (100., 9.) and seen["PARi"] == 7.
