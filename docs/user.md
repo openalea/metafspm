@@ -273,6 +273,10 @@ class SoilDiffusion(FunctionalComponent):
   at its construction that every required one is given (`required=False`: an optional one, which raises KeyError
   when read). A forcing is read at the end of the step by default; `forcing_variable(at="start")`, or
   `self.forcing(name, at="start")`, reads it at the step's start (a meteo table whose hour begins with the step).
+- **Solvers.** `@graph_system(solver=...)` takes one of the keys `solve.solver.solver_names()` lists; a solver class
+  of one's own (a subclass of `NewtonSolver`, e.g. with another linear solver) is given a key with
+  `solve.solver.register_solver(name, solver_class)`. A graph system's equations class, to call or re-solve its
+  equations outside the component, is `Component._system.equations`.
 - **Outputs and Jacobians.** `@graph_output(name, location=...)` derives outputs after the solve; `@graph_jacobian`
   gives an analytic Jacobian (finite differences with graph colouring otherwise).
 

@@ -1,8 +1,9 @@
 
 """
-Solvers of graph systems, selected by ``@graph_system(solver=...)``: a solver class or one of the keys "newton",
-"newton_fd", "explicit_euler", "scipy_krylov", "scipy_anderson", "scipy_hybr", "scipy_ivp_bdf",
-"scipy_ivp_radau" ("implicit_euler" is a deprecated alias of "newton" with transient=True). The Newton family
+Solvers of graph systems, selected by ``@graph_system(solver=...)``: one of the keys "newton", "newton_fd",
+"explicit_euler", "scipy_krylov", "scipy_anderson", "scipy_hybr", "scipy_ivp_bdf", "scipy_ivp_radau"
+("implicit_euler" is a deprecated alias of "newton" with transient=True), or a key given to a solver class of one's
+own by register_solver(name, solver_class) (e.g. a Newton solver with another linear solver). The Newton family
 solves residuals (time terms written by the equations, or by the framework from a @node_rate); explicit_euler and
 the IVP solvers integrate the du/dt of a @node_rate. The rest of this module (the solve() time loop, SolverResult,
 linear assembly with LinearDirectSolver, ODE specifications, make_solver) is internal and may change without notice.
@@ -838,6 +839,23 @@ _SOLVER_REGISTRY: dict[str, type] = {
     "scipy_ivp_bdf"            : ScipyIVPSolver,
     "scipy_ivp_radau"          : ScipyIVPSolver,
 }
+
+
+def register_solver(name: str, solver_class: type) -> None:
+    """
+    Make *solver_class* (a subclass of one of the solvers here: DAESolver, NewtonSolver...) available to
+    ``@graph_system(solver=name)``: e.g. a Newton solver with another linear solver. A name already used raises.
+    """
+    if not (isinstance(solver_class, type) and issubclass(solver_class, AbstractSolver)):
+        raise TypeError(f"register_solver: a solver class (an AbstractSolver), got {solver_class!r}")
+    if name in _SOLVER_REGISTRY and _SOLVER_REGISTRY[name] is not solver_class:
+        raise ValueError(f"register_solver: '{name}' is already {_SOLVER_REGISTRY[name].__name__}")
+    _SOLVER_REGISTRY[name] = solver_class
+
+
+def solver_names() -> list:
+    """The keys ``@graph_system(solver=...)`` accepts (metafspm's and the registered ones)."""
+    return sorted(_SOLVER_REGISTRY)
 
 
 def _make_solver(method: str, config=None) -> AbstractSolver:

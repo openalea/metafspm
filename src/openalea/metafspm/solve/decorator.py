@@ -1624,6 +1624,12 @@ class _GraphSystemDescriptor:
         self._spec      = spec
         self._attr_name = None
 
+    @property
+    def equations(self):
+        """The class holding the graph system's equations (its @node_balance, @edge_law, boundary methods), e.g. to
+        call or re-solve them outside the component (Component._flow.equations)."""
+        return self._inner_cls
+
     def __set_name__(self, owner, name):
         self._attr_name = name
 
