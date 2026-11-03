@@ -15,24 +15,35 @@ Richards' equation on a grid.
     scene_translator    the scene links of the soil with a plant water model (MECHA's): the uptake into the cells,
                         the soil's water potential back to the roots
 
+and the plant's own parts, between its shoot model (Adel's) and its root model (ArchiSimple's):
+
+    WheatCrown          an initiator, first in the plant: the seed at the sowing depth and the subcrown internode up
+                        to the crown, below the soil surface; the shoot's main stem grows on the crown's top
+                        (Adel's shoot_anchor), the seminal roots on the seed (ArchiSimple's root_anchor)
+    NodalRootEmergence  the rule of the nodal roots (a rule component, "sites"): N nodal roots per leaf appeared, on
+                        its axis' phytomer offset ranks below, D °Cd after the leaf's appearance, asked of the root
+                        model as a cumulative count per phytomer (nodal_axes_requested)
+
 Coordinates: z points down from the surface (the depth), as on every metafspm soil grid. The total head is h - z,
 and gravity pulls the water towards increasing z.
 
 Units: lengths in m, times in s, the pressure head in m of water, the water potential in MPa, volumes in m3 (fluxes
 in m3 s-1 on faces and cells; the rainfall and evaporation as m s-1 per area of soil surface), water contents in
-m3 m-3, conductivities in m s-1.
+m3 m-3, conductivities in m s-1. On the plant, z points up (the planting's: minus the sowing depth for a seed),
+thermal times are in °Cd.
 """
-from dataclasses import dataclass
+from dataclasses import dataclass, fields
 
 import numpy as np
 from scipy.sparse import csr_matrix, diags, identity, bmat
 
-from openalea.metafspm.coupling.component import (FunctionalComponent, input_variable, parameter, setting,
-                                                  state_variable)
+from openalea.metafspm.coupling.component import (FunctionalComponent, StructuralComponent, input_variable,
+                                                  parameter, planting_variable, setting, state_variable)
 from openalea.metafspm.coupling.translator import Translator
+from openalea.metafspm.data_structure.configs import PropsConfig, ScalesConfig
 from openalea.metafspm.scene.environment import EnvironmentModel
 from openalea.metafspm.solve.decorator import (boundary_condition, graph_jacobian, graph_output, graph_system,
-                                               node_balance)
+                                               node_balance, state)
 
 WATER_DENSITY, GRAVITY = 1000., 9.81                          # kg m-3, m s-2
 MPA_PER_METRE = WATER_DENSITY * GRAVITY * 1e-6                # MPa per m of pressure head
@@ -752,3 +763,257 @@ def scene_translator(plant_component="MechaHydraulics", uptake="root_uptake", up
     return (Translator()
             .link(plant_component, soil_potential, "RichardsSoil", {"water_potential": potential_factor})
             .link("RichardsSoil", "plant_uptake", plant_component, {uptake: uptake_factor}))
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# The plant's seed and crown: WheatCrown, an initiator
+# ═══════════════════════════════════════════════════════════════════════════════
+
+KIRBY_1993 = ("Kirby E.J.M. (1993) Effect of sowing depth on seedling emergence, growth and development in barley "
+              "and wheat. Field Crops Res. 35: 101-111 (the crown forms at about 2 cm below the surface whatever the "
+              "sowing depth, the subcrown internode spanning the rest)")
+GEGAS_2010 = ("Gegas V.C., Nazari A., Griffiths S., Simmonds J., Fish L., Orford S., Sayers L., Doonan J.H., Snape "
+              "J.W. (2010) A genetic framework for grain size and shape variation in wheat. Plant Cell 22: 1046-1056 "
+              "(grain lengths about 5.5 to 7.5 mm, widths 2.8 to 3.8 mm)")
+GEGAS_2010_DOI = ["10.1105/tpc.110.074153"]
+
+
+@dataclass
+class WheatCrown(StructuralComponent):
+    """
+    A wheat plant's seed and subcrown internode, the initiator that comes first in the plant (its initiate_plant):
+    the structure the shoot and the root models build on, so that the plant is one connected graph from the roots
+    to the leaves.
+
+        Plant
+         └─ Axis (ShootAxis) ─ GrowthUnit ─ Phytomer ─ Organ StemInternode (the subcrown internode)
+             the seed (SubOrgan Seed), at the sowing depth: the seminal roots' bearer (ArchiSimple's root_anchor
+             {"label": "Seed"})
+             then subcrown_elements StemElements '<', vertical, up to the crown at crown_depth below the surface:
+             the last one the crown's top, the main stem's bearer (Adel's shoot_anchor {"label": "StemElement",
+             "last": True})
+
+    Each element gets its start (x1, y1, z1), its end (x2, y2, z2), its length and its radius as MPG properties: the
+    models anchored on it start at its end (the seed's: its position) and the other models read them (an anatomy, a
+    hydraulic model). The seed is a point (its start and end at the seed), its length and radius the grain's. Its
+    axis has no row in the shoot's axes table (axis_row -1): it is not the shoot's, nor its organ.
+
+    The seed's depth is the planting's (z: minus the sowing depth, a planting_variable), unless the plant's
+    scenario gives sowing_depth. The crown's depth does not follow the sowing depth (Kirby 1993): the subcrown
+    internode's length is the sowing depth minus crown_depth, positive (a seed sown above the crown's depth raises).
+    The initiator reads its parameters from the plant's scenario (the class defaults otherwise); it has no step.
+    """
+    # the planting (the seed's position)
+    x: float = planting_variable("x")
+    y: float = planting_variable("y")
+    z: float = planting_variable("z")
+    # the seed and the subcrown internode
+    sowing_depth: float = parameter(unit="m", description="The seed's depth below the soil surface.", by="WheatCrown",
+                                    default=np.nan, value_comment="NaN: the planting's (minus its z)",
+                                    min_value=0.01, max_value=0.1, references=KIRBY_1993)
+    crown_depth: float = parameter(unit="m", description="The crown's depth below the soil surface (the tillering "
+                                                         "node: the top of the subcrown internode).",
+                                   by="WheatCrown", default=0.02, min_value=0.005, max_value=0.05,
+                                   references=KIRBY_1993)
+    seed_length: float = parameter(unit="m", description="The grain's length (the seed element's).", by="WheatCrown",
+                                   default=0.0065, min_value=0.004, max_value=0.009, references=GEGAS_2010,
+                                   DOI=GEGAS_2010_DOI)
+    seed_radius: float = parameter(unit="m", description="Half the grain's width (the seed element's radius).",
+                                   by="WheatCrown", default=0.0016, min_value=0.001, max_value=0.0025,
+                                   references=GEGAS_2010, DOI=GEGAS_2010_DOI)
+    subcrown_radius: float = parameter(unit="m", description="The subcrown internode's radius.", by="WheatCrown",
+                                       default=0.0005, min_value=0.0002, max_value=0.0015,
+                                       value_comment="without a source: a thin stem of about 1 mm across")
+    subcrown_elements: float = parameter(unit="adim", description="The number of StemElements of the subcrown "
+                                                                  "internode.", by="WheatCrown", default=2,
+                                         min_value=1, max_value=20,
+                                         value_comment="numerical: the internode's discretisation (e.g. for its "
+                                                       "hydraulics)")
+
+    @classmethod
+    def plant_parameters(cls, scenario) -> dict:
+        """The class's defaults overridden by *scenario*, the plant's."""
+        return {f.name: scenario.get(f.name, f.default) for f in fields(cls)
+                if f.metadata.get("variable_type") == "parameter"}
+
+    @classmethod
+    def initiate_plant(cls, g, plant, scenario):
+        """The seed and the subcrown internode of *plant* (the class docstring's structure), from its planting's
+        position and its *scenario*'s parameters."""
+        parameters = cls.plant_parameters(scenario)
+        x, y, planted = (float(g.property(name)[plant]) for name in ("x", "y", "z"))
+        seed_height = planted if np.isnan(parameters["sowing_depth"]) else -float(parameters["sowing_depth"])
+        crown_height = -float(parameters["crown_depth"])
+        if crown_height <= seed_height + 1e-12:
+            raise ValueError(f"WheatCrown: the crown ({-crown_height} m deep) must lie above the seed "
+                             f"({-seed_height} m deep): crown_depth below the sowing depth")
+        count = int(parameters["subcrown_elements"])
+        if count < 1 or count != parameters["subcrown_elements"]:
+            raise ValueError(f"WheatCrown: subcrown_elements is a whole number >= 1, got "
+                             f"{parameters['subcrown_elements']}")
+        scales, labels = g.scales, g.labels
+        complex_ = plant
+        for scale, label in ((scales.Axis, labels.Axis.Shoot), (scales.GrowthUnit, labels.GrowthUnit.Shoot),
+                             (scales.Phytomer, labels.Phytomer.Shoot), (scales.Organ, labels.Organ.StemInternode)):
+            complex_ = g.add_component(complex_, **PropsConfig(scale=scale, edge_type='/', label=label))
+        element = g.add_component(complex_, **PropsConfig(scale=scales.SubOrgan, edge_type='/',
+                                                         label=labels.SubOrgan.Seed))
+        cls._place(g, element, x, y, seed_height, seed_height, float(parameters["seed_length"]),
+                   float(parameters["seed_radius"]))
+        rise = (crown_height - seed_height) / count
+        for k in range(count):
+            element = g.add_child(element, **PropsConfig(scale=scales.SubOrgan, edge_type='<',
+                                                         label=labels.SubOrgan.StemElement))
+            cls._place(g, element, x, y, seed_height + k * rise, seed_height + (k + 1) * rise, rise,
+                       float(parameters["subcrown_radius"]))
+
+    @staticmethod
+    def _place(g, element, x, y, bottom, top, length, radius):
+        """An element's start and end (vertical, at x, y), its length and its radius, on the MPG."""
+        for name, value in dict(x1=x, y1=y, z1=bottom, x2=x, y2=y, z2=top, length=length, radius=radius).items():
+            g.property(name)[element] = value
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# The nodal roots' emergence: NodalRootEmergence, a rule component
+# ═══════════════════════════════════════════════════════════════════════════════
+
+KLEPPER_1984 = ("Klepper B., Belford R.K., Rickman R.W. (1984) Root and shoot development in winter wheat. Agron. J. "
+                "76: 117-122 (the nodal roots of the main stem's node n appear with its leaf n + 3, in pairs at the "
+                "first nodes)")
+
+
+@dataclass
+class NodalRootEmergence(FunctionalComponent):
+    """
+    The nodal roots' emergence on a wheat plant, a rule from the shoot's development to the root model's sites:
+    each leaf appeared on an axis asks for nodal_roots_per_leaf nodal roots on the phytomer nodal_root_rank_offset
+    ranks below its own on that axis (its site: the root model grows them on the phytomer's bearer, its first
+    SubOrgan, at the crown for the first phytomers), nodal_root_delay °Cd after the leaf's appearance (Klepper et
+    al. 1984: the roots of node n with leaf n + 3). A leaf whose site would lie below the axis' first phytomer asks
+    for none (the seminal roots are the seed's).
+
+    The rule reads the shoot's public state (Adel's, ShootArchitecture's contract): each phytomer's rank
+    (phytomer_rank) and axis (axis_row: the shoot's axes have a row in its axes table), each axis' Haun stage
+    (haun_stage, the development's) and each plant's thermal time (thermal_time, the development's, °Cd). A leaf
+    has appeared when its axis' Haun stage reaches its rank minus one (Haun 1973's scale: the leaf of rank n appears
+    at stage n - 1); its appearance time is interpolated between the rule's last call and this one (the Haun stage
+    linear in thermal time over a step), the call's thermal time for an axis the rule has not seen yet.
+
+    It writes, per Phytomer, the cumulative number of nodal roots asked for on it (nodal_axes_requested, the root
+    model's input: it grows the difference with those it grew), each leaf's request counted once when it falls due
+    (leaf_nodal_roots): no request lost or replaced, whatever the steps. Its entities are the shoot's elements (its
+    axes with a row, axis_row >= 0), the phytomers they belong to its phytomers.
+    """
+    entities = {"axis_row": ">=0"}
+
+    # read from the shoot (its architecture and its development)
+    thermal_time: float = input_variable(unit="°Cd", description="The plant's thermal time (its development's).",
+                                         by="model_development", default=np.nan, scale=ScalesConfig.Plant)
+    haun_stage: float = input_variable(unit="adim", description="The axis' Haun stage: its leaves appeared, the last "
+                                                                "one's fraction (its development's).",
+                                       by="model_development", default=0., scale=ScalesConfig.Axis)
+    axis_row: int = input_variable(unit="adim", description="The axis' row in the shoot's axes table (-1: not the "
+                                                            "shoot's).", by="model_shoot_architecture", default=-1,
+                                   scale=ScalesConfig.Axis, dtype="int")
+    phytomer_rank: int = input_variable(unit="adim", description="The phytomer's rank on its axis, from 1.",
+                                        by="model_shoot_architecture", default=0, scale=ScalesConfig.Phytomer,
+                                        dtype="int")
+    # the rule's state
+    leaf_appearance_time: float = state_variable(unit="°Cd", description="The thermal time at which the phytomer's "
+                                                                         "leaf appeared.",
+                                                 value_comment="NaN: not appeared (or not a shoot's phytomer)",
+                                                 kind="descriptor", default=np.nan, scale=ScalesConfig.Phytomer)
+    leaf_nodal_roots: float = state_variable(unit="adim", description="The nodal roots the phytomer's leaf asked for "
+                                                                      "on its site.",
+                                             value_comment="NaN: not asked yet", kind="descriptor", default=np.nan,
+                                             scale=ScalesConfig.Phytomer)
+    nodal_axes_requested: float = state_variable(unit="adim", description="The cumulative number of nodal roots "
+                                                                          "asked for on the phytomer (the root "
+                                                                          "model's sites).", kind="descriptor",
+                                                 default=0., scale=ScalesConfig.Phytomer)
+    previous_thermal_time: float = state_variable(unit="°Cd", description="The axis' plant's thermal time at the "
+                                                                          "rule's last call.",
+                                                  value_comment="NaN: not seen yet", kind="descriptor",
+                                                  default=np.nan, scale=ScalesConfig.Axis)
+    previous_haun_stage: float = state_variable(unit="adim", description="The axis' Haun stage at the rule's last "
+                                                                         "call.", value_comment="NaN: not seen yet",
+                                                kind="descriptor", default=np.nan, scale=ScalesConfig.Axis)
+    # the rule
+    nodal_roots_per_leaf: float = parameter(unit="adim", description="The nodal roots each leaf appeared asks for.",
+                                            by="NodalRootEmergence", default=2., min_value=0., max_value=6.,
+                                            value_comment="two at the first nodes, more at the upper ones (Klepper "
+                                                          "et al. 1984)", references=KLEPPER_1984)
+    nodal_root_rank_offset: float = parameter(unit="adim", description="The ranks between a leaf and the phytomer "
+                                                                       "bearing the nodal roots it asks for.",
+                                              by="NodalRootEmergence", default=3., min_value=0., max_value=5.,
+                                              references=KLEPPER_1984)
+    nodal_root_delay: float = parameter(unit="°Cd", description="The thermal time from a leaf's appearance to its "
+                                                                "nodal roots' emergence.", by="NodalRootEmergence",
+                                        default=0., min_value=0., max_value=200.,
+                                        value_comment="without a source: the phase is the rank offset's (Klepper "
+                                                      "et al. 1984), the delay a refinement of it")
+
+    @state
+    def _nodal_axes_requested(self, thermal_time, haun_stage, axis_row, phytomer_rank, leaf_appearance_time,
+                              leaf_nodal_roots, nodal_axes_requested, previous_thermal_time, previous_haun_stage,
+                              nodal_roots_per_leaf, nodal_root_rank_offset, nodal_root_delay) -> dict:
+        """
+        Per Phytomer: the leaves appeared since the last call (their appearance times), the requests falling due
+        (thermal time >= appearance + delay) added to their sites' cumulative counts, once each.
+        """
+        ds = self.data_structure
+        axis = np.asarray(ds.owner("Axis", of="Phytomer"), dtype=np.int64)
+        plant = np.asarray(ds.owner("Plant", of="Phytomer"), dtype=np.int64)
+        rank = np.asarray(phytomer_rank, dtype=np.int64)
+        own = np.zeros(rank.size, dtype=bool)
+        own[np.unique(np.asarray(ds.owner("Phytomer"), dtype=np.int64))] = True     # its elements' phytomers
+        own &= rank >= 1
+        time = np.asarray(thermal_time, dtype=float)[plant]
+        stage = np.asarray(haun_stage, dtype=float)[axis]
+        time_before = np.asarray(previous_thermal_time, dtype=float)[axis]
+        stage_before = np.asarray(previous_haun_stage, dtype=float)[axis]
+
+        # The leaves appeared (the Haun stage at their rank minus one), their time interpolated over the step
+        appearance = np.array(leaf_appearance_time, dtype=float)
+        appeared = own & np.isnan(appearance) & np.isfinite(time) & (stage >= rank - 1)
+        seen = appeared & np.isfinite(time_before) & np.isfinite(stage_before) & (stage > stage_before)
+        fraction = np.zeros(rank.size)
+        fraction[seen] = np.clip((rank[seen] - 1 - stage_before[seen]) / (stage[seen] - stage_before[seen]), 0., 1.)
+        appearance[appeared] = np.where(seen, time_before + fraction * (time - time_before), time)[appeared]
+
+        # The requests falling due, each added once to its site (the phytomer offset ranks below on its axis)
+        asked = np.array(leaf_nodal_roots, dtype=float)
+        requested = np.array(nodal_axes_requested, dtype=float)
+        due = own & np.isnan(asked) & np.isfinite(appearance) & (time >= appearance + np.asarray(nodal_root_delay))
+        site_rank = rank - np.round(np.asarray(nodal_root_rank_offset, dtype=float)).astype(np.int64)
+        site = self._phytomer_at(axis, rank, own, site_rank)
+        count = np.asarray(nodal_roots_per_leaf, dtype=float) * np.ones(rank.size)
+        asked[due] = np.where(site[due] >= 0, count[due], 0.)
+        given = due & (site >= 0)
+        np.add.at(requested, site[given], count[given])
+        return {"leaf_appearance_time": appearance, "leaf_nodal_roots": asked, "nodal_axes_requested": requested}
+
+    @state
+    def _previous_axis_state(self, thermal_time, haun_stage) -> dict:
+        """Per Axis: its plant's thermal time and its Haun stage at this call, for the next call's interpolation
+        (after the requests)."""
+        plant = np.asarray(self.data_structure.owner("Plant", of="Axis"), dtype=np.int64)
+        return {"previous_thermal_time": np.asarray(thermal_time, dtype=float)[plant],
+                "previous_haun_stage": np.array(haun_stage, dtype=float)}
+
+    @staticmethod
+    def _phytomer_at(axis, rank, own, wanted_rank) -> np.ndarray:
+        """Per phytomer, the index of its axis' own phytomer of rank *wanted_rank* (-1: none)."""
+        found = np.full(rank.size, -1, dtype=np.int64)
+        candidates = np.flatnonzero(own)
+        if candidates.size == 0:
+            return found
+        width = int(rank.max()) + 1                                    # (axis, rank) as one key
+        key = axis * width + rank
+        order = candidates[np.argsort(key[candidates], kind="stable")]
+        wanted = axis * width + wanted_rank
+        position = np.searchsorted(key[order], wanted).clip(0, order.size - 1)
+        hit = (wanted_rank >= 1) & (key[order][position] == wanted)
+        found[hit] = order[position][hit]
+        return found
