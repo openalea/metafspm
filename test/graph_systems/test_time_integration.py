@@ -13,6 +13,7 @@ from scipy.sparse.linalg import spsolve
 from openalea.metafspm.coupling.component import FunctionalComponent, parameter, state_variable
 from openalea.metafspm.data_structure.data_api import ArrayDataStructure
 from openalea.metafspm.solve.decorator import edge_law, graph_system, node_balance
+from openalea.metafspm.solve.solver import SolverConvergenceError
 
 DOC = dict(unit="", unit_comment="", description="", min_value=0., max_value=1., value_comment="", references="",
            DOI=[])
@@ -130,6 +131,87 @@ def test_an_adaptive_step_below_min_step_raises():
     grid, _ = _grid(diffusivity=5e-3)
     with pytest.raises(RuntimeError, match="adaptive step below min_step"):
         TooStrict(data_structure=grid)()
+
+
+@dataclass
+class AdaptivePerUnknown(Fields):
+    _diffusion = _system(integrate="adaptive", rtol={"solute": 1e-3}, atol={"solute": 1e-6})
+
+
+def test_tolerances_per_unknown_are_those_of_the_unknown():
+    grid, _ = _grid(diffusivity=5e-3)
+    Adaptive(data_structure=grid)()
+    other, _ = _grid(diffusivity=5e-3)
+    AdaptivePerUnknown(data_structure=other)()
+    np.testing.assert_array_equal(other.get("solute"), grid.get("solute"))
+    with pytest.raises(ValueError, match="not node unknowns"):
+        graph_system(node_unknowns=["c"], integrate="adaptive", rtol={"d": 1e-3})
+    with pytest.raises(ValueError, match="needs integrate='adaptive'"):
+        graph_system(node_unknowns=["c"], atol={"c": 1e-3})
+
+
+# ---------------------------------------------------------------- failed solves within adaptive steps
+
+RATE = 3.
+
+
+class _LogarithmicDecay:
+    """d(log u)/dt = -RATE in its implicit form: exact for any step, but Newton's first iterate from u_prev,
+    u_prev (1 - RATE dt), is negative (its logarithm not a number) when RATE dt >= 1: steps shorter than 1 / RATE."""
+
+    @node_balance(field="amount")
+    def _balance(self, amount):
+        with np.errstate(invalid="ignore", divide="ignore"):
+            return np.log(amount) - np.log(self.previous("amount")) + RATE * self.dt
+
+
+@dataclass
+class Decay(FunctionalComponent):
+    amount: float = state_variable(**DOC, default=1., location="cell")
+    time_step = DT
+
+
+@dataclass
+class DecayOnce(Decay):
+    _decay = graph_system(node_unknowns=["amount"], transient=True)(_LogarithmicDecay)
+
+
+@dataclass
+class DecayAdaptive(Decay):
+    _decay = graph_system(node_unknowns=["amount"], transient=True, integrate="adaptive", rtol=1e-3,
+                          atol=1e-6)(_LogarithmicDecay)
+
+
+@dataclass
+class DecayAdaptiveLongSteps(Decay):
+    _decay = graph_system(node_unknowns=["amount"], transient=True, integrate="adaptive", rtol=1e-3, atol=1e-6,
+                          min_step=0.6)(_LogarithmicDecay)
+
+
+def _amounts():
+    grid = ArrayDataStructure(shape=SHAPE, dx=DX)
+    grid.register("amount", np.ones(SHAPE), location="cell")
+    return grid
+
+
+def test_a_step_where_newton_fails_raises_a_solver_convergence_error():
+    with pytest.raises(SolverConvergenceError, match="not finite"):
+        DecayOnce(data_structure=_amounts())()
+
+
+def test_adaptive_steps_halve_where_newton_fails():
+    grid = _amounts()
+    model = DecayAdaptive(data_structure=grid)
+    model()
+    np.testing.assert_allclose(grid.get("amount"), np.exp(-RATE * DT), rtol=1e-9)
+    assert model._last_integration["rejected"] >= 2                     # 1 s, then 0.5 s, rejected
+    assert model._last_integration["steps"] >= 3
+
+
+def test_adaptive_steps_failing_down_to_min_step_raise_naming_the_component_and_time():
+    with pytest.raises(SolverConvergenceError, match=r"DecayAdaptiveLongSteps\._decay: the solve failed down to "
+                                                     r"the minimum sub-step .* at t=0 s .*scene time 0 s"):
+        DecayAdaptiveLongSteps(data_structure=_amounts())()
 
 
 # ---------------------------------------------------------------- previous() levels

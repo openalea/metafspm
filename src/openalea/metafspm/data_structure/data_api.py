@@ -94,8 +94,13 @@ class GraphView:
         grids it is incidence.T. Adaptive grids give a consistent one: between cells of different sizes, the coarse
         cell's value is taken on the fine cell's axis (from its gradient), so that D @ u is exact for linear u. Edge
         laws written with it (j = k D @ u) are then consistent on any grid; the solver's Jacobian pattern follows it.
+        Built once per view (a view is one topology's: a changed topology gives a new view).
         """
-        return (self.difference if self.difference is not None else self.incidence.T).tocsr()
+        cached = self.__dict__.get("_edge_difference")
+        if cached is None:
+            cached = (self.difference if self.difference is not None else self.incidence.T).tocsr()
+            object.__setattr__(self, "_edge_difference", cached)              # frozen: not a field
+        return cached
 
     @property
     def n_nodes(self) -> int:

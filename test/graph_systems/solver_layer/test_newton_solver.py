@@ -9,7 +9,7 @@ Concerns:
   2. Linear 2-node convergence: A x = b
   3. FD Jacobian (method='newton_fd') agrees with analytic Jacobian
   4. Linesearch: linesearch=True still converges
-  5. Non-convergence raises AssertionError
+  5. Non-convergence raises SolverConvergenceError
   6. step_once returns 1-D ndarray with correct shape
   7. prev_fields and dt are ignored (quasi-static)
 """
@@ -17,7 +17,7 @@ Concerns:
 import numpy as np
 import pytest
 
-from openalea.metafspm.solve.solver import NewtonSolver, SolverConfig, _make_solver
+from openalea.metafspm.solve.solver import NewtonSolver, SolverConfig, SolverConvergenceError, _make_solver
 from solver_specs import build_spec_nonlinear_1node, build_spec_linear_2node
 
 
@@ -101,18 +101,26 @@ def test_newton_linesearch_same_result_as_without(spec_nonlinear_1node):
     )
 
 
-# ── 5. Non-convergence raises AssertionError ─────────────────────────────────
+# ── 5. Non-convergence raises SolverConvergenceError ─────────────────────────
 
 def test_newton_non_convergence_raises(spec_nonlinear_1node):
     solver = NewtonSolver(SolverConfig(max_iter=1, tol=1e-15))
-    with pytest.raises(AssertionError, match="Newton did not converge"):
+    with pytest.raises(SolverConvergenceError, match="Newton did not converge"):
         solver.step_once(spec_nonlinear_1node)
 
 
 def test_newton_non_convergence_message_has_residual(spec_nonlinear_1node):
     solver = NewtonSolver(SolverConfig(max_iter=1, tol=1e-15))
-    with pytest.raises(AssertionError, match=r"\|\|R\|\|"):
+    with pytest.raises(SolverConvergenceError, match=r"\|\|R\|\|"):
         solver.step_once(spec_nonlinear_1node)
+
+
+def test_newton_relative_tolerance_stops_once_the_residual_fell_enough(spec_nonlinear_1node):
+    with pytest.raises(SolverConvergenceError):
+        NewtonSolver(SolverConfig(max_iter=3, tol=1e-15)).step_once(spec_nonlinear_1node)
+    x_new = NewtonSolver(SolverConfig(max_iter=3, tol=1e-15, newton_rtol=1e-2)).step_once(spec_nonlinear_1node)
+    first = np.linalg.norm(spec_nonlinear_1node.residual(spec_nonlinear_1node.pack_unknowns(), None, None), np.inf)
+    assert np.linalg.norm(spec_nonlinear_1node.residual(x_new, None, None), np.inf) < 1e-2 * first
 
 
 # ── 6. Interface: step_once returns correct ndarray ──────────────────────────

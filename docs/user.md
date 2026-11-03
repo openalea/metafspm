@@ -247,8 +247,12 @@ class SoilDiffusion(FunctionalComponent):
   Euler with the Newton family, `u += dt * rate` with `"explicit_euler"`, an IVP integration with `"scipy_ivp_bdf"`
   or `"scipy_ivp_radau"`. One rate-form model can thus be solved by any solver; a residual can only be solved by
   Newton. The node unknowns of one system use one form. `integrate="substeps"` (with `substeps=`) or `"adaptive"`
-  (step doubling, `rtol` / `atol`) integrate over the component's time step (`"once"` by default). The Newton
-  iterations take `max_iterations`, `tolerance`, `finite_difference_step`, `linesearch`; `transient=True` declares
+  (step doubling, `rtol` / `atol`, numbers or `{unknown: value}` per node unknown) integrate over the component's
+  time step (`"once"` by default). A failed solve (Newton not converging, a residual that is not finite, a singular
+  system) raises `solve.solver.SolverConvergenceError`; with `"adaptive"` it rejects the sub-step and halves it, as
+  the error control does, and raises naming the component and the time only below `min_step`. The Newton
+  iterations take `max_iterations`, `tolerance` (on ||R||∞), `relative_tolerance` (converged too when ||R||∞ fell
+  below that fraction of the first iterate's; 0 by default), `finite_difference_step`, `linesearch`; `transient=True` declares
   that a `@node_balance` writes its own time term (it only decides the anchoring check; inferred for `@node_rate`).
   `@edge_law(integrate=True)` adds the integrated amount `<field>_amount` (Q += q dt) as an edge unknown. Edge unknowns are algebraic
   (`@edge_law`), whatever the solver.
@@ -281,6 +285,10 @@ class SoilDiffusion(FunctionalComponent):
   at its construction that every required one is given (`required=False`: an optional one, which raises KeyError
   when read). A forcing is read at the end of the step by default; `forcing_variable(at="start")`, or
   `self.forcing(name, at="start")`, reads it at the step's start (a meteo table whose hour begins with the step).
+  Outside a Scene, `component.set_forcings(forcings, start=None)` gives a component the forcings a Scene would
+  (`{name: forcing}` or a DataFrame indexed by time, the Scene's `start=` calendar), read at the component's clock
+  (0 at its first call); `self.has_forcing(name)` tells whether one is given as a time series, e.g. for an input
+  read from the forcing of its name at each sub-step when one is given.
 - **Solvers.** `@graph_system(solver=...)` takes one of the keys `solve.solver.solver_names()` lists; a solver class
   of one's own (a subclass of `NewtonSolver`, e.g. with another linear solver) is given a key with
   `solve.solver.register_solver(name, solver_class)`. A graph system's equations class, to call or re-solve its

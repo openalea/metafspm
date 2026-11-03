@@ -43,7 +43,7 @@ from openalea.metafspm.solve.system_specs   import (
     SolverResult,
 )
 from openalea.metafspm.solve.solver         import (
-    SolverConfig, _SOLVER_REGISTRY, ExplicitEulerSolver, ScipyIVPSolver,
+    SolverConfig, SolverConvergenceError, _SOLVER_REGISTRY, ExplicitEulerSolver, ScipyIVPSolver,
 )
 
 # Map MPG integer scale constants → generic "node"/"edge" for snapshot routing.
@@ -1287,11 +1287,12 @@ class _GraphSystemBuilder:
             method       = sd["method"],
             max_iter     = sd["max_iter"],
             tol          = sd["tol"],
+            newton_rtol  = sd.get("relative_tolerance", 0.),
             fd_eps       = sd["fd_eps"],
             prefer_sparse= sd["prefer_sparse"],
             linesearch   = sd["linesearch"],
-            rtol         = sd["rtol"],
-            atol         = sd["atol"],
+            rtol         = _tolerance(sd["rtol"], None, 1e-6),        # per unknown: step doubling only
+            atol         = _tolerance(sd["atol"], None, 1e-9),
             max_step     = np.inf if sd["max_step"] is None else sd["max_step"],
         )
 
@@ -1515,10 +1516,18 @@ def _solve_substep(self, method_name, spec_def, h) -> None:
     _solve_once(self, method_name, spec_def)
 
 
+def _tolerance(value, name, default) -> float:
+    """An error-control tolerance of unknown *name*: a number for all unknowns, or {unknown: value} (*default* for
+    the unknowns it does not name)."""
+    return float(value.get(name, default)) if isinstance(value, dict) else float(value)
+
+
 def _integrate_adaptive(self, method_name, spec_def, time_step, names) -> None:
     """
     Step doubling: a step of h is compared with two steps of h/2; accepted when the difference is within
-    rtol * |x| + atol on the node unknowns, h being adapted after each trial. Raises when h falls below min_step.
+    rtol * |x| + atol on the node unknowns (per unknown when given as dicts), h being adapted after each trial. A
+    failed solve (SolverConvergenceError: no convergence, a residual that is not finite...) or a state that is not
+    finite rejects the trial too, h halved. Raises when h falls below min_step.
     """
     ds = _live_ds(self)
     rtol, atol = spec_def["rtol"], spec_def["atol"]
@@ -1528,26 +1537,39 @@ def _integrate_adaptive(self, method_name, spec_def, time_step, names) -> None:
     while t < time_step * (1. - 1e-12):
         h = min(h, time_step - t)
         start = _capture(ds, names, self)
-        self.__dict__["_solve_offset"] = t
-        _solve_substep(self, method_name, spec_def, h)
-        coarse = _capture(ds, spec_def["node_unknowns"], self)
-        _restore(ds, start, self)
-        _solve_substep(self, method_name, spec_def, h / 2.)
-        self.__dict__["_solve_offset"] = t + h / 2.
-        _solve_substep(self, method_name, spec_def, h / 2.)
-        fine = _capture(ds, spec_def["node_unknowns"], self)
-        error = max((np.max(np.abs(_captured(fine, fn) - _captured(coarse, fn))
-                            / (atol + rtol * np.abs(_captured(fine, fn)))) for fn in fine), default=0.)
-        if error <= 1.:
+        failure = None
+        try:
+            self.__dict__["_solve_offset"] = t
+            _solve_substep(self, method_name, spec_def, h)
+            coarse = _capture(ds, spec_def["node_unknowns"], self)
+            _restore(ds, start, self)
+            _solve_substep(self, method_name, spec_def, h / 2.)
+            self.__dict__["_solve_offset"] = t + h / 2.
+            _solve_substep(self, method_name, spec_def, h / 2.)
+            fine = _capture(ds, spec_def["node_unknowns"], self)
+            error = max((np.max(np.abs(_captured(fine, fn) - _captured(coarse, fn))
+                                / (_tolerance(atol, fn, 1e-9) + _tolerance(rtol, fn, 1e-6)
+                                   * np.abs(_captured(fine, fn)))) for fn in fine), default=0.)
+            if not np.isfinite(error):
+                failure = SolverConvergenceError("the solved state is not finite")
+        except SolverConvergenceError as error_raised:
+            failure = error_raised
+        if failure is None and error <= 1.:
             t, steps = t + h, steps + 1
             h *= min(2., max(0.2, 0.9 / np.sqrt(max(error, 1e-12))))
-        else:
-            _restore(ds, start, self)
-            rejected += 1
-            h *= max(0.2, 0.9 / np.sqrt(error))
-            if h < min_step:
-                raise RuntimeError(f"{type(self).__name__}.{method_name}: adaptive step below min_step={min_step:g} "
-                                   f"at t={t:g} of {time_step:g}")
+            continue
+        _restore(ds, start, self)
+        rejected += 1
+        h *= 0.5 if failure is not None else max(0.2, 0.9 / np.sqrt(error))
+        if h < min_step:
+            scene_time = self.__dict__.get("_clock", 0.) + t
+            if failure is not None:
+                raise SolverConvergenceError(
+                    f"{type(self).__name__}.{method_name}: the solve failed down to the minimum sub-step "
+                    f"min_step={min_step:g} s, at t={t:g} s of the {time_step:g} s step (scene time "
+                    f"{scene_time:g} s): {failure}") from failure
+            raise RuntimeError(f"{type(self).__name__}.{method_name}: adaptive step below min_step={min_step:g} "
+                               f"at t={t:g} of {time_step:g} (scene time {scene_time:g} s)")
     self._last_integration = {"steps": steps, "rejected": rejected}
 
 
@@ -1676,6 +1698,7 @@ def graph_system(
     solver                 = "newton",
     max_iterations         = 15,
     tolerance              = 1e-10,
+    relative_tolerance     = 0.,
     finite_difference_step = 1e-8,
     prefer_sparse          = True,
     linesearch             = False,
@@ -1714,8 +1737,10 @@ def graph_system(
         "scipy_krylov", "scipy_anderson", "scipy_hybr", "scipy_ivp_bdf" or "scipy_ivp_radau" ("implicit_euler" is
         "newton" with transient=True, accepted with a warning for one release).
 
-    max_iterations, tolerance (||R||_inf), finite_difference_step (of the finite-difference Jacobian),
-        prefer_sparse, linesearch (Armijo backtracking): the Newton iterations.
+    max_iterations, tolerance (||R||_inf), relative_tolerance (converged when ||R||_inf < tolerance +
+        relative_tolerance ||R_0||_inf, R_0 the first iterate's residual; 0: absolute only), finite_difference_step
+        (of the finite-difference Jacobian), prefer_sparse, linesearch (Armijo backtracking): the Newton iterations.
+        A failed solve raises solve.solver.SolverConvergenceError.
 
     schedule_as: the schedule row the solve runs in ("axial", "state", ...).
 
@@ -1729,10 +1754,13 @@ def graph_system(
         own time term (self.previous(...)).
 
     integrate: "once": one solve of the component's time_step (default); "substeps": *substeps* solves of
-        time_step / substeps; "adaptive": step doubling with rtol / atol, min_step / max_step. Equations write
-        their time terms with self.dt and self.previous().
+        time_step / substeps; "adaptive": step doubling with rtol / atol, min_step / max_step, a failed solve (no
+        convergence, a residual that is not finite) rejecting the sub-step and halving it down to min_step. Equations
+        write their time terms with self.dt and self.previous().
 
     rtol, atol, max_step: the error control of "adaptive" and of the IVP solvers (scipy_ivp_bdf, scipy_ivp_radau).
+        With "adaptive", rtol and atol may be given per node unknown, {unknown: value} (1e-6 and 1e-9 for the
+        unknowns not named).
 
     pool_unknowns: unknowns at a coarse scale, one per entity ({name: location} or {name: {"location": ...,
         "exchange": boundary set name}}, e.g. the shoot phloem pool of each plant, location "Plant"), solved with the
@@ -1782,6 +1810,14 @@ def graph_system(
         raise ValueError(f"graph_system: integrate must be 'once', 'substeps' or 'adaptive', got '{integrate}'")
     if integrate == "substeps" and int(substeps) < 1:
         raise ValueError("graph_system: substeps must be at least 1")
+    for tolerance_name, value in (("rtol", rtol), ("atol", atol)):
+        if isinstance(value, dict):
+            if integrate != "adaptive":
+                raise ValueError(f"graph_system: {tolerance_name} per unknown ({{unknown: value}}) needs "
+                                 "integrate='adaptive'")
+            unknown = sorted(set(value) - set(node_unknowns))
+            if unknown:
+                raise ValueError(f"graph_system: {tolerance_name} names {unknown}, not node unknowns")
 
     if not isinstance(solver, str):
         raise TypeError(f"graph_system(solver=...): a solver key, one of {sorted(_SOLVER_REGISTRY)}, got "
@@ -1809,6 +1845,7 @@ def graph_system(
         "method"        : method_str,
         "max_iter"      : max_iterations,
         "tol"           : tolerance,
+        "relative_tolerance": float(relative_tolerance),
         "fd_eps"        : finite_difference_step,
         "prefer_sparse" : prefer_sparse,
         "linesearch"    : linesearch,

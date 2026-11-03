@@ -188,6 +188,26 @@ def test_water_balance_closes_with_uptake_and_regridding():
     assert abs(model.water_balance()["change"]) > 1e-5               # a run that moved water
 
 
+def test_a_rain_forcing_is_followed_within_the_step_and_the_balance_closes():
+    """A rain pulse within one day (a forcing, read at each sub-step; the rainfall input left at 0) on a column
+    closed at the bottom: the water stored changes by what entered, to round-off, and by the pulse's integral within
+    the sub-steps' accuracy; nothing runs off (the rain below Ks)."""
+    grid = _column(10)
+    soil = _soil(grid, DAY, bottom_boundary="no_flux")
+    soil.set_pressure_head(-1.)
+    peak, area = 1e-6, 0.1 * 0.1
+    soil.set_forcings({"rainfall": ([0., 0.25 * DAY, 0.5 * DAY, 0.75 * DAY], [0., 0., peak, 0.])})
+    stored = soil.stored_water()
+    soil()
+    assert soil._last_integration["steps"] > 4                        # sub-steps following the pulse
+    change = soil.stored_water() - stored
+    assert change == pytest.approx(soil.exchanged_water_volume(), rel=1e-11)
+    assert change == pytest.approx(0.5 * peak * 0.5 * DAY * area, rel=5e-3)
+    assert np.all(_values(grid, "rainfall") == 0.) and np.all(_values(grid, "runoff") == 0.)
+    soil()                                                              # the next day: dry
+    assert soil.stored_water() - stored == pytest.approx(change, rel=1e-11)
+
+
 def test_carry_over_keeps_the_water_volume():
     """Refining then coarsening a non-uniform h: the water θ V is the same before and after, h recomputed from θ."""
     Choregrapher().set_simulation_time_step(HOUR)

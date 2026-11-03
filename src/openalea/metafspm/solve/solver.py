@@ -3,7 +3,9 @@
 Solvers of graph systems, selected by ``@graph_system(solver=...)``: one of the keys "newton", "newton_fd",
 "explicit_euler", "scipy_krylov", "scipy_anderson", "scipy_hybr", "scipy_ivp_bdf", "scipy_ivp_radau"
 ("implicit_euler" is a deprecated alias of "newton" with transient=True), or a key given to a solver class of one's
-own by register_solver(name, solver_class) (e.g. a Newton solver with another linear solver). The Newton family
+own by register_solver(name, solver_class) (e.g. a Newton solver with another linear solver). A solve that fails
+(no convergence, a residual or a step that is not finite, a singular system) raises SolverConvergenceError, which
+graph_system(integrate="adaptive") catches to retry with a shorter sub-step. The Newton family
 solves residuals (time terms written by the equations, or by the framework from a @node_rate); explicit_euler and
 the IVP solvers integrate the du/dt of a @node_rate. The rest of this module (the solve() time loop, SolverResult,
 linear assembly with LinearDirectSolver, ODE specifications, make_solver) is internal and may change without notice.
@@ -60,12 +62,18 @@ from scipy.sparse.linalg import spsolve
 # Configuration
 # ═══════════════════════════════════════════════════════════════════════════════
 
+class SolverConvergenceError(RuntimeError):
+    """A solve that failed: Newton (or scipy's root finding, or the recovery of the edge unknowns) did not converge,
+    or met a residual or a step that is not finite, or a singular linear system."""
+
+
 @dataclass
 class SolverConfig:
     """Numerical settings, decoupled from system description."""
     method       : str   = "newton"
     max_iter     : int   = 15
     tol          : float = 1e-10
+    newton_rtol  : float = 0.          # Newton converged when ||R||inf < tol + newton_rtol ||R_0||inf
     fd_eps       : float = 1e-8
     prefer_sparse: bool  = True
     linesearch   : bool  = False
@@ -99,7 +107,7 @@ def _recover_edges(spec, x: np.ndarray, tol: float = 1e-10, max_iter: int = 50) 
         if hasattr(jac_ee, "toarray"):
             jac_ee = jac_ee.toarray()
         packed[n_node_dof:] -= np.linalg.solve(np.asarray(jac_ee, dtype=np.float64), residual)
-    raise AssertionError(f"Edge recovery did not converge in {max_iter} iterations")
+    raise SolverConvergenceError(f"Edge recovery did not converge in {max_iter} iterations")
 
 
 class AbstractSolver(ABC):
@@ -156,7 +164,22 @@ class AbstractSolver(ABC):
         solved alone: the full system's node rows hold only fluxes, a zero diagonal that makes the direct solver pivot
         and fill in (25 s against 0.1 s on a 16 x 16 x 32 soil grid).
         Dense J  → numpy.linalg.solve (O(N³)).
+        A singular J, or a step that is not finite, raises SolverConvergenceError.
         """
+        import warnings
+        from scipy.sparse.linalg import MatrixRankWarning
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", MatrixRankWarning)        # a singular J: the step is not finite
+            try:
+                delta = self._linear_solve(jac, residual, spec)
+            except np.linalg.LinAlgError as error:
+                raise SolverConvergenceError(f"the linear system of the Newton step is singular: {error}") from error
+        if not np.all(np.isfinite(delta)):
+            raise SolverConvergenceError("the Newton step is not finite (a singular linear system)")
+        return delta
+
+    def _linear_solve(self, jac, residual: np.ndarray, spec=None) -> np.ndarray:
+        """J δ = −R (see _linear_step)."""
         condensation = getattr(spec, "parameters", {}).get("condensation") if spec is not None else None
         if issparse(jac) and condensation is not None:
             from openalea.metafspm.solve.network import condensed_solve
@@ -559,10 +582,16 @@ class NewtonSolver(DAESolver):
     def _integrate_step(self, spec, t, x, h, p, prev_fields=None):
         packed   = np.array(x, dtype=np.float64, copy=True)
         force_fd = (self.config.method == "newton_fd")
+        tolerance = None
 
         for _ in range(self.config.max_iter):
             residual = spec.residual(packed, prev_fields, h)
-            if np.linalg.norm(residual, ord=np.inf) < self.config.tol:
+            norm = np.linalg.norm(residual, ord=np.inf)
+            if not np.isfinite(norm):
+                raise SolverConvergenceError(f"Newton met a residual that is not finite (||R||inf = {norm})")
+            if tolerance is None:                       # absolute, and relative to the first residual
+                tolerance = self.config.tol + self.config.newton_rtol * norm
+            if norm < tolerance:
                 return packed, np.zeros_like(packed)
 
             jac = (spec.finite_difference_jacobian(packed, prev_fields, h)
@@ -580,7 +609,7 @@ class NewtonSolver(DAESolver):
             else:
                 packed = packed + delta
 
-        raise AssertionError(
+        raise SolverConvergenceError(
             f"Newton did not converge in {self.config.max_iter} iterations; "
             f"final ||R||inf = "
             f"{np.linalg.norm(spec.residual(packed, prev_fields, h), ord=np.inf):.3e}"
@@ -715,7 +744,7 @@ class ScipyRootSolver(DAESolver):
                 spec.residual(result.x, prev_fields, h), ord=np.inf
             )
             if actual >= self.config.tol * 1e3:
-                raise AssertionError(
+                raise SolverConvergenceError(
                     f"scipy.optimize.root ({scipy_method!r}) failed: "
                     f"{result.message}"
                 )

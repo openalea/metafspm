@@ -181,7 +181,7 @@ class Forced(FunctionalComponent):
 def test_forcings_are_read_at_the_end_of_each_substep():
     ds, _ = _population()
     model = Forced(data_structure=ds)
-    model.__dict__["_scene_forcings"] = {"supply": pd.Series([0., 10.], index=[0., 10.])}           # supply(t) = t
+    model.set_forcings({"supply": pd.Series([0., 10.], index=[0., 10.])})                        # supply(t) = t
     Forced.seen = set()
     model()
     model()

@@ -175,7 +175,7 @@ def _face_fluxes(component, pressure_head, conductivity, conductivity_slope, fac
     face_conductivity setting).
     """
     view = component.graph_view
-    difference = component.cached("face_difference", lambda: view.edge_difference)     # per topology
+    difference = view.edge_difference
     tail, head = view.tail, view.head
     drive = np.asarray(difference @ pressure_head).reshape(-1) / face_distance + gravity
     faces = np.arange(tail.size)
@@ -288,7 +288,8 @@ class RichardsSoil(FunctionalComponent):
     contents and the balance closes to it), the face fluxes q = K_f A (Δh/d + g) (gravity along z, pointing down),
     K_f upstream-weighted or the arithmetic mean (face_conductivity). The soil is van Genuchten-Mualem's (or
     Gardner's, retention_model) with its parameters per cell, set by layers (set_soil_layers). The top: the rainfall
-    minus the potential evaporation (inputs a Scene's forcings of their names write), limited by what the soil takes
+    minus the potential evaporation (inputs; when forcings of their names are given, by a Scene or set_forcings, read
+    at the end of each sub-step, so that a rain varying within the step is followed), limited by what the soil takes
     or gives (the excess rain runs off); the bottom: free drainage, a water table or no flux (bottom_boundary); the
     sides: the grid's (periodic over the scene's pattern). The roots' uptake (plant_uptake, summed into the cells
     by the scene) is a sink.
@@ -348,11 +349,12 @@ class RichardsSoil(FunctionalComponent):
     plant_uptake: float = input_variable(unit="m3 s-1", description="Water taken up by the roots from a cell.",
                                          by="plants", default=0., location="cell", kind="extensive")
     rainfall: float = input_variable(unit="m s-1", description="Rain (and irrigation) reaching the soil surface "
-                                                               "(a forcing of this name writes it).",
-                                     by="forcings", default=0.)
+                                                               "(a forcing of this name, read at each sub-step, "
+                                                               "else the input).", by="forcings", default=0.)
     potential_evaporation: float = input_variable(unit="m s-1", description="Potential evaporation of the soil "
-                                                                            "surface (a forcing of this name writes "
-                                                                            "it).", by="forcings", default=0.)
+                                                                            "surface (a forcing of this name, read "
+                                                                            "at each sub-step, else the input).",
+                                                  by="forcings", default=0.)
     # the soil, per cell (set_soil_layers); a loam by default
     residual_water_content: float = parameter(unit="m3 m-3", description="Residual water content θr.",
                                               by="RichardsSoil", default=LOAM["residual_water_content"],
@@ -613,7 +615,12 @@ class RichardsSoil(FunctionalComponent):
 def _surface(component, pressure_head, residual_water_content, saturated_water_content, van_genuchten_alpha,
              van_genuchten_n, saturated_conductivity, pore_connectivity, boundary_area, half_height, rainfall,
              potential_evaporation, surface_minimum_head):
-    """The surface inflow of the cells given (inflow, d inflow / dh, runoff), from their soil."""
+    """The surface inflow of the cells given (inflow, d inflow / dh, runoff), from their soil; the rainfall and the
+    potential evaporation the forcings' at the (sub-)step when given, else the inputs."""
+    if component.has_forcing("rainfall"):
+        rainfall = component.forcing("rainfall")
+    if component.has_forcing("potential_evaporation"):
+        potential_evaporation = component.forcing("potential_evaporation")
     soil = (residual_water_content, saturated_water_content, van_genuchten_alpha, van_genuchten_n,
             saturated_conductivity, pore_connectivity)
     _, _, conductivity, conductivity_slope = _properties(component, pressure_head, *soil)

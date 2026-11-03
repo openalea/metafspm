@@ -406,6 +406,32 @@ class DataStructureComponent(Component):
         day, hour = float(start[0]), float(start[1])
         return day + (hour * 3600. + time) // 86400., (hour + time / 3600.) % 24.
 
+    def set_forcings(self, forcings, start=None) -> None:
+        """
+        The forcings of a component run outside a Scene, as a Scene gives them (Scene(forcings=..., start=...)):
+        {name: forcing} or a DataFrame indexed by time (s), one column each (coupling.forcings), read with
+        forcing(name) at the component's clock (its time from 0, advanced by each call); *start*, (day of year,
+        hour), the calendar of time 0 (calendar(), the forcings of origin "calendar"). Replaces the forcings given
+        before; a Scene gives its own.
+        """
+        from openalea.metafspm.coupling.forcings import forcing_table
+        table = forcing_table(forcings)
+        start = None if start is None else (float(start[0]), float(start[1]))
+        for forcing in table.values():
+            if getattr(forcing, "origin", None) == "calendar":
+                if start is None:
+                    raise ValueError("a forcing of origin 'calendar' needs start=(day_of_year, hour)")
+                forcing.at_calendar(start)
+        self.__dict__["_scene_forcings"] = table
+        self.__dict__["_scene_calendar"] = start
+
+    def has_forcing(self, name: str) -> bool:
+        """Whether forcing *name* is given (by the Scene or set_forcings) as a time series, readable with
+        forcing(name) (not one varying in space)."""
+        from openalea.metafspm.coupling.forcings import is_spatial
+        forcings = self.__dict__.get("_scene_forcings") or {}
+        return name in forcings and not is_spatial(forcings[name])
+
     def forcing_time(self, at: str = "end") -> float:
         """
         The time at which forcings are read: the end of the current (sub-)step for implicit solves and steps,
@@ -434,7 +460,8 @@ class DataStructureComponent(Component):
             at = declared.metadata.get("at", "end") if declared is not None else "end"
         forcings = self.__dict__.get("_scene_forcings") or {}
         if name not in forcings:
-            raise KeyError(f"{type(self).__name__} has no forcing '{name}' (the Scene's forcings=)")
+            raise KeyError(f"{type(self).__name__} has no forcing '{name}' (the Scene's forcings=, or "
+                           "set_forcings())")
         from openalea.metafspm.coupling.forcings import forcing_value, is_spatial
         if is_spatial(forcings[name]):
             raise TypeError(f"forcing '{name}' varies in space ((time, ids) -> values): the Scene writes it into an "
