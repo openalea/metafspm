@@ -1,3 +1,4 @@
+from contextlib import nullcontext
 from dataclasses import dataclass, field, fields, MISSING
 from typing import Literal, Optional
 import numpy as np
@@ -7,7 +8,7 @@ from openalea.metafspm.data_structure.mpg import MPG
 from openalea.metafspm.data_structure.data_api import (DataStructure, EntityView, GraphDataStructure,
                                                       MPGDataStructure)
 from openalea.metafspm.data_structure.configs import ScalesConfig as _ScalesConfig
-from openalea.metafspm.coupling.declaration import declared_specs, DeclarationError, held_at_scale
+from openalea.metafspm.coupling.declaration import declared_specs, DeclarationError, held_at_scale, holder_spec
 from openalea.metafspm.coupling.declaration import scale_names as declared_scale_names
 
 # Map integer MPG scale constants to the generic "node"/"edge" vocabulary used
@@ -1093,17 +1094,21 @@ class StructuralComponent(DataStructureComponent):
     def _run_mpg_step(self, run) -> None:
         """Run an MPG-style step with the synchronisation of the DataStructure around it, then the repartition."""
         ds = self.data_structure
-        specs = [spec for spec in getattr(self, "_variable_specs", {}).values()
-                 if spec.mtg_backed and ds.has(spec.name) and not held_at_scale(spec, ds)]
+        declared = [spec for spec in getattr(self, "_variable_specs", {}).values()
+                    if spec.mtg_backed and ds.has(spec.name)]
+        specs = [spec for spec in declared if not held_at_scale(spec, ds)]
+        # its inputs another component holds at another location (an architecture's SubOrgan lengths read at the
+        # Compartments): the MTG holds them at their holder's location, as their holder declares them
+        held = [holder_spec(spec, ds) for spec in declared if held_at_scale(spec, ds)]
         if hasattr(ds, "flush_mtg"):
             # The MPG-style code reads the MTG: the variables this component declares (its states, inputs and
             # parameters) changed since their last synchronisation are written first. Others are not: a step
             # reads what its component declares
-            for spec in specs:
+            for spec in specs + held:
                 ds._track_mtg(spec)
-            ds.flush_mtg([spec.name for spec in specs])
+            ds.flush_mtg([spec.name for spec in specs + held])
         else:
-            for spec in specs:
+            for spec in specs + held:
                 ds._write_mtg(spec)
         weights = self._weights() if self.repartition == "after_mpg_steps" else None
         if weights is not None:
@@ -1122,22 +1127,25 @@ class StructuralComponent(DataStructureComponent):
             run()
         finally:
             self.__dict__["_in_mpg_step"] = False
-        changed = self._mpg_signature() != before
-        if changed:
-            ds.update_topology()
-            self.topology_updates = getattr(self, "topology_updates", 0) + 1
-        for spec in states:
-            version = _property_version(properties.get(spec.name))
-            if not changed and version is not None and version == versions[spec.name]:
-                continue                             # the step left its MPG property as it was: nothing to read
-            values = ds._read_mtg(spec)
-            if values is None:
-                continue
-            if instanced and spec.location in known:
-                values = self._kept_at_instances(spec, values, known[spec.location])
-            ds.set(spec.name, values)
-            if hasattr(ds, "_mark_mtg_synced"):
-                ds._mark_mtg_synced(spec.name)
+        # the MTG ahead of the DataStructure until the step's states are read back: a ds.mtg meanwhile (an
+        # inheritance rule's, during the topology's update) flushes nothing over the step's writes
+        with ds.mtg_ahead() if hasattr(ds, "mtg_ahead") else nullcontext():
+            changed = self._mpg_signature() != before
+            if changed:
+                ds.update_topology()
+                self.topology_updates = getattr(self, "topology_updates", 0) + 1
+            for spec in states:
+                version = _property_version(properties.get(spec.name))
+                if not changed and version is not None and version == versions[spec.name]:
+                    continue                         # the step left its MPG property as it was: nothing to read
+                values = ds._read_mtg(spec)
+                if values is None:
+                    continue
+                if instanced and spec.location in known:
+                    values = self._kept_at_instances(spec, values, known[spec.location])
+                ds.set(spec.name, values)
+                if hasattr(ds, "_mark_mtg_synced"):
+                    ds._mark_mtg_synced(spec.name)
         if weights is not None:
             self._repartition(weight_before, active_before)
 
@@ -1386,7 +1394,9 @@ def _working_data_structure(component, ds):
     the view at the component's own scale (data_structure.LocatedView) when the finest scale of its declarations is
     coarser (a SubOrgan-scale architecture, a light or gas-exchange model): its nodes then those of its scale. A
     component declaring its `entities` works on the view restricted to them (data_structure.EntityView), at the nodes
-    in segment mode, at its scale in anatomy mode.
+    in segment mode, in anatomy mode at the DataStructure's from_scale (its SubOrgans: the entities segment mode's
+    nodes are, whatever coarser scale its declarations' finest is, a Phytomer-scale rule's say), or at its own scale
+    when finer.
     """
     entities = getattr(type(component), "entities", None)
     if entities is not None:
@@ -1401,6 +1411,9 @@ def _working_data_structure(component, ds):
             raise NotImplementedError(f"{type(component).__name__}.entities on an anatomy-mode DataStructure: the "
                                       "component works on its Compartments; entities are declared by a component "
                                       "of the SubOrgan scale or coarser")
+        g = base.structure
+        if getattr(g.scales, name) < base.from_scale:
+            name = base._scale_name(base.from_scale)        # its entities the from_scale's, as segment mode's nodes
         return base.entity_view(entities, at=name)
     if not getattr(ds, "_anatomy", False) or not hasattr(ds, "at"):
         return ds

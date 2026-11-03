@@ -36,12 +36,6 @@ from models import (PLANT_TRANSLATOR, SCENE_TRANSLATOR, WHEAT_SCENARIO, WATER_MO
 HOUR = 3600.
 STEPS = 3
 SOIL_NODE = 4.
-# The metafspm and port gaps the assembly meets (examples/use_case_1/README.md, "The assembly: open gaps"); each test
-# is expected to fail until they are fixed (strict: a test passing again says its mark is to go)
-GAPS = ("the use case's gaps: an entity view on an anatomy-mode DataStructure (its filters on coarser variables, its "
-        "scale, its base), the reduction's library running Adel's development, GRANAP's anatomies of sections without "
-        "length and of the sections made at a step, the light's and the soil's exchanges with an anatomy-mode plant")
-open_gap = pytest.mark.xfail(strict=True, reason=GAPS)
 
 
 def _scene():
@@ -100,7 +94,6 @@ def test_the_links_factors_are_their_units_conversions():
     assert links[("GasExchange", "height")].formula is not None                      # Adel's element ends
 
 
-@open_gap
 def test_the_assembly_builds_with_every_link(stepped):
     scene, _ = stepped
     instance = scene.populations[0].instance
@@ -118,7 +111,6 @@ def test_the_assembly_builds_with_every_link(stepped):
         assert tuple(couplings.loc[key, ["provider", "coupling"]]) == (provider, coupling), key
 
 
-@open_gap
 def test_each_model_works_on_its_own_entities(stepped):
     """Adel's and the rule's views hold the shoot's elements, ArchiSimple's the roots', none of them the crown's;
     the optics and the gas exchange work on every SubOrgan, GRANAP and MECHA on the Compartments."""
@@ -140,7 +132,6 @@ def test_each_model_works_on_its_own_entities(stepped):
     assert instance.anatomy.data_structure is ds and instance.hydraulics.data_structure is ds
 
 
-@open_gap
 def test_the_transpiration_reaches_mecha_in_its_units(stepped):
     """Each organ's leaf transpiration (cm3 d-1) is its elements' (mmol s-1) times 18e-3 × 86400, and leaves
     MECHA's plant at its leaf surface."""
@@ -152,7 +143,6 @@ def test_the_transpiration_reaches_mecha_in_its_units(stepped):
     np.testing.assert_allclose(np.sum(ds.get("evaporation")), np.sum(ds.get("leaf_transpiration")), rtol=1e-9)
 
 
-@open_gap
 def test_the_plant_is_steady(stepped):
     """What the roots take up is what the leaves transpire (MECHA's steady plant), at every step."""
     scene, _ = stepped
@@ -163,7 +153,6 @@ def test_the_plant_is_steady(stepped):
     assert (rows["transpiration"] > 0.).all()
 
 
-@open_gap
 def test_the_uptake_reaches_the_soil_in_its_units(stepped):
     """The soil's cells give the roots, in m3 s-1, the plant's uptake of the step before (cm3 d-1, times 1e-6 /
     86400): the exchange of decision U-6, lagged by a step."""
@@ -173,7 +162,6 @@ def test_the_uptake_reaches_the_soil_in_its_units(stepped):
         assert now["soil_uptake"] > 0.
 
 
-@open_gap
 def test_the_soil_potential_reaches_the_roots(stepped):
     """Each root section's soil node holds the soil's water potential (MPa, times 1e4: hPa) of the cells it lies
     in, and no other Compartment receives it."""
@@ -190,7 +178,6 @@ def test_the_soil_potential_reaches_the_roots(stepped):
     np.testing.assert_array_equal(soil_psi[kind != SOIL_NODE], 0.)
 
 
-@open_gap
 def test_the_light_reaches_the_gas_exchange(stepped):
     """Each element's PARa (µmol m-2 s-1) is the light's, and the lit blades assimilate."""
     scene, _ = stepped
@@ -202,7 +189,6 @@ def test_the_light_reaches_the_gas_exchange(stepped):
     assert lit.any() and (np.asarray(elements.get("An"))[lit] > 0.).any()
 
 
-@open_gap
 def test_the_soil_water_balance_closes_with_the_uptake(stepped):
     """The soil closed at its bottom, without rain or evaporation: its water changes by what it gave the roots, and
     its own balance (stored against exchanged) closes."""

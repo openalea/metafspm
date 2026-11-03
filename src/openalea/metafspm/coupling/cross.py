@@ -20,7 +20,7 @@ from numba import njit
 
 from openalea.metafspm.coupling.declaration import (DOWN_MAPPINGS, INTENSIVE_KINDS, MASSIC_KINDS, POOLED_UP_MAPPINGS,
                                                     check_link, declared_kind, default_mapping)
-from openalea.metafspm.data_structure.data_api import DataStructure, VariableStoreMixin
+from openalea.metafspm.data_structure.data_api import DataStructure, LocatedView, VariableStoreMixin
 
 SEGMENT_COORDINATES = ("x1", "x2", "y1", "y2", "z1", "z2")
 
@@ -83,6 +83,14 @@ class CrossMapping:
         mask:        a node mask of the source: its other entities are left out (they neither push nor receive, e.g.
                      plants before emergence).
 
+    On an anatomy-mode plant (its nodes the Compartments, its segments' ends at its SubOrgans) the mapping maps the
+    coordinates' location (`location`: "SubOrgan"), each SubOrgan's incidence its segment's; a variable at the
+    Compartments goes through its SubOrgan's incidence, its masked Compartments only (mask: a node mask, e.g. the
+    roots' soil nodes; a SubOrgan takes part when one of its Compartments does): up, their values pooled per cell as
+    their SubOrgan's would be (summed, or each one in the mean); down, each of them its SubOrgan's cell values
+    (broadcast) or its share of their amounts by its weight (split). The methods take the location of the values
+    (location=: "node", the Compartments, or the mapping's location; default the mapping's).
+
     The incidence is rebuilt at the next use after the source's or the target's topology (an adaptive grid's
     refinement) or a coordinate changed; refresh() forces
     it (coordinates written through a view without mark_written()).
@@ -98,7 +106,22 @@ class CrossMapping:
         self.periodic = periodic
         self.flip_z = flip_z
         self.mask = mask
-        self._stamp, self._incidence = None, None
+        self._stamp, self._incidence, self._node_incidence = None, None, None
+        location = source.location(self.coordinates[0]) if getattr(source, "_anatomy", False) and \
+            source.has(self.coordinates[0]) else "node"
+        self.location = location         # the entities mapped: the nodes, or an anatomy-mode plant's SubOrgans
+
+    @property
+    def _by_owner(self) -> bool:
+        """Whether the mapping's entities are a coarse location of the source (an anatomy-mode plant's SubOrgans)."""
+        return self.location != "node"
+
+    def _location(self, location) -> str:
+        location = self.location if location is None else location
+        if location not in ("node", self.location):
+            raise ValueError(f"a CrossMapping of {self.location} maps values at '{self.location}' or at the nodes, "
+                             f"not at '{location}'")
+        return location
 
     # ── incidence ─────────────────────────────────────────────────────────────
 
@@ -117,16 +140,46 @@ class CrossMapping:
             z1, z2 = -z1, -z2
         return np.stack([x1, y1, z1], axis=1), np.stack([x2, y2, z2], axis=1)
 
-    def incidence(self) -> tuple:
-        """(rows, columns, weights), rebuilt if the source changed since the last call."""
+    def incidence(self, location: str = None) -> tuple:
+        """(rows, columns, weights), rebuilt if the source changed since the last call: rows among the entities of
+        *location* (default the mapping's: its nodes, or an anatomy-mode plant's SubOrgans)."""
+        location = self._location(location)
         stamp = self._current_stamp()
         if self._incidence is None or stamp != self._stamp:
-            self._incidence, self._stamp = self._build(), stamp
-        return self._incidence
+            self._incidence, self._node_incidence, self._stamp = self._build(), None, stamp
+        if location == self.location:
+            return self._incidence
+        if self._node_incidence is None:
+            self._node_incidence = self._through_owners(self._incidence)
+        return self._node_incidence
 
-    def covered(self) -> Optional[np.ndarray]:
-        """Source entities taking part in the exchanges (None: all of them)."""
-        return None if self.mask is None else np.asarray(self.source.mask(self.mask), dtype=bool)
+    def _covered_nodes(self) -> Optional[np.ndarray]:
+        """On an anatomy-mode plant, whether each of its Compartments takes part (the mask's, owned by a SubOrgan)."""
+        owner = np.asarray(self.source.owner(self.location), dtype=np.int64)
+        covered = owner >= 0
+        if self.mask is not None:
+            values = np.asarray(self.source.mask(self.mask), dtype=bool)
+            if values.size == owner.size:
+                covered &= values
+            else:                                       # a mask of the SubOrgans: their Compartments
+                covered &= values[np.where(owner >= 0, owner, 0)]
+        return covered
+
+    def covered(self, location: str = None) -> Optional[np.ndarray]:
+        """Source entities of *location* (default the mapping's) taking part in the exchanges (None: all of them)."""
+        location = self._location(location)
+        if not self._by_owner:
+            return None if self.mask is None else np.asarray(self.source.mask(self.mask), dtype=bool)
+        if location == "node":
+            return self._covered_nodes() if self.mask is not None else None
+        if self.mask is None:
+            return None
+        values = np.asarray(self.source.mask(self.mask), dtype=bool)
+        size = len(self.source.entity_ids(self.location))
+        if values.size == size:
+            return values
+        owner = np.asarray(self.source.owner(self.location), dtype=np.int64)
+        return np.bincount(owner[self._covered_nodes()], minlength=size) > 0
 
     def _build(self) -> tuple:
         rows, columns, weights = self._build_all()
@@ -135,8 +188,27 @@ class CrossMapping:
             rows, columns, weights = rows[kept], columns[kept], weights[kept]
         return rows, columns, weights
 
+    def _through_owners(self, incidence) -> tuple:
+        """The incidence of the source's covered nodes: each one its owner's (its SubOrgan's) rows."""
+        rows, columns, weights = incidence
+        order = np.argsort(rows, kind="stable")
+        rows, columns, weights = rows[order], columns[order], weights[order]
+        size = len(self.source.entity_ids(self.location))
+        counts = np.bincount(rows, minlength=size)
+        starts = np.concatenate(([0], np.cumsum(counts)[:-1]))
+        owner = np.asarray(self.source.owner(self.location), dtype=np.int64)
+        nodes = np.flatnonzero(self._covered_nodes())
+        per_node = counts[owner[nodes]]
+        node_rows = np.repeat(nodes, per_node)
+        within = np.arange(int(per_node.sum())) - np.repeat(np.cumsum(per_node) - per_node, per_node)
+        entries = np.repeat(starts[owner[nodes]], per_node) + within
+        return node_rows, columns[entries], weights[entries]
+
+    def _size(self, location: str) -> int:
+        return self.source.n_nodes() if location == "node" else len(self.source.entity_ids(location))
+
     def _build_all(self) -> tuple:
-        p1, p2 = self._ends()
+        p1, p2 = self._ends()                      # one row per entity of the mapping's location
         n = p1.shape[0]
         if self.method == "barycentre":
             columns = self.target.locate(0.5 * (p1 + p2), periodic=self.periodic, clip=True)
@@ -162,12 +234,13 @@ class CrossMapping:
 
     # ── mapping values ────────────────────────────────────────────────────────
 
-    def up(self, values, aggregation: str = "sum", weights=None) -> tuple:
+    def up(self, values, aggregation: str = "sum", weights=None, location: str = None) -> tuple:
         """
-        Source values to the cells: (numerator, denominator) per cell, the denominator None for "sum". Means are
-        numerator / denominator, so that several sources (populations) pool into one mean.
+        Source values (at *location*: the mapping's by default) to the cells: (numerator, denominator) per cell, the
+        denominator None for "sum". Means are numerator / denominator, so that several sources (populations) pool
+        into one mean.
         """
-        rows, columns, fractions = self.incidence()
+        rows, columns, fractions = self.incidence(location)
         n = self.target.n_nodes()
         values = np.asarray(values, dtype=float).reshape(-1)
         if aggregation == "sum":
@@ -183,21 +256,25 @@ class CrossMapping:
         return (np.bincount(columns, weights=share * values[rows], minlength=n),
                 np.bincount(columns, weights=share, minlength=n))
 
-    def weight_totals(self, weights) -> np.ndarray:
-        """Per cell, the sum of the source entities' weights times their fraction in the cell (for split)."""
-        rows, columns, fractions = self.incidence()
+    def weight_totals(self, weights, location: str = None) -> np.ndarray:
+        """Per cell, the sum of the source entities' weights (at *location*) times their fraction in the cell (for
+        split)."""
+        rows, columns, fractions = self.incidence(location)
         return np.bincount(columns, weights=fractions * np.asarray(weights, dtype=float).reshape(-1)[rows],
                            minlength=self.target.n_nodes())
 
-    def down(self, values, aggregation: str = "broadcast", weights=None, totals=None) -> np.ndarray:
+    def down(self, values, aggregation: str = "broadcast", weights=None, totals=None, location: str = None) \
+            -> np.ndarray:
         """
-        Cell values to the source entities. broadcast: each entity's fraction-weighted cell values (intensive).
-        split: each cell's amount shared by weight times fraction (extensive), *totals* being the cells' total
-        weights over every source sharing the grid (default: this source's).
+        Cell values to the source entities (of *location*: the mapping's by default). broadcast: each entity's
+        fraction-weighted cell values (intensive). split: each cell's amount shared by weight times fraction
+        (extensive), *totals* being the cells' total weights over every source sharing the grid (default: this
+        source's).
         """
-        rows, columns, fractions = self.incidence()
+        location = self._location(location)
+        rows, columns, fractions = self.incidence(location)
         values = np.asarray(values, dtype=float).reshape(-1)
-        n = self.source.n_nodes()
+        n = self._size(location)
         if aggregation == "broadcast":
             return np.bincount(rows, weights=fractions * values[columns], minlength=n)
         if aggregation != "split":
@@ -205,7 +282,7 @@ class CrossMapping:
         if weights is None:
             raise ValueError("split needs a weight variable")
         weights = np.asarray(weights, dtype=float).reshape(-1)
-        totals = self.weight_totals(weights) if totals is None else totals
+        totals = self.weight_totals(weights, location) if totals is None else totals
         share = np.divide(fractions * weights[rows], totals[columns], out=np.zeros(rows.size),
                           where=totals[columns] > 0.)
         return np.bincount(rows, weights=share * values[columns], minlength=n)
@@ -454,9 +531,11 @@ class UnionMapping:
 class _CrossLink:
     """One translator link across DataStructures, resolved against its mapping."""
 
-    def __init__(self, link, receiver, provider, mapping, direction: str, aggregation: str, part: Optional[int]):
+    def __init__(self, link, receiver, provider, mapping, direction: str, aggregation: str, part: Optional[int],
+                 options: dict = None):
         self.link, self.receiver, self.provider = link, receiver, provider
         self.mapping, self.direction, self.aggregation, self.part = mapping, direction, aggregation, part
+        self.options = options or {}        # a CrossMapping's: the location of the plant's values
 
     @property
     def receiver_ds(self):
@@ -495,6 +574,31 @@ def _per_column(apply, values, components: int = 0, pair: bool = False):
     if pair:
         return np.stack([np.asarray(r[0]).reshape(-1) for r in results], axis=1), results[0][1]
     return np.stack([np.asarray(r).reshape(-1) for r in results], axis=1)
+
+
+def _plant_side(mapping, ds) -> bool:
+    """Whether *ds* is the source of CrossMapping *mapping*, or the view of it at the mapping's location (an
+    anatomy-mode plant's SubOrgans, ds.at("SubOrgan"))."""
+    return ds is mapping.source or (mapping._by_owner and isinstance(ds, LocatedView)
+                                    and ds.__dict__["_base"] is mapping.source and ds._at == mapping.location)
+
+
+def _plant_location(mapping, ds, names) -> str:
+    """The location of the values *ds* gives (or receives) through CrossMapping *mapping*, named *names*: the nodes,
+    or the mapping's location (an anatomy-mode plant's SubOrgans: the view of them, or a variable held there)."""
+    if not mapping._by_owner:
+        return "node"
+    if ds is not mapping.source:
+        return mapping.location                       # its view at the mapping's location
+    held = {ds.location(name) for name in names if ds.has(name)}
+    return mapping.location if held == {mapping.location} else "node"
+
+
+def _underlying(ds):
+    """The DataStructure *ds* is a view of (a LocatedView's, an EntityView's base), or *ds* itself."""
+    while "_base" in getattr(ds, "__dict__", {}):
+        ds = ds.__dict__["_base"]
+    return ds
 
 
 class Exchanges:
@@ -553,7 +657,11 @@ class Exchanges:
                                      f"{allowed}")
                 if aggregation in ("weighted_mean", "split") and link.weight is None:
                     raise ValueError(f"{name}: '{aggregation}' needs weight=")
-            self.links.append(_CrossLink(link, receiver, provider, mapping, direction, aggregation, part))
+            options = {}
+            if isinstance(mapping, CrossMapping):
+                plant, names = (provider, tuple(link.sources)) if direction == "up" else (receiver, (link.variable,))
+                options["location"] = _plant_location(mapping, plant.data_structure, names)
+            self.links.append(_CrossLink(link, receiver, provider, mapping, direction, aggregation, part, options))
 
     def _mapping_between(self, link, provider_ds, receiver_ds) -> tuple:
         # An environment scalar: reduced over, or broadcast to, every entity of the population
@@ -571,9 +679,9 @@ class Exchanges:
                                                                                            id(mapping.grid)}:
                 return mapping, "layer", None
             if isinstance(mapping, CrossMapping):
-                if mapping.source is provider_ds and mapping.target is receiver_ds:
+                if _plant_side(mapping, provider_ds) and mapping.target is receiver_ds:
                     return mapping, "up", None
-                if mapping.source is receiver_ds and mapping.target is provider_ds:
+                if _plant_side(mapping, receiver_ds) and mapping.target is provider_ds:
                     return mapping, "down", None
             elif isinstance(mapping, UnionMapping):
                 if mapping.union is receiver_ds and mapping.part_index(provider_ds) is not None:
@@ -589,33 +697,38 @@ class Exchanges:
         for other in self.links:
             if (other.direction == "down" and other.aggregation == "split" and other.provider_ds is cross.provider_ds
                     and other.link.sources == cross.link.sources and other.link.weight == cross.link.weight):
-                part = other.mapping.weight_totals(other.receiver_ds.get(other.link.weight))
+                part = other.mapping.weight_totals(other.receiver_ds.get(other.link.weight), **other.options)
                 totals = part if totals is None else totals + part
         return totals
 
     def exchange(self, into) -> None:
-        """Run the links into DataStructure (or component) *into*."""
+        """Run the links into DataStructure (or component) *into*, and into the views of it its components work on
+        (an anatomy-mode plant's LocatedView at its SubOrgans, an EntityView)."""
         ds = getattr(into, "data_structure", into)
         if isinstance(ds, UnionDataStructure):
             ds.update_topology()
-        pending, keep = {}, {}
+        pending, keep, receivers = {}, {}, {}
         for cross in self.links:
-            if cross.receiver_ds is not ds:
+            if _underlying(cross.receiver_ds) is not _underlying(ds):
                 continue
-            variable, values = cross.link.variable, cross.source_values()
+            receiver = cross.receiver_ds
+            receivers[id(receiver)] = receiver
+            variable, values = (id(receiver), cross.link.variable), cross.source_values()
             weight = cross.link.weight
             components = cross.components()
             if cross.direction == "up":
                 weights = cross.provider_ds.get(weight) if weight is not None else None
                 numerator, denominator = _per_column(
-                    lambda v: cross.mapping.up(v, cross.aggregation, weights=weights), values, components, pair=True)
+                    lambda v: cross.mapping.up(v, cross.aggregation, weights=weights, **cross.options), values,
+                    components, pair=True)
             elif cross.direction == "down":
                 weights = cross.receiver_ds.get(weight) if weight is not None else None
                 totals = self._split_totals(cross) if cross.aggregation == "split" else None
                 numerator = _per_column(lambda v: cross.mapping.down(v, cross.aggregation, weights=weights,
-                                                                     totals=totals), values, components)
+                                                                     totals=totals, **cross.options), values,
+                                        components)
                 denominator = None
-                covered = cross.mapping.covered()
+                covered = cross.mapping.covered(**cross.options)
                 if covered is not None:                 # entities left out keep their values
                     keep.setdefault(variable, covered)
             elif cross.direction == "layer":
@@ -632,12 +745,13 @@ class Exchanges:
             if entry is None:
                 pending[variable] = [numerator, denominator]
             elif (entry[1] is None) != (denominator is None):
-                raise ValueError(f"'{variable}' receives both sums and means from different providers")
+                raise ValueError(f"'{variable[1]}' receives both sums and means from different providers")
             else:
                 entry[0] = entry[0] + numerator
                 if denominator is not None:
                     entry[1] = entry[1] + denominator
-        for variable, (numerator, denominator) in pending.items():
+        for key, (numerator, denominator) in pending.items():
+            ds, variable = receivers[key[0]], key[1]
             if not ds.has(variable):
                 ds.register(variable)
             if denominator is not None:
@@ -647,7 +761,7 @@ class Exchanges:
                 numerator = np.where(denominator > 0., numerator / np.where(denominator > 0., denominator, 1.),
                                      default)
             stored = ds.get(variable)
-            if variable in keep:
-                kept = keep[variable] if numerator.ndim == 1 else keep[variable][:, None]
+            if key in keep:
+                kept = keep[key] if numerator.ndim == 1 else keep[key][:, None]
                 numerator = np.where(kept, numerator, np.asarray(stored).reshape(numerator.shape))
             ds.set(variable, np.reshape(numerator, stored.shape))

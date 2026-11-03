@@ -481,3 +481,44 @@ def test_in_anatomy_mode_a_compartment_component_cannot_declare_entities():
 
     with pytest.raises(NotImplementedError, match="SubOrgan scale or coarser"):
         Cells(data_structure=ds, time_step=DT)
+
+
+def test_in_anatomy_mode_a_declaration_reads_a_coarse_variable_at_the_suborgans():
+    """{"axis_row": ">=0"} on an anatomy-mode DataStructure: the Axis variable read at each SubOrgan's axis (not at
+    the Compartments), the view the SubOrgans of the axes with a row."""
+    _, ds, root_vids = _anatomy_plant()
+    ds.register("axis_row", -1., location="Axis")
+    view = ds.entity_view({"axis_row": ">=0"})
+    assert view.n_nodes() == 0
+    rows = np.full(len(ds.entity_ids("Axis")), -1.)
+    rows[np.asarray(ds.at("SubOrgan").owner("Axis"))[np.isin(ds.entity_ids("SubOrgan"), root_vids)][0]] = 0.
+    ds.set("axis_row", rows)                                       # the roots' axis gets a row
+    assert view.entity_ids("node").tolist() == root_vids
+
+
+@dataclass
+class PhytomerRule(StructuralComponent):
+    """Its declarations at the Phytomers (a rule per phytomer), its entities the shoot's elements."""
+    entities = {"label": ("Seed", "StemElement")}
+    requested: float = state_variable(**DOC, default=0., scale=scales.Phytomer, kind="descriptor")
+
+
+def test_in_anatomy_mode_a_phytomer_scale_component_sees_its_suborgans():
+    """A component declared at the Phytomers with its entities: its view at the SubOrgans (the entities segment
+    mode's nodes are), owner("Phytomer") indexing its Phytomer arrays; its base the DataStructure at the SubOrgans,
+    where a variable is read at every element (another model's included)."""
+    g, ds, root_vids = _anatomy_plant()
+    Shoot(data_structure=ds, time_step=DT), Roots(data_structure=ds, time_step=DT)
+    rule = PhytomerRule(data_structure=ds, time_step=DT)
+    view = rule.data_structure
+    assert isinstance(view, EntityView) and view._at == "SubOrgan"
+    assert sorted(_labels(view)) == ["Seed", "StemElement", "StemElement"]
+    phytomers = ds.entity_ids("Phytomer")
+    assert np.asarray(view.get("requested")).size == phytomers.size
+    owners = phytomers[view.owner("Phytomer")]
+    assert owners.tolist() == [int(g.complex_at_scale(v, g.scales.Phytomer)) for v in view.entity_ids("node")]
+    base = view.base
+    assert isinstance(base, LocatedView) and base is ds.at("SubOrgan")
+    assert np.asarray(base.get("length")).size == len(ds.entity_ids("SubOrgan"))
+    lengths = np.asarray(base.get("length"))[np.atleast_1d(base.index_of(root_vids))]
+    np.testing.assert_allclose(lengths, ROOT_LENGTH)                # another model's entities, read through it

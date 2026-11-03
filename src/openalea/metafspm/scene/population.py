@@ -181,6 +181,8 @@ def _model_reduction(model, table: pd.DataFrame, scenario: dict, read: set):
     The model's reduction (solve.reduction): its class attribute, a Reduction, or a function of the model's scenario
     (``reduction = staticmethod(lambda scenario: ...)``: a reduction chosen by scenario entries, or None). The entries
     the function reads are the model's (added to *read*); they must be the same for every plant of the population.
+    The function's attribute `scenario_keys` names the entries it owns, the model's whether it reads them or not (a
+    reduction's labels given while the reduction is off: inactive).
     """
     from openalea.metafspm.solve.reduction import Reduction
     reduction = getattr(model, "reduction", None)
@@ -188,6 +190,7 @@ def _model_reduction(model, table: pd.DataFrame, scenario: dict, read: set):
         return reduction
     recorded = _ReadScenario(scenario)
     chosen = reduction(recorded)
+    recorded.read |= {key for key in getattr(reduction, "scenario_keys", ()) if key in scenario}
     names = getattr(model, "__name__", str(model))
     for row in table.itertuples(index=False):
         own = _flat_scenario(row.scenario)

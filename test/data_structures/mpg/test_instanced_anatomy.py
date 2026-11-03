@@ -238,3 +238,19 @@ def test_the_segments_topology_when_the_nodes_are_compartments():
     assert ds.order("pre", location="SubOrgan").tolist() == [0, 1, 2]
     assert ds.order("post", location="SubOrgan").tolist() == [2, 1, 0]
     assert ds.bearer("SubOrgan", ids).tolist() == ids                     # a SubOrgan bears itself
+
+
+def test_an_object_value_of_a_coarse_vertex_is_read_as_one_object():
+    """A plant's tables (a DataFrame, a plant model's record at its Plant vertex) read in bulk on an instanced MPG
+    (a frame's): one object per vertex, never unpacked into the array's dimensions, and a vertex's scalar values
+    as before."""
+    import pandas as pd
+    g, segments, _ = make_instanced_anatomy(2)
+    tables = {segment: pd.DataFrame({"length": [0.1 * k, 0.2 * k]}) for k, segment in enumerate(segments, 1)}
+    g.properties()["tables"] = dict(tables)
+    found, values = g.values_at("tables", np.asarray(segments, dtype=np.int64))
+    assert found.tolist() == segments and values.dtype == object and values.shape == (2,)
+    assert all(value is tables[segment] for value, segment in zip(values, segments))
+    g.properties()["rank"] = {segment: k for k, segment in enumerate(segments)}
+    _, ranks = g.values_at("rank", np.asarray(segments, dtype=np.int64))
+    assert ranks.tolist() == [0, 1] and ranks.dtype != object

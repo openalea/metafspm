@@ -296,15 +296,18 @@ class SoilDiffusion(FunctionalComponent):
 - **Outputs and Jacobians.** `@graph_output(name, location=...)` derives outputs after the solve; `@graph_jacobian`
   gives an analytic Jacobian (finite differences with graph colouring otherwise).
 
-- **Reductions.** A plant model may reduce its graph systems by groups (`solve.reduction.Reduction(location=,
-  labels=, ports=, keep=, explicit_edges=, kind=, inputs=, systems=, outputs=)`): the groups of a location (e.g.
-  the SubOrgans of some labels) keep their ports and kept nodes, their interiors eliminated once per kind (a library
-  population of the model's own components, each kind its group's template, kind values and the plant's parameters,
-  objects included, digested by content). It is the model's `reduction` class attribute, or a function of its
-  scenario choosing one, or None: `reduction = staticmethod(lambda scenario: Reduction(...) if
-  scenario.get("reduced") else None)`; the entries it reads are the model's, the same for every plant of a
-  population. A graph system's terms the reduction must keep explicit are declared `@explicit_term`, its inputs'
-  derivatives `@input_jacobian`.
+- **Reductions.** A plant model may reduce its graph systems by groups (`solve.reduction.Reduction(location=, labels=,
+  ports=, keep=, explicit_edges=, kind=, inputs=, systems=, outputs=)`): the groups of a location (e.g. the SubOrgans
+  of some labels) keep their ports and kept nodes, their interiors eliminated once per kind (a library population of
+  the model's own components, each kind its group's template, kind values and the plant's parameters, objects
+  included, digested by content; the library runs the components of the reduced systems and those giving them inputs
+  at the cells (per-cell osmotic presets), not the others (a shoot's development, its tables)). It is the model's
+  `reduction` class attribute, or a function of its scenario choosing one, or None: `reduction = staticmethod(lambda
+  scenario: Reduction(...) if scenario.get("reduced") else None)`; the entries it reads are the model's, the same for
+  every plant of a population. The entries it owns but may not read (the reduced labels while `reduced` is off) are
+  its attribute `scenario_keys` (`choose.scenario_keys = ("reduced", "reduced_labels")`): accepted, inactive. A graph
+  system's terms the reduction must keep explicit are declared `@explicit_term`, its inputs' derivatives
+  `@input_jacobian`.
 ## 4. Structure: `StructuralComponent`
 
 A structural component edits the plant (growth, segmentation, anatomy). Its steps come in two styles:
@@ -312,8 +315,13 @@ A structural component edits the plant (growth, segmentation, anatomy). Its step
 - **array-style** steps (with arguments) are vectorised like functional steps, e.g. elongating apices;
 - **MPG-style** steps (without arguments) edit the MTG through `self.mtg` (`add_child`, `insert_parent`,
   `remove_vertex(..., reparent_child=True)`, `add_components_bulk`). Before them, the variables they declare are
-  written to the MTG; after them, the DataStructure follows the new topology and the other components' variables are
-  repartitioned by kind (`partition_weight`, `active`). They loop over `self.active_ids()` to skip inactive plants.
+  written to the MTG, their inputs another component holds at another location too (an architecture's SubOrgan
+  lengths read by a Compartment-level anatomy model, at the SubOrgans as their holder declares them); after them,
+  the DataStructure follows the new topology, reads back the states they wrote (on the vertices they created too),
+  and the other components' variables are repartitioned by kind (`partition_weight`, `active`). Until their states
+  are read back the MTG is ahead of the DataStructure (`ds.mtg_ahead()`): a `ds.mtg` meanwhile (an inheritance
+  rule's, during the topology's update) writes nothing over them. They loop over `self.active_ids()` to skip
+  inactive plants.
 
 `StructuralComponent.initiate_plant(g, plant, parameters)` (a class method) builds one plant's initial structure in a
 population MPG, from that plant's scenario.
@@ -361,7 +369,8 @@ class Roots(StructuralComponent):
 ```
 
 - Its nodes are the entities of its location matching the declaration, in the base's order (the nodes in segment
-  mode; the SubOrgans of an anatomy-mode DataStructure, for a component declared at that scale or coarser):
+  mode; the SubOrgans of an anatomy-mode DataStructure, for a component declared at that scale or coarser, a
+  Phytomer-scale one included: its `owner("Phytomer")` maps its SubOrgans to their phytomers):
   `n_nodes()`, `entity_ids("node")`, `index_of` and its steps' arrays are theirs. They are selected again, at the
   next read, when the topology or the labels change (new entities matching the declaration join it) and when a
   variable the declaration reads is written (`{"axis_row": ">=0"}`, read at each node's Axis: an axis a
@@ -382,8 +391,9 @@ class Roots(StructuralComponent):
 - Its `NewNodes` may name a parent outside the view (a nodal root `'+'` on a stem element): any entity of the
   location; the new nodes must match its declaration. Its masks (and `active`) are its own; the base's triangles are
   those of every component drawing its entities, together.
-- `view.base` is the DataStructure the view is of (the MPGDataStructure): its `get(name)` gives a variable at every
-  entity of the location, `index_of` the base's indices. A component reads through it what lies outside its
+- `view.base` is the DataStructure the view is of, at the view's location: the MPGDataStructure in segment mode;
+  in anatomy mode, whose nodes are the Compartments, its view at the SubOrgans (`ds.at("SubOrgan")`). Its
+  `get(name)` gives a variable at every entity of the location, `index_of` their indices. A component reads through it what lies outside its
   entities and its steps' arguments cannot give: the end (`x2`, `y2`, `z2`) of the stem element a nodal root is borne
   by, its bearers' values. It does not write there: another model's entities are that model's.
 - `couplings()` and `declarations()` are unchanged: the components still share one DataStructure.
@@ -448,11 +458,20 @@ Links between components on different DataStructures are exchanged by `coupling.
 through a mapping:
 
 - `CrossMapping(plants, grid, method="barycentre" | "overlap")`: segments to cells (by middle point, or by the
-  length fraction in each cell), rebuilt after growth or coordinate changes;
+  length fraction in each cell), rebuilt after growth or coordinate changes. On an anatomy-mode plant (its nodes the
+  Compartments) it maps its SubOrgans, where the segments' ends are (`mapping.location`): a SubOrgan variable
+  through its segment's cells; a Compartment variable (MECHA's root uptake, the soil's potential it receives)
+  through its SubOrgan's cells, at its masked Compartments only (`mask="root_surface"`, a node mask: the roots'
+  soil nodes; the others neither give nor receive): summed (or each one in a mean) up, broadcast or split by weight
+  down;
 - environment **scalars** (stored at `"scalar"`): population values reduced over every plant of every population,
   or a scalar broadcast to every node;
 - `LayerMapping(column, grid, axis="z")`: a 1-D column and a 3-D grid, by layer overlaps;
 - `UnionDataStructure(populations)` with `UnionMapping`: one component (a light model) over every population.
+
+An exchange into a plant's DataStructure (the Scene's, before the population runs) reaches its components on views
+of it too: those at its SubOrgans on an anatomy-mode plant (a gas exchange's PARa from the light's union), and
+those on their entities.
 
 Defaults follow the variables' kinds: extensive values are summed towards cells and split back by a `weight=`;
 intensive values are averaged (with `weight=`) towards cells and gathered back. Several populations feeding one cell

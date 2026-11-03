@@ -242,6 +242,16 @@ def held_at_scale(spec, ds) -> bool:
             and meta.get("mapping") == "broadcast")
 
 
+def holder_spec(spec, ds) -> "VariableSpec":
+    """The spec, at its holder's location, of a variable *spec* reads held elsewhere (held_at_scale): what the MTG
+    holds of it (an MPG-style step reads it at its scale's vertices), as the holder declares it."""
+    from dataclasses import replace
+    held = ds.location(spec.name)
+    if held == "node":                                  # held at the nodes as a broadcast from its scale
+        return replace(spec, location="node", mapping="broadcast")
+    return replace(spec, location=held, mapping=None)
+
+
 def mapped_read(ds, spec) -> np.ndarray:
     """The values at *spec*'s location of a variable held elsewhere (held_at_scale): at the nodes through *spec*'s
     mapping, or at its scale from the nodes' broadcast values (their mean)."""

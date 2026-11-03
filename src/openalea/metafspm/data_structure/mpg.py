@@ -549,7 +549,7 @@ class MPG(MTG):
             found = order[position] == vids
             return vids[found], values[position[found]]
         found = np.array([v in prop for v in vids.tolist()], dtype=bool)
-        return vids[found], np.array([prop[v] for v in vids[found].tolist()])
+        return vids[found], _values_array([prop[v] for v in vids[found].tolist()])
 
     def _valid_vids_at(self, from_scale, filter_in=None, filter_out=None, as_array=False):
         """Non-anchor vertices at *from_scale* passing the filters (a set, or a sorted array). Without filters, cached
@@ -1458,3 +1458,14 @@ def _sorted_unique(ids) -> np.ndarray:
     if ids.size == 0:
         return ids
     return ids[np.concatenate(([True], ids[1:] != ids[:-1]))]
+
+
+def _values_array(values: list) -> np.ndarray:
+    """*values* as an array: of their type when they are scalars, else one object per value (a plant's table, a
+    record: never unpacked into the array's dimensions)."""
+    if all(np.isscalar(value) for value in values):
+        return np.array(values)
+    out = np.empty(len(values), dtype=object)
+    for position, value in enumerate(values):
+        out[position] = value
+    return out

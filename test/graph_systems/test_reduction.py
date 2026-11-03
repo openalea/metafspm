@@ -10,11 +10,12 @@ import numpy as np
 import pytest
 from scipy.sparse import diags
 
-from openalea.metafspm.coupling.component import FunctionalComponent, StructuralComponent, parameter, state_variable
+from openalea.metafspm.coupling.component import (FunctionalComponent, StructuralComponent, input_variable, parameter,
+                                                   state_variable)
 from openalea.metafspm.coupling.composite_wrapper import CompositeModel
 from openalea.metafspm.data_structure.configs import PropsConfig, ScalesConfig as scales
 from openalea.metafspm.scene.population import Planting, planting, population_data_structure
-from openalea.metafspm.solve.decorator import boundary_set, graph_jacobian, graph_system, node_balance
+from openalea.metafspm.solve.decorator import boundary_set, graph_jacobian, graph_system, node_balance, rate
 from openalea.metafspm.solve.reduction import Reduction
 
 from growth import DOC
@@ -228,3 +229,80 @@ def test_a_subclass_of_the_reduced_component_with_a_per_plant_parameter_gives_th
     row = {place: i for i, place in enumerate(_places(full))}
     rows = [row[place] for place in _places(reduced)]
     np.testing.assert_allclose(reduced.get("water_potential"), full.get("water_potential")[rows], rtol=1e-11)
+
+
+def test_the_library_runs_the_reduced_systems_components_and_their_cells_inputs_only():
+    """The library runs the reduced system's component and the components giving it an input at the cells (the
+    Connections' conductances here, per cell as MECHA's osmotic presets): the reduced model's potentials are the
+    full model's on its kept nodes; a functional component giving it nothing at the cells (its own tables, its
+    forcings, which the library has not: a shoot's development) is not run there."""
+    @dataclass
+    class EdgeConductance(FunctionalComponent):
+        K: float = state_variable(**DOC, default=1., scale=scales.Connection, location="edge", kind="intensive")
+
+        @rate
+        def _K(self, K):
+            return np.full(np.shape(K), 3.)
+
+    @dataclass
+    class GivenHydraulics(NodeHydraulics):
+        K: float = input_variable(**DOC, by="EdgeConductance", default=1., scale=scales.Connection, location="edge")
+
+    @dataclass
+    class TableReader(FunctionalComponent):
+        reads: float = state_variable(**DOC, default=0., scale=scales.Plant)
+
+        @rate
+        def _reads(self, reads):
+            if getattr(self.data_structure.structure.reduction, "library", False):
+                raise RuntimeError("TableReader run on the reduction's library: it has no tables there")
+            return reads + 1.
+
+    def with_reader(reduced):
+        class ReadingPlant(_model(reduced)):
+            def __init__(self, data_structure, time_step):
+                self.reader = TableReader(data_structure=data_structure, time_step=time_step)
+                self.conductance = EdgeConductance(data_structure=data_structure, time_step=time_step)
+                self.hydraulics = GivenHydraulics(data_structure=data_structure, time_step=time_step)
+                self.couple(self.reader, self.conductance, self.hydraulics)
+
+            def run(self):
+                self.reader()
+                self.conductance()
+                self.hydraulics()
+        return ReadingPlant
+
+    solved = {}
+    for reduced in (False, True):
+        model = with_reader(reduced)
+        population = population_data_structure(planting([Planting()], model, {}), model)
+        population.instance.run()
+        solved[reduced] = population.data_structure
+    full, reduced = solved[False], solved[True]
+    np.testing.assert_allclose(reduced.get("reads"), 1.)
+    row = {place: i for i, place in enumerate(_places(full))}
+    rows = [row[place] for place in _places(reduced)]
+    np.testing.assert_allclose(reduced.get("water_potential"), full.get("water_potential")[rows], rtol=1e-11)
+
+
+def test_a_reduction_chosen_by_the_scenario_owns_its_keys_while_off():
+    """The scenario keys a reduction function owns (its attribute scenario_keys) are the model's whether it reads
+    them or not: the reduced labels given while "reduced" is off are accepted (inactive); another unknown entry
+    still raises."""
+    def choose(scenario):
+        if not scenario.get("reduced", False):
+            return None
+        return Reduction(location="SubOrgan", labels=tuple(scenario.get("reduced_labels", ("RootSegment",))),
+                         ports=_xylem, keep=_soil_walls, systems=("NodeHydraulics._hydraulics",))
+    choose.scenario_keys = ("reduced", "reduced_labels")
+
+    class ToyPlantOwningKeys(_model(False)):
+        reduction = staticmethod(choose)
+
+    for reduced in (False, True):
+        population = population_data_structure(planting([Planting()], ToyPlantOwningKeys, {
+            "reduced": reduced, "reduced_labels": ("RootSegment",)}), ToyPlantOwningKeys)
+        assert (population.data_structure.structure.reduction is None) == (not reduced)
+    with pytest.raises(ValueError, match="reduced_lables"):
+        population_data_structure(planting([Planting()], ToyPlantOwningKeys, {"reduced_lables": ("RootSegment",)}),
+                                  ToyPlantOwningKeys)

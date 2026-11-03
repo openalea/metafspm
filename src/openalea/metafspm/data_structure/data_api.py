@@ -17,6 +17,7 @@ variable store. GraphView and BoundaryPort are the solver-facing view of a graph
 from __future__ import annotations
 
 from abc         import ABC, abstractmethod
+from contextlib  import contextmanager
 from dataclasses import dataclass, field
 from typing      import Optional, Union
 
@@ -2356,10 +2357,25 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
             tracked[spec.name] = spec
             self.__dict__.setdefault("_mtg_synced", {})[spec.name] = None
 
+    @contextmanager
+    def mtg_ahead(self):
+        """
+        A context in which the MTG is ahead of the DataStructure: an MPG-style step's writes (the values of the
+        vertices it created, say) not read back yet, or the DataStructure's arrays being carried over to a new
+        topology. ds.mtg and flush_mtg() write nothing meanwhile (the DataStructure's values would overwrite the
+        step's).
+        """
+        self.__dict__["_mtg_ahead"] = self.__dict__.get("_mtg_ahead", 0) + 1
+        try:
+            yield self
+        finally:
+            self.__dict__["_mtg_ahead"] -= 1
+
     def flush_mtg(self, names=None) -> None:
-        """Write the tracked variables (or *names* among them) changed since their last synchronisation to the MTG."""
+        """Write the tracked variables (or *names* among them) changed since their last synchronisation to the MTG
+        (nothing while the MTG is ahead: mtg_ahead)."""
         tracked = self.__dict__.get("_mtg_tracked")
-        if not tracked:
+        if not tracked or self.__dict__.get("_mtg_ahead", 0):
             return
         synced = self.__dict__["_mtg_synced"]
         for name in (tracked if names is None else [n for n in names if n in tracked]):
@@ -2441,6 +2457,15 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
         self._topology_version = self.topology_version + 1
 
     def update_topology(self) -> None:
+        """
+        Extend the graph after the MTG's structure changed (growth, pruning) and carry the registered variables
+        over to the new topology (_update_topology). Meanwhile the MTG is ahead of the DataStructure (mtg_ahead):
+        ds.mtg, read by an inheritance rule say, flushes nothing.
+        """
+        with self.mtg_ahead():
+            self._update_topology()
+
+    def _update_topology(self) -> None:
         """
         Extend the graph after the MTG's structure changed (growth, pruning) and carry the registered variables
         over to the new topology.
@@ -3427,6 +3452,7 @@ class LocatedView(DataStructure):
     masks = VariableStoreMixin.masks
     mask_version = VariableStoreMixin.mask_version
     _evaluate_mask = VariableStoreMixin._evaluate_mask
+    _mask_values_at = VariableStoreMixin._mask_values_at
     _CONDITION = VariableStoreMixin._CONDITION
     random = VariableStoreMixin.random
     parameter_view = VariableStoreMixin.parameter_view
@@ -3565,7 +3591,8 @@ class EntityView(DataStructure):
         declaration reads was written (its names in the filters' syntax; a callable's attribute `variables`, else
         none: a callable is evaluated again on a topology or label change only); its index maps, traversal and stores
         are cached on it, a step costing about what it costs on the base;
-      * the base: `base`, for what lies outside the view (read only).
+      * the base: `base`, for what lies outside the view (read only): the MPGDataStructure, or in anatomy mode its
+        LocatedView at the view's location.
 
     Its masks and caches are its own; the base's "active" mask is not seen (define it on the view: the component's
     `active`). MPGDataStructure.entity_view(entities, at) gives it; a component declaring `entities` gets it.
@@ -3590,10 +3617,12 @@ class EntityView(DataStructure):
 
     @property
     def base(self):
-        """The DataStructure the view is of (an MPGDataStructure): a variable at every entity of the location (get),
-        the base's indices (index_of). A component reads through it what lies outside its entities (the bearer of a
-        root it creates, its end); it does not write there, another model's entities being that model's."""
-        return self._base
+        """The DataStructure the view is of, at the view's location: the MPGDataStructure in segment mode, its
+        LocatedView at the view's location in anatomy mode (ds.at("SubOrgan"), the MPGDataStructure's own nodes being
+        the Compartments): a variable at every entity of the location (get), their indices (index_of). A component
+        reads through it what lies outside its entities (the bearer of a root it creates, its end); it does not write
+        there, another model's entities being that model's."""
+        return self._inner
 
     # ── the view's entities ──
     def _label_names(self, condition) -> set:

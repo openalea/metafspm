@@ -31,8 +31,9 @@ Declared on the plant model, before its structure is built (as nodes= and wiring
 The structural model asks for a group's reduced template (Reduction.template_for) when it instances its anatomy:
 the full cells never enter the plant's DataStructure. A kind: (the full template, the kind variables' values or
 classes, the plant's parameters and the settings), evaluated on a library population of the plant model (its own
-components): the graph system's own residual and Jacobian (decorator._EXTRACTING: without its boundary sets and its
-explicit terms), on a full instance and on a reduced one; the group's term is the full one's Kron reduction minus
+components, those of the reduced systems and of their inputs at the cells run): the graph system's own residual and
+Jacobian (decorator._EXTRACTING: without its boundary sets and its explicit terms), on a full instance and on a
+reduced one; the group's term is the full one's Kron reduction minus
 what the model computes on the reduced structure itself, so that every term is counted once, whether the model
 computes it live or the kind holds it.
 """
@@ -316,6 +317,32 @@ def _plant_scale() -> int:
     return ScalesConfig.Plant
 
 
+def _library_components(instance, systems) -> list:
+    """
+    The components a library runs, in the plant model's order: those of the reduced *systems*, and the functional
+    components giving them an input at the cells (Compartment or Connection scale: per-cell osmotic potentials from
+    their templates, say). The others are not: their inputs at coarser scales are the kinds' values or the
+    boundaries' (not the library's), their own tables and forcings the plant's (a shoot's development).
+    """
+    from dataclasses import fields
+    from openalea.metafspm.coupling.component import StructuralComponent
+    from openalea.metafspm.data_structure.configs import ScalesConfig
+    from openalea.metafspm.solve.decorator import declared_system
+    functional = [component for component in instance.components if not isinstance(component, StructuralComponent)]
+    reducing = [component for component in functional
+                if any(declared_system(component, system.split(".")[1], (system,)) is not None for system in systems)]
+
+    def at_cells(f) -> bool:
+        scale = f.metadata.get("scale")
+        return scale is not None and scale >= ScalesConfig.Compartment
+
+    needed = {f.name for component in reducing for f in fields(component)
+              if f.metadata.get("variable_type") == "input" and at_cells(f)}
+    return [component for component in functional
+            if component in reducing or any(f.metadata.get("variable_type") == "state_variable" and at_cells(f)
+                                            and f.name in needed for f in fields(component))]
+
+
 def _evaluate(reduction: Reduction, parameters: dict, requests: dict) -> dict:
     """{kind key: {system: Kind}} of *requests* ({kind key: (a representative group vertex, its reduced template
     key, its kind values)}) for a plant of *parameters*: a library population of the plant model, one full and one
@@ -391,11 +418,11 @@ def _evaluate(reduction: Reduction, parameters: dict, requests: dict) -> dict:
                 values[i] = value
         ds.set(name, values)
     from openalea.metafspm.solve import decorator
+    reducing = _library_components(instance, reduction.systems)
     decorator._SKIPPED.update(reduction.systems)                 # the reduced systems: read, not solved
     try:
-        for component in instance.components:
-            if not isinstance(component, StructuralComponent):
-                component()
+        for component in reducing:
+            component()
     finally:
         decorator._SKIPPED.difference_update(reduction.systems)
     out = {kind_key: {} for kind_key, _ in items}
