@@ -798,8 +798,7 @@ class WheatCrown(StructuralComponent):
     hydraulic model). The seed is a point (its start and end at the seed), its length and radius the grain's. Its
     axis has no row in the shoot's axes table (axis_row -1): it is not the shoot's, nor its organ.
 
-    The seed's depth is the planting's (z: minus the sowing depth, a planting_variable), unless the plant's
-    scenario gives sowing_depth. The crown's depth does not follow the sowing depth (Kirby 1993): the subcrown
+    The seed's depth is the planting's (z: minus the sowing depth, a planting_variable). The crown's depth does not follow the sowing depth (Kirby 1993): the subcrown
     internode's length is the sowing depth minus crown_depth, positive (a seed sown above the crown's depth raises).
     The initiator reads its parameters from the plant's scenario (the class defaults otherwise); it has no step.
     """
@@ -808,9 +807,6 @@ class WheatCrown(StructuralComponent):
     y: float = planting_variable("y")
     z: float = planting_variable("z")
     # the seed and the subcrown internode
-    sowing_depth: float = parameter(unit="m", description="The seed's depth below the soil surface.", by="WheatCrown",
-                                    default=np.nan, value_comment="NaN: the planting's (minus its z)",
-                                    min_value=0.01, max_value=0.1, references=KIRBY_1993)
     crown_depth: float = parameter(unit="m", description="The crown's depth below the soil surface (the tillering "
                                                          "node: the top of the subcrown internode).",
                                    by="WheatCrown", default=0.02, min_value=0.005, max_value=0.05,
@@ -841,8 +837,7 @@ class WheatCrown(StructuralComponent):
         """The seed and the subcrown internode of *plant* (the class docstring's structure), from its planting's
         position and its *scenario*'s parameters."""
         parameters = cls.plant_parameters(scenario)
-        x, y, planted = (float(g.property(name)[plant]) for name in ("x", "y", "z"))
-        seed_height = planted if np.isnan(parameters["sowing_depth"]) else -float(parameters["sowing_depth"])
+        x, y, seed_height = (float(g.property(name)[plant]) for name in ("x", "y", "z"))
         crown_height = -float(parameters["crown_depth"])
         if crown_height <= seed_height + 1e-12:
             raise ValueError(f"WheatCrown: the crown ({-crown_height} m deep) must lie above the seed "

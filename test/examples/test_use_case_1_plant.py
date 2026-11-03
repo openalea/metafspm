@@ -81,9 +81,9 @@ def _scenario(roots=True, rule=True, **values):
     return dict(scenario, **values)
 
 
-def _scene(model=WheatPlant, time_step=DAY, scenarios=None):
-    plants = [Planting(0.05, 0.05, -SOWING_DEPTHS[0], 0.), Planting(0.15, 0.05, -SOWING_DEPTHS[0], 90.)]
-    scenarios = scenarios or [_scenario(), _scenario(sowing_depth=SOWING_DEPTHS[1])]
+def _scene(model=WheatPlant, time_step=DAY, scenarios=None, sowing_depths=SOWING_DEPTHS):
+    plants = [Planting(0.05, 0.05, -sowing_depths[0], 0.), Planting(0.15, 0.05, -sowing_depths[1], 90.)]
+    scenarios = scenarios or [_scenario(), _scenario()]
     return Scene(planting(plants[:len(scenarios)], model, plant_scenarios=scenarios), time_step=time_step,
                  forcings={"air_temperature": 15.})
 
@@ -175,7 +175,6 @@ def test_the_seed_and_the_subcrown_internode(grown):
         np.testing.assert_allclose(np.asarray(ds.get("x1"))[index], x)
         np.testing.assert_allclose(np.asarray(ds.get("x2"))[index], x)
     np.testing.assert_allclose(ds.get("crown_depth"), CROWN_DEPTH)          # its parameters, per plant
-    np.testing.assert_allclose(ds.get("sowing_depth"), [np.nan, SOWING_DEPTHS[1]])
 
 
 def test_the_main_stem_on_the_crown_and_the_seminal_roots_on_the_seed(grown):
@@ -304,7 +303,7 @@ def test_requests_are_cumulative_and_none_is_lost():
 
 def test_a_crown_below_the_seed_raises():
     with pytest.raises(ValueError, match="above the seed"):
-        _scene(WheatShoot, scenarios=[_scenario(roots=False, sowing_depth=0.015)])
+        _scene(WheatShoot, scenarios=[_scenario(roots=False)], sowing_depths=(0.015, 0.015))
 
 
 def test_the_rule_s_defaults_wait_for_the_fourth_leaf():

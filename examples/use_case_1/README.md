@@ -56,8 +56,7 @@ Two components of this folder join them.
   - then `subcrown_elements` StemElements `'<'`, vertical, up to the crown at `crown_depth` below the surface.
 - **Geometry.** Each element gets its start and end (`x1` … `z2`), its length and its radius. The seed is a point,
   its length and radius the grain's (Gegas et al. 2010).
-- **Depths.** The seed's depth is the planting's (z: minus the sowing depth), unless the plant's scenario gives
-  `sowing_depth`. The crown's depth does not follow the sowing depth (Kirby 1993): the subcrown internode spans the
+- **Depths.** The seed's depth is the planting's (z: minus the sowing depth). The crown's depth does not follow the sowing depth (Kirby 1993): the subcrown internode spans the
   rest, and a crown below the seed raises.
 - **Anchors**, in the plant's scenario:
   - Adel's main stem `'<'` on the crown's top, `shoot_anchor={"label": "StemElement", "last": True}`;
