@@ -17,7 +17,8 @@ What a frame holds:
   Compartment; ids are the vids), the Connections as a relation (n_id_a → n_id_b); as columns, every MPG property
   and every variable of the DataStructure at that scale's location; its scalars; the triangles of its geometry
   provider as a mesh, by node and by coarser scale, and a mesh for each component drawing shapes for display only
-  (display_triangles(), e.g. GRANAP's sections). The MPG's own links (the raw complex and parent of each
+  (display_triangles(), e.g. GRANAP's sections; display_meshes=False leaves them out, SceneRecorder writes them every
+  display_period steps only). The MPG's own links (the raw complex and parent of each
   vertex, its raw edge type) are the metafspm_complex, metafspm_parent and metafspm_edge_type columns, and the
   label codes, variable metadata and construction arguments go in the data structure's extras, so that
   from_frame rebuilds the same MPG (vertices, links, properties) and the same variables, bit for bit;
@@ -353,7 +354,8 @@ def _location_scales(ds) -> dict:
     return scales
 
 
-def _mpg_data_structure(identifier: str, ds, metadata: dict, standard_names: dict, geometry: bool, components=()):
+def _mpg_data_structure(identifier: str, ds, metadata: dict, standard_names: dict, geometry: bool, components=(),
+                        display_meshes: bool = True):
     fspm_tf = _fspm_tf()
     ds.flush_mtg()                     # the MPG holds the variables' current values, as ds.mtg gives it
     g = ds.structure
@@ -545,7 +547,7 @@ def _mpg_data_structure(identifier: str, ds, metadata: dict, standard_names: dic
                                                     "(-1: none)",
                                  "metafspm_edge_type": "metafspm: the MPG's edge type (0 none, 1 '/', 2 '<', "
                                                        "3 '+')"}[column])
-    meshes = _meshes(ds, entity_sets, scale_of, names, components) if geometry else []
+    meshes = _meshes(ds, entity_sets, scale_of, names, components, display_meshes) if geometry else []
     return fspm_tf.DataStructure(identifier, kind="graph", entity_sets=entity_sets, relations=relations,
                                  scalars=scalars, meshes=meshes, platform=PLATFORM, model="MPGDataStructure",
                                  extras={EXTRAS: extras})
@@ -626,15 +628,15 @@ def _edge_rows(columns: dict, ids: np.ndarray) -> np.ndarray:
         return _rows_of(columns["target"], ids)
 
 
-def _meshes(ds, entity_sets: list, scale_of: dict, names: dict, components=()) -> list:
-    """The DataStructure's triangles (its geometry provider's, those light models get), and each component's
-    display_triangles() (shapes drawn for display only, e.g. GRANAP's sections), one mesh each."""
+def _meshes(ds, entity_sets: list, scale_of: dict, names: dict, components=(), display_meshes: bool = True) -> list:
+    """The DataStructure's triangles (its geometry provider's, those light models get), and with *display_meshes*
+    each component's display_triangles() (shapes drawn for display only, e.g. GRANAP's sections), one mesh each."""
     drawn = []
     try:
         drawn.append(("triangles", ds.triangles()))
     except (ValueError, NotImplementedError):
         pass
-    for component in components:
+    for component in components if display_meshes else ():
         display = getattr(component, "display_triangles", None)
         if callable(display):
             drawn.append((type(component).__name__, display()))
@@ -713,12 +715,14 @@ def _grid_data_structure(identifier: str, ds, metadata: dict, standard_names: di
 
 def to_frame(data_structures: dict, components: dict = None, mappings: dict = None, time: float = 0.,
              step: int = 0, time_unit="s", geometry: bool = True, standard_names: dict = None,
-             scales=None, entities=None, variables=None, plant_names: dict = None):
+             scales=None, entities=None, variables=None, plant_names: dict = None, display_meshes: bool = True):
     """
     The fspm-TF frame of *data_structures* ({id: DataStructure}; ids are identifiers), their variables declared
     by *components* ({id: [components]}), with *mappings* ({name: (CrossMapping, source id, target id)}), at *time*
-    (in *time_unit*: "s", "min", "h", "d" or its number of seconds, as as_forcing's) and *step*. *geometry*: the MPGDataStructures' triangles as meshes. *standard_names*: {metafspm
-    name: standard name} on top of the vocabulary's metafspm column (a None value drops one).
+    (in *time_unit*: "s", "min", "h", "d" or its number of seconds, as as_forcing's) and *step*. *geometry*: the
+    MPGDataStructures' triangles as meshes; *display_meshes*: with them, the components' display_triangles() (shapes
+    drawn for display only, e.g. GRANAP's sections; their data rows are written either way). *standard_names*:
+    {metafspm name: standard name} on top of the vocabulary's metafspm column (a None value drops one).
 
     For logging, *scales*, *entities* and *variables* filter what is written (see filter_frame), each a value for
     every DataStructure or a {id: value} dict; *plant_names*: {id: {plant name: Plant vid}}, to give *entities* by
@@ -735,7 +739,7 @@ def to_frame(data_structures: dict, components: dict = None, mappings: dict = No
         metadata = _declarations((components or {}).get(identifier, ()))
         if isinstance(ds, MPGDataStructure):
             frame.data_structures.append(_mpg_data_structure(identifier, ds, metadata, names, geometry,
-                                                             (components or {}).get(identifier, ())))
+                                                             (components or {}).get(identifier, ()), display_meshes))
         elif isinstance(ds, (ArrayDataStructure, AdaptiveGridDataStructure)):
             frame.data_structures.append(_grid_data_structure(identifier, ds, metadata, names))
         else:
@@ -758,12 +762,13 @@ def to_frame(data_structures: dict, components: dict = None, mappings: dict = No
 
 
 def scene_to_frame(scene, geometry: bool = True, standard_names: dict = None, data_structures=None, scales=None,
-                   entities=None, variables=None):
+                   entities=None, variables=None, display_meshes: bool = True):
     """The frame of a Scene now: each population's DataStructure (id: the population's name), each environment
     model's (id: the model's class name, numbered when it has several), the scene's CrossMappings.
 
-    For logging: *data_structures*, the ids of those to write (default: all); *scales*, *entities* and *variables*,
-    as in to_frame (filter_frame), *entities* also given by the planting table's plant names (e.g. "p0")."""
+    *geometry* and *display_meshes*: as in to_frame. For logging: *data_structures*, the ids of those to write (default:
+    all); *scales*, *entities* and *variables*, as in to_frame (filter_frame), *entities* also given by the planting
+    table's plant names (e.g. "p0")."""
     found = scene.data_structures()
     written = {identifier: entry[0] for identifier, entry in found.items()}
     components = {identifier: entry[2] for identifier, entry in found.items()}
@@ -788,7 +793,8 @@ def scene_to_frame(scene, geometry: bool = True, standard_names: dict = None, da
                    for population in scene.populations if hasattr(population, "plant_names")}
     return to_frame(written, components=components, mappings=mappings, time=scene.time,
                     step=scene.iteration, time_unit="s", geometry=geometry, standard_names=standard_names,
-                    scales=scales, entities=entities, variables=variables, plant_names=plant_names)
+                    scales=scales, entities=entities, variables=variables, plant_names=plant_names,
+                    display_meshes=display_meshes)
 
 
 def export_frame(path: str, data_structures: dict, **options) -> None:

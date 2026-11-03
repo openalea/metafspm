@@ -156,3 +156,54 @@ def test_a_restored_run_keeps_its_views(tmp_path):
     with open(os.path.join(out, "frames", "scene.fspm.json")) as file:
         assert [entry["step"] for entry in json.load(file)["frames"]] == [0, 2]      # a frame written since
     assert views.read_views(_views_file(out)) == saved
+
+
+class _Drawing:
+    """A component drawing shapes for display only (as GRANAP's sections): one triangle per node."""
+
+    def __init__(self, data_structure):
+        self.data_structure = data_structure
+
+    def display_triangles(self, where=None):
+        from openalea.metafspm.coupling.geometry import Triangles
+        nodes = np.arange(self.data_structure.n_nodes())
+        corners = np.stack([np.zeros((nodes.size, 3)), np.eye(3)[[0] * nodes.size], np.eye(3)[[1] * nodes.size]], 1)
+        return Triangles(corners + nodes[:, None, None], nodes)
+
+
+def _meshes_per_frame(out) -> dict:
+    from openalea import fspm_tf
+    found = {}
+    with open(os.path.join(out, "frames", "scene.fspm.json")) as file:
+        for entry in json.load(file)["frames"]:
+            frame = fspm_tf.read(os.path.join(out, "frames", entry["file"]))
+            found[entry["step"]] = {mesh.name for mesh in frame.data_structure("RootPopulation").meshes}
+    return found
+
+
+def test_display_shapes_are_recorded_at_their_own_period(tmp_path):
+    """The components' display shapes (e.g. sections) are a recording choice: none by default, every display_period
+    steps (and in the last frame) with it; every frame holds the data rows and the triangles."""
+    for name, period in (("none", None), ("every_four", 4)):
+        out = str(tmp_path / name)
+        Choregrapher().reset()
+        scene = _scene(SceneRecorder(out, summaries=False, frame_period=2, display_period=period))
+        population = scene.populations[0]
+        population.instance.components.append(_Drawing(population.data_structure))
+        for _ in range(5):
+            scene.run()
+        scene.finish()
+        meshes = _meshes_per_frame(out)
+        assert sorted(meshes) == [0, 2, 4, 5]
+        drawn = [step for step, names in meshes.items() if "_Drawing" in names]
+        assert drawn == ([] if period is None else [0, 4, 5])
+        assert all("triangles" in names for names in meshes.values())
+
+
+def test_display_period_is_a_multiple_of_frame_period(tmp_path):
+    with pytest.raises(ValueError, match="multiple of frame_period"):
+        SceneRecorder(str(tmp_path), frame_period=2, display_period=3)
+    with pytest.raises(ValueError, match="multiple of frame_period"):
+        SceneRecorder(str(tmp_path), display_period=2)
+    with pytest.raises(ValueError, match="display_period"):
+        SceneRecorder(str(tmp_path), frame_period=2, frame_options={"display_meshes": True})

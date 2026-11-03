@@ -576,25 +576,33 @@ scene = Scene.from_scenario(scenario, stand(...), Wheat, environment=[RhizoSoil,
   components={id: [...]})` writes a frame. `import_frame(path)` rebuilds the DataStructures: the same MPG, the
   same variables, bit for bit, from which a simulation continues as from the original. `SceneRecorder(folder,
   frame_period=24)` records a frame at the start and every 24 steps, in `folder/frames` with its index
-  `scene.fspm.json`, which ParaView's fspm-TF reader plays as time steps; `frame_options=` passes
+  `scene.fspm.json`, which ParaView's fspm-TF reader plays as time steps. A frame is full by default: every scale,
+  every row, every variable (what another platform reads, and a complete log), with the triangles light models get;
+  the components' display shapes (e.g. GRANAP's sections), drawings only, are a recording choice:
+  `display_period=96` writes them every 96 steps (a multiple of `frame_period`) and in the last frame, `None` (the
+  default) never; their data rows (the Compartments) are in every frame either way. `frame_options=` passes
   `scene_to_frame`'s options (e.g. `geometry=False`). For logging, the options also filter what each frame keeps:
   `data_structures=` (which ones), `scales=` (e.g. `["Plant", "SubOrgan"]`), `entities=` (a plant, by vid or by its
   name in the planting table, an axis, a segment with its cross-section: with everything they contain) and
-  `variables=`. Each is a value for every DataStructure or a `{id: value}` dict. A filtered frame is a smaller, valid
-  fspm-TF file, for outputs only: `import_frame` refuses to rebuild it. It uses
-  `openalea.fspm_tf`, a dependency of metafspm (in development, installed from the fspm-TF clone).
+  `variables=`. Each is a value for every DataStructure or a `{id: value}` dict. A light log is such an explicit
+  choice, e.g. `frame_options={"scales": {"Wheat": ["Plant", "Axis", "Organ", "SubOrgan"]}}` leaves out the
+  anatomies' rows (the scales below SubOrgan) of population `Wheat`; never a default. A filtered frame is a
+  smaller, valid fspm-TF file, for outputs only: `import_frame` refuses to rebuild it. It uses `openalea.fspm_tf`, a
+  dependency of metafspm (in development, installed from the fspm-TF clone).
 - **Frames ready to look at.** `SceneRecorder(folder, frame_period=24, frame_views="default")` also writes
   `frames/views.json` at the first frame: fspm-TF's views, the layers ParaView's fspm-TF reader shows, one block each,
   instead of one block per DataStructure. The default layers (`io.fspm_tf.default_views(scene)`) are, per population,
   its shoot mesh (where its SubOrgans are shoot elements) coloured by the first Organ variable its components declare
   (a state variable that is not a descriptor, else an input), its root segments as tubes on `radius` coloured by the
-  first such SubOrgan variable, and each component's display shapes (e.g. sections) hidden; per environment model,
-  its grid's cells coloured by its first cell variable, at opacity 0.3. A part missing from the first frame (a shoot
-  that appears later) gets no default layer. `frame_views=` also takes your own views, a dict or the path of a
-  views file (e.g. one saved from ParaView): each name a layer gives (data structure, mesh, entity set, variable) is
-  checked against the first frame, with a warning for each one it lacks; a layer is empty in the frames that lack
-  what it shows. `write_views(path, views)` writes views, checked against fspm-TF's schema. In ParaView, the fspm-TF
-  macros make each layer its own pipeline item and save your changes back (fspm-TF's `doc/using.md`, "Views").
+  first such SubOrgan variable, and each component's display shapes (e.g. sections, in the first frame with
+  `display_period`) hidden; per environment model, its grid's cells coloured by its first cell variable, at opacity
+  0.3. A part missing from the first frame (a shoot that appears later) gets no default layer. `frame_views=` also
+  takes your own views, a dict or the path of a views file (e.g. one saved from ParaView): each name a layer gives
+  (data structure, mesh, entity set, variable) is checked against the first frame, with a warning for each one it
+  lacks; a layer is empty in the frames that lack what it shows. `write_views(path, views)` writes views, checked
+  against fspm-TF's schema. In ParaView, the fspm-TF macros make each layer its own pipeline item and save your changes back, and "Select at scale" grows a picked
+  element to its plant, axis, organ or segment with everything it contains (a segment's section shown even when the
+  sections' layer is hidden), isolated in the view or in a panel of its own (fspm-TF's `doc/using.md`, "Views").
 - **Running with another platform's model.** In an fspm-TF coupling session (fspm-TF's coordinator, `fspm-tf
   couple`, runs models of several platforms step by step), `openalea.metafspm.io.coupling.RemoteComponent` stands for
   the other platform's model: a component computing nothing, whose state variables are that model's outputs and whose

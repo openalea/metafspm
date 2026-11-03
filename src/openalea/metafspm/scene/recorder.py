@@ -19,7 +19,9 @@ A scene's outputs, written as it runs::
     <name>.csv                        the tables given as tables={name: function(scene) -> a row (dict), a
                                       DataFrame, or None for no row}
     frames/frame_<step>.glb, frames/scene.fspm.json
-                                      the whole scene (fspm-TF), every frame_period steps
+                                      the whole scene (fspm-TF), every frame_period steps: every scale, every
+                                      row; the components' display shapes (e.g. GRANAP's sections) every
+                                      display_period steps
     frames/views.json                 with frame_views: the layers ParaView shows (fspm-TF's views), written at the
                                       first frame
     checkpoints/step_<iteration>/     Scene.checkpoint every checkpoint_period steps, the last keep_checkpoints kept
@@ -101,6 +103,11 @@ class SceneRecorder:
     The outputs of a Scene (see the module): *folder* (None: in memory, no files); *summaries* and their
     *summary_period* (steps); *segment_plants* (planting names) and *segment_period*; *frame_period* and *frame_options*
     (io.fspm_tf.scene_to_frame's: geometry, standard_names, data_structures, scales, entities, variables);
+    *display_period*: the frames that also carry the components' display shapes (display_triangles(), e.g. GRANAP's
+    sections: drawings only, their data rows are in every frame), every display_period steps (a multiple of
+    frame_period) and in the last frame; None (the default): none, the frames hold the data and the geometry
+    light models get. A light log leaves out data explicitly, by frame_options (e.g. scales={"Wheat": ["Plant",
+    "Axis", "Organ", "SubOrgan"]}: no anatomy rows in population Wheat's).
     *checkpoint_period* and *keep_checkpoints* (None: all); *tables* {name: function(scene)} and *table_period*.
     *frame_views*: the frames' views.json (fspm-TF's views: layers for ParaView), written at the first frame: None
     (none), "default" (io.fspm_tf.default_views: the shoots, the roots as tubes, the soil grids), a views dict, or the
@@ -111,12 +118,19 @@ class SceneRecorder:
     def __init__(self, folder: str = None, summaries: bool = True, summary_period: int = 1, segment_plants=(),
                  segment_period: int = 24, frame_period: int = None, frame_options: dict = None,
                  checkpoint_period: int = None, keep_checkpoints: int = 2, tables: dict = None,
-                 table_period: int = 1, frame_views=None):
+                 table_period: int = 1, frame_views=None, display_period: int = None):
         self.folder = os.fspath(folder) if folder is not None else None
         self.summaries, self.summary_period = bool(summaries), int(summary_period)
         self.segment_plants, self.segment_period = {str(name) for name in segment_plants}, int(segment_period)
         self.frame_period = int(frame_period) if frame_period else None
         self.frame_options = dict(frame_options or {})
+        if "display_meshes" in self.frame_options:
+            raise ValueError("SceneRecorder: the frames' display shapes are given by display_period (steps; None: "
+                             "none), not frame_options['display_meshes']")
+        self.display_period = int(display_period) if display_period else None
+        if self.display_period and (not self.frame_period or self.display_period % self.frame_period):
+            raise ValueError(f"SceneRecorder(display_period={display_period}): the frames carrying display shapes, a "
+                             f"multiple of frame_period ({self.frame_period})")
         self.checkpoint_period = int(checkpoint_period) if checkpoint_period else None
         self.keep_checkpoints = keep_checkpoints
         self.tables, self.table_period = dict(tables or {}), int(table_period)
@@ -177,7 +191,8 @@ class SceneRecorder:
     def _record(self, scene, initial: bool = False, final: bool = False) -> None:
         iteration = scene.iteration
         if self.frame_period and (iteration % self.frame_period == 0 or final) and self._due("frames", iteration):
-            self._write_frame(scene)
+            self._write_frame(scene, display=bool(self.display_period)
+                              and (iteration % self.display_period == 0 or final))
         if self.summaries and (iteration % self.summary_period == 0 or final) and self._due("summaries", iteration):
             self.write_summaries(scene)
         if (self.segment_plants and (iteration % self.segment_period == 0 or final)
@@ -362,8 +377,9 @@ class SceneRecorder:
             write_views(path, content)
         self._views_written = True
 
-    def _write_frame(self, scene) -> str:
-        """Write the scene's frame now (frames/frame_<step>.glb) and the frames' index; the frame's path."""
+    def _write_frame(self, scene, display: bool = False) -> str:
+        """Write the scene's frame now (frames/frame_<step>.glb), with the components' display shapes when
+        *display*, and the frames' index; the frame's path."""
         from openalea.metafspm.io.fspm_tf import _fspm_tf, scene_to_frame
         fspm_tf = _fspm_tf()
         folder = os.path.join(self.folder, "frames")
@@ -377,7 +393,7 @@ class SceneRecorder:
                 for entry in self._frames:
                     entry.pop("path", None)
         name = f"frame_{scene.iteration:06d}.glb"
-        frame = scene_to_frame(scene, **self.frame_options)
+        frame = scene_to_frame(scene, display_meshes=display, **self.frame_options)
         fspm_tf.write(os.path.join(folder, name), frame)
         if self.frame_views is not None and not self._views_written:
             self._write_views(scene, frame, folder)
@@ -483,6 +499,7 @@ class SceneRecorder:
             "recorder": {"summary_period": self.summary_period if self.summaries else None,
                          "segment_plants": sorted(self.segment_plants), "segment_period": self.segment_period,
                          "frame_period": self.frame_period, "frame_options": _described(self.frame_options),
+                         "display_period": self.display_period,
                          "frame_views": self.frame_views if self.frame_views in (None, "default") else "given",
                          "checkpoint_period": self.checkpoint_period, "tables": sorted(self.tables),
                          "table_period": self.table_period}}
