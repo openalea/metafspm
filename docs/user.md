@@ -526,6 +526,15 @@ scene = Scene.from_scenario(scenario, stand(...), Wheat, environment=[RhizoSoil,
   `variables=`. Each is a value for every DataStructure or a `{id: value}` dict. A filtered frame is a smaller, valid
   fspm-TF file, for outputs only: `import_frame` refuses to rebuild it. It uses
   `openalea.fspm_tf`, a dependency of metafspm (in development, installed from the fspm-TF clone).
+- **Running with another platform's model.** In an fspm-TF coupling session (fspm-TF's coordinator, `fspm-tf
+  couple`, runs models of several platforms step by step), `openalea.metafspm.io.coupling.RemoteComponent` stands for
+  the other platform's model: a component computing nothing, whose state variables are that model's outputs and whose
+  inputs are sent to it. A subclass declares them as any component does, with `rights` (per scale: `"owns"`, metafspm
+  creates the entities; `"follows"`, the other model's entities are created in the MPG) and `links` (renames, factors,
+  changes of scale between the two models' variables). `remote.start()` joins the session; each `remote()` sends the
+  step's outputs and applies the next turn's inputs, so it runs last in a step. The coupling is explicit: metafspm's
+  inputs at a step are what the other model gave at its previous turn. `test/exchange/test_coupling.py` couples the
+  root growth model with a carbon model written in VirtualPlantLab (`vpl_carbon.jl`).
 
 ## 7. Upscaled variables, observations and calibration
 
