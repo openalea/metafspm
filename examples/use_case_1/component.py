@@ -825,6 +825,11 @@ class WheatCrown(StructuralComponent):
                                          min_value=1, max_value=20,
                                          value_comment="numerical: the internode's discretisation (e.g. for its "
                                                        "hydraulics)")
+    # the subcrown internode's organ: its diameter, as the shoot model's organs have theirs (a stem anatomy's size)
+    diameter: float = state_variable(unit="m", description="The subcrown internode's diameter (twice "
+                                                           "subcrown_radius; the shoot's organs' diameter for the "
+                                                           "others).", default=0., scale=ScalesConfig.Organ,
+                                     kind="descriptor")
 
     @classmethod
     def plant_parameters(cls, scenario) -> dict:
@@ -851,6 +856,7 @@ class WheatCrown(StructuralComponent):
         for scale, label in ((scales.Axis, labels.Axis.Shoot), (scales.GrowthUnit, labels.GrowthUnit.Shoot),
                              (scales.Phytomer, labels.Phytomer.Shoot), (scales.Organ, labels.Organ.StemInternode)):
             complex_ = g.add_component(complex_, **PropsConfig(scale=scale, edge_type='/', label=label))
+        g.property("diameter")[complex_] = 2. * float(parameters["subcrown_radius"])
         element = g.add_component(complex_, **PropsConfig(scale=scales.SubOrgan, edge_type='/',
                                                          label=labels.SubOrgan.Seed))
         cls._place(g, element, x, y, seed_height, seed_height, float(parameters["seed_length"]),
