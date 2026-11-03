@@ -12,7 +12,8 @@ processes, around the Multiscale Tree Graph (MTG) of OpenAlea.
   DataStructures (plants and soil, light, environment scalars) by mappings exchanged at fixed points.
 - **Scenes** build plant populations from a planting table and run them with their environment models.
 - **Exchange**: scenes and DataStructures are written as fspm-TF files (one glTF file per time step), which other
-  platforms read and ParaView displays, and read back bit for bit.
+  platforms read and ParaView displays, and read back bit for bit; a metafspm model runs with another platform's
+  model in an fspm-TF coupling session, that model a component (`RemoteComponent`).
 
 ## Using models
 
