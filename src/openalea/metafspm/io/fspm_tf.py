@@ -501,6 +501,10 @@ def _mpg_data_structure(identifier: str, ds, metadata: dict, standard_names: dic
         ids = np.asarray(ds.entity_ids(location), dtype=np.int64)
         rows = _edge_rows(columns, ids) if location == "edge" else _rows_of(columns["id"], ids)
         reserved = _RELATION_RESERVED if scale == connection else _GRAPH_RESERVED
+        # the instanced vertices (a reduced or instanced anatomy's): their values are the DataStructure's only, the
+        # MPG giving their template's
+        explicit = (~np.asarray(ds._instanced_at(location), dtype=bool)
+                    if instanced and location in ("node", "edge") and hasattr(ds, "_instanced_at") else None)
         for name, values in store.items():
             column = f"metafspm_{name}" if name in reserved or name in LINK_COLUMNS else name
             try:
@@ -508,7 +512,8 @@ def _mpg_data_structure(identifier: str, ds, metadata: dict, standard_names: dic
             except TypeError as error:
                 warnings.warn(f"variable '{name}' is not exchanged: {error}")
                 continue
-            if column in columns and not _holds(columns[column], rows, values):
+            if column in columns and not _holds(columns[column], rows, values) and not (
+                    explicit is not None and _holds(columns[column], rows[explicit], values[explicit])):
                 column = f"metafspm_{name}"         # an MPG property of that name holds other values or text
             _place(columns, column, rows, values, columns["id"].size)
             extras["variables"][name] = dict(_json_meta(ds._variable_meta().get(name, {})), location=location,
@@ -632,25 +637,32 @@ def _meshes(ds, entity_sets: list, scale_of: dict, names: dict, components=(), d
     """The DataStructure's triangles (its geometry provider's, those light models get), and with *display_meshes*
     each component's display_triangles() (shapes drawn for display only, e.g. GRANAP's sections), one mesh each."""
     drawn = []
+    # the plants' triangles (those light models get): on an anatomy-mode DataStructure its SubOrgans' (the view at
+    # its from_scale, where the architectures draw them), their owners SubOrgans; the Compartments are not drawn
+    drawn_on = ds.at(ds._scale_name(ds.from_scale)) if getattr(ds, "_anatomy", False) and hasattr(ds, "at") else ds
     try:
-        drawn.append(("triangles", ds.triangles()))
+        drawn.append(("triangles", drawn_on, drawn_on.triangles()))
     except (ValueError, NotImplementedError):
         pass
     for component in components if display_meshes else ():
         display = getattr(component, "display_triangles", None)
         if callable(display):
-            drawn.append((type(component).__name__, display()))
-    return [_mesh_of(ds, entity_sets, scale_of, names, name, triangles) for name, triangles in drawn
+            drawn.append((type(component).__name__, ds, display()))
+    return [_mesh_of(on, entity_sets, scale_of, names, name, triangles) for name, on, triangles in drawn
             if len(triangles)]
 
 
 def _mesh_of(ds, entity_sets: list, scale_of: dict, names: dict, name: str, triangles):
+    """The mesh of *triangles*, owned by the nodes of *ds* (a DataStructure, or a view of it at a coarse location:
+    an anatomy-mode plant's SubOrgans), each vertex with the rows of its owner and of its owner's containing
+    entities."""
     fspm_tf = _fspm_tf()
     sets = {entity_set.name: entity_set for entity_set in entity_sets}
     node_ids = np.asarray(ds.entity_ids("node"), dtype=np.int64)
     owners = np.repeat(triangles.owner, 3)
     feature_rows = {}
-    node_set = sets[names[scale_of["node"]]]
+    at = ds.__dict__.get("_at")                             # a view: its nodes the entities of that location
+    node_set = sets[names[scale_of[at if at is not None else "node"]]]
     feature_rows[node_set.name] = _rows_of(node_set.columns["id"], node_ids[owners])
     for location in ds._coarse_scale_names():
         set_name = names[scale_of[location]]

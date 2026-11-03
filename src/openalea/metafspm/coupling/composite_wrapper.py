@@ -1,3 +1,5 @@
+from typing import Optional
+
 from openalea.metafspm.coupling.declaration import check_link
 from openalea.metafspm.coupling.translator import Translator
 
@@ -147,15 +149,15 @@ class CompositeModel:
                 raise ValueError(f"{link.receiver}.{link.variable} is linked to {link.provider}.{link.variable} with "
                                  f"factor {link.sources[link.variable]}: a same-name link within one data structure "
                                  "must have a factor of 1, rename the receiving variable")
-            location = ds.location(link.variable) if ds.has(link.variable) else None
+            location = ds.location(link.variable) if ds.has(link.variable) else self._receiving_location(link,
+                                                                                                         receiver, ds)
             aggregation, weight = link.aggregation, link.weight
             if location is not None and (aggregation is None or (weight is None and aggregation in
                                                                  ("weighted_mean", "split"))):
                 default, weight = self._default_link_mapping(ds, link, location)
                 aggregation = aggregation or default
-            options = dict(location=location, aggregation=aggregation, weight=weight, where=link.target)
-            if link.target is not None and ds.has(link.variable):
-                options["default"] = ds._variable_meta().get(link.variable, {}).get("default", 0.)
+            options = dict(location=location, aggregation=aggregation, weight=weight, where=link.target,
+                           missing=link.missing, default=self._receiving_default(link, receiver, ds))
             if link.formula is not None:
                 ds.derive(link.variable, link.sources, formula=link.formula, **options)
             else:
@@ -163,6 +165,40 @@ class CompositeModel:
             derived_inputs = receiver.__dict__.setdefault("_derived_inputs", [])
             if link.variable not in derived_inputs:
                 derived_inputs.append(link.variable)
+
+    @staticmethod
+    def _receiving_location(link, receiver, ds) -> Optional[str]:
+        """
+        Where a link derives its receiving variable not yet on *ds* (an optional input nothing registered): the
+        link's scale, else the receiver's declaration (on the view it works on, named as on *ds*); both given, they
+        must agree. None when neither says (the sources' location).
+        """
+        from openalea.metafspm.coupling.declaration import location_of_scale
+        stated = location_of_scale(ds, link.scale) if link.scale is not None else None
+        spec = receiver.variable_specs.get(link.variable)
+        declared = None
+        if spec is not None:
+            declared, at = spec.location, receiver.data_structure.__dict__.get("_at")
+            if receiver.data_structure is not ds and at is not None and declared in (None, "node"):
+                declared = at                           # a view's nodes: the entities of its location (LocatedView)
+        if stated is not None and declared is not None and stated != declared:
+            raise ValueError(f"{link.receiver}.{link.variable} <- {link.provider}: the link states scale "
+                             f"{link.scale} ({stated}), but {link.receiver} declares it at {declared}")
+        return stated or declared
+
+    @staticmethod
+    def _receiving_default(link, receiver, ds) -> float:
+        """The receiving variable's default (its value without a provider): the receiver's declaration's, else what
+        *ds* holds of it, else 0."""
+        spec = receiver.variable_specs.get(link.variable)
+        default = spec.default if spec is not None else None
+        if default is None:
+            default = ds._variable_meta().get(ds._resolve(link.variable) if ds.has(link.variable) else link.variable,
+                                              {}).get("default")
+        try:
+            return 0. if default is None else float(default)
+        except (TypeError, ValueError):
+            return 0.
 
     @staticmethod
     def _check_link_scales(link, ds) -> None:

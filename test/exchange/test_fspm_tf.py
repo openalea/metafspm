@@ -14,7 +14,7 @@ from openalea import fspm_tf
 from openalea.fspm_tf.validate import validate_bytes
 
 from openalea.metafspm.coupling.choregrapher import Choregrapher
-from openalea.metafspm.coupling.component import state_variable
+from openalea.metafspm.coupling.component import StructuralComponent, state_variable
 from openalea.metafspm.data_structure.configs import ScalesConfig as scales
 from openalea.metafspm.data_structure.adaptive_grid import AdaptiveGridDataStructure
 from openalea.metafspm.data_structure.data_api import ArrayDataStructure, MPGDataStructure
@@ -22,6 +22,7 @@ from openalea.metafspm.io.fspm_tf import from_frame, to_frame, ucum_unit
 from openalea.metafspm.scene.population import _build_population
 
 from growth import DOC, CarbonProbe, RootGrowthProbe
+from anatomy import make_rooted_anatomy, wiring as rooted_wiring
 from layered_anatomy import make_instanced_anatomy, make_layered_anatomy, wiring
 
 
@@ -170,6 +171,54 @@ def test_an_instanced_anatomy_is_framed_as_its_copy_and_read_back_as_one():
     copied, again = data["copied"], _round_trip({"section": data["instanced"]})["section"]
     _same_mpg(copied.structure, again.structure)
     _same_variables(copied, again)
+
+
+def test_a_variable_at_instanced_vertices_is_framed_with_the_data_structures_values():
+    """A node variable the MPG holds as its template's (its MTG write-back stops at the instanced vertices: a reduced
+    or instanced anatomy's): the frame's column holds the DataStructure's values, in the property's column, not its
+    template's under it; read back, the same values."""
+    g, _, _ = make_instanced_anatomy(n_segments=2)
+    ds = MPGDataStructure(g, from_scale=g.scales.SubOrgan, nodes="Compartment", wiring=wiring(g))
+    assert ds._instanced_at("node").all()
+    ds.register("kind", np.arange(ds.n_nodes(), dtype=float) + 1., location="node")      # the template's: 0
+    compartments = to_frame({"section": ds}).data_structures[0].entity_set("Compartment")
+    rows = np.searchsorted(compartments.columns["id"], ds.entity_ids("node"))
+    np.testing.assert_array_equal(np.asarray(compartments.columns["kind"])[rows], ds.get("kind"))
+    assert "metafspm_kind" not in compartments.columns
+    again = _round_trip({"section": ds})["section"]
+    np.testing.assert_array_equal(again.get("kind"), ds.get("kind"))
+
+
+@dataclass
+class SegmentEnds(StructuralComponent):
+    """An architecture at the SubOrgans of an anatomy-mode plant: its segments' ends and radii, drawn as cylinders."""
+    x1: float = state_variable(**DOC, default=0., scale=scales.SubOrgan, kind="descriptor")
+    x2: float = state_variable(**DOC, default=0., scale=scales.SubOrgan, kind="descriptor")
+    y1: float = state_variable(**DOC, default=0., scale=scales.SubOrgan, kind="descriptor")
+    y2: float = state_variable(**DOC, default=0., scale=scales.SubOrgan, kind="descriptor")
+    z1: float = state_variable(**DOC, default=0., scale=scales.SubOrgan, kind="descriptor")
+    z2: float = state_variable(**DOC, default=0., scale=scales.SubOrgan, kind="descriptor")
+    radius: float = state_variable(**DOC, default=1e-3, scale=scales.SubOrgan, kind="descriptor")
+
+
+def test_an_anatomy_mode_plants_triangles_are_its_suborgans():
+    """On an anatomy-mode plant (its nodes the Compartments), the frame's triangles are those its SubOrgan-scale
+    architecture draws (the light's), each owned by its SubOrgan, not by the Compartment of the same index."""
+    Choregrapher().set_simulation_time_step(1)
+    g, segments, _ = make_rooted_anatomy(n_segments=3)
+    ds = MPGDataStructure(g, from_scale=g.scales.SubOrgan, nodes="Compartment", wiring=rooted_wiring(g))
+    ends = SegmentEnds(data_structure=ds)
+    view = ds.at("SubOrgan")
+    assert ends.data_structure is view
+    ds.set("z1", -np.arange(3.))
+    ds.set("z2", -np.arange(1., 4.))
+    (mesh,) = [mesh for mesh in to_frame({"plant": ds}).data_structures[0].meshes if mesh.name == "triangles"]
+    suborgans = to_frame({"plant": ds}).data_structures[0].entity_set("SubOrgan").columns["id"]
+    drawn = view.triangles()
+    np.testing.assert_array_equal(suborgans[mesh.feature_rows["SubOrgan"]],
+                                  np.repeat(view.entity_ids("node")[drawn.owner], 3))
+    assert sorted(set(suborgans[mesh.feature_rows["SubOrgan"]].tolist())) == sorted(segments)
+    assert "Compartment" not in mesh.feature_rows
 
 
 def test_the_frame_reads_as_the_data_model():

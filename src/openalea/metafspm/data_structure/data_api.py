@@ -459,7 +459,8 @@ class VariableStoreMixin:
         return dict(self.__dict__.get("_derived", {}))
 
     def derive(self, name: str, sources=None, formula=None, location: str = None, aggregation: str = None,
-               weight: str = None, default: float = 0., on_grow: str = "default", where: str = None) -> np.ndarray:
+               weight: str = None, default: float = 0., on_grow: str = "default", where: str = None,
+               missing: str = "default") -> np.ndarray:
         """
         Declare *name* as derived from other variables and compute it::
 
@@ -470,11 +471,15 @@ class VariableStoreMixin:
                          "broadcast", "child", "parent"); *weight* names the weights of "weighted_mean".
             where:       a mask at *location*: the derived values are given on its entities only, the others getting
                          *default* (e.g. a SubOrgan concentration broadcast to the symplastic Compartments only).
+            missing:     an entity of *location* no source contributes to in a mean ("mean", "weighted_mean": no
+                         source entity, or all its weights 0) gets *default* ("default") or NaN ("nan").
 
         The value is recomputed in place by refresh(); dependencies on other derived variables are refreshed first.
         """
         if not sources:
             raise ValueError(f"derived variable '{name}' needs sources")
+        if missing not in ("default", "nan"):
+            raise ValueError(f"derived variable '{name}': missing must be 'default' or 'nan', got '{missing}'")
         names = list(sources)
         if formula is None and not isinstance(sources, dict):
             raise ValueError(f"derived variable '{name}': give {{variable: factor}} sources or a formula")
@@ -502,7 +507,8 @@ class VariableStoreMixin:
             raise KeyError(f"derived variable '{name}': its mask '{where}' (where=) is not defined")
         spec = {"sources": dict(sources) if formula is None else tuple(names), "formula": formula,
                 "source_location": source_location, "location": location,
-                "aggregation": aggregation, "weight": weight, "target": where, "default": float(default)}
+                "aggregation": aggregation, "weight": weight, "target": where, "default": float(default),
+                "missing": missing}
         previous = derived.get(name)
         derived[name] = spec
         try:
@@ -578,7 +584,16 @@ class VariableStoreMixin:
             weights = value(spec["weight"]) if spec["weight"] else None
             if spec["aggregation"] == "split" and spec.get("target") is not None:     # split over the target only
                 weights = np.where(self.mask(spec["target"]), weights, 0.)
-            values = self._map(values, spec["source_location"], spec["location"], spec["aggregation"], weights)
+            source_values = values
+            with np.errstate(invalid="ignore", divide="ignore"):
+                values = self._map(values, spec["source_location"], spec["location"], spec["aggregation"], weights)
+            if spec["aggregation"] in ("mean", "weighted_mean") and spec.get("missing", "default") == "default":
+                # the entities no source contributes to (none, or all its weights 0) get the default, not 0 / 0
+                contributing = (np.ones(source_values.shape[:1]) if weights is None
+                                else (np.asarray(weights, dtype=float).reshape(-1) != 0.).astype(float))
+                contributed = self._contributed(contributing, spec["source_location"], spec["location"])
+                values = np.where(contributed.reshape(contributed.shape + (1,) * (values.ndim - 1)), values,
+                                  spec["default"])
         if spec.get("target") is not None:
             values = np.where(self.mask(spec["target"]), values, spec["default"])
         return values
@@ -833,6 +848,21 @@ class VariableStoreMixin:
     def _map(self, values, from_location: str, to_location: str, aggregation: str, weights=None,
              fill=0.) -> np.ndarray:
         raise ValueError(f"{type(self).__name__} cannot map {from_location} to {to_location} ({aggregation})")
+
+    def _contributed(self, contributing, from_location: str, to_location: str) -> np.ndarray:
+        """Whether each entity of *to_location* has an entity of *from_location* whose *contributing* is 1 (a mean's
+        sources with a weight); every entity when the mapping is not a grouping (a node-to-edge mean of the ends)."""
+        reached = None
+        with np.errstate(invalid="ignore"):
+            for aggregation in ("max", "sum"):              # a mapping without max: the indicators' sum
+                try:
+                    reached = self._map(contributing, from_location, to_location, aggregation)
+                    break
+                except ValueError:
+                    continue
+        if reached is None:
+            return np.ones(self._location_shape(to_location)[:1], dtype=bool)
+        return np.nan_to_num(np.asarray(reached, dtype=float), nan=0.) > 0.
 
     def map_to(self, values, from_location: str, to_location: str, aggregation: str, weights=None) -> np.ndarray:
         """

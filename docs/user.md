@@ -442,6 +442,17 @@ self.couplings()                                                      # how each
 `couplings()` lists each input's provider and coupling: "shared" (by its name), "alias", "derived", "scene" (a
 link with another DataStructure, exchanged by the Scene) or "not provided" (its default, or a forcing).
 
+**Where a derived input is held.** At the receiving variable's location when it is registered; otherwise (an optional
+input nothing registered) where the link's `scale=` says, else where the receiver declares it, on the view it works
+on (a gas exchange at an anatomy-mode plant's SubOrgans: MECHA's Compartment water potential averaged onto them); the
+two must agree. The sources' location is used only when neither says. No registration by hand in a plant model.
+
+**Entities without contribution.** A mean (`"mean"`, `"weighted_mean"`) gives a receiving entity no source
+contributes to (none of its own, or all their weights 0: an element without a liquid node in a mean weighted by
+`liquid_volume`) the receiver's default, its standalone value (`missing="default"`, the default), or NaN
+(`Translator().link(..., missing="nan")`, to see where). Within one DataStructure and across DataStructures alike
+(a cell without roots in a mean towards the soil).
+
 `openalea.metafspm.testing.assert_component_couplable(Component, translator)` checks a component against a
 translator in a package's own tests.
 
@@ -599,7 +610,9 @@ scene = Scene.from_scenario(scenario, stand(...), Wheat, environment=[RhizoSoil,
   every row, every variable (what another platform reads, and a complete log), with the triangles light models get;
   the components' display shapes (e.g. GRANAP's sections), drawings only, are a recording choice:
   `display_period=96` writes them every 96 steps (a multiple of `frame_period`) and in the last frame, `None` (the
-  default) never; their data rows (the Compartments) are in every frame either way. `frame_options=` passes
+  default) never; their data rows (the Compartments) are in every frame either way, with the DataStructure's values
+  (those of an instanced or reduced section's Compartments too, which the MPG holds as their template's).
+  `frame_options=` passes
   `scene_to_frame`'s options (e.g. `geometry=False`). For logging, the options also filter what each frame keeps:
   `data_structures=` (which ones), `scales=` (e.g. `["Plant", "SubOrgan"]`), `entities=` (a plant, by vid or by its
   name in the planting table, an axis, a segment with its cross-section: with everything they contain) and

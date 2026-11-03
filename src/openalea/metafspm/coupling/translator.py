@@ -19,6 +19,7 @@ import yaml
 from openalea.metafspm.data_structure.configs import ScalesConfig
 
 Factor = Union[float, int, str]
+MISSING_POLICIES = ("default", "nan")         # a mean's receiving entity without contribution: its default, or NaN
 
 _BINARY = {ast.Add: operator.add, ast.Sub: operator.sub, ast.Mult: operator.mul, ast.Div: operator.truediv,
            ast.Pow: operator.pow}
@@ -86,6 +87,9 @@ class Link:
                      receiver's default (e.g. a segment concentration broadcast to its symplastic Compartments).
         unit_check:  the declared units checked against the factors (coupling.units.check_link: the same quantity,
                      each factor the units' conversion); False for a deliberate factor (a share, a calibration).
+        missing:     the value of a receiving entity no source contributes to, in a mean ("mean", "weighted_mean"):
+                     "default", the receiver's default (its standalone value; e.g. an element without a liquid node
+                     in a mean weighted by the liquid volume), or "nan" (NaN, to see where).
     """
     receiver: str
     variable: str
@@ -98,6 +102,7 @@ class Link:
     target: Optional[str] = None
     formula: Optional[Callable] = None
     unit_check: bool = True
+    missing: str = "default"
     raw_factors: Mapping = field(default_factory=dict, compare=False, repr=False)
 
     def __post_init__(self):
@@ -109,6 +114,9 @@ class Link:
             object.__setattr__(self, "sources", {name: parse_factor(f) for name, f in raw.items()})
         else:
             object.__setattr__(self, "sources", tuple(self.sources))
+        if self.missing not in MISSING_POLICIES:
+            raise ValueError(f"Link {self.receiver}.{self.variable}: missing must be one of {MISSING_POLICIES}, got "
+                             f"'{self.missing}'")
         object.__setattr__(self, "scale", _scale(self.scale))
         object.__setattr__(self, "source_scale", _scale(self.source_scale))
 
@@ -175,8 +183,8 @@ class Translator:
     def to_nested(self) -> dict:
         """
         Nested format {receiver: {provider: {variable: {source: factor}}}}, every pair present. A link with a
-        scale, aggregation, weight, target or unit_check is written in its long form {"sources": {...}, "scale": name, ...},
-        which from_dict() reads; formulas cannot be written.
+        scale, aggregation, weight, target, unit_check or missing is written in its long form {"sources": {...},
+        "scale": name, ...}, which from_dict() reads; formulas cannot be written.
         """
         names = self.components
         nested = {receiver: {provider: {} for provider in names} for receiver in names}
@@ -189,6 +197,8 @@ class Translator:
                        if getattr(link, key) is not None}
             if not link.unit_check:
                 options["unit_check"] = False
+            if link.missing != "default":
+                options["missing"] = link.missing
             if options:
                 for key in ("scale", "source_scale"):
                     if key in options:
@@ -205,7 +215,7 @@ class Translator:
                 for variable, spec in (links or {}).items():
                     if isinstance(spec, Mapping) and "sources" in spec:
                         options = {key: spec[key] for key in ("scale", "source_scale", "aggregation", "weight", "target",
-                                                              "unit_check") if key in spec}
+                                                              "unit_check", "missing") if key in spec}
                         translator.link(receiver, variable, provider, dict(spec["sources"]), **options)
                     else:
                         translator.link(receiver, variable, provider, dict(spec))

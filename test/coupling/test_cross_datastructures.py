@@ -193,6 +193,21 @@ def test_intensive_plant_values_need_a_weight_and_pool_into_one_mean():
     np.testing.assert_array_equal(soil.get("root_temperature").reshape(-1)[empty], -1.)   # the default
 
 
+def test_a_cell_without_contribution_gets_nan_when_the_link_says_so():
+    """missing="nan": the cells no root contributes to (none in them, or all their weights 0) are NaN, not the
+    default."""
+    roots, others, soil, components, mappings = _two_populations_and_soil()
+    roots.set("length", 1.)
+    others.set("length", 0.)
+    Exchanges(_translator(temperature=dict(weight="length", missing="nan")), components, mappings).exchange(into=soil)
+    values = soil.get("root_temperature").reshape(-1)
+    reached = np.setdiff1d(mappings[0].cells, mappings[1].cells)
+    only_others = np.setdiff1d(mappings[1].cells, mappings[0].cells)
+    empty = np.setdiff1d(np.arange(soil.n_nodes()), np.r_[mappings[0].cells, mappings[1].cells])
+    assert np.isfinite(values[reached]).all() and np.isnan(values[empty]).all()
+    assert np.isnan(values[only_others]).all()                            # its weights all 0
+
+
 def test_cell_amounts_are_split_between_populations_by_weight():
     _, _, _, components, mappings = _two_populations_and_soil()
     with pytest.raises(DeclarationError, match="weight of its split"):

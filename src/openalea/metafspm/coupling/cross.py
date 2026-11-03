@@ -707,7 +707,7 @@ class Exchanges:
         ds = getattr(into, "data_structure", into)
         if isinstance(ds, UnionDataStructure):
             ds.update_topology()
-        pending, keep, receivers = {}, {}, {}
+        pending, keep, receivers, missing = {}, {}, {}, {}
         for cross in self.links:
             if _underlying(cross.receiver_ds) is not _underlying(ds):
                 continue
@@ -741,6 +741,8 @@ class Exchanges:
             else:
                 numerator, denominator = np.asarray(values, dtype=float).reshape(-1)[
                     cross.provider_ds.part_slice(cross.part)], None
+            if denominator is not None:
+                missing.setdefault(variable, cross.link.missing)
             entry = pending.get(variable)
             if entry is None:
                 pending[variable] = [numerator, denominator]
@@ -755,7 +757,9 @@ class Exchanges:
             if not ds.has(variable):
                 ds.register(variable)
             if denominator is not None:
-                default = ds._variable_meta().get(ds._resolve(variable), {}).get("default", 0.)
+                # a receiving entity no source contributes to: its default (the link's missing="default"), or NaN
+                default = (np.nan if missing.get(key) == "nan"
+                           else ds._variable_meta().get(ds._resolve(variable), {}).get("default", 0.))
                 if numerator.ndim == 2 and denominator.ndim == 1:
                     denominator = denominator[:, None]
                 numerator = np.where(denominator > 0., numerator / np.where(denominator > 0., denominator, 1.),
