@@ -20,6 +20,7 @@ for package in ("openalea.adel", "openalea.archisimple", "openalea.granap", "ope
     pytest.importorskip(package)
 
 from openalea.caribu.component import CaribuLightModel                                # noqa: E402
+from openalea.cnwgrass.metafspm.gas_exchange import GasExchange                      # noqa: E402
 from openalea.metafspm.coupling.units import conversion_factor                       # noqa: E402
 from openalea.metafspm.data_structure.data_api import EntityView, LocatedView        # noqa: E402
 from openalea.metafspm.scene.population import Planting, planting                   # noqa: E402
@@ -102,6 +103,7 @@ def test_the_assembly_builds_with_every_link(stepped):
     expected = {("GranapAnatomy", "stem_radius"): ("ShootArchitecture", "derived"),
                 ("MechaHydraulics", "leaf_transpiration"): ("GasExchange", "derived"),
                 ("GasExchange", "height"): ("ShootArchitecture", "derived"),
+                ("GasExchange", "leaf_water_potential"): ("MechaHydraulics", "derived"),
                 ("GasExchange", "PARa"): ("CaribuLight", "scene"),
                 ("MechaHydraulics", "soil_psi"): ("RichardsSoil", "scene"),
                 ("RootArchitecture", "nodal_axes_requested"): ("NodalRootEmergence", "shared"),
@@ -141,6 +143,43 @@ def test_the_transpiration_reaches_mecha_in_its_units(stepped):
     np.testing.assert_allclose(ds.get("leaf_transpiration"), 1555.2 * per_organ, rtol=1e-12, atol=0.)
     assert float(np.sum(ds.get("leaf_transpiration"))) > 0.
     np.testing.assert_allclose(np.sum(ds.get("evaporation")), np.sum(ds.get("leaf_transpiration")), rtol=1e-9)
+
+
+def test_the_stomata_read_mechas_leaf_water_potential(stepped):
+    """Tuzet's stomata: each element's leaf water potential (MPa) is the mean of MECHA's water potential (hPa) over
+    its liquid (weighted by liquid_volume), held at the elements; an element without liquid keeps the gas exchange's
+    default. Derived when read: the gas exchange, running before MECHA, reads the step before's (the lag of
+    decision U-6); read now, MECHA's last."""
+    scene, _ = stepped
+    instance = scene.populations[0].instance
+    ds = scene.populations[0].data_structure
+    assert instance.gas_exchange.stomatal_model == "Tuzet"
+    assert ds.location("leaf_water_potential") == "SubOrgan"
+    owner = np.asarray(ds.owner("SubOrgan"))
+    water, liquid = np.asarray(ds.get("water_potential")), np.asarray(ds.get("liquid_volume"))
+    total = np.bincount(owner[owner >= 0], weights=liquid[owner >= 0], minlength=ds.entity_ids("SubOrgan").size)
+    expected = np.bincount(owner[owner >= 0], weights=(water * liquid)[owner >= 0],
+                           minlength=total.size) / np.where(total > 0., total, 1.) * 1e-4
+    values = np.asarray(ds.get("leaf_water_potential"))
+    assert np.isfinite(values).all()
+    np.testing.assert_allclose(values[total > 0.], expected[total > 0.], rtol=1e-12)
+    np.testing.assert_array_equal(values[total == 0.], GasExchange.leaf_water_potential)      # its default
+    leaves = np.asarray(ds.at("SubOrgan").labels()) == "LeafElement"
+    assert (values[leaves & (total > 0.)] < 0.).all()
+
+
+@pytest.mark.xfail(strict=True, reason="MECHA: node_volume and liquid_volume are 0 on a reduced section's kept nodes "
+                   "(its conduits): the blades' liquid mean has no weight, their leaf water potential the default")
+def test_the_blades_leaf_water_potential_is_mechas(stepped):
+    """On the reduced plant (WHEAT_SCENARIO's reduced), each blade element's kept conduits carry their liquid volume:
+    its leaf water potential is MECHA's, not the gas exchange's default."""
+    scene, _ = stepped
+    ds = scene.populations[0].data_structure
+    owner = np.asarray(ds.owner("SubOrgan"))
+    liquid = np.asarray(ds.get("liquid_volume"))
+    blades = np.flatnonzero(np.asarray(ds.at("SubOrgan").labels()) == "LeafElement")
+    assert all(liquid[owner == blade].sum() > 0. for blade in blades)
+    assert (np.asarray(ds.get("leaf_water_potential"))[blades] != GasExchange.leaf_water_potential).all()
 
 
 def test_the_plant_is_steady(stepped):

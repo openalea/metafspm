@@ -117,11 +117,14 @@ The links, each in its units:
 | the soil's `plant_uptake` | MECHA's `root_uptake` (cm³ d⁻¹) | the cells (m³ s⁻¹) | 1e-6 / 86400 |
 | MECHA's `soil_psi` | the soil's `water_potential` (MPa) | the roots' soil nodes (hPa) | 1e4 |
 | `GasExchange.PARa`, the optics | Caribu's light, `PlantOptics` | both ways | the Scene's identity links |
+| the gas exchange's `leaf_water_potential` | MECHA's `water_potential` (hPa, at the Compartments) | the elements (MPa) | 1e-4, the mean weighted by `liquid_volume` |
 
 The soil links are `component.scene_translator()`, through `root_surface_mappings` (the roots' soil nodes onto the
-grid). Not linked yet: MECHA's leaf water potential to the gas exchange's (Tuzet's stomata, lagged by a step): both
-are named `water_potential` (hPa at the Compartments, MPa at the elements), one variable on one DataStructure. The
-gas exchange keeps Ball-Woodrow-Berry's stomata.
+grid). The stomata are Tuzet's (`"stomatal_model": "Tuzet"` in the scenario, decision U-5): the leaf water potential
+is CNW-Grass's `mecha_links()`, MECHA's water potential averaged over each element's liquid (its walls and
+protoplasts, not its air spaces and pores), MECHA's of the step before (the gas exchange runs first: the lag of
+decision U-6). An element without liquid node (a section without anatomy yet) keeps the gas exchange's default,
+-0.1 MPa (metafspm's `missing="default"`).
 
 `run.py` runs a few plants over a few days of May, hour by hour, from their sowing (`python run.py [folder] [days]
 [plants]`): a clear day's PAR, the air's temperature and humidity in a daily course, a rain on the second day. After
@@ -132,26 +135,25 @@ each hour it prints `WaterBalance`'s diagnostics (decision U-6: the plant and th
 - the largest changes of the plant's and the soil's water potentials since the previous hour.
 
 With a folder, the SceneRecorder writes the summaries, `water_balance.csv`, and a frame every 6 hours with its
-views (`frame_views="default"`).
+views (`frame_views="default"`), the sections' drawings in the frames of every 24 hours and the last
+(`display_period`).
 
 Its tests are in `test/test_assembly.py` (the example's own, as the plant's), on one young plant over three hours: the
-links' factors, the assembly's couplings, each model's own entities, the transpiration into MECHA, the steady plant,
+links' factors, the assembly's couplings, each model's own entities, the transpiration into MECHA, MECHA's leaf
+water potential into the stomata, the steady plant,
 the uptake into the soil, the soil's potential on the roots, the light on the gas exchange, the soil's balance with
 the uptake.
 
 ### The assembly: open gaps
 
-The tests but the links' factors are marked `xfail` (strict) until these are fixed (metafspm or the ports):
+What `run.py`'s run shows (2026-11-03), the ports' gaps first; the test of the first is marked `xfail` (strict):
 
-- an entity view on an anatomy-mode DataStructure: its filters on a coarser variable (Adel's `axis_row`) evaluated
-  at the Compartments; the rule's view at its finest scale (Phytomer) rather than the SubOrgans; its `base` the
-  Compartments' DataStructure (ArchiSimple's bearers);
-- the reduction's library runs every functional component of the plant model (Adel's development, without its
-  tables);
-- GRANAP's anatomies: a section without length (Adel's internodes and sheaths before they grow) gets one (MECHA
-  divides by its length); Adel's lengths are not written to the MPG before GRANAP's step; the anatomies GRANAP makes
-  at a step for Adel's new sections lose their values (leaf surfaces, network paths);
-- the exchanges with an anatomy-mode plant: the light's PARa does not reach the gas exchange, the soil mapping
-  reads the roots' ends at the SubOrgans while it maps the Compartments;
-- a frame of an instanced MPG with Adel's per-plant tables;
-- the leaf water potential's name (above).
+- **MECHA, the reduced plant's volumes.** `node_volume` and `liquid_volume` are 0 on a reduced section's kept nodes
+  (its conduits): the blades' liquid mean has no weight, and their leaf water potential stays the gas exchange's
+  default (-0.1 MPa). Tuzet's stomata then never close: the plant's potentials go far below any physical value at
+  midday (tens of MPa below 0 for a seedling's few roots). With `"reduced": False` the mean is MECHA's.
+- **Adel and ArchiSimple, a plant's stage.** The scenario's `start` (°Cd) advances Adel's shoot only: a shoot started
+  at a few leaves has the roots of a seed. From the sowing (`start` 0), no blade has emerged after three days of
+  May: nothing transpires.
+- **fspm-TF's design check** (`paraview/check_in_paraview.py --design`) looks for an anatomy layer named "Section";
+  metafspm's default views name it after its component (`WheatPlant GranapAnatomy`).

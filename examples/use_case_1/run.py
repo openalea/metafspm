@@ -11,7 +11,8 @@ at the end, the time each model took.
 The weather (weather()): a clear day's PAR (Caribu's clear_day_PAR), the air's temperature and humidity in a daily
 course, a constant CO2 and wind, the soil at a constant temperature, a rain of 5 mm in the afternoon of the second
 day. The outputs (with a folder): the SceneRecorder's summaries, the water balance (water_balance.csv), and an
-fspm-TF frame every 6 hours with its views (frames/views.json, the default layers: the shoot, the roots, the soil).
+fspm-TF frame every 6 hours with its views (frames/views.json, the default layers: the shoot, the roots, the soil,
+the anatomies hidden), the sections' drawings in the frames of every 24 hours and the last.
 """
 import sys
 import time
@@ -69,15 +70,17 @@ def stand(plants=2):
             for k in range(plants)]
 
 
-def scene(plants=2, folder=None, frame_period=6, scenario=None, forcings=None, start_hour=0.):
+def scene(plants=2, folder=None, frame_period=6, display_period=24, scenario=None, forcings=None, start_hour=0.):
     """The use case's Scene: *plants* wheat plants (WHEAT_SCENARIO, updated by *scenario*), the soil and the light,
     the forcings of weather() (updated by *forcings*), recorded in *folder* (None: in memory) with the water
-    balance and, every *frame_period* hours, a frame with the default views."""
+    balance and, every *frame_period* hours, a frame with the default views (with the sections' drawings every
+    *display_period* hours and in the last frame)."""
     table = planting(stand(plants), WheatPlant, {**WHEAT_SCENARIO, **(scenario or {})},
                      xrange=plants * PLANT_SPACING, yrange=ROW_SPACING)
     recorder = SceneRecorder(folder, tables={"water_balance": WaterBalance()},
                              frame_period=frame_period if folder else None,
-                             frame_views="default" if folder else None)
+                             frame_views="default" if folder else None,
+                             display_period=display_period if folder else None)
     return Scene(table, environment=[RichardsSoilModel, CaribuLightModel],
                  environment_scenarios=[SOIL_SCENARIO, LIGHT_SCENARIO], translator=SCENE_TRANSLATOR,
                  time_step=HOUR, forcings={**weather(), **(forcings or {})}, mappings=root_surface_mappings,

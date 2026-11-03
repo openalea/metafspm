@@ -15,7 +15,8 @@ translators linking their components.
                         conduits
     PLANT_TRANSLATOR    within the plant: GRANAP's stems classed by their organ's diameter, the gas exchange's element
                         heights from Adel's element ends, the elements' transpiration summed per organ into MECHA's
-                        leaf transpiration
+                        leaf transpiration, MECHA's water potential back to the gas exchange's leaf water potential
+                        (Tuzet's stomata)
     SCENE_TRANSLATOR    between the plant and the soil (component.scene_translator: MECHA's root uptake into the
                         cells, the soil's water potential back to the roots); the light's PARa and the optics are
                         the Scene's default identity links
@@ -30,10 +31,10 @@ in cm3 d-1, the gas exchange's transpiration in mmol s-1, the soil's potentials 
 link's factor is its units' conversion, checked by metafspm, except where the quantity changes: a diameter halved
 into a radius (geometry), an amount of water into its volume (the water's molar volume).
 
-Not linked yet: MECHA's leaf water potential to the gas exchange (Tuzet's stomata, lagged by a step: decision U-6).
-Both components name it water_potential, MECHA's in hPa at the Compartments, the gas exchange's in MPa at the
-elements: on one DataStructure the two are one variable, and a link between them is refused. The gas exchange's
-stomata are Ball-Woodrow-Berry's (its default), which do not read it.
+The stomata are Tuzet's (decision U-5): each element's conductance limited by its leaf water potential, MECHA's
+of the step before (the gas exchange runs first: a lagged feedback, decisions U-5 and U-6), the mean of MECHA's
+water potential over the element's liquid (weighted by liquid_volume: CNW-Grass's mecha_links). An element without
+liquid node (a section without anatomy) keeps the gas exchange's default (metafspm's missing="default").
 """
 import numpy as np
 
@@ -42,13 +43,14 @@ from openalea.adel.development import ScenarioDevelopment, ScenarioShoot
 from openalea.archisimple.architecture import RootArchitecture
 from openalea.archisimple.parameter_sets import WHEAT_ON_A_SHOOT
 from openalea.caribu.optics import PlantOptics
-from openalea.cnwgrass.metafspm.gas_exchange import GasExchange, adel_links
+from openalea.cnwgrass.metafspm.gas_exchange import GasExchange, adel_links, mecha_links
 from openalea.granap.metafspm.build import SOIL_NODE
 from openalea.granap.metafspm.component import GranapAnatomy, junction_rules
 from openalea.mecha.component import MechaHydraulics, scenario_reduction
 from openalea.mecha.stand_ins import Development
 
 from openalea.metafspm.coupling.cross import CrossMapping
+from openalea.metafspm.coupling.translator import Translator
 
 from component import NodalRootEmergence, RichardsSoilModel, WheatCrown, scene_translator
 
@@ -77,10 +79,13 @@ WHEAT_SCENARIO = {
     "soil_boundary": "node_dirichlet", "collar_condition": 0., **BARRIERS,
     # MECHA's sections reduced onto their conduits, their soil node and a blade's vapour path (scenario_reduction)
     "reduced": True, "reduced_labels": ("RootSegment", "StemElement", "LeafElement", "Seed"),
+    # the gas exchange: Tuzet's stomata, limited by MECHA's leaf water potential (decision U-5)
+    "stomatal_model": "Tuzet",
 }
 
 PLANT_TRANSLATOR = (
-    adel_links(provider="ShootArchitecture")                         # the gas exchange's element heights
+    Translator(adel_links(provider="ShootArchitecture").links        # the gas exchange's element heights
+               + mecha_links().links)                                # its leaf water potential, MECHA's (Tuzet)
     # GRANAP's stems (and the seed) classed by their radius: their organ's diameter halved (Adel's organs', the
     # subcrown internode's WheatCrown gives), broadcast to its elements
     .link("GranapAnatomy", "stem_radius", "ShootArchitecture", {"diameter": 0.5}, source_scale="Organ",
@@ -107,7 +112,7 @@ class WheatPlant(ScenarioShoot):
     A step: Adel's shoot (its development and architecture together, ScenarioShoot.run_shoot), the nodal root rule,
     ArchiSimple's roots (the nodal roots on the phytomers the rule asks), GRANAP's anatomies of the new sections, the
     roots' barriers (MECHA's Development, by their distance from the tip), the new elements' optics, the gas exchange
-    (its PARa the light's) and MECHA's water flow (each organ's transpiration leaving at its leaf surface, the soil's
+    (its PARa the light's, its leaf water potential MECHA's of the step before) and MECHA's water flow (each organ's transpiration leaving at its leaf surface, the soil's
     potential on the roots' soil nodes).
 
     reduction: MECHA's sections reduced onto their conduits and kept nodes when the scenario says so
