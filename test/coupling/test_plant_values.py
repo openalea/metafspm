@@ -58,3 +58,35 @@ def test_a_scene_takes_them_per_plant_too():
     table.attrs.update(xrange=2., yrange=1.)
     scene = Scene(table)
     assert list(scene.populations[0].data_structure.get("anatomy")) == [{"cortex": {"n_layers": 3}}, {"seed": 4}]
+
+
+def test_a_per_plant_record_survives_an_mpg_style_step():
+    """A plant's object parameter, read by the component's MPG-style step at every call (it was written back at the
+    nodes' vertices, then re-read as None at its plant's)."""
+    from openalea.metafspm.solve.decorator import segmentation
+    seen = []
+
+    @dataclass
+    class Grower(Organs):
+        plan: object = parameter(**DOC, default=None, dtype="object", scale=scales.Plant)
+
+        @segmentation
+        def _grow(self):
+            seen.append(list(self.parameter_values("plan", "Plant")))
+
+    class GrowerModel(CompositeModel):
+        initiators = (Grower,)
+
+        def __init__(self, data_structure, time_step):
+            self.grower = Grower(data_structure=data_structure, time_step=time_step)
+            self.couple(self.grower)
+
+        def run(self):
+            self.grower()
+
+    table = pd.DataFrame([dict(plant="p0", model=GrowerModel, x=0., y=0., z=0., rotation=0.,
+                               scenario={"plan": [[0, 1.]]})])
+    population = population_data_structure(table, GrowerModel)
+    for _ in range(3):
+        population.instance.run()
+    assert seen == [[[[0, 1.]]]] * 3

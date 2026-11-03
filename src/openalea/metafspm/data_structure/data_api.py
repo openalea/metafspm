@@ -2385,9 +2385,10 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
         if getattr(self._mtg, "_instanced", lambda: False)() and spec.location in ("node", "edge"):
             self._write_explicit_to_mtg(spec, values)
             return
-        if values.dtype == object:
+        if values.dtype == object:                       # at its own entities (a plant's record at its Plant vertex)
             prop = self._mtg_property_for_write(spec.name, numeric=False)
-            for vid, value in zip(self._idx_to_vid, values):
+            ids = self._idx_to_vid if spec.location == "node" else self.entity_ids(spec.location)
+            for vid, value in zip(ids, values):
                 prop[int(vid)] = value
             return
         if spec.location == "node":
