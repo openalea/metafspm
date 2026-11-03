@@ -26,7 +26,7 @@ from openalea.metafspm.scene.population import Planting, planting               
 from openalea.metafspm.scene.recorder import SceneRecorder                           # noqa: E402
 from openalea.metafspm.scene.scene import Scene                                      # noqa: E402
 
-EXAMPLE = os.path.join(os.path.dirname(__file__), "..", "..", "examples", "use_case_1")
+EXAMPLE = os.path.join(os.path.dirname(__file__), "..")
 sys.path.insert(0, os.path.abspath(EXAMPLE))
 
 from component import RichardsSoilModel                                               # noqa: E402

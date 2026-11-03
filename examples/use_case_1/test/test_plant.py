@@ -23,7 +23,7 @@ from openalea.metafspm.data_structure.data_api import EntityView                
 from openalea.metafspm.scene.population import Planting, planting                     # noqa: E402
 from openalea.metafspm.scene.scene import Scene                                       # noqa: E402
 
-EXAMPLE = os.path.join(os.path.dirname(__file__), "..", "..", "examples", "use_case_1")
+EXAMPLE = os.path.join(os.path.dirname(__file__), "..")
 sys.path.insert(0, os.path.abspath(EXAMPLE))
 
 from component import NodalRootEmergence, WheatCrown                                   # noqa: E402
