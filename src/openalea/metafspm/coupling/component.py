@@ -4,7 +4,8 @@ import numpy as np
 
 from openalea.metafspm.solve.decorator import *
 from openalea.metafspm.data_structure.mpg import MPG
-from openalea.metafspm.data_structure.data_api import DataStructure, MPGDataStructure, GraphDataStructure
+from openalea.metafspm.data_structure.data_api import (DataStructure, EntityView, GraphDataStructure,
+                                                      MPGDataStructure)
 from openalea.metafspm.data_structure.configs import ScalesConfig as _ScalesConfig
 from openalea.metafspm.coupling.declaration import declared_specs, DeclarationError, held_at_scale
 from openalea.metafspm.coupling.declaration import scale_names as declared_scale_names
@@ -472,6 +473,12 @@ class DataStructureComponent(Component):
     # "after_call" writes them after every call; "never" leaves the MTG untouched.
     mtg_sync = "lazy"
 
+    # The entities the component owns, when it shares the plant with other models (the roots' and the shoot's): a
+    # filters-style declaration, e.g. {"label": ("RootSegment", "RootApex")} (label names resolved), or a callable
+    # ds -> boolean array. It then works on a view of the DataStructure restricted to them
+    # (data_structure.EntityView): its nodes those entities, its topology and mappings theirs. None: every entity
+    entities = None
+
     def __post_init__(self):
         self.check_settings()
         self._install_plant_parameters()
@@ -684,7 +691,10 @@ class DataStructureComponent(Component):
         the same order gets the same draws at every run, whatever the visiting order (ds.random).
         """
         name = f"{type(self).__name__}.{stream}"
-        counters = self.data_structure.__dict__.setdefault("_random_steps", {})   # kept by checkpoints
+        holder = self.data_structure
+        if isinstance(holder, EntityView):
+            holder = holder.__dict__["_base"]                  # its DataStructure's, which checkpoints save
+        counters = holder.__dict__.setdefault("_random_steps", {})   # kept by checkpoints
         step = counters.get(name, 0)
         counters[name] = step + 1
         return self.data_structure.random(distribution, stream=name, step=step, ids=ids, location=location,
@@ -1152,9 +1162,11 @@ class StructuralComponent(DataStructureComponent):
                 ds._invalidate_topology()
             return np.zeros(0, dtype=np.int64)
         known = np.asarray(ds.entity_ids("node"), dtype=np.int64)
+        # an entity view's new nodes may be borne by an entity outside it (a nodal root on a stem element)
+        bearers = ds._bearer_ids() if isinstance(ds, EntityView) else known
         outer = new.parent >= 0
         root = new.parent == NewNodes.NO_PARENT
-        if outer.any() and not np.isin(new.parent[outer], known).all():
+        if outer.any() and not np.isin(new.parent[outer], bearers).all():
             raise ValueError("NewNodes: a parent is not a node")
         if new.complexes is not None:
             complex_vids = self._create_complexes(g, new.complexes)
@@ -1165,13 +1177,19 @@ class StructuralComponent(DataStructureComponent):
         first = g._id + 1
         vids = np.arange(first, first + n, dtype=np.int64)
         parents = np.where(outer, new.parent, vids[np.clip(-1 - new.parent, 0, n - 1)])
-        node_scale = g.scale(int(known[0])) if known.size else g.scales.SubOrgan
+        node_scale = g.scale(int(bearers[0])) if bearers.size else g.scales.SubOrgan
         topo_parents = [None if is_root else int(p) for p, is_root in zip(parents.tolist(), root.tolist())]
         created = g.add_components_bulk(complex_of.tolist(), n, topo_parents=topo_parents, scale=node_scale,
                                         edge_type=new.edge.tolist(), label=new.label.tolist(), isanchor=False)
         assert created[0] == first
         ds.update_topology()
         self.topology_updates = getattr(self, "topology_updates", 0) + 1
+        if isinstance(ds, EntityView):
+            outside = ~np.isin(vids, ds.entity_ids("node"))
+            if outside.any():
+                raise ValueError(f"NewNodes: {int(outside.sum())} new nodes (labels "
+                                 f"{sorted(set(map(str, new.label[outside].tolist())))}) are not among "
+                                 f"{type(self).__name__}'s entities {self.entities!r}")
         index = ds.index_of(vids)
         for name, values in new.values.items():
             if not ds.has(name):
@@ -1336,10 +1354,33 @@ def _working_data_structure(component, ds):
     """
     The DataStructure a component works on: *ds*, or on an anatomy-mode DataStructure (its nodes the Compartments)
     the view at the component's own scale (data_structure.LocatedView) when the finest scale of its declarations is
-    coarser (a SubOrgan-scale architecture, a light or gas-exchange model): its nodes then those of its scale.
+    coarser (a SubOrgan-scale architecture, a light or gas-exchange model): its nodes then those of its scale. A
+    component declaring its `entities` works on the view restricted to them (data_structure.EntityView), at the nodes
+    in segment mode, at its scale in anatomy mode.
     """
+    entities = getattr(type(component), "entities", None)
+    if entities is not None:
+        base = ds.__dict__.get("_base", ds)
+        if not isinstance(base, MPGDataStructure):
+            raise TypeError(f"{type(component).__name__}.entities: an entity view is of a plant DataStructure "
+                            f"(MPGDataStructure), not of a {type(base).__name__}")
+        if not base._anatomy:
+            return base.entity_view(entities)
+        name = _own_scale_name(component, base)
+        if name is None:
+            raise NotImplementedError(f"{type(component).__name__}.entities on an anatomy-mode DataStructure: the "
+                                      "component works on its Compartments; entities are declared by a component "
+                                      "of the SubOrgan scale or coarser")
+        return base.entity_view(entities, at=name)
     if not getattr(ds, "_anatomy", False) or not hasattr(ds, "at"):
         return ds
+    name = _own_scale_name(component, ds)
+    return ds if name is None else ds.at(name)
+
+
+def _own_scale_name(component, ds):
+    """The name of the finest scale of *component*'s declarations on an anatomy-mode *ds* when it is coarser than
+    its Compartments (and finer than the plants), else None (it works on the nodes)."""
     g = ds.structure
     finest = None
     for f in fields(component):
@@ -1348,11 +1389,10 @@ def _working_data_structure(component, ds):
             continue
         scale = meta.get("scale")
         if meta.get("location") in ("node", "edge") or (scale is not None and scale >= g.scales.Compartment):
-            return ds                                       # it works on the nodes (the cells)
+            return None                                     # it works on the nodes (the cells)
         if scale is not None and scale > g.scales.Plant:
             finest = scale if finest is None else max(finest, scale)
     if finest is None:
-        return ds
-    name = next(n for n, v in vars(type(g.scales)).items() if isinstance(v, int) and not n.startswith("_")
+        return None
+    return next(n for n, v in vars(type(g.scales)).items() if isinstance(v, int) and not n.startswith("_")
                 and v == finest)
-    return ds.at(name)

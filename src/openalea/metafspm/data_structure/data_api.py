@@ -191,8 +191,8 @@ class DataStructure(ABC):
             return chosen
         providers = self.__dict__.get("_geometry_providers", [])
         from openalea.metafspm.coupling.component import StructuralComponent
-        own = [provider for provider in providers
-               if type(provider).triangles is not StructuralComponent.triangles]
+        own = [provider for provider in providers          # (an entity view's: its component's)
+               if type(getattr(provider, "_drawn_by", provider)).triangles is not StructuralComponent.triangles]
         if len(own) > 1:
             raise ValueError(f"several components draw the elements ({', '.join(type(p).__name__ for p in own)}): "
                              "set ds.geometry_provider to the one giving the triangles")
@@ -208,6 +208,12 @@ class DataStructure(ABC):
         DataStructure does not define it)."""
         if isinstance(where, str):
             where = self.mask(where) if self.has_mask(where) else None
+        providers = self.__dict__.get("_geometry_providers", [])
+        if (self.__dict__.get("_geometry_provider") is None and len(providers) > 1
+                and all(isinstance(provider, _EntityGeometry) for provider in providers)):
+            # components drawing their own entities (entity views, e.g. the roots' and the shoot's): all of them
+            from openalea.metafspm.coupling.geometry import Triangles
+            return Triangles.concatenate([provider.triangles(where) for provider in providers])
         provider = self.geometry_provider
         if provider is None:
             raise ValueError(f"{type(self).__name__} has no geometry provider: no StructuralComponent drawing its "
@@ -1434,27 +1440,7 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
         raw = arrays["parent"][ids]
         position = np.searchsorted(ids, raw).clip(0, max(ids.size - 1, 0))
         known = (raw >= 0) & (ids.size > 0) & (ids[position] == raw)
-        parent = np.where(known, position, -1)
-        n = ids.size
-        order = np.argsort(parent, kind="stable")
-        has = parent[order] >= 0
-        indices = order[has]
-        indptr = np.searchsorted(parent[order][has], np.arange(n + 1))
-        roots = np.flatnonzero(parent < 0)
-        tips = np.flatnonzero(np.diff(indptr) == 0)
-        pre, post = [], []
-        stack = [(int(r), False) for r in roots[::-1]]
-        while stack:
-            node, done = stack.pop()
-            if done:
-                post.append(node)
-                continue
-            pre.append(node)
-            stack.append((node, True))
-            for child in indices[indptr[node]:indptr[node + 1]][::-1]:
-                stack.append((int(child), False))
-        result = {"parents": parent, "children": (indptr, indices), "roots": roots, "tips": tips,
-                  "pre": np.array(pre, dtype=np.int64), "post": np.array(post, dtype=np.int64)}
+        result = _tree_traversal(np.where(known, position, -1))
         cache[location] = (stamp, result)
         return result
 
@@ -3178,6 +3164,31 @@ class ArrayDataStructure(VariableStoreMixin, FieldDataStructure):
 
 
 
+def _tree_traversal(parent: np.ndarray) -> dict:
+    """Children (CSR), roots, tips and the pre and post orders of a forest given by each entity's *parent* index (-1
+    at a root), as _traversal's arrays."""
+    n = parent.size
+    order = np.argsort(parent, kind="stable")
+    has = parent[order] >= 0
+    indices = order[has]
+    indptr = np.searchsorted(parent[order][has], np.arange(n + 1))
+    roots = np.flatnonzero(parent < 0)
+    tips = np.flatnonzero(np.diff(indptr) == 0)
+    pre, post = [], []
+    stack = [(int(r), False) for r in roots[::-1]]
+    while stack:
+        node, done = stack.pop()
+        if done:
+            post.append(node)
+            continue
+        pre.append(node)
+        stack.append((node, True))
+        for child in indices[indptr[node]:indptr[node + 1]][::-1]:
+            stack.append((int(child), False))
+    return {"parents": parent, "children": (indptr, indices), "roots": roots, "tips": tips,
+            "pre": np.array(pre, dtype=np.int64), "post": np.array(post, dtype=np.int64)}
+
+
 def _grouped_extreme(values, owner, size: int, aggregation: str) -> np.ndarray:
     """The largest ("max") or smallest ("min") of *values* per owner (NaN for an owner of none, NaNs ignored)."""
     out = np.full(size, np.nan)
@@ -3418,3 +3429,564 @@ def _view_at(self, location: str) -> "LocatedView":
 
 
 MPGDataStructure.at = _view_at
+
+
+class _RestrictedStore:
+    """A store of a location's arrays (one value per entity of the location) seen at some of its entities, *take()*
+    their indices: each read is a copy of those entities' values."""
+
+    def __init__(self, store, take):
+        self._store, self._take = store, take
+
+    def __getitem__(self, name):
+        return self._store[name][self._take()]
+
+    def __contains__(self, name):
+        return name in self._store
+
+    def __iter__(self):
+        return iter(self._store)
+
+    def __len__(self):
+        return len(self._store)
+
+    def keys(self):
+        return self._store.keys()
+
+    def items(self):
+        return [(name, self[name]) for name in self._store]
+
+    def values(self):
+        return [self[name] for name in self._store]
+
+
+class _EntityGeometry:
+    """The triangles of a component working on an EntityView (its triangles() in the view's node indices), given in
+    the indices of the nodes of the DataStructure the view is of: the geometry provider registered there."""
+
+    def __init__(self, component, view):
+        self._drawn_by, self._view = component, view
+
+    def triangles(self, where=None):
+        from openalea.metafspm.coupling.geometry import Triangles
+        selection = self._view._selection()[0]
+        drawn = self._drawn_by.triangles(None if where is None else np.asarray(where, dtype=bool)[selection])
+        return Triangles(drawn.vertices, selection[drawn.owner])
+
+
+def _check_entities(entities) -> None:
+    if callable(entities):
+        return
+    if not isinstance(entities, dict) or not entities:
+        raise TypeError(f"entities must be a non-empty {{variable: condition}} dict (e.g. {{'label': ('RootSegment', "
+                        f"'RootApex')}}) or a callable ds -> boolean array, got {entities!r}")
+
+
+def _entities_key(entities):
+    """A hashable key of an entities declaration (the views of one declaration are shared)."""
+    if callable(entities):
+        return entities
+
+    def frozen(condition):
+        if isinstance(condition, set):
+            return tuple(sorted(condition, key=repr))
+        if isinstance(condition, (list, tuple, np.ndarray)):
+            return tuple(np.asarray(condition).tolist())
+        return condition
+
+    return tuple(sorted(((key, frozen(condition)) for key, condition in entities.items()), key=lambda item: item[0]))
+
+
+def _aggregated(values, owner, size: int, aggregation: str, weights=None) -> np.ndarray:
+    """*values* reduced per owner (an index in [0, size), -1: none, skipped) by *aggregation*."""
+    values, owner = np.asarray(values), np.asarray(owner, dtype=np.int64)
+    kept = owner >= 0
+    if not kept.all():
+        owner, values = owner[kept], values[kept]
+        weights = None if weights is None else np.asarray(weights)[kept]
+    if aggregation == "weighted_mean":
+        if weights is None:
+            raise ValueError("weighted_mean needs a weight variable")
+        with np.errstate(invalid="ignore", divide="ignore"):
+            return (np.bincount(owner, weights=values * weights, minlength=size)
+                    / np.bincount(owner, weights=weights, minlength=size))
+    if aggregation in ("max", "min"):
+        return _grouped_extreme(values, owner, size, aggregation)
+    total = np.bincount(owner, weights=values, minlength=size)
+    if aggregation == "sum":
+        return total
+    if aggregation == "mean":
+        with np.errstate(invalid="ignore", divide="ignore"):
+            return total / np.bincount(owner, minlength=size)
+    raise ValueError(f"unknown aggregation '{aggregation}'")
+
+
+class EntityView(DataStructure):
+    """
+    The entities a component owns (its class attribute `entities`, e.g. {"label": ("RootSegment", "RootApex")}),
+    as a DataStructure of their own: its nodes are the entities of a location of an MPGDataStructure matching the
+    declaration (the base's nodes in segment mode, location "node"; the SubOrgans of an anatomy-mode one, through its
+    LocatedView), in the base's order. Two models growing one plant (the roots' and the shoot's) each see their own
+    entities as if the DataStructure held them only:
+
+      * topology: each node's parent is its parent at the location when that one is in the view, else -1 (a base: a
+        seminal root on a seed another model owns); children, roots, tips, orders, levels, folds, chains and the
+        graph view follow from these parents;
+      * values: a name is one variable of the base, one value per entity of the location (two models' `length` is
+        one array): get() gives the view's entities' values, a copy (steps write through their outputs, or set()),
+        set() writes them back into the base's array, register() creates the base's variable (the default on the
+        other entities, or their MTG values); the coarse locations (Plant, Axis, ...) and the scalars are the base's;
+      * mappings between its nodes and coarse locations aggregate over its entities only (map_to, owner, labels);
+      * growth: a component's NewNodes may name a parent outside the view (a bearer: any entity of the location);
+        the view follows the topology, the new entities matching the declaration joining it.
+
+    Its masks and caches are its own; the base's "active" mask is not seen (define it on the view: the component's
+    `active`). MPGDataStructure.entity_view(entities, at) gives it; a component declaring `entities` gets it.
+    """
+    _default_location = "node"
+
+    def __init__(self, base, location: str, entities):
+        _check_entities(entities)
+        inner = base if location == "node" else base.at(location)
+        self.__dict__.update(_base=base, _at=location, _inner=inner, _entities=entities)
+
+    def __getattr__(self, name):
+        return getattr(self.__dict__["_inner"], name)
+
+    def __setattr__(self, name, value):
+        self.__dict__[name] = value
+
+    @property
+    def entities(self):
+        """The declaration selecting the view's entities."""
+        return self._entities
+
+    # ── the view's entities ──
+    def _label_names(self, condition) -> set:
+        """Label names of *condition* (a label name or code, or a sequence of them), as labels() gives them."""
+        values = condition if isinstance(condition, (list, tuple, set, np.ndarray)) else [condition]
+        translator = self._base.structure.labels.translator
+        names = set()
+        for value in values:
+            code = int(value) if isinstance(value, (int, np.integer)) else self._base.label_code(value)
+            names.add(translator.get(code, value))
+        return names
+
+    def _selected(self) -> np.ndarray:
+        """Whether each entity of the location belongs to the view."""
+        inner, rule = self._inner, self._entities
+        if callable(rule):
+            selected = np.asarray(rule(inner), dtype=bool).reshape(-1)
+            if selected.size != inner.n_nodes():
+                raise ValueError(f"entities: the callable gave {selected.size} values, the location has "
+                                 f"{inner.n_nodes()} entities")
+            return selected
+        selected = np.ones(inner.n_nodes(), dtype=bool)
+        if "label" in rule:
+            wanted = self._label_names(rule["label"])
+            selected &= np.array([name in wanted for name in inner.labels().tolist()], dtype=bool)
+        others = {key: condition for key, condition in rule.items() if key != "label"}
+        if others:
+            selected &= np.asarray(inner._evaluate_mask("entities", others, "node"), dtype=bool)
+        return selected
+
+    def _selection_stamp(self) -> tuple:
+        inner = self._inner
+        label = self._base.structure.properties().get("label")
+        return inner.topology_version, inner.n_nodes(), getattr(label, "version", None)
+
+    def _selection(self) -> tuple:
+        """(the view's entities as indices among the location's, each entity's index in the view or -1), rebuilt when
+        the topology (or the labels) changed."""
+        stamp = self._selection_stamp()
+        kept = self.__dict__.get("_selection_cache")
+        if kept is None or kept[0] != stamp:
+            selected = self._selected()
+            index = np.flatnonzero(selected)
+            position = np.full(selected.size, -1, dtype=np.int64)
+            position[index] = np.arange(index.size)
+            kept = self.__dict__["_selection_cache"] = (stamp, index, position)
+        return kept[1], kept[2]
+
+    def _take(self, location: str) -> np.ndarray:
+        """Indices of the view's entities of *location* ("node" or "edge") among the base's of that location."""
+        if location == "node":
+            return self._selection()[0]
+        return np.asarray(self._base.index_of(self.entity_ids("edge"), "edge"), dtype=np.int64)
+
+    def _bearer_ids(self) -> np.ndarray:
+        """The entities a new node may be borne by (NewNodes' parents): every entity of the location."""
+        return np.asarray(self._inner.entity_ids("node"), dtype=np.int64)
+
+    @property
+    def structure(self):
+        return self._base.structure
+
+    @property
+    def topology_version(self):
+        return self._base.topology_version
+
+    @property
+    def _anatomy(self):
+        return False
+
+    @property
+    def _idx_to_vid(self):
+        return self.entity_ids("node").tolist()
+
+    def n_nodes(self) -> int:
+        return int(self._selection()[0].size)
+
+    def n_edges(self) -> int:
+        return int((self.parents() >= 0).sum())
+
+    def entity_ids(self, location: str) -> np.ndarray:
+        if location == "node":
+            return np.asarray(self._inner.entity_ids("node"), dtype=np.int64)[self._selection()[0]]
+        if location == "edge":
+            return self.entity_ids("node")[self.parents() >= 0]
+        return self._inner.entity_ids(location)
+
+    def index_of(self, ids, location: str = None):
+        location = location or "node"
+        if location not in ("node", "edge"):
+            return self._inner.index_of(ids, location)
+        key = (location, self._selection_stamp())
+        kept = self.__dict__.get("_index_cache")
+        if kept is None or kept[0] != key:
+            known = np.asarray(self.entity_ids(location), dtype=np.int64)
+            order = np.argsort(known, kind="stable")
+            kept = self.__dict__["_index_cache"] = (key, known[order], order)
+        _, sorted_ids, order = kept
+        scalar = np.ndim(ids) == 0
+        query = np.atleast_1d(np.asarray(ids, dtype=np.int64))
+        position = np.searchsorted(sorted_ids, query)
+        known = position < sorted_ids.size
+        known[known] = sorted_ids[position[known]] == query[known]
+        if not known.all():
+            raise KeyError(f"ids {query[~known][:10].tolist()} are not {location}s of the entity view "
+                           f"({self._entities!r})")
+        result = order[position]
+        return int(result[0]) if scalar else result
+
+    # ── variables: the base's, at the view's entities ──
+    def _var_stores(self) -> dict:
+        stores = dict(self._inner._var_stores())
+        stores["node"] = _RestrictedStore(stores.get("node", {}), lambda: self._take("node"))
+        if "edge" in stores:
+            stores["edge"] = _RestrictedStore(stores["edge"], lambda: self._take("edge"))
+        return stores
+
+    @property
+    def _node_data(self):
+        return self._var_stores()["node"]
+
+    def _find(self, name: str):
+        target = self._resolve(name)
+        for location, store in self._var_stores().items():
+            if target in store:
+                return location, store, target
+        raise KeyError(f"Variable '{name}' is not registered. Available: {self.available_vars()}.")
+
+    def has(self, name: str) -> bool:
+        try:
+            self._find(name)
+            return True
+        except KeyError:
+            return False
+
+    def location(self, name: str) -> str:
+        try:
+            return self._find(name)[0]
+        except KeyError:
+            return self._inner.location(name)
+
+    def get(self, name: str) -> np.ndarray:
+        """The values of *name*: at the nodes (or edges) a copy of the view's entities' values; elsewhere the base's."""
+        location, store, target = self._find(name)
+        if location not in ("node", "edge"):
+            return self._inner.get(name)
+        if target in self._base.__dict__.get("_derived", {}):
+            self._base._update_derived([target])
+        return store[target]
+
+    def set(self, name: str, values) -> None:
+        """Write *values* (one per entity of the view, or broadcast) into the base's array at the view's entities."""
+        location, store, target = self._find(name)
+        if location not in ("node", "edge"):
+            return self._inner.set(name, values)
+        if target in self._base.__dict__.get("_derived", {}):
+            raise ValueError(f"'{name}' is derived from {list(self._base._derived_sources(target))} and recomputed "
+                             "when read: write its sources instead")
+        array, take = store._store[target], self._take(location)
+        array[take] = _converted(values, array[take], name)
+        self._base.mark_written(target)
+
+    def register(self, name, values=None, location=None, default: float = 0., on_grow: str = "default", dtype=float,
+                 shape: tuple = ()) -> np.ndarray:
+        """
+        (Re)create *name* at *location*: at the nodes (or edges), the base's variable, its other entities keeping their
+        values (or, created here, their MTG values when just read, else *default*), the view's set to *values* (or
+        *default*); elsewhere the base's register.
+        """
+        target = location or "node"
+        inner = self._inner
+        if target not in ("node", "edge"):
+            return inner.register(name, values, location=target, default=default, on_grow=on_grow, dtype=dtype,
+                                  shape=shape)
+        if target not in inner._var_stores():
+            raise ValueError(f"an entity view of {self._at} has no {target} variables ('{name}')")
+        current, read = None, self.__dict__.pop("_mtg_read", None)
+        if inner.has(name) and inner.location(name) == target and name not in self._base.aliases():
+            current = np.array(inner.get(name), copy=True)
+        elif read is not None and read[0] == (name, target, self._selection_stamp()):
+            current = read[1]                            # the MTG's values of every entity of the location
+        array = inner.register(name, current, location=target, default=default, on_grow=on_grow, dtype=dtype,
+                               shape=shape)
+        take = self._take(target)
+        if values is not None or current is not None:
+            array[take] = _converted(default if values is None else values, array[take], name)
+            self._base.mark_written(name)
+        return array[take]
+
+    def _location_shape(self, location):
+        if location in (None, "node"):
+            return (self.n_nodes(),)
+        if location == "edge":
+            return (self.n_edges(),)
+        return self._inner._location_shape(location)
+
+    def available_vars(self):
+        return [name for store in self._var_stores().values() for name in store]
+
+    def _instanced_at(self, location: str) -> np.ndarray:
+        values = self._inner._instanced_at(location)
+        return values[self._take(location)] if location in ("node", "edge") else values
+
+    # ── the MTG reads and writes: the base's, at the location ──
+    def _read_mtg(self, spec):
+        values = self._inner._read_mtg(spec)
+        if values is None or spec.location not in ("node", "edge"):
+            return values
+        take = self._take(spec.location)
+        # kept for register(): a variable created here gets the MTG's values on the other entities too
+        self.__dict__["_mtg_read"] = ((spec.name, spec.location, self._selection_stamp()), values)
+        if isinstance(values, list):
+            return [values[i] for i in take.tolist()]
+        return np.asarray(values)[take]
+
+    def _write_mtg(self, spec):
+        return self._inner._write_mtg(spec)
+
+    def _track_mtg(self, spec):
+        return self._inner._track_mtg(spec)
+
+    # ── topology within the view ──
+    def _traversal(self) -> dict:
+        stamp = self._selection_stamp()
+        kept = self.__dict__.get("_traversal_cache")
+        if kept is not None and kept[0] == stamp:
+            return kept[1]
+        selection, position = self._selection()
+        parent = np.asarray(self._inner.parents(), dtype=np.int64)[selection]
+        parent = np.where(parent >= 0, position[np.maximum(parent, 0)], -1)      # outside the view: a base
+        result = _tree_traversal(parent)
+        self.__dict__["_traversal_cache"] = (stamp, result)
+        return result
+
+    def parents(self) -> np.ndarray:
+        """Each node's parent in the view, -1 at a base (its parent is outside the view, or it has none)."""
+        return self._traversal()["parents"]
+
+    def children(self) -> tuple:
+        return self._traversal()["children"]
+
+    def roots(self) -> np.ndarray:
+        return self._traversal()["roots"]
+
+    def tips(self) -> np.ndarray:
+        return self._traversal()["tips"]
+
+    def order(self, kind: str = "pre", traversal: str = None) -> np.ndarray:
+        if kind not in ("pre", "post"):
+            raise ValueError(f"order must be 'pre' or 'post', got '{kind}'")
+        if traversal is None:
+            return self._traversal()[kind]
+        if traversal != "openalea" or kind != "post":
+            raise ValueError("traversal='openalea' is available for kind='post' only")
+        return MPGDataStructure._openalea_post_order(self)
+
+    def _edge_codes(self):
+        return self._base.structure.topology_arrays()["edge_type"][self.entity_ids("node")]
+
+    def edges(self) -> list:
+        ids, parents = self.entity_ids("node"), self.parents()
+        child = np.flatnonzero(parents >= 0)
+        return list(zip(ids[parents[child]].tolist(), ids[child].tolist()))
+
+    def to_graph_view(self, boundary_ports=(), node_properties=(), edge_properties=()) -> "GraphView":
+        ids, parents = self.entity_ids("node"), self.parents()
+        child = np.flatnonzero(parents >= 0)
+        n, m = ids.size, child.size
+        edge = np.arange(m)
+        incidence = coo_matrix((np.r_[np.ones(m), -np.ones(m)], (np.r_[parents[child], child], np.r_[edge, edge])),
+                               shape=(n, m)).tocsc()
+        if boundary_ports:
+            rows = np.atleast_1d(self.index_of([port.node_id for port in boundary_ports]))
+            boundary = coo_matrix((np.array([port.orientation for port in boundary_ports], dtype=float),
+                                   (rows, np.arange(len(boundary_ports)))), shape=(n, len(boundary_ports))).tocsc()
+        else:
+            boundary = csc_matrix((n, 0))
+        node_data = {name: np.array(self.get(name), dtype=float) for name in node_properties
+                     if self.has(name) and self.location(name) == "node"}
+        edge_data = {name: np.array(self.get(name), dtype=float) for name in edge_properties
+                     if self.has(name) and self.location(name) == "edge"}
+        return GraphView(node_ids=ids, edge_ids=edge, tail=parents[child], head=child, incidence=incidence,
+                         boundary_incidence=boundary, boundary_names=tuple(port.name for port in boundary_ports),
+                         node_data=node_data, edge_data=edge_data)
+
+    def update_topology(self) -> None:
+        self._inner.update_topology()
+
+    # ── coarse locations: over the view's entities ──
+    def owner(self, location: str, of: str = "node") -> np.ndarray:
+        """Index, in entity_ids(location), of the entity owning each node of the view, or of each entity of *of*."""
+        if location == "node":
+            return np.arange(self.n_nodes(), dtype=np.int64)
+        if of != "node":
+            return self._inner.owner(location, of=of)
+        return np.asarray(self._inner.owner(location), dtype=np.int64)[self._selection()[0]]
+
+    def labels(self, location: str = None, per_node: bool = True) -> np.ndarray:
+        if location in (None, "node"):
+            return self._inner.labels()[self._selection()[0]]
+        values = self._inner.labels(location=location, per_node=False)
+        return values[self.owner(location)] if per_node else values
+
+    def map_to(self, values, from_location: str, to_location: str, aggregation: str, weights=None) -> np.ndarray:
+        """*values* mapped between the view's nodes (or edges) and a coarse location, over the view's entities only
+        (VariableStoreMixin.map_to)."""
+        return np.asarray(self._map(np.asarray(values, dtype=float), from_location, to_location, aggregation,
+                                    None if weights is None else np.asarray(weights, dtype=float)))
+
+    def _owner_of(self, location: str, at: str) -> np.ndarray:
+        """The entity of coarse *location* owning each of the view's nodes, or edges (their child node's)."""
+        owner = self.owner(location)
+        return owner[self.parents() >= 0] if at == "edge" else owner
+
+    def _map(self, values, from_location, to_location, aggregation, weights=None, fill=0., owner=None):
+        coarse = self._coarse_scale_names()
+        values = np.asarray(values)
+        if from_location == "node" and to_location == "edge":
+            parents = self.parents()
+            child = np.flatnonzero(parents >= 0)
+            if aggregation == "child":
+                return values[child]
+            if aggregation == "parent":
+                return values[parents[child]]
+            if aggregation == "mean":
+                return (values[parents[child]] + values[child]) / 2.
+        elif from_location in ("node", "edge") and to_location in coarse:
+            entities, node_owner = owner if owner is not None else \
+                (self._inner.entity_ids(to_location), self._owner_of(to_location, from_location))
+            return _aggregated(values, node_owner, len(entities), aggregation, weights)
+        elif from_location in coarse and to_location in ("node", "edge"):
+            node_owner = self._owner_of(from_location, to_location)
+            if aggregation == "split":
+                return _split(values, node_owner, weights, from_location)
+            if aggregation == "broadcast":
+                if (node_owner >= 0).all():
+                    return values[node_owner]
+                out = np.full((node_owner.size,) + values.shape[1:], fill,
+                              dtype=np.result_type(values, np.asarray(fill)))
+                out[node_owner >= 0] = values[node_owner[node_owner >= 0]]
+                return out
+        elif from_location in coarse and to_location in coarse:
+            return self._inner._map(values, from_location, to_location, aggregation, weights, fill=fill)
+        elif to_location == "scalar" and from_location != "scalar":
+            return np.asarray(VariableStoreMixin._reduce(values, aggregation, weights))
+        elif from_location == "scalar" and aggregation == "broadcast":
+            return np.full(self._location_shape(to_location), float(values))
+        elif from_location == "scalar" and aggregation == "split":
+            return _split(np.atleast_1d(values), np.zeros(self._location_shape(to_location)[0], dtype=np.int64),
+                          weights, "the plant")
+        raise ValueError(f"an entity view cannot map {from_location} to {to_location} ({aggregation})")
+
+    def _broadcast_to_entities(self, values, location: str, to: str, name: str = None) -> np.ndarray:
+        return self._map(values, location, to, "broadcast", fill=self._default_of(name))
+
+    # ── geometry: the component's triangles, also given to the base in its node indices ──
+    def add_geometry_provider(self, component) -> None:
+        DataStructure.add_geometry_provider(self, component)
+        holder = self._inner
+        providers = holder.__dict__.setdefault("_geometry_providers", [])
+        if not any(getattr(provider, "_drawn_by", None) is component for provider in providers):
+            providers.append(_EntityGeometry(component, self))
+
+    # ── the abstract DataStructure's ──
+    def extract_state(self, var_names):
+        if not var_names:
+            return np.zeros(0)
+        return np.concatenate([np.asarray(self.get(name), dtype=float).reshape(-1) for name in var_names])
+
+    def inject_state(self, x, var_names):
+        offset = 0
+        for name in var_names:
+            shape = np.shape(self.get(name))
+            size = int(np.prod(shape))
+            self.set(name, np.asarray(x[offset:offset + size]).reshape(shape))
+            offset += size
+
+    @property
+    def n_dof(self):
+        return self.n_nodes()
+
+    # the store's helpers and the tree kernels, on the view's own nodes
+    mask = VariableStoreMixin.mask
+    define_mask = VariableStoreMixin.define_mask
+    has_mask = VariableStoreMixin.has_mask
+    masks = VariableStoreMixin.masks
+    mask_version = VariableStoreMixin.mask_version
+    _evaluate_mask = VariableStoreMixin._evaluate_mask
+    _mask_values_at = VariableStoreMixin._mask_values_at
+    _CONDITION = VariableStoreMixin._CONDITION
+    random = VariableStoreMixin.random
+    parameter_view = VariableStoreMixin.parameter_view
+    _default_of = VariableStoreMixin._default_of
+    default = VariableStoreMixin.default
+    depth = MPGDataStructure.depth
+    levels = MPGDataStructure.levels
+    accumulate = MPGDataStructure.accumulate
+    fold = MPGDataStructure.fold
+    path_window = MPGDataStructure.path_window
+    path_contributions = MPGDataStructure.path_contributions
+    scatter_contributions = MPGDataStructure.scatter_contributions
+    path_compose = MPGDataStructure.path_compose
+    define_chain = MPGDataStructure.define_chain
+    chain = MPGDataStructure.chain
+    chain_scan = MPGDataStructure.chain_scan
+    chain_shift = MPGDataStructure.chain_shift
+    chain_write = MPGDataStructure.chain_write
+    chain_gather = MPGDataStructure.chain_gather
+    chain_recurrence = MPGDataStructure.chain_recurrence
+
+
+def _entity_view(self, entities, at: str = None) -> "EntityView":
+    """
+    The view of this DataStructure restricted to *entities* (an entities declaration: {"label": (...)}, filters'
+    syntax, or a callable ds -> boolean array), at *at*: "node" (the nodes, segment mode's default) or a coarse location
+    of an anatomy-mode one (default its from_scale's, e.g. "SubOrgan"). Views of one declaration are shared.
+    """
+    if at is None:
+        at = self._scale_name(self.from_scale) if self._anatomy else "node"
+    if self._anatomy and at == "node":
+        raise ValueError("an entity view of an anatomy-mode DataStructure is at a coarse location (e.g. 'SubOrgan'): "
+                         "its nodes, the Compartments, are not restricted")
+    views = self.__dict__.setdefault("_entity_views", {})
+    key = (at, _entities_key(entities))
+    if key not in views:
+        views[key] = EntityView(self, at, entities)
+    return views[key]
+
+
+MPGDataStructure.entity_view = _entity_view

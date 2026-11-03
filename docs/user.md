@@ -163,6 +163,10 @@ carbon()                                  # one time step: every step, in the sc
   its component's parameters or settings, the active mask or the structure changed; otherwise its last outputs are
   written again (a network's conductances, recomputed only when a barrier or a length changed). The step's
   dependencies are its arguments: a memoized step reads nothing else.
+- **Own entities.** `entities = {"label": ("RootSegment", "RootApex")}` (a class attribute, the filters' syntax,
+  label names resolved; or a callable `ds -> boolean array`): the entities the component owns when several models
+  share one plant (the roots' and the shoot's). It then works on `ds.entity_view(entities)`, a view of the
+  DataStructure restricted to them (section 4). `None` (the default): every entity.
 - **Inheritance.** A subclass runs its bases' steps, a redefined step replacing its base's; `steps_removed =
   ("name",)` removes inherited ones.
 - **Compiled steps.** A step may call a `numba.njit` function on its arrays; parameters reach it as arrays (zero-stride
@@ -336,6 +340,35 @@ light), `Triangles.mean_per_owner(values, n)` averages per element by area.
 **Labels.** `ds.labels()` gives each node's MTG label name (`"LeafElement"`, `"RootSegment"`, ...), and
 `ds.labels(location="Organ")` the label of its entity at a coarser scale; a `UnionDataStructure` gives its parts'. They are
 read once per topology, for steps that treat leaves and stems, or root orders, differently. `openalea.metafspm.display.draw(axes, triangles, colors=...)` draws them with matplotlib.
+
+**Several architecture models on one plant: `entities`.** When two structural components grow one plant (the roots
+and the shoot), each declares the entities it owns, and works on an `EntityView` of them, as if the DataStructure held
+them only:
+
+```python
+@dataclass
+class Roots(StructuralComponent):
+    entities = {"label": ("RootSegment", "RootApex")}
+    ...
+```
+
+- Its nodes are the entities of its location matching the declaration, in the base's order (the nodes in segment
+  mode; the SubOrgans of an anatomy-mode DataStructure, for a component declared at that scale or coarser):
+  `n_nodes()`, `entity_ids("node")`, `index_of` and its steps' arrays are theirs. They are selected again when the
+  topology changes (new entities matching the declaration join it).
+- Its topology is theirs: a node's parent is its parent when that one is in the view, else -1 (a base: a seminal root
+  on the seed another model owns). `children()`, `roots()`, `tips()`, `order()`, `levels()`, the folds, chains and
+  `to_graph_view()` follow from these parents.
+- A name is one variable of the base for every entity of the location (the roots' and the shoot's `length`):
+  `get(name)` gives the view's entities' values, **a copy** (steps write through their outputs, or `ds.set`);
+  `set` writes them into the base's array; a variable it creates gets the default (or the MTG's values) on the other
+  entities. Coarse locations (`"Plant"`, `"Axis"`, …) and scalars are the base's.
+- `map_to` between its nodes and a coarse location, `owner()` and `labels()` are over its entities only (a plant's
+  root length: `map_to(length, "node", "Plant", "sum")`).
+- Its `NewNodes` may name a parent outside the view (a nodal root `'+'` on a stem element): any entity of the
+  location; the new nodes must match its declaration. Its masks (and `active`) are its own; the base's triangles are
+  those of every component drawing its entities, together.
+- `couplings()` and `declarations()` are unchanged: the components still share one DataStructure.
 
 ### Tree kernels
 
