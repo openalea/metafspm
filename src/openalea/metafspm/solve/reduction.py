@@ -266,6 +266,13 @@ class Reduction:
                 except (KeyError, ValueError, AttributeError):
                     values = np.asarray([getattr(component, name)], dtype=float)
                 out[name] = float(values[plant_index] if values.size > plant_index else values[0])
+            for f in fields(component):                  # its Plant-scale parameters, any value (a dict, a boolean)
+                if (f.metadata.get("variable_type") == "parameter" and f.name not in out
+                        and f.metadata.get("scale") == _plant_scale() and ds.has(f.name)
+                        and ds.location(f.name) == "Plant"):
+                    values = ds.get(f.name)
+                    value = values[plant_index] if len(values) > plant_index else values[0]
+                    out[f.name] = value.item() if isinstance(value, np.generic) else value
         return out
 
     def group_kinds(self, ds, groups) -> dict:
@@ -299,9 +306,14 @@ class Reduction:
 
 
 def _signature(parameters: dict) -> str:
-    import hashlib
-    return hashlib.blake2b(repr(sorted((k, repr(v)) for k, v in parameters.items())).encode(),
-                           digest_size=16).hexdigest()
+    """A digest of a plant's parameters, by content (dicts, records and numbers alike)."""
+    from openalea.metafspm.solve.memo import content_key
+    return content_key({name: parameters[name] for name in sorted(parameters)})
+
+
+def _plant_scale() -> int:
+    from openalea.metafspm.data_structure.configs import ScalesConfig
+    return ScalesConfig.Plant
 
 
 def _evaluate(reduction: Reduction, parameters: dict, requests: dict) -> dict:
@@ -354,7 +366,15 @@ def _evaluate(reduction: Reduction, parameters: dict, requests: dict) -> dict:
     for component in instance.components:                    # the plant's parameters and the settings
         own = {f.name for f in fields(component) if f.metadata.get("variable_type") in ("setting", "parameter")}
         for name, value in parameters.items():
-            if name in own:
+            if name not in own:
+                continue
+            if ds.has(name) and ds.location(name) == "Plant":   # the library's one plant: its value there
+                stored = np.asarray(ds.get(name))
+                values = np.empty(stored.shape, dtype=object) if stored.dtype == object else stored.copy()
+                for i in range(len(values)):
+                    values[i] = value                         # a record as it is (a dict, nested lists)
+                ds.set(name, values)
+            else:
                 setattr(component, name, value)
     ids = ds.entity_ids(reduction.location).tolist()
     entity = {int(v): i for i, v in enumerate(ids)}

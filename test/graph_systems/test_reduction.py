@@ -7,6 +7,7 @@ nodes as the full model; the interior recovered.
 from dataclasses import dataclass
 
 import numpy as np
+import pytest
 from scipy.sparse import diags
 
 from openalea.metafspm.coupling.component import FunctionalComponent, StructuralComponent, parameter, state_variable
@@ -145,3 +146,57 @@ def test_a_reduced_groups_interior_is_recovered():
     rows, values = g.reduction.recover(reduced, group, reduced.get("water_potential")[kept])
     row = {place: i for i, place in enumerate(_places(full))}
     np.testing.assert_allclose(values, full.get("water_potential")[[row[(group, int(r))] for r in rows]], rtol=1e-11)
+
+
+def _model_by_scenario():
+    """The toy plant choosing its reduction by its scenario: "reduced" (one model class for both)."""
+    class ToyPlantByScenario(_model(False)):
+        @staticmethod
+        def reduction(scenario):
+            if not scenario.get("reduced", False):
+                return None
+            return Reduction(location="SubOrgan", labels=("RootSegment",), ports=_xylem, keep=_soil_walls,
+                             systems=("NodeHydraulics._hydraulics",))
+    return ToyPlantByScenario
+
+
+def test_a_reduction_chosen_by_the_scenario():
+    model = _model_by_scenario()
+    solved = {}
+    for reduced in (False, True):
+        population = population_data_structure(planting([Planting()], model, {"reduced": reduced}), model)
+        population.instance.run()
+        solved[reduced] = population.data_structure
+    reference = {reduced: _solved(reduced).data_structure for reduced in (False, True)}
+    for reduced in (False, True):
+        assert solved[reduced].n_nodes() == reference[reduced].n_nodes()
+        np.testing.assert_allclose(solved[reduced].get("water_potential"), reference[reduced].get("water_potential"), rtol=1e-12)
+    with pytest.raises(ValueError, match="the same for every plant"):
+        population_data_structure(planting([Planting(), Planting(x=1.)], model, plant_scenarios=[
+            {"reduced": True}, {"reduced": False}]), model)
+
+
+@pytest.mark.xfail(strict=True, reason="a reduced component with a per-plant parameter: its library's solve does not "
+                                      "converge (NaN), a bug older than the object parameters (being fixed)")
+def test_the_library_gets_every_per_plant_parameter_and_keys_its_kinds_by_them():
+    """A plant's object parameter (e.g. a component's dict of options) reaches the reduction's library runs and tells
+    kinds apart: two plants differing in it only have kinds of their own."""
+    from openalea.metafspm.solve.reduction import _signature
+
+    @dataclass
+    class OptionedHydraulics(NodeHydraulics):
+        options: object = parameter(**DOC, default=None, dtype="object", scale=scales.Plant)
+
+    class OptionedPlant(_model(True)):
+        def __init__(self, data_structure, time_step):
+            self.hydraulics = OptionedHydraulics(data_structure=data_structure, time_step=time_step)
+            self.couple(self.hydraulics)
+
+    population = population_data_structure(planting([Planting(), Planting(x=1.)], OptionedPlant, plant_scenarios=[
+        {"options": {"suberin": 1}}, {"options": {"suberin": 2}}]), OptionedPlant)
+    population.instance.run()
+    reduction = population.data_structure.structure.reduction
+    first, second = (reduction._parameters(population.data_structure, k) for k in (0, 1))
+    assert first["options"] == {"suberin": 1} and second["options"] == {"suberin": 2}
+    assert _signature(first) != _signature(second)
+    assert _signature(first) == _signature(dict(first))                 # by content

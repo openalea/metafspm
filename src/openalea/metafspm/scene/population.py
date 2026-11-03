@@ -154,8 +154,9 @@ def population_data_structure(table: pd.DataFrame, model, time_step: float = 360
     table = table.reset_index(drop=True)
     scenario = _flat_scenario(table["scenario"].iloc[0] if scenario is None and len(table) else scenario)
     read_by_initiators = set()
+    reduction = _model_reduction(model, table, scenario, read_by_initiators)
     g, plants = _build_population(table, initiators=getattr(model, "initiators", ()),
-                                  read_by_initiators=read_by_initiators, reduction=getattr(model, "reduction", None),
+                                  read_by_initiators=read_by_initiators, reduction=reduction,
                                   translator=getattr(model, "translator", None))
     scale = getattr(model, "from_scale", None) or "SubOrgan"
     scale = getattr(g.scales, scale) if isinstance(scale, str) else scale
@@ -173,6 +174,37 @@ def population_data_structure(table: pd.DataFrame, model, time_step: float = 360
     _apply_model_scenario(model, instance, scenario, read_by_initiators)
     _apply_plant_scenarios(ds, population.components, table, plants)
     return population
+
+
+def _model_reduction(model, table: pd.DataFrame, scenario: dict, read: set):
+    """
+    The model's reduction (solve.reduction): its class attribute, a Reduction, or a function of the model's scenario
+    (``reduction = staticmethod(lambda scenario: ...)``: a reduction chosen by scenario entries, or None). The entries
+    the function reads are the model's (added to *read*); they must be the same for every plant of the population.
+    """
+    from openalea.metafspm.solve.reduction import Reduction
+    reduction = getattr(model, "reduction", None)
+    if reduction is None or isinstance(reduction, Reduction) or not callable(reduction):
+        return reduction
+    recorded = _ReadScenario(scenario)
+    chosen = reduction(recorded)
+    names = getattr(model, "__name__", str(model))
+    for row in table.itertuples(index=False):
+        own = _flat_scenario(row.scenario)
+        for key in recorded.read:
+            if not _equal(own.get(key), scenario.get(key)):
+                raise ValueError(f"{names}: the scenario entry '{key}' chooses the model's reduction, the same for "
+                                 f"every plant of a population (one plant has {own.get(key)!r}, another "
+                                 f"{scenario.get(key)!r})")
+    read |= recorded.read
+    return chosen
+
+
+def _equal(a, b) -> bool:
+    try:
+        return bool(a == b) if not isinstance(a, np.ndarray) else bool(np.array_equal(a, b))
+    except (TypeError, ValueError):
+        return repr(a) == repr(b)
 
 
 def _flat_scenario(scenario) -> dict:

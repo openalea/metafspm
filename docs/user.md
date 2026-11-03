@@ -274,6 +274,15 @@ class SoilDiffusion(FunctionalComponent):
 - **Outputs and Jacobians.** `@graph_output(name, location=...)` derives outputs after the solve; `@graph_jacobian`
   gives an analytic Jacobian (finite differences with graph colouring otherwise).
 
+- **Reductions.** A plant model may reduce its graph systems by groups (`solve.reduction.Reduction(location=,
+  labels=, ports=, keep=, explicit_edges=, kind=, inputs=, systems=, outputs=)`): the groups of a location (e.g.
+  the SubOrgans of some labels) keep their ports and kept nodes, their interiors eliminated once per kind (a library
+  population of the model's own components, each kind its group's template, kind values and the plant's parameters,
+  objects included, digested by content). It is the model's `reduction` class attribute, or a function of its
+  scenario choosing one, or None: `reduction = staticmethod(lambda scenario: Reduction(...) if
+  scenario.get("reduced") else None)`; the entries it reads are the model's, the same for every plant of a
+  population. A graph system's terms the reduction must keep explicit are declared `@explicit_term`, its inputs'
+  derivatives `@input_jacobian`.
 ## 4. Structure: `StructuralComponent`
 
 A structural component edits the plant (growth, segmentation, anatomy). Its steps come in two styles:
