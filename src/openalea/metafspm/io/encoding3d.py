@@ -1,5 +1,5 @@
 """
-metafspm's DataStructures as fspm-TF frames (the cross-platform scene format, https://github.com/openalea/fspm-TF),
+metafspm's DataStructures as encoding3d frames (the cross-platform scene format, https://github.com/openalea/encoding3d),
 and back::
 
     frame = to_frame({"plants": ds, "soil": grid}, components={"plants": [growth, carbon]},
@@ -63,13 +63,13 @@ _GRAPH_RESERVED = ("id", "label", "complex", "parent", "edge_type", "sibling_ord
 _RELATION_RESERVED = ("id", "source", "target", "relation")
 
 
-def _fspm_tf():
+def _encoding3d():
     try:
-        from openalea import fspm_tf
+        from openalea import encoding3d
     except ImportError:
-        raise ImportError("openalea.fspm_tf, a dependency of metafspm, is not installed (in development: clone fspm-TF "
-                          "next to metafspm, then pip install -e ../fspm-TF)") from None
-    return fspm_tf
+        raise ImportError("openalea.encoding3d, a dependency of metafspm, is not installed (in development: clone encoding3d "
+                          "next to metafspm, then pip install -e ../encoding3d)") from None
+    return encoding3d
 
 
 # ── Units, standard names, declarations ─────────────────────────────────────
@@ -77,7 +77,7 @@ def _fspm_tf():
 def ucum_unit(unit) -> str:
     """The UCUM code of a metafspm declaration's unit: 'mm3 s-1 MPa-1' → 'mm3.s-1.MPa-1', '°C' → 'Cel', 'adim' →
     '1', 'mol of hexose' → 'mol{hexose}'; a unit with no UCUM code becomes an annotation ('{phyllochron}')."""
-    from openalea.fspm_tf import ucum
+    from openalea.encoding3d import ucum
     text = "" if unit is None or (isinstance(unit, float) and math.isnan(unit)) else str(unit).strip()
     if text in _DIMENSIONLESS:
         return "1"
@@ -122,8 +122,8 @@ def _declarations(components) -> dict:
 
 
 def _variable(name: str, metadata: dict, standard_names: dict, derived: bool = False):
-    fspm_tf = _fspm_tf()
-    from openalea.fspm_tf import ucum, vocabulary
+    encoding3d = _encoding3d()
+    from openalea.encoding3d import ucum, vocabulary
     unit = ucum_unit(metadata.get("unit"))
     standard_name = standard_names.get(name)
     entry = vocabulary.standard_names().get(standard_name) if standard_name else None
@@ -143,7 +143,7 @@ def _variable(name: str, metadata: dict, standard_names: dict, derived: bool = F
     references = metadata.get("references")
     references = (references,) if isinstance(references, str) and references.strip() else tuple(references or ())
     doi = tuple(str(item) for item in (metadata.get("DOI") or ()) if str(item).strip())
-    return fspm_tf.Variable(unit=unit, standard_name=standard_name, kind=_KINDS.get(metadata.get("kind")),
+    return encoding3d.Variable(unit=unit, standard_name=standard_name, kind=_KINDS.get(metadata.get("kind")),
                             role="derived" if derived else _ROLES.get(metadata.get("variable_type"), "state"),
                             description=description, minimum=number(metadata.get("min_value")),
                             maximum=number(metadata.get("max_value")), references=tuple(str(r) for r in references),
@@ -356,7 +356,7 @@ def _location_scales(ds) -> dict:
 
 def _mpg_data_structure(identifier: str, ds, metadata: dict, standard_names: dict, geometry: bool, components=(),
                         display_meshes: bool = True):
-    fspm_tf = _fspm_tf()
+    encoding3d = _encoding3d()
     ds.flush_mtg()                     # the MPG holds the variables' current values, as ds.mtg gives it
     g = ds.structure
     names = _scale_names(g)
@@ -529,23 +529,23 @@ def _mpg_data_structure(identifier: str, ds, metadata: dict, standard_names: dic
             ends = np.concatenate([columns["source"], columns["target"]])
             endpoints = set(arrays["scale"][ends[(ends >= 0) & (ends < arrays["scale"].size)]].tolist())
             endpoint = names[endpoints.pop()] if len(endpoints) == 1 else names[g.scales.Compartment]
-            relations.append(fspm_tf.Relation(names[scale], columns=columns, source_set=endpoint,
+            relations.append(encoding3d.Relation(names[scale], columns=columns, source_set=endpoint,
                                               target_set=endpoint))
         else:
-            base_scales = fspm_tf.model.BASE_SCALES             # a base scale at its position: declared as such
+            base_scales = encoding3d.model.BASE_SCALES             # a base scale at its position: declared as such
             declared = names[scale] if names[scale] in base_scales and base_scales.index(names[scale]) + 1 == int(scale) \
                 else None
-            entity_sets.append(fspm_tf.EntitySet(names[scale], columns=columns, rank=int(scale), scale=declared))
+            entity_sets.append(encoding3d.EntitySet(names[scale], columns=columns, rank=int(scale), scale=declared))
     derived = set(ds.derived())
     for table in entity_sets + relations + ([scalars] if scalars is not None else []):
         _declare(table, metadata, standard_names, derived)
         for column in ("isanchor", "scale"):
             if column in table.columns and column not in table.variables:
-                table.variables[column] = fspm_tf.Variable(unit="1", kind="descriptor", role="setting",
+                table.variables[column] = encoding3d.Variable(unit="1", kind="descriptor", role="setting",
                                                            description=f"metafspm: the MPG property {column}")
         for column in LINK_COLUMNS:
             if column in table.columns:
-                table.variables[column] = fspm_tf.Variable(
+                table.variables[column] = encoding3d.Variable(
                     unit="1", kind="descriptor", role="setting",
                     description={"metafspm_complex": "metafspm: the MPG's own complex of the vertex (-1: none)",
                                  "metafspm_parent": "metafspm: the MPG's own parent of the vertex, at any scale "
@@ -553,7 +553,7 @@ def _mpg_data_structure(identifier: str, ds, metadata: dict, standard_names: dic
                                  "metafspm_edge_type": "metafspm: the MPG's edge type (0 none, 1 '/', 2 '<', "
                                                        "3 '+')"}[column])
     meshes = _meshes(ds, entity_sets, scale_of, names, components, display_meshes) if geometry else []
-    return fspm_tf.DataStructure(identifier, kind="graph", entity_sets=entity_sets, relations=relations,
+    return encoding3d.DataStructure(identifier, kind="graph", entity_sets=entity_sets, relations=relations,
                                  scalars=scalars, meshes=meshes, platform=PLATFORM, model="MPGDataStructure",
                                  extras={EXTRAS: extras})
 
@@ -590,7 +590,7 @@ def _scalar_table(ds, extras: dict):
         columns[name] = np.asarray(values).reshape((1,) + np.shape(values))
         extras["variables"][name] = dict(_json_meta(ds._variable_meta().get(name, {})), location="scalar",
                                          **({"encoding": encoding} if encoding else {}))
-    return _fspm_tf().Table("scalars", columns=columns) if columns else None
+    return _encoding3d().Table("scalars", columns=columns) if columns else None
 
 
 def _anchor_and_empty_properties(g, anchors: set) -> dict:
@@ -656,7 +656,7 @@ def _mesh_of(ds, entity_sets: list, scale_of: dict, names: dict, name: str, tria
     """The mesh of *triangles*, owned by the nodes of *ds* (a DataStructure, or a view of it at a coarse location:
     an anatomy-mode plant's SubOrgans), each vertex with the rows of its owner and of its owner's containing
     entities."""
-    fspm_tf = _fspm_tf()
+    encoding3d = _encoding3d()
     sets = {entity_set.name: entity_set for entity_set in entity_sets}
     node_ids = np.asarray(ds.entity_ids("node"), dtype=np.int64)
     owners = np.repeat(triangles.owner, 3)
@@ -674,13 +674,13 @@ def _mesh_of(ds, entity_sets: list, scale_of: dict, names: dict, name: str, tria
         known = entity >= 0
         rows[known] = _rows_of(sets[set_name].columns["id"], entity_ids[entity[known]])
         feature_rows[set_name] = rows
-    return fspm_tf.Mesh(name, positions=triangles.vertices.reshape(-1, 3), feature_rows=feature_rows)
+    return encoding3d.Mesh(name, positions=triangles.vertices.reshape(-1, 3), feature_rows=feature_rows)
 
 
 # ── Grids → data structures ────────────────────────────────────────────────
 
 def _grid_data_structure(identifier: str, ds, metadata: dict, standard_names: dict):
-    fspm_tf = _fspm_tf()
+    encoding3d = _encoding3d()
     adaptive = isinstance(ds, AdaptiveGridDataStructure)
     extras = {"class": type(ds).__name__, "construction": ds._construction(), "variables": {},
               "aliases": ds.aliases()}
@@ -706,18 +706,18 @@ def _grid_data_structure(identifier: str, ds, metadata: dict, standard_names: di
             target[column] = values
             extras["variables"][name] = dict(_json_meta(ds._variable_meta().get(name, {})), location=location,
                                              **({"column": column} if column != name else {}))
-    cell_set = fspm_tf.EntitySet("cell", columns=cells)
-    face_relation = fspm_tf.Relation("face", columns=faces, source_set="cell", target_set="cell")
-    scalar_table = fspm_tf.Table("scalars", columns=scalars) if scalars else None
+    cell_set = encoding3d.EntitySet("cell", columns=cells)
+    face_relation = encoding3d.Relation("face", columns=faces, source_set="cell", target_set="cell")
+    scalar_table = encoding3d.Table("scalars", columns=scalars) if scalars else None
     derived = set(ds.derived())
     for table in [cell_set, face_relation] + ([scalar_table] if scalar_table is not None else []):
         _declare(table, metadata, standard_names, derived)
     construction = ds._construction()
-    grid = fspm_tf.Grid(kind="adaptive" if adaptive else "regular", shape=tuple(construction["shape"]),
+    grid = encoding3d.Grid(kind="adaptive" if adaptive else "regular", shape=tuple(construction["shape"]),
                         origin=tuple(construction["origin"]), spacing=tuple(construction["dx"]),
                         axes=tuple(ds.axes), periodic=tuple(bool(p) for p in construction["periodic"]),
                         z_up=False, max_level=int(construction.get("max_level", 0)), cells="cell")
-    return fspm_tf.DataStructure(identifier, kind="adaptive_grid" if adaptive else "regular_grid",
+    return encoding3d.DataStructure(identifier, kind="adaptive_grid" if adaptive else "regular_grid",
                                  entity_sets=[cell_set], relations=[face_relation] if edges.size else [],
                                  scalars=scalar_table, grid=grid, platform=PLATFORM, model=type(ds).__name__,
                                  extras={EXTRAS: extras})
@@ -729,7 +729,7 @@ def to_frame(data_structures: dict, components: dict = None, mappings: dict = No
              step: int = 0, time_unit="s", geometry: bool = True, standard_names: dict = None,
              scales=None, entities=None, variables=None, plant_names: dict = None, display_meshes: bool = True):
     """
-    The fspm-TF frame of *data_structures* ({id: DataStructure}; ids are identifiers), their variables declared
+    The encoding3d frame of *data_structures* ({id: DataStructure}; ids are identifiers), their variables declared
     by *components* ({id: [components]}), with *mappings* ({name: (CrossMapping, source id, target id)}), at *time*
     (in *time_unit*: "s", "min", "h", "d" or its number of seconds, as as_forcing's) and *step*. *geometry*: the
     MPGDataStructures' triangles as meshes; *display_meshes*: with them, the components' display_triangles() (shapes
@@ -738,14 +738,14 @@ def to_frame(data_structures: dict, components: dict = None, mappings: dict = No
 
     For logging, *scales*, *entities* and *variables* filter what is written (see filter_frame), each a value for
     every DataStructure or a {id: value} dict; *plant_names*: {id: {plant name: Plant vid}}, to give *entities* by
-    plant name. A filtered frame is a valid fspm-TF file, but from_frame does not rebuild it.
+    plant name. A filtered frame is a valid encoding3d file, but from_frame does not rebuild it.
     """
-    fspm_tf = _fspm_tf()
-    from openalea.fspm_tf import vocabulary
+    encoding3d = _encoding3d()
+    from openalea.encoding3d import vocabulary
     names = dict(vocabulary.platform_names("metafspm"), **(standard_names or {}))
     names = {key: value for key, value in names.items() if value}
     from openalea.metafspm.coupling.forcings import time_unit_label
-    frame = fspm_tf.Frame(time=float(time), time_unit=time_unit_label(time_unit), step=int(step),
+    frame = encoding3d.Frame(time=float(time), time_unit=time_unit_label(time_unit), step=int(step),
                           writer={"platform": PLATFORM}, vocabulary_version=vocabulary.version())
     for identifier, ds in data_structures.items():
         metadata = _declarations((components or {}).get(identifier, ()))
@@ -763,7 +763,7 @@ def to_frame(data_structures: dict, components: dict = None, mappings: dict = No
         source_set = frame.data_structure(source)
         source_name = (source_set.entity_sets[0].name if not isinstance(source_ds, MPGDataStructure)
                        else _scale_names(source_ds.structure)[_location_scales(source_ds)["node"]])
-        frame.mappings.append(fspm_tf.Mapping(
+        frame.mappings.append(encoding3d.Mapping(
             name, source=(source, source_name), target=(target, "cell"), method=getattr(mapping, "method", None),
             columns={"source": np.asarray(source_ds.entity_ids("node"), dtype=np.int64)[rows],
                      "target": np.asarray(target_ds.entity_ids("cell"), dtype=np.int64)[cells],
@@ -811,15 +811,15 @@ def scene_to_frame(scene, geometry: bool = True, standard_names: dict = None, da
 
 def export_frame(path: str, data_structures: dict, **options) -> None:
     """Write to_frame(data_structures, \\*\\*options) to the .glb file *path*."""
-    _fspm_tf().write(path, to_frame(data_structures, **options))
+    _encoding3d().write(path, to_frame(data_structures, **options))
 
 
 def export_scene(path: str, scene, **options) -> None:
     """Write scene_to_frame(scene, \\*\\*options) to the .glb file *path*."""
-    _fspm_tf().write(path, scene_to_frame(scene, **options))
+    _encoding3d().write(path, scene_to_frame(scene, **options))
 
 
-# ── Views (fspm-TF §8.1: the layers ParaView shows) ─────────────────────────
+# ── Views (encoding3d §8.1: the layers ParaView shows) ─────────────────────────
 
 ROOT_LABELS = ("RootSegment", "RootApex")                       # the vocabulary's root SubOrgan labels
 SHOOT_LABELS = ("LeafElement", "StemElement", "HiddenElement")  # its shoot ones
@@ -861,7 +861,7 @@ def _draws_triangles(ds) -> bool:
 def _plant_layers(data_structure, ds, declared: dict) -> list:
     """A population's default layers: its shoot mesh coloured by an Organ variable, its root segments as tubes on
     radius coloured by a SubOrgan variable, each component's display mesh (e.g. sections) hidden."""
-    from openalea.fspm_tf import views
+    from openalea.encoding3d import views
     sets = {entity_set.name: entity_set for entity_set in data_structure.entity_sets}
     elements = sets.get("SubOrgan")
     if elements is None:
@@ -901,7 +901,7 @@ def _plant_layers(data_structure, ds, declared: dict) -> list:
 
 def default_views(scene, frame=None) -> dict:
     """
-    The default views of a Scene's frames (fspm-TF's views.json, §8.1), one configuration "default":
+    The default views of a Scene's frames (encoding3d's views.json, §8.1), one configuration "default":
 
     - per population: "<population> shoot", its mesh (the geometry provider's triangles) where the SubOrgans are shoot
       elements, coloured by the first Organ variable its components declare (a state variable not a descriptor, else
@@ -931,14 +931,14 @@ def default_views(scene, frame=None) -> dict:
             layers.append({"name": data_structure.id, "source": {"data_structure": data_structure.id, "kind": "grid"},
                            "color_by": {"entity_set": cells.name, "variable": variable} if variable else None,
                            "opacity": 0.3})
-    return {"fspm_tf_views": 1, "active": "default", "configurations": {"default": {"layers": layers}}}
+    return {"encoding3d_views": 1, "active": "default", "configurations": {"default": {"layers": layers}}}
 
 
 def write_views(path: str, views: dict) -> None:
-    """Write *views* (fspm-TF's views.json, §8.1) to *path*, checked against fspm-TF's schema."""
-    _fspm_tf()
-    from openalea.fspm_tf import views as fspm_tf_views
-    fspm_tf_views.write_views(path, views)
+    """Write *views* (encoding3d's views.json, §8.1) to *path*, checked against encoding3d's schema."""
+    _encoding3d()
+    from openalea.encoding3d import views as encoding3d_views
+    encoding3d_views.write_views(path, views)
 
 
 # ── Logging: filtered frames ────────────────────────────────────────────────
@@ -962,7 +962,7 @@ def filter_frame(frame, scales=None, entities=None, variables=None, plant_names:
       variables:  names of the variables kept (the structure's columns always are), in every table.
 
     Parents outside what is kept become none, relations and mappings keep the pairs whose ends are kept, meshes the
-    triangles of kept entities. The result is a valid fspm-TF frame, marked as filtered: from_frame does not rebuild it.
+    triangles of kept entities. The result is a valid encoding3d frame, marked as filtered: from_frame does not rebuild it.
     """
     for data_structure in frame.data_structures:
         wanted = {"entities": _for(entities, data_structure.id), "scales": _for(scales, data_structure.id),
@@ -1036,7 +1036,7 @@ def _keep_entities(data_structure, ids: list) -> None:
 
 def _mesh_rows(mesh, old_rows: dict):
     """*mesh* with the triangles of the kept entities, its feature rows renumbered (None: no triangle left)."""
-    fspm_tf = _fspm_tf()
+    encoding3d = _encoding3d()
     if mesh.indices is not None:
         raise ValueError(f"mesh '{mesh.name}': indexed meshes are not filtered")
     renumber = {}
@@ -1054,7 +1054,7 @@ def _mesh_rows(mesh, old_rows: dict):
         return None
     rows = {name: np.where(values[keep] >= 0, renumber[name][np.maximum(values[keep], 0)], NO_ID)
             if name in renumber else values[keep] for name, values in mesh.feature_rows.items()}
-    return fspm_tf.Mesh(mesh.name, positions=mesh.positions[keep], feature_rows=rows,
+    return encoding3d.Mesh(mesh.name, positions=mesh.positions[keep], feature_rows=rows,
                         display={name: values[keep] for name, values in mesh.display.items()},
                         display_sources=dict(mesh.display_sources))
 
@@ -1138,7 +1138,7 @@ def from_frame(frame) -> dict:
 
 def import_frame(path: str) -> dict:
     """from_frame of the .glb file *path*."""
-    return from_frame(_fspm_tf().read(path))
+    return from_frame(_encoding3d().read(path))
 
 
 def _mpg_from(data_structure, extras: dict):
@@ -1167,7 +1167,7 @@ def _mpg_from(data_structure, extras: dict):
     labels, edge_types = [], {}
     for name, table in tables.items():
         codes = extras["label_codes"].get(name, {})
-        column = "relation" if isinstance(table, _fspm_tf().Relation) else "label"
+        column = "relation" if isinstance(table, _encoding3d().Relation) else "label"
         if column in table.columns:
             named = table.columns[column] != "_none"
             labels.append((table.columns["id"][named],
@@ -1199,7 +1199,7 @@ def _mpg_from(data_structure, extras: dict):
         else:
             _merge(g, property_name, "dict", values)
     for name, table in tables.items():
-        if isinstance(table, _fspm_tf().Relation):
+        if isinstance(table, _encoding3d().Relation):
             _merge_arrays(g, "n_id_a", [(table.columns["id"], table.columns["source"].astype(np.float64))])
             _merge_arrays(g, "n_id_b", [(table.columns["id"], table.columns["target"].astype(np.float64))])
     for property_name, entry in extras.get("anchor_properties", {}).items():

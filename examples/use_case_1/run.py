@@ -14,7 +14,7 @@ first days are those of the seed's roots and the hidden shoot (no light, no tran
 The weather (weather()): a clear day's PAR (Caribu's clear_day_PAR), the air's temperature and humidity in a daily
 course, a constant CO2 and wind, the soil at a constant temperature, a rain of 5 mm in the afternoon of the second
 day. The outputs (with a folder): the SceneRecorder's summaries, the water balance (water_balance.csv), and an
-fspm-TF frame every 6 hours with its views (frames/views.json, the default layers: the shoot, the roots, the soil,
+encoding3d frame every 6 hours with its views (frames/views.json, the default layers: the shoot, the roots, the soil,
 the anatomies hidden), the sections' drawings in the frames of every 24 hours and the last, a checkpoint every day (the
 last two kept: Scene.load_checkpoint resumes the run from one), and run.log (the lines printed). The tables are
 appended to after each hour and run.json shows the run's progress: both can be read while it runs.

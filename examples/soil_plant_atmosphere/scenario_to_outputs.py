@@ -19,7 +19,7 @@ import sys
 
 import pandas as pd
 
-from openalea import fspm_tf
+from openalea import encoding3d
 from openalea.metafspm.scene.population import Planting, planting
 from openalea.metafspm.scene.recorder import SceneRecorder
 from openalea.metafspm.scene.scenarios import parameter_table, read_scenarios, variants
@@ -53,8 +53,8 @@ def read_back(folder: str) -> dict:
         status = json.load(file)
     plant = pd.read_csv(os.path.join(folder, "Plant", "SeedlingWater", "summaries.csv"))
     soil = pd.read_csv(os.path.join(folder, "Soil", "Soil", "summaries.csv"))
-    frames = fspm_tf.read_index(os.path.join(folder, "frames", "scene.fspm.json"))["frames"]
-    last = fspm_tf.read(frames[-1]["path"])
+    frames = encoding3d.read_index(os.path.join(folder, "frames", "scene.fspm.json"))["frames"]
+    last = encoding3d.read(frames[-1]["path"])
     return dict(status=status, plant=plant.assign(hour=plant["time"] / 3600.),
                 soil=soil.assign(hour=soil["time"] / 3600.), frames=frames, last_frame=last)
 

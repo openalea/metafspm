@@ -148,7 +148,7 @@ class GrassBRIDGES(CompositeModel):
 - **The SceneRecorder replaces fspm-utility's Logger** (`Scene(..., recorder=SceneRecorder(folder, ...))`):
   - `summaries.csv` (sums and means per plant, and per environment grid in `Soil/` or `Atmosphere/`) replaces the
     summed CSV;
-  - `segments.csv` for the `segment_plants` and the fspm-TF frames replace the NetCDF raw logs and the MTG pickles;
+  - `segments.csv` for the `segment_plants` and the encoding3d frames replace the NetCDF raw logs and the MTG pickles;
   - `run.json` (status, timing) and `scenario.json` replace the simulation log and the saved scenario;
   - `checkpoints/` restart a run;
   - `tables={name: function(scene)}` adds a package's own summary.

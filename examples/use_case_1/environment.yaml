@@ -1,6 +1,6 @@
 # Use case 1: a wheat plant in its soil and its light (metafspm, ArchiSimple, Adel, GRANAP, MECHA, CNW-Grass's gas
 # exchange, Caribu, and this example's Richards soil). Create it from this folder, the repositories cloned side by
-# side in one parent folder (metafspm, fspm-TF, archisimple, adel, caribu, GRANAP, MECHA-dev, cnwgrass), each on
+# side in one parent folder (metafspm, encoding3d, archisimple, adel, caribu, GRANAP, MECHA-dev, cnwgrass), each on
 # its metafspm branch:
 #
 #     mamba env create -f environment.yaml
@@ -20,14 +20,14 @@ channel_priority: flexible
 dependencies:
   - python >=3.11,<3.14     # GRANAP needs 3.11; openalea.plantgl (via openalea.mtg) has no 3.14 build
   - pip
-  # metafspm and fspm-TF
+  # metafspm and encoding3d
   - openalea.mtg
   - numpy
   - scipy >=1.13,<1.18      # sparse solvers; GRANAP's vendored Qhull (Voronoi, cKDTree)
   - pandas
   - numba
   - pyyaml
-  - jsonschema              # openalea.fspm_tf's validation
+  - jsonschema              # openalea.encoding3d's validation
   # GRANAP (and MECHA's sections): the geometry stack pinned as in GRANAP, whose golden regression suite pins an
   # exact cell census that another GEOS build shifts
   - geos =3.14.1
@@ -48,7 +48,7 @@ dependencies:
     # cv2 (GRANAP's geometry_collection). From pip rather than conda: every conda opencv 4.13 build needs icu 78,
     # while openalea.plantgl (required by openalea.mtg) is built on Qt 5 / icu 75, so the solve never ends.
     - "opencv-python-headless==4.13.0.*"
-    - "-e ../../../fspm-TF"      # openalea.fspm_tf
+    - "-e ../../../encoding3d"      # openalea.encoding3d
     - "-e ../.."                 # openalea.metafspm (this repository)
     - "-e ../../../archisimple"  # openalea.archisimple: the roots
     - "-e ../../../adel"         # openalea.adel (the port, branch to_metafspm): the shoot

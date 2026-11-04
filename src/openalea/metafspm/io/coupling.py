@@ -1,5 +1,5 @@
 """
-metafspm in an fspm-TF coupling session (openalea.fspm_tf.coupling, specification §11): another platform's model
+metafspm in an encoding3d coupling session (openalea.encoding3d.coupling, specification §11): another platform's model
 as a metafspm component.
 
 A RemoteComponent computes nothing. Its state variables are the remote model's outputs, read from the session at
@@ -36,7 +36,7 @@ import numpy as np
 
 from openalea.metafspm.coupling.component import StructuralComponent
 from openalea.metafspm.data_structure.configs import PropsConfig
-from openalea.metafspm.io.fspm_tf import _KINDS, _location_scales, _scale_names, to_frame, ucum_unit
+from openalea.metafspm.io.encoding3d import _KINDS, _location_scales, _scale_names, to_frame, ucum_unit
 
 _EDGE_SYMBOLS = {"successor": "<", "branch": "+"}
 _NO_ID = -1
@@ -44,9 +44,9 @@ _NO_ID = -1
 
 def _coupling():
     try:
-        from openalea.fspm_tf import coupling
+        from openalea.encoding3d import coupling
     except ImportError:
-        raise ImportError("openalea.fspm_tf (with its coupling) is not installed: pip install -e ../fspm-TF") from None
+        raise ImportError("openalea.encoding3d (with its coupling) is not installed: pip install -e ../encoding3d") from None
     return coupling
 
 
@@ -58,8 +58,8 @@ class RemoteComponent(StructuralComponent):
     data_structure_id = "plant"         # the session's data structure this DataStructure is
     platform = "metafspm"
     rights = {}                         # {scale name: "owns" | "refines" | "follows"}
-    links = ()                          # the links proposed (fspm_tf.coupling.Link)
-    endpoint = None                     # the session (default: the environment's FSPM_TF_ENDPOINT)
+    links = ()                          # the links proposed (encoding3d.coupling.Link)
+    endpoint = None                     # the session (default: the environment's ENCODING3D_ENDPOINT)
     timeout = 600.                      # seconds waited for a turn
 
     # ── what it declares ───────────────────────────────────────────────────────────
@@ -75,7 +75,7 @@ class RemoteComponent(StructuralComponent):
 
     def declaration(self):
         coupling = _coupling()
-        from openalea.fspm_tf import vocabulary
+        from openalea.encoding3d import vocabulary
         standard_names = {key: value for key, value in vocabulary.platform_names("metafspm").items() if value}
         declaration = coupling.Declaration(self.participant, self.platform)
         for name, rights in self.rights.items():
@@ -122,7 +122,7 @@ class RemoteComponent(StructuralComponent):
         return session_id - offset if offset <= session_id < offset + _coupling().ID_COUNT else None
 
     def _send(self) -> None:
-        from openalea import fspm_tf as codec
+        from openalea import encoding3d as codec
         ds = self.data_structure
         inputs = [name for name, (role, _) in self._variables().items() if role == "input"]
         frame = to_frame({self.data_structure_id: ds}, geometry=False, variables=inputs)

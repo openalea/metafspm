@@ -112,7 +112,7 @@ The solvers are chosen by key in `graph_system(solver=...)`: `"newton"`, `"newto
 ## Exchange with other platforms
 
 ```{eval-rst}
-.. automodule:: openalea.metafspm.io.fspm_tf
+.. automodule:: openalea.metafspm.io.encoding3d
    :members: to_frame, scene_to_frame, export_frame, export_scene, from_frame, import_frame, filter_frame, ucum_unit,
              default_views, write_views
 

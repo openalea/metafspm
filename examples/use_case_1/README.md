@@ -174,5 +174,5 @@ What `run.py`'s run from the sowing shows (2026-11-04), the ports' gaps first:
   then Adel's ends' mean).
 - **Adel and ArchiSimple, a plant's stage.** The scenario's `start` (°Cd) advances Adel's shoot only: a shoot started
   at a few leaves has the roots of a seed; an older plant is a run resumed from a checkpoint.
-- **fspm-TF's design check** (`paraview/check_in_paraview.py --design`) looks for an anatomy layer named "Section";
+- **encoding3d's design check** (`paraview/check_in_paraview.py --design`) looks for an anatomy layer named "Section";
   metafspm's default views name it after its component (`WheatPlant GranapAnatomy`).

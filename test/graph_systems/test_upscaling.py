@@ -79,7 +79,7 @@ def test_an_upscaled_variable_declares_what_it_is_the_equivalent_of():
 
 def test_the_frames_carry_the_upscaling():
     from openalea.metafspm.data_structure.data_api import ArrayDataStructure
-    from openalea.metafspm.io.fspm_tf import to_frame
+    from openalea.metafspm.io.encoding3d import to_frame
     grid = ArrayDataStructure(shape=(1,))
     component = RootSystem(data_structure=grid)
     frame = to_frame({"roots": grid}, components={"roots": [component]})

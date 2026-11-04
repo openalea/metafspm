@@ -60,7 +60,7 @@ dependencies = [
     "numba",
     "pandas",
     "scipy",
-    "openalea.fspm_tf",   # the fspm-TF exchange format (io.fspm_tf); in development: pip install -e ../fspm-TF
+    "openalea.encoding3d",   # the encoding3d exchange format (io.encoding3d); in development: pip install -e ../encoding3d
 ]
 
 [project.optional-dependencies]

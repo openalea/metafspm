@@ -1,7 +1,7 @@
 """Object variables in frames: tables (pandas DataFrames, e.g. a plant's tables) written as JSON and read back."""
 import pandas as pd
 
-from openalea.metafspm.io.fspm_tf import _decoded, _encoded
+from openalea.metafspm.io.encoding3d import _decoded, _encoded
 
 
 def test_a_table_round_trips():

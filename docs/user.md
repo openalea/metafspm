@@ -584,7 +584,7 @@ scene = Scene.from_scenario(scenario, stand(...), Wheat, environment=[RhizoSoil,
   - `Soil/<Model>/summaries.csv` and `Atmosphere/<Model>/summaries.csv`: each environment model's grid, by its
     `compartment` attribute;
   - your own tables, `tables={name: function(scene) -> row}`, as `<name>.csv`;
-  - `frames/` (fspm-TF, every `frame_period` steps) and `checkpoints/step_<n>` (every `checkpoint_period`, the last
+  - `frames/` (encoding3d, every `frame_period` steps) and `checkpoints/step_<n>` (every `checkpoint_period`, the last
     `keep_checkpoints` kept).
 
   Each output is switched on its own (`summaries=False`, `frame_period=None`, ...); the initial state is recorded
@@ -602,8 +602,8 @@ scene = Scene.from_scenario(scenario, stand(...), Wheat, environment=[RhizoSoil,
   descriptions and declared bounds. `variants(base, ranges, design="grid" | "one_at_a_time" | "sampling",
   declared=components)` builds scenarios within the declared `min_value` / `max_value`. `docs/tutorial.md` goes
   through the whole path.
-- **Exchange with other platforms.** `openalea.metafspm.io.fspm_tf` writes a scene, or chosen DataStructures, as an
-  [fspm-TF](https://github.com/openalea/fspm-TF) frame: one glTF file that CPlantBox, GroIMP or VirtualPlantLab can
+- **Exchange with other platforms.** `openalea.metafspm.io.encoding3d` writes a scene, or chosen DataStructures, as an
+  [encoding3d](https://github.com/openalea/encoding3d) frame: one glTF file that CPlantBox, GroIMP or VirtualPlantLab can
   read, and that glTF viewers display. It holds each MPG scale as a table of vertices (ids, complex, parent, edge
   type), the variables and MPG properties as columns with their declared units, kinds and standard names, the soil
   grids, the mappings and the geometry: the DataStructure's triangles, and the shapes a component draws for display
@@ -612,7 +612,7 @@ scene = Scene.from_scenario(scenario, stand(...), Wheat, environment=[RhizoSoil,
   components={id: [...]})` writes a frame. `import_frame(path)` rebuilds the DataStructures: the same MPG, the
   same variables, bit for bit, from which a simulation continues as from the original. `SceneRecorder(folder,
   frame_period=24)` records a frame at the start and every 24 steps, in `folder/frames` with its index
-  `scene.fspm.json`, which ParaView's fspm-TF reader plays as time steps. A frame is full by default: every scale,
+  `scene.fspm.json`, which ParaView's encoding3d reader plays as time steps. A frame is full by default: every scale,
   every row, every variable (what another platform reads, and a complete log), with the triangles light models get;
   the components' display shapes (e.g. GRANAP's sections), drawings only, are a recording choice:
   `display_period=96` writes them every 96 steps (a multiple of `frame_period`) and in the last frame, `None` (the
@@ -625,11 +625,11 @@ scene = Scene.from_scenario(scenario, stand(...), Wheat, environment=[RhizoSoil,
   `variables=`. Each is a value for every DataStructure or a `{id: value}` dict. A light log is such an explicit
   choice, e.g. `frame_options={"scales": {"Wheat": ["Plant", "Axis", "Organ", "SubOrgan"]}}` leaves out the
   anatomies' rows (the scales below SubOrgan) of population `Wheat`; never a default. A filtered frame is a
-  smaller, valid fspm-TF file, for outputs only: `import_frame` refuses to rebuild it. It uses `openalea.fspm_tf`, a
-  dependency of metafspm (in development, installed from the fspm-TF clone).
+  smaller, valid encoding3d file, for outputs only: `import_frame` refuses to rebuild it. It uses `openalea.encoding3d`, a
+  dependency of metafspm (in development, installed from the encoding3d clone).
 - **Frames ready to look at.** `SceneRecorder(folder, frame_period=24, frame_views="default")` also writes
-  `frames/views.json` at the first frame: fspm-TF's views, the layers ParaView's fspm-TF reader shows, one block each,
-  instead of one block per DataStructure. The default layers (`io.fspm_tf.default_views(scene)`) are, per population,
+  `frames/views.json` at the first frame: encoding3d's views, the layers ParaView's encoding3d reader shows, one block each,
+  instead of one block per DataStructure. The default layers (`io.encoding3d.default_views(scene)`) are, per population,
   its shoot mesh (where its SubOrgans are shoot elements) coloured by the first Organ variable its components declare
   (a state variable that is not a descriptor, else an input), its root segments as tubes on `radius` coloured by the
   first such SubOrgan variable, and each component's display shapes (e.g. sections, in the first frame with
@@ -638,10 +638,10 @@ scene = Scene.from_scenario(scenario, stand(...), Wheat, environment=[RhizoSoil,
   takes your own views, a dict or the path of a views file (e.g. one saved from ParaView): each name a layer gives
   (data structure, mesh, entity set, variable) is checked against the first frame, with a warning for each one it
   lacks; a layer is empty in the frames that lack what it shows. `write_views(path, views)` writes views, checked
-  against fspm-TF's schema. In ParaView, the fspm-TF macros make each layer its own pipeline item and save your changes back, and "Select at scale" grows a picked
+  against encoding3d's schema. In ParaView, the encoding3d macros make each layer its own pipeline item and save your changes back, and "Select at scale" grows a picked
   element to its plant, axis, organ or segment with everything it contains (a segment's section shown even when the
-  sections' layer is hidden), isolated in the view or in a panel of its own (fspm-TF's `doc/using.md`, "Views").
-- **Running with another platform's model.** In an fspm-TF coupling session (fspm-TF's coordinator, `fspm-tf
+  sections' layer is hidden), isolated in the view or in a panel of its own (encoding3d's `doc/using.md`, "Views").
+- **Running with another platform's model.** In an encoding3d coupling session (encoding3d's coordinator, `encoding3d
   couple`, runs models of several platforms step by step), `openalea.metafspm.io.coupling.RemoteComponent` stands for
   the other platform's model: a component computing nothing, whose state variables are that model's outputs and whose
   inputs are sent to it. A subclass declares them as any component does, with `rights` (per scale: `"owns"`, metafspm
@@ -679,7 +679,7 @@ def _root_system_conductance(self, conductance, soil_conductance, collar_kind):
 ```
 
 - **`upscaling(of=, law=, protocol=, references=)`** is metadata (`law`: `"sum"`, `"mean"`, `"weighted_mean"`,
-  `"series"` or `"network"`). `declarations()` lists it (column `upscaling`), the fspm-TF frames carry it.
+  `"series"` or `"network"`). `declarations()` lists it (column `upscaling`), the encoding3d frames carry it.
 - **`solve.network.equivalent_conductance(view, edge_conductance, sources, sinks, source_conductance=)`**: the
   conductance of a network between two node sets at a unit potential difference, and each source's inflow (one
   sparse solve; Robin sources with `source_conductance`). It has no physics: the model chooses the protocol.

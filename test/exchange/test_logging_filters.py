@@ -1,23 +1,23 @@
-"""Filtered fspm-TF frames, for logging (scales=, entities=, variables=, data_structures=): smaller, still valid
-fspm-TF files, which from_frame refuses to rebuild."""
+"""Filtered encoding3d frames, for logging (scales=, entities=, variables=, data_structures=): smaller, still valid
+encoding3d files, which from_frame refuses to rebuild."""
 from dataclasses import dataclass
 
 import numpy as np
 import pytest
 
-from openalea import fspm_tf
-from openalea.fspm_tf.validate import validate_bytes, validate_sequence
+from openalea import encoding3d
+from openalea.encoding3d.validate import validate_bytes, validate_sequence
 
 from openalea.metafspm.coupling.component import state_variable
 from openalea.metafspm.data_structure.configs import ScalesConfig as scales
 from openalea.metafspm.data_structure.data_api import ArrayDataStructure, MPGDataStructure
-from openalea.metafspm.io.fspm_tf import filter_frame, from_frame, scene_to_frame, to_frame
+from openalea.metafspm.io.encoding3d import filter_frame, from_frame, scene_to_frame, to_frame
 from openalea.metafspm.scene.scene import Scene, SceneRecorder
 
 from growth import DOC, RootGrowthProbe
 from layered_anatomy import make_layered_anatomy, wiring
 from scene_doubles import DT, RootPopulation, SceneSoil, Seedlings, doubles_planting, soil_translator
-from test_fspm_tf import _models, _population, _steps
+from test_encoding3d import _models, _population, _steps
 
 
 @dataclass
@@ -43,7 +43,7 @@ def _plants():
 
 
 def _valid(frame) -> bytes:
-    data = fspm_tf.to_bytes(frame)
+    data = encoding3d.to_bytes(frame)
     report = validate_bytes(data)
     assert report.ok, str(report)
     return data
@@ -124,7 +124,7 @@ def test_a_filtered_frame_is_not_rebuilt():
     ds, components = _plants()
     frame = to_frame({"plants": ds}, components={"plants": components}, variables=["length"])
     with pytest.raises(ValueError, match="filtered, for logging"):
-        from_frame(fspm_tf.from_bytes(_valid(frame)))
+        from_frame(encoding3d.from_bytes(_valid(frame)))
     with pytest.raises(ValueError, match="no entity"):
         filter_frame(to_frame({"plants": ds}), entities=[10 ** 9])
 
@@ -140,7 +140,7 @@ def test_a_scene_logs_filtered_frames(tmp_path):
     scene.run()
     index = str(tmp_path / "log" / "frames" / "scene.fspm.json")
     assert validate_sequence(index).ok
-    frame = fspm_tf.read(str(tmp_path / "log" / "frames" / "frame_000002.glb"))
+    frame = encoding3d.read(str(tmp_path / "log" / "frames" / "frame_000002.glb"))
     assert [data_structure.id for data_structure in frame.data_structures] == ["RootPopulation"]
     plants = frame.data_structures[0].entity_set("Plant")
     names = scene.populations[0].plant_names()

@@ -1,4 +1,4 @@
-"""The scene's frames (SceneRecorder(frame_period=)): the initial state and every frame_period steps, a valid fspm-TF
+"""The scene's frames (SceneRecorder(frame_period=)): the initial state and every frame_period steps, a valid encoding3d
 sequence whose frames rebuild the scene's DataStructures as they were; a restored scene carries on its index."""
 import json
 import os
@@ -6,11 +6,11 @@ import os
 import numpy as np
 import pytest
 
-from openalea import fspm_tf
-from openalea.fspm_tf.validate import validate_sequence
+from openalea import encoding3d
+from openalea.encoding3d.validate import validate_sequence
 
 from openalea.metafspm.coupling.choregrapher import Choregrapher
-from openalea.metafspm.io.fspm_tf import from_frame
+from openalea.metafspm.io.encoding3d import from_frame
 from openalea.metafspm.scene.scene import Scene, SceneRecorder
 
 from scene_doubles import DT, RootPopulation, SceneSoil, Seedlings, doubles_planting, soil_translator
@@ -38,7 +38,7 @@ def test_frames_at_the_start_and_every_period(tmp_path):
     assert os.listdir(out) == ["frames"] or set(os.listdir(out)) == {"frames", "run.json", "scenario.json"}  # no CSV
     report = validate_sequence(os.path.join(out, "frames", "scene.fspm.json"))
     assert report.ok, str(report)
-    last = from_frame(fspm_tf.read(os.path.join(out, "frames", frames[-1]["file"])))
+    last = from_frame(encoding3d.read(os.path.join(out, "frames", frames[-1]["file"])))
     for population in scene.populations:                  # the last frame is the scene now
         rebuilt = last[population.name]
         for name in population.data_structure.available_vars():

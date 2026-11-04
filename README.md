@@ -111,9 +111,9 @@ For a model built on MetaFSPM, see [Root_CyNAPS](https://github.com/GeraultTr/Ro
 
 ## Exchange with other platforms
 
-`openalea.metafspm.io.fspm_tf` writes scenes and DataStructures as [fspm-TF](https://github.com/openalea/fspm-TF)
+`openalea.metafspm.io.encoding3d` writes scenes and DataStructures as [encoding3d](https://github.com/openalea/encoding3d)
 files: one glTF file per time step, which CPlantBox, GroIMP or VirtualPlantLab can read, and ParaView displays with
-fspm-TF's reader plugin. A file holds:
+encoding3d's reader plugin. A file holds:
 
 - each MPG scale as a table, with every variable at its declared unit, kind and standard name;
 - the soil grids, the mappings between plants and soil;
@@ -123,16 +123,16 @@ fspm-TF's reader plugin. A file holds:
 the original.
 
 ```python
-from openalea.metafspm.io.fspm_tf import export_scene, import_frame
+from openalea.metafspm.io.encoding3d import export_scene, import_frame
 
 export_scene("scene.glb", scene)                         # one frame now
 data_structures = import_frame("scene.glb")              # {id: DataStructure}
 scene = Scene(..., recorder=SceneRecorder("outputs", frame_period=24))   # a frame every 24 steps, in outputs/frames
 ```
 
-fspm-TF's Python package, `openalea.fspm_tf`, is a dependency of metafspm. Until it is published, clone
-[fspm-TF](https://github.com/openalea/fspm-TF) next to metafspm; `conda/environment.yml` installs it from there
-(`pip install -e ../fspm-TF`).
+encoding3d's Python package, `openalea.encoding3d`, is a dependency of metafspm. Until it is published, clone
+[encoding3d](https://github.com/openalea/encoding3d) next to metafspm; `conda/environment.yml` installs it from there
+(`pip install -e ../encoding3d`).
 
 ## Code Structure
 

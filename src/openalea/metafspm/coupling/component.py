@@ -46,7 +46,7 @@ def upscaling(of, law: str = "network", protocol: str = "", references: str = ""
     "series", or "network": a solved network, not a reduction), the *protocol* that defines it (the conditions it is
     computed under, e.g. "uniform soil water potential at the epidermis, the collar's xylem potential fixed"), and
     its *references*. metafspm does not compute it: the model's step does (e.g. with solve.network's
-    equivalent_conductance). It is listed by declarations() and written in the fspm-TF frames' declarations, so that
+    equivalent_conductance). It is listed by declarations() and written in the encoding3d frames' declarations, so that
     an observation at the coarse scale can be told which model variable it measures.
     """
     of = (of,) if isinstance(of, str) else tuple(of)

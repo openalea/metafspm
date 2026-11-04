@@ -107,7 +107,7 @@ outputs/dry/
   forcings/air_water_potential.csv   the forcing, as given
   Plant/SeedlingWater/summaries.csv  one row per plant and step: the plant's state variables, summed or averaged
   Soil/Soil/summaries.csv            one row per step: the soil grid's state variables
-  frames/frame_000000.glb ...        the whole scene every 6 hours (fspm-TF), and their index scene.fspm.json
+  frames/frame_000000.glb ...        the whole scene every 6 hours (encoding3d), and their index scene.fspm.json
   checkpoints/step_000048/           the last checkpoint, to restart from
 ```
 
@@ -120,13 +120,13 @@ its `compartment` attribute. Every table has its time column, `time`, in s.
 ```python
 import json
 import pandas as pd
-from openalea import fspm_tf
+from openalea import encoding3d
 
 status = json.load(open("outputs/dry/run.json"))           # status["status"] == "finished", status["timing"]
 plant = pd.read_csv("outputs/dry/Plant/SeedlingWater/summaries.csv")
 soil = pd.read_csv("outputs/dry/Soil/Soil/summaries.csv")
-frames = fspm_tf.read_index("outputs/dry/frames/scene.fspm.json")["frames"]
-last = fspm_tf.read(frames[-1]["path"])                     # every variable of the plant and the soil, at 48 h
+frames = encoding3d.read_index("outputs/dry/frames/scene.fspm.json")["frames"]
+last = encoding3d.read(frames[-1]["path"])                     # every variable of the plant and the soil, at 48 h
 ```
 
 The script prints, for each scenario:
@@ -139,11 +139,11 @@ dry: finished after 48 steps in 1.5 s (the seedling 0.3 s, the soil 1.0 s)
 
 The dry air pulls more water through the seedling than the humid one, despite its stomata half closed.
 
-- **ParaView.** fspm-TF's reader plugin opens `frames/scene.fspm.json` and plays the frames as time steps.
+- **ParaView.** encoding3d's reader plugin opens `frames/scene.fspm.json` and plays the frames as time steps.
 - **Restart.** `Scene.restore("outputs/dry/checkpoints/step_000048", **the same arguments)` continues the run.
   The recorder then cuts its tables back to the checkpoint's time, so a run that went past it leaves no duplicate
   rows.
-- **Another platform.** `openalea.metafspm.io.fspm_tf.import_frame(path)` rebuilds the DataStructures from a frame,
+- **Another platform.** `openalea.metafspm.io.encoding3d.import_frame(path)` rebuilds the DataStructures from a frame,
   bit for bit.
 
 ## 5. Variants within the declared bounds

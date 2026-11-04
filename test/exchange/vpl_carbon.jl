@@ -1,8 +1,8 @@
-# The carbon model of test_coupling.py in VirtualPlantLab (PlantGraphs), as a participant of an fspm-TF coupling
-# session (FspmTF.jl): launched by the coordinator, it refines each of metafspm's root segments into two layers, grown
+# The carbon model of test_coupling.py in VirtualPlantLab (PlantGraphs), as a participant of an encoding3d coupling
+# session (encoding3d.jl): launched by the coordinator, it refines each of metafspm's root segments into two layers, grown
 # by a graph rewriting rule, and gives each layer a hexose concentration, (rank + 1) / (1 + its segment's structural
-# mass), computed on the graph by a query. Its graph is sent with FspmTF's PlantGraphs extension (from_graph).
-using FspmTF
+# mass), computed on the graph by a query. Its graph is sent with encoding3d's PlantGraphs extension (from_graph).
+using encoding3d
 using PlantGraphs
 using ZMQ
 
@@ -57,7 +57,7 @@ for turn in turns(participant)
     # the layers as the session's entities: ids in the participant's range, their segment as complex
     layers = entity_set(from_graph(tissue; id = "plant", entity_set = "Layer", rank = 7,
                                    keep = node -> node isa Layer), "Layer")
-    columns = FspmTF.Columns(
+    columns = encoding3d.Columns(
         "id" => layers.columns["id"] .+ offset,
         "complex" => Vector{Int64}(layers.columns["segment"]),
         "parent" => [parent == NO_ID ? NO_ID : parent + offset for parent in layers.columns["parent"]],

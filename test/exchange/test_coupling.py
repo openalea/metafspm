@@ -1,8 +1,8 @@
 """
-metafspm in an fspm-TF coupling session (openalea.metafspm.io.coupling): the root growth model coupled to a carbon
-model of another platform through a RemoteComponent, the session run by fspm-TF's coordinator.
+metafspm in an encoding3d coupling session (openalea.metafspm.io.coupling): the root growth model coupled to a carbon
+model of another platform through a RemoteComponent, the session run by encoding3d's coordinator.
 
-The remote carbon model here is a plain fspm-TF participant in a thread (any platform's would answer the same
+The remote carbon model here is a plain encoding3d participant in a thread (any platform's would answer the same
 messages): it refines each root segment into two layers, and gives each layer a hexose concentration from its
 segment's structural mass; the coordinator averages them back to the segments, the growth model's C_hexose_root.
 metafspm owns the plants down to the segments, and follows the layers (created in its MPG).
@@ -16,21 +16,21 @@ import pytest
 
 pytest.importorskip("zmq")
 
-from openalea import fspm_tf  # noqa: E402
-from openalea.fspm_tf.coupling import (Coordinator, Declaration, EntitySetSpec, Link, Participant,  # noqa: E402
+from openalea import encoding3d  # noqa: E402
+from openalea.encoding3d.coupling import (Coordinator, Declaration, EntitySetSpec, Link, Participant,  # noqa: E402
                                        VariableSpec)
 from openalea.metafspm.coupling.component import FunctionalComponent, input_variable, state_variable  # noqa: E402
 from openalea.metafspm.data_structure.configs import ScalesConfig as scales  # noqa: E402
 from openalea.metafspm.io.coupling import RemoteComponent  # noqa: E402
 
 from growth import DOC, RootGrowthProbe  # noqa: E402
-from test_fspm_tf import _population  # noqa: E402
+from test_encoding3d import _population  # noqa: E402
 
-NO_ID = fspm_tf.NO_ID
+NO_ID = encoding3d.NO_ID
 STEPS = 4
-# The command running Julia with FspmTF, PlantGraphs and ZMQ (e.g. "julia --project=env"): the carbon model in
+# The command running Julia with encoding3d, PlantGraphs and ZMQ (e.g. "julia --project=env"): the carbon model in
 # VirtualPlantLab (vpl_carbon.jl)
-JULIA = os.environ.get("FSPM_TF_JULIA")
+JULIA = os.environ.get("ENCODING3D_JULIA")
 VPL_CARBON = os.path.join(os.path.dirname(__file__), "vpl_carbon.jl")
 
 
@@ -88,8 +88,8 @@ def run_carbon(endpoint, log):
                    "label": np.array(["Layer"] * len(ids), dtype=object),
                    "hexose": np.array([hexose(layers[layer][1], np.nan_to_num(masses.get(layer, 0.)))
                                        for layer in ids])}
-        participant.send(fspm_tf.Frame(data_structures=[fspm_tf.DataStructure("plant", entity_sets=[
-            fspm_tf.EntitySet("Layer", rank=7, columns=columns)])], update=fspm_tf.Update("carbon", removed)))
+        participant.send(encoding3d.Frame(data_structures=[encoding3d.DataStructure("plant", entity_sets=[
+            encoding3d.EntitySet("Layer", rank=7, columns=columns)])], update=encoding3d.Update("carbon", removed)))
 
 
 def run_metafspm(endpoint_of, start_carbon, tmp_path, removal=True):
@@ -143,7 +143,7 @@ def run_metafspm(endpoint_of, start_carbon, tmp_path, removal=True):
     session.join(60)
     for thread in threads:
         thread.join(60)
-    record = fspm_tf.read_index(str(tmp_path / "record" / "scene.fspm.json"))
+    record = encoding3d.read_index(str(tmp_path / "record" / "scene.fspm.json"))
     assert [entry["step"] for entry in record["frames"]] == list(range(STEPS + 1))
     return log
 
@@ -163,7 +163,7 @@ def test_a_remote_model_as_a_component(transport, tmp_path):
     assert all(value > 0 for value in log[2].values())               # each layer's mass, copied from its segment
 
 
-@pytest.mark.skipif(not JULIA, reason="FSPM_TF_JULIA (Julia with FspmTF, PlantGraphs and ZMQ) is not set")
+@pytest.mark.skipif(not JULIA, reason="ENCODING3D_JULIA (Julia with encoding3d, PlantGraphs and ZMQ) is not set")
 @pytest.mark.parametrize("transport", sorted(ENDPOINTS))
 def test_virtualplantlab_as_the_carbon_model(transport, tmp_path):
     """The same coupling, the carbon model in VirtualPlantLab: its layers a PlantGraphs graph grown by a rule."""
@@ -215,8 +215,8 @@ def run_grower(endpoint, log):
                    "edge_type": np.array(["successor"] * len(new_ids), dtype=object),
                    "label": np.array(["RootSegment"] * len(new_ids), dtype=object),
                    "length": np.full(len(new_ids), 0.5)}
-        participant.send(fspm_tf.Frame(data_structures=[fspm_tf.DataStructure("plant", entity_sets=[
-            fspm_tf.EntitySet("SubOrgan", rank=6, columns=columns)])]))
+        participant.send(encoding3d.Frame(data_structures=[encoding3d.DataStructure("plant", entity_sets=[
+            encoding3d.EntitySet("SubOrgan", rank=6, columns=columns)])]))
 
 
 def test_metafspm_shares_its_amounts_over_remote_segments(tmp_path):

@@ -1,4 +1,4 @@
-"""The frames' views (fspm-TF's views.json, the layers ParaView shows): io.fspm_tf.default_views(scene) from the
+"""The frames' views (encoding3d's views.json, the layers ParaView shows): io.encoding3d.default_views(scene) from the
 components' declarations, and SceneRecorder(frame_views=) writing them at the first frame, their names checked
 against it."""
 import copy
@@ -10,10 +10,10 @@ import types
 import numpy as np
 import pytest
 
-from openalea.fspm_tf import views
+from openalea.encoding3d import views
 
 from openalea.metafspm.coupling.choregrapher import Choregrapher
-from openalea.metafspm.io.fspm_tf import default_views, scene_to_frame, write_views
+from openalea.metafspm.io.encoding3d import default_views, scene_to_frame, write_views
 from openalea.metafspm.scene.scene import Scene, SceneRecorder
 
 from scene_doubles import DT, RootPopulation, SceneSoil, Seedlings, doubles_planting, soil_translator
@@ -86,7 +86,7 @@ def test_write_views_checks_the_schema(tmp_path):
     write_views(path, default_views(scene))
     assert views.read_views(path) == default_views(scene)
     with pytest.raises(ValueError):
-        write_views(path, {"fspm_tf_views": 1, "configurations": {"c": {"layers": [{"name": "no source"}]}}})
+        write_views(path, {"encoding3d_views": 1, "configurations": {"c": {"layers": [{"name": "no source"}]}}})
 
 
 def _views_file(folder) -> str:
@@ -110,7 +110,7 @@ def test_the_recorder_writes_the_default_views_at_the_first_frame(tmp_path):
 
 
 def test_given_views_are_checked_against_the_first_frame(tmp_path):
-    given = {"fspm_tf_views": 1, "configurations": {"mine": {"layers": [
+    given = {"encoding3d_views": 1, "configurations": {"mine": {"layers": [
         {"name": "soil", "source": {"data_structure": "SceneSoil", "kind": "grid"},
          "color_by": {"entity_set": "cell", "variable": "soil_nitrate"}},
         {"name": "leaves", "source": {"data_structure": "RootPopulation", "kind": "mesh", "mesh": "leaves"}}]}}}
@@ -130,7 +130,7 @@ def test_given_views_are_checked_against_the_first_frame(tmp_path):
 def test_frame_views_need_frames_and_valid_views(tmp_path):
     with pytest.raises(ValueError, match="frame_period"):
         SceneRecorder(str(tmp_path), frame_views="default")
-    with pytest.raises(ValueError, match="fspm_tf_views"):
+    with pytest.raises(ValueError, match="encoding3d_views"):
         SceneRecorder(str(tmp_path), frame_period=1, frame_views={"configurations": {}})
     with pytest.raises(TypeError, match="views dict"):
         SceneRecorder(str(tmp_path), frame_period=1, frame_views=3)
@@ -172,11 +172,11 @@ class _Drawing:
 
 
 def _meshes_per_frame(out) -> dict:
-    from openalea import fspm_tf
+    from openalea import encoding3d
     found = {}
     with open(os.path.join(out, "frames", "scene.fspm.json")) as file:
         for entry in json.load(file)["frames"]:
-            frame = fspm_tf.read(os.path.join(out, "frames", entry["file"]))
+            frame = encoding3d.read(os.path.join(out, "frames", entry["file"]))
             found[entry["step"]] = {mesh.name for mesh in frame.data_structure("RootPopulation").meshes}
     return found
 

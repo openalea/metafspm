@@ -1,7 +1,7 @@
 """
-fspm-TF frames (openalea.metafspm.io.fspm_tf): a DataStructure written then read is the same, bit for bit (its MPG's
+encoding3d frames (openalea.metafspm.io.encoding3d): a DataStructure written then read is the same, bit for bit (its MPG's
 vertices, links and properties, its variables and their metadata), a simulation continues from it as from the
-original, and the files pass the fspm-TF validator.
+original, and the files pass the encoding3d validator.
 """
 from dataclasses import dataclass, fields
 
@@ -9,16 +9,16 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from openalea import fspm_tf
+from openalea import encoding3d
 
-from openalea.fspm_tf.validate import validate_bytes
+from openalea.encoding3d.validate import validate_bytes
 
 from openalea.metafspm.coupling.choregrapher import Choregrapher
 from openalea.metafspm.coupling.component import StructuralComponent, state_variable
 from openalea.metafspm.data_structure.configs import ScalesConfig as scales
 from openalea.metafspm.data_structure.adaptive_grid import AdaptiveGridDataStructure
 from openalea.metafspm.data_structure.data_api import ArrayDataStructure, MPGDataStructure
-from openalea.metafspm.io.fspm_tf import from_frame, to_frame, ucum_unit
+from openalea.metafspm.io.encoding3d import from_frame, to_frame, ucum_unit
 from openalea.metafspm.scene.population import _build_population
 
 from growth import DOC, CarbonProbe, RootGrowthProbe
@@ -57,10 +57,10 @@ def _steps(models, n):
 
 
 def _round_trip(data_structures, **options):
-    data = fspm_tf.to_bytes(to_frame(data_structures, **options))
+    data = encoding3d.to_bytes(to_frame(data_structures, **options))
     report = validate_bytes(data)
     assert report.ok, str(report)
-    return from_frame(fspm_tf.from_bytes(data))
+    return from_frame(encoding3d.from_bytes(data))
 
 
 def _mpg_state(g) -> dict:
@@ -125,10 +125,10 @@ def test_a_simulation_continues_from_a_frame_bit_for_bit():
     ds = _population()
     models = _models(ds)
     _steps(models, 2)
-    data = fspm_tf.to_bytes(to_frame({"plants": ds}, components={"plants": models}))
+    data = encoding3d.to_bytes(to_frame({"plants": ds}, components={"plants": models}))
     _steps(models, 2)                                         # uninterrupted
     Choregrapher().reset()
-    again = from_frame(fspm_tf.from_bytes(data))["plants"]
+    again = from_frame(encoding3d.from_bytes(data))["plants"]
     _steps(_models(again), 2)                                 # restarted from the frame
     _same_variables(ds, again)
     _same_mpg(ds.mtg, again.mtg)
@@ -240,14 +240,14 @@ def test_the_frame_reads_as_the_data_model():
 
 
 def test_a_variable_named_as_a_reserved_column_keeps_its_values():
-    """A variable named as one of fspm-TF's reserved columns (sibling_order) is written under another column and read
+    """A variable named as one of encoding3d's reserved columns (sibling_order) is written under another column and read
     back under its name."""
     ds = _population()
     ds.register("sibling_order", np.arange(ds.n_nodes(), dtype=float), location="node")
     frame = to_frame({"plants": ds})
     assert "sibling_order" not in frame.data_structures[0].entity_set("SubOrgan").columns
-    assert validate_bytes(fspm_tf.to_bytes(frame)).ok
-    again = from_frame(fspm_tf.from_bytes(fspm_tf.to_bytes(frame)))["plants"]
+    assert validate_bytes(encoding3d.to_bytes(frame)).ok
+    again = from_frame(encoding3d.from_bytes(encoding3d.to_bytes(frame)))["plants"]
     np.testing.assert_array_equal(ds.get("sibling_order"), again.get("sibling_order"))
 
 
@@ -280,7 +280,7 @@ def test_a_model_lighting_the_plants_declares_its_variables_too():
     from dataclasses import field
     from types import SimpleNamespace
 
-    from openalea.metafspm.io.fspm_tf import scene_to_frame
+    from openalea.metafspm.io.encoding3d import scene_to_frame
 
     @dataclass
     class Light:
@@ -313,7 +313,7 @@ def test_the_geometry_is_a_mesh_by_scale():
     np.testing.assert_array_equal(segments.columns["id"][node_rows], ds.entity_ids("node")[np.repeat(triangles.owner, 3)])
     plants = ds.owner("Plant")[np.repeat(triangles.owner, 3)]
     np.testing.assert_array_equal(mesh.feature_rows["Plant"], plants)
-    assert validate_bytes(fspm_tf.to_bytes(to_frame({"plants": ds}, components={"plants": [model]}))).ok
+    assert validate_bytes(encoding3d.to_bytes(to_frame({"plants": ds}, components={"plants": [model]}))).ok
 
 
 def test_display_shapes_are_a_mesh_of_their_own():
@@ -341,7 +341,7 @@ def test_display_shapes_are_a_mesh_of_their_own():
     assert len(meshes["Marker"].positions) == 3 * ds.n_nodes()
     np.testing.assert_array_equal(frame.data_structures[0].entity_set("SubOrgan").columns["id"][
         meshes["Marker"].feature_rows["SubOrgan"][::3]], ds.entity_ids("node"))
-    assert validate_bytes(fspm_tf.to_bytes(frame)).ok
+    assert validate_bytes(encoding3d.to_bytes(frame)).ok
 
 
 def test_grids_are_rebuilt_exactly():
@@ -374,7 +374,7 @@ def test_a_mapping_is_written():
     assert written.source == ("plants", "SubOrgan") and written.target == ("soil", "cell")
     np.testing.assert_array_equal(written.columns["source"], ds.entity_ids("node")[rows])
     np.testing.assert_array_equal(written.columns["weight"], weights)
-    assert validate_bytes(fspm_tf.to_bytes(frame)).ok
+    assert validate_bytes(encoding3d.to_bytes(frame)).ok
 
 
 @pytest.mark.parametrize("unit, code", [("mm3 s-1 MPa-1", "mm3.s-1.MPa-1"), ("°C", "Cel"), ("°Cd", "K.d"),
@@ -418,18 +418,18 @@ def test_frames_written_to_and_read_from_files(tmp_path):
     """export_frame and export_scene write .glb files, import_frame rebuilds the DataStructures from one."""
     from types import SimpleNamespace
 
-    from openalea.metafspm.io.fspm_tf import export_frame, export_scene, import_frame
+    from openalea.metafspm.io.encoding3d import export_frame, export_scene, import_frame
 
     ds = _population()
     models = _models(ds)
     export_frame(str(tmp_path / "frame.glb"), {"plants": ds}, components={"plants": list(models)}, time=2.,
                  time_unit="h")
-    assert fspm_tf.read(str(tmp_path / "frame.glb")).time_unit == "h"
+    assert encoding3d.read(str(tmp_path / "frame.glb")).time_unit == "h"
     rebuilt = import_frame(str(tmp_path / "frame.glb"))["plants"]
     for name in ("struct_mass", "length"):
         np.testing.assert_array_equal(rebuilt.get(name), ds.get(name))
     scene = SimpleNamespace(populations=[], environment=[], mappings=[], time=3600., iteration=1,
                             data_structures=lambda: {"plants": (ds, None, list(models))})
     export_scene(str(tmp_path / "scene.glb"), scene)
-    frame = fspm_tf.read(str(tmp_path / "scene.glb"))
+    frame = encoding3d.read(str(tmp_path / "scene.glb"))
     assert frame.time == 3600. and frame.step == 1 and [d.id for d in frame.data_structures] == ["plants"]

@@ -20,10 +20,10 @@ A scene's outputs, written as it runs::
     <name>.csv                        the tables given as tables={name: function(scene) -> a row (dict), a
                                       DataFrame, or None for no row}
     frames/frame_<step>.glb, frames/scene.fspm.json
-                                      the whole scene (fspm-TF), every frame_period steps: every scale, every
+                                      the whole scene (encoding3d), every frame_period steps: every scale, every
                                       row; the components' display shapes (e.g. GRANAP's sections) every
                                       display_period steps
-    frames/views.json                 with frame_views: the layers ParaView shows (fspm-TF's views), written at the
+    frames/views.json                 with frame_views: the layers ParaView shows (encoding3d's views), written at the
                                       first frame
     checkpoints/step_<iteration>/     Scene.checkpoint every checkpoint_period steps, the last keep_checkpoints kept
 
@@ -91,7 +91,7 @@ def _write_json(path: str, content: dict) -> None:
 def _versions() -> dict:
     from importlib.metadata import PackageNotFoundError, version
     found = {"python": platform.python_version()}
-    for package in ("openalea.metafspm", "numpy", "pandas", "openalea.fspm_tf"):
+    for package in ("openalea.metafspm", "numpy", "pandas", "openalea.encoding3d"):
         try:
             found[package] = version(package)
         except PackageNotFoundError:
@@ -103,15 +103,15 @@ class SceneRecorder:
     """
     The outputs of a Scene (see the module): *folder* (None: in memory, no files); *summaries* and their
     *summary_period* (steps); *segment_plants* (planting names) and *segment_period*; *frame_period* and *frame_options*
-    (io.fspm_tf.scene_to_frame's: geometry, standard_names, data_structures, scales, entities, variables);
+    (io.encoding3d.scene_to_frame's: geometry, standard_names, data_structures, scales, entities, variables);
     *display_period*: the frames that also carry the components' display shapes (display_triangles(), e.g. GRANAP's
     sections: drawings only, their data rows are in every frame), every display_period steps (a multiple of
     frame_period) and in the last frame; None (the default): none, the frames hold the data and the geometry
     light models get. A light log leaves out data explicitly, by frame_options (e.g. scales={"Wheat": ["Plant",
     "Axis", "Organ", "SubOrgan"]}: no anatomy rows in population Wheat's).
     *checkpoint_period* and *keep_checkpoints* (None: all); *tables* {name: function(scene)} and *table_period*.
-    *frame_views*: the frames' views.json (fspm-TF's views: layers for ParaView), written at the first frame: None
-    (none), "default" (io.fspm_tf.default_views: the shoots, the roots as tubes, the soil grids), a views dict, or the
+    *frame_views*: the frames' views.json (encoding3d's views: layers for ParaView), written at the first frame: None
+    (none), "default" (io.encoding3d.default_views: the shoots, the roots as tubes, the soil grids), a views dict, or the
     path of a views file; its names are checked against that frame, with a warning for each one it lacks. A restored
     run keeps the views.json it finds.
     """
@@ -150,8 +150,8 @@ class SceneRecorder:
         if self.folder is not None:
             os.makedirs(self.folder, exist_ok=True)
         if self.frame_period:
-            from openalea.metafspm.io.fspm_tf import _fspm_tf
-            _fspm_tf()                 # fails now, not after the first steps, without openalea.fspm_tf
+            from openalea.metafspm.io.encoding3d import _encoding3d
+            _encoding3d()                 # fails now, not after the first steps, without openalea.encoding3d
         self.frame_views = self._views_given(frame_views)
         self._views_written = False
 
@@ -356,9 +356,9 @@ class SceneRecorder:
             raise ValueError("SceneRecorder(frame_views=...) are the frames' views: give it a frame_period")
         if isinstance(frame_views, str) and frame_views == "default":
             return frame_views
-        from openalea.metafspm.io.fspm_tf import _fspm_tf
-        _fspm_tf()
-        from openalea.fspm_tf import views
+        from openalea.metafspm.io.encoding3d import _encoding3d
+        _encoding3d()
+        from openalea.encoding3d import views
         if isinstance(frame_views, (str, os.PathLike)):
             frame_views = views.read_views(os.fspath(frame_views))
         if not isinstance(frame_views, dict):
@@ -371,8 +371,8 @@ class SceneRecorder:
 
     def _write_views(self, scene, frame, folder: str) -> None:
         """views.json next to the first frame, its names checked against *frame* (a warning for each it lacks)."""
-        from openalea.metafspm.io.fspm_tf import default_views, write_views
-        from openalea.fspm_tf import views
+        from openalea.metafspm.io.encoding3d import default_views, write_views
+        from openalea.encoding3d import views
         path = os.path.join(folder, views.VIEWS_FILE)
         if not (self.resume and os.path.exists(path)):
             content = default_views(scene, frame) if self.frame_views == "default" else self.frame_views
@@ -384,26 +384,26 @@ class SceneRecorder:
     def _write_frame(self, scene, display: bool = False) -> str:
         """Write the scene's frame now (frames/frame_<step>.glb), with the components' display shapes when
         *display*, and the frames' index; the frame's path."""
-        from openalea.metafspm.io.fspm_tf import _fspm_tf, scene_to_frame
-        fspm_tf = _fspm_tf()
+        from openalea.metafspm.io.encoding3d import _encoding3d, scene_to_frame
+        encoding3d = _encoding3d()
         folder = os.path.join(self.folder, "frames")
         os.makedirs(folder, exist_ok=True)
-        index_path = os.path.join(folder, fspm_tf.codec.INDEX_FILE)
+        index_path = os.path.join(folder, encoding3d.codec.INDEX_FILE)
         if self._frames is None:
             self._frames = []
             if self.resume and os.path.exists(index_path):       # a restored run: the frames up to its step
-                self._frames = [entry for entry in fspm_tf.read_index(index_path)["frames"]
+                self._frames = [entry for entry in encoding3d.read_index(index_path)["frames"]
                                 if entry["step"] <= scene.iteration]
                 for entry in self._frames:
                     entry.pop("path", None)
         name = f"frame_{scene.iteration:06d}.glb"
         frame = scene_to_frame(scene, display_meshes=display, **self.frame_options)
-        fspm_tf.write(os.path.join(folder, name), frame)
+        encoding3d.write(os.path.join(folder, name), frame)
         if self.frame_views is not None and not self._views_written:
             self._write_views(scene, frame, folder)
         self._frames = [entry for entry in self._frames if entry["step"] != scene.iteration]
         self._frames.append({"time": float(scene.time), "step": int(scene.iteration), "file": name})
-        fspm_tf.write_index(index_path, self._frames, time_unit="s")
+        encoding3d.write_index(index_path, self._frames, time_unit="s")
         return os.path.join(folder, name)
 
     def _checkpoint(self, scene) -> str:
@@ -439,12 +439,12 @@ class SceneRecorder:
                     kept.to_csv(path, index=False)
         index_path = os.path.join(self.folder, "frames", "scene.fspm.json")
         if os.path.exists(index_path):
-            from openalea.metafspm.io.fspm_tf import _fspm_tf
-            fspm_tf = _fspm_tf()
-            frames = [entry for entry in fspm_tf.read_index(index_path)["frames"] if entry["step"] <= scene.iteration]
+            from openalea.metafspm.io.encoding3d import _encoding3d
+            encoding3d = _encoding3d()
+            frames = [entry for entry in encoding3d.read_index(index_path)["frames"] if entry["step"] <= scene.iteration]
             for entry in frames:
                 entry.pop("path", None)
-            fspm_tf.write_index(index_path, frames, time_unit="s")
+            encoding3d.write_index(index_path, frames, time_unit="s")
 
     # ── run.json, scenario.json ───────────────────────────────────────────────
 
