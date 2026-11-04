@@ -307,7 +307,9 @@ class SoilDiffusion(FunctionalComponent):
   every plant of a population. The entries it owns but may not read (the reduced labels while `reduced` is off) are
   its attribute `scenario_keys` (`choose.scenario_keys = ("reduced", "reduced_labels")`): accepted, inactive. A graph
   system's terms the reduction must keep explicit are declared `@explicit_term`, its inputs' derivatives
-  `@input_jacobian`.
+  `@input_jacobian`. A structural model takes a group's reduced template from `reduction.template_for(full)`; a
+  component reading a reduced group's full template (its volumes, its geometry) gets it from
+  `reduction.full_template(key)`, the key of the reduced template its instance holds.
 ## 4. Structure: `StructuralComponent`
 
 A structural component edits the plant (growth, segmentation, anatomy). Its steps come in two styles:

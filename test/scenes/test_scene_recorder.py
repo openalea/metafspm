@@ -64,7 +64,8 @@ def test_a_stopped_run_and_a_loop_of_steps(tmp_path):
     scene = _scene(SceneRecorder(str(tmp_path / "b"), summary_period=2))
     for _ in range(3):
         scene.run()
-    assert _json(tmp_path / "b" / "run.json")["status"] == "running"
+    run = _json(tmp_path / "b" / "run.json")                  # the progress, after every step
+    assert run["status"] == "running" and run["iterations"] == 3 and run["time"] == 3 * DT
     scene.finish()                                            # the last state, then the status
     times = sorted(set(pd.read_csv(tmp_path / "b" / "Plant" / "Seedlings" / "summaries.csv")["time"]))
     assert times == [0., 2 * DT, 3 * DT] and _json(tmp_path / "b" / "run.json")["status"] == "finished"

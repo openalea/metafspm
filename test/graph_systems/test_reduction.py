@@ -46,6 +46,11 @@ class ToySegments(StructuralComponent):
             g.add_instance(previous, template)
 
 
+def _collar(ds):
+    """The first section's xylem (a module-level function: a checkpoint keeps the DataStructure's filters)."""
+    return (ds.get("label") == ds.mtg.labels.Cell.MetaXylem) & (ds.owner("SubOrgan") == 0)
+
+
 @dataclass
 class NodeHydraulics(FunctionalComponent):
     """Steady water potential: the walls joined to the soil, the first section's xylem held."""
@@ -59,8 +64,7 @@ class NodeHydraulics(FunctionalComponent):
     @graph_system(node_unknowns=["water_potential"], solver="newton")
     class _hydraulics:
         soil = boundary_set(filters={"kind": "==1"}, kind="robin", value="soil_water_potential", weight=0.6)
-        collar = boundary_set(filters=lambda ds: (ds.get("label") == ds.mtg.labels.Cell.MetaXylem)
-                              & (ds.owner("SubOrgan") == 0), kind="dirichlet", value="xylem_water_potential")
+        collar = boundary_set(filters=_collar, kind="dirichlet", value="xylem_water_potential")
 
         @node_balance(field="water_potential")
         def _balance(self, water_potential, K):
@@ -136,6 +140,44 @@ def test_a_reduced_graph_system_gives_the_full_potentials_on_its_kept_nodes():
     row = {place: i for i, place in enumerate(_places(full))}
     rows = [row[place] for place in _places(reduced)]
     np.testing.assert_allclose(reduced.get("water_potential"), full.get("water_potential")[rows], rtol=1e-11)
+
+
+def test_the_full_template_of_a_reduced_template_is_given_by_its_key():
+    """Reduction.full_template(key): the full template a reduced one came from (template_for's inverse); a key no
+    reduced template has raises."""
+    reduction = Reduction(location="SubOrgan", labels=("RootSegment",), ports=_xylem, keep=_soil_walls,
+                          systems=("NodeHydraulics._hydraulics",))
+    full = section_template()[0]
+    reduced = reduction.template_for(full)
+    assert reduced.size < full.size
+    assert reduction.full_template(reduced.key) is full
+    with pytest.raises(KeyError):
+        reduction.full_template(full.key)
+
+
+def test_the_library_keeps_the_scenes_time_step():
+    """The library population built during a solve leaves the scene's time step (the Choregrapher's) as it was: a
+    daily scene's next components still run one step a day."""
+    from openalea.metafspm.coupling.choregrapher import Choregrapher
+    model = _model(True)
+    population = population_data_structure(planting([Planting()], model, {}), model, time_step=86400.)
+    population.instance.run()
+    assert Choregrapher().simulation_step() == 86400.
+
+
+def test_a_reduced_plant_loaded_from_a_checkpoint_solves_as_before(tmp_path):
+    """A checkpoint holds the MTG with its reduction (its templates, unbound): loaded into a freshly built
+    population, the reduction is bound to that population's model and solves its groups again."""
+    model = _model(True)
+    solved = _solved(True).data_structure
+    solved.checkpoint(str(tmp_path / "checkpoint"))
+    fresh = population_data_structure(planting([Planting()], model, {}), model)
+    fresh.data_structure.load_checkpoint(str(tmp_path / "checkpoint"))
+    reduction = fresh.data_structure.structure.reduction
+    assert reduction.instance is fresh.instance and reduction.g is fresh.data_structure.structure
+    fresh.instance.run()
+    np.testing.assert_allclose(fresh.data_structure.get("water_potential"), solved.get("water_potential"),
+                               rtol=1e-12)
 
 
 def test_a_reduced_groups_interior_is_recovered():

@@ -7,7 +7,8 @@ A scene's outputs, written as it runs::
   outputs/
     run.json                          the run: status (running, finished, stopped, failed, interrupted; a failure's
                                       error), started, ended, wall time, iterations, simulated time, time step, wall
-                                      time per model, versions
+                                      time per model, versions; rewritten after every step (a running run's
+                                      progress)
     scenario.json                     the scene: time step, size, populations (model, plants and their scenarios),
                                       environment models and their scenarios, forcings, the recorder's settings
     forcings/<name>.csv               the forcings given as tables
@@ -174,10 +175,13 @@ class SceneRecorder:
             self._record(scene, initial=True)
 
     def record(self, scene) -> None:
-        """After a step: what is due at this iteration."""
+        """After a step: what is due at this iteration, then run.json's progress (its iterations, time, wall time and
+        timing: a running run's state, read while it runs)."""
         self._record(scene)
         if self.checkpoint_period and scene.iteration % self.checkpoint_period == 0:
             self._checkpoint(scene)
+        elif self.folder is not None and self._run is not None:
+            self._write_run(scene)
 
     def finish(self, scene, status: str = "finished", error: BaseException = None) -> None:
         """The run's end: the last state (when not recorded at this step) and its status."""

@@ -145,6 +145,11 @@ class Reduction:
         self._kept[reduced.key] = np.flatnonzero(kept)
         return reduced
 
+    def full_template(self, key):
+        """The full SectionTemplate whose reduced template has the key *key* (a KeyError for a key template_for did
+        not give)."""
+        return self._full[key]
+
     def reduced_groups(self, ds) -> dict:
         """{group entity index: (its vertex, its reduced template key)} of the DataStructure's reduced groups."""
         g = ds.structure
@@ -382,7 +387,10 @@ def _evaluate(reduction: Reduction, parameters: dict, requests: dict) -> dict:
 
     model = type(f"Library{reduction.model.__name__}", (reduction.model,),
                  dict(initiators=(LibraryStructure,), wiring=(), reduction=None))
-    population = population_data_structure(planting([Planting()], model, {}), model)
+    from openalea.metafspm.coupling.choregrapher import Choregrapher
+    time_step = Choregrapher().simulation_step()             # the scene's step, kept for its components after
+    population = population_data_structure(planting([Planting()], model, {}), model,
+                                           time_step=3600. if time_step is None else time_step)
     ds = population.data_structure
     instance = population.instance
     library = reduction.for_population(ds.structure)       # the library knows its reduced groups, evaluates none

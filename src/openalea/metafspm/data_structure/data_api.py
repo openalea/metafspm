@@ -1840,6 +1840,10 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
             raise ValueError("the checkpoint holds no MTG (include_mtg=False): give load_checkpoint(path, mtg=...)")
         if (construction["nodes"] == "Compartment") != bool(self._anatomy):
             raise ValueError("the checkpoint and this DataStructure differ in anatomy mode")
+        bound, loaded = getattr(self._mtg, "reduction", None), getattr(mtg, "reduction", None)
+        if bound is not None and loaded is not None:           # the checkpointed reduction (its templates, the
+            loaded.g = mtg                                     # loaded MTG's) bound to this one's model
+            loaded.bind(bound.model, bound.instance)
         self._mtg, self._from_scale = mtg, construction["from_scale"]
         self._B_cached = None
         self._membership_cache = {}
