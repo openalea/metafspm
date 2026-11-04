@@ -309,7 +309,11 @@ class SoilDiffusion(FunctionalComponent):
   system's terms the reduction must keep explicit are declared `@explicit_term`, its inputs' derivatives
   `@input_jacobian`. A structural model takes a group's reduced template from `reduction.template_for(full)`; a
   component reading a reduced group's full template (its volumes, its geometry) gets it from
-  `reduction.full_template(key)`, the key of the reduced template its instance holds.
+  `reduction.full_template(key)`, the key of the reduced template its instance holds. The kinds kept are those of the plant's current groups:
+  at each solve, a kind no group has any more (a growing section's former length class) is released, its arrays
+  freed (a component's cache holding it by the object finds it empty), evaluated again if a group comes back to it;
+  a kind keeps its term and the sparse blocks of its full interior, not their factorisation (made again for a
+  recovery, `recover`), so the memory follows the plant's size, not the kinds it went through.
 ## 4. Structure: `StructuralComponent`
 
 A structural component edits the plant (growth, segmentation, anatomy). Its steps come in two styles:

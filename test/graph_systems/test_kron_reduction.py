@@ -62,3 +62,19 @@ def test_the_injection_matrix_is_inject():
     reduction = kron_reduction(A, [1, 9, 30])
     b = rng.normal(size=reduction.interior_nodes.size)
     np.testing.assert_allclose(reduction.injection() @ b, reduction.inject(b), rtol=1e-10, atol=1e-13)
+
+
+def test_a_released_reduction_factorises_its_interior_again():
+    """release() frees the interior's factorisation (a reduction kept for its reduced matrix): inject, injection and
+    recover give the same values, the interior factorised again at each call and not kept."""
+    rng = np.random.default_rng(3)
+    A, _ = _network(rng)
+    reduction = kron_reduction(A, [2, 11, 40])
+    b = rng.normal(size=reduction.interior_nodes.size)
+    x_K = rng.normal(size=3)
+    before = reduction.inject(b), reduction.injection(), reduction.recover(x_K, b), reduction.recover(np.eye(3))
+    reduction.release()
+    after = reduction.inject(b), reduction.injection(), reduction.recover(x_K, b), reduction.recover(np.eye(3))
+    assert reduction._lu is None
+    for value, again in zip(before, after):
+        np.testing.assert_allclose(again, value, rtol=1e-12, atol=1e-14)

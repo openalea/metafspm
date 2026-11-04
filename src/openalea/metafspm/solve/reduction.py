@@ -82,6 +82,13 @@ class Kind:
     inputs: dict
     outputs: dict = None
 
+    def release(self) -> None:
+        """Free its arrays: a kind no group of its DataStructure has any more (Reduction.group_kinds' release), its
+        memory freed even where a cache still holds it (a component's, by the kind object: never given again)."""
+        self.D = self.e = self.reduction = self.interior_source = None
+        self.kept_rows = self.interior_rows = None
+        self.inputs, self.outputs = {}, {}
+
 
 class Reduction:
     def __init__(self, location: str = "SubOrgan", labels=(), ports=None, keep=None, explicit_edges=None,
@@ -174,7 +181,7 @@ class Reduction:
             return None
         n = node_ids.size
         position = {int(v): i for i, v in enumerate(node_ids.tolist())}
-        kinds = self.group_kinds(ds, groups)
+        kinds = self.group_kinds(ds, groups, release=True)
         rows, cols, values, e = [], [], [], np.zeros(n)
         g = ds.structure
         for i, (owner, key) in groups.items():
@@ -281,9 +288,12 @@ class Reduction:
                     out[f.name] = value.item() if isinstance(value, np.generic) else value
         return out
 
-    def group_kinds(self, ds, groups) -> dict:
+    def group_kinds(self, ds, groups, release: bool = False) -> dict:
         """{group: {system: Kind}}: the kinds of *groups*, the missing ones evaluated together (per plant's
-        parameters)."""
+        parameters). *release*: *groups* are all the DataStructure's reduced groups (a solve's terms), and the kinds
+        none of them has are released: a growing section's former kinds (its length's former classes), their
+        memory freed, evaluated again if a group comes back to one. So the kinds kept are those of the plant's
+        current groups, not of every group it had."""
         values = self._kind_values(ds, groups)
         plant = np.asarray(ds.owner("Plant"))
         owner = np.asarray(ds.owner(self.location))
@@ -300,6 +310,11 @@ class Reduction:
                 missing.setdefault(signature, (parameters, {}))[1].setdefault(kind_key, (vertex, key, values[i]))
         for parameters, requests in missing.values():
             self._kinds.update(_evaluate(self, parameters, requests))
+        if release:
+            used = set(keys.values())
+            for kind_key in [k for k in self._kinds if k not in used]:
+                for kind in self._kinds.pop(kind_key).values():
+                    kind.release()
         return {i: self._kinds[k] for i, k in keys.items()}
 
     def recover(self, ds, group: int, values, system: str = None) -> tuple:
@@ -493,6 +508,7 @@ def _evaluate(reduction: Reduction, parameters: dict, requests: dict) -> dict:
                     values = np.asarray(ds.get(name), dtype=float)
                     group_outputs[name] = float(values[full_group] if ds.location(name) == reduction.location else
                                                 values[np.flatnonzero(owner == full_group)[0]])
+            kron.release()                     # its factorisation (the full interior's) made again on recovery
             out[kind_key][system] = Kind(D=S - A_red, e=s - c_red, reduction=kron, interior_source=c_full[I],
                                          kept_rows=compartments[K], interior_rows=compartments[I], inputs=inputs,
                                          outputs=group_outputs)

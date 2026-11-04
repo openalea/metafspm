@@ -348,3 +348,35 @@ def test_a_reduction_chosen_by_the_scenario_owns_its_keys_while_off():
     with pytest.raises(ValueError, match="reduced_lables"):
         population_data_structure(planting([Planting()], ToyPlantOwningKeys, {"reduced_lables": ("RootSegment",)}),
                                   ToyPlantOwningKeys)
+
+
+def test_the_kinds_no_group_has_any_more_are_released():
+    """A group's kind follows its kind variables (a growing section's length class, say): a solve keeps the kinds of
+    the current groups only, the former ones released (their arrays freed, a cache holding one finds it empty); the
+    potentials and the recovered interior are those of a plant solved with the new values from the start."""
+    class KindedPlant(_model(False)):
+        reduction = Reduction(location="SubOrgan", labels=("RootSegment",), ports=_xylem, keep=_soil_walls,
+                              kind={"soil_water_potential": None}, systems=("NodeHydraulics._hydraulics",))
+
+    def solved(soil_water_potential):
+        population = population_data_structure(planting([Planting()], KindedPlant, {}), KindedPlant)
+        ds = population.data_structure
+        ds.set("soil_water_potential", np.full(ds.n_nodes(), soil_water_potential))
+        population.instance.run()
+        return population
+
+    population = solved(-0.2)
+    ds = population.data_structure
+    reduction = ds.structure.reduction
+    former = [kind for by_system in reduction._kinds.values() for kind in by_system.values()]
+    assert len(reduction._kinds) == 1 and former[0].D is not None
+    ds.set("soil_water_potential", np.full(ds.n_nodes(), -0.3))
+    population.instance.run()
+    assert len(reduction._kinds) == 1 and all(kind.D is None and kind.reduction is None for kind in former)
+    fresh = solved(-0.3).data_structure
+    np.testing.assert_allclose(ds.get("water_potential"), fresh.get("water_potential"), rtol=1e-12)
+    kept = np.flatnonzero(np.asarray(ds.owner("SubOrgan")) == 2)
+    rows, values = reduction.recover(ds, 2, ds.get("water_potential")[kept])
+    fresh_rows, fresh_values = fresh.structure.reduction.recover(fresh, 2, fresh.get("water_potential")[kept])
+    np.testing.assert_array_equal(rows, fresh_rows)
+    np.testing.assert_allclose(values, fresh_values, rtol=1e-12)

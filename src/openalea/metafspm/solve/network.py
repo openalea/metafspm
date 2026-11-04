@@ -253,25 +253,41 @@ class KronReduction:
       shunts()          each kept node's diagonal term left (S_ii + Σ_j S_ij: 0 for a network of conductances alone)
       inject(b_I)       the interior sources *b_I* as sources at the kept nodes (−A_KI A_II⁻¹ b_I)
       recover(x_K, b_I) the interior's potentials (A_II⁻¹ (b_I − A_IK x_K)), from the kept nodes' and the sources
+      release()         the interior's factorisation freed: a reduction kept for S, recovered from rarely
 
-    Kept and interior nodes are local indices of *A* (kept_nodes, interior_nodes). The interior is factorised once.
+    Kept and interior nodes are local indices of *A* (kept_nodes, interior_nodes). The interior is factorised once
+    and its factorisation kept (until release()); the reduction keeps the sparse blocks of *A*, not A_II⁻¹ A_IK
+    (dense, interior × kept).
     """
 
     def __init__(self, matrix, kept):
-        from scipy.sparse.linalg import splu
         A = csr_matrix(matrix)
         n = A.shape[0]
         kept = _mask(kept, n, "kept")
         self.kept_nodes, self.interior_nodes = np.flatnonzero(kept), np.flatnonzero(~kept)
         K, I = self.kept_nodes, self.interior_nodes
         self._A_KI = A[K][:, I].tocsr()
-        A_IK = A[I][:, K].tocsc()
-        if I.size:
-            self._lu = splu(A[I][:, I].tocsc())
-            self._X = self._lu.solve(A_IK.toarray()) if K.size else np.zeros((I.size, 0))
-        else:
-            self._lu, self._X = None, np.zeros((0, K.size))
-        self.reduced = np.asarray(A[K][:, K].toarray() - self._A_KI @ self._X)
+        self._A_IK = A[I][:, K].tocsr()
+        self._A_II = A[I][:, I].tocsc()
+        self._lu, self._keep = None, True
+        X = (self._factorisation().solve(self._A_IK.toarray()) if I.size and K.size
+             else np.zeros((I.size, K.size)))
+        self.reduced = np.asarray(A[K][:, K].toarray() - self._A_KI @ X)
+
+    def _factorisation(self):
+        """The interior's LU factorisation: the kept one, else a new one (kept unless released)."""
+        if self._lu is not None:
+            return self._lu
+        from scipy.sparse.linalg import splu
+        lu = splu(self._A_II)
+        if self._keep:
+            self._lu = lu
+        return lu
+
+    def release(self) -> None:
+        """Free the interior's factorisation and keep none from now on: inject, injection and recover factorise the
+        interior again at each call (a reduction kept for its reduced matrix, recovered from rarely)."""
+        self._lu, self._keep = None, False
 
     def pairs(self) -> tuple:
         """(i, j, conductance) of the equivalent network's pairs i < j (local indices among the kept nodes)."""
@@ -285,24 +301,27 @@ class KronReduction:
     def inject(self, interior_sources) -> np.ndarray:
         """The interior's sources (one per interior node, or a matrix of columns) as sources at the kept nodes."""
         b = np.asarray(interior_sources, dtype=float)
-        if self._lu is None:
+        if not self.interior_nodes.size:
             return np.zeros((self.kept_nodes.size,) + b.shape[1:])
-        return -(self._A_KI @ self._lu.solve(b))
+        return -(self._A_KI @ self._factorisation().solve(b))
 
     def injection(self) -> np.ndarray:
         """inject's matrix (kept × interior, dense): −A_KI A_II⁻¹, from one transposed solve with the kept nodes'
         columns (not one per interior source)."""
-        if self._lu is None:
+        if not self.interior_nodes.size:
             return np.zeros((self.kept_nodes.size, 0))
-        return -np.asarray(self._lu.solve(self._A_KI.T.toarray(), trans="T")).T
+        return -np.asarray(self._factorisation().solve(self._A_KI.T.toarray(), trans="T")).T
 
     def recover(self, kept_values, interior_sources=None) -> np.ndarray:
-        """The interior's values for the kept nodes' *kept_values* (and the interior's sources, if any)."""
+        """The interior's values for the kept nodes' *kept_values* (a vector, or a matrix of columns) and the
+        interior's sources, if any."""
         x = np.asarray(kept_values, dtype=float)
-        out = -(self._X @ x)
-        if interior_sources is not None and self._lu is not None:
-            out = out + self._lu.solve(np.asarray(interior_sources, dtype=float))
-        return out
+        if not self.interior_nodes.size:
+            return np.zeros((0,) + x.shape[1:])
+        b = -(self._A_IK @ x)
+        if interior_sources is not None:
+            b = b + np.asarray(interior_sources, dtype=float)
+        return np.asarray(self._factorisation().solve(b))
 
 
 def kron_reduction(matrix, kept) -> KronReduction:
