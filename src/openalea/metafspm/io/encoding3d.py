@@ -824,6 +824,9 @@ def export_scene(path: str, scene, **options) -> None:
 ROOT_LABELS = ("RootSegment", "RootApex")                       # the vocabulary's root SubOrgan labels
 SHOOT_LABELS = ("LeafElement", "StemElement", "HiddenElement")  # its shoot ones
 SHOOT_COLOR = [0.42, 0.68, 0.3]
+SHOOT_COLORMAP = "Cool to Warm"                  # the default views' colour maps, one per part (ParaView presets)
+ROOTS_COLORMAP = "Inferno (matplotlib)"
+GRID_COLORMAP = "Viridis (matplotlib)"
 
 
 def _labels_for(data_structure, vocabulary_labels: tuple, others: list = ()) -> list:
@@ -879,8 +882,8 @@ def _plant_layers(data_structure, ds, declared: dict) -> list:
         layer = {"name": f"{data_structure.id} shoot",
                  "source": {"data_structure": data_structure.id, "kind": "mesh", "mesh": "triangles"},
                  "select": {"entity_set": "SubOrgan", "where": {"label": shoots}}}
-        layer.update({"color_by": {"entity_set": "Organ", "variable": variable}} if variable
-                     else {"color_by": None, "solid_color": SHOOT_COLOR})
+        layer.update({"color_by": {"entity_set": "Organ", "variable": variable}, "colormap": SHOOT_COLORMAP}
+                     if variable else {"color_by": None, "solid_color": SHOOT_COLOR})
         layers.append(layer)
     if views.segment_columns(elements):
         variable = _shown_variable(declared, elements, scale="SubOrgan")
@@ -888,6 +891,8 @@ def _plant_layers(data_structure, ds, declared: dict) -> list:
                  "source": {"data_structure": data_structure.id, "kind": "segments", "entity_set": "SubOrgan"},
                  "select": {"entity_set": "SubOrgan", "where": {"label": roots}},
                  "color_by": {"entity_set": "SubOrgan", "variable": variable} if variable else None}
+        if variable:
+            layer["colormap"] = ROOTS_COLORMAP
         if "radius" in elements.columns:
             layer["tube"] = {"radius": "radius", "scale": 1.}
         layers.append(layer)
@@ -906,7 +911,8 @@ def default_views(scene, frame=None) -> dict:
     - per population: "<population> shoot", its mesh (the geometry provider's triangles) where the SubOrgans are shoot
       elements, coloured by the first Organ variable its components declare (a state variable not a descriptor, else
       an input; a solid green without one); "<population> roots", its SubOrgans with segment ends where they are root
-      elements, as tubes on radius, coloured by the first such SubOrgan variable; each display mesh of a component
+      elements, as tubes on radius, coloured by the first such SubOrgan variable; each part its own colour map (shoot
+      SHOOT_COLORMAP, roots ROOTS_COLORMAP, grids GRID_COLORMAP); each display mesh of a component
       ("<population> <component>", e.g. sections), hidden;
     - per environment grid: "<model>", its cells coloured by the first cell variable its components declare, at
       opacity 0.3.
@@ -930,7 +936,7 @@ def default_views(scene, frame=None) -> dict:
             variable = _shown_variable(declared, cells, location="cell")
             layers.append({"name": data_structure.id, "source": {"data_structure": data_structure.id, "kind": "grid"},
                            "color_by": {"entity_set": cells.name, "variable": variable} if variable else None,
-                           "opacity": 0.3})
+                           "colormap": GRID_COLORMAP, "opacity": 0.3})
     return {"encoding3d_views": 1, "active": "default", "configurations": {"default": {"layers": layers}}}
 
 

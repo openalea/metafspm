@@ -41,9 +41,11 @@ def test_default_views_of_roots_and_a_soil_grid():
     assert set(roots["select"]["where"]["label"]) == {"RootSegment", "RootApex"}
     # the first state variable declared at SubOrgan that is not a descriptor (length, radius, x1 ... are)
     assert roots["color_by"] == {"entity_set": "SubOrgan", "variable": "struct_mass"}
+    assert roots["colormap"] == "Inferno (matplotlib)"                              # each part its own colour map
     assert layers["Seedlings roots"]["color_by"]["variable"] == "exudation"
     assert layers["SceneSoil"] == {"name": "SceneSoil", "source": {"data_structure": "SceneSoil", "kind": "grid"},
-                                   "color_by": {"entity_set": "cell", "variable": "soil_nitrate"}, "opacity": 0.3}
+                                   "color_by": {"entity_set": "cell", "variable": "soil_nitrate"},
+                                   "colormap": "Viridis (matplotlib)", "opacity": 0.3}
     assert default_views(scene) == document                                         # deterministic
 
 
