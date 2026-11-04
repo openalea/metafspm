@@ -9,12 +9,14 @@ translators linking their components.
                         Development), the elements' optics (Caribu's PlantOptics), their gas exchange (CNW-Grass's
                         GasExchange) and the water flow through the whole plant (MECHA's MechaHydraulics), on one MPG
                         whose nodes are the Compartments
-    WHEAT_SCENARIO      the plant's scenario: the crown, Adel's blades, ArchiSimple's wheat on a shoot and its anchor,
+    WHEAT_SCENARIO      the plant's scenario: the crown, Adel's blades (CN-Wheat's leaf shapes, LeafShapes.cnwheat:
+                        CNW-Grass's stand's), ArchiSimple's wheat on a shoot and its anchor,
                         GRANAP's anatomies (a wheat root, the monocot stem, sheath and leaf), the barriers' zones,
                         MECHA's soil boundary on each root section's soil node, the sections reduced onto their
                         conduits
     PLANT_TRANSLATOR    within the plant: GRANAP's stems classed by their organ's diameter, the gas exchange's element
-                        heights from Adel's element ends above the soil (emerged_height), the elements' transpiration
+                        heights and green areas from Adel's element ends above the soil (emerged_height,
+                        emerged_green_area), the elements' transpiration
                         summed per organ into MECHA's
                         leaf transpiration, MECHA's water potential back to the gas exchange's leaf water potential
                         (Tuzet's stomata)
@@ -41,6 +43,7 @@ import numpy as np
 
 from openalea.adel.architecture import ShootArchitecture
 from openalea.adel.development import ScenarioDevelopment, ScenarioShoot
+from openalea.adel.leaf_shapes import LeafShapes
 from openalea.archisimple.architecture import RootArchitecture
 from openalea.archisimple.parameter_sets import WHEAT_ON_A_SHOOT
 from openalea.caribu.optics import PlantOptics
@@ -70,8 +73,9 @@ WHEAT_SCENARIO = {
     "crown_depth": 0.02, "subcrown_elements": 2,
     "shoot_anchor": {"label": "StemElement", "last": True},
     **WHEAT_ON_A_SHOOT, "root_anchor": {"label": "Seed"},
-    # Adel's blades in two elements
-    "n_sect": 2,
+    # Adel's blades in two elements, their shapes CN-Wheat's (echap's Mercia profiles, Soissons' midribs), as
+    # CNW-Grass's stand
+    "n_sect": 2, "leaves": LeafShapes.cnwheat(),
     # GRANAP's anatomies: a wheat root, the seed and the stems the monocot stem's, the sheaths and blades the monocot
     # leaf's; each root section with its soil node
     "root_anatomy": {"preset": "for_wheat_root"}, "seed_anatomy": {}, "stem_anatomy": {}, "sheath_anatomy": {},
@@ -102,11 +106,34 @@ def emerged_height(z1, z2):
         return np.where(high > SOIL_LEVEL, (np.maximum(low, SOIL_LEVEL) + high) / 2, np.nan)
 
 
+def emerged_green_area(z1, z2, area, green_area):
+    """
+    An element's green area above the soil (m2), the area of its gas exchange (CNW-Grass's emerged_green_area), cut at
+    the soil's surface (SOIL_LEVEL) as Caribu cuts the light: the fraction of its length above it, from its ends'
+    heights (Adel's z1, its base, and z2), of its area; Adel's senescence goes down from its top, so the part in the
+    soil is green where it is the base's (z1 below z2: the green area less the buried area) and senesced first where
+    it is the top's (z1 above z2: the green area within the emerged part). 0 for an element wholly below the soil;
+    NaN without ends (the gas exchange's whole green area, an element without geometry exchanging nothing anyway).
+    """
+    z1, z2 = np.asarray(z1, dtype=float), np.asarray(z2, dtype=float)
+    area, green_area = np.asarray(area, dtype=float), np.asarray(green_area, dtype=float)
+    low, high = np.minimum(z1, z2), np.maximum(z1, z2)
+    with np.errstate(invalid="ignore", divide="ignore"):
+        fraction = np.where(low >= SOIL_LEVEL, 1., np.where(high <= SOIL_LEVEL, 0.,
+                                                            (high - SOIL_LEVEL) / (high - low)))
+        emerged = np.where(z1 <= z2, np.maximum(green_area - (1. - fraction) * area, 0.),
+                           np.minimum(green_area, fraction * area))
+    return np.where(np.isnan(z1) | np.isnan(z2), np.nan, emerged)
+
+
 PLANT_TRANSLATOR = (
     Translator(mecha_links().links)                                  # the leaf water potential, MECHA's (Tuzet)
     # the gas exchange's element heights: of their part above the soil (CNW-Grass's adel_links, its ends' mean, would
     # count the part in the soil)
     .link("GasExchange", "height", "ShootArchitecture", ("z1", "z2"), formula=emerged_height)
+    # and the green area they exchange over: of the same part (the light's, Caribu cutting it below the soil)
+    .link("GasExchange", "emerged_green_area", "ShootArchitecture", ("z1", "z2", "area", "green_area"),
+          formula=emerged_green_area)
     # GRANAP's stems (and the seed) classed by their radius: their organ's diameter halved (Adel's organs', the
     # subcrown internode's WheatCrown gives), broadcast to its elements
     .link("GranapAnatomy", "stem_radius", "ShootArchitecture", {"diameter": 0.5}, source_scale="Organ",

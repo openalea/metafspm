@@ -212,6 +212,8 @@ def test_each_model_sees_its_own_entities(grown):
              for v in [_crown(ds.structure, plant)[0], *_crown(ds.structure, plant)[1]]}
     assert shoot_ids | root_ids | crown == set(ds.entity_ids("node").tolist())   # everything is someone's
     assert not crown & (shoot_ids | root_ids)
+    assert isinstance(instance.crown.data_structure, EntityView)                  # the crown's: its elements
+    assert set(instance.crown.data_structure.entity_ids("node").tolist()) == crown
     assert (np.asarray(shoot.parents()) == -1).sum() == 2                          # each main stem on its crown
     assert (np.asarray(roots.parents()) == -1).sum() == 2 * 6 + sum(len(record["roots"]) for record
                                                                    in _record(scene)["phytomers"].values())
@@ -267,6 +269,55 @@ def test_nodal_roots_on_the_right_phytomers_at_the_right_times(grown):
         assert len(axes) == PER_LEAF and all(g.label(a) == g.labels.Axis.Root for a in axes)
         np.testing.assert_allclose(np.asarray(ds.get("z1"))[ds.index_of(on_crown["roots"])], -CROWN_DEPTH,
                                    atol=1e-12)               # at the crown's depth (phytomer 1's bearer: its base)
+
+
+def test_the_nodal_roots_start_on_the_crown(grown):
+    """Every nodal root starts at its phytomer's node (the rule's site_x, site_y, site_z): on the crown, the
+    internodes below not elongated (the tillering zone), the crown's x and y; Adel draws the first element of a
+    phytomer above the first on the coleoptile's top, out of the soil, where the nodal roots would otherwise start."""
+    scene, history = grown
+    ds = scene.populations[0].data_structure
+    g = ds.structure
+    final = history[-1]["phytomers"]
+    plants = ds.entity_ids("Plant").tolist()
+    grown_on = 0
+    for (plant, row, rank), record in final.items():
+        if not record["roots"]:
+            continue
+        grown_on += 1
+        site = ds.index_of([record["id"]], location="Phytomer")
+        node = [float(np.asarray(ds.get(name))[site][0]) for name in ("site_x", "site_y", "site_z")]
+        np.testing.assert_allclose(node, [g.property("x")[plants[plant]], g.property("y")[plants[plant]],
+                                          -CROWN_DEPTH], atol=1e-12)
+        index = ds.index_of(record["roots"])
+        start = np.column_stack([np.asarray(ds.get(name))[index] for name in ("x1", "y1", "z1")])
+        np.testing.assert_allclose(start, np.tile(node, (len(record["roots"]), 1)), atol=1e-12)
+        if rank >= 2:                                                   # its bearer drawn out of the soil
+            assert np.asarray(ds.get("z2"))[ds.index_of(record["bearer"])] > 0.
+    assert grown_on >= 4                                                # ranks 1 and 2 of each main stem
+    crown_axes = np.asarray(ds.get("axis_row"))[ds.owner("Axis", of="Phytomer")] < 0
+    assert np.isnan(np.asarray(ds.get("site_z"))[crown_axes]).all()     # the crown's and the roots' phytomers
+
+
+def test_the_plant_is_drawn_connected(grown):
+    """The plant's triangles (those of its SubOrgans, the frames' and the light's): the crown's elements too (the
+    seed as the grain, the subcrown internode's cylinders from the seed up to the crown), so that the seminal roots,
+    on the seed, and the shoot, on the crown, are drawn joined."""
+    scene, _ = grown
+    ds = scene.populations[0].data_structure
+    g = ds.structure
+    elements = ds.at("SubOrgan") if ds._anatomy else ds                # the plant model's here: its nodes
+    triangles = elements.triangles()
+    owner, vertices = np.asarray(triangles.owner), np.asarray(triangles.vertices)
+    drawn = set(np.asarray(elements.entity_ids("node"))[np.unique(owner)].tolist())
+    for plant, sowing_depth in zip(ds.entity_ids("Plant").tolist(), SOWING_DEPTHS):
+        seed, subcrown = _crown(g, plant)
+        assert {seed, *subcrown} <= drawn
+        heights = vertices[np.isin(owner, elements.index_of(subcrown))][..., 2]
+        np.testing.assert_allclose([heights.min(), heights.max()], [-sowing_depth, -CROWN_DEPTH], atol=1e-12)
+        grain = vertices[owner == elements.index_of(seed)].reshape(-1, 3)
+        np.testing.assert_allclose(np.ptp(grain[:, 0]), WheatCrown.seed_length, rtol=1e-12)    # along x
+        assert grain[:, 2].min() < -sowing_depth < grain[:, 2].max()
 
 
 def test_requests_are_cumulative_and_none_is_lost():

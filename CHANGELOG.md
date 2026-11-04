@@ -8,6 +8,7 @@
 - `@explicit_term(field, jacobian=)`: a graph system's term kept explicit (a nonlinear one, its nodes kept); `@input_jacobian(name)`: the balance's derivative with respect to a node variable.
 - `solve.network.kron_reduction` / `KronReduction` (`reduced`, `pairs`, `shunts`, `inject`, `injection`, `recover`, `release`: its interior's factorisation freed, made again at each later call); it keeps the sparse blocks, not A_II⁻¹ A_IK (dense, interior × kept); `SectionTemplate.restricted` and `extended`.
 - Memory of a reduction: a kind keeps no factorisation of its full interior (`KronReduction.release` once evaluated); `Reduction.group_kinds(release=True)`, at each solve's terms, releases the kinds no group has any more (a growing section's former length classes: `Kind.release`, its arrays freed even where a cache still holds it). A growing plant's kinds no longer pile up (36 to 120 MB each for a wheat stem's or blade's full anatomy: 30 GB by use case 1's third day).
+- `Kind.key` and `Kind.system`: a kind's key in its Reduction (its reduced template key, kind values and plant parameters' signature) and its system, the same when the kind is evaluated again; a component caching values derived from kinds keys them so and drops the keys its groups no longer have (MECHA's condensed volumes, which grew by one entry per kind, held by the kind object).
 
 ### Instanced sections and condensed solves (memory and time at the size of a plant)
 
@@ -76,6 +77,7 @@
   - `Scene.timing` gives the wall time per model.
 - **Fixed:** an environment model's scenario entry that is a per-plant parameter on the plants' DataStructure (a light model's optics) was silently skipped. It is now set for every plant.
 - **Fixed:** after a restore, the recorder's CSVs are cut back to the checkpoint's time. A run that went past its checkpoint duplicated their rows.
+- **Fixed:** a run resumed with a changed translator silently used the checkpoint's derived-variable formulas (`load_checkpoint` replaced the DataStructure's links by the saved ones). A DataStructure its models coupled (`CompositeModel.couple`) now keeps its own derivations on `load_checkpoint`: a changed one is recomputed from the loaded sources at its next read, a new one registered, an unchanged one kept as saved, a dropped one's variable left as saved; a changed alias raises `ValueError`. `DataStructure.restore` (no model) still takes the checkpoint's.
 - **Scenario layer (`openalea.metafspm.scene.scenarios`):**
   - `read_scenarios` reads a scenario table: one column per scenario, with type, unit and description columns; forcing rows read from CSV files; an optional `model` column.
   - `parameter_table(*components, main=)` lists the parameters with their declared bounds.
@@ -300,6 +302,7 @@ The flat modules used before the 2026 restructure have been removed. No compatib
   - column → grid: broadcast over x and y, or totals shared over each layer's cells.
 
   Pass it to `Scene(mappings=[...])` (or a callable building it from the scene).
+- **A plant in a stand, its roots out of the pattern:** `CrossMapping(periodic=(True, True, False))`, the default, folds a segment's pieces outside the grid's x and y into the cells of their periodic images (the stand repeated, the grid its pattern: a neighbour's roots come in as this plant's go out), each piece's length fraction kept, nothing dropped; z is clipped into the grid (a root below the grid in its bottom cells). Documented in the user guide and tested on the overlap and barycentre methods (`test_overlap_folds_segments_leaving_the_pattern_into_its_periodic_images`); the plants stay drawn at their own positions.
 
 ### Graph-system extensions
 

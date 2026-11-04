@@ -1008,10 +1008,54 @@ class VariableStoreMixin:
         """
         Load the checkpoint of folder *path* into this DataStructure, in place: components, mappings and
         scenes keep their references to it. An MPG DataStructure takes the checkpointed MTG (or *mtg*).
+
+        A DataStructure its models coupled (CompositeModel.couple: the links of their current translator) keeps its
+        links: its derived variables are its own, not the checkpoint's (a run resumed with a changed translator
+        uses the changed formulas, factors and options: a changed derivation recomputed from the loaded sources at
+        its next read, a new one registered; an unchanged one kept as saved), the checkpoint's derivations it no
+        longer has dropped (their variables kept as saved). Its aliases must be the checkpoint's (ValueError
+        otherwise: an alias has no values of its own to resume from). A DataStructure no model coupled takes the
+        checkpoint's links.
         """
         manifest, saved, arrays = self._read_checkpoint(path, type(self).__name__)
+        links = self._current_links() if self.__dict__.get("_links_coupled") else None
         self._load_construction(dict(manifest["construction"], **construction), saved)
         self._apply_checkpoint(path, manifest, saved, arrays)
+        if links is not None:
+            self._keep_current_links(path, *links)
+
+    def _current_links(self) -> tuple:
+        """(derivations, aliases, their variables' metadata) of this DataStructure, before a checkpoint is loaded."""
+        derived = {name: dict(spec) for name, spec in self.__dict__.get("_derived", {}).items()}
+        meta = self._variable_meta()
+        return derived, dict(self.__dict__.get("_aliases", {})), {name: dict(meta.get(name, {})) for name in derived}
+
+    def _keep_current_links(self, path: str, derived: dict, aliases: dict, meta: dict) -> None:
+        """The links of this DataStructure's models (_current_links) in place of the checkpoint's (load_checkpoint)."""
+        saved_aliases = self.__dict__.get("_aliases", {})
+        if saved_aliases != aliases:
+            changed = sorted(set(saved_aliases.items()) ^ set(aliases.items()))
+            raise ValueError(f"{path}: the checkpoint's aliases differ from this DataStructure's links (its models' "
+                             f"translator changed): {changed}; an alias cannot change on a resumed run (link the "
+                             "variable by a factor or a formula instead, or resume with the checkpoint's translator)")
+        saved_derived = self.__dict__.get("_derived", {})
+
+        def without_stamps(spec):
+            return {key: value for key, value in spec.items() if key != "stamps"}
+
+        kept = {}
+        for name, spec in derived.items():
+            previous = saved_derived.get(name)
+            if previous is not None and without_stamps(previous) == without_stamps(spec):
+                kept[name] = previous                    # unchanged: its saved values up to date with its sources
+            else:
+                kept[name] = without_stamps(spec)        # changed or new: recomputed at its next read
+        self.__dict__["_derived"] = kept
+        for name, spec in kept.items():
+            if not self.has(name):                       # a new link's receiving variable
+                self.register(name, location=spec["location"], default=spec["default"],
+                              on_grow=meta[name].get("on_grow", "default"))
+                self._variable_meta()[name].update(meta[name])
 
     def _load_construction(self, construction: dict, saved: dict) -> None:
         """Make this DataStructure's construction the checkpointed one (in-place loads)."""

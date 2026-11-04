@@ -81,10 +81,14 @@ class Kind:
     interior_rows: np.ndarray
     inputs: dict
     outputs: dict = None
+    key: tuple = None                            # its key in its Reduction's kinds: (reduced template key, kind
+                                                 # values, plant parameters' signature), the same when evaluated again
+    system: str = None                           # the system it reduces
 
     def release(self) -> None:
         """Free its arrays: a kind no group of its DataStructure has any more (Reduction.group_kinds' release), its
-        memory freed even where a cache still holds it (a component's, by the kind object: never given again)."""
+        memory freed even where a cache still holds it. A component's cache of a kind's derived values keys them by
+        (key, system), the same when the kind is evaluated again, and drops the keys its groups no longer have."""
         self.D = self.e = self.reduction = self.interior_source = None
         self.kept_rows = self.interior_rows = None
         self.inputs, self.outputs = {}, {}
@@ -511,6 +515,6 @@ def _evaluate(reduction: Reduction, parameters: dict, requests: dict) -> dict:
             kron.release()                     # its factorisation (the full interior's) made again on recovery
             out[kind_key][system] = Kind(D=S - A_red, e=s - c_red, reduction=kron, interior_source=c_full[I],
                                          kept_rows=compartments[K], interior_rows=compartments[I], inputs=inputs,
-                                         outputs=group_outputs)
+                                         outputs=group_outputs, key=kind_key, system=system)
     return out
 

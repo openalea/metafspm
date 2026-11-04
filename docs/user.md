@@ -311,7 +311,9 @@ class SoilDiffusion(FunctionalComponent):
   component reading a reduced group's full template (its volumes, its geometry) gets it from
   `reduction.full_template(key)`, the key of the reduced template its instance holds. The kinds kept are those of the plant's current groups:
   at each solve, a kind no group has any more (a growing section's former length class) is released, its arrays
-  freed (a component's cache holding it by the object finds it empty), evaluated again if a group comes back to it;
+  freed, evaluated again if a group comes back to it. A component caching values derived from a kind keys them by
+  `(kind.key, kind.system)` (the same when the kind is evaluated again: its template key, kind values and plant
+  parameters' signature) and drops the keys its groups no longer have, so its cache too follows the plant's groups;
   a kind keeps its term and the sparse blocks of its full interior, not their factorisation (made again for a
   recovery, `recover`), so the memory follows the plant's size, not the kinds it went through.
 ## 4. Structure: `StructuralComponent`
@@ -480,7 +482,11 @@ through a mapping:
   through its segment's cells; a Compartment variable (MECHA's root uptake, the soil's potential it receives)
   through its SubOrgan's cells, at its masked Compartments only (`mask="root_surface"`, a node mask: the roots'
   soil nodes; the others neither give nor receive): summed (or each one in a mean) up, broadcast or split by weight
-  down;
+  down. A plant in a stand: the grid is the stand's pattern (the scene's `xrange` and `yrange`, its sides periodic),
+  and `periodic=(True, True, False)` (the default) folds the pieces of a segment outside the grid's x and y into the
+  cells of their periodic images, so that a root leaving the pattern takes up water where a neighbour's would come
+  in, nothing dropped nor clamped into the side cells; z is clipped (a root below the grid in its bottom cells). The
+  plants are drawn at their own positions (the frames: their real architectures, out of the pattern);
 - environment **scalars** (stored at `"scalar"`): population values reduced over every plant of every population,
   or a scalar broadcast to every node;
 - `LayerMapping(column, grid, axis="z")`: a 1-D column and a 3-D grid, by layer overlaps;
@@ -592,9 +598,14 @@ scene = Scene.from_scenario(scenario, stand(...), Wheat, environment=[RhizoSoil,
   `recorder.table(name)` reads any of them back. `Scene.simulate` sets the run's status; a loop of `scene.run()`
   ends with `scene.finish()` (a recording scene dropped without it warns).
 - **Restarts.** `scene.checkpoint(path)` and `Scene.restore(path, **arguments)` continue a run bit for bit; models
-  keep non-variable state through `checkpoint_state()` / `restore_state(state)`. A restored scene cuts its
-  recorder's tables and frames back to the checkpoint's step, so a run that went past its checkpoint leaves no
-  duplicate rows.
+  keep non-variable state through `checkpoint_state()` / `restore_state(state)` (e.g. a registry of their own, such
+  as GRANAP's anatomy templates, which a new process does not have). A restored scene cuts its recorder's tables
+  and frames back to the checkpoint's step, so a run that went past its checkpoint leaves no duplicate rows. A scene
+  rebuilt with a changed translator and resumed uses the changed links: a DataStructure its models coupled keeps
+  their derived variables (formulas, factors, aggregations) on `load_checkpoint`, not the checkpoint's (a changed
+  one recomputed from the loaded sources at its next read, a new one registered, a dropped one's variable left as
+  saved); a changed alias raises (an alias has no values of its own). `DataStructure.restore` (no model) takes the
+  checkpoint's.
 - **Scenario tables and variants** (`scene.scenarios`). `read_scenarios("scenarios.csv")` reads a table with one row
   per entry and one column per named scenario into `{name: scenario}`. Description columns (`type`, `unit`,
   `description`, ...) are skipped, empty cells leave the defaults, `forcing` rows read their CSV, and a `model`
@@ -638,9 +649,12 @@ scene = Scene.from_scenario(scenario, stand(...), Wheat, environment=[RhizoSoil,
   takes your own views, a dict or the path of a views file (e.g. one saved from ParaView): each name a layer gives
   (data structure, mesh, entity set, variable) is checked against the first frame, with a warning for each one it
   lacks; a layer is empty in the frames that lack what it shows. `write_views(path, views)` writes views, checked
-  against encoding3d's schema. In ParaView, the encoding3d macros make each layer its own pipeline item and save your changes back, and "Select at scale" grows a picked
-  element to its plant, axis, organ or segment with everything it contains (a segment's section shown even when the
-  sections' layer is hidden), isolated in the view or in a panel of its own (encoding3d's `doc/using.md`, "Views").
+  against encoding3d's schema. In ParaView, encoding3d's plugin (`paraview/plugin_encoding3d.py`, no macros) draws
+  the default configuration at Apply, each layer with its own colour map and opacity (the soil translucent), edited
+  layer by layer in View → MultiBlock Inspector and saved back with the reader's "Save Views" button; its filter
+  "Select at scale" grows a picked element to its plant, axis, organ or segment with everything it contains (a
+  segment's section shown even when the sections' layer is hidden), isolated in the view or in a panel of its own
+  (encoding3d's `paraview/README.md`, the how-to).
 - **Running with another platform's model.** In an encoding3d coupling session (encoding3d's coordinator, `encoding3d
   couple`, runs models of several platforms step by step), `openalea.metafspm.io.coupling.RemoteComponent` stands for
   the other platform's model: a component computing nothing, whose state variables are that model's outputs and whose

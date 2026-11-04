@@ -118,6 +118,34 @@ def test_overlap_of_an_oblique_segment():
     np.testing.assert_allclose(row[np.ravel_multi_index(([0, 1], [0, 0], [0, 1]), soil.shape)], [0.5, 0.5])
 
 
+def test_overlap_folds_segments_leaving_the_pattern_into_its_periodic_images():
+    """A plant in a stand: the grid is the stand's pattern, periodic in x and y. A segment crossing the pattern's side
+    has its piece outside in the cells of the other side (its periodic image), one wholly outside lies in the cells
+    of its image; none is dropped nor clamped into the side cells (as periodic=False, clipping, would). Below the
+    grid, z is clipped into its bottom cells."""
+    plants, soil = _population([0.1]), _grid()                    # x in [0, 0.8), depth in [0, 1.6)
+    RootGeometry(data_structure=plants)
+    ends = {name: np.array(plants.get(name), dtype=float) for name in COORDINATES}
+    for row, (x1, x2) in enumerate(((0.6, 1.0), (-0.3, -0.1))):  # across the side x = 0.8; wholly before x = 0
+        ends["x1"][row], ends["x2"][row] = x1, x2
+        ends["z1"][row] = ends["z2"][row] = -0.2                   # horizontal, in the first layer
+    for name, values in ends.items():
+        plants.set(name, values)
+
+    def cell(i, k=0):
+        return np.ravel_multi_index((i, 0, k), soil.shape)
+
+    folded = _dense(CrossMapping(plants, soil, method="overlap"))
+    np.testing.assert_allclose(folded[0, [cell(0), cell(1)]], [0.5, 0.5])     # x in [0.8, 1.0) in [0, 0.2)
+    np.testing.assert_allclose(folded[1, cell(1)], 1.)                        # x in [0.5, 0.7)
+    np.testing.assert_allclose(folded.sum(axis=1), 1.)                        # nothing dropped
+    clamped = _dense(CrossMapping(plants, soil, method="overlap", periodic=(False, False, False)))
+    np.testing.assert_allclose(clamped[0, cell(1)], 1.)                       # the piece outside in the side cell
+    np.testing.assert_allclose(clamped[1, cell(0)], 1.)
+    barycentre = CrossMapping(plants, soil).cells                             # the middle point, folded too
+    assert barycentre[0] == cell(0) and barycentre[1] == cell(1)
+
+
 def test_the_incidence_follows_growth_and_moves():
     plants, soil = _population([0.1]), _grid()
     growth = RootGrowthProbe(data_structure=plants)

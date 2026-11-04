@@ -19,10 +19,12 @@ and the plant's own parts, between its shoot model (Adel's) and its root model (
 
     WheatCrown          an initiator, first in the plant: the seed at the sowing depth and the subcrown internode up
                         to the crown, below the soil surface; the shoot's main stem grows on the crown's top
-                        (Adel's shoot_anchor), the seminal roots on the seed (ArchiSimple's root_anchor)
+                        (Adel's shoot_anchor), the seminal roots on the seed (ArchiSimple's root_anchor); it draws
+                        its elements (the grain, the subcrown internode), joining the roots and the shoot drawn
     NodalRootEmergence  the rule of the nodal roots (a rule component, "sites"): N nodal roots per leaf appeared, on
                         its axis' phytomer offset ranks below, D °Cd after the leaf's appearance, asked of the root
-                        model as a cumulative count per phytomer (nodal_axes_requested)
+                        model as a cumulative count per phytomer (nodal_axes_requested), from the phytomer's node
+                        (site_x, site_y, site_z: on the crown in the tillering zone)
 
 Coordinates: z points down from the surface (the depth), as on every metafspm soil grid. The total head is h - z,
 and gravity pulls the water towards increasing z.
@@ -801,7 +803,16 @@ class WheatCrown(StructuralComponent):
     The seed's depth is the planting's (z: minus the sowing depth, a planting_variable). The crown's depth does not follow the sowing depth (Kirby 1993): the subcrown
     internode's length is the sowing depth minus crown_depth, positive (a seed sown above the crown's depth raises).
     The initiator reads its parameters from the plant's scenario (the class defaults otherwise); it has no step.
+
+    Its entities are its elements (the seed and the subcrown internode's StemElements: on its axis without a row,
+    axis_row -1), at the plant's SubOrgans, so that it draws them as the shoot and the root models draw theirs
+    (triangles(): the frames, the light): the subcrown internode's StemElements as cylinders, the seed as the grain,
+    a cylinder of seed_length and seed_radius centred on the seed's position, lying along x. Without it the
+    subcrown internode would not be drawn: the seminal roots, on the seed, would start a subcrown internode's length
+    below the shoot, on the crown.
     """
+    entities = {"label": ("Seed", "StemElement"), "axis_row": "<0"}
+
     # the planting (the seed's position)
     x: float = planting_variable("x")
     y: float = planting_variable("y")
@@ -825,6 +836,10 @@ class WheatCrown(StructuralComponent):
                                          min_value=1, max_value=20,
                                          value_comment="numerical: the internode's discretisation (e.g. for its "
                                                        "hydraulics)")
+    # its entities: the elements of its axis, which has no row in the shoot's axes table
+    axis_row: int = input_variable(unit="adim", description="The axis' row in the shoot's axes table (-1: not the "
+                                                            "shoot's: the crown's axis).",
+                                   by="model_shoot_architecture", default=-1, scale=ScalesConfig.Axis, dtype="int")
     # the subcrown internode's organ: its diameter, as the shoot model's organs have theirs (a stem anatomy's size)
     diameter: float = state_variable(unit="m", description="The subcrown internode's diameter (twice "
                                                            "subcrown_radius; the shoot's organs' diameter for the "
@@ -868,6 +883,23 @@ class WheatCrown(StructuralComponent):
             cls._place(g, element, x, y, seed_height + k * rise, seed_height + (k + 1) * rise, rise,
                        float(parameters["subcrown_radius"]))
 
+    def triangles(self, where=None):
+        """The elements' triangles (coupling.geometry.Triangles, each one's node index here): the subcrown internode's
+        StemElements as cylinders from their start to their end, the seed as the grain (a cylinder of its length and
+        its radius, centred on its position, along x); *where*: a node mask restricting them."""
+        from openalea.metafspm.coupling.geometry import Triangles, segment_triangles
+        ds = self.data_structure
+        names = ("x1", "y1", "z1", "x2", "y2", "z2", "length", "radius")
+        x1, y1, z1, x2, y2, z2, length, radius = (np.asarray(ds.get(name), dtype=float) for name in names)
+        nodes = np.arange(x1.size) if where is None else np.flatnonzero(where)
+        start = np.stack([x1[nodes], y1[nodes], z1[nodes]], axis=1)
+        end = np.stack([x2[nodes], y2[nodes], z2[nodes]], axis=1)
+        seed = np.asarray(ds.labels())[nodes] == "Seed"
+        half_length = np.stack([0.5 * length[nodes][seed], np.zeros(seed.sum()), np.zeros(seed.sum())], axis=1)
+        start[seed], end[seed] = start[seed] - half_length, start[seed] + half_length
+        vertices, drawn = segment_triangles(start, end, radius[nodes])
+        return Triangles(vertices[drawn].reshape(-1, 3, 3), np.repeat(nodes[drawn], vertices.shape[1]))
+
     @staticmethod
     def _place(g, element, x, y, bottom, top, length, radius):
         """An element's start and end (vertical, at x, y), its length and its radius, on the MPG."""
@@ -903,8 +935,10 @@ class NodalRootEmergence(FunctionalComponent):
 
     It writes, per Phytomer, the cumulative number of nodal roots asked for on it (nodal_axes_requested, the root
     model's input: it grows the difference with those it grew), each leaf's request counted once when it falls due
-    (leaf_nodal_roots): no request lost or replaced, whatever the steps. Its entities are the shoot's elements (its
-    axes with a row, axis_row >= 0), the phytomers they belong to its phytomers.
+    (leaf_nodal_roots): no request lost or replaced, whatever the steps; and each phytomer's node, where its nodal
+    roots start (site_x, site_y, site_z, the root model's site position: _site_position), on the crown while the
+    internodes below it have not elongated. Its entities are the shoot's elements (its axes with a row,
+    axis_row >= 0), the phytomers they belong to its phytomers.
     """
     entities = {"axis_row": ">=0"}
 
@@ -920,6 +954,13 @@ class NodalRootEmergence(FunctionalComponent):
     phytomer_rank: int = input_variable(unit="adim", description="The phytomer's rank on its axis, from 1.",
                                         by="model_shoot_architecture", default=0, scale=ScalesConfig.Phytomer,
                                         dtype="int")
+    # the plant's position (its seed's) and the elements' lengths (the internodes', the shoot's and the crown's)
+    x: float = planting_variable("x")
+    y: float = planting_variable("y")
+    z: float = planting_variable("z")
+    length: float = input_variable(unit="m", description="The element's length (read on every element of the plant: "
+                                                         "the internodes').", by="model_shoot_architecture",
+                                   default=0., scale=ScalesConfig.SubOrgan)
     # the rule's state
     leaf_appearance_time: float = state_variable(unit="°Cd", description="The thermal time at which the phytomer's "
                                                                          "leaf appeared.",
@@ -929,6 +970,18 @@ class NodalRootEmergence(FunctionalComponent):
                                                                       "on its site.",
                                              value_comment="NaN: not asked yet", kind="descriptor", default=np.nan,
                                              scale=ScalesConfig.Phytomer)
+    site_x: float = state_variable(unit="m", description="Where the nodal roots of the phytomer start, x: its node "
+                                                         "(the root model's site position).",
+                                   value_comment="NaN: not a shoot's phytomer", kind="descriptor", default=np.nan,
+                                   scale=ScalesConfig.Phytomer)
+    site_y: float = state_variable(unit="m", description="Where the nodal roots of the phytomer start, y.",
+                                   value_comment="NaN: not a shoot's phytomer", kind="descriptor", default=np.nan,
+                                   scale=ScalesConfig.Phytomer)
+    site_z: float = state_variable(unit="m", description="Where the nodal roots of the phytomer start, z: its node's "
+                                                         "height, on the crown while the internodes below it have "
+                                                         "not elongated.",
+                                   value_comment="NaN: not a shoot's phytomer", kind="descriptor", default=np.nan,
+                                   scale=ScalesConfig.Phytomer)
     nodal_axes_requested: float = state_variable(unit="adim", description="The cumulative number of nodal roots "
                                                                           "asked for on the phytomer (the root "
                                                                           "model's sites).", kind="descriptor",
@@ -994,6 +1047,36 @@ class NodalRootEmergence(FunctionalComponent):
         given = due & (site >= 0)
         np.add.at(requested, site[given], count[given])
         return {"leaf_appearance_time": appearance, "leaf_nodal_roots": asked, "nodal_axes_requested": requested}
+
+    @state
+    def _site_position(self, x, y, z, phytomer_rank) -> dict:
+        """
+        Per Phytomer of the shoot: its node, where its nodal roots start (the root model's site_x, site_y, site_z):
+        above the seed (the planting's position) by the internodes' lengths on its path from the seed, its own
+        internode's included (the subcrown internode, then the shoot's: the elements of StemInternode organs but the
+        seed, the grain, in the subcrown internode's organ), the axes vertical (Adel's tiller_inclination 0). The shoot model draws a hidden element on the top of the visible
+        parts below it (Adel's turtle: a phytomer on its previous one's sheath), not at its node: a phytomer of the
+        tillering zone, its internodes not elongated, has its node on the crown while its first element is drawn
+        above the coleoptile, out of the soil.
+        """
+        ds = self.data_structure
+        elements = ds.base                                   # every SubOrgan of the plant: the crown's, the roots'
+        internode = ((np.asarray(elements.labels("Organ")) == "StemInternode")
+                     & (np.asarray(elements.labels()) != "Seed"))
+        own_length = np.where(internode, np.asarray(elements.get("length"), dtype=float), 0.)
+        rise = elements.accumulate(own_length, direction="down")          # the path's internodes, its own included
+        phytomer = np.asarray(elements.owner("Phytomer"), dtype=np.int64)
+        count = len(elements.entity_ids("Phytomer"))
+        kept = (phytomer >= 0) & internode
+        height = np.full(count, -np.inf)
+        np.maximum.at(height, phytomer[kept], rise[kept])               # the top of its own internode
+        plant = np.asarray(elements.owner("Plant", of="Phytomer"), dtype=np.int64)
+        shoot = (np.asarray(phytomer_rank) >= 1) & np.isfinite(height)
+        site_x, site_y, site_z = np.full(count, np.nan), np.full(count, np.nan), np.full(count, np.nan)
+        site_x[shoot] = np.asarray(x, dtype=float)[plant[shoot]]
+        site_y[shoot] = np.asarray(y, dtype=float)[plant[shoot]]
+        site_z[shoot] = np.asarray(z, dtype=float)[plant[shoot]] + height[shoot]
+        return {"site_x": site_x, "site_y": site_y, "site_z": site_z}
 
     @state
     def _previous_axis_state(self, thermal_time, haun_stage) -> dict:

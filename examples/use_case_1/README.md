@@ -20,7 +20,10 @@ an `AdaptiveGridDataStructure`.
   - The top: `rainfall` − `potential_evaporation` (inputs that a Scene's forcings of the same names write). Both
     are limited by what the soil can take or give: the rain it cannot take runs off.
   - The bottom: free drainage, a water table (`water_table_head`) or no flux (`bottom_boundary`).
-  - The sides: the grid's (periodic over the stand).
+  - The sides: the grid's (periodic over the stand). A root leaving the stand's pattern exchanges with the cells of
+    its periodic image (metafspm's `CrossMapping`, `periodic=(True, True, False)`): it takes up water where a
+    neighbour's root would come in. The frames draw it at its own position (the plant's architecture), out of the
+    grid; a root below the grid exchanges with its bottom cells.
 - **Solver.** Newton with the analytic Jacobian, and adaptive time steps (step doubling).
 - **Water balance.** A second unknown, `exchanged_water`, integrates what crosses the boundaries and what the roots
   take, so Σ θ V − Σ θ₀ V = Σ exchanged_water V over any run.
@@ -56,6 +59,9 @@ Two components of this folder join them.
   - then `subcrown_elements` StemElements `'<'`, vertical, up to the crown at `crown_depth` below the surface.
 - **Geometry.** Each element gets its start and end (`x1` … `z2`), its length and its radius. The seed is a point,
   its length and radius the grain's (Gegas et al. 2010).
+- **Drawing.** Its entities are its elements (`entities = {"label": ("Seed", "StemElement"), "axis_row": "<0"}`): it
+  draws them as Adel and ArchiSimple draw theirs (the frames, the light), the subcrown internode's cylinders and the
+  seed as the grain (along x). The seminal roots, on the seed, and the shoot, on the crown, are drawn joined.
 - **Its organ's diameter** (`diameter`, twice `subcrown_radius`), as Adel's organs have theirs: GRANAP's stems and
   seed are classed by it (the assembly's `stem_radius` link).
 - **Depths.** The seed's depth is the planting's (z: minus the sowing depth). The crown's depth does not follow the sowing depth (Kirby 1993): the subcrown internode spans the
@@ -77,8 +83,13 @@ model's sites.
   - A leaf appears when its axis' Haun stage reaches its rank minus one. Its time is interpolated within the step.
   - A leaf whose site would lie below its axis' first phytomer asks for none.
 - **What it writes:** `nodal_axes_requested` per phytomer, the cumulative count ArchiSimple reads. ArchiSimple
-  grows the difference with the roots it grew, `'+'` on the phytomer's bearer (its first element: at the crown for
-  the first phytomers). Each leaf's request is counted once, when it falls due: none is lost, whatever the steps.
+  grows the difference with the roots it grew, `'+'` on the phytomer's bearer (its first element). Each leaf's
+  request is counted once, when it falls due: none is lost, whatever the steps.
+- **Where the nodal roots start:** each phytomer's node (`site_x`, `site_y`, `site_z`, ArchiSimple's site position):
+  the seed's position raised by the internodes on its path (the subcrown internode's, the shoot's, its own
+  included), on the crown while they have not elongated (the tillering zone). Adel's turtle draws a phytomer's first
+  element on the top of the visible parts below it (phytomer 2 on the coleoptile's top, out of the soil): ArchiSimple
+  starting the roots at their bearer's end would put the nodal roots of phytomer 2 and above in the air.
 - **Its entities:** Adel's elements (`entities = {"axis_row": ">=0"}`), its phytomers those they belong to.
 
 Their tests are in `test/test_plant.py` (the example's own: `python -m pytest examples/use_case_1/test`, outside metafspm's suite, which needs no port), on a test plant model (WheatCrown, Adel,
@@ -88,7 +99,8 @@ the rule, ArchiSimple):
 - Adel's main stem on the crown's top, the six seminal roots on the seed;
 - each model's own entities;
 - the leaves' appearance times;
-- the nodal roots on the right phytomers at the right thermal times, kept;
+- the nodal roots on the right phytomers at the right thermal times, kept, starting on the crown;
+- the plant drawn connected (the grain and the subcrown internode drawn);
 - the requests cumulative, the same at a step of a day and of six hours;
 - the rule's defaults (nothing before the fourth leaf).
 
@@ -102,7 +114,9 @@ Compartments of GRANAP's sections (anatomy mode).
 - **A step:** Adel's shoot (`run_shoot`), the nodal root rule, ArchiSimple's roots, GRANAP's anatomies of the new
   sections, the roots' barriers (MECHA's `Development`, by their distance from the tip: no root maturation model is
   ported), Caribu's `PlantOptics`, CNW-Grass's `GasExchange`, MECHA's `MechaHydraulics`.
-- **Its scenario,** `WHEAT_SCENARIO`: the crown, `WHEAT_ON_A_SHOOT` and the anchors, GRANAP's wheat root
+- **Its scenario,** `WHEAT_SCENARIO`: the crown, Adel's leaf shapes CN-Wheat's (`LeafShapes.cnwheat()`: echap's
+  Mercia profiles and Soissons' midribs, as CNW-Grass's stand; Adel's samples by default), `WHEAT_ON_A_SHOOT` and
+  the anchors, GRANAP's wheat root
   (`for_wheat_root`) and monocot stem, sheath and leaf, a soil node per root section, MECHA's soil boundary on it
   (`node_dirichlet`) and no collar condition, MECHA's sections reduced onto their conduits (`reduction =
   staticmethod(scenario_reduction)`, the scenario's `reduced`, `reduced_labels`).

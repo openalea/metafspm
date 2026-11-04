@@ -146,6 +146,12 @@ def test_each_model_works_on_its_own_entities(stepped):
     assert not set(shoot.entity_ids("node").tolist()) & set(roots.entity_ids("node").tolist())
     crown = set(np.asarray(ds.entity_ids("SubOrgan"))[np.isin(ds.at("SubOrgan").labels(), ["Seed"])].tolist())
     assert crown and not crown & (set(shoot.entity_ids("node").tolist()) | set(roots.entity_ids("node").tolist()))
+    own = instance.crown.data_structure                                 # the crown's: the seed, the subcrown internode
+    assert isinstance(own, EntityView) and crown <= set(own.entity_ids("node").tolist())
+    assert set(np.asarray(own.labels()).tolist()) == {"Seed", "StemElement"}
+    elements = ds.at("SubOrgan")                                        # drawn with the shoot and the roots
+    drawn = set(np.asarray(elements.entity_ids("node"))[np.unique(elements.triangles().owner)].tolist())
+    assert set(own.entity_ids("node").tolist()) <= drawn
     for component in (instance.optics, instance.gas_exchange):
         assert isinstance(component.data_structure, LocatedView)
         assert np.array_equal(component.data_structure.entity_ids("node"), ds.entity_ids("SubOrgan"))

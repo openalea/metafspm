@@ -122,6 +122,8 @@ class CompositeModel:
         by the Scene, not here.
         """
         by_name = {component.__class__.__name__: component for component in self.components}
+        for component in self.components:          # their links are this translator's: load_checkpoint keeps them
+            _base_of(component.data_structure).__dict__["_links_coupled"] = True
         for link in Translator.load(translator).links:
             if link.receiver not in by_name or link.provider not in by_name or link.receiver == link.provider:
                 continue
