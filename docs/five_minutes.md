@@ -97,8 +97,9 @@ variables, the soil, and the 3D shapes.
 - In ParaView, encoding3d's reader plugin opens a file, or the index to play the time steps. Every variable can then
   colour the plants, the root sections or the soil.
 
-encoding3d is installed with metafspm (the steps above). ParaView's plugin is the file `encoding3d/paraview/encoding3d_reader.py`,
-loaded once from ParaView's Tools → Manage Plugins menu.
+encoding3d is installed with metafspm (the steps above). ParaView's plugin is the file
+`encoding3d/paraview/plugin_encoding3d.py`, loaded once from ParaView's Tools → Manage Plugins... menu (Load New ...,
+tick Auto Load); `encoding3d/paraview/README.md` is the how-to (layers, colour maps, selection by scale).
 
 ## For developers
 
