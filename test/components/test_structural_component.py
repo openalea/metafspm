@@ -215,3 +215,36 @@ def test_labels_of_a_coarse_scale():
     assert ds.labels(location="Organ").tolist() == ["RootInternode"] * ds.n_nodes()
     assert ds.labels(location="Organ", per_node=False).tolist() == ["RootInternode"]
     assert ds.labels(location="Axis", per_node=False).tolist() == ["Root"]
+
+
+def test_a_component_whose_geometry_is_never_drawn_warns():
+    """On an anatomy-mode DataStructure, the frames and the light models draw the view at its from_scale
+    (ds.at("SubOrgan").triangles()): a StructuralComponent working at a coarser scale (its finest declaration at
+    Organ) registers its geometry on ds.at("Organ"), never drawn, and warns, naming itself and that view; one working
+    at the SubOrgans, or at the Compartments (an anatomy's: not drawn by design), does not."""
+    import warnings
+    from openalea.metafspm.coupling.component import StructuralComponent
+    from openalea.metafspm.data_structure.data_api import MPGDataStructure
+    from anatomy import make_rooted_anatomy, wiring
+
+    @dataclass
+    class AtOrgans(StructuralComponent):
+        organ_length: float = state_variable(**DOC, default=0., scale=scales.Organ)
+
+    @dataclass
+    class AtElements(StructuralComponent):
+        element_length: float = state_variable(**DOC, default=0., scale=scales.SubOrgan)
+
+    @dataclass
+    class AtCompartments(StructuralComponent):
+        water: float = state_variable(**DOC, default=0., scale=scales.Compartment, location="node")
+
+    Choregrapher().set_simulation_time_step(1)
+    g, _, _ = make_rooted_anatomy(n_segments=3)
+    ds = MPGDataStructure(g, from_scale=g.scales.SubOrgan, nodes="Compartment", wiring=wiring(g))
+    with pytest.warns(UserWarning, match=r"AtOrgans works at the Organ scale .* ds\.at\('Organ'\), which the frames"):
+        AtOrgans(data_structure=ds, time_step=1)
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        AtElements(data_structure=ds, time_step=1)
+        AtCompartments(data_structure=ds, time_step=1)

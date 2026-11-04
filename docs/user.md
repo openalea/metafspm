@@ -357,6 +357,10 @@ shapes (Adel's blades) overrides it. A light model computes on the triangles and
 (`Triangles.per_owner`). An environment model receives DataStructures, not components: `ds.triangles()` gives the
 triangles of the structural component built on it (the one with its own `triangles()` first; set
 `ds.geometry_provider` when several draw), and a `UnionDataStructure`'s concatenates its parts', in its node indices.
+On an anatomy-mode DataStructure, the frames and the light models take the triangles of its view at its from_scale
+(`ds.at("SubOrgan").triangles()`, the elements): a structural component working at a coarser scale (its finest
+declaration at Organ) registers its geometry on `ds.at("Organ")`, never drawn nor lit, and warns at its construction;
+declare one of its variables at the SubOrgan scale (or its `entities`) for its elements to be drawn.
 `ds.triangles(where)` takes a node mask or a mask's name (`"emerged"`: plants not yet emerged left out; every node
 when the DataStructure has no such mask). `Triangles.clip_below(z)` cuts them at the soil (a buried part receives no
 light), `Triangles.mean_per_owner(values, n)` averages per element by area.
@@ -645,7 +649,8 @@ scene = Scene.from_scenario(scenario, stand(...), Wheat, environment=[RhizoSoil,
   (a state variable that is not a descriptor, else an input), its root segments as tubes on `radius` coloured by the
   first such SubOrgan variable, and each component's display shapes (e.g. sections, in the first frame with
   `display_period`) hidden; per environment model, its grid's cells coloured by its first cell variable, at opacity
-  0.3. A part missing from the first frame (a shoot that appears later) gets no default layer. `frame_views=` also
+  0.3. Each part has its own colour map (ParaView presets: the shoot `SHOOT_COLORMAP`, "Cool to Warm"; the roots
+  `ROOTS_COLORMAP`, "Inferno (matplotlib)"; the grids `GRID_COLORMAP`, "Viridis (matplotlib)", in `io.encoding3d`). A part missing from the first frame (a shoot that appears later) gets no default layer. `frame_views=` also
   takes your own views, a dict or the path of a views file (e.g. one saved from ParaView): each name a layer gives
   (data structure, mesh, entity set, variable) is checked against the first frame, with a warning for each one it
   lacks; a layer is empty in the frames that lack what it shows. `write_views(path, views)` writes views, checked

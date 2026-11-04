@@ -1053,6 +1053,7 @@ class StructuralComponent(DataStructureComponent):
     def __post_init__(self):
         super().__post_init__()
         self.data_structure.add_geometry_provider(self)     # ds.triangles(), for light models
+        _warn_if_not_drawn(self)
         if self.active is not None and not self.data_structure.has_mask("active"):
             self.data_structure.define_mask("active", self.active)
 
@@ -1386,6 +1387,31 @@ def _property_version(prop):
     if prop is None:
         return 0
     return getattr(prop, "version", None)
+
+
+def _warn_if_not_drawn(component) -> None:
+    """
+    Warn when *component*'s geometry (triangles(), registered on the DataStructure it works on) is on a view of an
+    anatomy-mode DataStructure at a location the frames and the light models never draw: they take the triangles of
+    the view at its from_scale (ds.at("SubOrgan"), the elements), a component working at a coarser scale (its finest
+    declaration at Organ, say: ds.at("Organ")) registering on that scale's view instead. Its triangles are owned by
+    that scale's entities, which no element's mesh row or absorbed light can be given back to: they are not routed
+    to the drawn view. The Compartments (the anatomy-mode DataStructure itself, an anatomy's component) are not
+    drawn by design: no warning.
+    """
+    ds = component.data_structure
+    located = ds.__dict__.get("_inner", ds) if isinstance(ds, EntityView) else ds
+    base = located.__dict__.get("_base")
+    location = located.__dict__.get("_at")
+    if location is None or not isinstance(base, MPGDataStructure) or not base._anatomy:
+        return
+    drawn = base._scale_name(base.from_scale)
+    if location != drawn:
+        import warnings
+        warnings.warn(f"{type(component).__name__} works at the {location} scale of an anatomy-mode DataStructure: "
+                      f"its geometry is registered on ds.at({location!r}), which the frames and the light models never "
+                      f"draw (they take ds.at({drawn!r}).triangles()); declare one of its variables at the {drawn} "
+                      f"scale (or its entities) for its elements to be drawn and lit", stacklevel=4)
 
 
 def _working_data_structure(component, ds):

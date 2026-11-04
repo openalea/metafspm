@@ -148,7 +148,8 @@ exchange's canopy height was 0 and no element exchanged (gs, An and the transpir
 
 `run.py` runs two plants over two weeks of May, hour by hour, from their sowing (`python run.py [folder] [days]
 [plants]`, by default `outputs/from_sowing`, 14 days, 2 plants): a clear day's PAR, the air's temperature and
-humidity in a daily course, a rain on the second day. Every step is an hour from the sowing: an older plant is a
+humidity in a daily course, a rain on the second day, in a loam 50 cm deep (`SOIL_SCENARIO`: ten layers of 5 cm
+cells, refined once where the roots take up water). Every step is an hour from the sowing: an older plant is a
 resumed run (a checkpoint), not a later start of one model. The first blade emerges after about 100 °Cd (a week);
 before, the plant has no light and transpires nothing. After each hour it prints, and writes to the folder's
 `run.log`, `WaterBalance`'s diagnostics (decision U-6: the plant and the soil exchange once per step) and the
@@ -176,17 +177,5 @@ the uptake.
 
 What `run.py`'s run from the sowing shows (2026-11-04), the ports' gaps first:
 
-- **CNW-Grass, an emerging blade's area.** The gas exchange's area is Adel's green area of the whole element: a
-  blade crossing the soil exchanges over its part in the soil too (its height is that of its part above,
-  `emerged_height`). Its part above the soil (Caribu's `lit_area`) cannot be linked into `green_area` within the
-  plant (a same-name link within one DataStructure is an identity): it would need a receiving variable of its own.
-- **GRANAP, a resumed run's drawings.** After `Scene.load_checkpoint`, the first frame with the sections' drawings
-  fails (`template_by_index`: the module's template registry holds only the templates made since the process
-  started, not the checkpointed segments').
-- **metafspm, a resumed run's links.** A checkpoint holds the DataStructure's derived variables with their formula:
-  loaded into a scene built with a changed translator, the checkpoint's derivations stay (the gas exchange's height
-  then Adel's ends' mean).
 - **Adel and ArchiSimple, a plant's stage.** The scenario's `start` (°Cd) advances Adel's shoot only: a shoot started
   at a few leaves has the roots of a seed; an older plant is a run resumed from a checkpoint.
-- **encoding3d's design check** (`paraview/check_in_paraview.py --design`) looks for an anatomy layer named "Section";
-  metafspm's default views name it after its component (`WheatPlant GranapAnatomy`).

@@ -43,8 +43,9 @@ SOWING_DEPTH = 0.03                            # m
 ROW_SPACING, PLANT_SPACING = 0.15, 0.05        # m
 RAIN = (24. + 14., 24. + 15., 5e-3)            # the rain: from and to (h of scene time), its depth (m)
 
-# The soil: a loam 30 cm deep, 5 cm cells refined once where the roots take up water, its water at -1 m of head
-SOIL_SCENARIO = {"depth": 0.3, "voxel": 0.05, "max_level": 1, "initial_pressure_head": -1.}
+# The soil: a loam 50 cm deep (ten layers of 5 cm cells, below the roots of two weeks), refined once where the roots
+# take up water, its water at -1 m of head
+SOIL_SCENARIO = {"depth": 0.5, "voxel": 0.05, "max_level": 1, "initial_pressure_head": -1.}
 # The light: Caribu with the sun, every hour
 LIGHT_SCENARIO = {"sun": True, "latitude": LATITUDE, "interval": HOUR}
 
