@@ -112,7 +112,7 @@ The links, each in its units:
 | link | from | to | factor |
 |---|---|---|---|
 | GRANAP's stems' class input `stem_radius` | the organ's `diameter` (m; Adel's, the crown's) | its elements (m) | 0.5, broadcast |
-| the gas exchange's element `height` | Adel's `z1`, `z2` | the elements | `adel_links`' formula |
+| the gas exchange's element `height` | Adel's `z1`, `z2` | the elements | `emerged_height`: the mean of the part above the soil, NaN wholly below |
 | MECHA's `leaf_transpiration` | `GasExchange.transpiration` (mmol s⁻¹, per element) | per Organ (cm³ d⁻¹) | 18e-3 × 86400, summed |
 | the soil's `plant_uptake` | MECHA's `root_uptake` (cm³ d⁻¹) | the cells (m³ s⁻¹) | 1e-6 / 86400 |
 | MECHA's `soil_psi` | the soil's `water_potential` (MPa) | the roots' soil nodes (hPa) | 1e4 |
@@ -126,34 +126,53 @@ protoplasts, not its air spaces and pores), MECHA's of the step before (the gas 
 decision U-6). An element without liquid node (a section without anatomy yet) keeps the gas exchange's default,
 -0.1 MPa (metafspm's `missing="default"`).
 
-`run.py` runs a few plants over a few days of May, hour by hour, from their sowing (`python run.py [folder] [days]
-[plants]`): a clear day's PAR, the air's temperature and humidity in a daily course, a rain on the second day. After
-each hour it prints `WaterBalance`'s diagnostics (decision U-6: the plant and the soil exchange once per step):
+Adel's shoot stands on the crown, 2 cm below the soil: a blade Adel has brought out of its sheath may still be in
+the soil. Caribu lights only the parts above the soil (its `soil_level`), and the gas exchange's element `height` is
+the mean of its part above the soil (`models.emerged_height`; NaN for an element wholly below it: no gas exchange).
+CNW-Grass's `adel_links` height, the mean of the element's ends, put the seedling's canopy below the soil: the gas
+exchange's canopy height was 0 and no element exchanged (gs, An and the transpiration 0 under a full sun).
+
+`run.py` runs two plants over two weeks of May, hour by hour, from their sowing (`python run.py [folder] [days]
+[plants]`, by default `outputs/from_sowing`, 14 days, 2 plants): a clear day's PAR, the air's temperature and
+humidity in a daily course, a rain on the second day. Every step is an hour from the sowing: an older plant is a
+resumed run (a checkpoint), not a later start of one model. The first blade emerges after about 100 °Cd (a week);
+before, the plant has no light and transpires nothing. After each hour it prints, and writes to the folder's
+`run.log`, `WaterBalance`'s diagnostics (decision U-6: the plant and the soil exchange once per step) and the
+leaves' gas exchange (`gas_exchange`):
 
 - the plant's transpiration and uptake (equal for a steady plant), and what the soil gave the roots;
 - the soil's water change and what crossed its boundaries (equal);
-- the largest changes of the plant's and the soil's water potentials since the previous hour.
+- the largest changes of the plant's and the soil's water potentials since the previous hour;
+- the blades' green area, PARa, An, gs and leaf water potential, the roots' water potential.
 
-With a folder, the SceneRecorder writes the summaries, `water_balance.csv`, and a frame every 6 hours with its
-views (`frame_views="default"`), the sections' drawings in the frames of every 24 hours and the last
-(`display_period`).
+The SceneRecorder writes the summaries, `water_balance.csv` and `gas_exchange.csv` (appended to after every hour),
+`run.json` (the run's progress, after every hour), a frame every 6 hours with its views (`frame_views="default"`),
+the sections' drawings in the frames of every 24 hours and the last (`display_period`), and a checkpoint every day
+(the last two kept): `Scene.load_checkpoint` resumes the run from it, bit for bit.
 
-Its tests are in `test/test_assembly.py` (the example's own, as the plant's), on one young plant over three hours: the
-links' factors, the assembly's couplings, each model's own entities, the transpiration into MECHA, MECHA's leaf
+Its tests are in `test/test_assembly.py` (the example's own, as the plant's), on one plant grown from its sowing to
+its first blade's emergence by daily steps (Adel and ArchiSimple grow it whatever the step; the light, the gas
+exchange, MECHA and the soil run at each), checkpointed and resumed by an hourly scene for three hours: the links'
+factors, the assembly's couplings, each model's own entities, the transpiration into MECHA, MECHA's leaf
 water potential into the stomata, the steady plant,
 the uptake into the soil, the soil's potential on the roots, the light on the gas exchange, the soil's balance with
 the uptake.
 
 ### The assembly: open gaps
 
-What `run.py`'s run shows (2026-11-03), the ports' gaps first; the test of the first is marked `xfail` (strict):
+What `run.py`'s run from the sowing shows (2026-11-04), the ports' gaps first:
 
-- **MECHA, the reduced plant's volumes.** `node_volume` and `liquid_volume` are 0 on a reduced section's kept nodes
-  (its conduits): the blades' liquid mean has no weight, and their leaf water potential stays the gas exchange's
-  default (-0.1 MPa). Tuzet's stomata then never close: the plant's potentials go far below any physical value at
-  midday (tens of MPa below 0 for a seedling's few roots). With `"reduced": False` the mean is MECHA's.
+- **CNW-Grass, an emerging blade's area.** The gas exchange's area is Adel's green area of the whole element: a
+  blade crossing the soil exchanges over its part in the soil too (its height is that of its part above,
+  `emerged_height`). Its part above the soil (Caribu's `lit_area`) cannot be linked into `green_area` within the
+  plant (a same-name link within one DataStructure is an identity): it would need a receiving variable of its own.
+- **GRANAP, a resumed run's drawings.** After `Scene.load_checkpoint`, the first frame with the sections' drawings
+  fails (`template_by_index`: the module's template registry holds only the templates made since the process
+  started, not the checkpointed segments').
+- **metafspm, a resumed run's links.** A checkpoint holds the DataStructure's derived variables with their formula:
+  loaded into a scene built with a changed translator, the checkpoint's derivations stay (the gas exchange's height
+  then Adel's ends' mean).
 - **Adel and ArchiSimple, a plant's stage.** The scenario's `start` (°Cd) advances Adel's shoot only: a shoot started
-  at a few leaves has the roots of a seed. From the sowing (`start` 0), no blade has emerged after three days of
-  May: nothing transpires.
+  at a few leaves has the roots of a seed; an older plant is a run resumed from a checkpoint.
 - **fspm-TF's design check** (`paraview/check_in_paraview.py --design`) looks for an anatomy layer named "Section";
   metafspm's default views name it after its component (`WheatPlant GranapAnatomy`).

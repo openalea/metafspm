@@ -14,7 +14,8 @@ translators linking their components.
                         MECHA's soil boundary on each root section's soil node, the sections reduced onto their
                         conduits
     PLANT_TRANSLATOR    within the plant: GRANAP's stems classed by their organ's diameter, the gas exchange's element
-                        heights from Adel's element ends, the elements' transpiration summed per organ into MECHA's
+                        heights from Adel's element ends above the soil (emerged_height), the elements' transpiration
+                        summed per organ into MECHA's
                         leaf transpiration, MECHA's water potential back to the gas exchange's leaf water potential
                         (Tuzet's stomata)
     SCENE_TRANSLATOR    between the plant and the soil (component.scene_translator: MECHA's root uptake into the
@@ -43,7 +44,7 @@ from openalea.adel.development import ScenarioDevelopment, ScenarioShoot
 from openalea.archisimple.architecture import RootArchitecture
 from openalea.archisimple.parameter_sets import WHEAT_ON_A_SHOOT
 from openalea.caribu.optics import PlantOptics
-from openalea.cnwgrass.metafspm.gas_exchange import GasExchange, adel_links, mecha_links
+from openalea.cnwgrass.metafspm.gas_exchange import GasExchange, mecha_links
 from openalea.granap.metafspm.build import SOIL_NODE
 from openalea.granap.metafspm.component import GranapAnatomy, junction_rules
 from openalea.mecha.component import MechaHydraulics, scenario_reduction
@@ -58,6 +59,7 @@ WATER_MOLAR_VOLUME = 18e-3                   # cm3 mmol-1 (1 g of water is 1 cm3
 SECONDS_PER_DAY = 86400.
 HPA_PER_MPA = 1e4
 CM3_PER_M3 = 1e6
+SOIL_LEVEL = 0.                              # m, the soil's surface (Caribu's soil_level: the light cut below it)
 
 # The root segments' barriers by their distance from the tip (MECHA's Development): none on the tip segment, a
 # Casparian strip up to 10 cm, a suberized endodermis beyond
@@ -83,9 +85,28 @@ WHEAT_SCENARIO = {
     "stomatal_model": "Tuzet",
 }
 
+
+
+def emerged_height(z1, z2):
+    """
+    An element's height (m) for the gas exchange: the mean of its part above the soil, its ends' heights (Adel's z1
+    and z2) the lower raised to the soil's surface (SOIL_LEVEL); NaN for an element wholly below it (the gas
+    exchange's "no geometry": it exchanges nothing). Adel's shoot stands on the crown, below the soil: a blade Adel
+    has emerged from its sheath may still be in the soil, unlit (Caribu's light is cut below the soil) and without
+    gas exchange; CNW-Grass's adel_links' height (element_height, its ends' mean) would put the canopy below the soil
+    (the gas exchange's canopy height then 0: no element exchanges).
+    """
+    z1, z2 = np.asarray(z1, dtype=float), np.asarray(z2, dtype=float)
+    low, high = np.minimum(z1, z2), np.maximum(z1, z2)
+    with np.errstate(invalid="ignore"):
+        return np.where(high > SOIL_LEVEL, (np.maximum(low, SOIL_LEVEL) + high) / 2, np.nan)
+
+
 PLANT_TRANSLATOR = (
-    Translator(adel_links(provider="ShootArchitecture").links        # the gas exchange's element heights
-               + mecha_links().links)                                # its leaf water potential, MECHA's (Tuzet)
+    Translator(mecha_links().links)                                  # the leaf water potential, MECHA's (Tuzet)
+    # the gas exchange's element heights: of their part above the soil (CNW-Grass's adel_links, its ends' mean, would
+    # count the part in the soil)
+    .link("GasExchange", "height", "ShootArchitecture", ("z1", "z2"), formula=emerged_height)
     # GRANAP's stems (and the seed) classed by their radius: their organ's diameter halved (Adel's organs', the
     # subcrown internode's WheatCrown gives), broadcast to its elements
     .link("GranapAnatomy", "stem_radius", "ShootArchitecture", {"diameter": 0.5}, source_scale="Organ",
@@ -171,19 +192,23 @@ class WaterBalance:
                                         boundaries or went to the roots (RichardsSoilModel.water_balance): equal
         plant_potential_change, soil_potential_change
                                         the largest change of MECHA's ψ (MPa) and of the soil's water potential (MPa)
-                                        since the previous step (NaN at the first, or when the nodes changed)
+                                        since the previous step, over the nodes and the cells there at both (NaN at
+                                        the first)
     """
 
     def __init__(self):
         self.previous = {}
 
-    def _change(self, key, values) -> float:
-        values = np.asarray(values, dtype=float).reshape(-1)
+    def _change(self, key, ids, values) -> float:
+        """The largest change of *values* (of the entities *ids*) since the previous call of *key*, over the entities
+        there at both (a grown plant's new nodes, a refined grid's new cells left out); NaN at the first."""
+        ids, values = np.asarray(ids).reshape(-1), np.asarray(values, dtype=float).reshape(-1)
         before = self.previous.get(key)
-        self.previous[key] = values.copy()
-        if before is None or before.shape != values.shape:
+        self.previous[key] = (ids.copy(), values.copy())
+        if before is None:
             return np.nan
-        return float(np.max(np.abs(values - before))) if values.size else 0.
+        _, now, then = np.intersect1d(ids, before[0], assume_unique=True, return_indices=True)
+        return float(np.max(np.abs(values[now] - before[1][then]))) if now.size else 0.
 
     def __call__(self, scene) -> dict:
         row = {"time": scene.time}
@@ -193,7 +218,8 @@ class WaterBalance:
         row.update(transpiration=transpiration, root_uptake=uptake,
                    plant_balance=(transpiration - uptake) / transpiration if transpiration else np.nan)
         row["plant_potential_change"] = max(
-            (self._change(("plant", k), np.asarray(ds.get("psi")) / HPA_PER_MPA) for k, ds in enumerate(plants)),
+            (self._change(("plant", k), ds.entity_ids("node"), np.asarray(ds.get("psi")) / HPA_PER_MPA)
+             for k, ds in enumerate(plants)),
             default=np.nan)
         for model in scene.environment:
             if isinstance(model, RichardsSoilModel):
@@ -201,5 +227,6 @@ class WaterBalance:
                 row.update(soil_uptake=float(np.sum(model.grid.get("plant_uptake"))) * CM3_PER_M3 * SECONDS_PER_DAY,
                            soil_stored=balance["stored"], soil_change=balance["change"],
                            soil_exchanged=balance["exchanged"],
-                           soil_potential_change=self._change("soil", model.grid.get("water_potential")))
+                           soil_potential_change=self._change("soil", model.grid.entity_ids("cell"),
+                                                              model.grid.get("water_potential")))
         return row
