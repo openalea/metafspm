@@ -15,9 +15,10 @@ The weather (weather()): a clear day's PAR (Caribu's clear_day_PAR), the air's t
 course, a constant CO2 and wind, the soil at a constant temperature, a rain of 5 mm in the afternoon of the second
 day. The outputs (with a folder): the SceneRecorder's summaries, the water balance (water_balance.csv), and an
 encoding3d frame every 12 hours with its views (frames/views.json, the default layers: the shoot, the roots, the soil,
-the anatomies hidden), the sections' drawings in the frames of every 24 hours and the last, a checkpoint every day (the
-last two kept: Scene.load_checkpoint resumes the run from one), and run.log (the lines printed). The tables are
-appended to after each hour and run.json shows the run's progress: both can be read while it runs.
+the anatomies hidden) holding a few variables (FRAME_VARIABLES), the sections' drawings in the frames of every 24
+hours and the last, a checkpoint every day (the last two kept: Scene.load_checkpoint resumes the run from one), and
+run.log (the lines printed). The tables are appended to after each hour and run.json shows the run's progress: both
+can be read while it runs.
 """
 import os
 import sys
@@ -48,6 +49,19 @@ RAIN = (24. + 14., 24. + 15., 5e-3)            # the rain: from and to (h of sce
 SOIL_SCENARIO = {"depth": 0.5, "voxel": 0.05, "max_level": 1, "initial_pressure_head": -1.}
 # The light: Caribu with the sun, every hour
 LIGHT_SCENARIO = {"sun": True, "latitude": LATITUDE, "interval": HOUR}
+# The variables the frames keep (SceneRecorder's frame_options variables=, io.encoding3d.filter_frame): every entity
+# set keeps its structure (ids, labels, complex and parent links, the segment ends), and these variables only. The
+# Compartments (a reduced section's interiors too, in the frames drawing the sections) hold most of a frame's rows:
+# MECHA's potential (psi, hPa; water_potential, MPa, of the solved nodes) and their tissue; the elements their length
+# and radius, their type (the roots' default colour), anatomy and gas exchange; the Organs their rank (the shoot's
+# default colour); the soil's cells their water. The default views' colour variables are kept (else the recorder
+# raises at the first frame).
+FRAME_VARIABLES = {
+    "WheatPlant": {"Compartment": ["psi", "water_potential", "tissue"], "Cell": ["tissue"], "Layer": ["tissue"],
+                   "SubOrgan": ["length", "radius", "type", "anatomy_class", "anatomy_template", "anatomy_kind",
+                                "PARa", "An", "gs", "transpiration"],
+                   "Organ": ["organ_rank"], "*": []},
+    "RichardsSoilModel": {"cell": ["pressure_head", "water_potential", "water_content"]}}
 
 
 def daily_course(minimum, maximum, warmest=15.):
@@ -114,17 +128,19 @@ def gas_exchange(scene) -> dict:
 
 
 def scene(plants=2, folder=None, frame_period=12, display_period=24, checkpoint_period=24, scenario=None,
-          forcings=None, start_hour=0.):
+          forcings=None, start_hour=0., frame_variables=FRAME_VARIABLES):
     """The use case's Scene: *plants* wheat plants (WHEAT_SCENARIO, updated by *scenario*), the soil and the light,
     the forcings of weather() (updated by *forcings*), recorded in *folder* (None: in memory) with the water
     balance and the gas exchange and, every *frame_period* hours, a frame with the default views (with the sections'
-    drawings every *display_period* hours and in the last frame), a checkpoint every *checkpoint_period* hours."""
+    drawings every *display_period* hours and in the last frame) holding the *frame_variables* (None: all), a
+    checkpoint every *checkpoint_period* hours."""
     table = planting(stand(plants), WheatPlant, {**WHEAT_SCENARIO, **(scenario or {})},
                      xrange=plants * PLANT_SPACING, yrange=ROW_SPACING)
     recorder = SceneRecorder(folder, tables={"water_balance": WaterBalance(), "gas_exchange": gas_exchange},
                              frame_period=frame_period if folder else None,
                              frame_views="default" if folder else None,
                              display_period=display_period if folder else None,
+                             frame_options={"variables": frame_variables} if frame_variables is not None else None,
                              checkpoint_period=checkpoint_period if folder else None)
     return Scene(table, environment=[RichardsSoilModel, CaribuLightModel],
                  environment_scenarios=[SOIL_SCENARIO, LIGHT_SCENARIO], translator=SCENE_TRANSLATOR,

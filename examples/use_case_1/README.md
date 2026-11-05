@@ -170,6 +170,23 @@ The SceneRecorder writes the summaries, `water_balance.csv` and `gas_exchange.cs
 the sections' drawings in the frames of every 24 hours and the last (`display_period`), and a checkpoint every day
 (the last two kept): `Scene.load_checkpoint` resumes the run from it, bit for bit.
 
+The frames keep a few variables, the run's explicit choice (`run.FRAME_VARIABLES`, the recorder's
+`frame_options={"variables": ...}`; `scene(frame_variables=None)` keeps them all). Every entity set keeps its
+structure (ids, labels, complex and parent links, the segment ends, the display rows' marker), and:
+
+| where | variables |
+|---|---|
+| `WheatPlant` Compartment (a reduced section's interiors too) | `psi` (MECHA's, hPa), `water_potential` (MPa, the solved nodes'), `tissue` |
+| Cell, Layer | `tissue` |
+| SubOrgan | `length`, `radius`, `type` (the roots' default colour), `anatomy_class`, `anatomy_template`, `anatomy_kind`, `PARa`, `An`, `gs`, `transpiration` |
+| Organ | `organ_rank` (the shoot's default colour) |
+| the other entity sets, the Connections | none |
+| `RichardsSoilModel` cell | `pressure_head` (the soil's default colour), `water_potential`, `water_content` (its faces and scalars unfiltered) |
+
+The default views colour by kept variables (the recorder raises at the first frame otherwise). A frame drawing the
+sections is 56, 70 and 89 MB at days 1 to 3 (243, 306 and 389 MB with every variable); the sections' drawing (the
+GranapAnatomy mesh, 55 MB at day 3) is most of what is left.
+
 Its tests are in `test/test_assembly.py` (the example's own, as the plant's), on one plant grown from its sowing to
 its first blade's emergence by daily steps (Adel and ArchiSimple grow it whatever the step; the light, the gas
 exchange, MECHA and the soil run at each), checkpointed and resumed by an hourly scene for three hours: the links'

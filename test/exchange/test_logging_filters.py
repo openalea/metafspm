@@ -11,7 +11,7 @@ from openalea.encoding3d.validate import validate_bytes, validate_sequence
 from openalea.metafspm.coupling.component import state_variable
 from openalea.metafspm.data_structure.configs import ScalesConfig as scales
 from openalea.metafspm.data_structure.data_api import ArrayDataStructure, MPGDataStructure
-from openalea.metafspm.io.encoding3d import filter_frame, from_frame, scene_to_frame, to_frame
+from openalea.metafspm.io.encoding3d import filter_frame, filtered_view_columns, from_frame, scene_to_frame, to_frame
 from openalea.metafspm.scene.scene import Scene, SceneRecorder
 
 from growth import DOC, RootGrowthProbe
@@ -95,8 +95,9 @@ def test_scales_and_variables():
     plant_of = dict(zip(ds.entity_ids("node").tolist(), np.asarray(ds.entity_ids("Plant"))[ds.owner("Plant")]))
     assert all(plant_of[v] == c for v, c in zip(sets["SubOrgan"].columns["id"], sets["SubOrgan"].columns["complex"]))
     assert "complex" not in sets["Plant"].columns
-    assert set(sets["SubOrgan"].columns) == {"id", "label", "complex", "parent", "edge_type", "length", "radius"}
-    assert set(sets["SubOrgan"].variables) == {"length", "radius"}
+    ends = {"x1", "y1", "z1", "x2", "y2", "z2"}                         # the segment ends: always kept
+    assert set(sets["SubOrgan"].columns) == {"id", "label", "complex", "parent", "edge_type", "length", "radius"} | ends
+    assert set(sets["SubOrgan"].variables) == {"length", "radius"} | ends
     connections = frame.data_structures[0].relations[0]                # between SubOrgan elements: kept
     assert connections.source_set == connections.target_set == "SubOrgan"
     assert not _sets(to_frame({"plants": ds}, scales=["Plant"]))["Plant"].columns.get("complex")
@@ -118,6 +119,44 @@ def test_per_data_structure_and_grids():
     _valid(frame)
     with pytest.raises(ValueError, match="only its variables"):
         to_frame({"soil": soil}, scales=["cell"])
+
+
+def test_variables_per_entity_set():
+    ds, components = _plants()
+    full = to_frame({"plants": ds}, components={"plants": components})
+    structure = {"id", "label", "complex", "parent", "edge_type"}
+    frame = to_frame({"plants": ds}, components={"plants": components},
+                     variables={"plants": {"SubOrgan": ["length"], "Organ": "struct_mass", "*": []}})
+    sets = _sets(frame)
+    assert set(sets["SubOrgan"].columns) == structure | {"length", "x1", "y1", "z1", "x2", "y2", "z2"}
+    for name, entity_set in sets.items():                     # every other one: its structure, its complex link
+        if name not in ("SubOrgan", "Organ"):
+            assert set(entity_set.columns) <= structure and "id" in entity_set.columns
+            assert ("complex" in entity_set.columns) == ("complex" in _sets(full)[name].columns)
+    connections = frame.data_structures[0].relations[0]
+    assert set(connections.columns) == set(connections.reserved) & set(full.data_structures[0].relations[0].columns)
+    assert frame.data_structures[0].extras["metafspm"]["filtered"]["variables"] == {
+        "SubOrgan": ["length"], "Organ": ["struct_mass"], "*": []}
+    _valid(frame)
+    # without "*", the entity sets not named are unfiltered (metafspm's own links included)
+    frame = to_frame({"plants": ds}, components={"plants": components}, variables={"plants": {"SubOrgan": ["length"]}})
+    assert set(_sets(frame)["Plant"].columns) == set(_sets(full)["Plant"].columns)
+    assert "metafspm_complex" not in _sets(frame)["SubOrgan"].columns
+    assert len(_valid(frame)) < len(_valid(full))
+
+
+def test_views_against_a_variables_filter():
+    layer = {"name": "roots", "source": {"data_structure": "plants", "kind": "segments", "entity_set": "SubOrgan"},
+             "select": {"entity_set": "SubOrgan", "where": {"label": ["RootSegment"], "order": 1}},
+             "color_by": {"entity_set": "SubOrgan", "variable": "psi"}, "tube": {"radius": "radius", "scale": 1.}}
+    document = {"encoding3d_views": 1, "configurations": {"c": {"layers": [layer]}}}
+    assert filtered_view_columns(document, None) == []
+    assert filtered_view_columns(document, {"soil": ["water_content"]}) == []          # another data structure
+    assert filtered_view_columns(document, {"plants": {"SubOrgan": ["psi", "radius", "order"]}}) == []
+    assert filtered_view_columns(document, {"plants": {"Compartment": ["psi"]}}) == []  # SubOrgan unfiltered
+    assert filtered_view_columns(document, {"plants": {"*": ["psi"]}}) == [
+        "c/roots: plants/SubOrgan/order", "c/roots: plants/SubOrgan/radius"]
+    assert filtered_view_columns(document, ["radius", "order"]) == ["c/roots: plants/SubOrgan/psi"]
 
 
 def test_a_filtered_frame_is_not_rebuilt():

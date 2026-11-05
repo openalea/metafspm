@@ -1168,10 +1168,17 @@ def filter_frame(frame, scales=None, entities=None, variables=None, plant_names:
                   entities are kept too, so that every complex link resolves. Graphs only.
       scales:     names of the entity sets kept (e.g. ["Plant", "SubOrgan"]); a complex link over a dropped scale
                   goes to the nearest kept one. Graphs only.
-      variables:  names of the variables kept (the structure's columns always are), in every table.
+      variables:  names of the variables kept in every table, or a {table: names} dict, a table being an entity set,
+                  a relation or the scalars (by name) and "*" every table it does not name (a table it does not
+                  name, without "*": unfiltered), e.g. {"Compartment": ["psi", "tissue"], "SubOrgan": ["radius"],
+                  "*": []}. A filtered table always keeps its structure (encoding3d's reserved columns: ids, labels,
+                  complex and parent links, edge types, a relation's ends, a grid cell's level and index), its
+                  segment ends and the display rows' marker (metafspm_display_only, e.g. a reduced section's
+                  interiors); metafspm's own links (metafspm_complex, ...: from_frame's) only when named.
 
     Parents outside what is kept become none, relations and mappings keep the pairs whose ends are kept, meshes the
     triangles of kept entities. The result is a valid encoding3d frame, marked as filtered: from_frame does not rebuild it.
+    filtered_view_columns checks views against a variables filter.
     """
     for data_structure in frame.data_structures:
         wanted = {"entities": _for(entities, data_structure.id), "scales": _for(scales, data_structure.id),
@@ -1188,12 +1195,61 @@ def filter_frame(frame, scales=None, entities=None, variables=None, plant_names:
         if wanted["scales"] is not None:
             _keep_scales(data_structure, list(wanted["scales"]))
         if wanted["variables"] is not None:
-            _keep_variables(data_structure, set(wanted["variables"]))
+            _keep_variables(data_structure, wanted["variables"])
         data_structure.extras.setdefault(EXTRAS, {})["filtered"] = {
-            key: (None if value is None else [item if isinstance(item, str) else int(item)
-                                              for item in np.atleast_1d(value)]) for key, value in wanted.items()}
+            key: (None if value is None else _filter_described(value)) for key, value in wanted.items()}
     _filter_mappings(frame)
     return frame
+
+
+def _filter_described(value):
+    """A filter's value as the frame's extras note it: a list (names or ids), or {table: names} for variables."""
+    if isinstance(value, dict):
+        return {str(table): sorted(_table_variables(names, table)) for table, names in value.items()}
+    return [item if isinstance(item, str) else int(item) for item in np.atleast_1d(value)]
+
+
+def _table_variables(wanted, table: str):
+    """The variables a variables filter (*wanted*: names, or {table: names, "*": names}) keeps in *table* (a set),
+    or None: *table* unfiltered."""
+    names = wanted.get(table, wanted.get("*")) if isinstance(wanted, dict) else wanted
+    return None if names is None else {str(name) for name in ([names] if isinstance(names, str) else names)}
+
+
+def _always_kept(table) -> set:
+    """The columns a variables filter keeps in *table*: its structure, its segment ends, the display rows' marker."""
+    from openalea.encoding3d import views
+    kept = set(table.reserved) | {DISPLAY_ONLY}
+    if table.table_kind == "entity_set":
+        kept.update(views.segment_columns(table))
+    return kept
+
+
+def filtered_view_columns(views: dict, variables) -> list:
+    """The columns *views* (encoding3d's views.json) select, colour or size tubes by that a variables filter (a
+    value for every data structure, or a {data structure id: value} dict, as filter_frame's) drops, as
+    "configuration/layer: data structure/entity set/column" lines ([]: none)."""
+    from openalea.encoding3d import model
+    from openalea.encoding3d.views import SEGMENT_ENDS
+    structure = set(model.RESERVED["entity_set"]) | {DISPLAY_ONLY} | {name for pair in SEGMENT_ENDS for name in pair}
+    dropped = []
+    for configuration, content in views.get("configurations", {}).items():
+        for layer in content.get("layers", ()):
+            source = layer["source"]
+            wanted = _for(variables, source["data_structure"])
+            if wanted is None:
+                continue
+            select, color_by = layer.get("select") or {}, layer.get("color_by") or {}
+            used = [(select.get("entity_set"), column) for column in select.get("where", {})]
+            used.append((color_by.get("entity_set"), color_by.get("variable")))
+            used.append((source.get("entity_set"), (layer.get("tube") or {}).get("radius")))
+            for table, column in used:
+                if not column or column in structure:
+                    continue
+                kept = _table_variables(wanted, table)
+                if kept is not None and column not in kept:
+                    dropped.append(f"{configuration}/{layer['name']}: {source['data_structure']}/{table}/{column}")
+    return dropped
 
 
 def _complex_links(data_structure) -> dict:
@@ -1297,10 +1353,14 @@ def _keep_scales(data_structure, names: list) -> None:
     data_structure.meshes = [mesh for mesh in data_structure.meshes if mesh.feature_rows]
 
 
-def _keep_variables(data_structure, names: set) -> None:
+def _keep_variables(data_structure, wanted) -> None:
     tables = list(data_structure.entity_sets) + list(data_structure.relations)
     for table in tables + ([data_structure.scalars] if data_structure.scalars is not None else []):
-        for column in [column for column in table.columns if column not in table.reserved and column not in names]:
+        names = _table_variables(wanted, table.name)
+        if names is None:
+            continue
+        kept = names | _always_kept(table)
+        for column in [column for column in table.columns if column not in kept]:
             del table.columns[column]
             table.variables.pop(column, None)
     if data_structure.scalars is not None and not data_structure.scalars.columns:

@@ -108,7 +108,11 @@ class SceneRecorder:
     sections: drawings only, their data rows are in every frame), every display_period steps (a multiple of
     frame_period) and in the last frame; None (the default): none, the frames hold the data and the geometry
     light models get. A light log leaves out data explicitly, by frame_options (e.g. scales={"Wheat": ["Plant",
-    "Axis", "Organ", "SubOrgan"]}: no anatomy rows in population Wheat's).
+    "Axis", "Organ", "SubOrgan"]}: no anatomy rows in population Wheat's; variables={"Wheat": {"Compartment": ["psi",
+    "tissue"], "SubOrgan": ["length", "radius"], "*": []}}: a few variables, the structure kept, see
+    io.encoding3d.filter_frame); a variables filter must keep what the frames' views select, colour and size tubes
+    by (a ValueError: given views at construction, the default ones, those of the frame unfiltered by variables, at
+    the first frame).
     *checkpoint_period* and *keep_checkpoints* (None: all); *tables* {name: function(scene)} and *table_period*.
     *frame_views*: the frames' views.json (encoding3d's views: layers for ParaView), written at the first frame: None
     (none), "default" (io.encoding3d.default_views: the shoots, the roots as tubes, the soil grids), a views dict, or the
@@ -367,15 +371,33 @@ class SceneRecorder:
         report = views.check_views(frame_views)
         if not report.ok:
             raise ValueError(f"SceneRecorder(frame_views=...): {report}")
+        self._check_views_kept(frame_views)
         return frame_views
 
-    def _write_views(self, scene, frame, folder: str) -> None:
+    def _check_views_kept(self, content: dict) -> None:
+        """A ValueError when frame_options' variables filter drops a column the views select, colour or size by."""
+        from openalea.metafspm.io.encoding3d import filtered_view_columns
+        if self.frame_options.get("variables") is None:
+            return
+        dropped = filtered_view_columns(content, self.frame_options["variables"])
+        if dropped:
+            raise ValueError("SceneRecorder: frame_options' variables filter drops what the frames' views show (keep "
+                             "these variables): " + "; ".join(dropped))
+
+    def _write_views(self, scene, frame, folder: str, display: bool = False) -> None:
         """views.json next to the first frame, its names checked against *frame* (a warning for each it lacks)."""
-        from openalea.metafspm.io.encoding3d import default_views, write_views
+        from openalea.metafspm.io.encoding3d import default_views, scene_to_frame, write_views
         from openalea.encoding3d import views
         path = os.path.join(folder, views.VIEWS_FILE)
         if not (self.resume and os.path.exists(path)):
-            content = default_views(scene, frame) if self.frame_views == "default" else self.frame_views
+            content = self.frame_views
+            if self.frame_views == "default":       # those of the frame unfiltered by variables, which must keep theirs
+                unfiltered = frame
+                if self.frame_options.get("variables") is not None:
+                    options = {key: value for key, value in self.frame_options.items() if key != "variables"}
+                    unfiltered = scene_to_frame(scene, display_meshes=display, **options)
+                content = default_views(scene, unfiltered)
+                self._check_views_kept(content)
             for issue in views.check_views(content, frame).issues:
                 warnings.warn(f"SceneRecorder(frame_views=...): {issue.where}: {issue.message} (in the first frame)")
             write_views(path, content)
@@ -400,7 +422,7 @@ class SceneRecorder:
         frame = scene_to_frame(scene, display_meshes=display, **self.frame_options)
         encoding3d.write(os.path.join(folder, name), frame)
         if self.frame_views is not None and not self._views_written:
-            self._write_views(scene, frame, folder)
+            self._write_views(scene, frame, folder, display)
         self._frames = [entry for entry in self._frames if entry["step"] != scene.iteration]
         self._frames.append({"time": float(scene.time), "step": int(scene.iteration), "file": name})
         encoding3d.write_index(index_path, self._frames, time_unit="s")

@@ -114,6 +114,20 @@ def test_from_frame_rebuilds_the_reduced_plant_and_a_selection_brings_a_section_
     assert shown.any() and (owners == section).all()
 
 
+def test_a_variables_filter_applies_to_the_display_rows(solved):
+    _, reduced, instance = solved
+    full = _frame(reduced, instance).data_structures[0].entity_set("Compartment").columns
+    frame = filter_frame(_frame(reduced, instance),
+                         variables={"plants": {"Compartment": ["water_potential"], "*": []}})
+    compartments = frame.data_structures[0].entity_set("Compartment").columns
+    assert set(compartments) == {"id", "label", "complex", "parent", "edge_type", "water_potential", DISPLAY_ONLY}
+    np.testing.assert_array_equal(compartments[DISPLAY_ONLY], full[DISPLAY_ONLY])
+    np.testing.assert_array_equal(compartments["water_potential"], full["water_potential"])
+    assert set(frame.data_structures[0].entity_set("Cell").columns) <= {"id", "label", "complex", "parent",
+                                                                        "edge_type", DISPLAY_ONLY}
+    assert validate_bytes(encoding3d.to_bytes(frame)).ok
+
+
 def test_without_a_display_component_no_display_row_is_written(solved):
     _, reduced, instance = solved
     compartments = to_frame({"plants": reduced}, components={"plants": list(instance.components)}) \

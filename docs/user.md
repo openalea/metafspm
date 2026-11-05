@@ -655,7 +655,17 @@ scene = Scene.from_scenario(scenario, stand(...), Wheat, environment=[RhizoSoil,
   name in the planting table, an axis, a segment with its cross-section: with everything they contain) and
   `variables=`. Each is a value for every DataStructure or a `{id: value}` dict. A light log is such an explicit
   choice, e.g. `frame_options={"scales": {"Wheat": ["Plant", "Axis", "Organ", "SubOrgan"]}}` leaves out the
-  anatomies' rows (the scales below SubOrgan) of population `Wheat`; never a default. A filtered frame is a
+  anatomies' rows (the scales below SubOrgan) of population `Wheat`; never a default. `variables=` gives, per
+  DataStructure, the variables kept in every table, or per table (an entity set, a relation or the scalars, by name;
+  `"*"`: every table not named, the others unfiltered), e.g.
+  `frame_options={"variables": {"Wheat": {"Compartment": ["psi", "tissue"], "SubOrgan": ["length", "radius"],
+  "*": []}}}`: the Compartments' potential and tissue (a reduced section's interior rows too), the elements' length
+  and radius, nothing else. A filtered table always keeps its structure (ids, labels, complex and parent links, edge
+  types, a relation's ends, a grid cell's level and index), its segment ends and the display rows' marker; metafspm's
+  own links (`metafspm_complex` ..., for `import_frame`) only when named. The frames' views must keep what they
+  show: the recorder raises when the filter drops a variable a view selects, colours or sizes its tubes by (your
+  views at construction, the default views, those of the unfiltered frame, at the first frame;
+  `io.encoding3d.filtered_view_columns(views, variables)` lists them). A filtered frame is a
   smaller, valid encoding3d file, for outputs only: `import_frame` refuses to rebuild it. It uses `openalea.encoding3d`, a
   dependency of metafspm (in development, installed from the encoding3d clone).
 - **Frames ready to look at.** `SceneRecorder(folder, frame_period=24, frame_views="default")` also writes

@@ -286,3 +286,23 @@ def test_the_soil_water_balance_closes_with_the_uptake(stepped):
     given = sum(step["soil_uptake"] for step in history[1:]) * HOUR
     assert given > 0.
     assert balance["change"] - resumed["change"] == pytest.approx(-given, rel=1e-6)
+
+
+def test_the_frames_keep_what_the_default_views_show(stepped):
+    """run.py's frames keep a few variables (FRAME_VARIABLES): the default views' colour, selection and tube
+    variables among them, the Compartments' potential and tissue, a valid encoding3d frame marked filtered."""
+    from openalea import encoding3d
+    from openalea.encoding3d.validate import validate_bytes
+    from openalea.metafspm.io.encoding3d import DISPLAY_ONLY, default_views, filtered_view_columns, scene_to_frame
+    from run import FRAME_VARIABLES
+    scene, _ = stepped
+    assert filtered_view_columns(default_views(scene, scene_to_frame(scene)), FRAME_VARIABLES) == []
+    frame = scene_to_frame(scene, variables=FRAME_VARIABLES)
+    plant = frame.data_structure("WheatPlant")
+    compartments = plant.entity_set("Compartment")
+    assert set(compartments.columns) == {"id", "label", "complex", "parent", "edge_type", "psi", "water_potential",
+                                         "tissue", DISPLAY_ONLY}             # the reduced sections' interior rows'
+    assert np.asarray(compartments.columns[DISPLAY_ONLY], dtype=bool).any()
+    assert {"An", "PARa", "radius", "length"} <= set(plant.entity_set("SubOrgan").columns)
+    assert plant.extras["metafspm"]["filtered"]["variables"]["Compartment"] == ["psi", "tissue", "water_potential"]
+    assert validate_bytes(encoding3d.to_bytes(frame)).ok

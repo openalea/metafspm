@@ -129,6 +129,27 @@ def test_given_views_are_checked_against_the_first_frame(tmp_path):
     assert views.read_views(_views_file(other)) == given
 
 
+def test_a_variables_filter_keeps_what_the_views_show(tmp_path):
+    kept = {"RootPopulation": {"SubOrgan": ["struct_mass", "radius"], "*": []}}
+    out = str(tmp_path / "kept")
+    _scene(SceneRecorder(out, summaries=False, frame_period=2, frame_views="default",
+                         frame_options={"variables": kept})).run()
+    roots = _layers(views.read_views(_views_file(out)))["RootPopulation roots"]       # the unfiltered frame's views
+    assert roots["color_by"]["variable"] == "struct_mass" and roots["tube"]["radius"] == "radius"
+    Choregrapher().reset()
+    dropped = {"RootPopulation": {"SubOrgan": ["radius"], "*": []}}
+    with pytest.raises(ValueError, match="RootPopulation/SubOrgan/struct_mass"):
+        _scene(SceneRecorder(str(tmp_path / "dropped"), summaries=False, frame_period=2, frame_views="default",
+                             frame_options={"variables": dropped})).run()
+    Choregrapher().reset()
+    given = {"encoding3d_views": 1, "configurations": {"mine": {"layers": [
+        {"name": "soil", "source": {"data_structure": "SceneSoil", "kind": "grid"},
+         "color_by": {"entity_set": "cell", "variable": "soil_nitrate"}}]}}}
+    with pytest.raises(ValueError, match="SceneSoil/cell/soil_nitrate"):          # at construction
+        SceneRecorder(str(tmp_path / "given"), frame_period=2, frame_views=given,
+                      frame_options={"variables": {"SceneSoil": []}})
+
+
 def test_frame_views_need_frames_and_valid_views(tmp_path):
     with pytest.raises(ValueError, match="frame_period"):
         SceneRecorder(str(tmp_path), frame_views="default")
