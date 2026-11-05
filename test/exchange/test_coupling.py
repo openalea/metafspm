@@ -20,6 +20,7 @@ from openalea import encoding3d  # noqa: E402
 from openalea.encoding3d.coupling import (Coordinator, Declaration, EntitySetSpec, Link, Participant,  # noqa: E402
                                        VariableSpec)
 from openalea.metafspm.coupling.component import FunctionalComponent, input_variable, state_variable  # noqa: E402
+from openalea.metafspm.solve.decorator import actual  # noqa: E402
 from openalea.metafspm.data_structure.configs import ScalesConfig as scales  # noqa: E402
 from openalea.metafspm.io.coupling import RemoteComponent  # noqa: E402
 
@@ -254,3 +255,89 @@ def test_metafspm_shares_its_amounts_over_remote_segments(tmp_path):
     assert ds.n_nodes() > nodes
     for thread in threads:
         thread.join(60)
+
+
+@dataclass
+class RemoteRoots(RemoteComponent):
+    """Another platform's root architecture: metafspm follows its plant, organs and segments (it owns none)."""
+    participant = "metafspm"
+    rights = {"Plant": "follows", "Organ": "follows", "SubOrgan": "follows"}
+    length: float = state_variable(**dict(DOC, unit="m"), default=0., scale=scales.SubOrgan, kind="extensive")
+    radius: float = state_variable(**dict(DOC, unit="m"), default=0., scale=scales.SubOrgan, kind="intensive")
+    water_uptake: float = input_variable(**dict(DOC, unit="m3/s"), default=0., scale=scales.SubOrgan,
+                                         kind="extensive")
+
+
+@dataclass
+class WaterUptake(FunctionalComponent):
+    """Uptake per segment, proportional to its surface."""
+    length: float = input_variable(**dict(DOC, unit="m"), default=0., scale=scales.SubOrgan)
+    radius: float = input_variable(**dict(DOC, unit="m"), default=0., scale=scales.SubOrgan)
+    water_uptake: float = state_variable(**dict(DOC, unit="m3/s"), default=0., scale=scales.SubOrgan,
+                                         kind="extensive")
+
+    @actual
+    def _water_uptake(self, length, radius):
+        return 1e-6 * 2 * np.pi * radius * length
+
+
+def run_roots(endpoint, log):
+    """A plant (no complex), an organ, a chain of segments: one more each step, 1 cm long, radius 0.5 mm (in cm)."""
+    declaration = Declaration("roots", "test", [EntitySetSpec("plant", name, rights="owns")
+                                                for name in ("Plant", "Organ", "SubOrgan")], [
+        VariableSpec("plant", "SubOrgan", "length", "provides", "cm", "length", "extensive"),
+        VariableSpec("plant", "SubOrgan", "radius", "provides", "cm", "radius", "intensive"),
+        VariableSpec("plant", "SubOrgan", "water_uptake", "requires", "m3/s", kind="extensive")])
+    participant = Participant.connect(declaration, endpoint, timeout=120)
+    plant, organ = participant.id_offset, participant.id_offset + 1
+    segments = [participant.id_offset + 2, participant.id_offset + 3]
+    for turn in participant.turns():
+        if turn.step > 0:
+            received = turn.frame.data_structure("plant").entity_set("SubOrgan")
+            log[turn.step] = dict(zip(received.columns["id"].tolist(),
+                                      np.asarray(received.columns["water_uptake"]).tolist()))
+            segments.append(segments[-1] + 1)
+        count = len(segments)
+        sets = [entity_set_of("Plant", 1, [plant], [NO_ID], [NO_ID], "Wheat"),
+                entity_set_of("Organ", 5, [organ], [plant], [NO_ID], "RootInternode"),
+                entity_set_of("SubOrgan", 6, segments, [organ] * count, [NO_ID] + segments[:-1], "RootSegment",
+                            length=np.ones(count), radius=np.full(count, 0.05))]
+        participant.send(encoding3d.Frame(data_structures=[encoding3d.DataStructure("plant", entity_sets=sets)]))
+
+
+def entity_set_of(name, rank, ids, complexes, parents, label, **variables):
+    columns = dict(id=np.array(ids, dtype=np.int64), complex=np.array(complexes, dtype=np.int64),
+                   parent=np.array(parents, dtype=np.int64),
+                   edge_type=np.array(["none" if parent == NO_ID else "successor" for parent in parents], dtype=object),
+                   label=np.array([label] * len(ids), dtype=object), **variables)
+    return encoding3d.EntitySet(name, rank=rank, columns=columns)
+
+
+def test_metafspm_joins_a_plant_another_platform_builds():
+    """join(): no plant of metafspm's; its MPG and DataStructure built from the session's first turn (another
+    platform's plant, organ and segments), then its component computes on them, the new segments followed."""
+    coordinator = Coordinator("tcp://127.0.0.1:*", steps=3, interval=1., expect=["roots", "metafspm"], timeout=120)
+    log = {}
+    threads = [threading.Thread(target=coordinator.run, daemon=True),
+               threading.Thread(target=run_roots, args=(coordinator.endpoint, log), daemon=True)]
+    for thread in threads:
+        thread.start()
+    ds = RemoteRoots.join(coordinator.endpoint)
+    assert ds.n_nodes() == 2
+    g = ds._mtg
+    anchors = set(g.scales.anchors.values())
+    assert len([v for v in g.vertices(scale=g.scales.Plant) if v not in anchors]) == 1      # the remote plant
+    uptake, remote = WaterUptake(data_structure=ds), RemoteRoots(data_structure=ds)
+    remote.start()
+    assert np.allclose(ds.get("length"), 0.01)                          # cm converted to m
+    for _ in range(3):
+        uptake()
+        expected = 1e-6 * 2 * np.pi * np.asarray(ds.get("radius")) * np.asarray(ds.get("length"))
+        assert np.allclose(ds.get("water_uptake"), expected)
+        remote()
+    for thread in threads:
+        thread.join(60)
+    assert remote.stopped == "end of the session"
+    assert ds.n_nodes() == 5                                             # one more segment at steps 1, 2 and 3
+    assert log[2] and all(value == pytest.approx(1e-6 * 2 * np.pi * 0.0005 * 0.01) for value in log[2].values()
+                          if value == value)

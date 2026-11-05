@@ -29,6 +29,14 @@ remote model provides, e.g. a length): an extensive quantity split, a concentrat
 
 Ids: the session id of a vertex metafspm created is its vid plus the participant's offset; the vertices created for
 remote entities keep the remote ids in a map.
+
+When metafspm's model works on a plant another platform builds (metafspm follows its scales, owning none), there is no
+plant to start from: `join()` joins the session first and builds the DataStructure from the first turn's entities,
+then the components are made on it and `start()` carries on::
+
+    ds = RemoteRoots.join(endpoint)                    # metafspm's MPG and DataStructure, from the session's plant
+    uptake, remote = WaterUptake(ds), RemoteRoots(ds)
+    remote.start()
 """
 from dataclasses import dataclass, fields
 
@@ -40,6 +48,7 @@ from openalea.metafspm.io.encoding3d import _KINDS, _location_scales, _scale_nam
 
 _EDGE_SYMBOLS = {"successor": "<", "branch": "+"}
 _NO_ID = -1
+_JOINED = {}                    # id(DataStructure): the session join() opened, which start() carries on
 
 
 def _coupling():
@@ -73,19 +82,71 @@ class RemoteComponent(StructuralComponent):
         ds = self.data_structure
         return _scale_names(ds.structure)[_location_scales(ds)[ds.location(name)]]
 
-    def declaration(self):
+    @classmethod
+    def _declared_variables(cls) -> dict:
+        return {item.name: (item.metadata.get("variable_type"), dict(item.metadata)) for item in fields(cls)
+                if item.metadata.get("variable_type") in ("state_variable", "input")}
+
+    @classmethod
+    def _declaration(cls, set_name):
         coupling = _coupling()
         from openalea.encoding3d import vocabulary
         standard_names = {key: value for key, value in vocabulary.platform_names("metafspm").items() if value}
-        declaration = coupling.Declaration(self.participant, self.platform)
-        for name, rights in self.rights.items():
-            declaration.entity_sets.append(coupling.EntitySetSpec(self.data_structure_id, name, rights=rights))
-        for name, (role, meta) in self._variables().items():
+        declaration = coupling.Declaration(cls.participant, cls.platform)
+        for name, rights in cls.rights.items():
+            declaration.entity_sets.append(coupling.EntitySetSpec(cls.data_structure_id, name, rights=rights))
+        for name, (role, meta) in cls._declared_variables().items():
             declaration.variables.append(coupling.VariableSpec(
-                self.data_structure_id, self._set_name(name), name,
+                cls.data_structure_id, set_name(name, meta), name,
                 "requires" if role == "state_variable" else "provides", ucum_unit(meta.get("unit")),
                 standard_names.get(name), _KINDS.get(meta.get("kind")), optional=False))
         return declaration.complete()
+
+    def declaration(self):
+        return self._declaration(lambda name, meta: self._set_name(name))
+
+    @classmethod
+    def join(cls, endpoint: str = None, from_scale: str = "SubOrgan"):
+        """
+        Join the session before any DataStructure exists, when metafspm works on a plant another platform builds:
+        the first turn's entities (of the scales the class declares) become an MPG, under the MPG's anchors where
+        they have no complex, and its MPGDataStructure (*from_scale*: its nodes' scale) is returned. A RemoteComponent
+        made on it then carries on the session with start(). The variables' scales come from their declarations
+        (scale=).
+        """
+        from openalea.metafspm.coupling.declaration import scale_names
+        from openalea.metafspm.data_structure.data_api import MPGDataStructure
+        from openalea.metafspm.data_structure.mpg import MPG
+        coupling = _coupling()
+        names = scale_names()
+
+        def set_name(name, meta):
+            if meta.get("scale") is None:
+                raise ValueError(f"{cls.__name__}.{name}: join() needs each variable's scale (scale=)")
+            return names[meta["scale"]]
+
+        declaration = cls._declaration(set_name)
+        session = coupling.Participant.connect(declaration, endpoint or cls.endpoint, links=cls.links,
+                                               timeout=cls.timeout)
+        turns = session.turns()
+        turn = next(turns, None)
+        if turn is None:
+            raise RuntimeError(f"{cls.__name__}: the session stopped before its first turn ({session.stopped})")
+        g = MPG()
+        maps = dict(vid_of={}, session_of={}, echo={})
+        if turn.frame.data_structures:
+            _create_entities(g, turn.frame.data_structure(cls.data_structure_id), cls.rights, maps,
+                             session.id_offset)
+        scale = getattr(g.scales, from_scale)
+        if not any(g._scale.get(vid) == scale for vid in maps["session_of"]):
+            raise ValueError(f"{cls.__name__}: the session's first turn holds no {from_scale} entity to build the "
+                             "DataStructure on")
+        g.populate_graph(scale)
+        g.convert_properties_to_arraydict()
+        ds = MPGDataStructure(g, from_scale=scale)
+        _JOINED[id(ds)] = dict(session=session, turns=turns, turn=turn,
+                               declared={entity_set.name for entity_set in declaration.entity_sets}, **maps)
+        return ds
 
     # ── the session ────────────────────────────────────────────────────────────────
     def start(self) -> None:
@@ -96,6 +157,14 @@ class RemoteComponent(StructuralComponent):
         self._vid_of, self._session_of = {}, {}   # remote session id <-> vid of the vertex created for it
         self._echo = {}                           # remote session id: the topology it was received with
         self.stopped = None
+        joined = _JOINED.pop(id(self.data_structure), None)
+        if joined is not None:                    # join() opened the session and built the DataStructure
+            self.session, self._turns, self._declared = joined["session"], joined["turns"], joined["declared"]
+            self._vid_of, self._session_of, self._echo = joined["vid_of"], joined["session_of"], joined["echo"]
+            self._apply(joined["turn"])
+            self._send()
+            self._apply_next()
+            return
         declaration = self.declaration()
         self._declared = {entity_set.name for entity_set in declaration.entity_sets}
         self.session = coupling.Participant.connect(declaration, self.endpoint, links=self.links,
@@ -178,6 +247,9 @@ class RemoteComponent(StructuralComponent):
         if turn is None:
             self.stopped = self.session.stopped
             return
+        self._apply(turn)
+
+    def _apply(self, turn) -> None:
         self.turn = turn
         frame = turn.frame
         if not frame.data_structures:
@@ -231,55 +303,72 @@ class RemoteComponent(StructuralComponent):
     def _create(self, structure, g) -> bool:
         """The vertices of the remote entities new in the scales metafspm follows or refines (another participant may
         refine them too)."""
-        ds = self.data_structure
-        changed = False
-        for table in sorted(structure.entity_sets, key=lambda item: item.rank or 0):
-            if self.rights.get(table.name, "follows") == "owns" or "complex" not in table.columns:
-                continue
-            scale = getattr(g.scales, table.name, None)
-            if scale is None:
-                raise ValueError(f"{type(self).__name__}: the MPG has no scale '{table.name}'")
-            rows = [row for row, identifier in enumerate(table.columns["id"].tolist())
-                    if self._vid(int(identifier)) is None]
-            while rows:                                  # parents first
-                pending = []
-                for row in rows:
-                    identifier = int(table.columns["id"][row])
-                    parent = int(table.columns["parent"][row]) if "parent" in table.columns else _NO_ID
-                    if parent != _NO_ID and self._vid(parent) is None and parent in table.columns["id"]:
-                        pending.append(row)
-                        continue
-                    complex_ = int(table.columns["complex"][row])
-                    complex_vid = self._vid(complex_) if complex_ != _NO_ID else None
-                    if complex_vid is None:
-                        raise ValueError(f"{type(self).__name__}: remote entity {identifier} of {table.name} has no "
-                                         "complex in metafspm's MPG (follow its complex's scale)")
-                    edge_type = str(table.columns["edge_type"][row]) if "edge_type" in table.columns else "none"
-                    label = str(table.columns["label"][row]) if "label" in table.columns else table.name
-                    properties = dict(scale=scale)
-                    try:
-                        properties["label"] = ds.label_code(label)
-                    except ValueError:
-                        pass
-                    parent_vid = self._vid(parent) if parent != _NO_ID else None
-                    if parent_vid is not None and g.complex(parent_vid) == complex_vid:
-                        vid = g.add_child(parent_vid, **PropsConfig(edge_type=_EDGE_SYMBOLS.get(edge_type, "<"),
-                                                                    **properties))
-                    elif parent_vid is not None:
-                        vid = g.add_component_with_topo(complex_vid, parent_vid, **PropsConfig(
-                            edge_type=_EDGE_SYMBOLS.get(edge_type, "+"), **properties))
-                    else:
-                        vid = g.add_component(complex_vid, **PropsConfig(edge_type="/", **properties))
-                    self._vid_of[identifier], self._session_of[vid] = vid, identifier
-                    self._echo[identifier] = (label, complex_, parent, edge_type)
-                    changed = True
-                if len(pending) == len(rows):
-                    raise ValueError(f"{type(self).__name__}: remote entities of {table.name} whose parents never "
-                                     "come")
-                rows = pending
-        return changed
+        maps = dict(vid_of=self._vid_of, session_of=self._session_of, echo=self._echo)
+        return _create_entities(g, structure, self.rights, maps, self.session.id_offset)
 
     def triangles(self, where=None):
         """No geometry of its own: the remote model's is not drawn by metafspm's light models."""
         from openalea.metafspm.coupling.geometry import Triangles
         return Triangles(np.zeros((0, 3, 3)), np.zeros(0, dtype=np.int64))
+
+
+def _create_entities(g, structure, rights: dict, maps: dict, id_offset: int) -> bool:
+    """The MPG vertices of the remote entities of *structure* new to *maps* (vid_of, session_of, echo), in the scales
+    *rights* does not own: under their complex's vertex (the MPG's anchor of their scale when they have none, and
+    vertices of metafspm's own for the scales skipped in between), after their parent; their labels by the MPG's label
+    codes where it knows them."""
+    vid_of, session_of, echo = maps["vid_of"], maps["session_of"], maps["echo"]
+    count = _coupling().ID_COUNT
+
+    def vid(session_id):
+        if session_id in vid_of:
+            return vid_of[session_id]
+        return session_id - id_offset if id_offset <= session_id < id_offset + count else None
+
+    changed = False
+    for table in sorted(structure.entity_sets, key=lambda item: item.rank or 0):
+        if rights.get(table.name, "follows") == "owns":
+            continue
+        scale = getattr(g.scales, table.name, None)
+        if scale is None:
+            raise ValueError(f"the MPG has no scale '{table.name}'")
+        ids = table.columns["id"].tolist()
+        rows = [row for row, identifier in enumerate(ids) if vid(int(identifier)) is None]
+        while rows:                                      # parents first
+            pending = []
+            for row in rows:
+                identifier = int(ids[row])
+                parent = int(table.columns["parent"][row]) if "parent" in table.columns else _NO_ID
+                if parent != _NO_ID and vid(parent) is None and parent in ids:
+                    pending.append(row)
+                    continue
+                complex_ = int(table.columns["complex"][row]) if "complex" in table.columns else _NO_ID
+                complex_vid = vid(complex_) if complex_ != _NO_ID else None
+                if complex_ != _NO_ID and complex_vid is None:
+                    raise ValueError(f"remote entity {identifier} of {table.name}: its complex {complex_} is not in "
+                                     "metafspm's MPG (follow its complex's scale)")
+                edge_type = str(table.columns["edge_type"][row]) if "edge_type" in table.columns else "none"
+                label = str(table.columns["label"][row]) if "label" in table.columns else table.name
+                properties = dict(scale=scale)            # the MPG's scale property, which its index reads
+                group = getattr(g.labels, table.name, None)       # the label's code: by its value, or its name
+                code = g.labels.filters.get(label, getattr(group, label, None) if group is not None else None)
+                if isinstance(code, (int, np.integer)):
+                    properties["label"] = int(code)
+                parent_vid = vid(parent) if parent != _NO_ID else None
+                # its container one scale up: its complex's vertex (the MPG's anchor of its scale when it has none),
+                # through vertices of metafspm's own for the scales between (another platform may skip some: an
+                # organ right under its plant), which the session never sees
+                container = complex_vid if complex_vid is not None else g.scales.anchors[scale]
+                while g.scale(container) < scale - 1:
+                    container = g.add_components_bulk(container, 1, scale=g.scale(container) + 1, edge_type="/",
+                                                      isanchor=False)[0]
+                edge = _EDGE_SYMBOLS.get(edge_type, "<") if parent_vid is not None else "/"
+                new = g.add_components_bulk(container, 1, topo_parents=[parent_vid], edge_type=edge, isanchor=False,
+                                            **properties)[0]
+                vid_of[identifier], session_of[new] = new, identifier
+                echo[identifier] = (label, complex_, parent, edge_type)
+                changed = True
+            if len(pending) == len(rows):
+                raise ValueError(f"remote entities of {table.name} whose parents never come")
+            rows = pending
+    return changed
