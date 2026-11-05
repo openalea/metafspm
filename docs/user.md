@@ -315,7 +315,12 @@ class SoilDiffusion(FunctionalComponent):
   `(kind.key, kind.system)` (the same when the kind is evaluated again: its template key, kind values and plant
   parameters' signature) and drops the keys its groups no longer have, so its cache too follows the plant's groups;
   a kind keeps its term and the sparse blocks of its full interior, not their factorisation (made again for a
-  recovery, `recover`), so the memory follows the plant's size, not the kinds it went through.
+  recovery, `recover`), so the memory follows the plant's size, not the kinds it went through. For outputs,
+  `reduction.recover_interiors(ds)` gives every reduced group's interior values at once (batched by kind, one
+  factorisation each), `reduction.full_rows(key)` the full template's rows a reduced template holds and
+  `reduction.unknown()` the reduced system's node unknown; a plant model's structural component asks
+  `reduction.reduces(label)` with its own kinds' names (GRANAP's anatomy kinds: a sheath's elements are the kind
+  `Sheath`, not their label `StemElement`).
 ## 4. Structure: `StructuralComponent`
 
 A structural component edits the plant (growth, segmentation, anatomy). Its steps come in two styles:
@@ -633,6 +638,17 @@ scene = Scene.from_scenario(scenario, stand(...), Wheat, environment=[RhizoSoil,
   `display_period=96` writes them every 96 steps (a multiple of `frame_period`) and in the last frame, `None` (the
   default) never; their data rows (the Compartments) are in every frame either way, with the DataStructure's values
   (those of an instanced or reduced section's Compartments too, which the MPG holds as their template's).
+  A reduced section is drawn whole in those frames: a component's display shapes may own triangles by id
+  (`Triangles(vertices, owner, owner_ids)`, owner -1 and `owner_ids` the display ids of
+  `solve.reduction.display_ids(group vertex, full template rows)`, e.g. GRANAP's interior cells), and a frame with
+  display shapes writes each reduced group's interior (its full template's Compartments, Cells and Layers the reduced
+  one does not hold; not its Connections) as display rows of their entity sets, marked by the column
+  `metafspm_display_only`, linked to their Cells, Layers and section (a selection by entity brings a section's
+  interior with it), with the reduced system's unknown recovered (`Reduction.recover_interiors(ds)`: exact for the
+  linear Kron reduction, one factorisation per kind for all its groups, freed after; e.g. MECHA's psi), their
+  template's properties, NaN otherwise (their derived values, e.g. a water potential with its osmotic part). Display
+  rows are output only: `from_frame` leaves them out (the DataStructure stays reduced), and frames without display
+  shapes have none. They make those frames as large as the full anatomy's.
   `frame_options=` passes
   `scene_to_frame`'s options (e.g. `geometry=False`). For logging, the options also filter what each frame keeps:
   `data_structures=` (which ones), `scales=` (e.g. `["Plant", "SubOrgan"]`), `entities=` (a plant, by vid or by its

@@ -12,6 +12,9 @@ segment_triangles.
     triangles = component.triangles()
     triangles.vertices       (T, 3, 3): T triangles, their 3 points, x y z
     triangles.owner          (T,): the node index of each triangle's element
+    triangles.owner_ids      (T,) or None: for display shapes only, each triangle's owner by id, for those owned
+                             by no node (owner -1): a reduced section's interior cells, by their display ids
+                             (solve.reduction.display_ids), which an encoding3d frame writes as rows of their own
 
 The turtle's frame operations follow PlantGL's PglTurtle (the same angles in degrees, the same senses), for models
 placing their elements as PlantGL would, without it: a frame is its heading H and its up U, its left L = U × H.
@@ -28,12 +31,17 @@ from numba import njit
 class Triangles:
     vertices: np.ndarray
     owner: np.ndarray
+    owner_ids: np.ndarray = None
 
     def __post_init__(self):
         self.vertices = np.asarray(self.vertices, dtype=float).reshape(-1, 3, 3)
         self.owner = np.asarray(self.owner, dtype=np.int64).reshape(-1)
         if self.owner.size != self.vertices.shape[0]:
             raise ValueError(f"Triangles: {self.vertices.shape[0]} triangles, {self.owner.size} owners")
+        if self.owner_ids is not None:
+            self.owner_ids = np.asarray(self.owner_ids, dtype=np.int64).reshape(-1)
+            if self.owner_ids.size != self.owner.size:
+                raise ValueError(f"Triangles: {self.owner.size} owners, {self.owner_ids.size} owner ids")
 
     def __len__(self):
         return self.owner.size
@@ -49,8 +57,13 @@ class Triangles:
         if not parts:
             return cls.empty()
         offsets = np.zeros(len(parts), dtype=np.int64) if offsets is None else np.asarray(offsets, dtype=np.int64)
+        owner_ids = None
+        if any(p.owner_ids is not None for p in parts):          # display shapes: their owners by id where given
+            owner_ids = np.concatenate([p.owner_ids if p.owner_ids is not None else np.full(len(p), -1)
+                                        for p in parts])
         return cls(np.concatenate([p.vertices for p in parts]),
-                   np.concatenate([p.owner + offset for p, offset in zip(parts, offsets)]))
+                   np.concatenate([np.where(p.owner >= 0, p.owner + offset, -1) for p, offset in zip(parts, offsets)]),
+                   owner_ids)
 
     def areas(self) -> np.ndarray:
         """Each triangle's area."""

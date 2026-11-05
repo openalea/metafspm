@@ -51,6 +51,7 @@ EXTRAS = "metafspm"
 NO_ID = -1
 EDGE_CODES = {1: "/", 2: "<", 3: "+"}               # the MPG's edge types (MPG.topology_arrays)
 LINK_COLUMNS = ("metafspm_complex", "metafspm_parent", "metafspm_edge_type")
+DISPLAY_ONLY = "metafspm_display_only"             # the display rows' column: a reduced section's interior vertices
 
 _KINDS = {"intensive": "intensive", "extensive": "extensive", "massic_concentration": "massic_concentration",
           "volumic_concentration": "volumic_concentration", "descriptor": "descriptor",
@@ -519,6 +520,8 @@ def _mpg_data_structure(identifier: str, ds, metadata: dict, standard_names: dic
             extras["variables"][name] = dict(_json_meta(ds._variable_meta().get(name, {})), location=location,
                                              **({"column": column} if column != name else {}),
                                              **({"encoding": encoding} if encoding else {}))
+    if geometry and display_meshes and any(callable(getattr(c, "display_triangles", None)) for c in components):
+        _display_interiors(ds, tables, extras, names, translator)    # the reduced sections' interiors, drawn whole
     scalars = _scalar_table(ds, extras)
     extras["tracked"] = [name for name in extras["tracked"] if name in extras["variables"]]
     extras.update(_anchor_and_empty_properties(g, anchors))
@@ -543,6 +546,12 @@ def _mpg_data_structure(identifier: str, ds, metadata: dict, standard_names: dic
             if column in table.columns and column not in table.variables:
                 table.variables[column] = encoding3d.Variable(unit="1", kind="descriptor", role="setting",
                                                            description=f"metafspm: the MPG property {column}")
+        if DISPLAY_ONLY in table.columns:
+            table.variables[DISPLAY_ONLY] = encoding3d.Variable(
+                unit="1", kind="descriptor", role="setting",
+                description="metafspm: a row for display only, a reduced section's interior vertex (its values: the "
+                            "reduced system's unknown recovered, its full template's properties, NaN otherwise); "
+                            "not a vertex of the MPG")
         for column in LINK_COLUMNS:
             if column in table.columns:
                 table.variables[column] = encoding3d.Variable(
@@ -556,6 +565,156 @@ def _mpg_data_structure(identifier: str, ds, metadata: dict, standard_names: dic
     return encoding3d.DataStructure(identifier, kind="graph", entity_sets=entity_sets, relations=relations,
                                  scalars=scalars, meshes=meshes, platform=PLATFORM, model="MPGDataStructure",
                                  extras={EXTRAS: extras})
+
+
+def _display_interiors(ds, tables: dict, extras: dict, names: dict, translator: dict) -> None:
+    """
+    The reduced sections' interiors as display rows (the frame's display meshes draw the sections whole): each reduced
+    group's full template vertices its reduced template does not hold (its eliminated Compartments, and the Cells and
+    Layers holding them; not its Connections), appended to the tables of their scales under their display ids
+    (solve.reduction.display_ids), marked by the column metafspm_display_only, their complex and parent links resolved
+    to the group's vertices (kept or displayed) and to its owner. Their values: the reduced system's unknown recovered
+    from the kept nodes' (Reduction.recover_interiors: exact for the linear Kron reduction), their full template's
+    properties, NaN (or the column's empty value) otherwise. from_frame leaves them out: the DataStructure stays
+    reduced.
+    """
+    from openalea.metafspm.data_structure.instances import ANCHOR, OWNER
+    from openalea.metafspm.solve.reduction import display_ids
+    g = ds.structure
+    reduction = getattr(g, "reduction", None)
+    if reduction is None or not g._instanced():
+        return
+    groups = reduction.reduced_groups(ds)
+    if not groups:
+        return
+    if reduction.systems and reduction.instance is not None and not reduction.library:
+        recovered, unknown = reduction.recover_interiors(ds), reduction.unknown()
+    else:                                           # no system bound: the interiors' structure, their values NaN
+        recovered, unknown = {i: (owner, key, reduction.full_template(key), np.zeros(0, dtype=np.int64),
+                                  np.zeros(0)) for i, (owner, key) in groups.items()}, None
+    unknown_column = extras["variables"].get(unknown, {}).get("column", unknown) if unknown else None
+    connection = g.scales.Connection
+    parts = {}                                      # {scale: [(ids, scale, complex, parent, template, rows, values)]}
+    for owner, key, full, interior_rows, values in recovered.values():
+        first, _ = g.instances.block(owner)
+        held = reduction.full_rows(key)
+        index_in_reduced = np.full(full.size, -1, dtype=np.int64)
+        index_in_reduced[held] = np.arange(held.size)
+        ids_of_row = np.where(index_in_reduced >= 0, first + index_in_reduced,
+                              display_ids(owner, np.arange(full.size)))
+        added = np.flatnonzero((index_in_reduced < 0) & (full.scale != connection))
+        unknown_at = np.full(full.size, np.nan)
+        unknown_at[np.asarray(interior_rows, dtype=np.int64)] = values
+
+        def resolved(codes, rows):
+            codes = codes[rows]
+            out = np.where(codes >= 0, ids_of_row[np.maximum(codes, 0)], NO_ID)
+            out = np.where(codes == OWNER, owner, out)
+            anchors = np.array([g.scales.anchors[int(scale)] for scale in full.scale[rows]], dtype=np.int64) \
+                if rows.size else np.zeros(0, dtype=np.int64)
+            return np.where(codes == ANCHOR, anchors, out)
+
+        for scale in np.unique(full.scale[added]).tolist():
+            rows = added[full.scale[added] == scale]
+            parts.setdefault(scale, []).append((ids_of_row[rows], resolved(full.complex, rows),
+                                                resolved(full.parent, rows), full, rows, unknown_at[rows]))
+    arrays = g.topology_arrays()
+    display_id_list = [item[0] for items in parts.values() for item in items]
+    display_scale_list = [np.full(item[0].size, scale, dtype=np.int64) for scale, items in parts.items()
+                          for item in items]
+    display_order = np.concatenate(display_id_list) if display_id_list else np.zeros(0, dtype=np.int64)
+    display_scales = np.concatenate(display_scale_list) if display_scale_list else np.zeros(0, dtype=np.int64)
+    sort = np.argsort(display_order)
+    display_order, display_scales = display_order[sort], display_scales[sort]
+
+    def scale_at(vids):
+        """The scale of each of *vids* (a display id's, an MPG vertex's; -1 for none)."""
+        out = np.full(vids.size, -1, dtype=np.int64)
+        real = (vids >= 0) & (vids < arrays["scale"].size)
+        out[real] = arrays["scale"][vids[real]]
+        if display_order.size:
+            position = np.searchsorted(display_order, vids).clip(0, display_order.size - 1)
+            shown = display_order[position] == vids
+            out[shown] = display_scales[position[shown]]
+        return out
+    counts = {}
+    for scale, items in sorted(parts.items()):
+        if scale not in tables:
+            continue                                # no vertex of the MPG at that scale: not drawn by scale
+        set_name = names[scale]
+        columns = tables[scale]
+        ids = np.concatenate([item[0] for item in items])
+        raw_complex = np.concatenate([item[1] for item in items])
+        raw_parent = np.concatenate([item[2] for item in items])
+
+        parent_scale = scale_at(raw_parent)
+        same_scale = (raw_parent >= 0) & (parent_scale == scale)
+        anchored = np.isin(raw_complex, list(g.scales.anchors.values()))
+        complex_ = np.where(~anchored & (raw_complex >= 0), raw_complex,
+                            np.where((raw_parent >= 0) & ~same_scale, raw_parent, NO_ID))
+        n = ids.size
+        new = {"id": ids, "complex": complex_.astype(np.int64),
+               "parent": np.where(same_scale, raw_parent, NO_ID).astype(np.int64),
+               "edge_type": np.array(["successor" if same else "none" for same in same_scale], dtype=object),
+               "metafspm_complex": raw_complex, "metafspm_parent": raw_parent,
+               "metafspm_edge_type": np.zeros(n, dtype=np.uint8)}
+
+        def template_values(name):
+            """(present, values) of the template property *name* at the display rows (object values)."""
+            present, out = np.zeros(n, dtype=bool), np.empty(n, dtype=object)
+            start = 0
+            for _, _, _, full, rows, _ in items:
+                stored = full.properties.get(name)
+                if stored is not None:
+                    where, values = stored
+                    position = np.searchsorted(where, rows).clip(0, max(where.size - 1, 0))
+                    here = (where[position] == rows) if where.size else np.zeros(rows.size, dtype=bool)
+                    present[start:start + rows.size] = here
+                    out[start:start + rows.size][here] = list(np.asarray(values)[position[here]])
+                start += rows.size
+            return present, out
+
+        present, codes = template_values("label")
+        if "label" in columns:
+            known = extras["label_codes"].setdefault(set_name, {})
+            name_of = {float(code): label for label, code in known.items()}
+            numbers = np.array([float(code) if here else np.nan for here, code in zip(present, codes)])
+            labels = np.full(n, "_none", dtype=object)
+            for code in np.unique(numbers[present]).tolist():
+                label = name_of.get(code)
+                if label is None:                    # a label only the interiors have
+                    label = translator.get(int(code), f"label_{int(code)}")
+                    if label in known:
+                        label = f"{label}_{int(code)}"
+                    known[label] = int(code) if float(code).is_integer() else float(code)
+                    name_of[code] = label
+                labels[numbers == code] = label
+            new["label"] = labels
+        for property_name, entry in extras["properties"].items():
+            column, kind = entry["column"], entry.get("dtypes", {}).get(set_name)
+            if column not in columns or column in new or kind is None:
+                continue
+            here, values = template_values(property_name)
+            if not here.any():
+                continue
+            filled = _empty_column(columns[column].dtype, n, columns[column].shape[1:])
+            if kind == "float64" and filled.ndim == 1:
+                filled[here] = np.asarray(values[here].tolist(), dtype=np.float64)
+            else:
+                convert = {"float64": float, "int64": int, "bool": bool, "str": str, "json": _encoded}[kind]
+                for k in np.flatnonzero(here).tolist():
+                    filled[k] = convert(values[k])
+            new[column] = filled
+        if unknown_column is not None and unknown_column in columns and \
+                np.issubdtype(columns[unknown_column].dtype, np.floating):
+            new[unknown_column] = np.concatenate([item[5] for item in items])
+        for column, old in list(columns.items()):
+            added = new[column] if column in new else _empty_column(old.dtype, n, old.shape[1:])
+            columns[column] = np.concatenate([old, added])
+        columns[DISPLAY_ONLY] = np.concatenate([np.zeros(columns["id"].size - n, dtype=bool), np.ones(n, dtype=bool)])
+        counts[set_name] = int(n)
+    if counts:
+        extras["display_only"] = {"rows": counts, "column": DISPLAY_ONLY, "values": unknown}
 
 
 def _object_values(values) -> tuple:
@@ -660,21 +819,65 @@ def _mesh_of(ds, entity_sets: list, scale_of: dict, names: dict, name: str, tria
     sets = {entity_set.name: entity_set for entity_set in entity_sets}
     node_ids = np.asarray(ds.entity_ids("node"), dtype=np.int64)
     owners = np.repeat(triangles.owner, 3)
+    shown = owners < 0                                      # display rows' triangles (a reduced section's interior)
+    if shown.any() and triangles.owner_ids is None:
+        raise ValueError(f"mesh '{name}': triangles without owner (-1) and no owner_ids")
     feature_rows = {}
     at = ds.__dict__.get("_at")                             # a view: its nodes the entities of that location
     node_set = sets[names[scale_of[at if at is not None else "node"]]]
-    feature_rows[node_set.name] = _rows_of(node_set.columns["id"], node_ids[owners])
+    rows = np.full(owners.size, NO_ID, dtype=np.int64)
+    rows[~shown] = _rows_of(node_set.columns["id"], node_ids[owners[~shown]])
+    feature_rows[node_set.name] = rows
+    coarse = []
     for location in ds._coarse_scale_names():
         set_name = names[scale_of[location]]
         if set_name not in sets or set_name == node_set.name:
             continue
-        entity = ds.owner(location)[owners]
+        coarse.append(set_name)
+        entity = np.full(owners.size, -1, dtype=np.int64)
+        entity[~shown] = ds.owner(location)[owners[~shown]]
         entity_ids = np.asarray(ds.entity_ids(location), dtype=np.int64)
         rows = np.full(owners.size, NO_ID, dtype=np.int64)
         known = entity >= 0
         rows[known] = _rows_of(sets[set_name].columns["id"], entity_ids[entity[known]])
         feature_rows[set_name] = rows
+    if shown.any():                       # by their ids, up their complex links (display rows and vertices alike)
+        ids = np.repeat(triangles.owner_ids, 3)[shown]
+        unique, inverse = np.unique(ids, return_inverse=True)
+        found = _rows_up(sets, unique, [node_set.name] + coarse)
+        for set_name, rows in found.items():
+            feature_rows[set_name][shown] = rows[inverse]
     return encoding3d.Mesh(name, positions=triangles.vertices.reshape(-1, 3), feature_rows=feature_rows)
+
+
+def _rows_up(sets: dict, ids: np.ndarray, set_names: list) -> dict:
+    """{set name: the row of each of *ids*' entity in that set (NO_ID: none)}: each id's own row, then its complex's,
+    up the complex links (a display row's Compartment, its Cell, its Layer, its section...)."""
+    table_ids, table_complex, table_set, table_row = [], [], [], []
+    for k, set_name in enumerate(set_names):
+        columns = sets[set_name].columns
+        table_ids.append(np.asarray(columns["id"], dtype=np.int64))
+        table_complex.append(np.asarray(columns["complex"], dtype=np.int64) if "complex" in columns
+                             else np.full(columns["id"].size, NO_ID, dtype=np.int64))
+        table_set.append(np.full(columns["id"].size, k, dtype=np.int64))
+        table_row.append(np.arange(columns["id"].size, dtype=np.int64))
+    every = np.concatenate(table_ids)
+    order = np.argsort(every, kind="stable")
+    every, complex_of = every[order], np.concatenate(table_complex)[order]
+    set_of, row_of = np.concatenate(table_set)[order], np.concatenate(table_row)[order]
+    out = {set_name: np.full(ids.size, NO_ID, dtype=np.int64) for set_name in set_names}
+    current = np.asarray(ids, dtype=np.int64).copy()
+    for _ in range(64):
+        live = current != NO_ID
+        if not live.any():
+            break
+        position = np.searchsorted(every, current).clip(0, every.size - 1)
+        here = live & (every[position] == current)
+        for k, set_name in enumerate(set_names):
+            at = here & (set_of[position] == k) & (out[set_name] == NO_ID)
+            out[set_name][at] = row_of[position[at]]
+        current = np.where(here, complex_of[position], NO_ID)
+    return out
 
 
 # ── Grids → data structures ────────────────────────────────────────────────
@@ -1152,7 +1355,7 @@ def _mpg_from(data_structure, extras: dict):
     if sorted(set(_anchor_vids(g))) != extras["anchors"]:
         raise ValueError(f"'{data_structure.id}': the MPG's scale anchors differ from the written ones")
     scales = extras["scales"]
-    tables = {table.name: table for table in data_structure.entity_sets + data_structure.relations}
+    tables = {table.name: _without_display_rows(table) for table in data_structure.entity_sets + data_structure.relations}
     # The vertices and their own links, in vid order (the order of the MPG's component and children lists)
     links = []
     for name, table in tables.items():
@@ -1232,6 +1435,21 @@ def _mpg_from(data_structure, extras: dict):
                                   shape=tuple(meta.get("shape", ()))))
         ds._mark_mtg_synced(name)
     return ds
+
+
+class _Rows:
+    """A table's rows but its display rows (a reduced section's interior, for display only: not MPG vertices)."""
+
+    def __init__(self, table, keep):
+        self.name, self.variables = table.name, getattr(table, "variables", {})
+        self.columns = {name: np.asarray(column)[keep] for name, column in table.columns.items()
+                        if name != DISPLAY_ONLY}
+
+
+def _without_display_rows(table):
+    if DISPLAY_ONLY not in table.columns:
+        return table
+    return _Rows(table, ~np.asarray(table.columns[DISPLAY_ONLY], dtype=bool))
 
 
 def _anchor_vids(g) -> list:

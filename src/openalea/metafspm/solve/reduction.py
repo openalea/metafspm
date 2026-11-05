@@ -29,7 +29,10 @@ Declared on the plant model, before its structure is built (as nodes= and wiring
                      section's kr): Reduction.outputs(ds, name)
 
 The structural model asks for a group's reduced template (Reduction.template_for) when it instances its anatomy:
-the full cells never enter the plant's DataStructure. A kind: (the full template, the kind variables' values or
+the full cells never enter the plant's DataStructure. For display only (an encoding3d frame's sections, drawn whole),
+Reduction.recover_interiors gives every reduced group's interior values at once (one factorisation per kind),
+full_rows the full template's rows a reduced one holds, and display_ids the ids the interior's vertices are written
+under (never a vertex id). A kind: (the full template, the kind variables' values or
 classes, the plant's parameters and the settings), evaluated on a library population of the plant model (its own
 components, those of the reduced systems and of their inputs at the cells run): the graph system's own residual and
 Jacobian (decorator._EXTRACTING: without its boundary sets and its explicit terms), on a full instance and on a
@@ -45,6 +48,25 @@ import numpy as np
 from scipy.sparse import coo_matrix, csr_matrix
 
 from openalea.metafspm.solve.network import kron_reduction
+
+# The ids of a reduced group's interior vertices in an output (an encoding3d frame's display rows: they are not the
+# MPG's vertices): DISPLAY_ID_BASE + the group's vertex × DISPLAY_ROWS + the vertex's row in the full template, the
+# same from one frame to the next, above every vertex id
+DISPLAY_ID_BASE, DISPLAY_ROWS = 2 ** 52, 2 ** 24
+
+
+def display_ids(owner: int, rows) -> np.ndarray:
+    """The display ids of the full template's *rows* of the reduced group *owner* (its vertex): its interior's
+    vertices, as an output writes them (never an MPG vertex id)."""
+    rows = np.asarray(rows, dtype=np.int64)
+    if rows.size and (rows.min() < 0 or rows.max() >= DISPLAY_ROWS):
+        raise ValueError(f"display_ids: a full template's rows are below {DISPLAY_ROWS}")
+    return DISPLAY_ID_BASE + int(owner) * DISPLAY_ROWS + rows
+
+
+def is_display_id(ids) -> np.ndarray:
+    """Whether each of *ids* is a display id (display_ids), not an MPG vertex id."""
+    return np.asarray(ids, dtype=np.int64) >= DISPLAY_ID_BASE
 
 
 @dataclass(frozen=True)
@@ -101,7 +123,7 @@ class Reduction:
         self.ports, self.keep, self.explicit_edges = ports, keep, explicit_edges
         self.kind, self.inputs, self.systems = dict(kind or {}), dict(inputs or {}), tuple(systems)
         self.output_names = tuple(outputs)
-        self._reduced, self._full, self._kept = {}, {}, {}
+        self._reduced, self._full, self._kept, self._rows = {}, {}, {}, {}
         self._kinds = {}
         self.model, self.instance, self.g = None, None, None
         self.library = False                     # a library's: its groups' kinds are not evaluated (no library of
@@ -135,6 +157,16 @@ class Reduction:
         Layers, and the explicit edges between them; one per full template."""
         if full.key in self._reduced:
             return self._reduced[full.key]
+        kept, held = self._restriction(full)
+        reduced = full.restricted(held, key=tuple(np.atleast_1d(full.key)) + ("reduced",))
+        self._reduced[full.key], self._full[reduced.key] = reduced, full
+        self._kept[reduced.key] = np.flatnonzero(kept)
+        self.__dict__.setdefault("_rows", {})[reduced.key] = np.flatnonzero(held)
+        return reduced
+
+    def _restriction(self, full) -> tuple:
+        """(the kept Compartments, every vertex the reduced template holds), masks over the full template *full*: the
+        kept nodes (ports and keep), their Cells and Layers, the explicit edges."""
         from openalea.metafspm.data_structure.configs import ScalesConfig
         compartment = full.scale == ScalesConfig.Compartment
         kept = np.zeros(full.size, dtype=bool)
@@ -151,10 +183,15 @@ class Reduction:
         edges = np.zeros(full.size, dtype=bool)
         if self.explicit_edges is not None:
             edges = np.asarray(self.explicit_edges(full), dtype=bool) & (full.scale == ScalesConfig.Connection)
-        reduced = full.restricted(kept | structure | edges, key=tuple(np.atleast_1d(full.key)) + ("reduced",))
-        self._reduced[full.key], self._full[reduced.key] = reduced, full
-        self._kept[reduced.key] = np.flatnonzero(kept)
-        return reduced
+        return kept, kept | structure | edges
+
+    def full_rows(self, key) -> np.ndarray:
+        """The rows in its full template of each vertex of the reduced template of key *key* (template_for's, in the
+        reduced template's order)."""
+        rows = self.__dict__.setdefault("_rows", {})        # a checkpoint of an earlier version: recomputed
+        if key not in rows:
+            rows[key] = np.flatnonzero(self._restriction(self._full[key])[1])
+        return rows[key]
 
     def full_template(self, key):
         """The full SectionTemplate whose reduced template has the key *key* (a KeyError for a key template_for did
@@ -320,6 +357,46 @@ class Reduction:
                 for kind in self._kinds.pop(kind_key).values():
                     kind.release()
         return {i: self._kinds[k] for i, k in keys.items()}
+
+    def unknown(self, system: str = None) -> str:
+        """The node unknown of the reduced *system* (default: the first): its graph system's (one node unknown)."""
+        from openalea.metafspm.solve.decorator import declared_system
+        system = system or self.systems[0]
+        attr = system.split(".")[1]
+        component = next(c for c in self.instance.components if declared_system(c, attr, (system,)) is not None)
+        return type(component)._graph_system_specs[attr]["node_unknowns"][0]
+
+    def recover_interiors(self, ds, groups=None, system: str = None) -> dict:
+        """
+        {group: (its vertex, its reduced template key, its full template, its interior's Compartment rows in it, the
+        unknown of *system* there)} of the reduced *groups* (entity indices of the location; default: all), from their
+        kept nodes' values in *ds* (recover's, the same values): batched by kind, one factorisation of each kind's
+        interior for all its groups (its columns at once), freed after. For outputs (a frame's sections drawn whole):
+        the DataStructure stays reduced.
+        """
+        every = self.reduced_groups(ds)
+        if not every or self.library:
+            return {}
+        chosen = every if groups is None else {int(i): every[int(i)] for i in groups if int(i) in every}
+        system = system or self.systems[0]
+        values = np.asarray(ds.get(self.unknown(system)), dtype=float)
+        kinds = self.group_kinds(ds, chosen)
+        g = ds.structure
+        by_kind = {}
+        for i, (owner, key) in chosen.items():
+            kind = kinds[i][system]
+            first, _ = g.instances.block(owner)
+            kept = first + np.flatnonzero(self._reduced_scale(key) == g.scales.Compartment)
+            by_kind.setdefault(id(kind), (kind, []))[1].append((i, owner, key, values[ds.index_of(kept)]))
+        out = {}
+        for kind, members in by_kind.values():
+            columns = np.column_stack([member[3] for member in members])
+            interior = kind.reduction.recover(columns, -np.asarray(kind.interior_source, dtype=float)[:, None])
+            interior = np.asarray(interior).reshape(len(kind.interior_rows), len(members))
+            for column, (i, owner, key, _) in enumerate(members):
+                out[i] = (owner, key, self._full[key], kind.interior_rows, interior[:, column].copy())
+            del interior, columns
+        return out
 
     def recover(self, ds, group: int, values, system: str = None) -> tuple:
         """A reduced group's interior: (its full template's local rows, the values of the system's unknown there),

@@ -64,8 +64,10 @@ HPA_PER_MPA = 1e4
 CM3_PER_M3 = 1e6
 SOIL_LEVEL = 0.                              # m, the soil's surface (Caribu's soil_level: the light cut below it)
 
-# The root segments' barriers by their distance from the tip (MECHA's Development): none on the tip segment, a
-# Casparian strip up to 10 cm, a suberized endodermis beyond
+# The root sections' barriers (the segments' and the apices') by their distance from the tip (MECHA's Development,
+# ArchiSimple's distance: from the section's base, an apex's its length): none at the tip (a section of distance 0:
+# an apex without length, which has no anatomy), a Casparian strip up to 10 cm (a growing apex's: barrier 0 would
+# make its xylem immature, MECHA's, cutting it off), a suberized endodermis beyond
 BARRIERS = {"tip_zone": 0., "tip_barrier": 0., "young_zone": 0.1, "young_barrier": 1., "mature_barrier": 3.}
 
 WHEAT_SCENARIO = {
@@ -83,8 +85,10 @@ WHEAT_SCENARIO = {
     # MECHA: the soil's potential on each root section's soil node, no condition at the collar (the plant closed
     # between the soil and the air), the roots' barriers
     "soil_boundary": "node_dirichlet", "collar_condition": 0., **BARRIERS,
-    # MECHA's sections reduced onto their conduits, their soil node and a blade's vapour path (scenario_reduction)
-    "reduced": True, "reduced_labels": ("RootSegment", "StemElement", "LeafElement", "Seed"),
+    # MECHA's sections reduced onto their conduits, their soil node and a blade's vapour path (scenario_reduction),
+    # by GRANAP's anatomy kinds: the root segments and apices, the stems, the sheaths (Adel's StemElements of a Sheath
+    # organ: the kind "Sheath"), the blades and the seed
+    "reduced": True, "reduced_labels": ("RootSegment", "RootApex", "StemElement", "Sheath", "LeafElement", "Seed"),
     # the gas exchange: Tuzet's stomata, limited by MECHA's leaf water potential (decision U-5)
     "stomatal_model": "Tuzet",
 }

@@ -119,7 +119,12 @@ Compartments of GRANAP's sections (anatomy mode).
   the anchors, GRANAP's wheat root
   (`for_wheat_root`) and monocot stem, sheath and leaf, a soil node per root section, MECHA's soil boundary on it
   (`node_dirichlet`) and no collar condition, MECHA's sections reduced onto their conduits (`reduction =
-  staticmethod(scenario_reduction)`, the scenario's `reduced`, `reduced_labels`).
+  staticmethod(scenario_reduction)`, the scenario's `reduced`, `reduced_labels`: GRANAP's anatomy kinds, the root
+  segments and apices, the stems, the sheaths, the blades and the seed; a sheath's elements are Adel's StemElements,
+  the kind `Sheath`). ArchiSimple's root apices (`RootApex`, an axis' tip beyond its last segment) are root sections
+  with the root's anatomy once they have a length, their barriers by their distance from the tip as the segments'
+  (a growing apex's distance is its length: a Casparian strip; at barrier 0 MECHA's xylem would be immature, the apex
+  cut off).
 
 The links, each in its units:
 
@@ -161,7 +166,7 @@ leaves' gas exchange (`gas_exchange`):
 - the blades' green area, PARa, An, gs and leaf water potential, the roots' water potential.
 
 The SceneRecorder writes the summaries, `water_balance.csv` and `gas_exchange.csv` (appended to after every hour),
-`run.json` (the run's progress, after every hour), a frame every 6 hours with its views (`frame_views="default"`),
+`run.json` (the run's progress, after every hour), a frame every 12 hours with its views (`frame_views="default"`),
 the sections' drawings in the frames of every 24 hours and the last (`display_period`), and a checkpoint every day
 (the last two kept): `Scene.load_checkpoint` resumes the run from it, bit for bit.
 

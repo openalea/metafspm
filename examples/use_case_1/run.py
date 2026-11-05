@@ -14,7 +14,7 @@ first days are those of the seed's roots and the hidden shoot (no light, no tran
 The weather (weather()): a clear day's PAR (Caribu's clear_day_PAR), the air's temperature and humidity in a daily
 course, a constant CO2 and wind, the soil at a constant temperature, a rain of 5 mm in the afternoon of the second
 day. The outputs (with a folder): the SceneRecorder's summaries, the water balance (water_balance.csv), and an
-encoding3d frame every 6 hours with its views (frames/views.json, the default layers: the shoot, the roots, the soil,
+encoding3d frame every 12 hours with its views (frames/views.json, the default layers: the shoot, the roots, the soil,
 the anatomies hidden), the sections' drawings in the frames of every 24 hours and the last, a checkpoint every day (the
 last two kept: Scene.load_checkpoint resumes the run from one), and run.log (the lines printed). The tables are
 appended to after each hour and run.json shows the run's progress: both can be read while it runs.
@@ -113,7 +113,7 @@ def gas_exchange(scene) -> dict:
     return row
 
 
-def scene(plants=2, folder=None, frame_period=6, display_period=24, checkpoint_period=24, scenario=None,
+def scene(plants=2, folder=None, frame_period=12, display_period=24, checkpoint_period=24, scenario=None,
           forcings=None, start_hour=0.):
     """The use case's Scene: *plants* wheat plants (WHEAT_SCENARIO, updated by *scenario*), the soil and the light,
     the forcings of weather() (updated by *forcings*), recorded in *folder* (None: in memory) with the water
