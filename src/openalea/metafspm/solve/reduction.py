@@ -25,6 +25,20 @@ Declared on the plant model, before its structure is built (as nodes= and wiring
                      properties), a {variable: condition} dict, a callable template -> mask of its local vertices, or
                      a tuple of them (their union)
   explicit_edges     a rule giving the Connections kept between kept nodes (those of the explicit terms)
+  merge              kept nodes lumped into one (an approximation, a modelling choice: a merged group shares one
+                     potential; exact when its members' potentials are equal in the full group): a dict, or a tuple
+                     of them (disjoint), {"where": a rule (as keep's: the kept nodes it applies to; None: all), "by":
+                     a tuple of template property names (the kept nodes of equal values of them one node; a NaN: not
+                     merged) or a callable template -> one integer label per vertex (a label one node; < 0: not
+                     merged), "properties": {name: aggregation} (the merged node's value of a template property, of
+                     its members': "sum", "mean", "min", "max", "root_sum_square" (√Σv², a quantity whose effect goes
+                     as its square, e.g. a conduit's area in its Poiseuille conductance) or a callable values ->
+                     value; the others its representative's, its first member's)}. The merged node is its
+                     representative (its first member), the others dropped from the reduced template, the explicit
+                     edges of a member joined to it (one between two members of a group: dropped); its kind is the
+                     full group's matrix with the members' rows and columns summed (the members held equal), then
+                     reduced. The model's live terms on a merged node are its representative's and those of the
+                     explicit edges joined to it: merge nodes without boundary sets of their own
   kind               the group variables a kind depends on, {name: None (its value) | Relative(width) (its classes:
                      a group between two the blend of their kinds, interpolate=True; its nearest, False)}; the
                      plant's parameters and the components' settings are always in it
@@ -142,6 +156,66 @@ class Relative:
 
 CLASS_ROUNDING = 1e-12          # a value within this fraction of the class interval from a class: that class alone
 
+# Reduction(merge=)'s named aggregations of a merged node's members' values
+_AGGREGATIONS = {"sum": np.sum, "mean": np.mean, "min": np.min, "max": np.max,
+                 "root_sum_square": lambda values: float(np.sqrt(np.sum(np.square(values))))}
+
+
+def _merge_specs(merge) -> tuple:
+    """Reduction(merge=) as a tuple of {"where", "by", "properties"} dicts (checked)."""
+    if merge is None:
+        return ()
+    specs = (merge,) if isinstance(merge, dict) else tuple(merge)
+    out = []
+    for spec in specs:
+        if not isinstance(spec, dict) or "by" not in spec or set(spec) - {"where", "by", "properties"}:
+            raise TypeError(f"Reduction merge: a dict {{'by': ..., 'where': ..., 'properties': ...}} ('by' "
+                            f"required), or a tuple of them; got {spec!r}")
+        by = spec["by"]
+        by = (by,) if isinstance(by, str) else by
+        if not callable(by) and not (isinstance(by, tuple) and all(isinstance(name, str) for name in by)):
+            raise TypeError(f"Reduction merge: 'by' is a property name, a tuple of them or a callable, got {by!r}")
+        properties = dict(spec.get("properties") or {})
+        for name, aggregation in properties.items():
+            if not callable(aggregation) and aggregation not in _AGGREGATIONS:
+                raise ValueError(f"Reduction merge: the aggregation of {name!r} is one of {sorted(_AGGREGATIONS)} or "
+                                 f"a callable, got {aggregation!r}")
+        out.append({"where": spec.get("where"), "by": by, "properties": properties})
+    return tuple(out)
+
+
+def _merge_labels(by, template) -> np.ndarray:
+    """A merge dict's labels over the vertices of *template*: its callable's, or the distinct rows of its properties'
+    values (-1 where one is missing or NaN)."""
+    if callable(by):
+        labels = np.asarray(by(template), dtype=np.int64).reshape(-1)
+        if labels.size != template.size:
+            raise ValueError(f"Reduction merge: 'by' gave {labels.size} labels for a template of {template.size} "
+                             "vertices")
+        return labels
+    values = np.full((template.size, len(by)), np.nan)
+    for column, name in enumerate(by):
+        rows, stored = template.properties.get(name, (np.zeros(0, dtype=np.int64), np.zeros(0)))
+        values[np.asarray(rows, dtype=np.int64), column] = np.asarray(stored, dtype=float)
+    present = ~np.isnan(values).any(axis=1)
+    labels = np.full(template.size, -1, dtype=np.int64)
+    if present.any():
+        labels[present] = np.unique(values[present], axis=0, return_inverse=True)[1].reshape(-1)
+    return labels
+
+
+def _within_one_node(template, into) -> np.ndarray:
+    """Per vertex of *template*, whether it is a Connection whose ends are merged into one node (*into*: merged_into's
+    representatives)."""
+    from openalea.metafspm.data_structure.instances import LINKS
+    ends = []
+    for name in LINKS:
+        rows, values = template.properties.get(name, (np.zeros(0, dtype=np.int64), np.zeros(0)))
+        end = np.full(template.size, -1, dtype=np.int64)
+        end[np.asarray(rows, dtype=np.int64)] = np.asarray(into, dtype=np.int64)[np.asarray(values, dtype=np.int64)]
+        ends.append(end)
+    return (ends[0] >= 0) & (ends[0] == ends[1])
+
 
 @contextmanager
 def _extracting():
@@ -173,6 +247,10 @@ class Kind:
                                                  # values, plant parameters' signature), the same when evaluated again
     system: str = None                           # the system it reduces
     parts: tuple = None                          # a blend's ((weight, Kind), ...)
+    contraction: np.ndarray = None               # merged nodes (Reduction(merge=)): per full template Compartment,
+                                                 # its node in the kind's (the kron's) order; None: none merged
+    merged_rows: np.ndarray = None               # the merged members dropped (their full template rows) ...
+    merged_kept: np.ndarray = None               # ... and their representative's place among the kept nodes
 
     shared_in_checkpoints = "kind"               # class attribute (not a field): scene.shared's part name
 
@@ -182,7 +260,17 @@ class Kind:
         it, computed again with it."""
         self.D = self.e = self.reduction = self.interior_source = None
         self.kept_rows = self.interior_rows = None
+        self.contraction = self.merged_rows = self.merged_kept = None
         self.inputs, self.outputs, self.parts = {}, {}, None
+
+    def contract(self, values) -> np.ndarray:
+        """Values per full template Compartment (its order) summed per node of the kind (the kron's order): a merged
+        node's its members' sum (e.g. their volumes); the values themselves when none is merged. For @kind_derived
+        methods."""
+        values = np.asarray(values, dtype=float)
+        if self.contraction is None:
+            return values
+        return np.bincount(self.contraction, weights=values, minlength=int(self.contraction.max()) + 1)
 
     def recover(self, kept_values) -> np.ndarray:
         """Its interior's values (interior_rows' order) for the kept nodes' *kept_values* (a vector, or a matrix of
@@ -210,20 +298,22 @@ def _blend(parts) -> Kind:
             outputs[name] = value
     return Kind(D=sum(weight * part.D for weight, part in parts), e=sum(weight * part.e for weight, part in parts),
                 reduction=None, interior_source=None, kept_rows=first.kept_rows, interior_rows=first.interior_rows,
-                inputs={}, outputs=outputs, key=None, system=first.system, parts=tuple(parts))
+                inputs={}, outputs=outputs, key=None, system=first.system, parts=tuple(parts),
+                contraction=first.contraction, merged_rows=first.merged_rows, merged_kept=first.merged_kept)
 
 
 class Reduction:
     def __init__(self, location: str = "SubOrgan", where=None, ports=None, keep=None, explicit_edges=None,
-                 kind: dict = None, inputs: dict = None, systems=(), outputs=()):
+                 kind: dict = None, inputs: dict = None, systems=(), outputs=(), merge=None):
         if where is not None and not isinstance(where, (dict, str)):
             raise TypeError(f"Reduction: where is a {{variable: condition}} filter of the {location}s or an entity "
                             f"set's name, got {where!r}")
         self.location, self.where = location, (dict(where) if isinstance(where, dict) else where)
         self.ports, self.keep, self.explicit_edges = ports, keep, explicit_edges
+        self.merge = _merge_specs(merge)
         self.kind, self.inputs, self.systems = dict(kind or {}), dict(inputs or {}), tuple(systems)
         self.output_names = tuple(outputs)
-        self._reduced, self._full, self._kept, self._rows = {}, {}, {}, {}
+        self._reduced, self._full, self._kept, self._rows, self._merged = {}, {}, {}, {}, {}
         self._kinds, self._blends, self._libraries = {}, {}, {}
         self.model, self.instance, self.g = None, None, None
         self.library = False                     # a library's: its groups' kinds are not evaluated (no library of
@@ -248,7 +338,7 @@ class Reduction:
         the model's Reduction (two Scenes of the model in one process share none: each freed with its population)."""
         out = copy.copy(self)
         out._kinds, out._blends, out._libraries, out._pickles, out.g = {}, {}, {}, {}, g
-        out._reduced, out._full, out._kept, out._rows = {}, {}, {}, {}
+        out._reduced, out._full, out._kept, out._rows, out._merged = {}, {}, {}, {}, {}
         out.__dict__.pop("_table", None)
         out.__dict__.pop("_assigned", None)
         return out
@@ -312,12 +402,17 @@ class Reduction:
         return (label,) if isinstance(label, str) else tuple(label)
 
     def template_for(self, full):
-        """The reduced template of the full SectionTemplate *full*: its kept nodes (ports and keep), their Cells and
-        Layers, and the explicit edges between them; one per full template."""
+        """The reduced template of the full SectionTemplate *full*: its kept nodes (ports and keep; a merged group's
+        representative only), their Cells and Layers, and the explicit edges between them (a merged member's joined
+        to its representative); one per full template."""
         if full.key in self._reduced:
             return self._reduced[full.key]
         kept, held = self._restriction(full)
-        reduced = full.restricted(held, key=tuple(np.atleast_1d(full.key)) + ("reduced",))
+        into, _ = self.merged_into(full)
+        reduced = full.restricted(held, key=tuple(np.atleast_1d(full.key)) + ("reduced",),
+                                  redirect=into if self.merge else None)
+        if self.merge:
+            self._aggregate(full, reduced, held)
         self._reduced[full.key], self._full[reduced.key] = reduced, full
         self._kept[reduced.key] = np.flatnonzero(kept)
         self.__dict__.setdefault("_rows", {})[reduced.key] = np.flatnonzero(held)
@@ -329,13 +424,11 @@ class Reduction:
         from openalea.metafspm.data_structure.configs import ScalesConfig
         compartment = full.scale == ScalesConfig.Compartment
         from openalea.metafspm.coupling.declaration import template_selection
-        kept = np.zeros(full.size, dtype=bool)
-        for rule in (self.ports, self.keep):
-            if rule is not None:
-                kept |= template_selection(rule, full)
-        kept &= compartment
+        kept = self._kept_mask(full)
+        into, _ = self.merged_into(full)
+        representative = kept & (into == np.arange(full.size))
         structure = np.zeros(full.size, dtype=bool)
-        above = full.complex[kept & (full.complex >= 0)]
+        above = full.complex[representative & (full.complex >= 0)]
         while above.size:
             structure[above] = True
             above = full.complex[above]
@@ -343,7 +436,70 @@ class Reduction:
         edges = np.zeros(full.size, dtype=bool)
         if self.explicit_edges is not None:
             edges = template_selection(self.explicit_edges, full) & (full.scale == ScalesConfig.Connection)
-        return kept, kept | structure | edges
+            if self.merge:
+                edges &= ~_within_one_node(full, into)
+        return kept, representative | structure | edges
+
+    def _kept_mask(self, full) -> np.ndarray:
+        """The kept Compartments of the full template *full* (ports and keep; a merged group's members all)."""
+        from openalea.metafspm.coupling.declaration import template_selection
+        from openalea.metafspm.data_structure.configs import ScalesConfig
+        kept = np.zeros(full.size, dtype=bool)
+        for rule in (self.ports, self.keep):
+            if rule is not None:
+                kept |= template_selection(rule, full)
+        return kept & (full.scale == ScalesConfig.Compartment)
+
+    def merged_into(self, full) -> tuple:
+        """(per vertex of the full template *full*, the row of the node it is merged into: its group's
+        representative, the vertex itself when not merged; per vertex, the merge= dict merging it, -1 for none):
+        merge='s groups of kept nodes, once per full template."""
+        merged = self.__dict__.setdefault("_merged", {})            # a checkpoint of an earlier version: made again
+        if full.key in merged:
+            return merged[full.key]
+        into, spec_of = np.arange(full.size), np.full(full.size, -1, dtype=np.int64)
+        if self.merge:
+            from openalea.metafspm.coupling.declaration import template_selection
+            kept = self._kept_mask(full)
+            for position, spec in enumerate(self.merge):
+                where = kept if spec["where"] is None else kept & template_selection(spec["where"], full)
+                labels = _merge_labels(spec["by"], full)
+                rows = np.flatnonzero(where & (labels >= 0))
+                if (spec_of[rows] >= 0).any():
+                    raise ValueError("Reduction merge: a kept node is merged by two of its dicts (they are disjoint)")
+                if rows.size:
+                    _, first, inverse = np.unique(labels[rows], return_index=True, return_inverse=True)
+                    into[rows] = rows[first][np.asarray(inverse).reshape(-1)]     # the first member of each label
+                    spec_of[rows] = position
+        merged[full.key] = (into, spec_of)
+        return into, spec_of
+
+    def _aggregate(self, full, reduced, held) -> None:
+        """The merged nodes' properties in *reduced* (template_for's, from *full*, holding *held*): each merge dict's
+        aggregations of its members' values (its "properties"), on their representative."""
+        into, spec_of = self.merged_into(full)
+        position = np.full(full.size, -1, dtype=np.int64)
+        position[np.flatnonzero(held)] = np.arange(int(np.count_nonzero(held)))
+        for index, spec in enumerate(self.merge):
+            for name, aggregation in spec["properties"].items():
+                if name not in full.properties or name not in reduced.properties:
+                    continue
+                rows, values = full.properties[name]
+                members = spec_of[rows] == index
+                if not members.any():
+                    continue
+                groups, inverse = np.unique(into[rows[members]], return_inverse=True)
+                member_values = np.asarray(values[members], dtype=float)
+                inverse = np.asarray(inverse).reshape(-1)
+                aggregated = np.array([_AGGREGATIONS.get(aggregation, aggregation)(member_values[inverse == k])
+                                       for k in range(groups.size)], dtype=float)
+                reduced_rows, reduced_values = reduced.properties[name]
+                reduced_values = np.array(reduced_values, dtype=float, copy=True)
+                slot = np.full(reduced.size, -1, dtype=np.int64)
+                slot[np.asarray(reduced_rows, dtype=np.int64)] = np.arange(len(reduced_rows))
+                at = slot[position[groups]]
+                reduced_values[at[at >= 0]] = aggregated[at >= 0]
+                reduced.properties[name] = (reduced_rows, reduced_values)
 
     def is_reduced(self, template) -> bool:
         """Whether *template* (a SectionTemplate) is one of this reduction's reduced templates (template_for's)."""
@@ -717,6 +873,10 @@ class Reduction:
                 members, corners = np.nonzero(chosen == k)
                 interior = np.asarray(part.recover(columns[members].T)).reshape(len(part.interior_rows),
                                                                                members.size)
+                interior_rows = part.interior_rows
+                if part.merged_rows is not None and part.merged_rows.size:   # a merged member: its node's value
+                    interior = np.vstack([interior, columns[members][:, part.merged_kept].T])
+                    interior_rows = np.concatenate([part.interior_rows, part.merged_rows])
                 weights = assignment.weights[at[members], corners]
                 for column, (member, weight) in enumerate(zip(members.tolist(), weights.tolist())):
                     row = int(at[member])
@@ -725,7 +885,7 @@ class Reduction:
                         out[i][4][...] += weight * interior[:, column]
                     else:
                         key = table.template[row]
-                        out[i] = (int(table.owner[row]), key, self._full[key], part.interior_rows,
+                        out[i] = (int(table.owner[row]), key, self._full[key], interior_rows,
                                   weight * interior[:, column])
                 del interior
         return dict(sorted(out.items()))
@@ -1061,6 +1221,7 @@ class _Library:
         own = reduction.for_population(ds.structure)         # the library knows its reduced groups, evaluates none
         own._reduced, own._full, own._kept, own._rows = reduction._reduced, reduction._full, reduction._kept, \
             reduction._rows                                   # the plants' templates, which its groups are
+        own._merged = reduction.__dict__.setdefault("_merged", {})
         own.library = True
         own.bind(model, instance)
         ds.structure.reduction = own
@@ -1134,6 +1295,23 @@ def _evaluate(reduction: Reduction, parameters: dict, requests: dict) -> dict:
     return _evaluate_in(reduction, _library(reduction, parameters), list(requests.items()))
 
 
+def _contraction(reduction: Reduction, full_template, compartments) -> tuple:
+    """(P, alive, contraction) of the merged nodes of *full_template* (Reduction.merged_into) over its
+    *compartments* (its Compartment rows): P (compartments × nodes, sparse ones) sums a merged group's rows and
+    columns into its representative's (Pᵀ A P), alive the compartments that stay a node (not a dropped member),
+    contraction each compartment's node; (None, None, None) when none is merged."""
+    if not reduction.merge:
+        return None, None, None
+    into, _ = reduction.merged_into(full_template)
+    alive = into[compartments] == compartments
+    if alive.all():
+        return None, None, None
+    node = np.cumsum(alive) - 1
+    contraction = node[np.searchsorted(compartments, into[compartments])]
+    n, m = compartments.size, int(alive.sum())
+    return csr_matrix((np.ones(n), (np.arange(n), contraction)), shape=(n, m)), alive, contraction
+
+
 def _evaluate_in(reduction: Reduction, library: _Library, items: list) -> dict:
     """_evaluate's kinds *items* in *library*."""
     from openalea.metafspm.solve.decorator import _GraphSystemBuilder, declared_system, kind_derived_methods
@@ -1189,9 +1367,13 @@ def _evaluate_in(reduction: Reduction, library: _Library, items: list) -> dict:
             compartments = np.flatnonzero(full_template.scale == plant_g.scales.Compartment)
             kept = np.isin(compartments, reduction._kept[key])
             A_full = A[full_nodes][:, full_nodes]
+            c_full = c[full_nodes]
+            contract, alive, contraction = _contraction(reduction, full_template, compartments)
+            if contract is not None:              # merged nodes: their rows and columns summed (held equal)
+                A_full, c_full = (contract.T @ A_full @ contract).tocsr(), contract.T @ c_full
+                compartments, kept = compartments[alive], kept[alive]
             kron = kron_reduction(A_full, kept)
             I, K = kron.interior_nodes, kron.kept_nodes
-            c_full = c[full_nodes]
             S, s = kron.reduced, c_full[K] + kron.inject(c_full[I])
             A_red, c_red = A[reduced_nodes][:, reduced_nodes].toarray(), c[reduced_nodes]
             inputs = {}
@@ -1201,10 +1383,14 @@ def _evaluate_in(reduction: Reduction, library: _Library, items: list) -> dict:
             for name in declared:
                 Jp = input_jacobians[name]
                 J_full = Jp[full_nodes][:, full_nodes]
+                if contract is not None:
+                    J_full = (contract.T @ J_full @ contract).tocsr()
                 response = np.asarray(J_full[K].toarray()) + np.asarray((J_full[I].T @ carry.T).T)
                 own = Jp[reduced_nodes][:, reduced_nodes].toarray()
                 base = np.asarray(ds.get(name), dtype=float)
                 base_full = base[np.flatnonzero(owner == group_of[(k, "full")])]
+                if contract is not None:
+                    base_full = base_full[alive]
                 categories = {}
                 by = reduction.inputs[name].get("by")
                 if by is not None and by in full_template.properties:
@@ -1227,6 +1413,12 @@ def _evaluate_in(reduction: Reduction, library: _Library, items: list) -> dict:
             kind = Kind(D=S - A_red, e=s - c_red, reduction=kron, interior_source=c_full[I],
                         kept_rows=compartments[K], interior_rows=compartments[I], inputs=inputs,
                         outputs=group_outputs, key=kind_key, system=system)
+            if contract is not None:
+                full_entities = full_entities[alive]
+                kind.contraction = contraction
+                members = np.flatnonzero(~alive)
+                kind.merged_rows = np.flatnonzero(full_template.scale == plant_g.scales.Compartment)[members]
+                kind.merged_kept = np.searchsorted(K, contraction[members])
             for name, method in derived.items():   # while the factorisation is live
                 kind.outputs[name] = method(kind, full_template, kron, full_entities)
             kron.release()                     # its factorisation (the full interior's) made again on recovery

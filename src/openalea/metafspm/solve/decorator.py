@@ -378,7 +378,9 @@ def kind_derived(name: str):
     kind.outputs[name]. *kind*: the Kind (D, e, kept_rows, interior_rows: its full template's Compartment rows),
     *full_template*: the full SectionTemplate, *kron*: its KronReduction (kron.shares, kron.recover: no
     refactorisation), *nodes*: the full group's node indices in the library's DataStructure, in the kron's local
-    order (its kept nodes nodes[kron.kept_nodes]). E.g. the kept nodes' share of the interior's volumes.
+    order (its kept nodes nodes[kron.kept_nodes]; with merged nodes, Reduction(merge=), a merged group's
+    representative only: kind.contract(values per full template Compartment) sums them into the kron's order). E.g.
+    the kept nodes' share of the interior's volumes.
     """
     def decorator(func):
         func.__kind_derived__ = name

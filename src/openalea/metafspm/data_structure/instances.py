@@ -84,11 +84,13 @@ class SectionTemplate:
                 return False
         return True
 
-    def restricted(self, rows, key) -> "SectionTemplate":
+    def restricted(self, rows, key, redirect=None) -> "SectionTemplate":
         """
         The template of the vertices *rows* only (local indices or a mask; e.g. a section's kept nodes and their
         Cells): renumbered in their order, their properties and links kept. A kept vertex's complex, parent or link
-        must be kept too (or be the owner or an anchor).
+        must be kept too (or be the owner or an anchor). *redirect*: per vertex, the vertex its links point to
+        instead (e.g. a reduction's merged nodes: a Connection to a member joined to its group's representative);
+        None: each its own.
         """
         rows = np.asarray(rows)
         rows = np.flatnonzero(rows) if rows.dtype == bool else np.unique(rows.astype(np.int64))
@@ -112,6 +114,8 @@ class SectionTemplate:
             values = values[keep]
             if name in self.links:
                 targets = values.astype(np.int64)
+                if redirect is not None:
+                    targets = np.asarray(redirect, dtype=np.int64)[targets]
                 if (new[targets] < 0).any():
                     raise ValueError(f"SectionTemplate.restricted: a kept vertex's '{name}' is not kept")
                 values = new[targets].astype(np.float64)
