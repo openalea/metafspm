@@ -87,8 +87,11 @@ WHEAT_SCENARIO = {
     "soil_boundary": "node_dirichlet", "collar_condition": 0., **BARRIERS,
     # MECHA's sections reduced onto their conduits, their soil node and a blade's vapour path (scenario_reduction),
     # by GRANAP's anatomy kinds: the root segments and apices, the stems, the sheaths (Adel's StemElements of a Sheath
-    # organ: the kind "Sheath"), the blades and the seed
+    # organ: the kind "Sheath"), the blades and the seed; their kinds by length class of relative width 0.1 (a
+    # section between two classes their kinds' blend; each class evaluated once, shared by the plants: "exact" for a
+    # kind per length, the reference)
     "reduced": True, "reduced_labels": ("RootSegment", "RootApex", "StemElement", "Sheath", "LeafElement", "Seed"),
+    "length_classes": 0.1,
     # the gas exchange: Tuzet's stomata, limited by MECHA's leaf water potential (decision U-5)
     "stomatal_model": "Tuzet",
 }

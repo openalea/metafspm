@@ -15,7 +15,11 @@ A scene's run configuration: how many threads and processes it uses, its device 
   memory         "trim" (default): glibc's malloc_trim(0) after each step, the memory freed given back to the system
                  (a no-op where there is no malloc_trim: macOS, Windows); "keep": nothing
   linear_solver  the sparse solver of the graph systems: "superlu" (scipy's)
-  kind_batch     the most interior cells evaluated in one library population (a reduction's kinds)
+  kind_batch     the most interior cells evaluated at once in a reduction's library (its kinds' batches; the
+                 library's transients freed between batches)
+
+Within limits() (the Scene's build and each of its steps), Compute.current() is that Compute: what the code run
+there reads of it (a reduction's kind batches) without being given it; outside, a default Compute().
 
 The allocator's arenas are not set here (MALLOC_ARENA_MAX=2 saves 0.6 GB on use case 1): an environment variable read
 when the process starts, set in the examples' environment.yaml (docs/user.md).
@@ -29,6 +33,7 @@ from dataclasses import dataclass, field, fields
 DEVICES = ("cpu", "cuda")
 MEMORY = ("trim", "keep")
 LINEAR_SOLVERS = ("superlu",)
+_ACTIVE = []                  # the Computes whose limits() are entered, the innermost last
 POOL_WORK = 1.                # s: the estimated work of a batch above which "auto" starts a pool
 SECONDS_PER_CELL = 1e-5       # s per interior cell of a kind: its evaluation's estimated cost
 
@@ -65,12 +70,17 @@ class Compute:
         state["_controller"] = None
         return state
 
+    @staticmethod
+    def current() -> "Compute":
+        """The Compute whose limits() the code runs in (the innermost), else a default Compute()."""
+        return _ACTIVE[-1] if _ACTIVE else Compute()
+
     # ── threads ──
 
     @contextmanager
     def limits(self):
         """The process's BLAS/OpenMP threads (threadpoolctl) and numba's limited to *threads* within the context,
-        restored after."""
+        restored after; Compute.current() is this Compute within it."""
         from threadpoolctl import ThreadpoolController
         import numba
         if self._controller is None:
@@ -78,9 +88,11 @@ class Compute:
         numba_threads = numba.get_num_threads()
         with self._controller.limit(limits=self.threads):
             numba.set_num_threads(min(self.threads, numba.config.NUMBA_NUM_THREADS))
+            _ACTIVE.append(self)
             try:
                 yield self
             finally:
+                _ACTIVE.pop()
                 numba.set_num_threads(numba_threads)
 
     def thread_info(self) -> dict:

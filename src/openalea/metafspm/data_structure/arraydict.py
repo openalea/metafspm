@@ -154,7 +154,10 @@ class ArrayDict(MutableMapping):
 
     def delete_many(self, keys) -> int:
         """Delete every key of *keys* present, in one compaction (del per key shifts the suffix each time)."""
-        positions, found = self._positions(np.fromiter((int(k) for k in keys), dtype=np.int64))
+        array = keys if isinstance(keys, np.ndarray) else None
+        if array is None or array.dtype.kind not in "iu":
+            array = np.fromiter((int(k) for k in keys), dtype=np.int64)
+        positions, found = self._positions(array.astype(np.int64, copy=False))
         doomed = np.unique(positions[found])
         if doomed.size == 0:
             return 0
@@ -167,6 +170,20 @@ class ArrayDict(MutableMapping):
         self.size = kept
         self._index = None
         return int(doomed.size)
+
+    def delete_range(self, start: int, stop: int) -> int:
+        """Delete every key k with start <= k < stop (the keys are sorted: two binary searches, one compaction)."""
+        order = self.order[:self.size]
+        low, high = int(np.searchsorted(order, start)), int(np.searchsorted(order, stop))
+        if high <= low:
+            return 0
+        self.changed()
+        removed = high - low
+        self.arr[low:self.size - removed] = self.arr[high:self.size]
+        self.order[low:self.size - removed] = self.order[high:self.size]
+        self.size -= removed
+        self._index = None
+        return removed
 
     # --- handy array views ---------------------------------------------------
 

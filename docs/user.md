@@ -318,9 +318,20 @@ class SoilDiffusion(FunctionalComponent):
   system's terms the reduction must keep explicit are declared `@explicit_term`, its inputs' derivatives
   `@input_jacobian`. A structural model takes a group's reduced template from `reduction.template_for(full)`; a
   component reading a reduced group's full template (its volumes, its geometry) gets it from
-  `reduction.full_template(key)`, the key of the reduced template its instance holds. The kinds kept are those of the plant's current groups:
-  at each solve, a kind no group has any more (a growing section's former length class) is released, its arrays
-  freed, evaluated again if a group comes back to it. A value derived from a kind (a section's condensed volumes)
+  `reduction.full_template(key)`, the key of the reduced template its instance holds. A kind variable is exact
+  (`kind={"barrier": None}`: a kind per value) or classed: `Relative(width, interpolate=True)` gives the classes
+  (1 + width)^k, and a group between two classes their two kinds' blend, weighted linearly by its value's place
+  between them (its D, e, inputs' terms, outputs and recovered interior; exact at the class values and for terms
+  affine in the value, within width²/8 of the curvature between them: MECHA's sections within 10⁻⁶ of their own
+  length's at width 0.1); `interpolate=False` takes the nearest class as it is. Classes are evaluated once each: a
+  class kind no group has any more is kept while its family (its template, exact kind values and parameters) is in
+  use, so a growing plant's kinds saturate; an exact kind no group has any more is released at the next solve (its
+  arrays freed, evaluated again if a group comes back to it). The plants of one population share their kinds when
+  their parameters are the same. The missing kinds are evaluated in batches of at most `Compute.kind_batch`
+  interior cells (the Scene's Compute, `Compute.current()`; the memory freed between batches), in one library
+  population per plant parameters kept on the reduction (each batch's groups replacing the former's, its
+  components reset to their built state). The kinds are checkpointed with the population (`Kind`, a shared part
+  of `scene.shared`, saved once; never a factorisation): a resumed run evaluates none again. A value derived from a kind (a section's condensed volumes)
   is a method of the reduced system's component tagged `@kind_derived(name)`: `method(self, kind, full_template,
   kron, nodes)`, run once per kind on its library while the kind's factorisation is live (`kron.shares(targets,
   values)`, the interior's values shared among kept nodes by the recovery weights; `kron.recover`; no
@@ -815,8 +826,11 @@ says how the scene uses the machine:
   2.5 GB); `"keep"`: nothing. The allocator's arenas are an environment variable read when the process starts:
   `MALLOC_ARENA_MAX=2` (0.6 GB less at the peak, no time cost), set in the examples' `environment.yaml`
   (`variables:`) or in the shell (`export MALLOC_ARENA_MAX=2`).
+- `kind_batch=200_000`: the most interior cells a reduction evaluates at once (its missing kinds in batches, the
+  memory freed between them: a blade's kind is about 10k cells, a stem's 45k).
 
-`scenario.json` records the Compute, `run.json` the threads in use and the pool.
+Within the scene's build and steps, `Compute.current()` is the scene's Compute (what runs there reads it without
+being given it: a reduction's batches); outside, a default `Compute()`. `scenario.json` records the Compute, `run.json` the threads in use and the pool.
 
 ### Compiled kernels (numba)
 

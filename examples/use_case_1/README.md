@@ -121,7 +121,8 @@ Compartments of GRANAP's sections (anatomy mode).
   (`node_dirichlet`) and no collar condition, MECHA's sections reduced onto their conduits (`reduction =
   staticmethod(scenario_reduction)`, the scenario's `reduced`, `reduced_labels`: GRANAP's anatomy kinds, the root
   segments and apices, the stems, the sheaths, the blades and the seed; a sheath's elements are Adel's StemElements,
-  the kind `Sheath`). ArchiSimple's root apices (`RootApex`, an axis' tip beyond its last segment) are root sections
+  the kind `Sheath`), their kinds by length class (`length_classes`: 0.1, a section between two classes their kinds'
+  blend; each class evaluated once and shared by the plants, checkpointed: `"exact"` for a kind per length). ArchiSimple's root apices (`RootApex`, an axis' tip beyond its last segment) are root sections
   with the root's anatomy once they have a length, their barriers by their distance from the tip as the segments'
   (a growing apex's distance is its length: a Casparian strip; at barrier 0 MECHA's xylem would be immature, the apex
   cut off).
@@ -188,7 +189,8 @@ environment, `export MALLOC_ARENA_MAX=2` before running).
 
 `benchmark.py` times it (`python benchmark.py [--plants 2] [--days 3]`, under a memory bound): each hour's time by
 model, the kinds of the reduction evaluated, the nodes, the memory (after each hour, after `malloc_trim` and the
-peak), written to `outputs/benchmarks/<commit>.json`, one entry per mode.
+peak), written to `outputs/benchmarks/<commit>.json`, one entry per mode; `--checkpoint-at 168` checkpoints the
+scene after those hours and `--resume <checkpoint>` runs on from one (its kinds loaded, none evaluated again).
 
 The frames keep a few variables, the run's explicit choice (`run.FRAME_VARIABLES`, the recorder's
 `frame_options={"variables": ...}`; `scene(frame_variables=None)` keeps them all). Every entity set keeps its

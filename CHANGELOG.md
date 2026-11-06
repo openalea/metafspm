@@ -28,6 +28,21 @@
   `shared.json`; the recorder's `checkpoints/shared`, pruned with its checkpoints). Use case 1 at day 3: 261 MB per
   checkpoint before, 4 MB per checkpoint and 169 MB shared once after.
 
+### Reduction kinds by interpolated length classes, one library, bounded batches, checkpointed
+
+- `Relative(width, interpolate=True)`: a group between two classes (1 + width)^k gets their two kinds' blend,
+  weighted linearly by its value's place between them (`Relative.corners`; a blended `Kind` has `parts`, its D, e
+  and outputs weighted, its inputs' terms and its interior, `Kind.recover`, its parts'); `interpolate=False` is the
+  nearest class. The class kinds no group has are kept while their template, exact kind values and parameters are
+  in use (they saturate); the exact ones are released as before. MECHA's `plant_reduction(length_classes=0.1)` and
+  use case 1 by default; `"exact"` stays the exactness tests' reference.
+- The missing kinds are evaluated in batches of at most `Compute.kind_batch` interior cells (`Compute.current()`:
+  the Scene's Compute within its build and steps), in one library population per plant parameters and time step
+  kept on the Reduction (`_libraries`, not checkpointed): each batch's groups replace the former's, its components
+  reset to their built state, its MTG-backed variables read again.
+- The kinds are checkpointed (`Reduction.__getstate__` keeps them; `Kind.shared_in_checkpoints`: a shared part
+  of the checkpoints, saved once): a resumed run evaluates no kind again.
+
 ### Reduction of graph systems by groups
 
 - `solve.reduction.Reduction`, declared on a plant model (`reduction = Reduction(location=, labels=, ports=, keep=, explicit_edges=, kind=, inputs=, systems=)`): each group of the location holds only its kept nodes (its ports and the nodes the model keeps), its interior eliminated exactly, once per kind (its full template, its kind variables' values or `Relative` classes, the plant's parameters, the settings), from a library population of the plant model's own components; the group's term is the full instance's Kron reduction minus what the model computes on the reduced structure. `Reduction.template_for` (a structural model's reduced templates), `full_template(key)` (the full template of a reduced one's key), `recover` (a group's interior), per-group inputs through the graph system's `@input_jacobian`.

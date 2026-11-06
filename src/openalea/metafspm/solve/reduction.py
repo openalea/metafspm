@@ -9,7 +9,7 @@ Declared on the plant model, before its structure is built (as nodes= and wiring
 
     class Plant(CompositeModel):
         reduction = Reduction(location="SubOrgan", labels=("RootSegment",), ports=conduits, keep=soil_nodes,
-                              kind={"barrier": None, "length": Relative(0.02)},
+                              kind={"barrier": None, "length": Relative(0.1)},
                               inputs={"osmotic_potential": dict(by="tissue", group="tissue_osmotic_potential",
                                                                 kept="conduit_osmotic_potential")},
                               systems=("MechaHydraulics._plant_problem",))
@@ -19,14 +19,20 @@ Declared on the plant model, before its structure is built (as nodes= and wiring
                      groups (the structural model's) and the nodes the functional model keeps (its boundary nodes,
                      the nodes of its explicit terms)
   explicit_edges     a rule giving the Connections kept between kept nodes (those of the explicit terms)
-  kind               the group variables a kind depends on, {name: None (its value) | Relative(width) (its class)};
-                     the plant's parameters and the components' settings are always in it
+  kind               the group variables a kind depends on, {name: None (its value) | Relative(width) (its classes:
+                     a group between two the blend of their kinds, interpolate=True; its nearest, False)}; the
+                     plant's parameters and the components' settings are always in it
   inputs             the per-group right-hand-side inputs {node variable: {"by": a template property (its categories
                      over the interior), "group": the group's {category: value} input, "kept": the kept nodes' input
                      (NaN: the kind's)}}, acting through the graph system's @input_jacobian(variable)
   systems            the graph systems reduced, "Component._system"
   outputs            the group variables a kind gives its groups (their values on its library's full group, e.g. a
                      section's kr): Reduction.outputs(ds, name)
+
+The kinds of classes are kept once evaluated while their family (template, exact values, parameters) is in use: they
+saturate; an exact kind no group has any more is released. The missing kinds are evaluated in batches of at most
+Compute.current().kind_batch interior cells, in one library population per plant parameters kept on the Reduction;
+the kinds are checkpointed (shared parts, saved once), so a resumed run evaluates none again.
 
 A value a kind derives (a section's condensed volumes, say) is a method of the reduced system's component tagged
 @kind_derived(name) (solve.decorator): run once per kind on the library, while the kind's interior factorisation
@@ -75,15 +81,45 @@ def is_display_id(ids) -> np.ndarray:
 
 @dataclass(frozen=True)
 class Relative:
-    """Classes of relative width *width* ((1 + width)^k): a value's class is the nearest."""
+    """
+    Classes of relative width *width*: the values (1 + width)^k. With *interpolate* (default), a value between two
+    classes is given both, weighted linearly by its place between them (its group's terms the two kinds' blend: exact
+    at the class values and for terms affine in the value, a curvature's error width²/8 of it between them); without,
+    its nearest class (its kind's terms as they are: an error up to width times the terms' change).
+    """
     width: float
+    interpolate: bool = True
+
+    def __post_init__(self):
+        if not float(self.width) > 0:
+            raise ValueError(f"Relative: width is positive, got {self.width!r}")
 
     def classify(self, value) -> float:
+        """The nearest class of *value* (a value not positive or not finite: itself)."""
         value = float(value)
         if value <= 0 or not np.isfinite(value):
             return value
         base = np.log1p(float(self.width))
         return float(np.exp(np.round(np.log(value) / base) * base))
+
+    def corners(self, value) -> tuple:
+        """((weight, class), ...) of *value*: its two neighbouring classes weighted by its place between them (one at a
+        class value), or its nearest class without interpolation (a value not positive or not finite: itself)."""
+        value = float(value)
+        if not self.interpolate or value <= 0 or not np.isfinite(value):
+            return ((1., self.classify(value)),)
+        base = np.log1p(float(self.width))
+        k = np.floor(np.log(value) / base)
+        low, high = float(np.exp(k * base)), float(np.exp((k + 1) * base))
+        weight = (value - low) / (high - low)
+        if weight <= CLASS_ROUNDING:
+            return ((1., low),)
+        if weight >= 1. - CLASS_ROUNDING:
+            return ((1., high),)
+        return ((1. - weight, low), (weight, high))
+
+
+CLASS_ROUNDING = 1e-12          # a value within this fraction of the class interval from a class: that class alone
 
 
 @contextmanager
@@ -98,7 +134,12 @@ def _extracting():
 
 @dataclass
 class Kind:
-    """A kind's reduction: its term on the kept nodes (D, e), the inputs' responses, and its interior for recovery."""
+    """
+    A kind's reduction: its term on the kept nodes (D, e), the inputs' responses, and its interior for recovery. A
+    blend (a group between two classes of a Relative variable: Reduction.group_kinds) has its parts ((weight, Kind),
+    ...): its D, e and outputs their weighted sums, its inputs' terms and its interior its parts' weighted.
+    Checkpointed as a shared part (scene.shared), saved once: a resumed run evaluates no kind again.
+    """
     D: np.ndarray
     e: np.ndarray
     reduction: object
@@ -110,6 +151,9 @@ class Kind:
     key: tuple = None                            # its key in its Reduction's kinds: (reduced template key, kind
                                                  # values, plant parameters' signature), the same when evaluated again
     system: str = None                           # the system it reduces
+    parts: tuple = None                          # a blend's ((weight, Kind), ...)
+
+    shared_in_checkpoints = "kind"               # class attribute (not a field): scene.shared's part name
 
     def release(self) -> None:
         """Free its arrays: a kind no group of its DataStructure has any more (Reduction.group_kinds' release), its
@@ -117,7 +161,35 @@ class Kind:
         it, computed again with it."""
         self.D = self.e = self.reduction = self.interior_source = None
         self.kept_rows = self.interior_rows = None
-        self.inputs, self.outputs = {}, {}
+        self.inputs, self.outputs, self.parts = {}, {}, None
+
+    def recover(self, kept_values) -> np.ndarray:
+        """Its interior's values (interior_rows' order) for the kept nodes' *kept_values* (a vector, or a matrix of
+        columns): its interior's solve (one factorisation), a blend's its parts' weighted."""
+        x = np.asarray(kept_values, dtype=float)
+        if self.parts:
+            return sum(weight * part.recover(x) for weight, part in self.parts)
+        source = -np.asarray(self.interior_source, dtype=float)
+        return np.asarray(self.reduction.recover(x, source[:, None] if x.ndim == 2 else source))
+
+
+def _blend(parts) -> Kind:
+    """The Kind of a group between classes: *parts* ((weight, Kind), ...: the weights summing to 1) blended, its D, e
+    and numeric outputs weighted (an output that is not a number: the heaviest part's)."""
+    weights = [weight for weight, _ in parts]
+    heaviest = parts[int(np.argmax(weights))][1]
+    first = parts[0][1]
+    outputs = {}
+    for name, value in (heaviest.outputs or {}).items():
+        try:
+            values = [np.asarray(part.outputs[name], dtype=float) for _, part in parts]
+            blended = sum(weight * v for weight, v in zip(weights, values))
+            outputs[name] = float(blended) if np.ndim(blended) == 0 and not isinstance(value, np.ndarray) else blended
+        except (KeyError, TypeError, ValueError):
+            outputs[name] = value
+    return Kind(D=sum(weight * part.D for weight, part in parts), e=sum(weight * part.e for weight, part in parts),
+                reduction=None, interior_source=None, kept_rows=first.kept_rows, interior_rows=first.interior_rows,
+                inputs={}, outputs=outputs, key=None, system=first.system, parts=tuple(parts))
 
 
 class Reduction:
@@ -128,22 +200,27 @@ class Reduction:
         self.kind, self.inputs, self.systems = dict(kind or {}), dict(inputs or {}), tuple(systems)
         self.output_names = tuple(outputs)
         self._reduced, self._full, self._kept, self._rows = {}, {}, {}, {}
-        self._kinds = {}
+        self._kinds, self._blends, self._libraries = {}, {}, {}
         self.model, self.instance, self.g = None, None, None
         self.library = False                     # a library's: its groups' kinds are not evaluated (no library of
                                                  # its own)
 
     def __getstate__(self):
-        state = dict(self.__dict__)                       # a checkpoint: the declaration and the templates only
-        state.update(_kinds={}, model=None, instance=None, g=None)
+        state = dict(self.__dict__)        # a checkpoint: the declaration, the templates and the kinds (shared parts)
+        state.update(_blends={}, _libraries={}, model=None, instance=None, g=None)
         return state
+
+    def __setstate__(self, state):
+        state.setdefault("_blends", {})
+        state.setdefault("_libraries", {})
+        self.__dict__.update(state)
 
     # ── The population's own (Scene, population_data_structure) ──
 
     def for_population(self, g) -> "Reduction":
         """A copy for one population's MPG *g* (the templates shared, the kinds its own)."""
         out = copy.copy(self)
-        out._kinds, out.g = {}, g
+        out._kinds, out._blends, out._libraries, out.g = {}, {}, {}, g
         return out
 
     def bind(self, model, instance) -> None:
@@ -275,6 +352,8 @@ class Reduction:
     def _input_terms(self, ds, kind, group, kept, owner) -> np.ndarray:
         """The change of a group's kept sources for its own inputs: the kept nodes' (kept input, NaN: the kind's)
         and its categories' ({category: value} group input)."""
+        if kind.parts:
+            return sum(weight * self._input_terms(ds, part, group, kept, owner) for weight, part in kind.parts)
         out = np.zeros(kind.D.shape[0])
         for name, response in kind.inputs.items():
             declared = self.inputs[name]
@@ -293,17 +372,29 @@ class Reduction:
 
     # ── Kinds ──
 
-    def _kind_values(self, ds, groups) -> dict:
-        """{group: (the kind variables' values or classes)}."""
-        out = {i: [] for i in groups}
+    def _kind_corners(self, ds, groups) -> dict:
+        """{group: ((weight, the kind variables' values or classes), ...)}: one kind's values, or the corners of its
+        classes it lies between (Relative(interpolate=True): two per such variable, their weights' products)."""
+        per_variable = {i: [] for i in groups}
+        owner = None
         for name, classes in self.kind.items():
             values = np.asarray(ds.get(name))
-            location = ds.location(name)
-            owner = np.asarray(ds.owner(self.location)) if location == "node" else None
-            for i in groups:
-                value = float(values[np.flatnonzero(owner == i)[0]]) if owner is not None else float(values[i])
-                out[i].append(value if classes is None else classes.classify(value))
-        return {i: tuple(v) for i, v in out.items()}
+            if ds.location(name) == "node":
+                if owner is None:
+                    owner = np.asarray(ds.owner(self.location))
+                first = _first_nodes(owner)
+                picked = {i: float(values[first[i]]) for i in groups}
+            else:
+                picked = {i: float(values[i]) for i in groups}
+            for i, value in picked.items():
+                per_variable[i].append(((1., value),) if classes is None else classes.corners(value))
+        out = {}
+        for i, choices in per_variable.items():
+            corners = [(1., ())]
+            for options in choices:
+                corners = [(weight * w, values + (v,)) for weight, values in corners for w, v in options]
+            out[i] = tuple(corners)
+        return out
 
     def _parameters(self, ds, plant_index) -> dict:
         """The plant's parameters and the components' settings ({name: value}), for its kinds' key and library."""
@@ -334,33 +425,86 @@ class Reduction:
         return out
 
     def group_kinds(self, ds, groups, release: bool = False) -> dict:
-        """{group: {system: Kind}}: the kinds of *groups*, the missing ones evaluated together (per plant's
-        parameters). *release*: *groups* are all the DataStructure's reduced groups (a solve's terms), and the kinds
-        none of them has are released: a growing section's former kinds (its length's former classes), their
-        memory freed, evaluated again if a group comes back to one. So the kinds kept are those of the plant's
-        current groups, not of every group it had."""
-        values = self._kind_values(ds, groups)
+        """
+        {group: {system: Kind}}: the kinds of *groups*, the missing ones evaluated (per plant's parameters, in
+        batches: _evaluate_missing); a group between two classes of a Relative variable gets their blend (_blend,
+        kept while its weights are the same). *release*: *groups* are all the DataStructure's reduced groups (a
+        solve's terms), and the kinds none of them has are released (their memory freed, evaluated again if a group
+        comes back to one), except a class's whose exact kind values, template and parameters a current group has (a
+        growing section's former classes: kept, a bounded set, so that the kinds saturate). Without classes the kinds
+        kept are those of the plant's current groups only.
+        """
+        corners = self._kind_corners(ds, groups)
         plant = np.asarray(ds.owner("Plant"))
         owner = np.asarray(ds.owner(self.location))
+        first = _first_nodes(owner)
         by_plant, keys, missing = {}, {}, {}
         for i, (vertex, key) in groups.items():
-            p = int(plant[np.flatnonzero(owner == i)[0]])
+            p = int(plant[first[i]])
             if p not in by_plant:
                 parameters = self._parameters(ds, p)
                 by_plant[p] = (parameters, _signature(parameters))
             parameters, signature = by_plant[p]
-            kind_key = (key, values[i], signature)
-            keys[i] = kind_key
-            if kind_key not in self._kinds:
-                missing.setdefault(signature, (parameters, {}))[1].setdefault(kind_key, (vertex, key, values[i]))
+            keys[i] = tuple((weight, (key, values, signature)) for weight, values in corners[i])
+            for _, kind_key in keys[i]:
+                if kind_key not in self._kinds:
+                    missing.setdefault(signature, (parameters, {}))[1].setdefault(kind_key, (vertex, key,
+                                                                                             kind_key[1]))
         for parameters, requests in missing.values():
-            self._kinds.update(_evaluate(self, parameters, requests))
+            self._evaluate_missing(parameters, requests)
+        blends = self.__dict__.setdefault("_blends", {})
+        out = {}
+        for i, chosen in keys.items():
+            if len(chosen) == 1:
+                out[i] = self._kinds[chosen[0][1]]
+                continue
+            if chosen not in blends:
+                blends[chosen] = {system: _blend([(weight, self._kinds[kind_key][system])
+                                                  for weight, kind_key in chosen])
+                                  for system in self._kinds[chosen[0][1]]}
+            out[i] = blends[chosen]
         if release:
-            used = set(keys.values())
+            used = {kind_key for chosen in keys.values() for _, kind_key in chosen}
+            exact = [position for position, classes in enumerate(self.kind.values()) if classes is None]
+            current = {self._class_family(kind_key, exact) for kind_key in used}
             for kind_key in [k for k in self._kinds if k not in used]:
+                if len(exact) < len(self.kind) and self._class_family(kind_key, exact) in current:
+                    continue                              # a class of a current group's family: kept
                 for kind in self._kinds.pop(kind_key).values():
                     kind.release()
-        return {i: self._kinds[k] for i, k in keys.items()}
+            for chosen in [c for c in blends if c not in set(keys.values())]:
+                del blends[chosen]
+        return out
+
+    @staticmethod
+    def _class_family(kind_key, exact) -> tuple:
+        """A kind key without its classed values: (template key, the exact kind values, signature)."""
+        key, values, signature = kind_key
+        return key, tuple(values[position] for position in exact), signature
+
+    def _evaluate_missing(self, parameters: dict, requests: dict) -> None:
+        """Evaluate the kinds *requests* ({kind key: (a representative group vertex, its reduced template key, its kind
+        values)}) of a plant of *parameters*, in batches of at most Compute.current().kind_batch interior cells (one
+        kind at least), the library's transients freed between batches (Compute.trim)."""
+        from openalea.metafspm.compute import Compute
+        compute = Compute.current()
+        batch, cells = {}, 0
+        items = list(requests.items())
+        for position, (kind_key, request) in enumerate(items):
+            size = self._interior_cells(request[1])
+            if batch and cells + size > compute.kind_batch:
+                self._kinds.update(_evaluate(self, parameters, batch))
+                compute.trim()
+                batch, cells = {}, 0
+            batch[kind_key], cells = request, cells + size
+        if batch:
+            self._kinds.update(_evaluate(self, parameters, batch))
+
+    def _interior_cells(self, key) -> int:
+        """The interior cells of the reduced template of key *key* (its full template's Compartments not kept)."""
+        from openalea.metafspm.data_structure.configs import ScalesConfig
+        full = self._full[key]
+        return int(np.count_nonzero(full.scale == ScalesConfig.Compartment)) - int(self._kept[key].size)
 
     def unknown(self, system: str = None) -> str:
         """The node unknown of the reduced *system* (default: the first): its graph system's (one node unknown)."""
@@ -391,15 +535,20 @@ class Reduction:
             kind = kinds[i][system]
             first, _ = g.instances.block(owner)
             kept = first + np.flatnonzero(self._reduced_scale(key) == g.scales.Compartment)
-            by_kind.setdefault(id(kind), (kind, []))[1].append((i, owner, key, values[ds.index_of(kept)]))
+            column = values[ds.index_of(kept)]
+            for weight, part in (kind.parts or ((1., kind),)):              # a blend's parts, each solved once
+                by_kind.setdefault(id(part), (part, []))[1].append((i, weight, column))
         out = {}
-        for kind, members in by_kind.values():
-            columns = np.column_stack([member[3] for member in members])
-            interior = kind.reduction.recover(columns, -np.asarray(kind.interior_source, dtype=float)[:, None])
-            interior = np.asarray(interior).reshape(len(kind.interior_rows), len(members))
-            for column, (i, owner, key, _) in enumerate(members):
-                out[i] = (owner, key, self._full[key], kind.interior_rows, interior[:, column].copy())
-            del interior, columns
+        for part, members in by_kind.values():
+            interior = part.recover(np.column_stack([member[2] for member in members]))
+            interior = np.asarray(interior).reshape(len(part.interior_rows), len(members))
+            for column, (i, weight, _) in enumerate(members):
+                if i in out:
+                    out[i][4][...] += weight * interior[:, column]
+                else:
+                    owner, key = chosen[i]
+                    out[i] = (owner, key, self._full[key], part.interior_rows, weight * interior[:, column])
+            del interior
         return out
 
     def recover(self, ds, group: int, values, system: str = None) -> tuple:
@@ -407,8 +556,18 @@ class Reduction:
         from its kind and its kept nodes' *values* (the unknown on them, DataStructure order)."""
         groups = self.reduced_groups(ds)
         kind = self.group_kinds(ds, {group: groups[group]})[group][system or self.systems[0]]
-        x = np.asarray(values, dtype=float)
-        return kind.interior_rows, kind.reduction.recover(x, -kind.interior_source)
+        return kind.interior_rows, kind.recover(values)
+
+
+def _first_nodes(owner) -> np.ndarray:
+    """Each group's first node (its index among the nodes; -1 for a group without any), from the nodes' *owner*
+    groups (entity indices)."""
+    owner = np.asarray(owner, dtype=np.int64)
+    out = np.full(int(owner.max()) + 1 if owner.size else 0, -1, dtype=np.int64)
+    owned = owner >= 0
+    groups, starts = np.unique(owner[owned], return_index=True)
+    out[groups] = np.flatnonzero(owned)[starts]
+    return out
 
 
 def _signature(parameters: dict) -> str:
@@ -448,69 +607,174 @@ def _library_components(instance, systems) -> list:
                                             and f.name in needed for f in fields(component))]
 
 
+_STRUCTURAL = ("scale", "edge_type", "label", "isanchor")     # the vertex properties a library group does not copy
+
+
+class _Library:
+    """
+    A reduction's library population for one plant's parameters (their signature) and the scene's time step: a
+    population of the plant model (its own components, those of the reduced systems and of their inputs at the
+    cells run), built once and kept on the Reduction (_libraries, not checkpointed), its components reset to their
+    built state at each batch (no state left from the former groups). Each batch of kinds gets one full and one reduced group per kind (a
+    representative group's complexes, label and properties, its template's instance); the next batch's replace them
+    (removed in the same update of the library's DataStructure: a library of no group would have no plant).
+    """
+
+    def __init__(self, reduction: Reduction, parameters: dict, time_step: float):
+        self.reduction, self.parameters, self.time_step = reduction, parameters, time_step
+        self.population, self.model, self.built = None, None, {}
+        self.placed = []                 # the last batch's vertices (each group's complexes, then the group)
+
+    def place(self, g, plant, items) -> dict:
+        """{group vertex: (k, "full" | "reduced")}: the groups of the kinds *items* placed in the library's MPG *g*
+        under *plant*."""
+        from openalea.metafspm.data_structure.configs import PropsConfig
+        reduction = self.reduction
+        plant_g = reduction.g
+        scale = getattr(plant_g.scales, reduction.location)
+        made = {}
+        for k, (_, (vertex, key, _)) in enumerate(items):
+            chain = []                                     # the representative's complexes, Plant excluded
+            v = plant_g.complex(vertex)
+            while v is not None and plant_g.scale(v) > plant_g.scales.Plant:
+                chain.append(v)
+                v = plant_g.complex(v)
+            for which, template in (("full", reduction._full[key]),
+                                    ("reduced", reduction._reduced[reduction._full[key].key])):
+                parent, vertices = plant, []
+                for source in reversed(chain):
+                    parent = g.add_component(parent, **PropsConfig(scale=plant_g.scale(source), edge_type='/',
+                                                                   label=plant_g.label(source)))
+                    vertices.append(parent)
+                group = g.add_component(parent, **PropsConfig(scale=scale, edge_type='/',
+                                                              label=plant_g.label(vertex)))
+                for name, prop in plant_g.properties().items():
+                    value = prop.get(vertex) if hasattr(prop, "get") else None
+                    if value is not None and name not in _STRUCTURAL:
+                        g.property(name)[group] = value
+                g.add_instance(group, template)
+                made[group] = (k, which)
+                self.placed.append(vertices + [group])
+        return made
+
+    def remove(self, g) -> None:
+        """The last batch's groups and their complexes removed from the library's MPG *g* (the DataStructure follows
+        at its next update)."""
+        for vertices in self.placed:
+            for vertex in reversed(vertices):
+                g.remove_vertex(vertex)
+        self.placed = []
+
+    def groups(self, items) -> dict:
+        """{group vertex: (k, which)} of the batch *items*: the population built at the first batch, its groups
+        placed in it after."""
+        reduction = self.reduction
+        if self.population is not None:
+            ds = self.population.data_structure
+            g = ds.structure
+            plant = int(ds.entity_ids("Plant")[0])
+            self.remove(g)
+            made = self.place(g, plant, items)
+            self._reset_components()
+            ds.update_topology()
+            self._read_structure()
+            self._apply_parameters()
+            return made
+        from openalea.metafspm.coupling.component import StructuralComponent
+        from openalea.metafspm.scene.population import Planting, planting, population_data_structure
+        library, made = self, {}
+
+        class LibraryStructure(StructuralComponent):
+            @classmethod
+            def initiate_plant(cls, g, plant, scenario):
+                made.update(library.place(g, plant, items))
+
+        self.model = model = type(f"Library{reduction.model.__name__}", (reduction.model,),
+                                  dict(initiators=(LibraryStructure,), wiring=(), reduction=None))
+        population = population_data_structure(planting([Planting()], model, {}), model,
+                                               time_step=self.time_step)       # the scene's step (_library)
+        ds, instance = population.data_structure, population.instance
+        own = reduction.for_population(ds.structure)         # the library knows its reduced groups, evaluates none
+        own.library = True
+        own.bind(model, instance)
+        ds.structure.reduction = own
+        self.population = population
+        self._apply_parameters()
+        self.built = {id(component): dict(component.__dict__) for component in instance.components}
+        return made
+
+    def _reset_components(self) -> None:
+        """Each component's state as the library built it (its fields, its construction's records): what a run left
+        on it (a solve's previous values, its caches and memos, sized to the former groups) dropped."""
+        for component in self.population.instance.components:
+            built = self.built[id(component)]
+            for name in [name for name in component.__dict__ if name not in built]:
+                del component.__dict__[name]
+            for name, value in built.items():
+                component.__dict__[name] = copy.copy(value) if isinstance(value, (dict, list, set)) else value
+
+    def _read_structure(self) -> None:
+        """The variables its MPG holds (its groups' templates' and properties' values) read again, as a library built
+        anew reads them (the components' MTG-backed variables): the groups placed since have their own."""
+        ds = self.population.data_structure
+        aliases, derived = ds.aliases(), ds.derived()
+        for component in self.population.instance.components:
+            for spec in getattr(component, "_variable_specs", {}).values():
+                if (not spec.mtg_backed or not ds.has(spec.name) or spec.name in aliases or spec.name in derived
+                        or ds.location(spec.name) != spec.location):    # held at another location by another
+                    continue                                            # component (its source, not this one)
+                try:
+                    values = ds._read_mtg(spec)
+                except (TypeError, ValueError):         # a property of another type of the same name: not its
+                    continue                            # source (the variable registered by another component)
+                if values is not None and np.shape(values) == np.shape(ds.get(spec.name)):
+                    ds.set(spec.name, values)
+
+    def _apply_parameters(self) -> None:
+        """The plant's parameters and the components' settings given to the library's plant and components."""
+        from dataclasses import fields
+        ds, instance = self.population.data_structure, self.population.instance
+        for component in instance.components:
+            names = {f.name for f in fields(component) if f.metadata.get("variable_type") in ("setting", "parameter")}
+            for name, value in self.parameters.items():
+                if name not in names:
+                    continue
+                if ds.has(name) and ds.location(name) == "Plant":   # the library's one plant: its value there
+                    stored = np.asarray(ds.get(name))
+                    values = np.empty(stored.shape, dtype=object) if stored.dtype == object else stored.copy()
+                    for i in range(len(values)):
+                        values[i] = value                         # a record as it is (a dict, nested lists)
+                    ds.set(name, values)
+                else:
+                    setattr(component, name, value)
+
+
+def _library(reduction: Reduction, parameters: dict) -> _Library:
+    """The reduction's library for a plant of *parameters* at the scene's time step (built at its first batch)."""
+    from openalea.metafspm.coupling.choregrapher import Choregrapher
+    time_step = Choregrapher().simulation_step()
+    time_step = 3600. if time_step is None else float(time_step)
+    libraries = reduction.__dict__.setdefault("_libraries", {})
+    key = (_signature(parameters), time_step)
+    if key not in libraries:
+        libraries[key] = _Library(reduction, parameters, time_step)
+    return libraries[key]
+
+
 def _evaluate(reduction: Reduction, parameters: dict, requests: dict) -> dict:
     """{kind key: {system: Kind}} of *requests* ({kind key: (a representative group vertex, its reduced template
-    key, its kind values)}) for a plant of *parameters*: a library population of the plant model, one full and one
-    reduced instance per kind, isolated."""
-    from openalea.metafspm.coupling.component import StructuralComponent
-    from openalea.metafspm.scene.population import Planting, planting, population_data_structure
+    key, its kind values)}) for a plant of *parameters*: one full and one reduced group per kind in the reduction's
+    library for those parameters (_Library), isolated, replaced by the next batch's."""
+    return _evaluate_in(reduction, _library(reduction, parameters), list(requests.items()))
+
+
+def _evaluate_in(reduction: Reduction, library: _Library, items: list) -> dict:
+    """_evaluate's kinds *items* in *library*."""
     from openalea.metafspm.solve.decorator import _GraphSystemBuilder, declared_system, kind_derived_methods
-    items = list(requests.items())
     plant_g = reduction.g
-    scale = getattr(plant_g.scales, reduction.location)
-    groups_made = {}
-
-    class LibraryStructure(StructuralComponent):
-        @classmethod
-        def initiate_plant(cls, g, plant, scenario):
-            from openalea.metafspm.data_structure.configs import PropsConfig
-            for k, (_, (vertex, key, _)) in enumerate(items):
-                chain = []                                 # the representative's complexes, Plant excluded
-                v = plant_g.complex(vertex)
-                while v is not None and plant_g.scale(v) > plant_g.scales.Plant:
-                    chain.append(v)
-                    v = plant_g.complex(v)
-                for which, template in (("full", reduction._full[key]), ("reduced", reduction._reduced[
-                        reduction._full[key].key])):
-                    parent = plant
-                    for v in reversed(chain):
-                        parent = g.add_component(parent, **PropsConfig(scale=plant_g.scale(v), edge_type='/',
-                                                                       label=plant_g.label(v)))
-                    group = g.add_component(parent, **PropsConfig(scale=scale, edge_type='/',
-                                                                  label=plant_g.label(vertex)))
-                    for name, prop in plant_g.properties().items():
-                        value = prop.get(vertex) if hasattr(prop, "get") else None
-                        if value is not None and name not in ("scale", "edge_type", "label", "isanchor"):
-                            g.property(name)[group] = value
-                    g.add_instance(group, template)
-                    groups_made[group] = (k, which)
-
-    model = type(f"Library{reduction.model.__name__}", (reduction.model,),
-                 dict(initiators=(LibraryStructure,), wiring=(), reduction=None))
-    from openalea.metafspm.coupling.choregrapher import Choregrapher
-    time_step = Choregrapher().simulation_step()             # the scene's step, kept for its components after
-    population = population_data_structure(planting([Planting()], model, {}), model,
-                                           time_step=3600. if time_step is None else time_step)
-    ds = population.data_structure
-    instance = population.instance
-    library = reduction.for_population(ds.structure)       # the library knows its reduced groups, evaluates none
-    library.library = True
-    library.bind(model, instance)
-    ds.structure.reduction = library
-    from dataclasses import fields
-    for component in instance.components:                    # the plant's parameters and the settings
-        own = {f.name for f in fields(component) if f.metadata.get("variable_type") in ("setting", "parameter")}
-        for name, value in parameters.items():
-            if name not in own:
-                continue
-            if ds.has(name) and ds.location(name) == "Plant":   # the library's one plant: its value there
-                stored = np.asarray(ds.get(name))
-                values = np.empty(stored.shape, dtype=object) if stored.dtype == object else stored.copy()
-                for i in range(len(values)):
-                    values[i] = value                         # a record as it is (a dict, nested lists)
-                ds.set(name, values)
-            else:
-                setattr(component, name, value)
+    groups_made = library.groups(items)
+    ds = library.population.data_structure
+    instance = library.population.instance
     ids = ds.entity_ids(reduction.location).tolist()
     entity = {int(v): i for i, v in enumerate(ids)}
     group_of = {(k, which): entity[int(vertex)] for vertex, (k, which) in groups_made.items()}

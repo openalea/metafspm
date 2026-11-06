@@ -73,6 +73,25 @@ def test_the_threads_are_limited_while_the_scene_runs_and_restored_after(monkeyp
     assert after == ({2}, outside)
 
 
+def test_the_current_compute_is_the_scenes_within_its_steps(monkeypatch):
+    """Compute.current(): the Compute whose limits() the code runs in (the scene's, in its build and steps: what a
+    reduction's batches read), the innermost when nested, a default one outside."""
+    seen = []
+    outer, inner = Compute(kind_batch=7), Compute(kind_batch=3)
+    with outer.limits():
+        seen.append(Compute.current())
+        with inner.limits():
+            seen.append(Compute.current())
+        seen.append(Compute.current())
+    assert seen == [outer, inner, outer] and seen[0] is outer and seen[1] is inner
+    assert Compute.current() == Compute()
+    scene = _scene(compute=Compute(kind_batch=11))
+    during = []
+    monkeypatch.setattr(scene, "_step", lambda *args, **kwargs: during.append(Compute.current()))
+    scene.run()
+    assert during and during[0] is scene.compute
+
+
 def test_the_memory_is_trimmed_after_each_step_unless_kept(monkeypatch):
     calls = []
     monkeypatch.setattr(compute_module, "_malloc_trim", lambda: calls.append)

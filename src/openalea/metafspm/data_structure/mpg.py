@@ -343,11 +343,10 @@ class MPG(MTG):
         if block is None:
             return False
         first, size = block
-        doomed = np.arange(first, first + size, dtype=np.int64)
         for prop in self.properties().values():
             if isinstance(prop, ArrayDict):
                 if prop.size and prop.order[0] < first + size and prop.order[prop.size - 1] >= first:
-                    prop.delete_many(doomed)
+                    prop.delete_range(first, first + size)           # the block's ids: a range of sorted keys
             elif prop:
                 for v in [v for v in prop if isinstance(v, (int, np.integer)) and first <= v < first + size]:
                     del prop[v]

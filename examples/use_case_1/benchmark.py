@@ -4,13 +4,17 @@ no checkpoints) run hour by hour from the sowing, each step's time by model (Sce
 reduction evaluated (their number and time), the plants' nodes, and the memory (RSS after each step; after
 malloc_trim and the peak at the end).
 
-    python benchmark.py [--plants 2] [--days 3] [--label text] [--outputs]
+    python benchmark.py [--plants 2] [--days 3] [--label text] [--outputs] [--checkpoint-at 168 ...]
+                        [--resume outputs/benchmarks/checkpoints/<label>/step_000168]
 
 By default 2 plants to day 3 (the use case's fast regime); --days 8 for the day-8 numbers, --plants 8 --days 4 for the
 scaling; --outputs measures the outputs at the end (outputs()): a frame without and with the sections drawn (those of
 run.DISPLAY_PLANTS, the use case's frame variables), two checkpoints sharing their unchanging parts, their size and
-time. The results go to outputs/benchmarks/<commit>.json (untracked), one entry per mode ("2p_3d") updated in place,
-and a summary is printed. Run it under a memory bound, one at a time (systemd-run --user --scope -p MemoryMax=8G ...).
+time. --checkpoint-at writes the scene's checkpoint after those hours (outputs/benchmarks/checkpoints/<label>/, the
+shared parts once); --resume loads one into the freshly built scene and runs on from its hour to --days (the load's
+time and memory, then each step's: a resumed run evaluates no kind again). The results go to
+outputs/benchmarks/<commit>.json (untracked), one entry per mode ("2p_3d") updated in place, and a summary is
+printed. Run it under a memory bound, one at a time (systemd-run --user --scope -p MemoryMax=8G ...).
 """
 import argparse
 import ctypes
@@ -93,15 +97,28 @@ class KindCounter:
         return out
 
 
-def benchmark(plants: int, days: float, measure_outputs: bool = False) -> dict:
+def benchmark(plants: int, days: float, measure_outputs: bool = False, checkpoint_at=(), resume: str = None,
+              label: str = "run") -> dict:
     counter = KindCounter()
     started = time.perf_counter()
     scene = run.scene(plants, folder=None)
     built = time.perf_counter() - started
     counter.take()
+    loaded, first_hour = None, 0
+    if resume is not None:
+        load_started = time.perf_counter()
+        scene.load_checkpoint(resume)
+        first_hour = int(round(scene.time / HOUR))
+        loaded = {"path": resume, "hour": first_hour, "seconds": time.perf_counter() - load_started,
+                  "rss_gb": resident_memory(), "kinds": sum(len(population.data_structure.structure.reduction._kinds)
+                                                           for population in scene.populations
+                                                           if population.data_structure.structure.reduction)}
+        print(f"loaded {resume} (hour {first_hour}, {loaded['kinds']} kinds) in {loaded['seconds']:.1f} s, "
+              f"RSS {loaded['rss_gb']:.2f} GB", flush=True)
+    checkpoints = os.path.join(BENCHMARKS, "checkpoints", label)
     steps = []
-    previous = {}
-    for hour in range(int(round(days * 24))):
+    previous = dict(scene.timing)
+    for hour in range(first_hour, int(round(days * 24))):
         step_started = time.perf_counter()
         scene.run()
         seconds = time.perf_counter() - step_started
@@ -113,6 +130,16 @@ def benchmark(plants: int, days: float, measure_outputs: bool = False) -> dict:
                       "kind_seconds": kind_seconds, "nodes": nodes, "rss_gb": resident_memory()})
         print(f"h {hour + 1:4d}  {seconds:7.2f} s  kinds {kinds:3d} ({kind_seconds:6.2f} s)  nodes {nodes:6d}  "
               f"RSS {steps[-1]['rss_gb']:.2f} GB", flush=True)
+        if hour + 1 in checkpoint_at:
+            checkpoint_started = time.perf_counter()
+            path = os.path.join(checkpoints, f"step_{hour + 1:06d}")
+            scene.checkpoint(path, shared=os.path.join(checkpoints, "shared"))
+            steps[-1]["checkpoint"] = {"path": path, "seconds": time.perf_counter() - checkpoint_started,
+                                       "MB": folder_size(path) / 1e6,
+                                       "shared_MB": folder_size(os.path.join(checkpoints, "shared")) / 1e6}
+            print(f"checkpoint {path}: {steps[-1]['checkpoint']['MB']:.1f} MB (shared "
+                  f"{steps[-1]['checkpoint']['shared_MB']:.1f} MB) in {steps[-1]['checkpoint']['seconds']:.1f} s",
+                  flush=True)
     scene.finish()
     timing, total = dict(scene.timing), time.perf_counter() - started    # the steps' (outputs() runs one more)
     rss = resident_memory()
@@ -126,7 +153,7 @@ def benchmark(plants: int, days: float, measure_outputs: bool = False) -> dict:
               "compute": compute.as_dict() if compute is not None else None,
               "environment": {name: os.environ.get(name) for name in
                               ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS", "MALLOC_ARENA_MAX")},
-              "build_seconds": built, "total_seconds": total,
+              "build_seconds": built, "total_seconds": total, "resumed": loaded,
               "rss_end_gb": rss, "rss_after_trim_gb": after_trim, "peak_rss_gb": peak,
               "timing": timing, "steps": steps, "outputs": measured}
     return result
@@ -196,15 +223,18 @@ def main(argv=None):
     parser.add_argument("--days", type=float, default=3.)
     parser.add_argument("--label", default=None, help="the entry's name (default: <plants>p_<days>d)")
     parser.add_argument("--outputs", action="store_true", help="measure a frame and two checkpoints at the end")
+    parser.add_argument("--checkpoint-at", type=int, nargs="*", default=(), help="hours after which to checkpoint")
+    parser.add_argument("--resume", default=None, help="a checkpoint folder to resume from")
     arguments = parser.parse_args(argv)
-    result = benchmark(arguments.plants, arguments.days, arguments.outputs)
+    label = arguments.label or f"{arguments.plants}p_{arguments.days:g}d"
+    result = benchmark(arguments.plants, arguments.days, arguments.outputs, tuple(arguments.checkpoint_at),
+                       arguments.resume, label)
     os.makedirs(BENCHMARKS, exist_ok=True)
     path = os.path.join(BENCHMARKS, f"{result['commit']}.json")
     entries = {}
     if os.path.exists(path):
         with open(path) as f:
             entries = json.load(f)
-    label = arguments.label or f"{arguments.plants}p_{arguments.days:g}d"
     entries[label] = result
     with open(path, "w") as f:
         json.dump(entries, f, indent=1)
