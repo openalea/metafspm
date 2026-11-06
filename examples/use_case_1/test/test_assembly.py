@@ -303,19 +303,42 @@ def test_the_soil_water_balance_closes_with_the_uptake(stepped):
 
 def test_the_frames_keep_what_the_default_views_show(stepped):
     """run.py's frames keep a few variables (FRAME_VARIABLES): the default views' colour, selection and tube
-    variables among them, the Compartments' potential and tissue, a valid encoding3d frame marked filtered."""
+    variables among them, the Compartments' potential and tissue, a valid encoding3d frame marked filtered. The
+    reduced sections are instances of their templates (display="instances", the default): the sections' derived psi
+    is the recovered one of display="full" (its interior rows), the kept nodes' their own; the views declare the
+    instances layer."""
     from openalea import encoding3d
     from openalea.encoding3d.validate import validate_bytes
     from openalea.metafspm.io.encoding3d import DISPLAY_ONLY, default_views, filtered_view_columns, scene_to_frame
     from run import FRAME_VARIABLES
     scene, _ = stepped
-    assert filtered_view_columns(default_views(scene, scene_to_frame(scene)), FRAME_VARIABLES) == []
+    views = default_views(scene, scene_to_frame(scene))
+    assert filtered_view_columns(views, FRAME_VARIABLES) == []
+    layers = {layer["name"]: layer for layer in views["configurations"]["default"]["layers"]}
+    assert layers["WheatPlant GranapAnatomy instances"]["color_by"] == {"entity_set": "Compartment", "variable": "psi"}
     frame = scene_to_frame(scene, variables=FRAME_VARIABLES)
     plant = frame.data_structure("WheatPlant")
     compartments = plant.entity_set("Compartment")
     assert set(compartments.columns) == {"id", "label", "complex", "parent", "edge_type", "psi", "water_potential",
-                                         "tissue", DISPLAY_ONLY}             # the reduced sections' interior rows'
-    assert np.asarray(compartments.columns[DISPLAY_ONLY], dtype=bool).any()
+                                         "tissue"}
+    sections = plant.instance_set("GranapAnatomy")
+    assert sections.owners == "SubOrgan" and [field.name for field in sections.derived] == ["psi"]
     assert {"An", "PARa", "radius", "length"} <= set(plant.entity_set("SubOrgan").columns)
     assert plant.extras["metafspm"]["filtered"]["variables"]["Compartment"] == ["psi", "tissue", "water_potential"]
-    assert validate_bytes(encoding3d.to_bytes(frame)).ok
+    assert validate_bytes(encoding3d.to_bytes(frame, embed_parts=True)).ok
+    full = scene_to_frame(scene, variables=FRAME_VARIABLES, display="full").data_structure("WheatPlant")
+    rows = full.entity_set("Compartment").columns
+    shown = np.asarray(rows[DISPLAY_ONLY], dtype=bool)
+    assert shown.any() and not full.instance_sets                  # the interiors as display rows
+    recovered = dict(zip(rows["id"][shown].tolist(), rows["psi"][shown].tolist()))
+    evaluated = encoding3d.evaluate(frame, "psi")
+    from openalea.metafspm.solve.reduction import display_ids
+    for row in range(0, sections.count, max(1, sections.count // 7)):      # a few sections
+        owner = int(sections.columns["owner"][row])
+        template = frame.part(sections.parts[int(sections.columns["template"][row])])
+        template_rows = template.entity_set("Compartment").columns["id"]
+        ids = display_ids(owner, template_rows)
+        here = np.array([identifier in recovered for identifier in ids.tolist()])
+        assert here.any()
+        np.testing.assert_allclose(evaluated[row][here], [recovered[i] for i in ids[here].tolist()], rtol=1e-9,
+                                   atol=1e-12)

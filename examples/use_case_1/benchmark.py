@@ -11,9 +11,10 @@ end).
                         [--scenario leaf_ports=bundles vapour_path=air_spaces ...]
 
 By default 2 plants to day 3 (the use case's fast regime); --days 8 for the day-8 numbers, --plants 8 --days 4 for the
-scaling; --outputs measures the outputs at the end (outputs()): a frame without and with the sections drawn (those of
-run.DISPLAY_PLANTS, the use case's frame variables), two checkpoints sharing their unchanging parts, their size and
-time. --checkpoint-at writes the scene's checkpoint after those hours (outputs/benchmarks/checkpoints/<label>/, the
+scaling; --outputs measures the outputs at the end (outputs()): a frame without the sections drawn, two display
+frames one step apart with the sections of run.DISPLAY_PLANTS drawn as instances (display="instances", the
+recorder's default: their frames, the parts they share, the folder packed with deflate) and whole ("full"), the use
+case's frame variables, and two checkpoints sharing their unchanging parts: their size and time. --checkpoint-at writes the scene's checkpoint after those hours (outputs/benchmarks/checkpoints/<label>/, the
 shared parts once); --resume loads one into the freshly built scene and runs on from its hour to --days (the load's
 time and memory, then each step's: a resumed run evaluates no kind again); --scenario updates the plants' scenario
 (run.WHEAT_SCENARIO; a value read as JSON when it is, e.g. length_classes=0.2, else a string). Each step records the
@@ -225,32 +226,61 @@ def folder_size(path: str) -> int:
 
 
 def outputs(scene) -> dict:
-    """The outputs of *scene* now, written under outputs/benchmarks/outputs (removed after): a frame of the data, a
-    frame with the sections of run.DISPLAY_PLANTS drawn (the recorder's display frames), two checkpoints one step
-    apart into one shared folder (the second refers to the first's parts); their size (MB) and time (s)."""
+    """The outputs of *scene* now, written under outputs/benchmarks/outputs (removed after): a frame of the data; a
+    display frame with the sections of run.DISPLAY_PLANTS drawn as instances (display_instances_<k>: the frame, the
+    parts it adds to the frames' parts/ folder, their count) and whole (display_full_<k>), at this step (k 1) and
+    the next (k 2: the parts it shares with the first not written again), the instances' two frames and parts packed
+    (display_instances_packed: deflate, encoding3d.pack); two checkpoints one step apart into one shared folder (the
+    second refers to the first's parts); their size (MB) and time (s)."""
     import shutil
     from openalea.metafspm.io.encoding3d import _encoding3d, scene_to_frame
     folder = os.path.join(BENCHMARKS, "outputs")
     shutil.rmtree(folder, ignore_errors=True)
     os.makedirs(folder)
     encoding3d, found = _encoding3d(), {}
-    for name, options in (("frame", {}), ("display_frame", {"display_meshes": True,
-                                                              "display_plants": list(run.DISPLAY_PLANTS)})):
+
+    def write(name, subfolder, file, **options):
+        os.makedirs(os.path.join(folder, subfolder), exist_ok=True)
+        parts = os.path.join(folder, subfolder, "parts")
+        before = folder_size(parts) if os.path.isdir(parts) else 0
         started = time.perf_counter()
         frame = scene_to_frame(scene, variables=run.FRAME_VARIABLES, **{"display_meshes": False, **options})
-        path = os.path.join(folder, name + ".glb")
-        encoding3d.write(path, frame)
+        path = os.path.join(folder, subfolder, file)
+        keys = encoding3d.write(path, frame)
         found[name] = {"seconds": time.perf_counter() - started, "MB": os.path.getsize(path) / 1e6}
+        if options.get("display") == "instances":
+            found[name].update(parts=len(keys), new_parts_MB=(folder_size(parts) - before) / 1e6,
+                               parts_MB=folder_size(parts) / 1e6)
         del frame
-    shared = os.path.join(folder, "checkpoints", "shared")
+        return keys
+    drawn = {"display_meshes": True, "display_plants": list(run.DISPLAY_PLANTS)}
+    write("frame", "data", "frame.glb")
+    keys = set()
     for k in (1, 2):
-        path = os.path.join(folder, "checkpoints", f"step_{k}")
-        started = time.perf_counter()
-        scene.checkpoint(path, shared=shared)
-        found[f"checkpoint_{k}"] = {"seconds": time.perf_counter() - started, "MB": folder_size(path) / 1e6,
-                                    "shared_MB": folder_size(shared) / 1e6}
+        keys |= set(write(f"display_instances_{k}", "instances", f"frame_{k:06d}.glb", display="instances", **drawn))
+        write(f"display_full_{k}", "full", f"frame_{k:06d}.glb", display="full", **drawn)
         if k == 1:
-            scene.run()
+            shared = os.path.join(folder, "checkpoints", "shared")
+            for c in (1, 2):
+                path = os.path.join(folder, "checkpoints", f"step_{c}")
+                started = time.perf_counter()
+                scene.checkpoint(path, shared=shared)
+                found[f"checkpoint_{c}"] = {"seconds": time.perf_counter() - started, "MB": folder_size(path) / 1e6,
+                                            "shared_MB": folder_size(shared) / 1e6}
+                if c == 1:
+                    scene.run()
+    instances = os.path.join(folder, "instances")
+    encoding3d.write_index(os.path.join(instances, "scene.fspm.json"),
+                           [{"time": float(k), "step": k, "file": f"frame_{k:06d}.glb"} for k in (1, 2)],
+                           time_unit="s", parts=sorted(keys))
+    started = time.perf_counter()
+    packed = encoding3d.pack(instances, os.path.join(folder, "instances.fspm.zip"))
+    found["display_instances_packed"] = {"seconds": time.perf_counter() - started,
+                                         "MB": os.path.getsize(packed) / 1e6,
+                                         "folder_MB": folder_size(instances) / 1e6}
+    found["display_full_folder"] = {"seconds": found["display_full_1"]["seconds"]
+                                    + found["display_full_2"]["seconds"],
+                                    "MB": folder_size(os.path.join(folder, "full")) / 1e6}
     shutil.rmtree(folder)
     return found
 
@@ -280,6 +310,8 @@ def summary(result: dict) -> str:
         lines.append("outputs: " + ", ".join(
             f"{name} {entry['MB']:.1f} MB in {entry['seconds']:.2f} s"
             + (f" (shared {entry['shared_MB']:.1f} MB)" if "shared_MB" in entry else "")
+            + (f" (+{entry['new_parts_MB']:.1f} MB of parts, {entry['parts']} used)" if "parts" in entry else "")
+            + (f" (folder {entry['folder_MB']:.1f} MB)" if "folder_MB" in entry else "")
             for name, entry in result["outputs"].items()))
     return "\n".join(lines)
 

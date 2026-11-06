@@ -496,3 +496,12 @@ def test_the_recorder_s_display_options_are_checked(tmp_path):
         SceneRecorder(str(tmp_path), frame_period=1, pack_at_finish=True, pack_compression="zstd")
     with pytest.raises(ValueError, match="display="):
         SceneRecorder(str(tmp_path), frame_period=1, frame_options={"display": "full"})
+
+
+def test_a_variables_filter_keeps_the_templates_columns_it_names(solved):
+    ds, instance = solved
+    frame = _frame(ds, instance, variables={"plants": {"Compartment": ["water_potential", "port"], "*": []}})
+    sections = frame.data_structures[0].instance_set("NetworkDrawer")
+    template = next(part for part in sections.parts if isinstance(part, encoding3d.Template))
+    assert set(template.entity_set("Compartment").columns) == {"id", "label", "port"}
+    assert len(encoding3d.evaluate(frame, "water_potential")) == sections.count

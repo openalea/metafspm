@@ -362,7 +362,8 @@ def _location_scales(ds) -> dict:
 
 
 def _mpg_data_structure(identifier: str, ds, metadata: dict, standard_names: dict, geometry: bool, components=(),
-                        display_meshes: bool = True, display_plants=None, display: str = "instances"):
+                        display_meshes: bool = True, display_plants=None, display: str = "instances",
+                        variables=None):
     encoding3d = _encoding3d()
     ds.flush_mtg()                     # the MPG holds the variables' current values, as ds.mtg gives it
     g = ds.structure
@@ -574,7 +575,7 @@ def _mpg_data_structure(identifier: str, ds, metadata: dict, standard_names: dic
     meshes = _meshes(ds, entity_sets, scale_of, names, components, display_meshes, display_plants,
                      reduced_nodes) if geometry else []
     instance_sets = _instance_sets(ds, instanced_by, entity_sets, scale_of, names, translator, extras, metadata,
-                                   standard_names, display_plants) if instanced_by else []
+                                   standard_names, display_plants, variables) if instanced_by else []
     if instance_sets:
         extras["instances"] = {instance_set.name: {"owners": instance_set.owners,
                                                    "derived": [field.name for field in instance_set.derived]}
@@ -773,7 +774,7 @@ def _reduced_nodes(ds):
 
 
 def _instance_sets(ds, components, entity_sets: list, scale_of: dict, names: dict, translator: dict, extras: dict,
-                   metadata: dict, standard_names: dict, plants=None) -> list:
+                   metadata: dict, standard_names: dict, plants=None, variables=None) -> list:
     """
     The reduced groups of *ds* as encoding3d instance sets (specification §12), one per component drawing them
     (display_instances: a TemplateShapes), named after it: each group an instance of its template (a shared part:
@@ -783,7 +784,8 @@ def _instance_sets(ds, components, entity_sets: list, scale_of: dict, names: dic
     nodes, the weighted sum of its kinds' recovery operators (shared parts: Kind.recovery_operator, a class blend's two
     kinds weighted) applied to it, as Reduction.recover_interiors recovers them (the kept nodes their own values).
     The parts are kept on the Reduction (built once per template and kind, as long as the kind is held). *plants*:
-    the Plant vids whose groups are drawn (None: all).
+    the Plant vids whose groups are drawn (None: all). *variables*: a variables filter (filter_frame's), the
+    templates' node columns kept by it as the node set's (their id and label always).
     """
     encoding3d = _encoding3d()
     reduction = _reduction_of(ds)
@@ -796,6 +798,8 @@ def _instance_sets(ds, components, entity_sets: list, scale_of: dict, names: dic
         return []
     owner_scale = names[int(g.topology_arrays()["scale"][next(iter(groups.values()))[0]])]   # the location's set
     node_set = names[scale_of["node"]]                     # the reduced system's nodes: the templates' rows
+    kept = _table_variables(variables, node_set) if variables is not None else None
+    kept = None if kept is None else tuple(sorted(kept))
     bound = bool(reduction.systems) and reduction.instance is not None and not reduction.library
     terms = [reduction.recovery_terms(ds, groups=list(groups), system=system) for system in reduction.systems] \
         if bound else []
@@ -828,9 +832,9 @@ def _instance_sets(ds, components, entity_sets: list, scale_of: dict, names: dic
         for position, (owner, shape_key) in enumerate(zip(shapes.owners.tolist(), shapes.shape_of)):
             full = full_of[owner]
             template_index[position] = part_of(
-                ("template", component_name, shape_key, full.key),
+                ("template", component_name, shape_key, full.key, kept),
                 lambda: _template_part(full, shapes.shapes[shape_key], node_set, component_name, translator, g,
-                                       metadata, standard_names))
+                                       metadata, standard_names, kept))
         columns = {"id": shapes.owners.copy(), "owner": shapes.owners.copy(), "template": template_index,
                    "transform": encoding3d.column_major(shapes.transforms)}
         vectors, derived = {}, []
@@ -859,11 +863,12 @@ def _instance_sets(ds, components, entity_sets: list, scale_of: dict, names: dic
 
 
 def _template_part(full, shape, node_set: str, mesh_name: str, translator: dict, g, metadata: dict = None,
-                   standard_names: dict = None):
+                   standard_names: dict = None, kept=None):
     """The encoding3d Template of a reduced group's full template *full* drawn by *shape* (Triangles in template
     coordinates, each triangle's owner a full template row): its entity set *node_set*, the template's nodes (its
     Compartments, ascending: the derived fields' rows), ids their template rows, with their constant properties
-    (label names, numbers, text); its mesh *mesh_name*, the vertices shared by its triangles."""
+    (label names, numbers, text; *kept*: those named only, None: all); its mesh *mesh_name*, the vertices shared by
+    its triangles."""
     encoding3d = _encoding3d()
     rows = np.flatnonzero(full.scale == g.scales.Compartment)
     position = np.searchsorted(rows, shape.owner).clip(0, max(rows.size - 1, 0))
@@ -873,7 +878,8 @@ def _template_part(full, shape, node_set: str, mesh_name: str, translator: dict,
     columns = {"id": rows.astype(np.int64)}
     from openalea.metafspm.data_structure.instances import LINKS
     for name, (where, values) in sorted(full.properties.items()):
-        if name in LINKS or name in ("scale", "isanchor") or (name in _GRAPH_RESERVED and name != "label"):
+        if name in LINKS or name in ("scale", "isanchor") or (name in _GRAPH_RESERVED and name != "label") or \
+                (kept is not None and name != "label" and name not in kept):
             continue
         at = np.searchsorted(rows, where).clip(0, max(rows.size - 1, 0))
         here = rows[at] == where if np.size(where) else np.zeros(0, dtype=bool)
@@ -1199,7 +1205,7 @@ def to_frame(data_structures: dict, components: dict = None, mappings: dict = No
             drawn = _display_plants_of(display_plants, identifier, (plant_names or {}).get(identifier, {}))
             frame.data_structures.append(_mpg_data_structure(identifier, ds, metadata, names, geometry,
                                                              (components or {}).get(identifier, ()), display_meshes,
-                                                             drawn, display))
+                                                             drawn, display, _for(variables, identifier)))
         elif isinstance(ds, (ArrayDataStructure, AdaptiveGridDataStructure)):
             frame.data_structures.append(_grid_data_structure(identifier, ds, metadata, names))
         else:
@@ -1453,8 +1459,9 @@ def filter_frame(frame, scales=None, entities=None, variables=None, plant_names:
                   "*": []}. A filtered table always keeps its structure (encoding3d's reserved columns: ids, labels,
                   complex and parent links, edge types, a relation's ends, a grid cell's level and index), its
                   segment ends and the display rows' marker (metafspm_display_only, e.g. a reduced section's
-                  interiors); metafspm's own links (metafspm_complex, ...: from_frame's) only when named. Instance
-                  sets are not filtered by variables (their templates and derived fields are shared parts).
+                  interiors); metafspm's own links (metafspm_complex, ...: from_frame's) only when named. The
+                  instances' templates (shared parts) keep the columns their node set's filter keeps when the frame
+                  is made (to_frame's variables): filter_frame leaves instance sets' columns as they are.
 
     Parents outside what is kept become none, relations and mappings keep the pairs whose ends are kept, meshes the
     triangles of kept entities, instance sets (display="instances") the instances of kept owners (none when their
