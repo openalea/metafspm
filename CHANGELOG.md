@@ -2,6 +2,18 @@
 
 ## Unreleased (release2026)
 
+### Dense shoot blocks (O-7): merged kept nodes
+
+- **`Reduction(merge=)`**: kept nodes lumped by a declared grouping (`{"where": rule, "by": property names |
+  callable labels, "properties": {name: "sum" | "mean" | "min" | "max" | "root_sum_square" | callable}}`, or a tuple
+  of disjoint such dicts): one node per group (its representative, the first member), the members' explicit edges
+  joined to it; the kind's full matrix and sources contracted (PᵀAP, Pᵀc) before the Kron reduction (an
+  approximation, exact when the members' potentials are equal). `Reduction.merged_into(full)`; `Kind.contract`
+  (a `@kind_derived` method's per-Compartment values summed into the merged nodes); `recover_interiors` gives the
+  dropped members their node's value; `SectionTemplate.restricted(redirect=)`.
+- Use case 1's `benchmark.py`: `--scenario KEY=VALUE`, the dense blocks' nonzeros per step, the kinds held and their
+  pickled size, the leaves' water potential in the results.
+
 ### API generalisations (O-11, second half: checkpoint scenario, no process-wide state, balances, timing)
 
 - **Resuming with the current scenario.** `Scene.load_checkpoint(path, scenario="checkpoint" | "current")` and

@@ -358,6 +358,21 @@ class SoilDiffusion(FunctionalComponent):
   `reduction.unknown()` the reduced system's node unknown; a plant model's structural component asks
   `reduction.reduces(g, vertex)` for each group it instances (where= on the vertex as it is: its label, its
   complexes', its properties), and `reduction.is_reduced(template)` whether an instance's template is a reduced one.
+  **Merged kept nodes** (`Reduction(merge=)`, an approximation chosen by the model): kept nodes lumped into one, a
+  dict or a tuple of disjoint dicts `{"where": rule, "by": property names | callable, "properties": {name:
+  aggregation}}`: `where` the kept nodes it applies to (a rule as `keep=`'s; None: all), `by` their grouping (the
+  kept nodes of equal values of those template properties one node, a NaN not merged; or a callable template ->
+  an integer label per vertex, < 0 not merged), `properties` the merged node's values of template properties from
+  its members' (`"sum"`, `"mean"`, `"min"`, `"max"`, `"root_sum_square"`, or a picklable callable; the others its
+  representative's, its first member's). The reduced template holds the representative only; a member's explicit
+  edges join it (one between two members: dropped); the kind contracts its full group's matrix and sources (the
+  members' rows and columns summed, PᵀAP, Pᵀc: the members held at one potential) before reducing it, exact when the
+  members' potentials are equal in the full group. The model's live terms on a merged node are its representative's
+  and those of the edges joined to it, so merge nodes without boundary sets of their own. A `@kind_derived` method
+  sees the contracted nodes (`nodes`, the kron's order): `kind.contract(values)` sums per-Compartment values of the
+  full template into them; `recover_interiors` gives a member its node's value. MECHA's
+  `plant_reduction(leaf_ports="bundles", vapour_path="air_spaces")` lumps the shoot's conduits per vascular bundle
+  and a leaf's evaporating walls per air space this way.
 ## 4. Structure: `StructuralComponent`
 
 A structural component edits the plant (growth, segmentation, anatomy). Its steps come in two styles:
