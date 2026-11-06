@@ -1197,7 +1197,7 @@ class MTGDataStructure(GraphDataStructure):
         return len(self._idx_to_vid)
 
     def node_ids(self) -> list:
-        return list(self._idx_to_vid)
+        return [int(v) for v in self._idx_to_vid]
 
     def edges(self) -> list[tuple]:
         if self._mtg is None:
@@ -1304,8 +1304,8 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
         if self._from_scale is None:
             # Inferred from the populated graph: the scale of the vertices the Compartments stand for
             self._from_scale = self._node_scale()
-        if self._anatomy:
-            self._anatomy_signature = self._anatomy_signatures()
+        if self._anatomy:              # what update_topology compares to rewire: none without a rule (built then)
+            self._anatomy_signature = self._anatomy_signatures() if self._wiring else None
 
     # ── Index map ─────────────────────────────────────────────────────────────
 
@@ -1321,20 +1321,20 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
         indexing instead of Python-level VID iteration.
         """
         if self._mtg is None:
-            self._idx_to_vid, self._vid_to_idx = [], {}
+            self._idx_to_vid, self._vid_to_idx = _read_only(np.empty(0, dtype=np.int64)), {}
             self._bio_vids_sorted  = np.empty(0, dtype=np.int64)
             self._bio_node_idx     = np.empty(0, dtype=np.int64)
             self._bio_edge_a_idx   = np.empty(0, dtype=np.int64)
             self._bio_edge_b_idx   = np.empty(0, dtype=np.int64)
             return
         if getattr(self, "_anatomy", False):
-            svids = self._mtg.owned_compartments(self._from_scale).tolist()
+            svids = np.array(self._mtg.owned_compartments(self._from_scale), dtype=np.int64)
         else:
             raw = self._mtg.array_filtering(
                 "vertex_id", filter_in={"scale": self._mtg.scales.Compartment}
             )
-            svids = np.asarray(raw, dtype=np.int64).tolist()
-        self._idx_to_vid = svids
+            svids = np.array(raw, dtype=np.int64)
+        self._idx_to_vid = _read_only(svids)        # the node ids (entity_ids("node")), read-only, shared
         self._vid_to_idx = None            # built at first use: array code uses _vid_index
         self._build_bio_index_map()
 
@@ -1343,7 +1343,7 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
         """{node vid: local index}, built at first use after each topology change."""
         mapping = self.__dict__.get("_vid_to_idx_dict")
         if mapping is None:
-            mapping = {v: i for i, v in enumerate(self._idx_to_vid)}
+            mapping = {v: i for i, v in enumerate(self._idx_to_vid.tolist())}
             self.__dict__["_vid_to_idx_dict"] = mapping
         return mapping
 
@@ -1394,14 +1394,14 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
         Called once per topology from _build_index_map (and thus from both
         __init__ and invalidate_topology).
         """
-        if not self._idx_to_vid:
+        if not self._idx_to_vid.size:
             self._bio_vids_sorted = np.empty(0, dtype=np.int64)
             self._bio_node_idx    = np.empty(0, dtype=np.int64)
             self._bio_edge_a_idx  = np.empty(0, dtype=np.int64)
             self._bio_edge_b_idx  = np.empty(0, dtype=np.int64)
             return
 
-        vids             = np.array(self._idx_to_vid, dtype=np.int64)
+        vids             = self._idx_to_vid
         sorted_vids      = np.sort(vids)
         self._bio_vids_sorted = sorted_vids
         self._bio_node_idx    = np.searchsorted(sorted_vids, vids)
@@ -1652,7 +1652,7 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
                 if getattr(self, "_anatomy", False):
                     raise NotImplementedError("edge-type chains in anatomy mode: define them by group and rank")
                 code = self._mtg._EDGE_TYPE_CODES[spec["edge_type"]]
-                vids = np.array(self._idx_to_vid, dtype=np.int64)
+                vids = self._idx_to_vid
                 follows = self._mtg.topology_arrays()["edge_type"][vids] == code
                 pred = np.where(follows, self.parents(), -1)
                 chains = tree_kernels.chains_from_predecessors(pred)
@@ -1706,7 +1706,7 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
         """Edge type code of each node (the MTG edge_type of its vid), None in anatomy mode."""
         if getattr(self, "_anatomy", False):
             return None
-        return self._mtg.topology_arrays()["edge_type"][np.asarray(self._idx_to_vid, dtype=np.int64)]
+        return self._mtg.topology_arrays()["edge_type"][self._idx_to_vid]
 
     def fold(self, update, values, direction: str = "up") -> np.ndarray:
         """Level-by-level fold with a custom vectorised *update* (tree_kernels.fold)."""
@@ -1864,7 +1864,7 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
         if cache is not None and cache[0] == key:
             return cache[1]
         vids, owners = self._mtg.compartment_owners()
-        nodes = np.asarray(self._idx_to_vid, dtype=np.int64)
+        nodes = self._idx_to_vid
         result = np.full(nodes.size, -1, dtype=np.int64)
         if nodes.size and vids.size:
             position = np.searchsorted(vids, nodes).clip(0, vids.size - 1)
@@ -1941,14 +1941,14 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
         cache = self.__dict__.setdefault("_membership_cache", {})
         if scale_name not in cache:
             scale = getattr(self._mtg.scales, scale_name)
-            vids = np.array(self._idx_to_vid, dtype=np.int64)
+            vids = self._idx_to_vid
             if getattr(self, "_anatomy", False):
                 # Through each node's owner (its Cell, or its segment), -1 where the owner is finer than the scale
                 owners = self._mtg.owners_at_scale(self._node_owners(), scale)
             elif hasattr(self._mtg, "complex_at_scale_array"):
                 owners = self._mtg.complex_at_scale_array(vids, scale) if scale != self._node_scale_of(vids) else vids
             else:
-                owners = np.array([self._owner_at(int(v), scale) for v in self._idx_to_vid], dtype=np.int64)
+                owners = np.array([self._owner_at(int(v), scale) for v in self._idx_to_vid.tolist()], dtype=np.int64)
             entities = np.unique(owners[owners >= 0])
             plant = self._mtg.scales.Plant
             if getattr(self, "_anatomy", False) and scale > plant:
@@ -1961,7 +1961,7 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
                 entities = np.union1d(entities, candidates[in_plants])
             index = np.full(owners.size, -1, dtype=np.int64)
             index[owners >= 0] = np.searchsorted(entities, owners[owners >= 0])
-            cache[scale_name] = (entities, index)
+            cache[scale_name] = (_read_only(np.asarray(entities, dtype=np.int64)), _read_only(index))
         return cache[scale_name]
 
     def _node_scale_of(self, vids) -> int:
@@ -2001,11 +2001,16 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
         coarser scale (sorted).
         """
         if location == "node":
-            return np.array(self._idx_to_vid, dtype=np.int64)
+            return self._idx_to_vid
         if location == "edge":
             if getattr(self, "_anatomy", False):
                 return self._connection_vids()
-            return np.array([b for _, b in self.edges()], dtype=np.int64)
+            stamp = self._topology_stamp()
+            cached = self.__dict__.get("_edge_ids_cache")
+            if cached is None or cached[0] != stamp:
+                cached = self.__dict__["_edge_ids_cache"] = (
+                    stamp, _read_only(np.array([b for _, b in self.edges()], dtype=np.int64)))
+            return cached[1]
         if location in self._coarse_scale_names():
             return self._membership(location)[0]
         raise ValueError(f"'{location}' has no entity ids (locations: node, edge, scalar, {self._coarse_scale_names()})")
@@ -2132,13 +2137,13 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
         return n_id_a, n_id_b
 
     def _node_scale(self):
-        if not self._idx_to_vid:
+        if not self._idx_to_vid.size:
             return None
         if getattr(self, "_anatomy", False):
             # the Compartments' scale, whichever node is first: after a growth step the first node may be gone
             # (its segment's anatomy removed) until update_topology rebuilds the index map
             return self._mtg.scales.Compartment
-        return self._mtg.scale(self._idx_to_vid[0])
+        return self._mtg.scale(int(self._idx_to_vid[0]))
 
     def _keys_at_scale(self, vids, scale) -> list:
         """MTG vertices holding the values of *vids* for a property defined at *scale* (their complex at that scale)."""
@@ -2253,7 +2258,7 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
         Coarser scales are mapped through each node's complex at that scale. Returns None if the property
         is absent; raises ValueError if some nodes have no value.
         """
-        if not self._idx_to_vid:
+        if not self._idx_to_vid.size:
             return None
         return self._mtg_values(name, self._idx_to_vid, scale=scale, fast_idx=self._bio_node_idx, fill=fill)
 
@@ -2297,7 +2302,7 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
 
         Fast path: ArrayDict keyed exactly by the node vids → assign_at. Errors are raised.
         """
-        if not self._idx_to_vid:
+        if not self._idx_to_vid.size:
             return
         arr = np.asarray(arr, dtype=np.float64)
         if arr.shape != (self.n_nodes(),):
@@ -2307,7 +2312,7 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
                 and np.array_equal(prop.keys_array(), self._bio_vids_sorted)):
             prop.assign_at(self._bio_node_idx, arr)
         else:
-            _scatter(prop, np.asarray(self._idx_to_vid, dtype=np.int64), arr)
+            _scatter(prop, self._idx_to_vid, arr)
 
     def _write_edge_to_mtg(self, name: str, arr: np.ndarray,
                            convention: str = "proximal") -> None:
@@ -2400,11 +2405,11 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
                 return [prop.get(int(v)) for v in self.entity_ids(spec.location).tolist()]
             if getattr(self._mtg, "_instanced", lambda: False)():
                 values = self._mtg.values_of(spec.name, self._idx_to_vid)
-                return [values.get(int(v)) for v in self._idx_to_vid] if values else None
+                return [values.get(int(v)) for v in self._idx_to_vid.tolist()] if values else None
             prop = self._mtg.properties().get(spec.name)
             if prop is None or len(prop) == 0:
                 return None
-            return [prop.get(int(v)) for v in self._idx_to_vid]
+            return [prop.get(int(v)) for v in self._idx_to_vid.tolist()]
         fill = spec.default if isinstance(spec.default, (int, float)) and not isinstance(spec.default, bool) else None
         if spec.location == "node":
             return self._mtg_to_node_array(spec.name, scale=spec.scale, fill=fill)
@@ -2689,8 +2694,8 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
             else:
                 column[:] = [prop.get(nv) for nv in vids.tolist()]
             columns.append(column)
-        return {"parents": {vid: g.linked_parent(vid, from_scale, valid) for vid in valid},
-                "vids": vids, "owners": owner_of, "columns": columns}
+        return {"parents": _linked_parents(g, from_scale, valid), "vids": vids, "owners": owner_of,
+                "columns": columns}
 
     @staticmethod
     def _changed_anatomies(old: dict, new: dict) -> set:
@@ -2735,6 +2740,11 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
         anatomy (or its parent's) changed. Every other Connection, with its vid and values, is kept.
         """
         g, old = self._mtg, self._anatomy_signature
+        if not self._wiring and not g.properties().get("is_junction"):
+            self.rewired = []           # no rule and no junction (a reduction's library): nothing to rewire
+            return
+        if old is None:
+            old = self._anatomy_signatures()
         new = self._anatomy_signatures()
         changed = self._changed_anatomies(old, new)
         old_parents = old["parents"]
@@ -2744,8 +2754,7 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
         alive = g.owned_compartments(self._from_scale)
         n_id_a, n_id_b = g.property("n_id_a"), g.property("n_id_b")
         junctions = np.asarray(g.junction_vids(), dtype=np.int64)
-        tails = np.array([int(n_id_a[ev]) for ev in junctions.tolist()], dtype=np.int64)
-        heads = np.array([int(n_id_b[ev]) for ev in junctions.tolist()], dtype=np.int64)
+        tails, heads = _values_at(n_id_a, junctions), _values_at(n_id_b, junctions)
         head_alive = np.isin(heads, alive)
         sections = self._sections_of(np.where(head_alive, heads, -1))
         stale = junctions[~np.isin(tails, alive) | ~head_alive | np.isin(sections, list(rewire))]
@@ -2813,18 +2822,18 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
             known, source = values_by_key.match(keys)
             out[known] = values_by_key.values[source[known]]
             unknown = np.flatnonzero(~known)
-            if policy["on_grow"] != "inherit" and out.dtype != object:    # objects (lists) are set one by one
-                out[unknown] = policy["default"]
+            if policy["on_grow"] != "inherit":
+                _fill(out, unknown, policy["default"])
                 return out
-            if policy["on_grow"] == "inherit" and getattr(self, "_anatomy", False):
+            if getattr(self, "_anatomy", False):
                 # The sources of the new Compartments, found once per update for every variable (inheritance)
-                out[unknown] = policy["default"]
+                _fill(out, unknown, policy["default"])
                 sources = self._inheritance_sources(keys[unknown], values_by_key)
                 found, position = values_by_key.match(np.maximum(sources, 0))
                 found &= sources >= 0
                 out[unknown[found]] = values_by_key.values[position[found]]
                 return out
-            if policy["on_grow"] == "inherit" and not getattr(self, "_anatomy", False) and out.dtype != object:
+            if out.dtype != object:
                 # The nearest known ancestor, level by level for all the new entities at once
                 parent = self._mtg.topology_arrays()["parent"]
                 out[unknown] = policy["default"]
@@ -2881,7 +2890,7 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
         cache = self.__dict__.get("_graph_topology_cache")
         if cache is not None and cache[0] == stamp:
             return cache[1]
-        node_ids = np.array(self._idx_to_vid, dtype=np.int64)
+        node_ids = self._idx_to_vid
         n = len(node_ids)
         n_id_a_arr = np.asarray(self._mtg.array_filtering("n_id_a", filter_in={"scale": self._mtg.scales.Connection}),
                                 dtype=np.int64)
@@ -2948,6 +2957,47 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
 # ═══════════════════════════════════════════════════════════════════════════════
 # Field / grid branch
 # ═══════════════════════════════════════════════════════════════════════════════
+
+def _read_only(array: np.ndarray) -> np.ndarray:
+    """*array*, made read-only (a topology's array, shared by every caller until the topology changes)."""
+    array.setflags(write=False)
+    return array
+
+
+def _values_at(prop, vids: np.ndarray) -> np.ndarray:
+    """The integer values of property *prop* at *vids* (every one having one): in bulk on an ArrayDict."""
+    if isinstance(prop, ArrayDict):
+        positions, found = prop._positions(vids)
+        if not found.all():
+            raise KeyError(int(vids[~found][0]))
+        return prop.values_array()[positions].astype(np.int64)
+    return np.array([int(prop[v]) for v in vids.tolist()], dtype=np.int64)
+
+
+def _linked_parents(g, from_scale: int, valid) -> dict:
+    """{vertex: its linked parent (MPG.linked_parent)} of the *valid* vertices at *from_scale*: their parent at once
+    when it is valid (most), linked_parent's walk for the others (an axis' first vertex)."""
+    vids = np.fromiter(valid, dtype=np.int64, count=len(valid))
+    parent = g.topology_arrays()["parent"]
+    inside = vids < parent.size
+    parents = np.full(vids.size, -1, dtype=np.int64)
+    parents[inside] = parent[vids[inside]]
+    direct = np.isin(parents, vids) & inside
+    out = dict(zip(vids[direct].tolist(), parents[direct].tolist()))
+    for vid in vids[~direct].tolist():
+        out[vid] = g.linked_parent(vid, from_scale, valid)
+    return out
+
+
+def _fill(out: np.ndarray, at: np.ndarray, value) -> None:
+    """out[at] = value: in bulk, or element by element for an object array given a sequence (a list each, not
+    broadcast)."""
+    if out.dtype != object or np.ndim(value) == 0:
+        out[at] = value
+        return
+    for i in at.tolist():
+        out[i] = value
+
 
 def _scatter(prop, vids: np.ndarray, values: np.ndarray, integer: bool = False) -> None:
     """Write *values* at *vids* of MTG property *prop*: in place for the vids it has, one batched insert for the others."""

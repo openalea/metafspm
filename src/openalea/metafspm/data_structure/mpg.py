@@ -788,6 +788,8 @@ class MPG(MTG):
     def junction_vids(self) -> list:
         """Vids of the junction Connections (created by wire_junctions)."""
         prop = self.properties().get("is_junction", {})
+        if isinstance(prop, ArrayDict):
+            return prop.keys_array()[prop.values_array() != 0].tolist()
         return [int(v) for v, flag in prop.items() if flag]
 
     # ── Children at the vertex's own scale ───────────────────────────
@@ -1236,16 +1238,23 @@ class MPG(MTG):
         instance's, or those of the instances *rows*."""
         instances = self.instances
         rows = np.arange(len(instances)) if rows is None else np.asarray(rows, dtype=np.int64)
-        vids = np.concatenate([np.arange(f, f + n, dtype=np.int64)
-                               for f, n in zip(instances.first[rows].tolist(), instances.size[rows].tolist())])
+        first, size = instances.first[rows].astype(np.int64), instances.size[rows].astype(np.int64)
+        starts = np.cumsum(size) - size                       # every instance's block, at once
+        vids = np.repeat(first - starts, size) + np.arange(int(size.sum()), dtype=np.int64)
         their_scale, their_complex, their_parent = instances.structure(vids)
-        anchored = their_complex <= -2
-        anchors = self.scales.anchors
-        their_complex[anchored] = [anchors[int(-2 - c)] for c in their_complex[anchored].tolist()]
+        anchored = np.flatnonzero(their_complex <= -2)
+        if anchored.size:                    # an anchor code -2 - scale: the scale's anchor vertex
+            anchors = self.scales.anchors
+            anchor_of = np.full(max(anchors) + 1, -1, dtype=np.int64)
+            anchor_of[list(anchors)] = list(anchors.values())
+            their_complex[anchored] = anchor_of[-2 - their_complex[anchored]]
         scale[vids], complex_[vids], parent[vids] = their_scale, their_complex, their_parent
         found, types = self._property_at("edge_type", vids)
-        codes = self._EDGE_TYPE_CODES
-        edge_type[found] = [codes.get(t, 0) for t in types.tolist()]
+        coded = np.zeros(found.size, dtype=edge_type.dtype)
+        if types.dtype == object:
+            for name, code in self._EDGE_TYPE_CODES.items():      # by value: a comparison per code, not per vertex
+                coded[types == name] = code
+        edge_type[found] = coded
 
     def complex_at_scale_array(self, vids, scale: int) -> np.ndarray:
         """complex_at_scale for many vertices at once (from topology_arrays)."""
