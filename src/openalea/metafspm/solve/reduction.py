@@ -65,7 +65,10 @@ The structural model asks for a group's reduced template (Reduction.template_for
 the full cells never enter the plant's DataStructure. For display only (an encoding3d frame's sections, drawn whole),
 Reduction.recover_interiors gives every reduced group's interior values at once (one factorisation per kind),
 full_rows the full template's rows a reduced one holds, and display_ids the ids the interior's vertices are written
-under (never a vertex id). A kind: (the full template, the kind variables' values or
+under (never a vertex id); for a frame drawing the groups as instances (io.encoding3d's display="instances"),
+Reduction.recovery_terms gives each group's kept values and its kinds' weights, Kind.recovery_operator each kind's
+recovery as one linear operator (dense, derived while its factorisation is live up to DISPLAY_DENSE_MAX values, else
+its sparse system). A kind: (the full template, the kind variables' values or
 classes, the plant's parameters and the settings), evaluated on a library population of the plant model (its own
 components, those of the reduced systems and of their inputs at the cells run): the graph system's own residual and
 Jacobian (decorator._EXTRACTING: without its boundary sets and its explicit terms), on a full instance and on a
@@ -155,6 +158,11 @@ class Relative:
 
 
 CLASS_ROUNDING = 1e-12          # a value within this fraction of the class interval from a class: that class alone
+
+# A kind's recovery operator (Kind.recovery_operator: display instances) derived dense while its factorisation is
+# live when it holds at most this many values (its full template's Compartments × (kept nodes + 1)); beyond, its
+# sparse system is stored instead (the reader solves it), smaller and exact
+DISPLAY_DENSE_MAX = 1 << 15
 
 # Reduction(merge=)'s named aggregations of a merged node's members' values
 _AGGREGATIONS = {"sum": np.sum, "mean": np.mean, "min": np.min, "max": np.max,
@@ -251,6 +259,9 @@ class Kind:
                                                  # its node in the kind's (the kron's) order; None: none merged
     merged_rows: np.ndarray = None               # the merged members dropped (their full template rows) ...
     merged_kept: np.ndarray = None               # ... and their representative's place among the kept nodes
+    recovery: np.ndarray = None                  # its recovery operator, dense (recovery_operator's), derived while
+                                                 # its factorisation is live when it holds at most DISPLAY_DENSE_MAX
+                                                 # values; None: built from its sparse system when asked
 
     shared_in_checkpoints = "kind"               # class attribute (not a field): scene.shared's part name
 
@@ -260,7 +271,7 @@ class Kind:
         it, computed again with it."""
         self.D = self.e = self.reduction = self.interior_source = None
         self.kept_rows = self.interior_rows = None
-        self.contraction = self.merged_rows = self.merged_kept = None
+        self.contraction = self.merged_rows = self.merged_kept = self.recovery = None
         self.inputs, self.outputs, self.parts = {}, {}, None
 
     def contract(self, values) -> np.ndarray:
@@ -280,6 +291,63 @@ class Kind:
             return sum(weight * part.recover(x) for weight, part in self.parts)
         source = -np.asarray(self.interior_source, dtype=float)
         return np.asarray(self.reduction.recover(x, source[:, None] if x.ndim == 2 else source))
+
+    # ── Its recovery as a linear operator (outputs drawing a reduced group from its kept values: display instances) ──
+
+    def rows(self) -> np.ndarray:
+        """Its full template's Compartment rows (ascending): the rows of its recovery operator."""
+        parts = [self.kept_rows, self.interior_rows] + ([self.merged_rows] if self.merged_rows is not None else [])
+        return np.sort(np.concatenate([np.asarray(part, dtype=np.int64) for part in parts]))
+
+    def recovery_operator(self):
+        """
+        Its recovery as one linear operator: the values of the reduced system's unknown on every Compartment of its
+        full template (rows(), ascending) = M · [x_K; 1], x_K its kept nodes' values (their order in its reduced
+        template), the last column its interior's sources: a kept node's row the identity, an interior node's
+        A_II⁻¹(−A_IK x_K − c_I) (recover's, exact), a merged member's its representative's value. ("dense", M) when
+        derived while its factorisation was live (Kind.recovery: at most DISPLAY_DENSE_MAX values), else
+        ("solve", S, R): M = S⁻¹R, S and R sparse (its interior's own blocks, no solve made here; S the identity
+        on the kept and merged rows). Not for a blend: its parts' operators are weighted (Reduction.recovery_terms).
+        """
+        if self.parts:
+            raise ValueError("Kind.recovery_operator: a blend's recovery is its parts' weighted")
+        if self.recovery is not None:
+            return ("dense", self.recovery)
+        rows = self.rows()
+        n, kept = rows.size, self.kept_rows.size
+        kept_at, interior_at = np.searchsorted(rows, self.kept_rows), np.searchsorted(rows, self.interior_rows)
+        others = np.setdiff1d(np.arange(n), interior_at)
+        interior_block = self.reduction._A_II.tocoo()
+        S = coo_matrix((np.concatenate([np.ones(others.size), interior_block.data]),
+                        (np.concatenate([others, interior_at[interior_block.row]]),
+                         np.concatenate([others, interior_at[interior_block.col]]))), shape=(n, n)).tocsr()
+        coupling = self.reduction._A_IK.tocoo()
+        merged_at = (np.searchsorted(rows, self.merged_rows) if self.merged_rows is not None
+                     else np.zeros(0, dtype=np.int64))
+        merged_kept = self.merged_kept if self.merged_kept is not None else np.zeros(0, dtype=np.int64)
+        source = np.asarray(self.interior_source, dtype=float)
+        R = coo_matrix((np.concatenate([np.ones(kept + merged_at.size), -coupling.data, -source]),
+                        (np.concatenate([kept_at, merged_at, interior_at[coupling.row], interior_at]),
+                         np.concatenate([np.arange(kept), merged_kept, coupling.col, np.full(source.size, kept)]))),
+                       shape=(n, kept + 1)).tocsr()
+        return ("solve", S, R)
+
+
+def _dense_recovery(kind: Kind, kron) -> np.ndarray:
+    """*kind*'s recovery operator, dense (Kind.recovery_operator's M), from its live KronReduction *kron* (X and its
+    factorisation: one solve, of its interior's sources)."""
+    rows = kind.rows()
+    kept = kind.kept_rows.size
+    out = np.zeros((rows.size, kept + 1))
+    out[np.searchsorted(rows, kind.kept_rows), np.arange(kept)] = 1.
+    if kind.merged_rows is not None and kind.merged_rows.size:
+        out[np.searchsorted(rows, kind.merged_rows), kind.merged_kept] = 1.
+    if kind.interior_rows.size:
+        interior = np.searchsorted(rows, kind.interior_rows)
+        if kept:
+            out[interior, :kept] = -kron._X if kron._X is not None else kron.recover(np.eye(kept))
+        out[interior, kept] = kron.recover(np.zeros(kept), -np.asarray(kind.interior_source, dtype=float))
+    return out
 
 
 def _blend(parts) -> Kind:
@@ -322,6 +390,7 @@ class Reduction:
     def __getstate__(self):
         state = dict(self.__dict__)        # a checkpoint: the declaration, the templates and the kinds (shared parts)
         state.update(_blends={}, _libraries={}, _pickles={}, model=None, instance=None, g=None)
+        state.pop("_display_parts", None)  # the frames' parts built from it (io.encoding3d): made again
         state.pop("_table", None)          # the groups' arrays: per DataStructure and topology
         state.pop("_assigned", None)
         return state
@@ -341,6 +410,7 @@ class Reduction:
         out._reduced, out._full, out._kept, out._rows, out._merged = {}, {}, {}, {}, {}
         out.__dict__.pop("_table", None)
         out.__dict__.pop("_assigned", None)
+        out.__dict__.pop("_display_parts", None)
         return out
 
     def bind(self, model, instance) -> None:
@@ -890,11 +960,77 @@ class Reduction:
                 del interior
         return dict(sorted(out.items()))
 
+    def recovery_terms(self, ds, groups=None, system: str = None):
+        """
+        The reduced *groups* (entity indices of the location; default: all) as linear recoveries of their kept values,
+        for outputs drawing them as instances of their full templates (an encoding3d frame's display instances):
+        RecoveryTerms, the groups in their table's order. Group i's unknown of *system* on its full template's
+        Compartments is Σ_c weights[i, c] · M_kinds[kind[i, c]] · inputs[i] (kind −1: no term), M a kind's
+        recovery_operator, inputs[i] its kept nodes' values in *ds* then 1: recover_interiors' values on the
+        interior, the kept nodes' own on them. None without a reduced group (or without its kinds: a library's).
+        """
+        assignment = None if self.library else self.assignment(ds)
+        if assignment is None:
+            return None
+        table = assignment.table
+        rows = np.arange(table.index.size)
+        if groups is not None:
+            rows = rows[np.isin(table.index, np.asarray([int(i) for i in groups], dtype=np.int64))]
+        system = system or self.systems[0]
+        values = np.asarray(ds.get(self.unknown(system)), dtype=float)
+        inputs = [None] * rows.size
+        position = np.empty(table.index.size, dtype=np.int64)
+        position[rows] = np.arange(rows.size)
+        for code_rows in table.by_template:
+            at = code_rows[np.isin(code_rows, rows)]
+            if at.size:
+                kept = values[table.kept_of(at)]
+                for row, vector in zip(at.tolist(), np.hstack([kept, np.ones((at.size, 1))])):
+                    inputs[position[row]] = vector
+        kind = assignment.kind[rows]
+        used = np.unique(kind[kind >= 0])
+        renumber = np.full(len(assignment.kinds), -1, dtype=np.int64)
+        renumber[used] = np.arange(used.size)
+        return RecoveryTerms(system=system, unknown=self.unknown(system), index=table.index[rows],
+                             owner=table.owner[rows], full_keys=[self._full[table.template[row]].key
+                                                                 for row in rows.tolist()],
+                             full_templates={self._full[key].key: self._full[key] for key in set(table.template)},
+                             inputs=inputs, kind=np.where(kind >= 0, renumber[np.maximum(kind, 0)], -1),
+                             weights=np.where(kind >= 0, assignment.weights[rows], 0.),
+                             kinds=[assignment.kinds[k][system] for k in used.tolist()],
+                             kind_keys=[assignment.keys[k] for k in used.tolist()])
+
     def recover(self, ds, group: int, values, system: str = None) -> tuple:
         """A reduced group's interior: (its full template's local rows, the values of the system's unknown there),
         from its kind and its kept nodes' *values* (the unknown on them, DataStructure order)."""
         kind = self.group_kinds(ds, (group,))[group][system or self.systems[0]]
         return kind.interior_rows, kind.recover(values)
+
+
+@dataclass
+class RecoveryTerms:
+    """
+    Reduced groups as linear recoveries of their kept values (Reduction.recovery_terms), one row per group:
+
+      system, unknown     the reduced system and its node unknown
+      index, owner        the groups' entity indices at the location and their vertices
+      full_keys           each group's full template key (full_templates: {key: SectionTemplate})
+      inputs              each group's operator input: its kept nodes' values of the unknown, then 1
+      kind, weights       (groups × corners) each corner's kind (its position in kinds; −1: none) and weight: a group
+                          between two classes of a Relative variable the weighted sum of their two kinds' operators
+      kinds, kind_keys    the distinct kinds (their recovery_operator) and their keys (stable across steps)
+    """
+    system: str
+    unknown: str
+    index: np.ndarray
+    owner: np.ndarray
+    full_keys: list
+    full_templates: dict
+    inputs: list
+    kind: np.ndarray
+    weights: np.ndarray
+    kinds: list
+    kind_keys: list
 
 
 class _GroupTable:
@@ -1421,6 +1557,9 @@ def _evaluate_in(reduction: Reduction, library: _Library, items: list) -> dict:
                 kind.merged_kept = np.searchsorted(K, contraction[members])
             for name, method in derived.items():   # while the factorisation is live
                 kind.outputs[name] = method(kind, full_template, kron, full_entities)
+            if np.count_nonzero(full_template.scale == plant_g.scales.Compartment) * (K.size + 1) \
+                    <= DISPLAY_DENSE_MAX:              # its recovery operator, for display instances
+                kind.recovery = _dense_recovery(kind, kron)
             kron.release()                     # its factorisation (the full interior's) made again on recovery
             out[kind_key][system] = kind
     return out

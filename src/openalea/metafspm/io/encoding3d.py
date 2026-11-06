@@ -18,7 +18,11 @@ What a frame holds:
   and every variable of the DataStructure at that scale's location; its scalars; the triangles of its geometry
   provider as a mesh, by node and by coarser scale, and a mesh for each component drawing shapes for display only
   (display_triangles(), e.g. GRANAP's sections, its vertices shared by its triangles; display_meshes=False leaves them
-  out, SceneRecorder writes them every display_period steps only; display_plants= draws them for some plants only).
+  out, SceneRecorder writes them every display_period steps only; display_plants= draws them for some plants only);
+  the groups of its Reduction (any, at any location) drawn as instances of their templates (display="instances",
+  the default: an instance set per component giving display_instances, its templates and each kind's recovery
+  operator shared parts written once, the reduced system's unknown on the templates' nodes a derived field the reader
+  rebuilds for the instances it selects), or whole with every interior as display rows (display="full").
   The MPG's own links (the raw complex and parent of each
   vertex, its raw edge type) are the metafspm_complex, metafspm_parent and metafspm_edge_type columns, and the
   label codes, variable metadata and construction arguments go in the data structure's extras, so that
@@ -53,6 +57,7 @@ NO_ID = -1
 EDGE_CODES = {1: "/", 2: "<", 3: "+"}               # the MPG's edge types (MPG.topology_arrays)
 LINK_COLUMNS = ("metafspm_complex", "metafspm_parent", "metafspm_edge_type")
 DISPLAY_ONLY = "metafspm_display_only"             # the display rows' column: a reduced section's interior vertices
+DISPLAYS = ("instances", "full", None)             # how display shapes draw a Reduction's groups (to_frame's display)
 
 _KINDS = {"intensive": "intensive", "extensive": "extensive", "massic_concentration": "massic_concentration",
           "volumic_concentration": "volumic_concentration", "descriptor": "descriptor",
@@ -357,7 +362,7 @@ def _location_scales(ds) -> dict:
 
 
 def _mpg_data_structure(identifier: str, ds, metadata: dict, standard_names: dict, geometry: bool, components=(),
-                        display_meshes: bool = True, display_plants=None):
+                        display_meshes: bool = True, display_plants=None, display: str = "instances"):
     encoding3d = _encoding3d()
     ds.flush_mtg()                     # the MPG holds the variables' current values, as ds.mtg gives it
     g = ds.structure
@@ -521,7 +526,10 @@ def _mpg_data_structure(identifier: str, ds, metadata: dict, standard_names: dic
             extras["variables"][name] = dict(_json_meta(ds._variable_meta().get(name, {})), location=location,
                                              **({"column": column} if column != name else {}),
                                              **({"encoding": encoding} if encoding else {}))
-    if geometry and display_meshes and any(callable(getattr(c, "display_triangles", None)) for c in components):
+    drawing = geometry and display_meshes
+    instanced_by = _instancing_components(ds, components) if drawing and display == "instances" else []
+    if drawing and (display == "full" or (display == "instances" and not instanced_by)) and \
+            any(callable(getattr(c, "display_triangles", None)) for c in components):
         _display_interiors(ds, tables, extras, names, translator, display_plants)   # the reduced sections' interiors
     scalars = _scalar_table(ds, extras)
     extras["tracked"] = [name for name in extras["tracked"] if name in extras["variables"]]
@@ -562,10 +570,18 @@ def _mpg_data_structure(identifier: str, ds, metadata: dict, standard_names: dic
                                                     "(-1: none)",
                                  "metafspm_edge_type": "metafspm: the MPG's edge type (0 none, 1 '/', 2 '<', "
                                                        "3 '+')"}[column])
-    meshes = _meshes(ds, entity_sets, scale_of, names, components, display_meshes, display_plants) if geometry else []
+    reduced_nodes = _reduced_nodes(ds) if instanced_by or (drawing and display is None) else None
+    meshes = _meshes(ds, entity_sets, scale_of, names, components, display_meshes, display_plants,
+                     reduced_nodes) if geometry else []
+    instance_sets = _instance_sets(ds, instanced_by, entity_sets, scale_of, names, translator, extras, metadata,
+                                   standard_names, display_plants) if instanced_by else []
+    if instance_sets:
+        extras["instances"] = {instance_set.name: {"owners": instance_set.owners,
+                                                   "derived": [field.name for field in instance_set.derived]}
+                               for instance_set in instance_sets}
     return encoding3d.DataStructure(identifier, kind="graph", entity_sets=entity_sets, relations=relations,
                                  scalars=scalars, meshes=meshes, platform=PLATFORM, model="MPGDataStructure",
-                                 extras={EXTRAS: extras})
+                                 extras={EXTRAS: extras}, instance_sets=instance_sets)
 
 
 def _plants_mask(ds, plants, location: str = "node") -> np.ndarray:
@@ -728,6 +744,173 @@ def _display_interiors(ds, tables: dict, extras: dict, names: dict, translator: 
         extras["display_only"] = {"rows": counts, "column": DISPLAY_ONLY, "values": unknown}
 
 
+def _reduction_of(ds):
+    """The Reduction of *ds*'s MPG with reduced groups (None: none)."""
+    g = ds.structure
+    reduction = getattr(g, "reduction", None)
+    if reduction is None or not g._instanced() or reduction.group_table(ds) is None:
+        return None
+    return reduction
+
+
+def _instancing_components(ds, components) -> list:
+    """The *components* drawing *ds*'s reduced groups as instances (display_instances), [] without a reduced group."""
+    if _reduction_of(ds) is None:
+        return []
+    return [component for component in components if callable(getattr(component, "display_instances", None))]
+
+
+def _reduced_nodes(ds):
+    """The node mask of *ds*'s reduced groups (None without a reduction): their kept nodes."""
+    reduction = _reduction_of(ds)
+    if reduction is None:
+        return None
+    table = reduction.group_table(ds)
+    owner = np.asarray(ds.owner(reduction.location), dtype=np.int64)
+    reduced = np.zeros(len(ds.entity_ids(reduction.location)), dtype=bool)
+    reduced[table.index] = True
+    return (owner >= 0) & reduced[np.maximum(owner, 0)]
+
+
+def _instance_sets(ds, components, entity_sets: list, scale_of: dict, names: dict, translator: dict, extras: dict,
+                   metadata: dict, standard_names: dict, plants=None) -> list:
+    """
+    The reduced groups of *ds* as encoding3d instance sets (specification §12), one per component drawing them
+    (display_instances: a TemplateShapes), named after it: each group an instance of its template (a shared part:
+    the component's shape in template coordinates, on the full template's nodes, with their constant properties),
+    placed by its transform, owned by its group's vertex (an entity of the reduction's location); its vector the kept
+    nodes' values of each reduced system's unknown, then 1; a derived field per system, the unknown on the template's
+    nodes, the weighted sum of its kinds' recovery operators (shared parts: Kind.recovery_operator, a class blend's two
+    kinds weighted) applied to it, as Reduction.recover_interiors recovers them (the kept nodes their own values).
+    The parts are kept on the Reduction (built once per template and kind, as long as the kind is held). *plants*:
+    the Plant vids whose groups are drawn (None: all).
+    """
+    encoding3d = _encoding3d()
+    reduction = _reduction_of(ds)
+    g = ds.structure
+    groups = reduction.reduced_groups(ds)
+    if plants is not None and groups:
+        drawn = _plants_mask(ds, plants, reduction.location)
+        groups = {i: group for i, group in groups.items() if drawn[i]}
+    if not groups:
+        return []
+    owner_scale = names[int(g.topology_arrays()["scale"][next(iter(groups.values()))[0]])]   # the location's set
+    node_set = names[scale_of["node"]]                     # the reduced system's nodes: the templates' rows
+    bound = bool(reduction.systems) and reduction.instance is not None and not reduction.library
+    terms = [reduction.recovery_terms(ds, groups=list(groups), system=system) for system in reduction.systems] \
+        if bound else []
+    terms = [item for item in terms if item is not None]
+    full_of = {int(owner): reduction.full_template(key) for owner, key in groups.values()}
+    parts_cache = reduction.__dict__.setdefault("_display_parts", {})
+    held = set(reduction._kinds)
+    for cached in [key for key in parts_cache if key[0] == "operator" and key[1] not in held]:
+        del parts_cache[cached]                    # a kind released: its operator too
+    out = []
+    for component in components:
+        component_name = type(component).__name__
+        shapes = component.display_instances(np.asarray(sorted(full_of), dtype=np.int64))
+        if not len(shapes):
+            continue
+        unknown_owner = sorted(set(shapes.owners.tolist()) - set(full_of))
+        if unknown_owner:
+            raise ValueError(f"{component_name}.display_instances drew groups that are not reduced ones: "
+                             f"{unknown_owner[:5]}")
+        parts, part_index = [], {}
+
+        def part_of(key, build):
+            if key not in part_index:
+                if key not in parts_cache:
+                    parts_cache[key] = build()
+                part_index[key] = len(parts)
+                parts.append(parts_cache[key])
+            return part_index[key]
+        template_index = np.empty(len(shapes), dtype=np.int64)
+        for position, (owner, shape_key) in enumerate(zip(shapes.owners.tolist(), shapes.shape_of)):
+            full = full_of[owner]
+            template_index[position] = part_of(
+                ("template", component_name, shape_key, full.key),
+                lambda: _template_part(full, shapes.shapes[shape_key], node_set, component_name, translator, g,
+                                       metadata, standard_names))
+        columns = {"id": shapes.owners.copy(), "owner": shapes.owners.copy(), "template": template_index,
+                   "transform": encoding3d.column_major(shapes.transforms)}
+        vectors, derived = {}, []
+        for item in terms:
+            row_of = dict(zip(item.owner.tolist(), range(item.owner.size)))
+            rows = np.array([row_of.get(owner, -1) for owner in shapes.owners.tolist()], dtype=np.int64)
+            operator_of = np.array([part_of(("operator", key, item.system), lambda kind=kind: _operator_part(kind))
+                                    for key, kind in zip(item.kind_keys, item.kinds)], dtype=np.int64)
+            corners = item.kind.shape[1]
+            operators = np.full((rows.size, corners), NO_ID, dtype=np.int64)
+            weights = np.zeros((rows.size, corners))
+            found = rows >= 0
+            chosen = item.kind[rows[found]]
+            operators[found] = np.where(chosen >= 0, operator_of[np.maximum(chosen, 0)], NO_ID)
+            weights[found] = item.weights[rows[found]]
+            unknown_column = extras["variables"].get(item.unknown, {}).get("column", item.unknown)
+            vector = f"{unknown_column}_kept"
+            vectors[vector] = encoding3d.Ragged.of([item.inputs[row] if row >= 0 else np.zeros(0)
+                                                    for row in rows.tolist()])
+            derived.append(encoding3d.DerivedField(
+                unknown_column, entity_set=node_set, input=vector, operators=operators, weights=weights,
+                variable=_variable(item.unknown, metadata.get(item.unknown, {}), standard_names, derived=True)))
+        out.append(encoding3d.InstanceSet(component_name, owners=owner_scale, parts=parts, columns=columns,
+                                          vectors=vectors, derived=derived))
+    return out
+
+
+def _template_part(full, shape, node_set: str, mesh_name: str, translator: dict, g, metadata: dict = None,
+                   standard_names: dict = None):
+    """The encoding3d Template of a reduced group's full template *full* drawn by *shape* (Triangles in template
+    coordinates, each triangle's owner a full template row): its entity set *node_set*, the template's nodes (its
+    Compartments, ascending: the derived fields' rows), ids their template rows, with their constant properties
+    (label names, numbers, text); its mesh *mesh_name*, the vertices shared by its triangles."""
+    encoding3d = _encoding3d()
+    rows = np.flatnonzero(full.scale == g.scales.Compartment)
+    position = np.searchsorted(rows, shape.owner).clip(0, max(rows.size - 1, 0))
+    if not rows.size or (rows[position] != shape.owner).any():
+        raise ValueError(f"mesh '{mesh_name}': a template shape's triangle on a template row that is not one of its "
+                         f"nodes (Compartments): {sorted(set(shape.owner[rows[position] != shape.owner].tolist()))[:5]}")
+    columns = {"id": rows.astype(np.int64)}
+    from openalea.metafspm.data_structure.instances import LINKS
+    for name, (where, values) in sorted(full.properties.items()):
+        if name in LINKS or name in ("scale", "isanchor") or (name in _GRAPH_RESERVED and name != "label"):
+            continue
+        at = np.searchsorted(rows, where).clip(0, max(rows.size - 1, 0))
+        here = rows[at] == where if np.size(where) else np.zeros(0, dtype=bool)
+        if not here.any():
+            continue
+        values = np.asarray(values)[here]
+        if name == "label":
+            labels = np.full(rows.size, "_none", dtype=object)
+            labels[at[here]] = [translator.get(int(code), f"label_{int(code)}") for code in values.tolist()]
+            columns["label"] = labels
+        elif values.dtype != object and values.dtype.kind in "fiub":
+            column = np.full(rows.size, np.nan)
+            column[at[here]] = values.astype(float)
+            columns[name] = column
+        elif all(isinstance(value, str) for value in values.tolist()):
+            column = np.full(rows.size, "", dtype=object)
+            column[at[here]] = values
+            columns[name] = column
+    positions = shape.vertices.reshape(-1, 3)
+    feature_rows = {node_set: np.repeat(position, 3).astype(np.int64)}
+    positions, feature_rows, indices = _shared_vertices(positions, feature_rows)
+    nodes = encoding3d.EntitySet(node_set, columns=columns)
+    _declare(nodes, metadata or {}, standard_names or {}, set())
+    return encoding3d.Template(entity_sets=[nodes],
+                               meshes=[encoding3d.Mesh(mesh_name, positions=positions, feature_rows=feature_rows,
+                                                       indices=indices)])
+
+
+def _operator_part(kind):
+    """The encoding3d Operator of *kind*'s recovery (Kind.recovery_operator): dense, or its sparse system solved by
+    the reader."""
+    encoding3d = _encoding3d()
+    found = kind.recovery_operator()
+    return encoding3d.Operator.dense(found[1]) if found[0] == "dense" else encoding3d.Operator.solve(found[1],
+                                                                                                    found[2])
+
+
 def _object_values(values) -> tuple:
     """(values, encoding) of a variable: object values other than text become JSON text (encoding "json")."""
     values = np.asarray(values)
@@ -804,10 +987,12 @@ def _edge_rows(columns: dict, ids: np.ndarray) -> np.ndarray:
 
 
 def _meshes(ds, entity_sets: list, scale_of: dict, names: dict, components=(), display_meshes: bool = True,
-            display_plants=None) -> list:
+            display_plants=None, reduced_nodes=None) -> list:
     """The DataStructure's triangles (its geometry provider's, those light models get), and with *display_meshes*
     each component's display_triangles() (shapes drawn for display only, e.g. GRANAP's sections; those of the Plant
-    vids *display_plants* only when given), one mesh each, its vertices shared by its triangles."""
+    vids *display_plants* only when given), one mesh each, its vertices shared by its triangles. *reduced_nodes*: a
+    node mask, the nodes of the reduced groups not drawn here (drawn as instances, or not at all: display None), the
+    triangles of no node (a reduced group's interior) left out with them."""
     drawn = []
     # the plants' triangles (those light models get): on an anatomy-mode DataStructure its SubOrgans' (the view at
     # its from_scale, where the architectures draw them), their owners SubOrgans; the Compartments are not drawn
@@ -817,10 +1002,16 @@ def _meshes(ds, entity_sets: list, scale_of: dict, names: dict, components=(), d
     except (ValueError, NotImplementedError):
         pass
     where = None if display_plants is None else _plants_mask(ds, display_plants)
+    if reduced_nodes is not None:
+        where = ~reduced_nodes if where is None else where & ~reduced_nodes
     for component in components if display_meshes else ():
         display = getattr(component, "display_triangles", None)
         if callable(display):
-            drawn.append((type(component).__name__, ds, display() if where is None else display(where=where), True))
+            triangles = display() if where is None else display(where=where)
+            if reduced_nodes is not None and len(triangles):           # whatever the component drew of them
+                owner = triangles.owner
+                triangles = triangles.select(np.flatnonzero((owner >= 0) & ~reduced_nodes[np.maximum(owner, 0)]))
+            drawn.append((type(component).__name__, ds, triangles, True))
     return [_mesh_of(on, entity_sets, scale_of, names, name, triangles, shared=shared)
             for name, on, triangles, shared in drawn if len(triangles)]
 
@@ -965,7 +1156,7 @@ def _grid_data_structure(identifier: str, ds, metadata: dict, standard_names: di
 def to_frame(data_structures: dict, components: dict = None, mappings: dict = None, time: float = 0.,
              step: int = 0, time_unit="s", geometry: bool = True, standard_names: dict = None,
              scales=None, entities=None, variables=None, plant_names: dict = None, display_meshes: bool = True,
-             display_plants=None):
+             display_plants=None, display: str = "instances"):
     """
     The encoding3d frame of *data_structures* ({id: DataStructure}; ids are identifiers), their variables declared
     by *components* ({id: [components]}), with *mappings* ({name: (CrossMapping, source id, target id)}), at *time*
@@ -973,13 +1164,28 @@ def to_frame(data_structures: dict, components: dict = None, mappings: dict = No
     MPGDataStructures' triangles as meshes; *display_meshes*: with them, the components' display_triangles() (shapes
     drawn for display only, e.g. GRANAP's sections; their data rows are written either way); *display_plants*: the
     plants whose display shapes are drawn, {id: [Plant vids or plant names (plant_names')]} or one list for every
-    DataStructure (None: all; the others' reduced sections' interiors not recovered). *standard_names*:
-    {metafspm name: standard name} on top of the vocabulary's metafspm column (a None value drops one).
+    DataStructure (None: all; the others' reduced sections' interiors not recovered). *display*: how the display
+    shapes draw the groups of a DataStructure's Reduction (any reduction, at any location):
+
+      "instances"   (default) each reduced group an instance of its full template (an encoding3d instance set per
+                    component giving display_instances: the template's shape and nodes once, a shared part; per
+                    group its transform, owner, kept values; the unknown on the template's nodes a derived field,
+                    its kinds' recovery operators shared parts too, rebuilt by the reader for the instances it
+                    selects: encoding3d.evaluate, ParaView's Select at scale); a DataStructure without such a
+                    component draws its groups as with "full"
+      "full"        the groups drawn whole in the display mesh, their interiors recovered as display rows
+                    (metafspm_display_only): every value in the frame, the largest
+      None          the reduced groups not drawn (the others are)
+
+    *standard_names*: {metafspm name: standard name} on top of the vocabulary's metafspm column (a None value drops
+    one).
 
     For logging, *scales*, *entities* and *variables* filter what is written (see filter_frame), each a value for
     every DataStructure or a {id: value} dict; *plant_names*: {id: {plant name: Plant vid}}, to give *entities* by
     plant name. A filtered frame is a valid encoding3d file, but from_frame does not rebuild it.
     """
+    if display not in DISPLAYS:
+        raise ValueError(f"display: one of {DISPLAYS}, got {display!r}")
     encoding3d = _encoding3d()
     from openalea.encoding3d import vocabulary
     names = dict(vocabulary.platform_names("metafspm"), **(standard_names or {}))
@@ -993,7 +1199,7 @@ def to_frame(data_structures: dict, components: dict = None, mappings: dict = No
             drawn = _display_plants_of(display_plants, identifier, (plant_names or {}).get(identifier, {}))
             frame.data_structures.append(_mpg_data_structure(identifier, ds, metadata, names, geometry,
                                                              (components or {}).get(identifier, ()), display_meshes,
-                                                             drawn))
+                                                             drawn, display))
         elif isinstance(ds, (ArrayDataStructure, AdaptiveGridDataStructure)):
             frame.data_structures.append(_grid_data_structure(identifier, ds, metadata, names))
         else:
@@ -1034,12 +1240,13 @@ def _display_plants_of(display_plants, identifier: str, names: dict):
 
 
 def scene_to_frame(scene, geometry: bool = True, standard_names: dict = None, data_structures=None, scales=None,
-                   entities=None, variables=None, display_meshes: bool = True, display_plants=None):
+                   entities=None, variables=None, display_meshes: bool = True, display_plants=None,
+                   display: str = "instances"):
     """The frame of a Scene now: each population's DataStructure (id: the population's name), each environment
     model's (id: the model's class name, numbered when it has several), the scene's CrossMappings.
 
-    *geometry*, *display_meshes* and *display_plants* (the planting table's plant names, e.g. ("p0", "p3"), or a
-    {population: names} dict): as in to_frame. For logging: *data_structures*, the ids of those to write (default:
+    *geometry*, *display_meshes*, *display* and *display_plants* (the planting table's plant names, e.g. ("p0", "p3"),
+    or a {population: names} dict): as in to_frame. For logging: *data_structures*, the ids of those to write (default:
     all); *scales*, *entities* and *variables*, as in to_frame (filter_frame), *entities* also given by the planting
     table's plant names (e.g. "p0")."""
     found = scene.data_structures()
@@ -1067,7 +1274,7 @@ def scene_to_frame(scene, geometry: bool = True, standard_names: dict = None, da
     return to_frame(written, components=components, mappings=mappings, time=scene.time,
                     step=scene.iteration, time_unit="s", geometry=geometry, standard_names=standard_names,
                     scales=scales, entities=entities, variables=variables, plant_names=plant_names,
-                    display_meshes=display_meshes, display_plants=display_plants)
+                    display_meshes=display_meshes, display_plants=display_plants, display=display)
 
 
 def export_frame(path: str, data_structures: dict, **options) -> None:
@@ -1088,6 +1295,7 @@ SHOOT_COLOR = [0.42, 0.68, 0.3]
 SHOOT_COLORMAP = "Cool to Warm"                  # the default views' colour maps, one per part (ParaView presets)
 ROOTS_COLORMAP = "Inferno (matplotlib)"
 GRID_COLORMAP = "Viridis (matplotlib)"
+SECTIONS_COLORMAP = "Blue Orange (divergent)"    # a reduction's instances, by the derived unknown
 
 
 def _labels_for(data_structure, vocabulary_labels: tuple, others: list = ()) -> list:
@@ -1162,6 +1370,16 @@ def _plant_layers(data_structure, ds, declared: dict) -> list:
             layers.append({"name": f"{data_structure.id} {name}",
                            "source": {"data_structure": data_structure.id, "kind": "mesh", "mesh": name},
                            "color_by": None, "visible": False})
+    for instance_set in data_structure.instance_sets:  # a reduction's groups drawn as instances (display="instances")
+        layer = {"name": f"{data_structure.id} {instance_set.name} instances",
+                 "source": {"data_structure": data_structure.id, "kind": "instances",
+                            "instance_set": instance_set.name},
+                 "color_by": None, "visible": False}
+        if instance_set.derived:                      # coloured by the reduced system's unknown, once rebuilt
+            field = instance_set.derived[0]
+            layer.update(color_by={"entity_set": field.entity_set, "variable": field.name},
+                         colormap=SECTIONS_COLORMAP)
+        layers.append(layer)
     return layers
 
 
@@ -1174,7 +1392,10 @@ def default_views(scene, frame=None) -> dict:
       an input; a solid green without one); "<population> roots", its SubOrgans with segment ends where they are root
       elements, as tubes on radius, coloured by the first such SubOrgan variable; each part its own colour map (shoot
       SHOOT_COLORMAP, roots ROOTS_COLORMAP, grids GRID_COLORMAP); each display mesh of a component
-      ("<population> <component>", e.g. sections), hidden;
+      ("<population> <component>", e.g. sections), hidden; each instance set (a reduction's groups drawn as
+      instances: "<population> <component> instances"), hidden, coloured by its first derived field (the reduced
+      system's unknown, SECTIONS_COLORMAP: its colours once the reader rebuilds it, for the instances selected or
+      every one);
     - per environment grid: "<model>", its cells coloured by the first cell variable its components declare, at
       opacity 0.3.
 
@@ -1232,10 +1453,12 @@ def filter_frame(frame, scales=None, entities=None, variables=None, plant_names:
                   "*": []}. A filtered table always keeps its structure (encoding3d's reserved columns: ids, labels,
                   complex and parent links, edge types, a relation's ends, a grid cell's level and index), its
                   segment ends and the display rows' marker (metafspm_display_only, e.g. a reduced section's
-                  interiors); metafspm's own links (metafspm_complex, ...: from_frame's) only when named.
+                  interiors); metafspm's own links (metafspm_complex, ...: from_frame's) only when named. Instance
+                  sets are not filtered by variables (their templates and derived fields are shared parts).
 
     Parents outside what is kept become none, relations and mappings keep the pairs whose ends are kept, meshes the
-    triangles of kept entities. The result is a valid encoding3d frame, marked as filtered: from_frame does not rebuild it.
+    triangles of kept entities, instance sets (display="instances") the instances of kept owners (none when their
+    owners' scale is dropped). The result is a valid encoding3d frame, marked as filtered: from_frame does not rebuild it.
     filtered_view_columns checks views against a variables filter.
     """
     for data_structure in frame.data_structures:
@@ -1355,6 +1578,20 @@ def _keep_entities(data_structure, ids: list) -> None:
                      & np.isin(relation.columns["target"], list(kept)))
     data_structure.meshes = [mesh for mesh in (_mesh_rows(mesh, old_rows) for mesh in data_structure.meshes)
                              if mesh is not None]
+    for instance_set in data_structure.instance_sets:        # the instances of the kept owners
+        _select_instances(instance_set, np.isin(instance_set.columns["owner"], list(kept))
+                          if "owner" in instance_set.columns else np.ones(instance_set.count, dtype=bool))
+    data_structure.instance_sets = [instance_set for instance_set in data_structure.instance_sets
+                                    if instance_set.count]
+
+
+def _select_instances(instance_set, keep: np.ndarray) -> None:
+    """*instance_set* reduced to its instances *keep* (a mask): its rows, vectors and derived fields' terms."""
+    rows = np.flatnonzero(keep)
+    _select_rows(instance_set, rows)
+    instance_set.vectors = {name: vector.take(rows) for name, vector in instance_set.vectors.items()}
+    for field in instance_set.derived:
+        field.operators, field.weights = field.operators[rows], field.weights[rows]
 
 
 def _mesh_rows(mesh, old_rows: dict):
@@ -1420,6 +1657,8 @@ def _keep_scales(data_structure, names: list) -> None:
         mesh.feature_rows = {name: rows for name, rows in mesh.feature_rows.items() if name in names}
         mesh.display_sources = {name: source for name, source in mesh.display_sources.items() if source in names}
     data_structure.meshes = [mesh for mesh in data_structure.meshes if mesh.feature_rows]
+    data_structure.instance_sets = [instance_set for instance_set in data_structure.instance_sets
+                                    if instance_set.owners is None or instance_set.owners in names]
 
 
 def _keep_variables(data_structure, wanted) -> None:

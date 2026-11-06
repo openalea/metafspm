@@ -18,6 +18,12 @@ segment_triangles.
     triangles.attributes     {name: (T,)}: per-triangle values a provider gives (Adel's "green": each triangle's
                              green share), kept through select, clip and concatenate (ATTRIBUTE_DEFAULTS)
 
+A component drawing shapes for display only (``display_triangles(where=None) -> Triangles``, e.g. GRANAP's sections,
+in the scene's frame) may also draw the groups of a Reduction as instances of their templates (an encoding3d frame's
+"instances" display, io.encoding3d): ``display_instances(owners) -> TemplateShapes``, each group's shape once per
+template in the template's own coordinates, each triangle owned by the template row it shows, and a 4×4 per group
+placing it. Any reduction, at any location: a section's cells, a coarse cell's sub-cells, a reduced network's nodes.
+
 What of the elements lies in a domain (a HalfSpace; "air" and "soil", the half spaces of the scene's soil surface,
 Scene(soil_surface=)), vectorised: Triangles.clip and Triangles.fraction_in (exact cuts at the plane), and per entity
 a DataStructure's geometry (ds.geometry: Geometry.clipped, fraction_in, centre_in, by area or by length);
@@ -170,6 +176,54 @@ class Triangles:
 
 # The defaults of per-triangle attributes in the parts that do not carry them (Triangles.concatenate)
 ATTRIBUTE_DEFAULTS = {"green": 1.}
+
+
+@dataclass
+class TemplateShapes:
+    """
+    Groups drawn as instances of their templates (a component's display_instances(owners)): each shape once, in its
+    template's own coordinates, and per group the shape it draws and where.
+
+      owners      (N,) the groups drawn: their vertices (at the Reduction's location, e.g. SubOrgans, voxels)
+      shapes      {shape key: Triangles}: each shape in template coordinates, each triangle's owner the row it shows
+                  in the group's full template (SectionTemplate rows: a node of the reduced system, a Compartment,
+                  e.g. a cell's protoplast; owner_ids unused); a key is any hashable, stable from one frame to the
+                  next (e.g. the full template's key), the shape the same for every group of that key
+      shape_of    (N,) each group's shape key
+      transforms  (N, 4, 4): each group's placement, template coordinates → the DataStructure's (x' = T · [x, 1]):
+                  any affine map (a section's centre and its frame: translation, rotation, scaling along it)
+
+    placed(): the groups' triangles in the DataStructure's coordinates, as display_triangles draws them (their owner
+    the group's position in owners, owner_ids the template rows).
+    """
+    owners: np.ndarray
+    shapes: dict
+    shape_of: list
+    transforms: np.ndarray
+
+    def __post_init__(self):
+        self.owners = np.asarray(self.owners, dtype=np.int64).reshape(-1)
+        self.shape_of = list(self.shape_of)
+        self.transforms = np.asarray(self.transforms, dtype=float).reshape(-1, 4, 4)
+        if not (len(self.shape_of) == self.owners.size == self.transforms.shape[0]):
+            raise ValueError(f"TemplateShapes: {self.owners.size} owners, {len(self.shape_of)} shape keys, "
+                             f"{self.transforms.shape[0]} transforms")
+        missing = {key for key in self.shape_of} - set(self.shapes)
+        if missing:
+            raise ValueError(f"TemplateShapes: no shape for the keys {sorted(map(repr, missing))[:5]}")
+
+    def __len__(self):
+        return self.owners.size
+
+    def placed(self) -> Triangles:
+        """Every group's shape placed by its transform (owner: the group's position in owners; owner_ids: the
+        template rows)."""
+        parts = []
+        for position, (key, transform) in enumerate(zip(self.shape_of, self.transforms)):
+            shape = self.shapes[key]
+            points = shape.vertices.reshape(-1, 3) @ transform[:3, :3].T + transform[:3, 3]
+            parts.append(Triangles(points.reshape(-1, 3, 3), np.full(len(shape), position), shape.owner))
+        return Triangles.concatenate(parts) if parts else Triangles.empty()
 
 
 @dataclass(frozen=True)

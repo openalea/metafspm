@@ -33,7 +33,14 @@ A scene's outputs, written as it runs::
     frames/frame_<step>.glb, frames/scene.fspm.json
                                       the whole scene (encoding3d), every frame_period steps: every scale, every
                                       row; the components' display shapes (e.g. GRANAP's sections) every
-                                      display_period steps
+                                      display_period steps, a reduction's groups as instances of their templates
+                                      (display="instances", the default)
+    frames/parts/<key>.glb            the parts the frames share (encoding3d 0.4): each template drawn and each
+                                      kind's recovery operator, written once (its key: its content's hash), listed
+                                      in scene.fspm.json; those no frame refers to removed (a resumed run)
+    frames.fspm.zip                   with pack_at_finish: the frames folder in one archive (encoding3d.pack),
+                                      written when the run finishes; ParaView and encoding3d.read open it as the
+                                      folder
     frames/views.json                 with frame_views: the layers ParaView shows (encoding3d's views), written at the
                                       first frame
     checkpoints/step_<iteration>/     Scene.checkpoint every checkpoint_period steps, the last keep_checkpoints kept
@@ -361,6 +368,13 @@ class SceneRecorder:
     io.encoding3d.filter_frame); a variables filter must keep what the frames' views select, colour and size tubes
     by (a ValueError: given views at construction, the default ones, those of the frame unfiltered by variables, at
     the first frame).
+    *display*: how those frames draw the groups of a population's Reduction (io.encoding3d.to_frame's display):
+    "instances" (default; a population without a reduction is drawn as with "full") each group an instance of its
+    template, its unknown on the template's nodes a derived field the reader rebuilds for the instances it selects
+    (ParaView: Select at scale), the templates and the kinds' recovery operators shared parts written once in
+    frames/parts; "full" every interior recovered and written in every display frame; None the reduced groups not
+    drawn. *pack_at_finish*: the frames folder packed into frames.fspm.zip when the run finishes (*pack_compression*
+    "deflate", the default, "lzma": about 3 times smaller, 5 times slower to pack, or "stored"), the folder kept.
     *checkpoint_period* and *keep_checkpoints* (None: all); *tables* {name: function(scene)} and *table_period*.
     *frame_views*: the frames' views.json (encoding3d's views: layers for ParaView), written at the first frame: None
     (none), "default" (io.encoding3d.default_views: the shoots, the roots as tubes, the soil grids), a views dict, or the
@@ -372,6 +386,7 @@ class SceneRecorder:
                  segment_period: int = 24, frame_period: int = None, frame_options: dict = None,
                  checkpoint_period: int = None, keep_checkpoints: int = 2, tables: dict = None,
                  table_period: int = 1, frame_views=None, display_period: int = None, display_plants=None,
+                 display: str = "instances", pack_at_finish: bool = False, pack_compression: str = "deflate",
                  conservation: bool = True):
         self.folder = os.fspath(folder) if folder is not None else None
         self.summaries, self.summary_period = bool(summaries), int(summary_period)
@@ -391,6 +406,19 @@ class SceneRecorder:
         if self.display_period and (not self.frame_period or self.display_period % self.frame_period):
             raise ValueError(f"SceneRecorder(display_period={display_period}): the frames carrying display shapes, a "
                              f"multiple of frame_period ({self.frame_period})")
+        from openalea.metafspm.io.encoding3d import DISPLAYS
+        if display not in DISPLAYS:
+            raise ValueError(f"SceneRecorder(display=...): one of {DISPLAYS}, got {display!r}")
+        if "display" in self.frame_options:
+            raise ValueError("SceneRecorder: the reduced groups' drawing is given by display=, not "
+                             "frame_options['display']")
+        self.display = display
+        self.pack_at_finish, self.pack_compression = bool(pack_at_finish), str(pack_compression)
+        if self.pack_at_finish and not self.frame_period:
+            raise ValueError("SceneRecorder(pack_at_finish=True) packs the frames: give it a frame_period")
+        if self.pack_compression not in ("deflate", "lzma", "stored"):
+            raise ValueError(f"SceneRecorder(pack_compression=...): 'deflate', 'lzma' or 'stored', got "
+                             f"{pack_compression!r}")
         self.checkpoint_period = int(checkpoint_period) if checkpoint_period else None
         self.keep_checkpoints = keep_checkpoints
         self.tables, self.table_period = dict(tables or {}), int(table_period)
@@ -403,6 +431,7 @@ class SceneRecorder:
         self._columns = {}
         self._memory = {}              # {table: [DataFrame]}, without an output folder
         self._frames = None            # the frames index's entries, read at the first frame written
+        self._parts = set()            # the keys of the parts those frames use (frames/parts)
         self._called = {}              # {table: the last iteration its function was called at}
         self._run = None
         self._started = None
@@ -447,6 +476,8 @@ class SceneRecorder:
     def finish(self, scene, status: str = "finished", error: BaseException = None) -> None:
         """The run's end: the last state (when not recorded at this step) and its status."""
         self._record(scene, final=True)
+        if self.pack_at_finish and self._frames:
+            self.pack()
         if self.folder is not None and self._run is not None:
             self._run["status"] = status
             if error is not None:
@@ -761,7 +792,7 @@ class SceneRecorder:
                 if self.frame_options.get("variables") is not None:
                     options = {key: value for key, value in self.frame_options.items() if key != "variables"}
                     unfiltered = scene_to_frame(scene, display_meshes=display, display_plants=self.display_plants,
-                                                **options)
+                                                display=self.display, **options)
                 content = default_views(scene, unfiltered)
                 self._check_views_kept(content)
             for issue in views.check_views(content, frame).issues:
@@ -777,22 +808,40 @@ class SceneRecorder:
         folder = os.path.join(self.folder, "frames")
         os.makedirs(folder, exist_ok=True)
         index_path = os.path.join(folder, encoding3d.codec.INDEX_FILE)
-        if self._frames is None:
-            self._frames = []
+        first = self._frames is None
+        if first:
+            self._frames, self._parts = [], set()
             if self.resume and os.path.exists(index_path):       # a restored run: the frames up to its step
-                self._frames = [entry for entry in encoding3d.read_index(index_path)["frames"]
-                                if entry["step"] <= scene.iteration]
+                index = encoding3d.read_index(index_path)
+                self._frames = [entry for entry in index["frames"] if entry["step"] <= scene.iteration]
                 for entry in self._frames:
                     entry.pop("path", None)
+                self._parts = set(index.get("parts", {}))
         name = f"frame_{scene.iteration:06d}.glb"
-        frame = scene_to_frame(scene, display_meshes=display, display_plants=self.display_plants, **self.frame_options)
-        encoding3d.write(os.path.join(folder, name), frame)
+        frame = scene_to_frame(scene, display_meshes=display, display_plants=self.display_plants,
+                               display=self.display, **self.frame_options)
+        self._parts.update(encoding3d.write(os.path.join(folder, name), frame))    # its parts: each written once
         if self.frame_views is not None and not self._views_written:
             self._write_views(scene, frame, folder, display)
         self._frames = [entry for entry in self._frames if entry["step"] != scene.iteration]
         self._frames.append({"time": float(scene.time), "step": int(scene.iteration), "file": name})
-        encoding3d.write_index(index_path, self._frames, time_unit="s")
+        encoding3d.write_index(index_path, self._frames, time_unit="s", parts=sorted(self._parts))
+        if first:                     # the parts of frames not listed (an earlier run in this folder) removed
+            encoding3d.prune_parts(index_path)
+            self._parts = set(encoding3d.read_index(index_path).get("parts", {}))
         return os.path.join(folder, name)
+
+    def pack(self) -> str:
+        """The frames folder packed into frames.fspm.zip next to it (encoding3d.pack, pack_compression: each file
+        an unchanged member, read as the folder); its path. SceneRecorder(pack_at_finish=True) calls it when the run
+        finishes."""
+        from openalea.metafspm.io.encoding3d import _encoding3d
+        encoding3d = _encoding3d()
+        path = encoding3d.pack(os.path.join(self.folder, "frames"), os.path.join(self.folder, "frames.fspm.zip"),
+                               compression=self.pack_compression)
+        if self._run is not None:
+            self._run["frames_archive"] = os.path.relpath(path, self.folder)
+        return path
 
     def _checkpoint(self, scene) -> str:
         """Scene.checkpoint into checkpoints/step_<iteration>, their parts saved once in checkpoints/shared; the older
@@ -834,10 +883,12 @@ class SceneRecorder:
         if os.path.exists(index_path):
             from openalea.metafspm.io.encoding3d import _encoding3d
             encoding3d = _encoding3d()
-            frames = [entry for entry in encoding3d.read_index(index_path)["frames"] if entry["step"] <= scene.iteration]
+            index = encoding3d.read_index(index_path)
+            frames = [entry for entry in index["frames"] if entry["step"] <= scene.iteration]
             for entry in frames:
                 entry.pop("path", None)
-            encoding3d.write_index(index_path, frames, time_unit="s")
+            encoding3d.write_index(index_path, frames, time_unit="s", parts=sorted(index.get("parts", {})))
+            encoding3d.prune_parts(index_path)          # the parts only the removed frames used
 
     # ── run.json, scenario.json ───────────────────────────────────────────────
 
@@ -897,6 +948,8 @@ class SceneRecorder:
                          "segment_plants": sorted(self.segment_plants), "segment_period": self.segment_period,
                          "frame_period": self.frame_period, "frame_options": _described(self.frame_options),
                          "display_period": self.display_period, "display_plants": self.display_plants,
+                         "display": self.display, "pack_at_finish": self.pack_at_finish,
+                         "pack_compression": self.pack_compression,
                          "frame_views": self.frame_views if self.frame_views in (None, "default") else "given",
                          "checkpoint_period": self.checkpoint_period, "tables": sorted(self.tables),
                          "table_period": self.table_period, "conservation": self.conservation}}

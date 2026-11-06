@@ -51,7 +51,8 @@ def solved():
 
 
 def _frame(reduced, instance):
-    return to_frame({"plants": reduced}, components={"plants": list(instance.components) + [SectionDrawer(reduced)]})
+    return to_frame({"plants": reduced}, components={"plants": list(instance.components) + [SectionDrawer(reduced)]},
+                    display="full")
 
 
 def test_the_interiors_are_display_rows_with_the_full_solve_s_values(solved):
