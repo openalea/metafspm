@@ -8,13 +8,17 @@ end).
 
     python benchmark.py [--plants 2] [--days 3] [--label text] [--outputs] [--checkpoint-at 168 ...]
                         [--resume outputs/benchmarks/checkpoints/<label>/step_000168]
+                        [--scenario leaf_ports=bundles vapour_path=air_spaces ...]
 
 By default 2 plants to day 3 (the use case's fast regime); --days 8 for the day-8 numbers, --plants 8 --days 4 for the
 scaling; --outputs measures the outputs at the end (outputs()): a frame without and with the sections drawn (those of
 run.DISPLAY_PLANTS, the use case's frame variables), two checkpoints sharing their unchanging parts, their size and
 time. --checkpoint-at writes the scene's checkpoint after those hours (outputs/benchmarks/checkpoints/<label>/, the
 shared parts once); --resume loads one into the freshly built scene and runs on from its hour to --days (the load's
-time and memory, then each step's: a resumed run evaluates no kind again). The results go to
+time and memory, then each step's: a resumed run evaluates no kind again); --scenario updates the plants' scenario
+(run.WHEAT_SCENARIO; a value read as JSON when it is, e.g. length_classes=0.2, else a string). Each step records the
+plants' nodes and the reduced groups' dense blocks (their nonzeros: kept nodes squared, summed), the end the kinds
+held and their pickled size (as checkpointed). The results go to
 outputs/benchmarks/<commit>.json (untracked), one entry per mode ("2p_3d") updated in place, and a summary is
 printed. Run it under a memory bound, one at a time (systemd-run --user --scope -p MemoryMax=8G ...).
 """
@@ -112,7 +116,8 @@ def results(scene) -> dict:
     picked = {"transpiration": rows["leaf_water"]["leaf_transpiration"],
               "root_uptake": rows["plant_water"]["root_uptake"],
               "green_area": rows["leaves"]["green_area"], "PARa": rows["leaves"]["PARa"], "An": rows["leaves"]["An"],
-              "gs": rows["leaves"]["gs"], "roots_psi": rows["roots"]["psi"]}
+              "gs": rows["leaves"]["gs"], "leaf_psi": rows["leaves"]["leaf_water_potential"],
+              "leaf_psi_min": rows["leaves"]["leaf_water_potential_min"], "roots_psi": rows["roots"]["psi"]}
     balances = scene.recorder.table("conservation")
     balances = balances[balances["time"] == scene.time]
     for component, name in (("MechaHydraulics", "plant_residual"), ("RichardsSoil", "soil_residual")):
@@ -121,11 +126,35 @@ def results(scene) -> dict:
     return {name: float(value) for name, value in picked.items()}
 
 
+def dense_blocks(scene) -> int:
+    """The nonzeros of the reduced groups' dense blocks (each group's kept nodes squared), over the populations."""
+    total = 0
+    for population in scene.populations:
+        ds = population.data_structure
+        reduction = getattr(ds.structure, "reduction", None)
+        table = reduction.group_table(ds) if reduction is not None else None
+        if table is not None:
+            total += sum(int(vids.shape[0]) * int(vids.shape[1]) ** 2 for vids in table.kept_vids)
+    return total
+
+
+def kinds_size(scene) -> tuple:
+    """(the kinds the reductions hold, their pickled size in MB: as checkpointed), one kind pickled at a time."""
+    import pickle
+    count, size = 0, 0
+    for population in scene.populations:
+        reduction = getattr(population.data_structure.structure, "reduction", None)
+        for by_system in (reduction._kinds.values() if reduction is not None else ()):
+            count += 1
+            size += len(pickle.dumps(by_system, protocol=pickle.HIGHEST_PROTOCOL))
+    return count, size / 1e6
+
+
 def benchmark(plants: int, days: float, measure_outputs: bool = False, checkpoint_at=(), resume: str = None,
-              label: str = "run") -> dict:
+              label: str = "run", scenario: dict = None) -> dict:
     counter = KindCounter()
     started = time.perf_counter()
-    scene = run.scene(plants, folder=None)
+    scene = run.scene(plants, folder=None, scenario=scenario)
     built = time.perf_counter() - started
     counter.take()
     loaded, first_hour = None, 0
@@ -150,14 +179,15 @@ def benchmark(plants: int, days: float, measure_outputs: bool = False, checkpoin
         timing = {name: value - previous.get(name, 0.) for name, value in scene.timing.items()}
         previous = dict(scene.timing)
         nodes = sum(population.data_structure.n_nodes() for population in scene.populations)
-        steps.append({"hour": hour + 1, "seconds": seconds,
+        dense = dense_blocks(scene)
+        steps.append({"hour": hour + 1, "seconds": seconds, "dense_nnz": dense,
                       "models": {name: value for name, value in timing.items() if "." not in name},
                       "components": {name: value for name, value in timing.items() if "." in name}, "kinds": kinds,
                       "new_templates": templates,
                       "kind_seconds": kind_seconds, "nodes": nodes, "rss_gb": resident_memory(),
                       "results": results(scene)})
         print(f"h {hour + 1:4d}  {seconds:7.2f} s  kinds {kinds:3d} ({kind_seconds:6.2f} s)  nodes {nodes:6d}  "
-              f"RSS {steps[-1]['rss_gb']:.2f} GB", flush=True)
+              f"dense {dense:8d}  RSS {steps[-1]['rss_gb']:.2f} GB", flush=True)
         if hour + 1 in checkpoint_at:
             checkpoint_started = time.perf_counter()
             path = os.path.join(checkpoints, f"step_{hour + 1:06d}")
@@ -173,6 +203,7 @@ def benchmark(plants: int, days: float, measure_outputs: bool = False, checkpoin
     rss = resident_memory()
     trim_memory()
     after_trim, peak = resident_memory(), peak_memory()
+    kinds_held, kinds_mb = kinds_size(scene)
     measured = outputs(scene) if measure_outputs else None
     compute = getattr(scene, "compute", None)
     result = {"commit": commit(), "date": time.strftime("%Y-%m-%d %H:%M:%S"), "plants": plants, "days": days,
@@ -182,7 +213,8 @@ def benchmark(plants: int, days: float, measure_outputs: bool = False, checkpoin
               "environment": {name: os.environ.get(name) for name in
                               ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS", "MALLOC_ARENA_MAX")},
               "build_seconds": built, "total_seconds": total, "resumed": loaded,
-              "rss_end_gb": rss, "rss_after_trim_gb": after_trim, "peak_rss_gb": peak,
+              "rss_end_gb": rss, "rss_after_trim_gb": after_trim, "peak_rss_gb": peak, "scenario": scenario or {},
+              "kinds_held": kinds_held, "kinds_MB": kinds_mb,
               "timing": timing, "steps": steps, "outputs": measured}
     return result
 
@@ -235,6 +267,9 @@ def summary(result: dict) -> str:
                  f"{sum(step['kind_seconds'] for step in steps):.1f} s")
     lines.append(f"memory: RSS at the end {result['rss_end_gb']:.2f} GB, after trim {result['rss_after_trim_gb']:.2f} GB, "
                  f"peak {result['peak_rss_gb']:.2f} GB")
+    lines.append(f"nodes at the end {steps[-1]['nodes']}, dense blocks {steps[-1]['dense_nnz']} nonzeros; kinds held "
+                 f"{result['kinds_held']} ({result['kinds_MB']:.1f} MB pickled)"
+                 + (f"; scenario {result['scenario']}" if result.get("scenario") else ""))
     by_model = {name: value for name, value in result["timing"].items() if "." not in name}
     by_component = {name: value for name, value in result["timing"].items() if "." in name}
     lines.append("per model (s): " + ", ".join(f"{name} {value:.1f}" for name, value in
@@ -249,6 +284,19 @@ def summary(result: dict) -> str:
     return "\n".join(lines)
 
 
+def scenario_entries(entries) -> dict:
+    """--scenario's KEY=VALUE entries as a dict, each value read as JSON when it is (a number, true), else a
+    string."""
+    out = {}
+    for entry in entries:
+        key, _, value = entry.partition("=")
+        try:
+            out[key] = json.loads(value)
+        except ValueError:
+            out[key] = value
+    return out
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.strip().splitlines()[0])
     parser.add_argument("--plants", type=int, default=2)
@@ -257,10 +305,12 @@ def main(argv=None):
     parser.add_argument("--outputs", action="store_true", help="measure a frame and two checkpoints at the end")
     parser.add_argument("--checkpoint-at", type=int, nargs="*", default=(), help="hours after which to checkpoint")
     parser.add_argument("--resume", default=None, help="a checkpoint folder to resume from")
+    parser.add_argument("--scenario", nargs="*", default=(), metavar="KEY=VALUE",
+                        help="the plants' scenario entries (e.g. leaf_ports=bundles vapour_path=air_spaces)")
     arguments = parser.parse_args(argv)
     label = arguments.label or f"{arguments.plants}p_{arguments.days:g}d"
     result = benchmark(arguments.plants, arguments.days, arguments.outputs, tuple(arguments.checkpoint_at),
-                       arguments.resume, label)
+                       arguments.resume, label, scenario_entries(arguments.scenario))
     os.makedirs(BENCHMARKS, exist_ok=True)
     path = os.path.join(BENCHMARKS, f"{result['commit']}.json")
     entries = {}
