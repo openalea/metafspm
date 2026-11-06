@@ -206,6 +206,28 @@ laptop (2026-11-06), the same results bit for bit with 1, "auto" (6) or 4 proces
 with 1, 212 s with "auto" (last day 1.97 → 1.83 s per hour, first hour 6.3 → 4.1 s), 208 s with 4 (1.68 s), the
 memory's peak, the processes included, 3.4, 4.3 and 5.0 GB; 8 plants to day 4, last day 1.08 → 0.97 s; 16 plants,
 1.78 → 1.52 s. `benchmark.py --workers 1|auto|n --linear-solver superlu|superlu_reuse|cholmod` compares them.
+
+**Scaling** (measured 2026-11-06 on the same laptop, metafspm 97a7ff3, GRANAP 9464738–5f5b34b; `benchmark.py
+--variability 1`: each plant its own root draws, the plants sharing their kinds; under an 8 GB bound, the memory the
+scope's peak, the pool's processes included; each row the day's mean step):
+
+| plants, day | workers | s per step | kinds evaluated that day (s per step) | nodes | memory peak |
+|---|---|---|---|---|---|
+| 2, day 8 (identical plants, metafspm 917377f) | auto (7) | 1.54 | 139 (0.50) | 13,924 | 5.3 GB |
+| 8, day 8 | 4 | 2.49 | 115 (0.34) | 56,598 | 4.4 GB |
+| 16, day 8 | 4 | 4.70 | 122 (0.33) | 113,438 | 5.3 GB |
+| 16, day 9 | 4 | 5.86 | 61 (0.21) | 154,204 | 5.7 GB |
+| 8, day 12 | 1 | 6.31 | 91 (0.53) | 193,672 | 5.6 GB |
+| 8, day 14 | 1 | about 10 | 60 (0.35) | 333,712 | 6.7 GB |
+
+The kinds saturate (a few hundred a day in the first week, 50 to 90 a day from day 9: the organs' new classes, a
+few tenths of a second per step); the step grows with the plants' nodes (the roots' sections and their kept nodes:
+about 30 µs per node per step from day 10 on, MECHA's plant solve and the topology updates first), and so does the
+memory (about 10 kB per node beyond 1.5 GB). Extrapolated, 40 plants at day 14 would hold about 1.7 million nodes,
+take about 50 s per step and need about 19 GB: beyond this laptop (the run is a workstation's, or fewer plants, or a
+coarser root anatomy). On a large scene the pool's forked processes add 1 to 2.5 GB (the pages of the main process
+they touch are copied): beyond about 150,000 nodes, `--workers 1` or `2` keeps the memory down at little cost (the
+kinds take a few tenths of a second per step there).
 On a machine with an NVIDIA GPU and CuPy, `benchmark.py --device cuda` runs the kinds' Kron reductions and the
 linear solves on the device (metafspm's docs/gpu.md, "Running on a GPU": what is offloaded, how to compare it with
 the CPU run, the transfers in the entry's `device`); not measured yet (no GPU on the development laptop).
@@ -227,7 +249,10 @@ their drop below the roots'); with `vapour_path="air_spaces"` too, 10,250 nodes,
 step 1.55 s), the kinds 337 MB, the fluxes within 0.2 %, the leaves' water potential 3 % above. Both are kept as
 options: the leaves' water potential (Tuzet's stomata read it) drifts beyond the 0.5 % bound as the plants grow,
 while the step gains less than 15 % at two plants (the kinds' evaluation and the other models dominate it there; the
-plant solve, which the options shrink, dominates a larger scene's).
+plant solve, which the options shrink, dominates a larger scene's). At 16 plants (their own root draws), day 8:
+`leaf_ports="bundles"` keeps 98,526 nodes (113,438), 8.8M dense nonzeros (15.7M), MECHA 1.44 s per step (2.18;
+the step 3.28 s, 4.66), the scope's peak 4.7 GB (5.3), the transpiration and uptake unchanged, gs within 0.04 %, the
+leaves' water potential 0.36 % above on average, 0.54 % at most (0.8 % of their drop below the roots').
 
 The frames keep a few variables, the run's explicit choice (`run.FRAME_VARIABLES`, the recorder's
 `frame_options={"variables": ...}`; `scene(frame_variables=None)` keeps them all). Every entity set keeps its
