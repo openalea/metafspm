@@ -669,7 +669,8 @@ class RichardsSoilModel(EnvironmentModel):
     h starting at *initial_pressure_head* (m: a number or a function of the depth).
 
     After each run, an adaptive grid is refined where the roots take up water (the uptake per volume above
-    refine_uptake_fraction of its largest value) and where h changes steeply (|∇h| above refine_gradient, m m-1:
+    refine_uptake_fraction of its largest value, when that is above uptake_floor, m3 m-3 s-1: not a plant's
+    round-off before it transpires, about 1e-21, a seedling's 1e-9) and where h changes steeply (|∇h| above refine_gradient, m m-1:
     a front; 1 at hydrostatic equilibrium), and coarsened where both are low (coarsen_uptake_fraction,
     coarsen_gradient). The water is carried over as a volume (RichardsSoil.carry_over: θ V conserved, h from θ),
     which no metafspm hook does for derived variables: it is done here, after the refinement.
@@ -681,7 +682,7 @@ class RichardsSoilModel(EnvironmentModel):
 
     def __init__(self, plant_data_structures, xrange, yrange, time_step, depth=1., voxel=0.05, adaptive=True,
                  max_level=2, layers=((np.inf, LOAM),), initial_pressure_head=-1., refine_uptake_fraction=0.05,
-                 coarsen_uptake_fraction=0.005, refine_gradient=5., coarsen_gradient=2.):
+                 coarsen_uptake_fraction=0.005, refine_gradient=5., coarsen_gradient=2., uptake_floor=1e-15):
         super().__init__(plant_data_structures, xrange, yrange, time_step)
         self.grid = self.build_grid(voxel, depth, adaptive=adaptive, max_level=max_level)
         self.soil = RichardsSoil(data_structure=self.grid, time_step=time_step)
@@ -692,6 +693,7 @@ class RichardsSoilModel(EnvironmentModel):
         self.adaptive = adaptive
         self.refine_uptake_fraction, self.coarsen_uptake_fraction = refine_uptake_fraction, coarsen_uptake_fraction
         self.refine_gradient, self.coarsen_gradient = refine_gradient, coarsen_gradient
+        self.uptake_floor = uptake_floor
         self.initial_water = None
         self.history = []                                    # cells per level after each adaptation
 
@@ -736,7 +738,7 @@ class RichardsSoilModel(EnvironmentModel):
         top = density.max()
         refine = gradient > self.refine_gradient
         coarsen = gradient < self.coarsen_gradient
-        if top > 0.:
+        if top > self.uptake_floor:                          # an uptake, not round-off (a plant not transpiring)
             refine |= density > self.refine_uptake_fraction * top
             coarsen &= density < self.coarsen_uptake_fraction * top
         coarsenable = set(self.grid.cell_ids()[coarsen & ~refine].tolist())
