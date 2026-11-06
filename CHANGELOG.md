@@ -2,6 +2,35 @@
 
 ## Unreleased (release2026)
 
+### API generalisations (O-11, second half: checkpoint scenario, no process-wide state, balances, timing)
+
+- **Resuming with the current scenario.** `Scene.load_checkpoint(path, scenario="checkpoint" | "current")` and
+  `Scene.restore(path, scenario=..., **arguments)`: `"checkpoint"` (the default) runs on with the saved parameters
+  and settings; `"current"` applies the scene's own scenarios (its planting table's, its environment scenarios)
+  again after the load (only the entries they give).
+- **Breaking: the time step is the Scene's.** `ds.simulation_time_step` (every DataStructure of a Scene, set by
+  `Scene(time_step=)` and `population_data_structure(time_step=)`), `Component.simulation_step()`. The Choregrapher
+  is no singleton and holds no run state (the steps registered at class definition only): **`Choregrapher().reset()`,
+  `set_simulation_time_step`, `simulation_step()` and `scheduled_groups` are removed**; a component run without a
+  Scene is given its DataStructure's `simulation_time_step` (none: one of its own steps per call). Scenes of other
+  time steps run in one process. A component built without a time step runs one of the scene's steps.
+- **Objects shared by content.** `ds.objects(name, saved=)` (`MPG.objects`, `MPG.share_objects` for a reduction's
+  library), `data_structure.objects.ObjectRegistry`: one registry per DataStructure, its objects keyed by content,
+  checkpointed with it, each once (a shared part, in its saved form; `saved=False` a cache). GRANAP's module-level
+  registries are gone (its templates are `g.objects("anatomy_templates")`).
+- **One store of caches.** `Component.caches()` (cached()'s values, `keep(saved=False)`'s, the graph systems' views,
+  pieces and previous solutions), `clear_caches()`: `Scene.load_checkpoint` drops them all (no list of keys).
+- **Declared conservation.** `graph_system(conserved={quantity: Conservation(amount=, inflow=, outflow=,
+  unit=)})` (`solve.conservation`): the inflow and outflow integrated over the accepted sub-steps (a rejected
+  adaptive trial counts for nothing), the change of what is held, the residual; `component.conservation(reset=)`;
+  the SceneRecorder's `conservation.csv` (`SceneRecorder(conservation=True)`).
+- **The values before the step.** `ds.previous(name, missing=nan)` (aligned by id), kept by the Scene
+  (`ds.remember_previous`, `scene.keep_previous(ds, *names)`) for the variables a `Summary(max_change=[...])` asks
+  for (`<name>_max_change`); `Summary(population=)` may name an environment model's DataStructure (a grid's
+  `"cell"`).
+- **Timing per component.** `scene.timing` holds `"<Model>.<Component>"` entries next to the models'
+  (`Component.wall_time(reset=)`: its calls and its steps run together), in run.json.
+
 ### API generalisations (O-11: soil surface, receiver-private names, entity sets, link mappings)
 
 - **One soil surface.** `Scene(soil_surface=0.)` (m): every DataStructure's `ds.soil_surface` (a component's

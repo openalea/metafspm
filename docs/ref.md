@@ -34,6 +34,9 @@
 .. automodule:: openalea.metafspm.solve.reduction
    :members: Reduction, Relative, Kind
 
+.. automodule:: openalea.metafspm.solve.conservation
+   :members: Conservation
+
 .. automodule:: openalea.metafspm.coupling.choregrapher
    :members: Choregrapher, family_of
 ```
@@ -52,6 +55,9 @@ The solvers are chosen by key in `graph_system(solver=...)`: `"newton"`, `"newto
 
 .. automodule:: openalea.metafspm.data_structure.mpg
    :members: MPG
+
+.. automodule:: openalea.metafspm.data_structure.objects
+   :members: ObjectRegistry
 
 .. automodule:: openalea.metafspm.data_structure.instances
    :members: SectionTemplate, Instances, InstancedView

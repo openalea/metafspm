@@ -182,7 +182,15 @@ carbon()                                  # one time step: every step, in the sc
   (the same for every plant), checked against their `choices`. Numeric `parameter`s stay per plant.
 - **State that is not a variable:** `self.keep(name, value)` and `self.kept(name, default)` (the time of a last
   lighting), saved by the Scene's checkpoints; `keep(..., saved=False)` for a cache rebuilt when missing (a kept
-  canopy, incremental meshes); `self.cached(name, build, key)` for a value derived from the structure.
+  canopy, incremental meshes); `self.cached(name, build, key)` for a value derived from the structure. Both caches
+  are the component's `caches()` (with its graph systems' views and solutions): never checkpointed, all dropped
+  when a checkpoint is loaded (`clear_caches()`).
+- **Objects shared by content:** `ds.objects(name, saved=)` (`g.objects` on an MPG, for the initiators), a
+  registry of the DataStructure (`data_structure.objects.ObjectRegistry`: `get(key, build)`, `index(key)`,
+  `by_index(index)`), its objects keyed by their content (`solve.memo.content_key` of what they are made from), saved
+  with it by the checkpoints, each once (a shared part, in the form `saved` gives; `saved=False`: a cache, not
+  saved). No module-level registry: two Scenes in one process have their own, freed with them (GRANAP's anatomy
+  templates, `g.objects("anatomy_templates")`).
 - **Reading a component:** `Component.declarations()` lists its variables as a table (kind, scale, unit, description,
   default, provider); `Component.schedule()` its steps in the order they run, grouped by stage;
   `component.variable_specs` their resolved places on its DataStructure; `component.active_ids(location)` the active
@@ -652,11 +660,18 @@ scene = Scene.from_scenario(scenario, stand(...), Wheat, environment=[RhizoSoil,
 - **A soil for tests and examples.** `openalea.metafspm.testing.soil.Soil` (not one of metafspm's models, a
   fixture): the steady water flow in a coarse fixed grid (5 cm cells), its conductivity by layer, the water table at
   the bottom, the surface evaporating; a plant model takes up water from it through scene links.
+- **The time step is the Scene's.** `Scene(time_step=)` sets it on every DataStructure of the scene
+  (`ds.simulation_time_step`, also `population_data_structure(time_step=)`'s), from which each component runs
+  `simulation_time_step / time_step` sub-steps per call (`component.simulation_step()`); a component built without a
+  time step runs one of the scene's steps. Nothing is process-wide: Scenes of other time steps run in one process,
+  and the Choregrapher (the steps' schedule) holds no run state.
 - **Calendar.** `Scene(start=(day_of_year, hour))`: the calendar of the scene's time 0 (UTC); every component's
   `self.calendar()` gives the (day of year, hour) of its forcing time (a light model's sun), and a forcing given by
   the hour of the day (or by the day of the year) takes it with `as_forcing(value, time_unit="h", origin="calendar")`.
 - **Outputs: the SceneRecorder.** `recorder=SceneRecorder(folder, ...)` (or `recorder=folder`) writes:
-  - `run.json`: status (running, finished, stopped, failed with its error), times, wall time per model, versions;
+  - `run.json`: status (running, finished, stopped, failed with its error), times, wall time per model and per
+    component (`scene.timing`: `"<Model>"` and `"<Model>.<Component>"`, a component's calls and its steps run
+    together with others, `Component.wall_time()`), versions;
   - `scenario.json`: the planting, the scenarios, the environment models, the forcings (tables in `forcings/`);
   - `Plant/<Model>/summaries.csv`: one row per plant and step, the float state variables of every component on the
     plants' DataStructure **and on its views** (a structural component's SubOrgans, Adel's or ArchiSimple's
@@ -674,7 +689,17 @@ scene = Scene.from_scenario(scenario, stand(...), Wheat, environment=[RhizoSoil,
     "green_area": ">0"}, sum={"An": "green_area", "transpiration": None}, mean={"gs": "green_area"})`: the
     entities at the location where every condition holds (a variable, at that location or a coarser one; `"label"`;
     `"<Scale>.label"`, their owner's at a scale), the sums (of name × factor: an integral), the means (by their
-    declared weight with a list), the extremes (`<name>_min`, `<name>_max`);
+    declared weight with a list), the extremes (`<name>_min`, `<name>_max`), the largest change since the step
+    before (`max_change=[...]`, `<name>_max_change`: over the entities there at both, from the values the Scene
+    keeps before each step, `ds.previous(name)`, aligned by id; `scene.keep_previous(ds, *names)` keeps others);
+    `population=` a population's model name, or an environment model's DataStructure (its `scene.data_structures()`
+    id: a soil grid's cells);
+  - `conservation.csv`: the balances of the quantities the graph systems conserve (`graph_system(conserved=
+    {"water": Conservation(amount=("water_content", "volume"), inflow="surface_inflow", outflow=("drainage",
+    "plant_uptake"), unit="m3")})`): per step (the summaries' period), each one's inflow and outflow (their rates at
+    the end of each accepted sub-step times its length, over the solved entities), the change of what is held and
+    their residual, change − (inflow − outflow), the solver's tolerance for a conservative system
+    (`component.conservation(reset=False)` reads it);
   - `frames/` (encoding3d, every `frame_period` steps) and `checkpoints/step_<n>` (every `checkpoint_period`, the last
     `keep_checkpoints` kept; their unchanging parts saved once in `checkpoints/shared`, below).
 
@@ -683,8 +708,13 @@ scene = Scene.from_scenario(scenario, stand(...), Wheat, environment=[RhizoSoil,
   `recorder.table(name)` reads any of them back. `Scene.simulate` sets the run's status; a loop of `scene.run()`
   ends with `scene.finish()` (a recording scene dropped without it warns).
 - **Restarts.** `scene.checkpoint(path)` and `Scene.restore(path, **arguments)` continue a run bit for bit; models
-  keep non-variable state through `checkpoint_state()` / `restore_state(state)` (e.g. a registry of their own, such
-  as GRANAP's anatomy templates, which a new process does not have). What does not change from one checkpoint to the
+  keep non-variable state through `checkpoint_state()` / `restore_state(state)` (an external solver's state; the
+  objects the components share by content are the DataStructures' `ds.objects`, saved with them).
+  `Scene.load_checkpoint(path, scenario="checkpoint" | "current")` (and `Scene.restore(path, scenario=...,
+  **arguments)`): with `"checkpoint"` (the default) the run goes on with the checkpoint's parameters and settings,
+  whatever the scene was built with; with `"current"` the scene's own scenarios (its planting table's, its
+  environment scenarios) are applied again after the load: a resumed run with a changed parameter (only the entries
+  the scenarios give; the others keep the checkpoint's values). What does not change from one checkpoint to the
   next is saved once (`scene.shared`): a `checkpoint_state()` returns `Shared(name, value)` for such a value (at any
   depth), and the sections' templates (reduced or instanced) are shared the same way; each part is written once in
   the shared folder (`scene.checkpoint(path, shared=folder)`, by default `path/shared`; the SceneRecorder's

@@ -121,7 +121,8 @@ import json
 import pandas as pd
 from openalea import encoding3d
 
-status = json.load(open("outputs/dry/run.json"))           # status["status"] == "finished", status["timing"]
+status = json.load(open("outputs/dry/run.json"))           # status["status"] == "finished", status["timing"]:
+                                                           # per model and per component ("SeedlingWater.PlantWaterTransport")
 plant = pd.read_csv("outputs/dry/Plant/SeedlingWater/summaries.csv")
 soil = pd.read_csv("outputs/dry/Soil/Soil/summaries.csv")
 frames = encoding3d.read_index("outputs/dry/frames/scene.fspm.json")["frames"]
@@ -141,7 +142,9 @@ The dry air pulls more water through the seedling than the humid one, despite it
 - **ParaView.** encoding3d's reader plugin opens `frames/scene.fspm.json` and plays the frames as time steps.
 - **Restart.** `Scene.restore("outputs/dry/checkpoints/step_000048", **the same arguments)` continues the run.
   The recorder then cuts its tables back to the checkpoint's time, so a run that went past it leaves no duplicate
-  rows.
+  rows. To go on with a changed parameter, build the scene with the changed scenario and resume with
+  `scenario="current"`: `Scene.restore(path, scenario="current", **arguments)` applies the scene's scenarios after
+  the load (by default, `"checkpoint"`, the run keeps the saved values).
 - **Another platform.** `openalea.metafspm.io.encoding3d.import_frame(path)` rebuilds the DataStructures from a frame,
   bit for bit.
 

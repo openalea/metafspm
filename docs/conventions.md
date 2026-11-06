@@ -124,6 +124,7 @@ Declarations that cannot be written back raise when the component is created: a 
 
   An MPG-style step sees the variables its component declares (states, inputs, parameters); it must declare the properties it reads. Code holding the MTG object itself (e.g. a Logger given `g`) calls `ds.flush_mtg()` first.
 - **Checkpoints:** `ds.checkpoint(path)` and `Class.restore(path)`. Derivation formulas and mask rules are module-level functions or picklable objects, not lambdas.
+- **No process-wide state:** what a run builds belongs to its DataStructures or its components, never to a module or a class: objects shared by content in `ds.objects(name, saved=)` (saved with the DataStructure, freed with it), caches in `component.caches()` (`cached()`, `keep(saved=False)`: dropped when a checkpoint is loaded), the simulation step in `ds.simulation_time_step`. A module-level memo is only for constants (a preset's defaults).
 - **`mtg_sync = "after_call"`** writes the state variables after every call (the former default); **`"never"`** leaves the MTG untouched.
 - MTG-backed parameters are re-read at the start of every call.
 - In graph systems, parameters and inputs are read-only.
