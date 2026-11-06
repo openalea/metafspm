@@ -326,8 +326,8 @@ class SoilDiffusion(FunctionalComponent):
   a published entity set's name; all without) keep their ports and kept nodes (`ports=`, `keep=`: entity set names,
   `"GranapAnatomy.conduits"`, `{variable: condition}` rules on the template's properties, callables, or tuples of
   them), their interiors eliminated once per kind (a library population of
-  the model's own components, each kind its group's template, kind values and the plant's parameters, objects
-  included, digested by content; the library runs the components of the reduced systems and those giving them inputs
+  the model's own components, each kind its group's template, kind values and the parameters of the components
+  the library runs, objects included, digested by content; the library runs the components of the reduced systems and those giving them inputs
   at the cells (per-cell osmotic presets), not the others (a shoot's development, its tables)). It is the model's
   `reduction` class attribute, or a function of its scenario choosing one, or None: `reduction = staticmethod(lambda
   scenario: Reduction(...) if scenario.get("reduced") else None)`; the entries it reads are the model's, the same for
@@ -345,7 +345,7 @@ class SoilDiffusion(FunctionalComponent):
   class kind no group has any more is kept while its family (its template, exact kind values and parameters) is in
   use, so a growing plant's kinds saturate; an exact kind no group has any more is released at the next solve (its
   arrays freed, evaluated again if a group comes back to it). The plants of one population share their kinds when
-  their parameters are the same. The missing kinds are evaluated in batches of at most `Compute.kind_batch`
+  those parameters are the same (plants differing in another component's only, their root draws say, share them). The missing kinds are evaluated in batches of at most `Compute.kind_batch`
   interior cells (the Scene's Compute, `Compute.current()`; the memory freed between batches), in one library
   population per plant parameters kept on the reduction (each batch's groups replacing the former's, its
   components reset to their built state); with `Compute.workers` allowing a pool, the batch's kinds are dealt over
