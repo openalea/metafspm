@@ -166,6 +166,22 @@ def test_the_library_runs_at_the_scenes_time_step():
     assert all(library.population.data_structure.simulation_time_step == 86400. for library in libraries)
 
 
+def test_the_library_is_freed_with_its_plants():
+    """Nothing keeps a reduction's library population once its plants are gone (its class, held by the planting
+    table's object column, which the garbage collector does not see, refers to no library)."""
+    import gc
+    import weakref
+    model = _model(True)
+    population = population_data_structure(planting([Planting()], model, {}), model, time_step=86400.)
+    population.instance.run()
+    libraries = list(population.data_structure.structure.reduction.__dict__.get("_libraries", {}).values())
+    assert libraries
+    gone = [weakref.ref(population)] + [weakref.ref(library.population) for library in libraries]
+    del population, libraries
+    gc.collect()
+    assert all(reference() is None for reference in gone)
+
+
 def test_a_reduced_plant_loaded_from_a_checkpoint_solves_as_before(tmp_path):
     """A checkpoint holds the MTG with its reduction (its templates, unbound): loaded into a freshly built
     population, the reduction is bound to that population's model and solves its groups again."""

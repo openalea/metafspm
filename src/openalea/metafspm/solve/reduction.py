@@ -1035,18 +1035,28 @@ class _Library:
             return made
         from openalea.metafspm.coupling.component import StructuralComponent
         from openalea.metafspm.scene.population import Planting, planting, population_data_structure
-        library, made = self, {}
+        made = {}
 
         class LibraryStructure(StructuralComponent):
+            # (library, batch, made) while the library population builds, then None: no reference from the class
+            # (which the planting table's object column holds, a reference gc does not see) to the library, which
+            # would keep it, its population and its plants' reduction alive for ever
+            building = None
+
             @classmethod
             def initiate_plant(cls, g, plant, scenario):
-                g.share_objects(reduction.g)          # the plants' registries (their templates: ds.objects)
-                made.update(library.place(g, plant, items))
+                library, batch, placed = cls.building
+                g.share_objects(library.reduction.g)  # the plants' registries (their templates: ds.objects)
+                placed.update(library.place(g, plant, batch))
 
         self.model = model = type(f"Library{reduction.model.__name__}", (reduction.model,),
                                   dict(initiators=(LibraryStructure,), wiring=(), reduction=None))
-        population = population_data_structure(planting([Planting()], model, {}), model,
-                                               time_step=self.time_step)       # the scene's step (_library)
+        LibraryStructure.building = (self, items, made)
+        try:
+            population = population_data_structure(planting([Planting()], model, {}), model,
+                                                   time_step=self.time_step)       # the scene's step (_library)
+        finally:
+            LibraryStructure.building = None
         ds, instance = population.data_structure, population.instance
         own = reduction.for_population(ds.structure)         # the library knows its reduced groups, evaluates none
         own._reduced, own._full, own._kept, own._rows = reduction._reduced, reduction._full, reduction._kept, \
