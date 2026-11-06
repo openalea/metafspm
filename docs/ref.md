@@ -32,7 +32,7 @@
    :members: equivalent_conductance, condensed_solve, kron_reduction, KronReduction
 
 .. automodule:: openalea.metafspm.solve.reduction
-   :members: Reduction, Relative, Kind
+   :members: Reduction, Relative, Kind, RecoveryTerms, display_ids, is_display_id
 
 .. automodule:: openalea.metafspm.solve.conservation
    :members: Conservation

@@ -107,7 +107,8 @@ def stand(plants=2):
 
 
 def scene(plants=2, folder=None, frame_period=12, display_period=24, checkpoint_period=24, scenario=None,
-          forcings=None, start_hour=0., frame_variables=FRAME_VARIABLES, compute=None):
+          forcings=None, start_hour=0., frame_variables=FRAME_VARIABLES, compute=None, display="instances",
+          pack_at_finish=False):
     """The use case's Scene: *plants* wheat plants (WHEAT_SCENARIO, updated by *scenario*), the soil and the light,
     the forcings of weather() (updated by *forcings*), recorded in *folder* (None: in memory) with the water
     diagnostics (WATER_TABLES) and balances (conservation), the leaves' gas exchange and the roots' water (LEAVES,
@@ -115,7 +116,9 @@ def scene(plants=2, folder=None, frame_period=12, display_period=24, checkpoint_
     with the default views (with the sections of DISPLAY_PLANTS drawn every *display_period* hours and in the last
     frame) holding the *frame_variables* (None: all), a
     checkpoint every *checkpoint_period* hours; *compute*: the run configuration (None: Compute(), one BLAS thread,
-    the memory trimmed after each step)."""
+    the memory trimmed after each step); *display*: how the frames draw the reduced sections (the recorder's:
+    "instances", each section an instance of its template, psi rebuilt by the reader for the sections selected;
+    "full": every cell's psi in every frame); *pack_at_finish*: the frames packed into frames.fspm.zip at the end."""
     table = planting(stand(plants), WheatPlant, {**WHEAT_SCENARIO, **(scenario or {})},
                      xrange=plants * PLANT_SPACING, yrange=ROW_SPACING)
     recorder = SceneRecorder(folder, tables={**WATER_TABLES, "leaves": LEAVES, "roots": ROOTS},
@@ -123,6 +126,7 @@ def scene(plants=2, folder=None, frame_period=12, display_period=24, checkpoint_
                              frame_views="default" if folder else None,
                              display_period=display_period if folder else None,
                              display_plants=DISPLAY_PLANTS if folder and display_period else None,
+                             display=display, pack_at_finish=bool(pack_at_finish and folder),
                              frame_options={"variables": frame_variables} if frame_variables is not None else None,
                              checkpoint_period=checkpoint_period if folder else None)
     return Scene(table, environment=[RichardsSoilModel, CaribuLightModel],
@@ -131,9 +135,10 @@ def scene(plants=2, folder=None, frame_period=12, display_period=24, checkpoint_
                  recorder=recorder, start=(DAY_OF_YEAR, start_hour), compute=compute)
 
 
-def main(folder=os.path.join(OUTPUTS, "from_sowing"), days=14, plants=2):
+def main(folder=os.path.join(OUTPUTS, "from_sowing"), days=14, plants=2, **options):
     """The run: *plants* plants over *days* days from their sowing, recorded in *folder* (None: in memory), each
-    line printed also written to its run.log."""
+    line printed also written to its run.log; *options*: scene()'s others (e.g. display="full",
+    pack_at_finish=True)."""
     log = None
     if folder is not None:
         os.makedirs(folder, exist_ok=True)
@@ -146,7 +151,7 @@ def main(folder=os.path.join(OUTPUTS, "from_sowing"), days=14, plants=2):
             log.flush()
 
     started = time.perf_counter()
-    built = scene(plants, folder)
+    built = scene(plants, folder, **options)
     report(f"built in {time.perf_counter() - started:.1f} s")
     hours = int(round(days * 24))
     try:

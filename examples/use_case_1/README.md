@@ -223,21 +223,47 @@ plant solve, which the options shrink, dominates a larger scene's).
 
 The frames keep a few variables, the run's explicit choice (`run.FRAME_VARIABLES`, the recorder's
 `frame_options={"variables": ...}`; `scene(frame_variables=None)` keeps them all). Every entity set keeps its
-structure (ids, labels, complex and parent links, the segment ends, the display rows' marker), and:
+structure (ids, labels, complex and parent links, the segment ends), and:
 
 | where | variables |
 |---|---|
-| `WheatPlant` Compartment (a reduced section's interiors too) | `psi` (MECHA's, hPa), `water_potential` (MPa, the solved nodes'), `tissue` |
+| `WheatPlant` Compartment (and the sections' templates) | `psi` (MECHA's, hPa), `water_potential` (MPa, the solved nodes'), `tissue` |
 | Cell, Layer | `tissue` |
 | SubOrgan | `length`, `radius`, `type` (the roots' default colour), `anatomy_class`, `anatomy_template`, `anatomy_kind`, `PARa`, `An`, `gs`, `transpiration` |
 | Organ | `organ_rank` (the shoot's default colour) |
 | the other entity sets, the Connections | none |
 | `RichardsSoilModel` cell | `pressure_head` (the soil's default colour), `water_potential`, `water_content` (its faces and scalars unfiltered) |
 
-The default views colour by kept variables (the recorder raises at the first frame otherwise). At day 3 (2 plants,
-`benchmark.py --outputs`), a frame is 1.4 MB, a frame drawing the first plant's sections 34 MB (89 MB when both
-plants' were drawn, their mesh's vertices not shared), and a checkpoint 7 MB, the anatomy templates and the reduced
-sections (169 MB) written once in `checkpoints/shared` (261 MB per checkpoint for one plant before).
+The default views colour by kept variables (the recorder raises at the first frame otherwise).
+
+**The sections in the frames.** MECHA solves each section reduced (its conduits, soil node and vapour path kept),
+so the frames draw the first plant's sections as *instances* (metafspm's `display="instances"`, the recorder's
+default; `scene(display="full")` for the former drawing): per section its transform and its kept nodes' `psi`; once
+per template and per kind, in `frames/parts/` (listed in `scene.fspm.json`), the template's shape and nodes (their
+`tissue`) and the kind's recovery operator; `psi` on every cell is a derived field, rebuilt for the sections you
+select. In ParaView (encoding3d's plugin): show the hidden layer "WheatPlant GranapAnatomy instances", pick a
+section, apply "encoding3d Select at scale" (scale SubOrgan): the section is drawn with `psi` on each cell (or tick
+the reader's "Evaluate Derived Fields" for every section). `scene(pack_at_finish=True)` (or
+`run.main(..., pack_at_finish=True)`) also writes `frames.fspm.zip`, which ParaView opens as the folder.
+`pvbatch encoding3d/paraview/check_in_paraview.py --instances shots outputs/<run>/frames/scene.fspm.json` checks it
+by hand (it passed on a 2-day run: three sections selected, their 30,065 and 3,420 cells' `psi` equal to
+`encoding3d.evaluate`'s).
+
+Measured with `benchmark.py --outputs` (2026-11-06; the display frames draw p0's sections, the use case's frame
+variables; "+parts": the parts the frame added to `frames/parts`, the second display frame one hour later):
+
+| | data frame | display frame, instances (+parts) | display frame, full | 2nd frame, instances (+parts) | 2nd, full | 2 frames' folder: instances / packed / full |
+|---|---|---|---|---|---|---|
+| 1 plant, day 3 | 0.7 MB | 0.8 MB, 1.2 s (+33 MB) | 33.0 MB, 3.1 s | 0.8 MB, 0.3 s (+2.6 MB) | 33.6 MB, 3.1 s | 37 / 14 / 67 MB |
+| 2 plants, day 3 | 1.4 MB | 1.4 MB, 1.3 s (+33 MB) | 33.7 MB, 3.1 s | 1.4 MB, 0.4 s (+2.6 MB) | 34.3 MB, 3.1 s | 39 / 14 / 68 MB |
+| 1 plant, day 8 | 2.9 MB | 3.0 MB, 2.3 s (+52 MB) | 143.5 MB, 11.1 s | 3.1 MB, 0.9 s (+5.0 MB) | 145.3 MB, 11.5 s | 63 / 24 / 289 MB |
+| 2 plants, day 8 | 5.8 MB | 6.0 MB, 2.9 s (+52 MB) | 146.5 MB, 11.5 s | 6.0 MB, 1.4 s (+5.0 MB) | 148.3 MB, 11.3 s | 69 / 25 / 295 MB |
+
+A display frame costs about 0.1 MB more than the data frame; the parts are written once (the templates, then a
+kind's operator, 0.6 to 5.7 MB as its sparse system, when a new kind is drawn: they saturate with the kinds), so a
+run's frames grow by the kinds drawn, not by the frames. A 2-day run (1 plant, 5 frames, 3 drawing the sections):
+frames 0.3 to 0.6 MB, parts 34 MB, the folder 37 MB, packed 14 MB. A checkpoint is 8 MB at day 3 (1 plant), 36 MB at
+day 8 (2 plants), the anatomy templates and the kinds (0.4 to 0.9 GB) written once in `checkpoints/shared`.
 
 Its tests are in `test/test_assembly.py` (the example's own, as the plant's), on one plant grown from its sowing to
 its first blade's emergence by daily steps (Adel and ArchiSimple grow it whatever the step; the light, the gas

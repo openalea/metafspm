@@ -373,6 +373,36 @@ class SoilDiffusion(FunctionalComponent):
   full template into them; `recover_interiors` gives a member its node's value. MECHA's
   `plant_reduction(leaf_ports="bundles", vapour_path="air_spaces")` lumps the shoot's conduits per vascular bundle
   and a leaf's evaporating walls per air space this way.
+- **Drawing a reduction's groups (any reduction, at any location).** Nothing here is specific to anatomies: a
+  section's cells, a coarse soil cell's sub-cells, a leaf's reduced vein network or any group a `Reduction`
+  eliminates are drawn the same way. A group's interior is a linear function of its kept values, so a frame stores
+  each group as an *instance* of its template rather than its recovered interior (`display="instances"`, the
+  default of `to_frame`, `scene_to_frame` and `SceneRecorder`; see *Exchange with other platforms* below). The
+  model gives one hook, on the component that draws the groups for display (the one with `display_triangles`):
+
+  ```python
+  from openalea.metafspm.coupling.geometry import TemplateShapes, Triangles
+
+  def display_instances(self, owners):            # owners: the reduced groups' vertices (the reduction's location)
+      shapes = {full.key: Triangles(local_vertices, template_rows)}   # once per template, in its own coordinates
+      return TemplateShapes(owners, shapes, shape_of=[full.key, ...], transforms=placements)   # (N, 4, 4)
+  ```
+
+  - `shapes[key]` is the group's shape in the template's own coordinates, each triangle owned by the row it shows in
+    the group's full template (`reduction.full_template(key)`: a node of the reduced system, e.g. a protoplast's
+    Compartment); a key is any hashable stable across frames (e.g. the full template's key), one shape per key;
+  - `transforms[i]` places group *i* (template coordinates → the DataStructure's: any affine map, e.g. a section's
+    centre and its frame, a voxel's corner and size); `TemplateShapes.placed()` gives the triangles placed, as
+    `display_triangles` draws them (a test that both agree is cheap).
+
+  The rest is the reduction's: `reduction.recovery_terms(ds)` gives each group's kept values and its kinds' weights
+  (`RecoveryTerms`: a group between two classes of a `Relative` kind variable is the weighted sum of the two class
+  kinds), and `kind.recovery_operator()` each kind's recovery as one linear operator M over its full template's
+  Compartments, the unknown there being M · [x_kept; 1] (the identity on the kept nodes, A_II⁻¹(−A_IK x − c_I) on
+  the interior, a merged member its node's value): dense, derived while the kind's factorisation is live
+  (`Kind.recovery`) when it holds at most `solve.reduction.DISPLAY_DENSE_MAX` values (32768), else its sparse system
+  (S, R with M = S⁻¹R, from the blocks the kind keeps anyway: no solve when written). A model without the hook gets
+  its groups drawn whole as before (`display="full"`).
 ## 4. Structure: `StructuralComponent`
 
 A structural component edits the plant (growth, segmentation, anatomy). Its steps come in two styles:
@@ -767,17 +797,42 @@ scene = Scene.from_scenario(scenario, stand(...), Wheat, environment=[RhizoSoil,
   the plants drawn; the others' reduced sections' interiors not recovered; `scene_to_frame(display_plants=)` too);
   their meshes share their vertices (indices); their data rows (the Compartments) are in every frame either way, with the DataStructure's values
   (those of an instanced or reduced section's Compartments too, which the MPG holds as their template's).
-  A reduced section is drawn whole in those frames: a component's display shapes may own triangles by id
-  (`Triangles(vertices, owner, owner_ids)`, owner -1 and `owner_ids` the display ids of
-  `solve.reduction.display_ids(group vertex, full template rows)`, e.g. GRANAP's interior cells), and a frame with
-  display shapes writes each reduced group's interior (its full template's Compartments, Cells and Layers the reduced
-  one does not hold; not its Connections) as display rows of their entity sets, marked by the column
-  `metafspm_display_only`, linked to their Cells, Layers and section (a selection by entity brings a section's
-  interior with it), with the reduced system's unknown recovered (`Reduction.recover_interiors(ds)`: exact for the
-  linear Kron reduction, one factorisation per kind for all its groups, freed after; e.g. MECHA's psi), their
-  template's properties, NaN otherwise (their derived values, e.g. a water potential with its osmotic part). Display
-  rows are output only: `from_frame` leaves them out (the DataStructure stays reduced), and frames without display
-  shapes have none. They make those frames as large as the full anatomy's.
+  **A reduction's groups in those frames** (`display=` of `SceneRecorder`, `to_frame` and `scene_to_frame`):
+  - `"instances"` (the default): each reduced group an *instance* of its template (encoding3d 0.4's instance sets,
+    one per component giving `display_instances`, named after it; see *Drawing a reduction's groups* above). What a
+    frame stores per group is small: its owner (the group's vertex, e.g. its SubOrgan), its transform, its template's
+    index, its kept nodes' values of the reduced system's unknown (then 1) and its kinds' indices and weights. What
+    groups share is stored once, as *parts* in `frames/parts/<key>.glb` (the key: the SHA-256 of the part's bytes, a
+    part written only when its key is new): each template (the shape, and the full template's nodes with their
+    constant properties, e.g. `tissue`, those the frame's variables filter keeps) and each kind's recovery operator.
+    The unknown on every node of the template (e.g. MECHA's `psi` on every protoplast) is a *derived field*, the
+    weighted sum of the kinds' operators applied to the kept values, which the reader rebuilds for the instances it
+    selects: `encoding3d.evaluate(frame, "psi", instances=rows)` in Python, ParaView's "encoding3d Select at scale"
+    (or the reader's "Evaluate Derived Fields" for all). The values are those of `"full"` (exact: the same linear
+    recovery). The index `scene.fspm.json` lists the parts its frames use (`"parts"`); the recorder removes the parts
+    no listed frame refers to when it starts writing frames and when a run resumes from a checkpoint (its later
+    frames dropped). `encoding3d validate frames/scene.fspm.json` checks every reference; a missing part is an error
+    naming its key. A DataStructure whose display components have no `display_instances` is drawn as with `"full"`.
+  - `"full"`: each group drawn whole in the component's display mesh: its triangles may be owned by id
+    (`Triangles(vertices, owner, owner_ids)`, owner -1 and `owner_ids` the display ids of
+    `solve.reduction.display_ids(group vertex, full template rows)`, e.g. GRANAP's interior cells), and the frame
+    writes each reduced group's interior (its full template's Compartments, Cells and Layers the reduced one does not
+    hold; not its Connections) as display rows of their entity sets, marked by the column `metafspm_display_only`,
+    linked to their Cells, Layers and section (a selection by entity brings a section's interior with it), with the
+    reduced system's unknown recovered (`Reduction.recover_interiors(ds)`, one factorisation per kind for all its
+    groups, freed after), their template's properties, NaN otherwise. Every display frame then holds every value, as
+    large as the full anatomy's.
+  - `None`: the reduced groups not drawn (the other groups' shapes are).
+
+  Instances and display rows are output only: `from_frame` leaves them out (the DataStructure stays reduced). In use
+  case 1 (1 plant drawn, day 3) a display frame is 0.8 MB as instances against 33 MB whole, written in 0.3 s instead
+  of 3 s once its parts exist (the first frame writes them: 33 MB, then a new kind's operator at a time); see
+  `examples/use_case_1/README.md` for the day-8 and 2-plant numbers.
+  **One file to share:** `SceneRecorder(pack_at_finish=True)` packs the frames folder into `frames.fspm.zip` when
+  the run finishes (`pack_compression="deflate"`, the default, about a third of the folder for instances' frames;
+  `"lzma"` smaller and slower; `"stored"`), keeping the folder (`recorder.pack()` packs it on demand; `encoding3d
+  pack FOLDER OUT.fspm.zip` from the command line, `encoding3d unpack` back). ParaView's reader and
+  `encoding3d.read_index`/`read` open the archive as the folder (`frames.fspm.zip/frame_000024.glb`).
   `frame_options=` passes
   `scene_to_frame`'s options (e.g. `geometry=False`). For logging, the options also filter what each frame keeps:
   `data_structures=` (which ones), `scales=` (e.g. `["Plant", "SubOrgan"]`), `entities=` (a plant, by vid or by its
@@ -802,8 +857,10 @@ scene = Scene.from_scenario(scenario, stand(...), Wheat, environment=[RhizoSoil,
   instead of one block per DataStructure. The default layers (`io.encoding3d.default_views(scene)`) are, per population,
   its shoot mesh (where its SubOrgans are shoot elements) coloured by the first Organ variable its components declare
   (a state variable that is not a descriptor, else an input), its root segments as tubes on `radius` coloured by the
-  first such SubOrgan variable, and each component's display shapes (e.g. sections, in the first frame with
-  `display_period`) hidden; per environment model, its grid's cells coloured by its first cell variable, at opacity
+  first such SubOrgan variable, each component's display shapes (e.g. sections, in the first frame with
+  `display_period`) hidden, and each instance set ("<population> <component> instances": a reduction's groups as
+  instances) hidden, coloured by its derived field (the reduced system's unknown, `SECTIONS_COLORMAP`, "Blue Orange
+  (divergent)": its colours appear once the instances are selected at a scale or evaluated); per environment model, its grid's cells coloured by its first cell variable, at opacity
   0.3. Each part has its own colour map (ParaView presets: the shoot `SHOOT_COLORMAP`, "Cool to Warm"; the roots
   `ROOTS_COLORMAP`, "Inferno (matplotlib)"; the grids `GRID_COLORMAP`, "Viridis (matplotlib)", in `io.encoding3d`). A part missing from the first frame (a shoot that appears later) gets no default layer. `frame_views=` also
   takes your own views, a dict or the path of a views file (e.g. one saved from ParaView): each name a layer gives
@@ -814,7 +871,10 @@ scene = Scene.from_scenario(scenario, stand(...), Wheat, environment=[RhizoSoil,
   layer by layer in View → MultiBlock Inspector and saved back with the reader's "Save Views" button; its filter
   "Select at scale" grows a picked element to its plant, axis, organ or segment with everything it contains (a
   segment's section shown even when the sections' layer is hidden), isolated in the view or in a panel of its own
-  (encoding3d's `paraview/README.md`, the how-to).
+  (encoding3d's `paraview/README.md`, the how-to). On a frame whose reduced groups are instances, Select at scale
+  also rebuilds the derived fields of the instances it picks (e.g. a segment's section coloured by `psi` on every
+  cell), from the frame's parts, without evaluating the others; `pvbatch encoding3d/paraview/check_in_paraview.py
+  --instances` checks the plugin by hand.
 - **Running with another platform's model.** In an encoding3d coupling session (encoding3d's coordinator, `encoding3d
   couple`, runs models of several platforms step by step), `openalea.metafspm.io.coupling.RemoteComponent` stands for
   the other platform's model: a component computing nothing, whose state variables are that model's outputs and whose

@@ -140,6 +140,17 @@ dry: finished after 48 steps in 1.5 s (the seedling 0.3 s, the soil 1.0 s)
 The dry air pulls more water through the seedling than the humid one, despite its stomata half closed.
 
 - **ParaView.** encoding3d's reader plugin opens `frames/scene.fspm.json` and plays the frames as time steps.
+- **Shapes drawn for display** (e.g. GRANAP's root and leaf cross-sections). They are a recording choice:
+  `SceneRecorder(..., display_period=24)` adds them to a frame every 24 steps, `display_plants=("p0",)` for some
+  plants only. When the plant model *reduces* its sections (MECHA's water flow keeps a few nodes per section and
+  computes the others from them), the frames store each section as one copy of its shape plus a few numbers, not
+  every cell's value: a frame stays small (under 1 MB where a fully drawn one takes 30 MB or more), and the shapes
+  and the formulas shared by many sections go once into `frames/parts/`. In ParaView, the layer
+  "<plant model> <component> instances" shows these sections; pick one and run "encoding3d Select at scale" to
+  colour its cells by their water potential, or tick the reader's "Evaluate Derived Fields" to colour every section
+  (slower on large stands). `SceneRecorder(display="full")` writes every cell's value in every frame instead.
+- **One file to share.** `SceneRecorder(..., pack_at_finish=True)` packs `frames/` into `frames.fspm.zip` when the
+  run finishes (about a third of its size); ParaView and encoding3d open the archive as they open the folder.
 - **Restart.** `Scene.restore("outputs/dry/checkpoints/step_000048", **the same arguments)` continues the run.
   The recorder then cuts its tables back to the checkpoint's time, so a run that went past it leaves no duplicate
   rows. To go on with a changed parameter, build the scene with the changed scenario and resume with

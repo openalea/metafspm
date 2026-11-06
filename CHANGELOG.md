@@ -2,6 +2,33 @@
 
 ## Unreleased (release2026)
 
+### A reduction's groups in frames as instances (O-13, encoding3d 0.4)
+
+- **`display="instances"`** (the new default of `SceneRecorder`, `to_frame` and `scene_to_frame`; `"full"`: the
+  former drawing, every interior recovered as display rows; `None`: the reduced groups not drawn): any reduction, at
+  any location, its groups written as an encoding3d instance set per display component, each group an instance of
+  its template (its owner, transform, kept values of the unknown and kinds' weights); the templates (the shape and
+  the full template's nodes, their constant properties) and each kind's recovery operator are shared parts written
+  once in `frames/parts/<key>.glb`; the unknown on every template node is a derived field rebuilt by the reader for
+  the instances selected (`encoding3d.evaluate`, ParaView's Select at scale), equal to `"full"`'s values.
+- **The display hook:** a display component's `display_instances(owners) -> coupling.geometry.TemplateShapes`
+  (shapes once per template in template coordinates, each triangle owned by its full template row; a 4×4 per group;
+  `TemplateShapes.placed()`); without it, a DataStructure's groups are drawn as with `"full"`.
+- **The reduction's side:** `Reduction.recovery_terms(ds, groups=, system=)` (`RecoveryTerms`: the groups' kept
+  values then 1, their kinds and weights: a class blend two weighted terms), `Kind.recovery_operator()` (the
+  recovery as M · [x_kept; 1] over the full template's Compartments: the identity on the kept nodes, a merged member
+  its node's value), `Kind.recovery` (dense, derived while the factorisation is live up to
+  `solve.reduction.DISPLAY_DENSE_MAX` values; above, the sparse system, solved by the reader), `Kind.rows()`.
+- **`SceneRecorder`:** `display=`, `pack_at_finish=` and `pack_compression=` ("deflate", "lzma", "stored"):
+  `frames.fspm.zip` when the run finishes (`recorder.pack()`), noted in `run.json`; the frames' index lists the
+  parts its frames use, the unreferenced ones removed at the first frame written and when a run resumes; the
+  scenario records the options.
+- `filter_frame` keeps the instances of the kept owners (none when their owners' scale is dropped); a frame's
+  variables filter also selects the templates' node columns. `default_views` declares a hidden instances layer per
+  instance set, coloured by its derived field (`SECTIONS_COLORMAP`).
+- GRANAP's `GranapAnatomy.display_instances`: its reduced sections' protoplasts once per full template, in the
+  section's plane, each segment's transform.
+
 ### Dense shoot blocks (O-7): merged kept nodes
 
 - **`Reduction(merge=)`**: kept nodes lumped by a declared grouping (`{"where": rule, "by": property names |
