@@ -55,7 +55,6 @@ from typing      import Optional
 
 import numpy as np
 from scipy.sparse import diags, eye, issparse
-from scipy.sparse.linalg import spsolve
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -120,7 +119,7 @@ class AbstractSolver(ABC):
 
     Shared utilities
     ────────────────
-    _linear_step          sparse-aware J δ = −R  (spsolve when J is sparse).
+    _linear_step          sparse-aware J δ = −R  (the Compute's LinearSolver when J is sparse).
     _armijo_linesearch    Armijo sufficient-decrease backtracking for Newton.
     """
 
@@ -160,7 +159,8 @@ class AbstractSolver(ABC):
         """
         Solve J δ = −R, sparse-aware.
 
-        Sparse J → spsolve. When *spec* has edge unknowns whose block of J is diagonal (an edge law on each edge's
+        Sparse J → the Compute's LinearSolver (solve.linear: SuperLU by default), the system's key and symmetric
+        declaration from spec.parameters["linear_system"]. When *spec* has edge unknowns whose block of J is diagonal (an edge law on each edge's
         own flux, e.g. explicit laws j − k ΔΨ), they are eliminated exactly (Schur complement) and the node system is
         solved alone: the full system's node rows hold only fluxes, a zero diagonal that makes the direct solver pivot
         and fill in (25 s against 0.1 s on a 16 x 16 x 32 soil grid).
@@ -187,12 +187,14 @@ class AbstractSolver(ABC):
             groups, kept, cache = condensation
             return condensed_solve(jac, -residual, groups, kept, cache=cache)
         if issparse(jac):
+            from openalea.metafspm.solve.linear import solve
+            key, symmetric = _linear_system(spec)
             edges = _edge_unknowns(spec, jac.shape[0])
             if edges is not None:
-                delta = _solve_eliminating(jac.tocsr(), residual, edges)
+                delta = _solve_eliminating(jac.tocsr(), residual, edges, key=key, symmetric=symmetric)
                 if delta is not None:
                     return delta
-            return np.asarray(spsolve(jac.tocsc(), -residual, permc_spec="MMD_AT_PLUS_A"), dtype=np.float64)
+            return np.asarray(solve(jac, -residual, key=key, symmetric=symmetric), dtype=np.float64)
         return np.linalg.solve(np.asarray(jac, dtype=np.float64), -residual)
 
     def _armijo_linesearch(self, spec, packed: np.ndarray,
@@ -954,7 +956,14 @@ def _edge_unknowns(spec, size: int):
     return np.arange(start, stop)
 
 
-def _solve_eliminating(jac, residual: np.ndarray, eliminated: np.ndarray):
+def _linear_system(spec) -> tuple:
+    """(key, symmetric) of *spec*'s linear solves (spec.parameters["linear_system"]: the graph system's), else
+    (None, False)."""
+    parameters = getattr(spec, "parameters", None) or {}
+    return parameters.get("linear_system", (None, False))
+
+
+def _solve_eliminating(jac, residual: np.ndarray, eliminated: np.ndarray, key=None, symmetric: bool = False):
     """
     J δ = −R with the unknowns *eliminated* solved last, when their block D of J is diagonal and nonsingular:
     (A − B D⁻¹ C) δ_k = −R_k + B D⁻¹ R_e, then δ_e = D⁻¹ (−R_e − C δ_k). None when D is not diagonal.
@@ -973,7 +982,8 @@ def _solve_eliminating(jac, residual: np.ndarray, eliminated: np.ndarray):
     r_k, r_e = residual[kept], residual[eliminated]
     delta = np.empty_like(residual)
     if kept.size:
-        delta[kept] = spsolve(schur, -(r_k - B @ (inverse @ r_e)), permc_spec="MMD_AT_PLUS_A")
+        from openalea.metafspm.solve.linear import solve
+        delta[kept] = solve(schur, -(r_k - B @ (inverse @ r_e)), key=key, symmetric=symmetric)
         delta[eliminated] = inverse @ (-r_e - C @ delta[kept])
     else:
         delta[eliminated] = -(inverse @ r_e)

@@ -9,6 +9,7 @@ end).
     python benchmark.py [--plants 2] [--days 3] [--label text] [--outputs] [--checkpoint-at 168 ...]
                         [--resume outputs/benchmarks/checkpoints/<label>/step_000168]
                         [--scenario leaf_ports=bundles vapour_path=air_spaces ...]
+                        [--workers auto|n] [--linear-solver superlu|superlu_reuse|cholmod]
 
 By default 2 plants to day 3 (the use case's fast regime); --days 8 for the day-8 numbers, --plants 8 --days 4 for the
 scaling; --outputs measures the outputs at the end (outputs()): a frame without the sections drawn, two display
@@ -17,7 +18,9 @@ recorder's default: their frames, the parts they share, the folder packed with d
 case's frame variables, and two checkpoints sharing their unchanging parts: their size and time. --checkpoint-at writes the scene's checkpoint after those hours (outputs/benchmarks/checkpoints/<label>/, the
 shared parts once); --resume loads one into the freshly built scene and runs on from its hour to --days (the load's
 time and memory, then each step's: a resumed run evaluates no kind again); --scenario updates the plants' scenario
-(run.WHEAT_SCENARIO; a value read as JSON when it is, e.g. length_classes=0.2, else a string). Each step records the
+(run.WHEAT_SCENARIO; a value read as JSON when it is, e.g. length_classes=0.2, else a string); --workers and
+--linear-solver the Compute's (the pool of the kinds, the sparse solver), the pool recorded per step and the peak
+memory of the process's control group (the pool's processes included: run it in its own systemd-run --scope). Each step records the
 plants' nodes and the reduced groups' dense blocks (their nonzeros: kept nodes squared, summed), the end the kinds
 held and their pickled size (as checkpointed). The results go to
 outputs/benchmarks/<commit>.json (untracked), one entry per mode ("2p_3d") updated in place, and a summary is
@@ -67,6 +70,18 @@ def resident_memory() -> float:
     return float("nan")
 
 
+def scope_peak_memory() -> float:
+    """The peak memory of the process's control group (GB: its memory.peak, cgroup v2), the pool's processes
+    included (a systemd-run --scope's), NaN where there is none."""
+    try:
+        with open("/proc/self/cgroup") as cgroup:
+            relative = cgroup.read().strip().split("\n")[0].split("::", 1)[1]
+        with open(os.path.join("/sys/fs/cgroup", relative.lstrip("/"), "memory.peak")) as peak:
+            return int(peak.read()) / 2 ** 30
+    except (OSError, IndexError, ValueError):
+        return float("nan")
+
+
 def peak_memory() -> float:
     """The process's peak resident memory (GB)."""
     peak = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
@@ -82,26 +97,29 @@ def trim_memory() -> None:
 
 
 class KindCounter:
-    """Counts the kinds the reductions evaluate (solve.reduction._evaluate's requests) and the time they take."""
+    """Counts the kinds the reductions evaluate (Reduction._evaluate_requests' requests: in the process or in the
+    Compute's pool) and the time they take (the main process's wait)."""
 
     def __init__(self):
         self.kinds, self.seconds, self.templates = 0, 0., 0
         self.seen = set()                 # the (reduced template, signature) of the kinds evaluated so far
-        self._evaluate = reduction_module._evaluate
+        self._evaluate = evaluate = reduction_module.Reduction._evaluate_requests
+        counter = self
 
-        def counted(reduction, parameters, requests):
+        def counted(reduction, missing):
             started = time.perf_counter()
             try:
-                return self._evaluate(reduction, parameters, requests)
+                return evaluate(reduction, missing)
             finally:
-                self.kinds += len(requests)
-                self.seconds += time.perf_counter() - started
-                for key, _, signature in requests:        # the kinds of a template not seen before (a new anatomy)
-                    if (key, signature) not in self.seen:
-                        self.seen.add((key, signature))
-                        self.templates += 1
+                counter.seconds += time.perf_counter() - started
+                for _, requests in missing.values():
+                    counter.kinds += len(requests)
+                    for key, _, signature in requests:    # the kinds of a template not seen before (a new anatomy)
+                        if (key, signature) not in counter.seen:
+                            counter.seen.add((key, signature))
+                            counter.templates += 1
 
-        reduction_module._evaluate = counted
+        reduction_module.Reduction._evaluate_requests = counted
 
     def take(self) -> tuple:
         out = (self.kinds, self.seconds, self.templates)
@@ -152,10 +170,10 @@ def kinds_size(scene) -> tuple:
 
 
 def benchmark(plants: int, days: float, measure_outputs: bool = False, checkpoint_at=(), resume: str = None,
-              label: str = "run", scenario: dict = None) -> dict:
+              label: str = "run", scenario: dict = None, compute=None) -> dict:
     counter = KindCounter()
     started = time.perf_counter()
-    scene = run.scene(plants, folder=None, scenario=scenario)
+    scene = run.scene(plants, folder=None, scenario=scenario, compute=compute)
     built = time.perf_counter() - started
     counter.take()
     loaded, first_hour = None, 0
@@ -182,6 +200,7 @@ def benchmark(plants: int, days: float, measure_outputs: bool = False, checkpoin
         nodes = sum(population.data_structure.n_nodes() for population in scene.populations)
         dense = dense_blocks(scene)
         steps.append({"hour": hour + 1, "seconds": seconds, "dense_nnz": dense,
+                      "pool": scene.compute.pool_info(),
                       "models": {name: value for name, value in timing.items() if "." not in name},
                       "components": {name: value for name, value in timing.items() if "." in name}, "kinds": kinds,
                       "new_templates": templates,
@@ -199,6 +218,7 @@ def benchmark(plants: int, days: float, measure_outputs: bool = False, checkpoin
             print(f"checkpoint {path}: {steps[-1]['checkpoint']['MB']:.1f} MB (shared "
                   f"{steps[-1]['checkpoint']['shared_MB']:.1f} MB) in {steps[-1]['checkpoint']['seconds']:.1f} s",
                   flush=True)
+    pool = scene.compute.pool_info()
     scene.finish()
     timing, total = dict(scene.timing), time.perf_counter() - started    # the steps' (outputs() runs one more)
     rss = resident_memory()
@@ -214,7 +234,8 @@ def benchmark(plants: int, days: float, measure_outputs: bool = False, checkpoin
               "environment": {name: os.environ.get(name) for name in
                               ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS", "MALLOC_ARENA_MAX")},
               "build_seconds": built, "total_seconds": total, "resumed": loaded,
-              "rss_end_gb": rss, "rss_after_trim_gb": after_trim, "peak_rss_gb": peak, "scenario": scenario or {},
+              "rss_end_gb": rss, "rss_after_trim_gb": after_trim, "peak_rss_gb": peak,
+              "scope_peak_gb": scope_peak_memory(), "pool": pool, "scenario": scenario or {},
               "kinds_held": kinds_held, "kinds_MB": kinds_mb,
               "timing": timing, "steps": steps, "outputs": measured}
     return result
@@ -296,7 +317,8 @@ def summary(result: dict) -> str:
     lines.append(f"kinds evaluated {kinds.sum()} ({kinds[-24:].sum()} on the last day), "
                  f"{sum(step['kind_seconds'] for step in steps):.1f} s")
     lines.append(f"memory: RSS at the end {result['rss_end_gb']:.2f} GB, after trim {result['rss_after_trim_gb']:.2f} GB, "
-                 f"peak {result['peak_rss_gb']:.2f} GB")
+                 f"peak {result['peak_rss_gb']:.2f} GB, the scope's peak (pool included) "
+                 f"{result.get('scope_peak_gb', float('nan')):.2f} GB; pool {result.get('pool')}")
     lines.append(f"nodes at the end {steps[-1]['nodes']}, dense blocks {steps[-1]['dense_nnz']} nonzeros; kinds held "
                  f"{result['kinds_held']} ({result['kinds_MB']:.1f} MB pickled)"
                  + (f"; scenario {result['scenario']}" if result.get("scenario") else ""))
@@ -339,10 +361,15 @@ def main(argv=None):
     parser.add_argument("--resume", default=None, help="a checkpoint folder to resume from")
     parser.add_argument("--scenario", nargs="*", default=(), metavar="KEY=VALUE",
                         help="the plants' scenario entries (e.g. leaf_ports=bundles vapour_path=air_spaces)")
+    parser.add_argument("--workers", default="auto", help="Compute(workers=): auto (default) or a number")
+    parser.add_argument("--linear-solver", default="superlu", help="Compute(linear_solver=)")
     arguments = parser.parse_args(argv)
+    from openalea.metafspm.compute import Compute
+    compute = Compute(workers=arguments.workers if arguments.workers == "auto" else int(arguments.workers),
+                      linear_solver=arguments.linear_solver)
     label = arguments.label or f"{arguments.plants}p_{arguments.days:g}d"
     result = benchmark(arguments.plants, arguments.days, arguments.outputs, tuple(arguments.checkpoint_at),
-                       arguments.resume, label, scenario_entries(arguments.scenario))
+                       arguments.resume, label, scenario_entries(arguments.scenario), compute)
     os.makedirs(BENCHMARKS, exist_ok=True)
     path = os.path.join(BENCHMARKS, f"{result['commit']}.json")
     entries = {}

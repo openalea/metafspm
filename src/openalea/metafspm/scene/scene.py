@@ -144,6 +144,7 @@ class Scene:
         self.compute = Compute() if compute is None else compute
         if not isinstance(self.compute, Compute):
             raise TypeError(f"Scene: compute is a Compute (openalea.metafspm.compute), got {self.compute!r}")
+        self.compute.check_linear_solver()          # its optional package: now, with the install line
         with self.compute.limits():
             self._build(planting, environment, environment_scenarios, translator, time_step, mapping_method,
                         periodic, flip_z, xrange, yrange, forcings, events, stop_when, mappings, recorder, start,
@@ -685,17 +686,23 @@ class Scene:
         """
         The end of the run: the recorder writes the last state and the run's status. simulate() calls it; a loop of
         run() ends with it. A scene finished before any step (simulate(0): a static model, a section built once)
-        records its state then.
+        records its state then. The Compute's pool is closed.
         """
         self._finished = True
-        if self.recorder is None:
-            return
-        if not self._recording:
-            self._recording = True
-            self.recorder.begin(self)
-        self.recorder.finish(self, status, error)
+        try:
+            if self.recorder is None:
+                return
+            if not self._recording:
+                self._recording = True
+                self.recorder.begin(self)
+            self.recorder.finish(self, status, error)
+        finally:
+            self.compute.close()                    # the pool's processes stopped (a next run starts them again)
 
     def __del__(self):
+        compute = self.__dict__.get("compute")
+        if isinstance(compute, Compute):
+            compute.close()
         if getattr(self, "_recording", False) and not getattr(self, "_finished", True):
             warnings.warn("a recording Scene was dropped before scene.finish(): its last state and its run status "
                           "were not written (end a loop of run() with finish())", ResourceWarning, stacklevel=2)

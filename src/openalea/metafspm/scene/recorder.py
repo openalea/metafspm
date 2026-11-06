@@ -904,6 +904,9 @@ class SceneRecorder:
         self._run.update(iterations=int(scene.iteration), time=float(scene.time),
                          wall_time=(now - self._started).total_seconds() + self._run.get("wall_time_before", 0.),
                          timing={key: round(value, 6) for key, value in scene.timing.items()})
+        pool = scene.compute.pool_info()        # the pool used (the largest since the run began), None: none
+        if pool is not None or "compute" not in self._run:
+            self._run.setdefault("compute", {})["pool"] = pool
         if ended:
             self._run["ended"] = now.isoformat()
         else:

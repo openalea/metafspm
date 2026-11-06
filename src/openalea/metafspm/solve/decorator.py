@@ -1283,6 +1283,8 @@ class _GraphSystemBuilder:
         spec.parameters["time_hook"] = lambda t, _i=instance: _i.__dict__.__setitem__("_ivp_time", t)
         condense = spec_def.get("condense")
         location = condense(instance) if callable(condense) else condense
+        spec.parameters["linear_system"] = ((type(instance).__name__, spec_def["inner_class"].__name__, id(instance),
+                                             id(instance.__dict__.get("_restriction"))), bool(spec_def.get("symmetric")))
         if location is not None:
             owner = np.asarray(ds.owner(location), dtype=np.int64)
             take = _take(instance, "node")
@@ -1768,6 +1770,7 @@ def graph_system(
     pool_unknowns          = None,
     condense               = None,
     conserved              = None,
+    symmetric              = False,
     **renamed,
 ):
     """
@@ -1838,6 +1841,10 @@ def graph_system(
         outflow=, unit=)}: over each call, the inflow and outflow integrated over the accepted sub-steps and the
         change of the amount held, residual = change - (inflow - outflow) (Component.conservation(); the
         SceneRecorder's conservation.csv after every step).
+
+    symmetric: its linear steps' matrix is symmetric (a conductance network's Jacobian, its Dirichlet nodes
+        eliminated or held by a Robin term): checked once per pattern (solve.linear.SymmetryError when it is not),
+        and solved by CHOLMOD with Compute(linear_solver="cholmod").
 
     The former names max_iter, tol, fd_eps, n_substeps and integrate="step" are accepted with a warning for one
     release.
@@ -1926,6 +1933,7 @@ def graph_system(
         "rate_solver"   : rate_solver,
         "condense"      : condense,
         "conserved"     : check_conserved(conserved),
+        "symmetric"     : bool(symmetric),
     }
 
     def decorator(cls):

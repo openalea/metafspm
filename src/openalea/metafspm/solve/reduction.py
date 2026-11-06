@@ -77,12 +77,15 @@ what the model computes on the reduced structure itself, so that every term is c
 computes it live or the kind holds it.
 """
 import copy
+import itertools
+import weakref
 from contextlib import contextmanager
 from dataclasses import dataclass
 
 import numpy as np
 from scipy.sparse import coo_matrix, csr_matrix
 
+from openalea.metafspm.data_structure.objects import ObjectRegistry
 from openalea.metafspm.solve.network import kron_reduction
 
 # The ids of a reduced group's interior vertices in an output (an encoding3d frame's display rows: they are not the
@@ -393,6 +396,8 @@ class Reduction:
         state.pop("_display_parts", None)  # the frames' parts built from it (io.encoding3d): made again
         state.pop("_table", None)          # the groups' arrays: per DataStructure and topology
         state.pop("_assigned", None)
+        state.pop("_token", None)          # its number in a pool's processes: this process's
+        state.pop("_worker_time_step", None)
         return state
 
     def __setstate__(self, state):
@@ -411,6 +416,7 @@ class Reduction:
         out.__dict__.pop("_table", None)
         out.__dict__.pop("_assigned", None)
         out.__dict__.pop("_display_parts", None)
+        out.__dict__.pop("_token", None)
         return out
 
     def bind(self, model, instance) -> None:
@@ -819,8 +825,8 @@ class Reduction:
                     missing.setdefault(signature, (parameters[plant], {}))[1].setdefault(
                         key, (int(table.owner[g]), key[0], kind_values))
             local[u] = position[key]
-        for plant_parameters, requests in missing.values():
-            self._evaluate_missing(plant_parameters, requests)
+        if missing:
+            self._evaluate_requests(missing)
         kind = np.full(weights.shape, -1, dtype=np.int64)
         kind[group, corner] = local[np.asarray(inverse).reshape(-1)]
         out = _Assignment(table=table, weights=weights, kind=kind, keys=keys,
@@ -876,22 +882,37 @@ class Reduction:
         key, values, signature = kind_key
         return key, tuple(values[position] for position in exact), signature
 
-    def _evaluate_missing(self, parameters: dict, requests: dict) -> None:
-        """Evaluate the kinds *requests* ({kind key: (a representative group vertex, its reduced template key, its kind
-        values)}) of a plant of *parameters*, in batches of at most Compute.current().kind_batch interior cells (one
-        kind at least), the library's transients freed between batches (Compute.trim)."""
-        from openalea.metafspm.compute import Compute
+    def _evaluate_requests(self, missing: dict) -> None:
+        """
+        Evaluate the kinds *missing* ({signature: (a plant's parameters, {kind key: (a representative group vertex,
+        its reduced template key, its kind values)})}): in the process (_evaluate_missing), or over the Compute's
+        pool when Compute.pool_size gives more than one process for them (_evaluate_in_pool: each process its share,
+        in its own library); the kinds added in the requests' order either way (deterministic, the same kinds).
+        """
+        from openalea.metafspm.compute import Compute, in_worker
         compute = Compute.current()
-        batch, cells = {}, 0
-        items = list(requests.items())
-        for position, (kind_key, request) in enumerate(items):
-            size = self._interior_cells(request[1])
-            if batch and cells + size > compute.kind_batch:
-                self._kinds.update(_evaluate(self, parameters, batch))
-                compute.trim()
-                batch, cells = {}, 0
-            batch[kind_key], cells = request, cells + size
-        if batch:
+        described = {signature: (parameters, {kind_key: (_describe(self.g, vertex), key, values)
+                                              for kind_key, (vertex, key, values) in requests.items()})
+                     for signature, (parameters, requests) in missing.items()}
+        kinds = sum(len(requests) for _, requests in described.values())
+        cells = sum(self._interior_cells(request[1]) for _, requests in described.values()
+                    for request in requests.values())
+        workers = 1 if (self.library or in_worker()) else compute.pool_size(kinds, cells)
+        if workers <= 1:
+            for parameters, requests in described.values():
+                self._evaluate_missing(parameters, requests)
+            return
+        evaluated = _evaluate_in_pool(self, compute, workers, described)
+        for _, requests in described.values():
+            for kind_key in requests:
+                self._kinds[kind_key] = evaluated[kind_key]
+
+    def _evaluate_missing(self, parameters: dict, requests: dict) -> None:
+        """Evaluate the kinds *requests* ({kind key: (its representative group's description (_describe), its reduced
+        template key, its kind values)}) of a plant of *parameters*, in batches of at most Compute.current()
+        .kind_batch interior cells (one kind at least), the library's transients freed between batches
+        (Compute.trim)."""
+        for batch in _batches(self, requests):
             self._kinds.update(_evaluate(self, parameters, batch))
 
     def _interior_cells(self, key) -> int:
@@ -1276,31 +1297,22 @@ class _Library:
 
     def place(self, g, plant, items) -> dict:
         """{group vertex: (k, "full" | "reduced")}: the groups of the kinds *items* placed in the library's MPG *g*
-        under *plant*."""
+        under *plant*, each as its representative's description (_describe: its complexes, label and properties)."""
         from openalea.metafspm.data_structure.configs import PropsConfig
         reduction = self.reduction
-        plant_g = reduction.g
-        scale = getattr(plant_g.scales, reduction.location)
         made = {}
-        for k, (_, (vertex, key, _)) in enumerate(items):
-            chain = []                                     # the representative's complexes, Plant excluded
-            v = plant_g.complex(vertex)
-            while v is not None and plant_g.scale(v) > plant_g.scales.Plant:
-                chain.append(v)
-                v = plant_g.complex(v)
+        for k, (_, (description, key, _)) in enumerate(items):
+            chain, (scale, label), properties = description
             for which, template in (("full", reduction._full[key]),
                                     ("reduced", reduction._reduced[reduction._full[key].key])):
                 parent, vertices = plant, []
-                for source in reversed(chain):
-                    parent = g.add_component(parent, **PropsConfig(scale=plant_g.scale(source), edge_type='/',
-                                                                   label=plant_g.label(source)))
+                for complex_scale, complex_label in chain:
+                    parent = g.add_component(parent, **PropsConfig(scale=complex_scale, edge_type='/',
+                                                                   label=complex_label))
                     vertices.append(parent)
-                group = g.add_component(parent, **PropsConfig(scale=scale, edge_type='/',
-                                                              label=plant_g.label(vertex)))
-                for name, prop in plant_g.properties().items():
-                    value = prop.get(vertex) if hasattr(prop, "get") else None
-                    if value is not None and name not in _STRUCTURAL:
-                        g.property(name)[group] = value
+                group = g.add_component(parent, **PropsConfig(scale=scale, edge_type='/', label=label))
+                for name, value in properties.items():
+                    g.property(name)[group] = value
                 g.add_instance(group, template)
                 made[group] = (k, which)
                 self.placed.append(vertices + [group])
@@ -1342,7 +1354,8 @@ class _Library:
             @classmethod
             def initiate_plant(cls, g, plant, scenario):
                 library, batch, placed = cls.building
-                g.share_objects(library.reduction.g)  # the plants' registries (their templates: ds.objects)
+                g.share_objects(library.reduction.g)  # the plants' registries (their templates: ds.objects; in
+                                                      # a pool's process, those it was sent: _RegistryHolder)
                 placed.update(library.place(g, plant, batch))
 
         self.model = model = type(f"Library{reduction.model.__name__}", (reduction.model,),
@@ -1412,11 +1425,19 @@ class _Library:
                     setattr(component, name, value)
 
 
-def _library(reduction: Reduction, parameters: dict) -> _Library:
-    """The reduction's library for a plant of *parameters* at the scene's time step (built at its first batch)."""
+def _time_step(reduction: Reduction) -> float:
+    """The plants' time step (their DataStructure's simulation step), the library's; a pool process's copy: the one
+    it was sent."""
+    if "_worker_time_step" in reduction.__dict__:
+        return reduction.__dict__["_worker_time_step"]
     steps = [component.simulation_step() for component in getattr(reduction.instance, "components", ())
              if hasattr(component, "simulation_step")]
-    time_step = next((float(step) for step in steps if step is not None), 3600.)    # the plants' DataStructure's
+    return next((float(step) for step in steps if step is not None), 3600.)
+
+
+def _library(reduction: Reduction, parameters: dict) -> _Library:
+    """The reduction's library for a plant of *parameters* at the scene's time step (built at its first batch)."""
+    time_step = _time_step(reduction)
     libraries = reduction.__dict__.setdefault("_libraries", {})
     key = (_signature(reduction, parameters), time_step)
     if key not in libraries:
@@ -1429,6 +1450,198 @@ def _evaluate(reduction: Reduction, parameters: dict, requests: dict) -> dict:
     key, its kind values)}) for a plant of *parameters*: one full and one reduced group per kind in the reduction's
     library for those parameters (_Library), isolated, replaced by the next batch's."""
     return _evaluate_in(reduction, _library(reduction, parameters), list(requests.items()))
+
+
+def _describe(plant_g, vertex: int) -> tuple:
+    """A group's description for a library (_Library.place): ((its complexes' (scale, label), Plant excluded, the
+    coarsest first), (its scale, its label), {its properties but the structural ones: value}), read from the plants'
+    MPG *plant_g*, so that a library (a pool's process too) places a group like it without the plants' MPG."""
+    chain = []
+    v = plant_g.complex(vertex)
+    while v is not None and plant_g.scale(v) > plant_g.scales.Plant:
+        chain.append((plant_g.scale(v), plant_g.label(v)))
+        v = plant_g.complex(v)
+    properties = {}
+    for name, prop in plant_g.properties().items():
+        value = prop.get(vertex) if hasattr(prop, "get") and name not in _STRUCTURAL else None
+        if value is not None:
+            properties[name] = value
+    return tuple(reversed(chain)), (plant_g.scale(vertex), plant_g.label(vertex)), properties
+
+
+def _batches(reduction: Reduction, requests: dict):
+    """*requests* ({kind key: request}) in batches of at most Compute.current().kind_batch interior cells (one kind
+    at least), in their order; the transients freed (Compute.trim) before each batch but the first, as the caller
+    evaluates them (a generator)."""
+    from openalea.metafspm.compute import Compute
+    compute = Compute.current()
+    batch, cells = {}, 0
+    for kind_key, request in requests.items():
+        size = reduction._interior_cells(request[1])
+        if batch and cells + size > compute.kind_batch:
+            yield batch
+            compute.trim()
+            batch, cells = {}, 0
+        batch[kind_key], cells = request, cells + size
+    if batch:
+        yield batch
+
+
+# ── Kinds in a pool's processes (Compute.workers) ──
+#
+# Each process holds a copy of the reduction (_worker_copy: its declaration, its plant model, the templates and the
+# plants' registries it was sent, no kind) and its own libraries (one per plant parameters, as the main process's),
+# kept for the run. A forked process inherits the reduction as it was at its start (_record_fork: what it holds is
+# then not sent again); a spawned one receives it whole at its first task. Each task sends what the process lacks
+# (templates added since, registry entries), the plants' time step, and its kinds grouped by plant parameters; the
+# process returns their Kinds (arrays: pickled), which the main process adds in the requests' order.
+
+_POOL_REDUCTIONS = weakref.WeakValueDictionary()      # {token: Reduction} of the populations', for forked processes
+_TOKENS = itertools.count(1)
+_TEMPLATE_TABLES = ("_reduced", "_full", "_kept", "_rows", "_merged")
+
+
+class _RegistryHolder:
+    """The plants' registries (their MPG's objects, data_structure.objects) in a pool's process: what a library's
+    MPG shares (MPG.share_objects reads its _objects)."""
+
+    def __init__(self, objects=None):
+        self._objects = dict(objects or {})
+
+
+def _pool_token(reduction: Reduction) -> int:
+    """The reduction's number in the pool's processes (given at its first use, kept while it lives)."""
+    token = reduction.__dict__.get("_token")
+    if token is None:
+        token = reduction.__dict__["_token"] = next(_TOKENS)
+        _POOL_REDUCTIONS[token] = reduction
+    return token
+
+
+def _saved_registries(reduction: Reduction) -> dict:
+    """{name: registry} of the plants' registries a checkpoint saves (not the caches, saved=False: a process makes
+    its own)."""
+    store = getattr(reduction.g, "__dict__", {}).get("_objects", {})
+    return {name: registry for name, registry in store.items() if registry.saved is not False}
+
+
+def _holdings(reduction: Reduction) -> dict:
+    """What a process holds of *reduction* once sent all of it: its tables' keys, its registries' lengths."""
+    out = {table: set(reduction.__dict__.get(table, {})) for table in _TEMPLATE_TABLES}
+    out["objects"] = {name: len(registry) for name, registry in _saved_registries(reduction).items()}
+    return out
+
+
+def _record_fork(worker) -> None:
+    """compute.FORK_HOOKS': what a process forked now inherits of every population's reduction (all of it)."""
+    for token, reduction in list(_POOL_REDUCTIONS.items()):
+        worker.known[("reduction", token)] = _holdings(reduction)
+
+
+def _worker_copy(reduction: Reduction, registries: dict) -> Reduction:
+    """The reduction as a pool's process holds it: its declaration and plant model, its template tables and
+    *registries* ({name: ObjectRegistry}), no kind, no library, no plants (the rules of its templates' making not
+    needed: ports, keep, explicit_edges)."""
+    out = copy.copy(reduction)
+    out.__dict__ = {name: value for name, value in reduction.__dict__.items()
+                    if name not in ("_table", "_assigned", "_display_parts", "_token", "_pickles")}
+    out._kinds, out._blends, out._libraries = {}, {}, {}
+    out.instance, out.g = None, _RegistryHolder(registries)
+    out.ports = out.keep = out.explicit_edges = None
+    for table in _TEMPLATE_TABLES:
+        out.__dict__[table] = dict(reduction.__dict__.get(table, {}))
+    return out
+
+
+def _sync_for(reduction: Reduction, worker) -> dict:
+    """What *worker* lacks of *reduction* (its declaration when it holds none, the templates and registry entries
+    added since it was last sent: the entries in their checkpoint's form, ObjectRegistry's saved), its record
+    updated."""
+    known = worker.known.get(("reduction", reduction.__dict__["_token"]))
+    registries = _saved_registries(reduction)
+    sync = {"declaration": None, "tables": {}, "objects": {}}
+    if known is None:
+        declaration = _worker_copy(reduction, {})
+        for table in _TEMPLATE_TABLES:
+            declaration.__dict__[table] = {}
+        state = dict(declaration.__dict__)            # as is (Reduction.__getstate__ drops the model: a checkpoint's)
+        sync["declaration"] = ({name: value for name, value in state.items() if name not in ("g", "instance")},)
+        known = {table: set() for table in _TEMPLATE_TABLES}
+        known["objects"] = {}
+    for table in _TEMPLATE_TABLES:
+        values = reduction.__dict__.get(table, {})
+        sync["tables"][table] = {key: value for key, value in values.items() if key not in known[table]}
+        known[table].update(sync["tables"][table])
+    for name, registry in registries.items():
+        start = known["objects"].get(name, 0)
+        if len(registry) > start:           # in the form a checkpoint saves (a copy without what is rebuilt)
+            saved = registry.saved if registry.saved is not None else (lambda value: value)
+            sync["objects"][name] = (registry.saved, [(key, saved(value)) for key, value in registry.items()[start:]])
+            known["objects"][name] = len(registry)
+    worker.known[("reduction", reduction.__dict__["_token"])] = known
+    return sync
+
+
+def _evaluate_in_pool(reduction: Reduction, compute, workers: int, described: dict) -> dict:
+    """{kind key: {system: Kind}} of the requests *described* ({signature: (parameters, {kind key: request})}) over
+    *workers* processes of *compute*'s pool: the kinds dealt by their interior cells (the largest first, each to the
+    least loaded process: deterministic), each process its share in its library."""
+    from openalea.metafspm.compute import FORK_HOOKS
+    if _record_fork not in FORK_HOOKS:
+        FORK_HOOKS.append(_record_fork)
+    token = _pool_token(reduction)
+    entries = [(signature, kind_key, request) for signature, (_, requests) in described.items()
+               for kind_key, request in requests.items()]
+    workers = min(workers, len(entries))
+    pool = compute.pool(workers)
+    cells = [reduction._interior_cells(request[1]) for _, _, request in entries]
+    loads, shares = [0] * workers, [[] for _ in range(workers)]
+    for position in sorted(range(len(entries)), key=lambda i: -cells[i]):
+        target = loads.index(min(loads))
+        shares[target].append(position)
+        loads[target] += cells[position]
+    time_step = _time_step(reduction)
+    calls = []
+    for worker, share in zip(pool.workers, shares):
+        groups = {}
+        for position in sorted(share):
+            signature, kind_key, request = entries[position]
+            groups.setdefault(signature, (described[signature][0], []))[1].append((kind_key, request))
+        calls.append((_worker_evaluate, (token, _sync_for(reduction, worker), time_step, list(groups.values()))))
+    evaluated = {}
+    for result in pool.run(calls):
+        evaluated.update(result)
+    return evaluated
+
+
+def _worker_evaluate(token: int, sync: dict, time_step: float, groups: list) -> dict:
+    """In a pool's process: the kinds of *groups* ([(parameters, [(kind key, request)])]) of the reduction *token*,
+    its copy updated with *sync* (_sync_for), evaluated in batches in its library for those parameters; none kept."""
+    from openalea.metafspm.compute import worker_state
+    held = worker_state().setdefault("reductions", {})
+    reduction = held.get(token)
+    if reduction is None:
+        if sync["declaration"] is not None:
+            reduction = Reduction.__new__(Reduction)
+            reduction.__dict__.update(sync["declaration"][0])
+            reduction.instance, reduction.g = None, _RegistryHolder()
+        else:                                 # forked: the main process's, as inherited at this process's start
+            inherited = _POOL_REDUCTIONS[token]
+            reduction = _worker_copy(inherited, {name: registry for name, registry
+                                                 in _saved_registries(inherited).items()})
+        held[token] = reduction
+    for table, values in sync["tables"].items():
+        reduction.__dict__.setdefault(table, {}).update(values)
+    for name, (saved, entries) in sync["objects"].items():
+        registry = reduction.g._objects.setdefault(name, ObjectRegistry(name, saved))
+        for key, value in entries:
+            registry.add(key, value)
+    reduction.__dict__["_worker_time_step"] = float(time_step)
+    out = {}
+    for parameters, items in groups:
+        for batch in _batches(reduction, dict(items)):
+            out.update(_evaluate(reduction, parameters, batch))
+    return out
 
 
 def _contraction(reduction: Reduction, full_template, compartments) -> tuple:
@@ -1451,7 +1664,7 @@ def _contraction(reduction: Reduction, full_template, compartments) -> tuple:
 def _evaluate_in(reduction: Reduction, library: _Library, items: list) -> dict:
     """_evaluate's kinds *items* in *library*."""
     from openalea.metafspm.solve.decorator import _GraphSystemBuilder, declared_system, kind_derived_methods
-    plant_g = reduction.g
+    from openalea.metafspm.data_structure.configs import ScalesConfig
     groups_made = library.groups(items)
     ds = library.population.data_structure
     instance = library.population.instance
@@ -1500,7 +1713,7 @@ def _evaluate_in(reduction: Reduction, library: _Library, items: list) -> dict:
             full_nodes = np.array([node_of[int(v)] for v in ds.entity_ids("node")[full_entities]])
             reduced_nodes = np.array([node_of[int(v)] for v in ds.entity_ids("node")[reduced_nodes]])
             full_template = reduction._full[key]
-            compartments = np.flatnonzero(full_template.scale == plant_g.scales.Compartment)
+            compartments = np.flatnonzero(full_template.scale == ScalesConfig.Compartment)
             kept = np.isin(compartments, reduction._kept[key])
             A_full = A[full_nodes][:, full_nodes]
             c_full = c[full_nodes]
@@ -1553,11 +1766,11 @@ def _evaluate_in(reduction: Reduction, library: _Library, items: list) -> dict:
                 full_entities = full_entities[alive]
                 kind.contraction = contraction
                 members = np.flatnonzero(~alive)
-                kind.merged_rows = np.flatnonzero(full_template.scale == plant_g.scales.Compartment)[members]
+                kind.merged_rows = np.flatnonzero(full_template.scale == ScalesConfig.Compartment)[members]
                 kind.merged_kept = np.searchsorted(K, contraction[members])
             for name, method in derived.items():   # while the factorisation is live
                 kind.outputs[name] = method(kind, full_template, kron, full_entities)
-            if np.count_nonzero(full_template.scale == plant_g.scales.Compartment) * (K.size + 1) \
+            if np.count_nonzero(full_template.scale == ScalesConfig.Compartment) * (K.size + 1) \
                     <= DISPLAY_DENSE_MAX:              # its recovery operator, for display instances
                 kind.recovery = _dense_recovery(kind, kron)
             kron.release()                     # its factorisation (the full interior's) made again on recovery
