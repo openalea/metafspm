@@ -206,6 +206,20 @@ environment, `export MALLOC_ARENA_MAX=2` before running).
 model, the kinds of the reduction evaluated, the nodes, the memory (after each hour, after `malloc_trim` and the
 peak), written to `outputs/benchmarks/<commit>.json`, one entry per mode; `--checkpoint-at 168` checkpoints the
 scene after those hours and `--resume <checkpoint>` runs on from one (its kinds loaded, none evaluated again).
+`--scenario KEY=VALUE ...` updates the plants' scenario, e.g. MECHA's lumped shoot nodes, `--scenario
+leaf_ports=bundles vapour_path=air_spaces` (`plant_reduction`'s options: the shoot's conduits per vascular bundle,
+a leaf's evaporating walls per air space); each step records the reduced groups' dense blocks (their nonzeros), the
+end the kinds held and their pickled size.
+
+The use case keeps MECHA's defaults (each conduit and evaporating wall its own node). Measured with the options (2
+plants, day 8, against the defaults; 2026-11-06): `leaf_ports="bundles"` keeps 12,060 nodes (13,924), 1.09M dense
+nonzeros (1.96M), the plant solve 19 s over the run (30 s; the step 1.66 s on the last day, 1.77 s), the kinds 494 MB
+(613 MB), the transpiration, uptake, An and gs within 0.04 %, the leaves' water potential 0.45 % above (0.8 % of
+their drop below the roots'); with `vapour_path="air_spaces"` too, 10,250 nodes, 0.30M nonzeros, the solve 12 s (the
+step 1.55 s), the kinds 337 MB, the fluxes within 0.2 %, the leaves' water potential 3 % above. Both are kept as
+options: the leaves' water potential (Tuzet's stomata read it) drifts beyond the 0.5 % bound as the plants grow,
+while the step gains less than 15 % at two plants (the kinds' evaluation and the other models dominate it there; the
+plant solve, which the options shrink, dominates a larger scene's).
 
 The frames keep a few variables, the run's explicit choice (`run.FRAME_VARIABLES`, the recorder's
 `frame_options={"variables": ...}`; `scene(frame_variables=None)` keeps them all). Every entity set keeps its
