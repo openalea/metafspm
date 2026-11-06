@@ -367,6 +367,35 @@ def input_jacobian(name):
     return decorator
 
 
+def kind_derived(name: str):
+    """
+    Tag a method of a reduced graph system's component as a value its reduction's kinds derive (solve.reduction):
+    method(self, kind, full_template, kron, nodes) -> value, run once per kind of the systems the component declares,
+    on the reduction's library (self its library component, self.data_structure the library's DataStructure),
+    while the kind's interior factorisation is live (before kron.release()); its value is stored in
+    kind.outputs[name]. *kind*: the Kind (D, e, kept_rows, interior_rows: its full template's Compartment rows),
+    *full_template*: the full SectionTemplate, *kron*: its KronReduction (kron.shares, kron.recover: no
+    refactorisation), *nodes*: the full group's node indices in the library's DataStructure, in the kron's local
+    order (its kept nodes nodes[kron.kept_nodes]). E.g. the kept nodes' share of the interior's volumes.
+    """
+    def decorator(func):
+        func.__kind_derived__ = name
+        return func
+    return decorator
+
+
+def kind_derived_methods(component) -> dict:
+    """{name: method} of *component*'s @kind_derived methods (its class's and its bases', the most derived
+    first)."""
+    out = {}
+    for cls in type(component).__mro__:
+        for attribute in vars(cls).values():
+            name = getattr(attribute, "__kind_derived__", None)
+            if name is not None and name not in out:
+                out[name] = attribute.__get__(component, type(component))
+    return out
+
+
 # Reading a kind's operator (solve.reduction): the system's equations alone, without its boundary sets, explicit
 # terms and reduced terms
 _EXTRACTING = []

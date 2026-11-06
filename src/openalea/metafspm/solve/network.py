@@ -252,12 +252,15 @@ class KronReduction:
       pairs()           (i, j, conductance) of the equivalent network: −S_ij for each pair of kept nodes i < j
       shunts()          each kept node's diagonal term left (S_ii + Σ_j S_ij: 0 for a network of conductances alone)
       inject(b_I)       the interior sources *b_I* as sources at the kept nodes (−A_KI A_II⁻¹ b_I)
+      injection()       inject's matrix (kept × interior): −Xᵀ for a symmetric A (X = A_II⁻¹ A_IK), no solve
+      shares(T, v_I)    the interior values *v_I* shared among the kept nodes *T* by the recovery weights
       recover(x_K, b_I) the interior's potentials (A_II⁻¹ (b_I − A_IK x_K)), from the kept nodes' and the sources
-      release()         the interior's factorisation freed: a reduction kept for S, recovered from rarely
+      release()         the interior's factorisation and X freed: a reduction kept for S, recovered from rarely
 
-    Kept and interior nodes are local indices of *A* (kept_nodes, interior_nodes). The interior is factorised once
-    and its factorisation kept (until release()); the reduction keeps the sparse blocks of *A*, not A_II⁻¹ A_IK
-    (dense, interior × kept).
+    Kept and interior nodes are local indices of *A* (kept_nodes, interior_nodes). The interior is factorised once,
+    and X = A_II⁻¹ A_IK (dense, interior × kept: S's) solved once, both kept until release(): what a reduction needs
+    of them (its injection, its shares) is computed before. After release, the reduction keeps the sparse blocks of
+    *A* only.
     """
 
     def __init__(self, matrix, kept):
@@ -269,10 +272,12 @@ class KronReduction:
         self._A_KI = A[K][:, I].tocsr()
         self._A_IK = A[I][:, K].tocsr()
         self._A_II = A[I][:, I].tocsc()
+        difference = abs(A - A.T)
+        self.symmetric = bool(difference.nnz == 0 or difference.max() <= 1e-14 * abs(A).max())
         self._lu, self._keep = None, True
-        X = (self._factorisation().solve(self._A_IK.toarray()) if I.size and K.size
-             else np.zeros((I.size, K.size)))
-        self.reduced = np.asarray(A[K][:, K].toarray() - self._A_KI @ X)
+        self._X = (self._factorisation().solve(self._A_IK.toarray()) if I.size and K.size
+                   else np.zeros((I.size, K.size)))
+        self.reduced = np.asarray(A[K][:, K].toarray() - self._A_KI @ self._X)
 
     def _factorisation(self):
         """The interior's LU factorisation: the kept one, else a new one (kept unless released)."""
@@ -285,9 +290,10 @@ class KronReduction:
         return lu
 
     def release(self) -> None:
-        """Free the interior's factorisation and keep none from now on: inject, injection and recover factorise the
-        interior again at each call (a reduction kept for its reduced matrix, recovered from rarely)."""
-        self._lu, self._keep = None, False
+        """Free the interior's factorisation and X, and keep none from now on: inject, injection, shares and recover
+        factorise the interior again at each call (a reduction kept for its reduced matrix, recovered from
+        rarely)."""
+        self._lu, self._X, self._keep = None, None, False
 
     def pairs(self) -> tuple:
         """(i, j, conductance) of the equivalent network's pairs i < j (local indices among the kept nodes)."""
@@ -306,11 +312,48 @@ class KronReduction:
         return -(self._A_KI @ self._factorisation().solve(b))
 
     def injection(self) -> np.ndarray:
-        """inject's matrix (kept × interior, dense): −A_KI A_II⁻¹, from one transposed solve with the kept nodes'
-        columns (not one per interior source)."""
+        """inject's matrix (kept × interior, dense): −A_KI A_II⁻¹. For a symmetric A (A_KI = A_IKᵀ), −Xᵀ while X is
+        kept (no solve); otherwise one transposed solve with the kept nodes' columns (not one per interior
+        source)."""
         if not self.interior_nodes.size:
             return np.zeros((self.kept_nodes.size, 0))
+        if self.symmetric and self._X is not None:
+            return -self._X.T
         return -np.asarray(self._factorisation().solve(self._A_KI.T.toarray(), trans="T")).T
+
+    def shares(self, targets, interior_values) -> np.ndarray:
+        """
+        The interior's values *interior_values* (one per interior node, e.g. its volumes) shared among the kept
+        nodes *targets* (a mask over the kept nodes, or their indices among them): each interior node's value split
+        by its recovery weights over the targets (its row of W = −A_II⁻¹ A_IK, the potential it owes to each kept
+        node, restricted to the targets and normalised to 1; a node owing nothing to them, its value shared evenly).
+        One value per kept node, 0 off the targets. From X while it is kept, else from two single solves (the
+        weights' row sums, then the transposed solve of the normalised values): no dense interior × kept matrix.
+        """
+        K = self.kept_nodes.size
+        targets = np.asarray(targets)
+        mask = targets.astype(bool) if targets.dtype == bool else np.isin(np.arange(K), targets)
+        if mask.shape != (K,):
+            raise ValueError(f"KronReduction.shares: targets is a mask of the {K} kept nodes, got {mask.shape}")
+        values = np.asarray(interior_values, dtype=float).reshape(-1)
+        if values.size != self.interior_nodes.size:
+            raise ValueError(f"KronReduction.shares: {values.size} interior values, {self.interior_nodes.size} "
+                             "interior nodes")
+        out = np.zeros(K)
+        if not values.size or not mask.any():
+            return out
+        if self._X is not None:
+            total = -self._X[:, mask].sum(axis=1)
+        else:
+            total = self._factorisation().solve(-(self._A_IK @ mask.astype(float)))
+        bound = total > 0
+        scaled = np.where(bound, values / np.where(bound, total, 1.), 0.)
+        if self._X is not None:
+            weighted = -(self._X.T @ scaled)
+        else:
+            weighted = -(self._A_IK.T @ self._factorisation().solve(scaled, trans="T"))
+        out[mask] = weighted[mask] + values[~bound].sum() / mask.sum()
+        return out
 
     def recover(self, kept_values, interior_sources=None) -> np.ndarray:
         """The interior's values for the kept nodes' *kept_values* (a vector, or a matrix of columns) and the

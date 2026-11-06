@@ -78,3 +78,41 @@ def test_a_released_reduction_factorises_its_interior_again():
     assert reduction._lu is None
     for value, again in zip(before, after):
         np.testing.assert_allclose(again, value, rtol=1e-12, atol=1e-14)
+
+
+def test_a_symmetric_networks_injection_is_minus_x_transposed_without_a_solve(monkeypatch):
+    """A symmetric matrix (checked once): injection() is −Xᵀ, X = A_II⁻¹ A_IK solved for the reduced matrix, the
+    same as the transposed solve within round-off; a non-symmetric one (a drift term) still solves it transposed."""
+    rng = np.random.default_rng(4)
+    A, _ = _network(rng)
+    reduction = kron_reduction(A, [3, 14, 27, 50])
+    assert reduction.symmetric
+    transposed = -np.asarray(reduction._factorisation().solve(reduction._A_KI.T.toarray(), trans="T")).T
+    np.testing.assert_allclose(reduction.injection(), transposed, rtol=1e-13, atol=1e-13)
+    drift = A + diags(rng.uniform(0., 0.1, A.shape[0] - 1), 1)
+    skewed = kron_reduction(drift, [3, 14, 27, 50])
+    assert not skewed.symmetric
+    b = rng.normal(size=skewed.interior_nodes.size)
+    np.testing.assert_allclose(skewed.injection() @ b, skewed.inject(b), rtol=1e-10, atol=1e-13)
+
+
+def test_the_shares_are_the_dense_recovery_weights_normalised():
+    """shares(targets, v_I): each interior value split among the targets by its row of the recovery weights
+    (recover(eye): W = −A_II⁻¹ A_IK) over them, normalised (a row of no weight on them: shared evenly); from X before
+    release, from two single solves after."""
+    rng = np.random.default_rng(5)
+    A, _ = _network(rng)
+    reduction = kron_reduction(A, [0, 8, 21, 37, 55])
+    targets = np.array([True, False, True, True, False])
+    values = rng.uniform(0.5, 2., reduction.interior_nodes.size)
+    weights = np.asarray(reduction.recover(np.eye(5)))[:, targets]
+    total = weights.sum(axis=1)
+    weights = np.where((total > 0)[:, None], weights / np.where(total > 0, total, 1.)[:, None], 1. / targets.sum())
+    expected = np.zeros(5)
+    expected[targets] = weights.T @ values
+    np.testing.assert_allclose(reduction.shares(targets, values), expected, rtol=1e-12)
+    np.testing.assert_allclose(reduction.shares(np.flatnonzero(targets), values), expected, rtol=1e-12)
+    reduction.release()
+    np.testing.assert_allclose(reduction.shares(targets, values), expected, rtol=1e-12)
+    assert reduction._X is None and reduction._lu is None
+    np.testing.assert_allclose(reduction.shares(targets, values).sum(), values.sum(), rtol=1e-12)

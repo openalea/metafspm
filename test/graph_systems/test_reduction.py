@@ -380,3 +380,39 @@ def test_the_kinds_no_group_has_any_more_are_released():
     fresh_rows, fresh_values = fresh.structure.reduction.recover(fresh, 2, fresh.get("water_potential")[kept])
     np.testing.assert_array_equal(rows, fresh_rows)
     np.testing.assert_allclose(values, fresh_values, rtol=1e-12)
+
+
+def test_a_kind_derived_value_is_computed_once_per_kind_while_its_factorisation_is_live():
+    """@kind_derived(name) on the reduced system's component: run once per kind, on the library (its
+    DataStructure's full group nodes given, in the kron's order), the kind's factorisation live; its value in
+    kind.outputs[name]. A second solve of the same kinds runs it no more."""
+    from openalea.metafspm.solve.decorator import kind_derived
+    calls = []
+
+    @dataclass
+    class DerivingHydraulics(NodeHydraulics):
+        @kind_derived("interior_share")
+        def _interior_share(self, kind, full_template, kron, nodes):
+            calls.append((kron._lu is not None, self.data_structure.structure.reduction.library, len(nodes),
+                          full_template.rows_at_scale(scales.Compartment).size))
+            return kron.shares(np.ones(kron.kept_nodes.size, dtype=bool), np.ones(kron.interior_nodes.size))
+
+    class DerivingPlant(_model(False)):
+        reduction = Reduction(location="SubOrgan", labels=("RootSegment",), ports=_xylem, keep=_soil_walls,
+                              systems=("NodeHydraulics._hydraulics",))
+
+        def __init__(self, data_structure, time_step):
+            self.hydraulics = DerivingHydraulics(data_structure=data_structure, time_step=time_step)
+            self.couple(self.hydraulics)
+
+    population = population_data_structure(planting([Planting()], DerivingPlant, {}), DerivingPlant)
+    population.instance.run()
+    reduction = population.data_structure.structure.reduction
+    kinds = [kind for by_system in reduction._kinds.values() for kind in by_system.values()]
+    assert len(calls) == len(kinds) == 1
+    live, library, nodes, compartments = calls[0]
+    assert live and library and nodes == compartments
+    interior = kinds[0].interior_rows.size
+    np.testing.assert_allclose(kinds[0].outputs["interior_share"].sum(), interior, rtol=1e-12)
+    population.instance.run()
+    assert len(calls) == 1

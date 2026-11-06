@@ -311,9 +311,13 @@ class SoilDiffusion(FunctionalComponent):
   component reading a reduced group's full template (its volumes, its geometry) gets it from
   `reduction.full_template(key)`, the key of the reduced template its instance holds. The kinds kept are those of the plant's current groups:
   at each solve, a kind no group has any more (a growing section's former length class) is released, its arrays
-  freed, evaluated again if a group comes back to it. A component caching values derived from a kind keys them by
-  `(kind.key, kind.system)` (the same when the kind is evaluated again: its template key, kind values and plant
-  parameters' signature) and drops the keys its groups no longer have, so its cache too follows the plant's groups;
+  freed, evaluated again if a group comes back to it. A value derived from a kind (a section's condensed volumes)
+  is a method of the reduced system's component tagged `@kind_derived(name)`: `method(self, kind, full_template,
+  kron, nodes)`, run once per kind on its library while the kind's factorisation is live (`kron.shares(targets,
+  values)`, the interior's values shared among kept nodes by the recovery weights; `kron.recover`; no
+  refactorisation), its value in `kind.outputs[name]`, released with the kind. Each kind's interior is factorised
+  once: its reduced term and its inputs' injection (−Xᵀ for a symmetric operator, computed only when the reduction
+  declares an input) come from that one factorisation;
   a kind keeps its term and the sparse blocks of its full interior, not their factorisation (made again for a
   recovery, `recover`), so the memory follows the plant's size, not the kinds it went through. For outputs,
   `reduction.recover_interiors(ds)` gives every reduced group's interior values at once (batched by kind, one

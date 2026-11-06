@@ -28,6 +28,10 @@ Declared on the plant model, before its structure is built (as nodes= and wiring
   outputs            the group variables a kind gives its groups (their values on its library's full group, e.g. a
                      section's kr): Reduction.outputs(ds, name)
 
+A value a kind derives (a section's condensed volumes, say) is a method of the reduced system's component tagged
+@kind_derived(name) (solve.decorator): run once per kind on the library, while the kind's interior factorisation
+is live (KronReduction.shares, recover), its value in kind.outputs[name]. A kind's interior is factorised once.
+
 The structural model asks for a group's reduced template (Reduction.template_for) when it instances its anatomy:
 the full cells never enter the plant's DataStructure. For display only (an encoding3d frame's sections, drawn whole),
 Reduction.recover_interiors gives every reduced group's interior values at once (one factorisation per kind),
@@ -109,8 +113,8 @@ class Kind:
 
     def release(self) -> None:
         """Free its arrays: a kind no group of its DataStructure has any more (Reduction.group_kinds' release), its
-        memory freed even where a cache still holds it. A component's cache of a kind's derived values keys them by
-        (key, system), the same when the kind is evaluated again, and drops the keys its groups no longer have."""
+        memory freed even where a cache still holds it. Its derived values (@kind_derived, in its outputs) go with
+        it, computed again with it."""
         self.D = self.e = self.reduction = self.interior_source = None
         self.kept_rows = self.interior_rows = None
         self.inputs, self.outputs = {}, {}
@@ -450,7 +454,7 @@ def _evaluate(reduction: Reduction, parameters: dict, requests: dict) -> dict:
     reduced instance per kind, isolated."""
     from openalea.metafspm.coupling.component import StructuralComponent
     from openalea.metafspm.scene.population import Planting, planting, population_data_structure
-    from openalea.metafspm.solve.decorator import _GraphSystemBuilder, declared_system
+    from openalea.metafspm.solve.decorator import _GraphSystemBuilder, declared_system, kind_derived_methods
     items = list(requests.items())
     plant_g = reduction.g
     scale = getattr(plant_g.scales, reduction.location)
@@ -544,11 +548,12 @@ def _evaluate(reduction: Reduction, parameters: dict, requests: dict) -> dict:
             context = spec.make_context(x, None, None)
             input_jacobians = {name: csr_matrix(evaluator(context))
                                for name, evaluator in builder.input_jacobian_evaluators.items()}
+        derived = kind_derived_methods(component)
         node_of = {int(v): j for j, v in enumerate(spec.graph.node_ids.tolist())}
         for k, (kind_key, (_, key, _)) in enumerate(items):
-            full_nodes = np.flatnonzero(owner == group_of[(k, "full")])
+            full_entities = np.flatnonzero(owner == group_of[(k, "full")])        # DataStructure indices
             reduced_nodes = np.flatnonzero(owner == group_of[(k, "reduced")])
-            full_nodes = np.array([node_of[int(v)] for v in ds.entity_ids("node")[full_nodes]])
+            full_nodes = np.array([node_of[int(v)] for v in ds.entity_ids("node")[full_entities]])
             reduced_nodes = np.array([node_of[int(v)] for v in ds.entity_ids("node")[reduced_nodes]])
             full_template = reduction._full[key]
             compartments = np.flatnonzero(full_template.scale == plant_g.scales.Compartment)
@@ -560,11 +565,11 @@ def _evaluate(reduction: Reduction, parameters: dict, requests: dict) -> dict:
             S, s = kron.reduced, c_full[K] + kron.inject(c_full[I])
             A_red, c_red = A[reduced_nodes][:, reduced_nodes].toarray(), c[reduced_nodes]
             inputs = {}
-            if input_jacobians:
+            declared = [name for name in input_jacobians if name in reduction.inputs]
+            if declared:                       # −Xᵀ for a symmetric operator (no solve), only for a declared input
                 carry = kron.injection()
-            for name, Jp in input_jacobians.items():
-                if name not in reduction.inputs:
-                    continue
+            for name in declared:
+                Jp = input_jacobians[name]
                 J_full = Jp[full_nodes][:, full_nodes]
                 response = np.asarray(J_full[K].toarray()) + np.asarray((J_full[I].T @ carry.T).T)
                 own = Jp[reduced_nodes][:, reduced_nodes].toarray()
@@ -589,9 +594,12 @@ def _evaluate(reduction: Reduction, parameters: dict, requests: dict) -> dict:
                     values = np.asarray(ds.get(name), dtype=float)
                     group_outputs[name] = float(values[full_group] if ds.location(name) == reduction.location else
                                                 values[np.flatnonzero(owner == full_group)[0]])
+            kind = Kind(D=S - A_red, e=s - c_red, reduction=kron, interior_source=c_full[I],
+                        kept_rows=compartments[K], interior_rows=compartments[I], inputs=inputs,
+                        outputs=group_outputs, key=kind_key, system=system)
+            for name, method in derived.items():   # while the factorisation is live
+                kind.outputs[name] = method(kind, full_template, kron, full_entities)
             kron.release()                     # its factorisation (the full interior's) made again on recovery
-            out[kind_key][system] = Kind(D=S - A_red, e=s - c_red, reduction=kron, interior_source=c_full[I],
-                                         kept_rows=compartments[K], interior_rows=compartments[I], inputs=inputs,
-                                         outputs=group_outputs, key=kind_key, system=system)
+            out[kind_key][system] = kind
     return out
 
