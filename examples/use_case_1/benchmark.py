@@ -1,8 +1,9 @@
 """
 Use case 1's benchmark (devplan_release_optimisation.md §5): the use case's scene (run.scene, in memory: no frames,
 no checkpoints) run hour by hour from the sowing, each step's time by model (Scene.timing), the kinds of the
-reduction evaluated (their number and time), the plants' nodes, and the memory (RSS after each step; after
-malloc_trim and the peak at the end).
+reduction evaluated (their number and time), the plants' nodes, the step's results (results(): transpiration,
+uptake, the leaves' gas exchange, the roots' water potential, to compare runs), and the memory (RSS after each step;
+after malloc_trim and the peak at the end).
 
     python benchmark.py [--plants 2] [--days 3] [--label text] [--outputs] [--checkpoint-at 168 ...]
                         [--resume outputs/benchmarks/checkpoints/<label>/step_000168]
@@ -102,6 +103,17 @@ class KindCounter:
         return out
 
 
+def results(scene) -> dict:
+    """The step's results, to compare runs (a change's effect on them): the water balance's transpiration and uptake,
+    the leaves' green area, PARa, An and gs (run.LEAVES), the roots' water potential (run.ROOTS)."""
+    rows = {name: scene.recorder.table(name).iloc[-1] for name in ("water_balance", "leaves", "roots")}
+    picked = {"transpiration": rows["water_balance"]["transpiration"],
+              "root_uptake": rows["water_balance"]["root_uptake"],
+              "green_area": rows["leaves"]["green_area"], "PARa": rows["leaves"]["PARa"], "An": rows["leaves"]["An"],
+              "gs": rows["leaves"]["gs"], "roots_psi": rows["roots"]["psi"]}
+    return {name: float(value) for name, value in picked.items()}
+
+
 def benchmark(plants: int, days: float, measure_outputs: bool = False, checkpoint_at=(), resume: str = None,
               label: str = "run") -> dict:
     counter = KindCounter()
@@ -133,7 +145,8 @@ def benchmark(plants: int, days: float, measure_outputs: bool = False, checkpoin
         nodes = sum(population.data_structure.n_nodes() for population in scene.populations)
         steps.append({"hour": hour + 1, "seconds": seconds, "models": timing, "kinds": kinds,
                       "new_templates": templates,
-                      "kind_seconds": kind_seconds, "nodes": nodes, "rss_gb": resident_memory()})
+                      "kind_seconds": kind_seconds, "nodes": nodes, "rss_gb": resident_memory(),
+                      "results": results(scene)})
         print(f"h {hour + 1:4d}  {seconds:7.2f} s  kinds {kinds:3d} ({kind_seconds:6.2f} s)  nodes {nodes:6d}  "
               f"RSS {steps[-1]['rss_gb']:.2f} GB", flush=True)
         if hour + 1 in checkpoint_at:

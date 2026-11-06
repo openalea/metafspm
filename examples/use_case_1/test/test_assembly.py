@@ -21,6 +21,7 @@ for package in ("openalea.adel", "openalea.archisimple", "openalea.granap", "ope
 
 from openalea.caribu.component import CaribuLightModel                                # noqa: E402
 from openalea.cnwgrass.metafspm.gas_exchange import GasExchange                      # noqa: E402
+from openalea.metafspm.coupling.geometry import CentreIn, FractionIn                 # noqa: E402
 from openalea.metafspm.coupling.units import conversion_factor                       # noqa: E402
 from openalea.metafspm.data_structure.data_api import EntityView, LocatedView        # noqa: E402
 from openalea.metafspm.scene.population import Planting, planting                   # noqa: E402
@@ -32,12 +33,11 @@ sys.path.insert(0, os.path.abspath(EXAMPLE))
 
 from component import RichardsSoilModel                                               # noqa: E402
 from models import (PLANT_TRANSLATOR, SCENE_TRANSLATOR, WHEAT_SCENARIO, WATER_MOLAR_VOLUME, WaterBalance,  # noqa: E402
-                    WheatPlant, emerged_green_area, emerged_height, root_surface_mappings)
+                    WheatPlant)
 
 HOUR, DAY = 3600., 86400.
 EMERGENCE_DAYS = 5                 # at 20 °C (100 °Cd), the first blade has emerged and is lit
 STEPS = 3
-SOIL_NODE = 4.
 
 
 def _scene(time_step=HOUR):
@@ -50,7 +50,7 @@ def _scene(time_step=HOUR):
                  environment_scenarios=[dict(depth=0.2, voxel=0.05, adaptive=False, initial_pressure_head=-1.,
                                              bottom_boundary="no_flux"),
                                         dict(sun=True, interval=HOUR)],
-                 translator=SCENE_TRANSLATOR, time_step=time_step, forcings=forcings, mappings=root_surface_mappings,
+                 translator=SCENE_TRANSLATOR, time_step=time_step, forcings=forcings,
                  recorder=SceneRecorder(tables={"water_balance": WaterBalance()}), start=(130, 11.))
 
 
@@ -103,30 +103,34 @@ def test_the_links_factors_are_their_units_conversions():
     assert potential.sources["water_potential"] == pytest.approx(conversion_factor("hPa", "MPa"), rel=1e-12)
     uptake = links[("RichardsSoil", "plant_uptake")]
     assert uptake.sources["root_uptake"] == pytest.approx(conversion_factor("m3 s-1", "cm3 d-1"), rel=1e-12)
-    assert links[("GasExchange", "height")].formula is emerged_height                 # Adel's element ends
-    assert links[("GasExchange", "emerged_green_area")].formula is emerged_green_area      # and their areas
+    height, area = links[("GasExchange", "height")], links[("GasExchange", "green_area")]      # above the soil
+    assert isinstance(height.sources[0], CentreIn) and height.sources[0].domain == "air"
+    assert area.sources[0] == "green_area" and isinstance(area.sources[1], FractionIn)
+    assert area.names == {"green_area": "green_area_in_air"}                 # Adel's green_area untouched
+    assert uptake.mapping == potential.mapping == {"mask": "root_surface", "method": "overlap"}   # the soil nodes
 
 
-def test_the_gas_exchange_height_is_of_the_part_above_the_soil():
-    """An element's height for the gas exchange: the mean of its part above the soil (its lower end raised to the
-    soil's surface), NaN wholly below it (no gas exchange), its ends' mean wholly above."""
-    heights = emerged_height([-0.02, -0.02, 0.01, 0.03], [-0.01, 0.004, 0.03, 0.01])
-    np.testing.assert_allclose(heights, [np.nan, 0.002, 0.02, 0.02], rtol=1e-12)
-
-
-def test_the_gas_exchange_area_is_the_green_area_above_the_soil():
-    """An element's area for the gas exchange: its green area above the soil, from the fraction of its length above
-    it (its ends' heights, Adel's z1 its base). Wholly below: 0; wholly above: its green area. Its base buried (z1
-    below z2): the part in the soil is green first (senescence going down from the top), the green area less the
-    buried area; its top buried (z1 above z2): the buried part senesced first, the green area within the emerged
-    part. Without ends: NaN."""
-    z1 = [-0.02, -0.02, -0.02, 0.01, 0.03, 0.02, 0.02, np.nan]
-    z2 = [-0.01, 0.004, 0.004, 0.03, 0.01, -0.02, -0.02, 0.01]
-    area = np.array([6., 6., 6., 6., 6., 6., 6., 6.]) * 1e-4
-    green_area = np.array([6., 6., 4., 4., 4., 4., 2., 4.]) * 1e-4
-    emerged = emerged_green_area(z1, z2, area, green_area)
-    np.testing.assert_allclose(emerged, np.array([0., 1., 0., 4., 4., 3., 2., np.nan]) * 1e-4, rtol=1e-12,
-                               atol=1e-18)
+def test_the_gas_exchange_reads_the_green_area_above_the_soil(stepped):
+    """The gas exchange's green_area is each element's green area above the soil (Adel's times its green triangles'
+    share above the Scene's soil surface), under a private name: Adel's green_area is the whole element's. An
+    element drawn wholly below the soil exchanges nothing (0, its height NaN), one wholly above over its whole green
+    area; the light and the gas exchange cut the elements at the same surface."""
+    scene, _ = stepped
+    ds = scene.populations[0].data_structure
+    elements = ds.at("SubOrgan")
+    gas_exchange = scene.populations[0].instance.gas_exchange
+    assert ds.soil_surface == 0. and _light(scene).light.soil_surface == 0.
+    whole, read = np.asarray(elements.get("green_area")), gas_exchange.read("green_area")
+    np.testing.assert_array_equal(read, ds.get("green_area_in_air"))
+    triangles = elements.triangles()
+    drawn = np.bincount(triangles.owner, minlength=elements.n_nodes()) > 0
+    lowest, highest = np.full(elements.n_nodes(), np.inf), np.full(elements.n_nodes(), -np.inf)
+    np.minimum.at(lowest, triangles.owner, triangles.vertices[..., 2].min(axis=1))
+    np.maximum.at(highest, triangles.owner, triangles.vertices[..., 2].max(axis=1))
+    above, below = drawn & (lowest >= 0.), drawn & (highest < 0.)
+    assert (read <= whole * (1. + 1e-12)).all() and above.any() and below.any()
+    np.testing.assert_allclose(read[above], whole[above], rtol=1e-12)
+    assert (read[below] == 0.).all() and np.isnan(gas_exchange.read("height")[below]).all()
 
 
 def test_the_assembly_builds_with_every_link(stepped):
@@ -137,7 +141,7 @@ def test_the_assembly_builds_with_every_link(stepped):
     expected = {("GranapAnatomy", "stem_radius"): ("ShootArchitecture", "derived"),
                 ("MechaHydraulics", "leaf_transpiration"): ("GasExchange", "derived"),
                 ("GasExchange", "height"): ("ShootArchitecture", "derived"),
-                ("GasExchange", "emerged_green_area"): ("ShootArchitecture", "derived"),
+                ("GasExchange", "green_area"): ("ShootArchitecture", "derived"),
                 ("GasExchange", "leaf_water_potential"): ("MechaHydraulics", "derived"),
                 ("GasExchange", "PARa"): ("CaribuLight", "scene"),
                 ("MechaHydraulics", "soil_psi"): ("RichardsSoil", "scene"),
@@ -250,15 +254,15 @@ def test_the_soil_potential_reaches_the_roots(stepped):
     scene, history = stepped
     ds = scene.populations[0].data_structure
     soil = _soil(scene)
-    kind = np.asarray(ds.get("kind"))
+    soil_nodes = ds.mask("root_surface")                    # GRANAP's entity set soil_nodes
     soil_psi = np.asarray(ds.get("soil_psi"))
     potentials = np.asarray(soil.grid.get("water_potential")) * 1e4
     exchanged = np.isin(np.asarray(ds.entity_ids("node")), history[-2]["compartments"])
-    assert (kind == SOIL_NODE).any()
-    on_roots = soil_psi[(kind == SOIL_NODE) & exchanged]
+    assert soil_nodes.any()
+    on_roots = soil_psi[soil_nodes & exchanged]
     assert (on_roots < 0.).all()
     assert on_roots.min() >= potentials.min() - 1e-9 and on_roots.max() <= potentials.max() + 1e-9
-    np.testing.assert_array_equal(soil_psi[kind != SOIL_NODE], 0.)
+    np.testing.assert_array_equal(soil_psi[~soil_nodes], 0.)
 
 
 def test_the_light_reaches_the_gas_exchange(stepped):

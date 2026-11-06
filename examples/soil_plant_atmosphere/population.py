@@ -12,7 +12,7 @@ import numpy as np
 from openalea.metafspm.scene.population import planting, stand
 from openalea.metafspm.scene.scene import Scene, SceneRecorder
 
-from models import SCENE_TRANSLATOR, SeedlingWater, Soil, largest_change, root_surface_mappings
+from models import SCENE_TRANSLATOR, SeedlingWater, Soil, largest_change
 from one_plant import plots, summary
 
 
@@ -28,7 +28,7 @@ def scene(folder=None, tolerance=1e-6, root_radial_k=(0.4, 0.5, 0.6), soil_scena
     table = planting(sown, SeedlingWater, plant_scenarios=per_plant)
     stop = largest_change(tolerance)
     built = Scene(table, environment=[Soil], environment_scenarios=[soil_scenario or {}],
-                  translator=SCENE_TRANSLATOR, time_step=3600, mappings=root_surface_mappings, stop_when=stop,
+                  translator=SCENE_TRANSLATOR, time_step=3600, stop_when=stop,
                   recorder=SceneRecorder(folder, segment_plants=["p0"], segment_period=1) if folder else None)
     return built, stop
 

@@ -26,7 +26,7 @@ from openalea.metafspm.scene.scenarios import parameter_table, read_scenarios, v
 from openalea.metafspm.scene.scene import Scene
 
 from components import SeedlingStructure
-from models import SCENE_TRANSLATOR, SeedlingWater, Soil, root_surface_mappings
+from models import SCENE_TRANSLATOR, SeedlingWater, Soil
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 HOURS = 48
@@ -41,7 +41,7 @@ def run(scenario: dict, folder: str, hours: int = HOURS) -> Scene:
                      yrange=0.2)
     recorder = SceneRecorder(folder, frame_period=6, checkpoint_period=12, keep_checkpoints=1)
     scene = Scene(table, environment=[Soil], environment_scenarios=[scenario.get("Soil", {})],
-                  translator=SCENE_TRANSLATOR, time_step=3600, mappings=root_surface_mappings, forcings=forcings,
+                  translator=SCENE_TRANSLATOR, time_step=3600, forcings=forcings,
                   recorder=recorder)
     scene.simulate(hours)
     return scene

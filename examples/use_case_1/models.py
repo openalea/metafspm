@@ -15,16 +15,15 @@ translators linking their components.
                         MECHA's soil boundary on each root section's soil node, the sections reduced onto their
                         conduits
     PLANT_TRANSLATOR    within the plant: GRANAP's stems classed by their organ's diameter, the gas exchange's element
-                        heights and green areas from Adel's element ends above the soil (emerged_height,
-                        emerged_green_area), the elements' transpiration
-                        summed per organ into MECHA's
+                        heights and green areas of their parts above the soil (CNW-Grass's emerged_links: from
+                        Adel's triangles above the Scene's soil surface, its green area under a receiver-private
+                        name, Adel's untouched), the elements' transpiration summed per organ into MECHA's
                         leaf transpiration, MECHA's water potential back to the gas exchange's leaf water potential
                         (Tuzet's stomata)
     SCENE_TRANSLATOR    between the plant and the soil (component.scene_translator: MECHA's root uptake into the
-                        cells, the soil's water potential back to the roots); the light's PARa and the optics are
-                        the Scene's default identity links
-    root_surface_mappings
-                        the roots' soil nodes onto the soil grid (the Scene's mappings=)
+                        cells, the soil's water potential back to the roots, through the roots' soil nodes: the
+                        links' mapping, the plant's mask root_surface, GRANAP's entity set soil_nodes); the light's
+                        PARa and the optics are the Scene's default identity links
     WaterBalance        the diagnostics of decision U-6 after each step (a SceneRecorder table): the plant's balance
                         (transpiration, uptake), the soil's (its water stored, exchanged, given to the roots), the
                         largest changes of the plant's and the soil's water potentials since the previous step
@@ -47,13 +46,11 @@ from openalea.adel.leaf_shapes import LeafShapes
 from openalea.archisimple.architecture import RootArchitecture
 from openalea.archisimple.parameter_sets import WHEAT_ON_A_SHOOT
 from openalea.caribu.optics import PlantOptics
-from openalea.cnwgrass.metafspm.gas_exchange import GasExchange, mecha_links
-from openalea.granap.metafspm.build import SOIL_NODE
+from openalea.cnwgrass.metafspm.gas_exchange import GasExchange, emerged_links, mecha_links
 from openalea.granap.metafspm.component import GranapAnatomy, junction_rules
 from openalea.mecha.component import MechaHydraulics, scenario_reduction
 from openalea.mecha.stand_ins import Development
 
-from openalea.metafspm.coupling.cross import CrossMapping
 from openalea.metafspm.coupling.translator import Translator
 
 from component import NodalRootEmergence, RichardsSoilModel, WheatCrown, scene_translator
@@ -62,7 +59,6 @@ WATER_MOLAR_VOLUME = 18e-3                   # cm3 mmol-1 (1 g of water is 1 cm3
 SECONDS_PER_DAY = 86400.
 HPA_PER_MPA = 1e4
 CM3_PER_M3 = 1e6
-SOIL_LEVEL = 0.                              # m, the soil's surface (Caribu's soil_level: the light cut below it)
 
 # The root sections' barriers (the segments' and the apices') by their distance from the tip (MECHA's Development,
 # ArchiSimple's distance: from the section's base, an apex's its length): none at the tip (a section of distance 0:
@@ -85,12 +81,13 @@ WHEAT_SCENARIO = {
     # MECHA: the soil's potential on each root section's soil node, no condition at the collar (the plant closed
     # between the soil and the air), the roots' barriers
     "soil_boundary": "node_dirichlet", "collar_condition": 0., **BARRIERS,
-    # MECHA's sections reduced onto their conduits, their soil node and a blade's vapour path (scenario_reduction),
-    # by GRANAP's anatomy kinds: the root segments and apices, the stems, the sheaths (Adel's StemElements of a Sheath
-    # organ: the kind "Sheath"), the blades and the seed; their kinds by length class of relative width 0.1 (a
-    # section between two classes their kinds' blend; each class evaluated once, shared by the plants: "exact" for a
-    # kind per length, the reference)
-    "reduced": True, "reduced_labels": ("RootSegment", "RootApex", "StemElement", "Sheath", "LeafElement", "Seed"),
+    # MECHA's sections reduced onto their conduits, their soil node and a blade's vapour path (scenario_reduction):
+    # every section, the root segments and apices, the stem elements (the internodes' and the sheaths'), the blades
+    # and the seed (a filter of the SubOrgans, Reduction(where=)); their kinds by length class of relative width 0.1
+    # (a section between two classes their kinds' blend; each class evaluated once, shared by the plants: "exact" for
+    # a kind per length, the reference)
+    "reduced": True,
+    "reduced_where": {"label": ("RootSegment", "RootApex", "StemElement", "LeafElement", "Seed")},
     "length_classes": 0.1,
     # the gas exchange: Tuzet's stomata, limited by MECHA's leaf water potential (decision U-5)
     "stomatal_model": "Tuzet",
@@ -98,49 +95,11 @@ WHEAT_SCENARIO = {
 
 
 
-def emerged_height(z1, z2):
-    """
-    An element's height (m) for the gas exchange: the mean of its part above the soil, its ends' heights (Adel's z1
-    and z2) the lower raised to the soil's surface (SOIL_LEVEL); NaN for an element wholly below it (the gas
-    exchange's "no geometry": it exchanges nothing). Adel's shoot stands on the crown, below the soil: a blade Adel
-    has emerged from its sheath may still be in the soil, unlit (Caribu's light is cut below the soil) and without
-    gas exchange; CNW-Grass's adel_links' height (element_height, its ends' mean) would put the canopy below the soil
-    (the gas exchange's canopy height then 0: no element exchanges).
-    """
-    z1, z2 = np.asarray(z1, dtype=float), np.asarray(z2, dtype=float)
-    low, high = np.minimum(z1, z2), np.maximum(z1, z2)
-    with np.errstate(invalid="ignore"):
-        return np.where(high > SOIL_LEVEL, (np.maximum(low, SOIL_LEVEL) + high) / 2, np.nan)
-
-
-def emerged_green_area(z1, z2, area, green_area):
-    """
-    An element's green area above the soil (m2), the area of its gas exchange (CNW-Grass's emerged_green_area), cut at
-    the soil's surface (SOIL_LEVEL) as Caribu cuts the light: the fraction of its length above it, from its ends'
-    heights (Adel's z1, its base, and z2), of its area; Adel's senescence goes down from its top, so the part in the
-    soil is green where it is the base's (z1 below z2: the green area less the buried area) and senesced first where
-    it is the top's (z1 above z2: the green area within the emerged part). 0 for an element wholly below the soil;
-    NaN without ends (the gas exchange's whole green area, an element without geometry exchanging nothing anyway).
-    """
-    z1, z2 = np.asarray(z1, dtype=float), np.asarray(z2, dtype=float)
-    area, green_area = np.asarray(area, dtype=float), np.asarray(green_area, dtype=float)
-    low, high = np.minimum(z1, z2), np.maximum(z1, z2)
-    with np.errstate(invalid="ignore", divide="ignore"):
-        fraction = np.where(low >= SOIL_LEVEL, 1., np.where(high <= SOIL_LEVEL, 0.,
-                                                            (high - SOIL_LEVEL) / (high - low)))
-        emerged = np.where(z1 <= z2, np.maximum(green_area - (1. - fraction) * area, 0.),
-                           np.minimum(green_area, fraction * area))
-    return np.where(np.isnan(z1) | np.isnan(z2), np.nan, emerged)
-
-
 PLANT_TRANSLATOR = (
-    Translator(mecha_links().links)                                  # the leaf water potential, MECHA's (Tuzet)
-    # the gas exchange's element heights: of their part above the soil (CNW-Grass's adel_links, its ends' mean, would
-    # count the part in the soil)
-    .link("GasExchange", "height", "ShootArchitecture", ("z1", "z2"), formula=emerged_height)
-    # and the green area they exchange over: of the same part (the light's, Caribu cutting it below the soil)
-    .link("GasExchange", "emerged_green_area", "ShootArchitecture", ("z1", "z2", "area", "green_area"),
-          formula=emerged_green_area)
+    # the leaf water potential, MECHA's (Tuzet); the gas exchange's element heights and green areas of their parts
+    # above the soil (emerged_links: Adel's shoot stands on the crown, below the soil, so that a blade Adel has
+    # emerged from its sheath may still be in it, unlit, as Caribu cuts the light there, and without gas exchange)
+    Translator(mecha_links().links + emerged_links().links)
     # GRANAP's stems (and the seed) classed by their radius: their organ's diameter halved (Adel's organs', the
     # subcrown internode's WheatCrown gives), broadcast to its elements
     .link("GranapAnatomy", "stem_radius", "ShootArchitecture", {"diameter": 0.5}, source_scale="Organ",
@@ -171,7 +130,7 @@ class WheatPlant(ScenarioShoot):
     potential on the roots' soil nodes).
 
     reduction: MECHA's sections reduced onto their conduits and kept nodes when the scenario says so
-    (scenario_reduction: "reduced", "reduced_labels", "length_classes"), the whole network otherwise.
+    (scenario_reduction: "reduced", "reduced_where", "length_classes"), the whole network otherwise.
     """
     initiators = (WheatCrown, ShootArchitecture, RootArchitecture, GranapAnatomy)
     from_scale, nodes, wiring = "SubOrgan", "Compartment", junction_rules
@@ -192,7 +151,8 @@ class WheatPlant(ScenarioShoot):
         self.hydraulics = MechaHydraulics(data_structure=ds, time_step=time_step)
         self.couple(self.crown, self.development, self.architecture, self.rule, self.roots, self.anatomy,
                     self.barriers, self.optics, self.gas_exchange, self.hydraulics)
-        ds.define_mask("root_surface", {"kind": float(SOIL_NODE)})      # the roots' soil nodes: the soil mapping's
+        # the roots' soil nodes (GRANAP's entity set): the soil links' mapping (component.scene_translator)
+        ds.define_mask("root_surface", entities="GranapAnatomy.soil_nodes")
 
     def run(self):
         self.run_shoot()
@@ -203,13 +163,6 @@ class WheatPlant(ScenarioShoot):
         self.optics()
         self.gas_exchange()
         self.hydraulics()
-
-
-def root_surface_mappings(scene):
-    """The roots' soil nodes (the root_surface mask) of each population onto the soil grid."""
-    soil = next(model for model in scene.environment if isinstance(model, RichardsSoilModel))
-    return [CrossMapping(population.data_structure, soil.grid, method="overlap", mask="root_surface")
-            for population in scene.populations]
 
 
 class WaterBalance:

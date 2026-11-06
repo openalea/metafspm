@@ -756,17 +756,21 @@ class RichardsSoilModel(EnvironmentModel):
         self.initial_water = state.get("initial_water")
 
 
+ROOT_SURFACE = {"mask": "root_surface", "method": "overlap"}
+
+
 def scene_translator(plant_component="MechaHydraulics", uptake="root_uptake", uptake_factor=1e-6 / 86400.,
-                     soil_potential="soil_psi", potential_factor=1e4) -> Translator:
+                     soil_potential="soil_psi", potential_factor=1e4, mapping=ROOT_SURFACE) -> Translator:
     """
     The scene links of the soil with a plant water model: its *uptake* (MECHA's root_uptake, cm3 d-1, factor
     1e-6 / 86400 to m3 s-1) summed into the cells' plant_uptake, and the soil's water_potential (MPa, factor 1e4 to
-    MECHA's soil_psi in hPa) back to its *soil_potential*. The Scene maps the root surface onto the grid
-    (CrossMapping, given by its mappings=).
+    MECHA's soil_psi in hPa) back to its *soil_potential*. Their *mapping* (Link.mapping, the Scene's CrossMapping
+    of the plants onto the grid): the plant model's mask root_surface (the roots' soil nodes), by overlap.
     """
     return (Translator()
-            .link(plant_component, soil_potential, "RichardsSoil", {"water_potential": potential_factor})
-            .link("RichardsSoil", "plant_uptake", plant_component, {uptake: uptake_factor}))
+            .link(plant_component, soil_potential, "RichardsSoil", {"water_potential": potential_factor},
+                  mapping=mapping)
+            .link("RichardsSoil", "plant_uptake", plant_component, {uptake: uptake_factor}, mapping=mapping))
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -860,7 +864,7 @@ class WheatCrown(StructuralComponent):
         position and its *scenario*'s parameters."""
         parameters = cls.plant_parameters(scenario)
         x, y, seed_height = (float(g.property(name)[plant]) for name in ("x", "y", "z"))
-        crown_height = -float(parameters["crown_depth"])
+        crown_height = float(getattr(g, "soil_surface", 0.)) - float(parameters["crown_depth"])   # below the soil
         if crown_height <= seed_height + 1e-12:
             raise ValueError(f"WheatCrown: the crown ({-crown_height} m deep) must lie above the seed "
                              f"({-seed_height} m deep): crown_depth below the sowing depth")

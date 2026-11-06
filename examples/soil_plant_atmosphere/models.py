@@ -7,12 +7,12 @@ constant input of the components (components.AIR_WATER_POTENTIAL).
                         name, identities on the shared DataStructure)
     within the soil     SoilWaterTransport.conductance <- SoilStructure.k
     plants <-> soil     the soil water potential, broadcast to the root epidermis; the plants' uptake, summed into
-                        the soil cells (a CrossMapping of the root surface onto the grid)
+                        the soil cells: the links' mapping (mapping=: the Scene's CrossMapping of the root surface,
+                        SeedlingStructure's entity set root_surface, onto the grid)
 """
 import numpy as np
 
 from openalea.metafspm.coupling.composite_wrapper import CompositeModel
-from openalea.metafspm.coupling.cross import CrossMapping
 from openalea.metafspm.coupling.translator import Translator
 from openalea.metafspm.scene.environment import EnvironmentModel
 
@@ -24,10 +24,14 @@ from components import PlantWaterTransport, SeedlingStructure
 
 PLANT_TRANSLATOR = Translator().link("PlantWaterTransport", "conductance", "SeedlingStructure", {"k": 1.})
 
+# the plants and the soil exchange through the root surface only (the mask root_surface: the overlap of its nodes'
+# segments with the cells), the Scene's mapping of these links
+ROOT_SURFACE = {"mask": "root_surface", "method": "overlap"}
 SCENE_TRANSLATOR = (
     Translator()
-    .link("PlantWaterTransport", "soil_water_potential", "SoilWaterTransport", {"water_potential": 1.})
-    .link("SoilWaterTransport", "plant_uptake", "PlantWaterTransport", {"root_uptake": 1.})
+    .link("PlantWaterTransport", "soil_water_potential", "SoilWaterTransport", {"water_potential": 1.},
+          mapping=ROOT_SURFACE)
+    .link("SoilWaterTransport", "plant_uptake", "PlantWaterTransport", {"root_uptake": 1.}, mapping=ROOT_SURFACE)
 )
 
 
@@ -44,6 +48,8 @@ class SeedlingWater(CompositeModel):
         self.structure = SeedlingStructure(data_structure=data_structure, time_step=time_step)
         self.transport = PlantWaterTransport(data_structure=data_structure, time_step=time_step)
         self.couple(self.structure, self.transport, translator=PLANT_TRANSLATOR)
+        # the root surface (the structure's entity set): the soil links' mapping maps it only
+        data_structure.define_mask("root_surface", entities="SeedlingStructure.root_surface")
 
     def run(self):
         self.structure()
@@ -103,13 +109,6 @@ class AdaptiveSoil(EnvironmentModel):
             self.structure.set_layers()
             set_conductivity(self.grid, **self.layers)
         self.history.append(np.bincount(self.grid.refinement_level(), minlength=self.grid.max_level + 1))
-
-
-def root_surface_mappings(scene):
-    """The root epidermis of each population onto the soil grid (only the nodes in contact with the soil)."""
-    soil = next(model for model in scene.environment if isinstance(model, (Soil, AdaptiveSoil)))
-    return [CrossMapping(population.data_structure, soil.grid, method="overlap", mask="root_surface")
-            for population in scene.populations]
 
 
 def largest_change(tolerance=1e-4):

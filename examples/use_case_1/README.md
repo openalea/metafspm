@@ -119,9 +119,9 @@ Compartments of GRANAP's sections (anatomy mode).
   the anchors, GRANAP's wheat root
   (`for_wheat_root`) and monocot stem, sheath and leaf, a soil node per root section, MECHA's soil boundary on it
   (`node_dirichlet`) and no collar condition, MECHA's sections reduced onto their conduits (`reduction =
-  staticmethod(scenario_reduction)`, the scenario's `reduced`, `reduced_labels`: GRANAP's anatomy kinds, the root
-  segments and apices, the stems, the sheaths, the blades and the seed; a sheath's elements are Adel's StemElements,
-  the kind `Sheath`), their kinds by length class (`length_classes`: 0.1, a section between two classes their kinds'
+  staticmethod(scenario_reduction)`, the scenario's `reduced`, `reduced_where`: a filter of the SubOrgans, every
+  section, the root segments and apices, the stem elements (the internodes' and the sheaths'), the blades and the
+  seed), their kinds by length class (`length_classes`: 0.1, a section between two classes their kinds'
   blend; each class evaluated once and shared by the plants, checkpointed: `"exact"` for a kind per length). ArchiSimple's root apices (`RootApex`, an axis' tip beyond its last segment) are root sections
   with the root's anatomy once they have a length, their barriers by their distance from the tip as the segments'
   (a growing apex's distance is its length: a Casparian strip; at barrier 0 MECHA's xylem would be immature, the apex
@@ -132,23 +132,30 @@ The links, each in its units:
 | link | from | to | factor |
 |---|---|---|---|
 | GRANAP's stems' class input `stem_radius` | the organ's `diameter` (m; Adel's, the crown's) | its elements (m) | 0.5, broadcast |
-| the gas exchange's element `height` | Adel's `z1`, `z2` | the elements | `emerged_height`: the mean of the part above the soil, NaN wholly below |
+| the gas exchange's element `height` | Adel's triangles above the soil | the elements | CNW-Grass's `emerged_links`: the centre of the part above the soil (`CentreIn("air")`), NaN wholly below |
+| the gas exchange's `green_area` (a private name, `green_area_in_air`) | Adel's `green_area`, its green triangles' share above the soil | the elements | `emerged_links`: their product (`FractionIn("air", weight="green")`), Adel's `green_area` untouched |
 | MECHA's `leaf_transpiration` | `GasExchange.transpiration` (mmol s⁻¹, per element) | per Organ (cm³ d⁻¹) | 18e-3 × 86400, summed |
 | the soil's `plant_uptake` | MECHA's `root_uptake` (cm³ d⁻¹) | the cells (m³ s⁻¹) | 1e-6 / 86400 |
 | MECHA's `soil_psi` | the soil's `water_potential` (MPa) | the roots' soil nodes (hPa) | 1e4 |
 | `GasExchange.PARa`, the optics | Caribu's light, `PlantOptics` | both ways | the Scene's identity links |
 | the gas exchange's `leaf_water_potential` | MECHA's `water_potential` (hPa, at the Compartments) | the elements (MPa) | 1e-4, the mean weighted by `liquid_volume` |
 
-The soil links are `component.scene_translator()`, through `root_surface_mappings` (the roots' soil nodes onto the
-grid). The stomata are Tuzet's (`"stomatal_model": "Tuzet"` in the scenario, decision U-5): the leaf water potential
+The soil links are `component.scene_translator()`, through the roots' soil nodes: the links' mapping
+(`mapping={"mask": "root_surface", "method": "overlap"}`, from which the Scene infers its CrossMapping), the plant
+model's mask `root_surface` defined by GRANAP's entity set (`define_mask("root_surface",
+entities="GranapAnatomy.soil_nodes")`): no soil node code in the assembly. The stomata are Tuzet's (`"stomatal_model": "Tuzet"` in the scenario, decision U-5): the leaf water potential
 is CNW-Grass's `mecha_links()`, MECHA's water potential averaged over each element's liquid (its walls and
 protoplasts, not its air spaces and pores), MECHA's of the step before (the gas exchange runs first: the lag of
 decision U-6). An element without liquid node (a section without anatomy yet) keeps the gas exchange's default,
 -0.1 MPa (metafspm's `missing="default"`).
 
 Adel's shoot stands on the crown, 2 cm below the soil: a blade Adel has brought out of its sheath may still be in
-the soil. Caribu lights only the parts above the soil (its `soil_level`), and the gas exchange's element `height` is
-the mean of its part above the soil (`models.emerged_height`; NaN for an element wholly below it: no gas exchange).
+the soil. The soil's surface is defined once, `Scene(soil_surface=run.SOIL_SURFACE)` (0): the soil grid's top, the
+crown's depth below it, Caribu's cut (it lights only the triangles above it) and the gas exchange's, which reads the
+height and the green area of each element's part above it (CNW-Grass's `emerged_links`: from Adel's triangles above
+the soil, weighted by their green share, Adel's senescence going down from the top; NaN height and no area for an
+element wholly below it: no gas exchange). A blade's tip, the first part out of the soil, is narrow: its area above
+the soil is a smaller share of the element's than its length (the former chord clip, by length, gave it more).
 CNW-Grass's `adel_links` height, the mean of the element's ends, put the seedling's canopy below the soil: the gas
 exchange's canopy height was 0 and no element exchanged (gs, An and the transpiration 0 under a full sun).
 

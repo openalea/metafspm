@@ -115,7 +115,11 @@ class SeedlingStructure(StructuralComponent):
 
     Conductances: radial edges k = k_s · L_segment (each anatomical edge, extrapolated in 3D along its segment), axial
     edges k = k_axial / L (L between the two segments' centres).
+
+    Its named entity set (entity_sets): root_surface, the nodes in contact with the soil (is_soil_contact), which the
+    plant model's mask and the soil links' mapping name.
     """
+    entity_sets = {"root_surface": {"is_soil_contact": ">0"}}
     # the conductances computed from the structure
     k: float = state_variable(unit="mm3 s-1 MPa-1", description="Hydraulic conductance of a Connection.", default=0.,
                               scale=scales.Connection, kind="intensive")
@@ -194,11 +198,6 @@ class SeedlingStructure(StructuralComponent):
         chosen = hydraulic_type == AXIAL
         k[chosen] = (np.broadcast_to(axial_k, k.shape) / np.maximum(conductance_length, 1e-12))[chosen]
         return k
-
-    def __post_init__(self):
-        super().__post_init__()
-        # the root surface, as a mask of the DataStructure: the soil mapping maps it only (CrossMapping(mask=))
-        self.data_structure.define_mask("root_surface", {"is_soil_contact": ">0"})
 
     @postsegmentation(filters={"is_soil_contact": ">0"})
     def _soil_contact_conductance(self, contact_length, root_soil_k):

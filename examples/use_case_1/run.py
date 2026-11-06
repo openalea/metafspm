@@ -37,12 +37,14 @@ from openalea.metafspm.scene.recorder import SceneRecorder, Summary
 from openalea.metafspm.scene.scene import Scene
 
 from component import RichardsSoilModel
-from models import HPA_PER_MPA, SCENE_TRANSLATOR, WHEAT_SCENARIO, WaterBalance, WheatPlant, root_surface_mappings
+from models import HPA_PER_MPA, SCENE_TRANSLATOR, WHEAT_SCENARIO, WaterBalance, WheatPlant
 
 OUTPUTS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "outputs")
 HOUR = 3600.
 DAY_OF_YEAR, LATITUDE = 130, 48.85             # a May day at Paris' latitude, Caribu's default
 SOWING_DEPTH = 0.03                            # m
+SOIL_SURFACE = 0.                              # m: the soil's surface (the soil grid's top, the light's and the gas
+                                               # exchange's cut, the crown's depth below it): the Scene's, once
 ROW_SPACING, PLANT_SPACING = 0.15, 0.05        # m
 RAIN = (24. + 14., 24. + 15., 5e-3)            # the rain: from and to (h of scene time), its depth (m)
 DISPLAY_PLANTS = ("p0",)                       # the plants whose sections the frames draw
@@ -99,7 +101,8 @@ def weather() -> dict:
 
 def stand(plants=2):
     """*plants* wheat plants in a row, sown SOWING_DEPTH deep, their rotations a third of a turn apart."""
-    return [Planting(x=(k + 0.5) * PLANT_SPACING, y=0.5 * ROW_SPACING, z=-SOWING_DEPTH, rotation=120. * k)
+    return [Planting(x=(k + 0.5) * PLANT_SPACING, y=0.5 * ROW_SPACING, z=SOIL_SURFACE - SOWING_DEPTH,
+                     rotation=120. * k)
             for k in range(plants)]
 
 
@@ -123,7 +126,7 @@ def scene(plants=2, folder=None, frame_period=12, display_period=24, checkpoint_
                              checkpoint_period=checkpoint_period if folder else None)
     return Scene(table, environment=[RichardsSoilModel, CaribuLightModel],
                  environment_scenarios=[SOIL_SCENARIO, LIGHT_SCENARIO], translator=SCENE_TRANSLATOR,
-                 time_step=HOUR, forcings={**weather(), **(forcings or {})}, mappings=root_surface_mappings,
+                 time_step=HOUR, forcings={**weather(), **(forcings or {})}, soil_surface=SOIL_SURFACE,
                  recorder=recorder, start=(DAY_OF_YEAR, start_hour), compute=compute)
 
 
