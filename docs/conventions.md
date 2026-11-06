@@ -195,6 +195,21 @@ leaves = boundary_set(filters={"label": "LeafElement"}, kind="robin", value="air
 - **Live values.** `value` and `weight` are read at each solve.
 - **Parameters of grown entities.** A parameter read from the MTG gets its value for new entities at the refresh before the next solve. Until then, masks built on it use its `on_grow` value.
 
+## Stopping criteria
+
+A Newton solve (`graph_system(solver="newton")`) has converged when either holds:
+
+- **the residual**: `||R||∞ < tolerance + relative_tolerance · ||R₀||∞` (`R₀` the first iterate's residual;
+  `tolerance` 1e-10 and `relative_tolerance` 0 by default);
+- **the step**: `||δx||∞ ≤ step_tolerance · max(1, ||x||∞)` (`step_tolerance` 1e-10 by default, 0 to disable): the
+  step is below the unknowns' round-off.
+
+The residual of a converged iterate cannot fall below its round-off floor, about `ε ||J||∞ ||x||∞` (ε = 2.2e-16): a
+system of large unknowns (potentials in hPa, values to 1e4) and large coefficients has a floor above an absolute
+`tolerance` of 1e-8, which the residual test alone never meets. The step test stops it at its second iteration when
+it is linear. A solve that converges by neither within `max_iterations` raises `SolverConvergenceError`, its message
+the residuals' and the steps' history and the floor estimate, so a tolerance set below the floor shows.
+
 ## Parameters
 
 - **Storage.** Numeric parameters declared without a scale are stored per plant (`"Plant"`; `"scalar"` on grids). They are uniform unless the plants' scenarios differ.

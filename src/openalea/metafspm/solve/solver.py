@@ -73,7 +73,8 @@ class SolverConfig:
     method       : str   = "newton"
     max_iter     : int   = 15
     tol          : float = 1e-10
-    newton_rtol  : float = 0.          # Newton converged when ||R||inf < tol + newton_rtol ||R_0||inf
+    newton_rtol  : float = 0.          # Newton converged when ||R||inf < tol + newton_rtol ||R_0||inf,
+    step_tol     : float = 1e-10       # or when its step ||dx||inf <= step_tol max(1, ||x||inf) (0: never)
     fd_eps       : float = 1e-8
     prefer_sparse: bool  = True
     linesearch   : bool  = False
@@ -580,13 +581,21 @@ class NewtonSolver(DAESolver):
         return 1
 
     def _integrate_step(self, spec, t, x, h, p, prev_fields=None):
+        """
+        Newton iterations from *x*, converged when ||R||inf < tol + newton_rtol ||R_0||inf (R_0 the first iterate's
+        residual), or when a step is below the round-off of the unknowns: ||dx||inf <= step_tol max(1, ||x||inf)
+        (a linear system then converges at its second iteration whatever its residual's floor, ~ eps ||J|| ||x||).
+        Not converged after max_iter iterations: SolverConvergenceError, with the residuals' history and the floor.
+        """
         packed   = np.array(x, dtype=np.float64, copy=True)
         force_fd = (self.config.method == "newton_fd")
         tolerance = None
+        residuals, steps, jac = [], [], None
 
         for _ in range(self.config.max_iter):
             residual = spec.residual(packed, prev_fields, h)
             norm = np.linalg.norm(residual, ord=np.inf)
+            residuals.append(norm)
             if not np.isfinite(norm):
                 raise SolverConvergenceError(f"Newton met a residual that is not finite (||R||inf = {norm})")
             if tolerance is None:                       # absolute, and relative to the first residual
@@ -601,18 +610,27 @@ class NewtonSolver(DAESolver):
             delta = self._linear_step(jac, residual, spec)
 
             if self.config.linesearch:
-                packed = self._armijo_linesearch(
+                moved = self._armijo_linesearch(
                     spec, packed, delta,
                     np.linalg.norm(residual, ord=np.inf),
                     prev_fields, h,
                 )
             else:
-                packed = packed + delta
+                moved = packed + delta
+            step = np.linalg.norm(moved - packed, ord=np.inf)
+            steps.append(step)
+            packed = moved
+            if step <= self.config.step_tol * max(1., np.linalg.norm(packed, ord=np.inf)):
+                return packed, np.zeros_like(packed)
 
+        final = np.linalg.norm(spec.residual(packed, prev_fields, h), ord=np.inf)
+        floor = np.finfo(float).eps * _infinity_norm(jac) * np.linalg.norm(packed, ord=np.inf)
         raise SolverConvergenceError(
-            f"Newton did not converge in {self.config.max_iter} iterations; "
-            f"final ||R||inf = "
-            f"{np.linalg.norm(spec.residual(packed, prev_fields, h), ord=np.inf):.3e}"
+            f"Newton did not converge in {self.config.max_iter} iterations; final ||R||inf = {final:.3e} "
+            f"(tolerance {tolerance:.3e}; the residuals {', '.join(f'{r:.3e}' for r in residuals)}; the steps "
+            f"||dx||inf {', '.join(f'{d:.3e}' for d in steps)}). The residual's round-off floor is about "
+            f"eps ||J||inf ||x||inf = {floor:.3e}: a tolerance below it cannot be met (step_tolerance stops on the "
+            f"step instead, {self.config.step_tol:.1e} max(1, ||x||inf))"
         )
 
     def _recover_algebraic(self, spec, x, y_prev, p):
@@ -868,6 +886,16 @@ _SOLVER_REGISTRY: dict[str, type] = {
     "scipy_ivp_bdf"            : ScipyIVPSolver,
     "scipy_ivp_radau"          : ScipyIVPSolver,
 }
+
+
+def _infinity_norm(matrix) -> float:
+    """||J||inf, the largest row sum of |J| (sparse or dense; 0 for none)."""
+    if matrix is None:
+        return 0.
+    if issparse(matrix):
+        return float(abs(matrix).sum(axis=1).max()) if matrix.shape[0] else 0.
+    matrix = np.asarray(matrix, dtype=float)
+    return float(np.abs(matrix).sum(axis=1).max()) if matrix.size else 0.
 
 
 def register_solver(name: str, solver_class: type) -> None:

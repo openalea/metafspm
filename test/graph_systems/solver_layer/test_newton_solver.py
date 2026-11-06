@@ -162,3 +162,58 @@ def test_newton_ignores_dt(spec_nonlinear_1node):
     x_no_dt     = solver.step_once(spec_nonlinear_1node, dt=None)
     x_with_dt   = solver.step_once(spec_nonlinear_1node, dt=0.001)
     np.testing.assert_allclose(x_no_dt, x_with_dt, atol=1e-8)
+
+
+# ── 8. The step criterion (step_tol) ─────────────────────────────────────────
+
+class _DenseSystem:
+    """R(x) = residual(x), J = jacobian(x): a duck-typed spec for NewtonSolver._integrate_step, counting the
+    Jacobians (the iterations)."""
+
+    def __init__(self, residual, jacobian):
+        self._residual, self._jacobian, self.iterations = residual, jacobian, 0
+
+    def residual(self, x, prev_fields=None, h=None):
+        return self._residual(x)
+
+    def jacobian(self, x, prev_fields=None, h=None):
+        self.iterations += 1
+        return self._jacobian(x)
+
+
+def _scaled_linear(scale=1e6):
+    rng = np.random.default_rng(0)
+    A = scale * (np.eye(6) * 4. + rng.uniform(-1., 1., (6, 6)))
+    b = A @ rng.uniform(5e3, 1e4, 6)                      # the solution of order 1e4 (a potential in hPa)
+    return _DenseSystem(lambda x: A @ x - b, lambda x: A), np.linalg.solve(A, b)
+
+
+def test_a_linear_system_below_its_residual_floor_converges_on_its_step():
+    """A linear system scaled to 1e6, its solution of order 1e4: its residual's round-off floor (~eps ||J|| ||x||)
+    is far above tolerance=1e-12, so the residual test never holds; the step test stops at the second iteration."""
+    system, solution = _scaled_linear()
+    x, _ = NewtonSolver(SolverConfig(tol=1e-12, max_iter=10))._integrate_step(system, 0., np.zeros(6), 1., {})
+    assert system.iterations == 2
+    np.testing.assert_allclose(x, solution, rtol=1e-12)
+    assert np.linalg.norm(system.residual(x), np.inf) > 1e-12          # the residual test alone would not stop
+
+
+def test_without_the_step_test_the_floor_raises_with_its_history():
+    system, _ = _scaled_linear()
+    with pytest.raises(SolverConvergenceError, match=r"(?s)residuals .*round-off floor .*eps \|\|J\|\|inf"):
+        NewtonSolver(SolverConfig(tol=1e-12, max_iter=4, step_tol=0.))._integrate_step(system, 0., np.zeros(6), 1., {})
+    assert system.iterations == 4
+
+
+def test_a_diverging_system_still_raises():
+    """R(x) = x² + 1 has no root: Newton's steps never vanish, the step test does not stop it."""
+    system = _DenseSystem(lambda x: x ** 2 + 1., lambda x: np.diag(2. * x))
+    with pytest.raises(SolverConvergenceError, match="did not converge"):
+        NewtonSolver(SolverConfig(max_iter=30))._integrate_step(system, 0., np.array([0.3]), 1., {})
+
+
+def test_the_graph_system_option_reaches_the_solver():
+    from openalea.metafspm.solve.decorator import graph_system
+    descriptor = graph_system(node_unknowns=["u"], step_tolerance=1e-8)(type("_system", (), {}))
+    assert descriptor._spec["step_tolerance"] == 1e-8
+    assert graph_system(node_unknowns=["u"])(type("_system", (), {}))._spec["step_tolerance"] == 1e-10

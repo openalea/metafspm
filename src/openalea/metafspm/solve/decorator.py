@@ -1317,6 +1317,7 @@ class _GraphSystemBuilder:
             max_iter     = sd["max_iter"],
             tol          = sd["tol"],
             newton_rtol  = sd.get("relative_tolerance", 0.),
+            step_tol     = sd["step_tolerance"],
             fd_eps       = sd["fd_eps"],
             prefer_sparse= sd["prefer_sparse"],
             linesearch   = sd["linesearch"],
@@ -1728,6 +1729,7 @@ def graph_system(
     max_iterations         = 15,
     tolerance              = 1e-10,
     relative_tolerance     = 0.,
+    step_tolerance         = 1e-10,
     finite_difference_step = 1e-8,
     prefer_sparse          = True,
     linesearch             = False,
@@ -1767,9 +1769,12 @@ def graph_system(
         "newton" with transient=True, accepted with a warning for one release).
 
     max_iterations, tolerance (||R||_inf), relative_tolerance (converged when ||R||_inf < tolerance +
-        relative_tolerance ||R_0||_inf, R_0 the first iterate's residual; 0: absolute only), finite_difference_step
-        (of the finite-difference Jacobian), prefer_sparse, linesearch (Armijo backtracking): the Newton iterations.
-        A failed solve raises solve.solver.SolverConvergenceError.
+        relative_tolerance ||R_0||_inf, R_0 the first iterate's residual; 0: absolute only), step_tolerance
+        (converged too when a step ||dx||_inf <= step_tolerance max(1, ||x||_inf): below the unknowns' round-off,
+        whatever the residual's floor eps ||J|| ||x||, e.g. a linear system at its second iteration; 1e-10 by
+        default, 0: never), finite_difference_step (of the finite-difference Jacobian), prefer_sparse, linesearch
+        (Armijo backtracking): the Newton iterations. A failed solve raises solve.solver.SolverConvergenceError,
+        its message the residuals' history and the floor.
 
     schedule_as: the schedule row the solve runs in ("axial", "state", ...).
 
@@ -1875,6 +1880,7 @@ def graph_system(
         "max_iter"      : max_iterations,
         "tol"           : tolerance,
         "relative_tolerance": float(relative_tolerance),
+        "step_tolerance": float(step_tolerance),
         "fd_eps"        : finite_difference_step,
         "prefer_sparse" : prefer_sparse,
         "linesearch"    : linesearch,

@@ -252,7 +252,9 @@ class SoilDiffusion(FunctionalComponent):
   system) raises `solve.solver.SolverConvergenceError`; with `"adaptive"` it rejects the sub-step and halves it, as
   the error control does, and raises naming the component and the time only below `min_step`. The Newton
   iterations take `max_iterations`, `tolerance` (on ||R||∞), `relative_tolerance` (converged too when ||R||∞ fell
-  below that fraction of the first iterate's; 0 by default), `finite_difference_step`, `linesearch`; `transient=True` declares
+  below that fraction of the first iterate's; 0 by default), `step_tolerance` (converged too when a step is below
+  the unknowns' round-off, ||δx||∞ ≤ step_tolerance · max(1, ||x||∞); 1e-10 by default: conventions.md, Stopping
+  criteria), `finite_difference_step`, `linesearch`; `transient=True` declares
   that a `@node_balance` writes its own time term (it only decides the anchoring check; inferred for `@node_rate`).
   `@edge_law(integrate=True)` adds the integrated amount `<field>_amount` (Q += q dt) as an edge unknown. Edge unknowns are algebraic
   (`@edge_law`), whatever the solver.
