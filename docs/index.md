@@ -25,6 +25,7 @@ plain words, and the models available with their tutorials.
 
 metafspm in five minutes <five_minutes>
 From a scenario to its outputs <tutorial>
+Running on a GPU <gpu>
 ```
 
 ## Building models

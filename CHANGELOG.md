@@ -2,6 +2,30 @@
 
 ## Unreleased (release2026)
 
+### An optional GPU backend, and repeated runs in a process pool (O-8)
+
+- **`Compute(device="cuda")`** selects the CuPy backend (`openalea.metafspm.backend`: `HostBackend` numpy/scipy,
+  `CupyBackend` cupy/cupyx; `make_backend`, `cupy_modules`, `Compute.backend()`, `Compute.device_info()`):
+  - a reduction's kinds (`KronReduction`) solve their many right-hand sides on the GPU, SuperLU's factors copied
+    once (the factorisation stays SuperLU's, on the host), A_IK sent sparse, X copied back once; a right-hand side
+    below `DEVICE_MIN_VALUES` stays on the host;
+  - the new `"cupy"` LinearSolver (the default of `linear_solver` on cuda: `Compute.linear_solver=None` now means
+    "superlu" on the cpu, "cupy" on cuda; "cupy" on the cpu raises): a system of at least `DEVICE_MIN_NONZEROS`
+    entries solved whole on the device, its independent blocks together in one call (the batch), by cuDSS when
+    nvmath-python is installed, else cupyx's spsolve; its pattern copied once per pattern;
+  - the transfers explicit (`to_device`, `to_host`, counted: `run.json`'s `"compute": {"device": ...}`); the
+    components' `device` setting defaults to it (Caribu's near field, unchanged);
+  - CuPy is optional: nothing imports it unless the device is cuda; a missing CuPy, or no CUDA device, raises when
+    the Scene is built (`Compute.check()`, replacing `check_linear_solver()`), with the install line; the pool's
+    processes are spawned on cuda (CUDA does not survive a fork).
+- Tested without a GPU on a fake CuPy (`test/helpers/fake_cupy.py`: device arrays numpy refuses, every crossing
+  logged): the dispatch, the transfers, the results equal to the cpu path bit for bit (also use case 1, 1 plant,
+  6 hours); GPU runs by hand: `benchmark.py --device cuda`, docs/gpu.md ("Running on a GPU").
+- **`scenarios.run_variants(run, scenarios, workers="auto", compute=Compute(workers=1))`**: one scene per scenario
+  in a pool of fresh processes (forked on Linux, spawned elsewhere and on cuda), the results in the scenarios'
+  order; `variant_processes` bounds the total (a scene's "auto" pool becomes 1 when several variants run at once;
+  `workers × Compute.workers` and `× threads` within the processors, else ValueError).
+
 ### Parallel kinds and the sparse solvers (O-6)
 
 - **The kinds in a process pool:** `Compute(workers="auto")` (the default) starts a pool when a batch of missing

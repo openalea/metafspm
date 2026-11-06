@@ -993,6 +993,7 @@ says how the scene uses the machine:
   not (a linear system's second Newton iteration), at the memory of one factorisation kept per system (measured
   on use case 1, 2 plants to day 8: no gain, the plant solve being a small share of the step, and the process's
   memory growing 0.6 GB a day more than with "superlu" although the caches hold 66 MB: not advised there);
+  `"cupy"` (the default with `device="cuda"`, not allowed on the cpu: [Running on a GPU](gpu.md));
   `"cholmod"` (scikit-sparse, optional: `pip install scikit-sparse` or `conda install -c conda-forge
   scikit-sparse`), CHOLMOD's Cholesky for the systems declared `@graph_system(symmetric=True)`, its symbolic
   analysis kept while the pattern does not change, the other systems SuperLU's. A missing optional package raises
@@ -1000,7 +1001,13 @@ says how the scene uses the machine:
   `solve.linear.BLOCKS_MIN_NONZEROS` (200k) entries is solved block by block (the blocks found once per pattern),
   the blocks in threads per `workers` (SuperLU releases the GIL: 4 threads run as fast as 4 processes); the same
   blocks whatever the threads, so the same results.
-- `device`: `"cpu"` or `"cuda"`, the default of the components' setting named `device` (Caribu's near field).
+- `device`: `"cpu"` (default) or `"cuda"`: the array backend of the heavy linear algebra (`openalea.metafspm.backend`:
+  numpy/scipy or CuPy). On `"cuda"`, the kinds' Kron reductions solve their many right-hand sides on the GPU (SuperLU's
+  factors copied once), the linear solves go to `linear_solver="cupy"` (its default there: a system of at least
+  100k entries solved whole on the device, cuDSS when nvmath-python is installed), and the components' setting named
+  `device` defaults to it (Caribu's near field). CuPy is optional: a missing one, or no CUDA device, raises when the
+  Scene is built, with the install line; nothing imports it otherwise. The transfers are counted in `run.json`
+  (`"compute": {"device": ...}`). What moves, when it pays and how to check it: [Running on a GPU](gpu.md).
 - `memory="trim"`: glibc's `malloc_trim(0)` after each step, the memory freed given back (use case 1 at day 8: 4.7 →
   2.5 GB); `"keep"`: nothing. The allocator's arenas are an environment variable read when the process starts:
   `MALLOC_ARENA_MAX=2` (0.6 GB less at the peak, no time cost), set in the examples' `environment.yaml`
@@ -1010,6 +1017,20 @@ says how the scene uses the machine:
 
 Within the scene's build and steps, `Compute.current()` is the scene's Compute (what runs there reads it without
 being given it: a reduction's batches); outside, a default `Compute()`. `scenario.json` records the Compute, `run.json` the threads in use and the pool.
+
+### Repeated runs: `run_variants`
+
+A sensitivity analysis or a calibration runs many scenes that do not depend on each other. `run_variants(run,
+scenarios, workers="auto", compute=Compute(workers=1))` (`openalea.metafspm.scene.scenarios`) runs one per scenario
+in a process pool: *run* is a module-level function `run(name, scenario, compute)` that builds its scene with
+`compute=compute`, runs and finishes it, and returns what is kept (picklable: a table, a path); the results come back
+in the scenarios' order. Each variant has a fresh process (its memory given back when it ends), forked on Linux and
+spawned on macOS, Windows or with `device="cuda"`; `workers=1` runs them one after the other in the process. The
+processes stay within the processors (`variant_processes`): `"auto"` is processors − 1, at most one per variant; with
+several variant processes, a scene's `workers="auto"` becomes 1 (the variants are the parallel work); an integer is
+kept when `workers × Compute.workers` and `workers × Compute.threads` fit the processors, else it raises. On a laptop:
+`workers="auto"` and scenes of `Compute(workers=1)`; on a many-core workstation, k variants of a pool of w each
+(k × w ≤ processors); on a GPU workstation, one or two variants on the device ([Running on a GPU](gpu.md)).
 
 ### Compiled kernels (numba)
 

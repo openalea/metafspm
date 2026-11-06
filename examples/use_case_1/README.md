@@ -206,6 +206,9 @@ laptop (2026-11-06), the same results bit for bit with 1, "auto" (6) or 4 proces
 with 1, 212 s with "auto" (last day 1.97 → 1.83 s per hour, first hour 6.3 → 4.1 s), 208 s with 4 (1.68 s), the
 memory's peak, the processes included, 3.4, 4.3 and 5.0 GB; 8 plants to day 4, last day 1.08 → 0.97 s; 16 plants,
 1.78 → 1.52 s. `benchmark.py --workers 1|auto|n --linear-solver superlu|superlu_reuse|cholmod` compares them.
+On a machine with an NVIDIA GPU and CuPy, `benchmark.py --device cuda` runs the kinds' Kron reductions and the
+linear solves on the device (metafspm's docs/gpu.md, "Running on a GPU": what is offloaded, how to compare it with
+the CPU run, the transfers in the entry's `device`); not measured yet (no GPU on the development laptop).
 
 `benchmark.py` times it (`python benchmark.py [--plants 2] [--days 3]`, under a memory bound): each hour's time by
 model, the kinds of the reduction evaluated, the nodes, the memory (after each hour, after `malloc_trim` and the

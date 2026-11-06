@@ -5,7 +5,8 @@
 ```{eval-rst}
 .. automodule:: openalea.metafspm
    :members: FunctionalComponent, StructuralComponent, CompositeModel, Scene, SceneRecorder, Summary, Compute,
-             Planting, Stand, planting, stand, read_scenarios, variants, parameter_table, as_forcing, pulse
+             Planting, Stand, planting, stand, read_scenarios, variants, run_variants, parameter_table, as_forcing,
+             pulse
 ```
 
 ## Components and declarations
@@ -35,7 +36,7 @@
    :members: Reduction, Relative, Kind, RecoveryTerms, display_ids, is_display_id
 
 .. automodule:: openalea.metafspm.solve.linear
-   :members: LinearSolver, SuperLU, SuperLUReuse, Cholmod, LINEAR_SOLVERS, linear_solver, solve, held_rows,
+   :members: LinearSolver, SuperLU, SuperLUReuse, Cholmod, Cupy, LINEAR_SOLVERS, linear_solver, solve, held_rows,
              SymmetryError
 
 .. automodule:: openalea.metafspm.solve.conservation
@@ -75,6 +76,9 @@ The solvers are chosen by key in `graph_system(solver=...)`: `"newton"`, `"newto
 .. automodule:: openalea.metafspm.compute
    :members: warm_up
 
+.. automodule:: openalea.metafspm.backend
+   :members: HostBackend, CupyBackend, HostFactor, DeviceFactor, make_backend, cupy_modules
+
 .. automodule:: openalea.metafspm.data_structure.random_streams
    :members:
 
@@ -108,7 +112,7 @@ The solvers are chosen by key in `graph_system(solver=...)`: `"newton"`, `"newto
    :members: Planting, Stand, planting, stand, Population, population_data_structure
 
 .. automodule:: openalea.metafspm.scene.scenarios
-   :members: read_scenarios, parameter_table, variants, from_samples, design_table
+   :members: read_scenarios, parameter_table, variants, from_samples, design_table, run_variants, variant_processes
 
 .. automodule:: openalea.metafspm.scene.calibration
    :members: read_observations, compare, residuals, objective, Objective
