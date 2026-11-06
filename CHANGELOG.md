@@ -2,6 +2,39 @@
 
 ## Unreleased (release2026)
 
+### Parallel kinds and the sparse solvers (O-6)
+
+- **The kinds in a process pool:** `Compute(workers="auto")` (the default) starts a pool when a batch of missing
+  kinds is worth it (at least 2 kinds and about a second of estimated work, 1e-5 s per interior cell), of
+  `min(processors // 2, kinds)` processes, one processor left free, kept for the run and grown to the largest
+  batch's need; an integer forces it (`1`: in the process). Each process holds a copy of the reduction (its
+  declaration, plant model, templates and the plants' saved registries: sent only when new) and its own library
+  population per plant parameters; the kinds are dealt by their interior cells and added in the requests' order:
+  the same kinds, bit for bit, whatever the number. Forked on Linux (`compute.START_METHOD`), spawned on macOS and
+  Windows (the plant model class importable by name); `compute.WorkerPool`, `WorkerError`, `worker_state`,
+  `in_worker`; `Compute.pool()`, `pool_info()`, `close()` (called by `Scene.finish` and when a Scene is
+  collected); `run.json` records the pool used.
+- A library places a group from its description (`solve.reduction._describe`: its complexes, label and
+  properties), not from the plants' MPG.
+- **`solve.linear`**, the registry of the Newton steps' sparse solvers, `Compute(linear_solver=)`: `"superlu"`
+  (default), `"superlu_reuse"` (the ordering kept while the pattern does not change, the factorisation while the
+  matrix does not: SuperLU's solution bit for bit), `"cholmod"` (scikit-sparse, optional; the systems declared
+  `@graph_system(symmetric=True)`, their held rows solved first; the others SuperLU's). A missing optional package
+  raises when the Scene is built, with its install line. `LinearSolver`, `LINEAR_SOLVERS`, `linear_solver()`,
+  `solve()`, `held_rows()`, `SymmetryError`.
+- **`@graph_system(symmetric=True)`**: the matrix checked once per pattern, its held rows (a Dirichlet node's
+  diagonal alone) aside. MECHA's standard problem declares it.
+- A matrix of independent diagonal blocks of at least 200k entries (`solve.linear.BLOCKS_MIN_NONZEROS`: the plants
+  of a population) is solved block by block, the blocks in threads per `Compute.workers`: SuperLU releases the GIL
+  (measured: 4 solves in 4 threads as fast as in 4 processes, 1.5–2.1× on a 2 P + 10 E core laptop). The same
+  blocks whatever the threads: the same results.
+- `benchmark.py --workers`, `--linear-solver`; the peak memory of the run's control group (the pool included).
+- Measured (use case 1, this laptop: 14 threads, 2 P + 10 E cores): 2 plants to day 8 with 1, "auto" (6) and 4
+  processes, 8 and 16 plants to day 4 with 1 and "auto": the same results bit for bit. 2 plants day 8: run 235 →
+  212 s ("auto") → 208 s (4), last day's step 1.97 → 1.83 → 1.68 s, the first step 6.3 → 4.1 s, the scope's peak
+  3.4 → 4.3 → 5.0 GB; 8 plants day 4: last day 1.08 → 0.97 s; 16 plants day 4: 1.78 → 1.52 s. "superlu_reuse": no
+  gain there and more memory (above).
+
 ### A reduction's groups in frames as instances (O-13, encoding3d 0.4)
 
 - **`display="instances"`** (the new default of `SceneRecorder`, `to_frame` and `scene_to_frame`; `"full"`: the

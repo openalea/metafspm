@@ -200,7 +200,12 @@ checkpoint every day (the last two kept; the anatomy templates and the reduced s
 The run's configuration is metafspm's default `Compute()` (`scene(compute=...)`): one BLAS and numba thread (the
 work is many small sparse solves: more threads oversubscribe the cores), the memory freed given back after each hour
 (`malloc_trim`), and the environment's `MALLOC_ARENA_MAX=2` (`environment.yaml`'s `variables:`; outside the conda
-environment, `export MALLOC_ARENA_MAX=2` before running).
+environment, `export MALLOC_ARENA_MAX=2` before running). Its `workers="auto"` starts a pool of processes for the
+reduction's kinds when a batch is worth it (the first hours, the days the organs emerge): measured on a 14-thread
+laptop (2026-11-06), the same results bit for bit with 1, "auto" (6) or 4 processes; 2 plants to day 8 in 235 s
+with 1, 212 s with "auto" (last day 1.97 → 1.83 s per hour, first hour 6.3 → 4.1 s), 208 s with 4 (1.68 s), the
+memory's peak, the processes included, 3.4, 4.3 and 5.0 GB; 8 plants to day 4, last day 1.08 → 0.97 s; 16 plants,
+1.78 → 1.52 s. `benchmark.py --workers 1|auto|n --linear-solver superlu|superlu_reuse|cholmod` compares them.
 
 `benchmark.py` times it (`python benchmark.py [--plants 2] [--days 3]`, under a memory bound): each hour's time by
 model, the kinds of the reduction evaluated, the nodes, the memory (after each hour, after `malloc_trim` and the

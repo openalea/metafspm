@@ -308,8 +308,13 @@ class SoilDiffusion(FunctionalComponent):
   (0 at its first call); `self.has_forcing(name)` tells whether one is given as a time series, e.g. for an input
   read from the forcing of its name at each sub-step when one is given.
 - **Solvers.** `@graph_system(solver=...)` takes one of the keys `solve.solver.solver_names()` lists; a solver class
-  of one's own (a subclass of `NewtonSolver`, e.g. with another linear solver) is given a key with
-  `solve.solver.register_solver(name, solver_class)`. A graph system's equations class, to call or re-solve its
+  of one's own (a subclass of `NewtonSolver`) is given a key with `solve.solver.register_solver(name,
+  solver_class)`. The sparse solver of the Newton steps' linear systems is the run's (`Compute(linear_solver=)`,
+  below; `solve.linear.LINEAR_SOLVERS`, a solver of one's own registered there by name).
+  `@graph_system(symmetric=True)` declares the system's matrix symmetric (a conductance network: its held
+  Dirichlet rows aside, a row holding its diagonal alone): checked once per matrix pattern (`solve.linear.
+  SymmetryError` when it is not), and what lets `linear_solver="cholmod"` factorise it by Cholesky (MECHA's standard
+  problem declares it; its plant problem cannot: the leaves' vapour path makes it unsymmetric once they transpire). A graph system's equations class, to call or re-solve its
   equations outside the component, is `Component._system.equations`.
 - **Outputs and Jacobians.** `@graph_output(name, location=...)` derives outputs after the solve; `@graph_jacobian`
   gives an analytic Jacobian (finite differences with graph colouring otherwise).
@@ -343,7 +348,8 @@ class SoilDiffusion(FunctionalComponent):
   their parameters are the same. The missing kinds are evaluated in batches of at most `Compute.kind_batch`
   interior cells (the Scene's Compute, `Compute.current()`; the memory freed between batches), in one library
   population per plant parameters kept on the reduction (each batch's groups replacing the former's, its
-  components reset to their built state). The kinds are checkpointed with the population (`Kind`, a shared part
+  components reset to their built state); with `Compute.workers` allowing a pool, the batch's kinds are dealt over
+  its processes, each its share in its own library (the same kinds, bit for bit). The kinds are checkpointed with the population (`Kind`, a shared part
   of `scene.shared`, saved once; never a factorisation): a resumed run evaluates none again. A value derived from a kind (a section's condensed volumes)
   is a method of the reduced system's component tagged `@kind_derived(name)`: `method(self, kind, full_template,
   kron, nodes)`, run once per kind on its library while the kind's factorisation is live (`kron.shares(targets,
@@ -955,7 +961,9 @@ Its README describes each file and shows the figures.
   copy one (`np.array(ds.owner("SubOrgan"))`) before writing into it.
 - Growth bookkeeping is incremental: only new vertices are read from the MTG.
 - An MPG-style step sees only the MTG properties its component declares; keep MTG reads in such steps to those.
-- `split="components"` is not parallel; graph systems are solved by sparse LU (SuperLU).
+- `split="components"` solves its pieces one after the other; a whole system made of independent blocks (the
+  plants of a population) has its blocks solved apart, in threads (solve.linear, below); graph systems are solved
+  by sparse LU (SuperLU) unless `Compute(linear_solver=)` says otherwise.
 
 ### The run configuration: `Compute`
 
@@ -965,10 +973,33 @@ says how the scene uses the machine:
 - `threads`: the BLAS, OpenMP and numba threads of the process while the scene builds and runs (`threadpoolctl` and
   `numba.set_num_threads`, within each `run()` only: numpy outside the scene keeps its own). 1 by default: the work
   is many small sparse solves, which more threads only oversubscribe (use case 1: 10 → 6.4 s per step).
-- `workers`: the process pool of the scene's parallel work (a reduction's kinds). `"auto"` (default) starts none
-  until a batch is worth it (more than about a second of work, at least two kinds), then
-  `min(processors // 2, kinds)`; an integer forces it, `1` sequential and in the process. A component's setting
-  named `workers` that its scenario does not give takes the Compute's (Caribu's projection threads).
+- `workers`: the process pool of the scene's parallel work: a reduction's missing kinds, and the independent blocks
+  of a linear solve (in threads). `"auto"` (default) starts none until a batch of kinds is worth it (more than
+  about a second of work, estimated from their interior cells, and at least two kinds), then
+  `min(processors // 2, kinds)` processes, one processor left free, kept for the run and grown to the largest
+  batch's need; an integer forces it from the first batch, `1` sequential and in the process. The results are the
+  same, bit for bit, whatever the number (the kinds dealt by their interior cells, each process evaluating its
+  share in its own library population, the results added in the requests' order). The processes are forked on
+  Linux (they inherit the scene's state at their start: the templates are then sent only when new) and spawned on
+  macOS and Windows (each receives the reduction at its first task: the plant model class must be importable by
+  name, a module-level class, and the reduction's `merge=` rules picklable). Each holds its own libraries: a pool
+  of n adds about n library populations to the memory (use case 1, 2 plants, day 1: 1.4 → 2.1 GB for 4 processes);
+  `scene.finish()` (and a scene collected) stops them, `run.json` records the pool used (`"compute": {"pool":
+  {"workers": n, "start_method": "fork"}}`). A component's setting named `workers` that its scenario does not give
+  takes the Compute's (Caribu's projection threads).
+- `linear_solver`: the sparse solver of the graph systems' Newton steps (`solve.linear`): `"superlu"` (default,
+  scipy's SuperLU with the MMD ordering); `"superlu_reuse"`, the same solution bit for bit with its column ordering
+  kept per system while the matrix's pattern does not change, and its factorisation while the matrix itself does
+  not (a linear system's second Newton iteration), at the memory of one factorisation kept per system (measured
+  on use case 1, 2 plants to day 8: no gain, the plant solve being a small share of the step, and the process's
+  memory growing 0.6 GB a day more than with "superlu" although the caches hold 66 MB: not advised there);
+  `"cholmod"` (scikit-sparse, optional: `pip install scikit-sparse` or `conda install -c conda-forge
+  scikit-sparse`), CHOLMOD's Cholesky for the systems declared `@graph_system(symmetric=True)`, its symbolic
+  analysis kept while the pattern does not change, the other systems SuperLU's. A missing optional package raises
+  when the Scene is built, with its install line. A matrix of independent diagonal blocks of at least
+  `solve.linear.BLOCKS_MIN_NONZEROS` (200k) entries is solved block by block (the blocks found once per pattern),
+  the blocks in threads per `workers` (SuperLU releases the GIL: 4 threads run as fast as 4 processes); the same
+  blocks whatever the threads, so the same results.
 - `device`: `"cpu"` or `"cuda"`, the default of the components' setting named `device` (Caribu's near field).
 - `memory="trim"`: glibc's `malloc_trim(0)` after each step, the memory freed given back (use case 1 at day 8: 4.7 →
   2.5 GB); `"keep"`: nothing. The allocator's arenas are an environment variable read when the process starts:

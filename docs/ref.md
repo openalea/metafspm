@@ -34,6 +34,10 @@
 .. automodule:: openalea.metafspm.solve.reduction
    :members: Reduction, Relative, Kind, RecoveryTerms, display_ids, is_display_id
 
+.. automodule:: openalea.metafspm.solve.linear
+   :members: LinearSolver, SuperLU, SuperLUReuse, Cholmod, LINEAR_SOLVERS, linear_solver, solve, held_rows,
+             SymmetryError
+
 .. automodule:: openalea.metafspm.solve.conservation
    :members: Conservation
 
@@ -117,7 +121,7 @@ The solvers are chosen by key in `graph_system(solver=...)`: `"newton"`, `"newto
    :members: Scene, AllMasks
 
 .. automodule:: openalea.metafspm.compute
-   :members: Compute
+   :members: Compute, WorkerPool, WorkerError, worker_state, in_worker
 
 .. automodule:: openalea.metafspm.scene.environment
    :members: EnvironmentModel
