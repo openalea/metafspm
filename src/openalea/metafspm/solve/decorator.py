@@ -1283,8 +1283,8 @@ class _GraphSystemBuilder:
         spec.parameters["time_hook"] = lambda t, _i=instance: _i.__dict__.__setitem__("_ivp_time", t)
         condense = spec_def.get("condense")
         location = condense(instance) if callable(condense) else condense
-        spec.parameters["linear_system"] = ((type(instance).__name__, spec_def["inner_class"].__name__, id(instance),
-                                             id(instance.__dict__.get("_restriction"))), bool(spec_def.get("symmetric")))
+        spec.parameters["linear_system"] = ((type(instance).__name__, spec_def["inner_class"].__name__, id(instance)),
+                                            bool(spec_def.get("symmetric")))
         if location is not None:
             owner = np.asarray(ds.owner(location), dtype=np.int64)
             take = _take(instance, "node")

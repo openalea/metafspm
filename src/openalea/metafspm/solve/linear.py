@@ -37,7 +37,9 @@ from scipy.sparse.linalg import splu, spsolve
 SYMMETRY_TOLERANCE = 1e-10          # a symmetric=True system's |A − Aᵀ|_max / |A|_max, at most
 BLOCKS_MIN_NONZEROS = 200_000       # a matrix solved block by block (its independent blocks) from this size on
 BLOCKS_MAX = 64                     # the blocks a matrix is solved in, at most (its pieces gathered in order)
-PATTERNS_KEPT = 8                   # the patterns a system's cache keeps (a solver's factor: the last one's only)
+PATTERNS_KEPT = 8                   # the patterns a system's cache keeps (its pieces', its subgraphs'; a solver's
+                                    # factor: the last one's only)
+SYSTEMS_KEPT = 32                   # the systems a solver keeps caches for (the least recently solved dropped)
 
 
 class SymmetryError(ValueError):
@@ -124,7 +126,10 @@ class LinearSolver:
     def _pattern(self, matrix, key) -> _Pattern:
         if key is None:
             return _Pattern(matrix)
-        known = self._patterns.setdefault(key, [])
+        known = self._patterns.pop(key, [])
+        self._patterns[key] = known                  # the most recently solved last
+        while len(self._patterns) > SYSTEMS_KEPT:
+            del self._patterns[next(iter(self._patterns))]
         found = next((pattern for pattern in known if pattern.matches(matrix)), None)
         if found is None:
             found = _Pattern(matrix)

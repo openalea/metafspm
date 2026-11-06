@@ -281,3 +281,18 @@ def test_cholmod_solves_the_held_rows_first(monkeypatch):
     A = A.tocsc()
     solver = linear_solver("cholmod")
     np.testing.assert_allclose(solver.solve(A, b, key="held", symmetric=True), spsolve(A, b), rtol=1e-10)
+
+
+def test_superlu_reuse_keeps_one_factorisation_per_system():
+    """A system whose pattern changes (a growing plant) keeps at most PATTERNS_KEPT orderings and one
+    factorisation, its last pattern's; at most SYSTEMS_KEPT systems are kept."""
+    reuse = linear_solver("superlu_reuse")
+    for n in range(100, 100 + 3 * linear.PATTERNS_KEPT):
+        A, b = _matrix(n=n)
+        reuse.solve(A, b, key="growing")
+    patterns = reuse._patterns["growing"]
+    assert len(patterns) == linear.PATTERNS_KEPT
+    assert sum("factor" in pattern.state[0] for pattern in patterns) == 1
+    for k in range(linear.SYSTEMS_KEPT + 5):
+        reuse.solve(*_matrix(n=50), key=("system", k))
+    assert len(reuse._patterns) == linear.SYSTEMS_KEPT
