@@ -52,9 +52,10 @@ class CompositeModel:
         """
         components = components or tuple(self.components)
         contexts = [component._before_call() for component in components]
-        for component in components:
-            component.pull_available_inputs()
-        components[0].choregrapher.run_together(components)
+        with components[0].private_names(components[1:]):
+            for component in components:
+                component.pull_available_inputs()
+            components[0].choregrapher.run_together(components)
         for component, context in zip(components, contexts):
             component._after_call(context)
 
@@ -135,8 +136,12 @@ class CompositeModel:
                 raise NotImplementedError(f"{link.receiver}.{link.variable} <- {link.provider}: coupling across "
                                           "DataStructures goes through the Scene (coupling.cross.Exchanges)")
             check_link(link, receiver, provider)
+            link = self._geometric_sources(link, receiver, ds)
             self._check_link_scales(link, ds)
             detail = link.mapped_detail
+            if link.names:                          # a receiver-private name: always the link's own variable
+                self._derive_private(link, receiver, ds)
+                continue
             if detail == "identity":
                 continue
             crosses_locations = (detail == "alias" and ds.has(link.variable)
@@ -167,6 +172,59 @@ class CompositeModel:
             derived_inputs = receiver.__dict__.setdefault("_derived_inputs", [])
             if link.variable not in derived_inputs:
                 derived_inputs.append(link.variable)
+
+    def _geometric_sources(self, link, receiver, ds):
+        """The link with its geometric sources (coupling.geometry.FractionIn, CentreIn) replaced by the geometric
+        variables *ds* derives for them (DataStructure.derive_geometry), at the receiving location."""
+        from dataclasses import replace
+        from openalea.metafspm.coupling.geometry import GEOMETRIC_SOURCES
+        if not any(isinstance(source, GEOMETRIC_SOURCES) for source in link.sources):
+            return link
+        location = ds.location(link.variable) if ds.has(link.variable) else self._receiving_location(link, receiver,
+                                                                                                    ds)
+        renamed = {}
+        for source in link.sources:
+            if isinstance(source, GEOMETRIC_SOURCES):
+                if not ds.has(source.name):
+                    ds.derive_geometry(source.name, source, location=location)
+                renamed[source] = source.name
+        if link.formula is not None:
+            return replace(link, sources=tuple(renamed.get(source, source) for source in link.sources))
+        return replace(link, sources={renamed.get(source, source): factor for source, factor in link.raw_factors.items()})
+
+    def _derive_private(self, link, receiver, ds) -> None:
+        """A link with a receiver-private name (Link.names): its values derived under that name, which the receiver
+        reads as its variable (DataStructure.private_names around its calls), with the variable's declared metadata;
+        the variable of that name the other components share untouched."""
+        private = link.private_name
+        if ds.has(private) and private not in ds.derived():
+            raise ValueError(f"{link.receiver}.{link.variable} <- {link.provider}: its private name '{private}' is "
+                             "already a variable of the DataStructure")
+        location = ds.location(link.variable) if ds.has(link.variable) else self._receiving_location(link, receiver,
+                                                                                                    ds)
+        renamed = type(link)(link.receiver, private, link.provider, link.sources if link.formula is not None
+                             else link.raw_factors, scale=link.scale, source_scale=link.source_scale,
+                             aggregation=link.aggregation, weight=link.weight, target=link.target,
+                             formula=link.formula, unit_check=link.unit_check, missing=link.missing)
+        aggregation, weight = link.aggregation, link.weight
+        if location is not None and (aggregation is None or (weight is None and aggregation in
+                                                             ("weighted_mean", "split"))):
+            default, weight = self._default_link_mapping(ds, renamed, location)
+            aggregation = aggregation or default
+        options = dict(location=location, aggregation=aggregation, weight=weight, where=link.target,
+                       missing=link.missing, default=self._receiving_default(link, receiver, ds))
+        if link.formula is not None:
+            ds.derive(private, link.sources, formula=link.formula, **options)
+        else:
+            ds.derive(private, dict(link.sources), **options)
+        meta = ds._variable_meta()
+        declared = meta.get(ds._resolve(link.variable), {}) if ds.has(link.variable) else {}
+        meta.setdefault(private, {}).update({key: value for key, value in declared.items() if key != "derived"})
+        names = receiver.__dict__.setdefault("_private_names", {})
+        names[link.variable] = private
+        derived_inputs = receiver.__dict__.setdefault("_derived_inputs", [])
+        if private not in derived_inputs:
+            derived_inputs.append(private)
 
     @staticmethod
     def _receiving_location(link, receiver, ds) -> Optional[str]:

@@ -275,11 +275,31 @@ class Component:
 
     choregrapher = Choregrapher()
 
+    # The named entity sets the component publishes, {name: rule}, a rule a {variable: condition} dict (the filters'
+    # syntax: ">0", a value, a list of values; label names resolved), e.g. GRANAP's {"soil_nodes": {"kind": 4.}}:
+    # assemblies select by their qualified names ("GranapAnatomy.soil_nodes": define_mask(entities=), a Reduction's
+    # where=, ports= and keep=, evaluated on a DataStructure or on a section template), never by the codes inside
+    entity_sets = {}
+
     def __call__(self):
         context = self._before_call()
-        self.pull_available_inputs()
-        self.choregrapher(instance=self)
+        with self.private_names():
+            self.pull_available_inputs()
+            self.choregrapher(instance=self)
         self._after_call(context)
+
+    def private_names(self, components=()):
+        """The block in which the component's (and *components*') variables a link keeps under a private name
+        (Link.names) resolve to it on their DataStructure (DataStructure.private_names): its calls, read()."""
+        from contextlib import ExitStack
+        stack = ExitStack()
+        for component in (self, *components):
+            names = component.__dict__.get("_private_names")
+            ds = getattr(component, "data_structure", None)
+            if names and ds is not None:
+                from openalea.metafspm.data_structure.data_api import _root_data_structure
+                stack.enter_context(_root_data_structure(ds).private_names(names))
+        return stack
 
     def _before_call(self):
         """What a call needs to keep before its steps (the end-of-call repartition's basis): None here."""
@@ -399,6 +419,12 @@ class DataStructureComponent(Component):
     MTG-backed parameters are re-read before each graph solve.
     """
 
+    @property
+    def soil_surface(self) -> float:
+        """The soil surface's height (m, the plants' frame): its DataStructure's (Scene(soil_surface=), 0 by
+        default), e.g. a light model's cut, the domains "air" and "soil" of ds.geometry."""
+        return self.data_structure.soil_surface
+
     def calendar(self, time: float = None, default=None) -> tuple:
         """(day of year, hour) at *time* (default: forcing_time(), the scene time the step's forcings are read at),
         from the Scene's start (Scene(start=(day_of_year, hour)): the calendar of its time 0), else from *default*
@@ -453,12 +479,17 @@ class DataStructureComponent(Component):
             step = float(getattr(self, "time_step", None) or self.choregrapher.simulation_step() or 0.)
         return start + offset + step
 
-    def forcing_interval(self, over: str = "substep") -> tuple:
+    def forcing_interval(self, over="substep") -> tuple:
         """
         (start, end), the scene times a forcing is read over: *over* "substep", the (sub-)step being computed (the
         component's sub-step, a graph-system solve's sub-step: [t, t + dt]); "step", the whole step of the call (the
-        scene's step, all its sub-steps).
+        scene's step, all its sub-steps); a (start, end) pair of scene times, itself (a part of the step).
         """
+        if isinstance(over, tuple):
+            start, end = (float(time) for time in over)
+            if end < start:
+                raise ValueError(f"forcing(over=(start, end)): end {end} before start {start}")
+            return start, end
         if over == "substep":
             return self.forcing_time("start"), self.forcing_time("end")
         if over == "step":
@@ -467,12 +498,21 @@ class DataStructureComponent(Component):
             if length is None:
                 length = float(self.choregrapher.simulation_step() or getattr(self, "time_step", None) or 0.)
             return start, start + length
-        raise ValueError(f"forcing(over=...): 'substep' or 'step', got '{over}'")
+        raise ValueError(f"forcing(over=...): 'substep', 'step' or a (start, end) pair, got '{over}'")
+
+    def forcing_panels(self, over="substep") -> list:
+        """The interval *over* (forcing_interval's) in panels of at most an hour (coupling.forcings.QUADRATURE_PANEL,
+        the forcings' quadrature panels), [(start, end)]: for a model whose response to a forcing is not its mean's
+        (the sun's course over a daily step, lit panel by panel), each read with forcing(name, over=panel)."""
+        from openalea.metafspm.coupling.forcings import panels
+        edges = panels(*self.forcing_interval(over))
+        return list(zip(edges[:-1].tolist(), edges[1:].tolist()))
 
     def forcing(self, name: str, over: str = "substep"):
         """
         Forcing *name* (coupling.forcings: a number, a callable of the time, a table linearly interpolated, a pulse)
-        over the (sub-)step being computed (*over* "substep", [t, t + dt]) or the call's whole step ("step"), as its
+        over the (sub-)step being computed (*over* "substep", [t, t + dt]), the call's whole step ("step") or a
+        (start, end) pair of scene times (a panel of the step, forcing_panels()), as its
         declaration aggregates it (forcing_variable(aggregate=...): its mean by default, its total, or its value at the
         end; an undeclared name: its mean). Inside an IVP solve, its value at the evaluation time (the integrator
         averages it; a "total" has no value at an instant and raises).
@@ -584,6 +624,10 @@ class DataStructureComponent(Component):
         """A declared variable's values at the component's own place (its declaration's location), outside steps (a
         helper, a display): through the mapping when another component holds it elsewhere (held_at_scale), its
         default when it is an optional input nothing provides; else the DataStructure's."""
+        with self.private_names():
+            return self._read(name)
+
+    def _read(self, name: str) -> np.ndarray:
         from openalea.metafspm.coupling.declaration import mapped_read
         ds, spec = self.data_structure, self.variable_specs.get(name)
         if spec is None:
@@ -1054,6 +1098,15 @@ class StructuralComponent(DataStructureComponent):
         end = np.stack([x2[nodes], y2[nodes], z2[nodes]], axis=1)
         vertices, drawn = segment_triangles(start, end, radius[nodes])
         return Triangles(vertices[drawn].reshape(-1, 3, 3), np.repeat(nodes[drawn], vertices.shape[1]))
+
+    def geometry_stamp(self) -> tuple:
+        """What the component's triangles are made from, compared by the geometric variables
+        (DataStructure.derive_geometry) to know when to recompute: its calls (its clock: a call may move or reshape
+        its elements) and the writes of its segment ends (x1 … z2, radius) when it has them. A component whose
+        triangles depend on more than these between its calls overrides it."""
+        ds = self.data_structure
+        names = ("x1", "y1", "z1", "x2", "y2", "z2", "radius")
+        return (self.__dict__.get("_clock", 0.), tuple(ds.write_count(name) for name in names if ds.has(name)))
 
     def _mpg_signature(self) -> tuple:
         """Cheap topology signature of the MPG: vertex count and last allocated vertex id (the MPG read without

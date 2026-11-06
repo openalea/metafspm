@@ -214,3 +214,23 @@ def test_a_same_name_link_stating_its_scale_is_an_identity():
     assert "uptake" not in ds.__dict__.get("_derived", {})
     ds.set("uptake", 3.)
     np.testing.assert_allclose(ds.get("uptake"), 3.)
+
+
+def test_the_soil_surface_is_the_grid_top_and_the_parts_outside_are_counted():
+    """CrossMapping(soil_surface=): the grid's depth below that height (flip_z); the entities with a part outside the
+    grid along its non-periodic axes are counted (outside()), warned once."""
+    import warnings
+    plants = doubles_ds.make_chain_plant_ds()                    # middles 0.02, 0.04, 0.06 below 0
+    soil = ArrayDataStructure(shape=(1, 1, 2), dx=0.05)
+    by_depth = np.argsort(-(plants.get("z1") + plants.get("z2")))
+    level = CrossMapping(plants, soil, periodic=(True, True, False))
+    rows, columns, _ = level.incidence()
+    assert columns[np.argsort(rows)][by_depth].tolist() == [0, 0, 1] and level.outside().size == 0
+    lowered = CrossMapping(plants, soil, periodic=(True, True, False), soil_surface=-0.03)
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        rows, columns, _ = lowered.incidence()
+        lowered.refresh()
+        lowered.incidence()
+    assert columns[np.argsort(rows)][by_depth].tolist() == [0, 0, 0]       # the first above the soil: in the top
+    assert lowered.outside().size == 1 and sum("outside the grid" in str(w.message) for w in caught) == 1

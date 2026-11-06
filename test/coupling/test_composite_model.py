@@ -172,3 +172,34 @@ def test_a_translator_object_is_used_as_given():
     assert Translator.load(translator) is translator
     model.couple(carbon, nitrogen, translator=translator)
     assert ds.aliases() == {"sugar": "hexose"}
+
+
+def _doubled(values):
+    return 2. * np.asarray(values)
+
+
+def test_a_receiver_private_name_keeps_the_shared_variable_untouched():
+    """Link(names={variable: private}): the receiver reads its variable as the link's values (a formula of the
+    provider's variable of the same name), kept under the private name; the provider and everything outside the
+    receiver's calls read the shared variable."""
+    Choregrapher().reset()
+    ds = doubles_ds.make_plant_ds()
+    carbon, nitrogen = doubles_ds.PlantCarbon(data_structure=ds), doubles_ds.PlantNitrogen(data_structure=ds)
+    translator = Translator().link("PlantNitrogen", "hexose", "PlantCarbon", ("hexose",), formula=_doubled,
+                                   names={"hexose": "nitrogen_hexose"})
+    CompositeModel().couple(carbon, nitrogen, translator=translator)
+    shared = np.array(ds.get("hexose"))
+    np.testing.assert_array_equal(ds.get("nitrogen_hexose"), 2. * shared)
+    np.testing.assert_array_equal(nitrogen.read("hexose"), 2. * shared)          # the receiver's own reading
+    np.testing.assert_array_equal(carbon.read("hexose"), shared)                 # the provider's: untouched
+    before = np.array(ds.get("amino_acids"))
+    nitrogen()
+    # amino_acids - exudation + 0.5 sugar + 0.25 hexose + C_hexose_soil: the doubled hexose read
+    exudation = np.asarray(ds.get("amino_acids_exudation"))
+    np.testing.assert_allclose(ds.get("amino_acids"), before - exudation + 0.25 * 2. * shared)
+    np.testing.assert_array_equal(ds.get("hexose"), shared)
+    ds.set("hexose", 3.)                                                         # the provider writes: followed
+    np.testing.assert_array_equal(nitrogen.read("hexose"), 6.)
+    with pytest.raises(ValueError, match="private name"):
+        Translator().link("PlantNitrogen", "hexose", "PlantCarbon", ("hexose",), formula=_doubled,
+                          names={"sugar": "x"})

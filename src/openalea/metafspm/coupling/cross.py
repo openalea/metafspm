@@ -35,7 +35,9 @@ class CrossMapping:
         coordinates: the source's segment end variables, (x1, x2, y1, y2, z1, z2).
         periodic:    per grid axis, wrap positions into the grid (a periodic stand in x and y by default); the other
                      axes are clipped into the grid.
-        flip_z:      plant z is negative below ground while the soil z axis points down (reference soil model).
+        flip_z:      plant z is negative below ground while the soil z axis points down (reference soil model): the
+                     grid's z is the depth below the soil surface, *soil_surface* - z.
+        soil_surface: the soil surface's height in the plants' frame (m; the Scene's soil_surface): the grid's top.
         mask:        a node mask of the source: its other entities are left out (they neither push nor receive, e.g.
                      plants before emergence).
 
@@ -53,7 +55,7 @@ class CrossMapping:
     """
 
     def __init__(self, source, target, method: str = "barycentre", coordinates=SEGMENT_COORDINATES,
-                 periodic=(True, True, False), flip_z: bool = True, mask: str = None):
+                 periodic=(True, True, False), flip_z: bool = True, mask: str = None, soil_surface: float = 0.):
         if method not in ("barycentre", "overlap"):
             raise ValueError(f"method must be 'barycentre' or 'overlap', got '{method}'")
         self.source, self.target = source, target
@@ -61,8 +63,11 @@ class CrossMapping:
         self.coordinates = tuple(coordinates)
         self.periodic = periodic
         self.flip_z = flip_z
+        self.soil_surface = float(soil_surface)
         self.mask = mask
         self._stamp, self._incidence, self._node_incidence = None, None, None
+        self._outside, self._warned = np.zeros(0, dtype=np.int64), False
+        self.link_options = None         # an inferred mapping's link options (Link.mapping), None for a given one
         location = source.location(self.coordinates[0]) if getattr(source, "_anatomy", False) and \
             source.has(self.coordinates[0]) else "node"
         self.location = location         # the entities mapped: the nodes, or an anatomy-mode plant's SubOrgans
@@ -93,7 +98,7 @@ class CrossMapping:
     def _ends(self):
         x1, x2, y1, y2, z1, z2 = (np.asarray(self.source.get(name), dtype=float) for name in self.coordinates)
         if self.flip_z:
-            z1, z2 = -z1, -z2
+            z1, z2 = self.soil_surface - z1, self.soil_surface - z2
         return np.stack([x1, y1, z1], axis=1), np.stack([x2, y2, z2], axis=1)
 
     def incidence(self, location: str = None) -> tuple:
@@ -103,6 +108,13 @@ class CrossMapping:
         stamp = self._current_stamp()
         if self._incidence is None or stamp != self._stamp:
             self._incidence, self._node_incidence, self._stamp = self._build(), None, stamp
+            if self._outside.size and not self._warned:
+                import warnings
+                self._warned = True
+                warnings.warn(f"CrossMapping {type(self.source).__name__} -> {type(self.target).__name__}"
+                              f"{'' if self.mask is None else ' (mask ' + repr(self.mask) + ')'}: "
+                              f"{self._outside.size} mapped {self.location} entities lie partly outside the grid, "
+                              "clipped into its border cells (CrossMapping.outside(); warned once)", stacklevel=3)
         if location == self.location:
             return self._incidence
         if self._node_incidence is None:
@@ -137,12 +149,29 @@ class CrossMapping:
         owner = np.asarray(self.source.owner(self.location), dtype=np.int64)
         return np.bincount(owner[self._covered_nodes()], minlength=size) > 0
 
+    def outside(self) -> np.ndarray:
+        """The mapped entities (of the mapping's location) with a part outside the grid along its non-periodic axes
+        (above the soil, below its bottom), their parts clipped into its border cells: their indices, as of the
+        last incidence built (warned once, at the first)."""
+        self.incidence()
+        return self._outside
+
     def _build(self) -> tuple:
-        rows, columns, weights = self._build_all()
+        rows, columns, weights, outside = self._build_all()
         if self.mask is not None:
             kept = self.covered()[rows]
-            rows, columns, weights = rows[kept], columns[kept], weights[kept]
+            rows, columns, weights, outside = rows[kept], columns[kept], weights[kept], outside[kept]
+        self._outside = np.unique(rows[outside])
         return rows, columns, weights
+
+    def _outside_points(self, points) -> np.ndarray:
+        """Whether each point lies outside the grid along a non-periodic axis."""
+        grid = self.target
+        shape = np.asarray(getattr(grid, "_fine_shape", None) or getattr(grid, "_shape"), dtype=np.int64)
+        index = np.floor((np.asarray(points, dtype=float) - grid._origin) / grid._dx)
+        periodic = np.broadcast_to(np.asarray(self.periodic, dtype=bool), (shape.size,))
+        out = (index < 0) | (index >= shape)
+        return (out & ~periodic).any(axis=1)
 
     def _through_owners(self, incidence) -> tuple:
         """The incidence of the source's covered nodes: each one its owner's (its SubOrgan's) rows."""
@@ -167,8 +196,10 @@ class CrossMapping:
         p1, p2 = self._ends()                      # one row per entity of the mapping's location
         n = p1.shape[0]
         if self.method == "barycentre":
-            columns = self.target.locate(0.5 * (p1 + p2), periodic=self.periodic, clip=True)
-            return np.arange(n, dtype=np.int64), np.asarray(columns, dtype=np.int64), np.ones(n)
+            middles = 0.5 * (p1 + p2)
+            columns = self.target.locate(middles, periodic=self.periodic, clip=True)
+            return (np.arange(n, dtype=np.int64), np.asarray(columns, dtype=np.int64), np.ones(n),
+                    self._outside_points(middles))
         origin, dx = self.target._origin, self.target._dx
         counts = _count_pieces(p1, p2, origin, dx)
         offsets = np.zeros(n, dtype=np.int64)
@@ -179,7 +210,7 @@ class CrossMapping:
         kept = fractions > 0.
         rows, middles, fractions = rows[kept], middles[kept], fractions[kept]
         columns = np.asarray(self.target.locate(middles, periodic=self.periodic, clip=True), dtype=np.int64)
-        return rows, columns, fractions
+        return rows, columns, fractions, self._outside_points(middles)
 
     @property
     def cells(self) -> np.ndarray:
@@ -630,15 +661,21 @@ class Exchanges:
                                         for source in link.sources) and receiver_ds.has(link.variable) \
                 and receiver_ds.location(link.variable) != "scalar":
             return _ScalarMapping(receiver_ds, receiver_ds.location(link.variable)), "down", None
+        # a cross mapping inferred for the link's options (Link.mapping) first, then one given for the pair
+        options = link.mapping_options
+        crosses = sorted((m for m in self.mappings if isinstance(m, CrossMapping)),
+                         key=lambda m: m.link_options != options)
+        for mapping in crosses:
+            if mapping.link_options not in (None, options):
+                continue
+            if _plant_side(mapping, provider_ds) and mapping.target is receiver_ds:
+                return mapping, "up", None
+            if _plant_side(mapping, receiver_ds) and mapping.target is provider_ds:
+                return mapping, "down", None
         for mapping in self.mappings:
             if isinstance(mapping, LayerMapping) and {id(provider_ds), id(receiver_ds)} == {id(mapping.column),
                                                                                            id(mapping.grid)}:
                 return mapping, "layer", None
-            if isinstance(mapping, CrossMapping):
-                if _plant_side(mapping, provider_ds) and mapping.target is receiver_ds:
-                    return mapping, "up", None
-                if _plant_side(mapping, receiver_ds) and mapping.target is provider_ds:
-                    return mapping, "down", None
             elif isinstance(mapping, UnionMapping):
                 if mapping.union is receiver_ds and mapping.part_index(provider_ds) is not None:
                     return mapping, "into_union", mapping.part_index(provider_ds)

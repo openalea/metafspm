@@ -76,14 +76,21 @@ def gauss_points(start: float, end: float) -> tuple:
 QUADRATURE_PANEL = 3600.        # s: the longest interval one 4-point Gauss-Legendre rule averages a function over
 
 
+def panels(start: float, end: float) -> np.ndarray:
+    """The edges of the panels of at most QUADRATURE_PANEL covering [*start*, *end*] (equal panels: one for an hourly
+    step, 24 for a daily one); [start, end] for an empty interval."""
+    count = max(1, int(np.ceil((end - start) / QUADRATURE_PANEL - 1e-9)))
+    return np.linspace(start, end, count + 1)
+
+
 def quadrature(start: float, end: float) -> tuple:
     """(times, weights) of the mean over [*start*, *end*]: the 4-point Gauss-Legendre rule on panels of at most
     QUADRATURE_PANEL (an hour: one panel for an hourly step, 24 for a daily one, so that a daily course is averaged
     as well at any step), the weights summing to 1."""
-    panels = max(1, int(np.ceil((end - start) / QUADRATURE_PANEL - 1e-9)))
-    edges = np.linspace(start, end, panels + 1)
+    edges = panels(start, end)
     points = [gauss_points(first, last) for first, last in zip(edges[:-1], edges[1:])]
-    return np.concatenate([times for times, _ in points]), np.concatenate([weights for _, weights in points]) / panels
+    return (np.concatenate([times for times, _ in points]),
+            np.concatenate([weights for _, weights in points]) / (edges.size - 1))
 
 
 def _gauss_mean(function, start: float, end: float) -> float:

@@ -3,7 +3,8 @@ PlantGL's PglTurtle."""
 import numpy as np
 import pytest
 
-from openalea.metafspm.coupling.geometry import Triangles, place, segment_triangles, slim_cylinders
+from openalea.metafspm.coupling.geometry import (CentreIn, FractionIn, HalfSpace, Triangles, domain_of, place,
+                                                 segment_fraction_in, segment_triangles, slim_cylinders)
 from openalea.metafspm.kernels import down, follow_parents, left_of, roll_right, roll_to_vertical, turn_left
 
 
@@ -116,18 +117,44 @@ def test_follow_parents_as_pglturtle():
         expected[i] = (pgl.Vector3(turtle.getPosition()), turtle.getHeading(), turtle.getUp())
 
 
-def test_mean_per_owner_and_clip_below():
-    """Per-owner means weighted by area (0 without triangles); triangles cut at the soil, the area above kept."""
+def test_mean_per_owner_and_clip():
+    """Per-owner means weighted by area (0 without triangles); triangles cut at the soil (vectorised), the area above
+    kept, in the triangles' order, with their attributes; the area fractions inside exact."""
     vertices = np.array([[[0, 0, -1], [2, 0, 1], [0, 2, 1]],          # one vertex below: two triangles
                          [[0, 0, 1], [2, 0, -1], [0, 2, -1]],          # two below: one triangle
                          [[0, 0, -1], [1, 0, -1], [0, 1, -2]],         # all below: none
                          [[0, 0, 0], [1, 0, 1], [0, 1, 0]]], dtype=float)  # on the soil: kept whole
-    triangles = Triangles(vertices, [0, 1, 2, 3])
-    kept = triangles.clip_below(0.)
-    assert kept.owner.tolist() == [3, 0, 0, 1] and (kept.vertices[..., 2] >= 0).all()
+    triangles = Triangles(vertices, [0, 1, 2, 3], attributes={"green": [1., 0.5, 0., 0.25]})
+    kept = triangles.clip(HalfSpace(0.))
+    assert kept.owner.tolist() == [0, 0, 1, 3] and (kept.vertices[..., 2] >= 0).all()
+    assert kept.attributes["green"].tolist() == [1., 1., 0.5, 0.25]
     whole = triangles.areas()
     np.testing.assert_allclose(kept.per_owner(kept.areas(), 4), [whole[0] * 3 / 4, whole[1] / 4, 0., whole[3]])
+    np.testing.assert_allclose(triangles.fraction_in(HalfSpace(0.)), [3 / 4, 1 / 4, 0., 1.])
+    np.testing.assert_allclose(triangles.fraction_in(HalfSpace(0., above=False)), [1 / 4, 3 / 4, 1., 0.])
+    # the orientation kept: the pieces' normals those of their triangle
+    normal = lambda v: np.cross(v[:, 1] - v[:, 0], v[:, 2] - v[:, 0])           # noqa: E731
+    assert (np.einsum("ij,ij->i", normal(kept.vertices), normal(vertices[kept.owner])) > 0).all()
     values = np.array([1., 2., 3., 4.])
     np.testing.assert_allclose(triangles.mean_per_owner(values, 5), [1., 2., 3., 4., 0.])
     both = Triangles(vertices[:2], [0, 0])
     assert both.mean_per_owner([1., 3.], 1)[0] == pytest.approx((whole[0] + 3 * whole[1]) / (whole[0] + whole[1]))
+    # an attribute a part does not carry: its default ("green" 1)
+    joined = Triangles.concatenate([triangles, Triangles(vertices[:1], [0])], offsets=[0, 4])
+    assert joined.attributes["green"].tolist() == [1., 0.5, 0., 0.25, 1.]
+
+
+def test_domains_and_segments():
+    """"air" and "soil" are the half spaces of the soil surface; a segment's fraction in a domain and the middle of
+    its part there (a chord clip, vectorised)."""
+    assert domain_of("air", 0.1) == HalfSpace(0.1, "z", True) and domain_of("soil", 0.1).above is False
+    with pytest.raises(ValueError):
+        domain_of("water")
+    start = np.array([[0., 0., -2.], [0., 0., -2.], [0., 0., 1.], [0., 0., 3.], [0., 0., 2.]])
+    end = np.array([[0., 0., -1.], [0., 0., 2.], [0., 0., 3.], [0., 0., -1.], [0., 0., 2.]])
+    fraction, centre = segment_fraction_in(start, end, HalfSpace(0.))
+    np.testing.assert_allclose(fraction, [0., 0.5, 1., 0.75, 1.])
+    np.testing.assert_allclose(centre[1:, 2], [1., 2., 1.5, 2.])
+    assert np.isnan(centre[0]).all()
+    assert FractionIn("air", weight="green").name == "fraction_in_air_by_area_green"
+    assert CentreIn(HalfSpace(0.)).name == "centre_in_above_z_0_z_by_area"

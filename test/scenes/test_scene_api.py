@@ -12,6 +12,7 @@ import pandas as pd
 import pytest
 
 from openalea.metafspm.coupling.component import FunctionalComponent, input_variable, parameter, state_variable
+from openalea.metafspm.coupling.translator import Translator
 from openalea.metafspm.data_structure.configs import ScalesConfig as scales
 from openalea.metafspm.data_structure.data_api import ArrayDataStructure
 from openalea.metafspm.scene.environment import EnvironmentModel
@@ -20,7 +21,7 @@ from openalea.metafspm.scene.recorder import SceneRecorder
 from openalea.metafspm.scene.scene import Scene
 
 from growth import DOC, RootGrowthProbe
-from scene_doubles import DT, SceneSoil, Seedlings, soil_translator
+from scene_doubles import DT, SceneSoil, Seedlings, doubles_planting, soil_translator
 
 
 @dataclass
@@ -151,3 +152,50 @@ def test_a_recorder_writing_files_needs_a_folder():
     for options in ({"checkpoint_period": 1}, {"frame_period": 1}, {"segment_plants": ["p0"]}):
         with pytest.raises(ValueError, match="folder"):
             SceneRecorder(**options)
+
+
+class DeepSeedlings(Seedlings):
+    """Seedlings whose deep segments (z2 below -1.5) are a mask, for the soil links' mappings."""
+
+    def __init__(self, data_structure, time_step):
+        super().__init__(data_structure, time_step)
+        data_structure.define_mask("deep", {"z2": "<-1.5"})
+
+
+def _soil_links(exudation=None, nitrate=None):
+    return (Translator()
+            .link("SceneSoilNitrate", "exudation", "SeedlingExudation", {"exudation": 1.}, mapping=exudation)
+            .link("SeedlingExudation", "soil_nitrate", "SceneSoilNitrate", {"soil_nitrate": 1.}, mapping=nitrate))
+
+
+def test_the_cross_mappings_follow_the_links_options_and_the_soil_surface():
+    """A link's mapping= (Link.mapping: mask, method) gives its own inferred CrossMapping, shared by the links of the
+    same options; the Scene's soil_surface is every DataStructure's and the mappings' grid top; an unknown mask
+    raises."""
+    from openalea.metafspm.coupling.cross import CrossMapping
+    deep = {"mask": "deep", "method": "overlap"}
+    scene = Scene(doubles_planting([DeepSeedlings]), environment=[SceneSoil], translator=_soil_links(deep, deep),
+                  time_step=DT, soil_surface=0.01)
+    crosses = [m for m in scene.mappings if isinstance(m, CrossMapping)]
+    assert len(crosses) == 1 and (crosses[0].mask, crosses[0].method) == ("deep", "overlap")
+    assert crosses[0].soil_surface == 0.01 and crosses[0].link_options == (("mask", "deep"), ("method", "overlap"))
+    ds = scene.populations[0].data_structure
+    assert ds.soil_surface == 0.01 and scene.environment[0].grid.soil_surface == 0.01
+    assert ds.structure.soil_surface == 0.01
+    with pytest.warns(UserWarning, match="outside the grid"):          # the deepest below its bottom: warned once
+        scene.run()
+    assert crosses[0].outside().size == 2
+    scene.run()                                     # the soil receives the plants' exudation of the step before
+    exudation = scene.environment[0].grid.get("exudation")
+    assert exudation.sum() == pytest.approx(ds.mask("deep").sum()) and 0 < ds.mask("deep").sum() < ds.n_nodes()
+    scene = Scene(doubles_planting([DeepSeedlings]), environment=[SceneSoil], translator=_soil_links(deep, None),
+                  time_step=DT)
+    crosses = [m for m in scene.mappings if isinstance(m, CrossMapping)]
+    assert sorted((str(m.mask), m.method) for m in crosses) == [("None", "barycentre"), ("deep", "overlap")]
+    assert {link.link.variable: link.mapping.mask for link in scene.exchanges.links} == {
+        "exudation": "deep", "soil_nitrate": None}
+    with pytest.raises(KeyError, match="not defined"):
+        Scene(doubles_planting([DeepSeedlings]), environment=[SceneSoil],
+              translator=_soil_links({"mask": "shallow"}), time_step=DT)
+    with pytest.raises(ValueError, match="mapping options"):
+        _soil_links({"cells": "all"})

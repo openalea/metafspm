@@ -20,6 +20,7 @@ from openalea.metafspm.data_structure.configs import ScalesConfig
 
 Factor = Union[float, int, str]
 MISSING_POLICIES = ("default", "nan")         # a mean's receiving entity without contribution: its default, or NaN
+MAPPING_OPTIONS = ("mask", "method")          # a link's cross mapping options (Link.mapping)
 
 _BINARY = {ast.Add: operator.add, ast.Sub: operator.sub, ast.Mult: operator.mul, ast.Div: operator.truediv,
            ast.Pow: operator.pow}
@@ -90,6 +91,18 @@ class Link:
         missing:     the value of a receiving entity no source contributes to, in a mean ("mean", "weighted_mean"):
                      "default", the receiver's default (its standalone value; e.g. an element without a liquid node
                      in a mean weighted by the liquid volume), or "nan" (NaN, to see where).
+        names:       receiver-private names, {variable: private name}: the link's values are kept under the private
+                     name, which the receiver reads as its variable (during its calls and read()), the providers'
+                     variable of that name untouched; e.g. a gas exchange's green_area, derived from the shoot's
+                     green_area and the part above the soil, names={"green_area": "exchanging_area"}.
+        mapping:     a link across DataStructures (a population and a grid, the Scene's): the options of the cross
+                     mapping it goes through (coupling.cross.CrossMapping), {"mask": a node mask of the plants (only
+                     its entities exchange, e.g. the roots' soil nodes), "method": "barycentre" | "overlap"}; the
+                     Scene infers one mapping per pair of DataStructures and options (Scene._infer_mappings).
+
+    A source may be a geometric query (coupling.geometry.FractionIn, CentreIn): a variable the receiver's
+    DataStructure derives from its elements' geometry (DataStructure.derive_geometry), e.g. the fraction of each
+    element's green area above the soil.
     """
     receiver: str
     variable: str
@@ -103,6 +116,8 @@ class Link:
     formula: Optional[Callable] = None
     unit_check: bool = True
     missing: str = "default"
+    names: Optional[Mapping[str, str]] = None
+    mapping: Optional[Mapping] = None
     raw_factors: Mapping = field(default_factory=dict, compare=False, repr=False)
 
     def __post_init__(self):
@@ -119,7 +134,30 @@ class Link:
                              f"'{self.missing}'")
         object.__setattr__(self, "scale", _scale(self.scale))
         object.__setattr__(self, "source_scale", _scale(self.source_scale))
+        if self.names is not None:
+            names = dict(self.names)
+            if set(names) != {self.variable} or not isinstance(names[self.variable], str) \
+                    or names[self.variable] == self.variable:
+                raise ValueError(f"Link {self.receiver}.{self.variable}: names gives its variable's private name, "
+                                 f"{{'{self.variable}': 'another_name'}}, got {self.names!r}")
+            object.__setattr__(self, "names", names)
+        if self.mapping is not None:
+            mapping = dict(self.mapping)
+            unknown = set(mapping) - set(MAPPING_OPTIONS)
+            if unknown:
+                raise ValueError(f"Link {self.receiver}.{self.variable}: mapping options are {MAPPING_OPTIONS}, got "
+                                 f"{sorted(unknown)}")
+            object.__setattr__(self, "mapping", mapping)
 
+    @property
+    def private_name(self) -> str:
+        """The name the link's values are kept under: its variable's private name (names=), else its variable."""
+        return self.names[self.variable] if self.names else self.variable
+
+    @property
+    def mapping_options(self) -> tuple:
+        """The cross mapping's options as a sorted tuple (an inferred mapping's key; () without)."""
+        return tuple(sorted((self.mapping or {}).items()))
     @property
     def detail(self) -> str:
         """identity | alias | factor | expression | multi_source | same_name_factor | formula | scale_change."""
@@ -183,15 +221,16 @@ class Translator:
     def to_nested(self) -> dict:
         """
         Nested format {receiver: {provider: {variable: {source: factor}}}}, every pair present. A link with a
-        scale, aggregation, weight, target, unit_check or missing is written in its long form {"sources": {...},
+        scale, aggregation, weight, target, unit_check, missing, names or mapping is written in its long form {"sources": {...},
         "scale": name, ...}, which from_dict() reads; formulas cannot be written.
         """
         names = self.components
         nested = {receiver: {provider: {} for provider in names} for receiver in names}
         for link in self.links:
-            if link.formula is not None or callable(link.aggregation):
-                raise ValueError(f"Link {link.receiver}.{link.variable} uses a formula or a callable aggregation, "
-                                 "which the nested format cannot express")
+            if link.formula is not None or callable(link.aggregation) or \
+                    not all(isinstance(source, str) for source in link.sources):
+                raise ValueError(f"Link {link.receiver}.{link.variable} uses a formula, a callable aggregation or a "
+                                 "geometric source, which the nested format cannot express")
             spec = dict(link.sources)
             options = {key: getattr(link, key) for key in ("scale", "source_scale", "aggregation", "weight", "target")
                        if getattr(link, key) is not None}
@@ -199,6 +238,9 @@ class Translator:
                 options["unit_check"] = False
             if link.missing != "default":
                 options["missing"] = link.missing
+            for key in ("names", "mapping"):
+                if getattr(link, key) is not None:
+                    options[key] = dict(getattr(link, key))
             if options:
                 for key in ("scale", "source_scale"):
                     if key in options:
@@ -215,7 +257,8 @@ class Translator:
                 for variable, spec in (links or {}).items():
                     if isinstance(spec, Mapping) and "sources" in spec:
                         options = {key: spec[key] for key in ("scale", "source_scale", "aggregation", "weight", "target",
-                                                              "unit_check", "missing") if key in spec}
+                                                              "unit_check", "missing", "names", "mapping")
+                                   if key in spec}
                         translator.link(receiver, variable, provider, dict(spec["sources"]), **options)
                     else:
                         translator.link(receiver, variable, provider, dict(spec))

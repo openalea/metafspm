@@ -98,13 +98,12 @@ class BenchSegments(StructuralComponent):
             parent = g.add_component(parent, **PropsConfig(scale=scale, edge_type='/', label=label))
         section = template(SETTINGS["cells"])
         reduction = getattr(g, "reduction", None)
-        if reduction is not None and reduction.reduces("RootSegment"):
-            section = reduction.template_for(section)
         previous = None
         for _ in range(SETTINGS["groups"]):
             props = PropsConfig(scale=s.SubOrgan, edge_type='<' if previous else '/', label=L.SubOrgan.RootSegment)
             previous = g.add_child(previous, **props) if previous else g.add_component(parent, **props)
-            g.add_instance(previous, section)
+            reduced = reduction is not None and reduction.reduces(g, previous)
+            g.add_instance(previous, reduction.template_for(section) if reduced else section)
 
 
 def _collar(ds):
@@ -158,7 +157,7 @@ def _wiring(g):
 
 class BenchPlant(CompositeModel):
     from_scale, nodes, initiators = "SubOrgan", "Compartment", (BenchSegments,)
-    reduction = Reduction(location="SubOrgan", labels=("RootSegment",), ports=_xylem, keep=_soil_walls,
+    reduction = Reduction(location="SubOrgan", where={"label": "RootSegment"}, ports=_xylem, keep=_soil_walls,
                           kind={"soil_water_potential": None}, systems=("BenchHydraulics._hydraulics",))
     wiring = staticmethod(_wiring)
 

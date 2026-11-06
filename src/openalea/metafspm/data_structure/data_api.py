@@ -180,6 +180,24 @@ class DataStructure(ABC):
 
     # ── The elements' geometry, for light models ─────────────────────────────
 
+    @property
+    def geometry(self):
+        """The elements' geometry (coupling.geometry.Geometry): their triangles, their segments and what of them lies
+        in a domain (fraction_in, centre_in: "air", "soil", the scene's soil surface's half spaces)."""
+        from openalea.metafspm.coupling.geometry import Geometry
+        return Geometry(self)
+
+    @property
+    def soil_surface(self) -> float:
+        """The height of the soil's surface (m, the plants' frame; Scene(soil_surface=), 0 by default): the domains
+        "air" and "soil" of the geometry, the light's cut, the soil grids' top."""
+        return float(_root_data_structure(self).__dict__.get("_soil_surface", 0.))
+
+    @soil_surface.setter
+    def soil_surface(self, value: float) -> None:
+        _root_data_structure(self).__dict__["_soil_surface"] = float(value)
+
+
     def add_geometry_provider(self, component) -> None:
         """Register *component* (a StructuralComponent on this DataStructure, at its construction) as a source of the
         elements' triangles."""
@@ -225,6 +243,15 @@ class DataStructure(ABC):
             raise ValueError(f"{type(self).__name__} has no geometry provider: no StructuralComponent drawing its "
                              "elements was built on it (or set ds.geometry_provider)")
         return provider.triangles(where)
+
+
+def _root_data_structure(ds):
+    """The DataStructure holding the store a view (LocatedView, EntityView) is of, or *ds* itself."""
+    while True:
+        inner = ds.__dict__.get("_base", ds.__dict__.get("_inner"))
+        if inner is None or inner is ds:
+            return ds
+        ds = inner
 
 
 def _split(totals, owner, weights, owners_name: str) -> np.ndarray:
@@ -327,6 +354,9 @@ class VariableStoreMixin:
         return dict(self.__dict__.get("_aliases", {}))
 
     def _resolve(self, name: str) -> str:
+        scoped = self.__dict__.get("_private_names")
+        if scoped and not self.__dict__.get("_private_names_suspended") and name in scoped:
+            name = scoped[name]                         # a receiver's private name, during its calls
         aliases, seen = self.__dict__.get("_aliases", {}), set()
         while name in aliases:
             if name in seen:
@@ -527,6 +557,28 @@ class VariableStoreMixin:
         self.refresh(name)
         return self.get(name)
 
+    def derive_geometry(self, name: str, query, location: str = None, default: float = np.nan) -> np.ndarray:
+        """
+        Declare *name* as a geometric variable: per entity of *location* (default the nodes), *query*'s values
+        (coupling.geometry.FractionIn, CentreIn: what of each element's geometry lies in a domain), recomputed when
+        read after the geometry changed (Geometry.stamp: the topology, the geometry providers' stamps or the segment
+        ends' writes). A translator link naming a geometric source derives it (CompositeModel.couple).
+        """
+        location = location or self._default_location
+        derived = self.__dict__.setdefault("_derived", {})
+        spec = {"sources": (), "formula": None, "geometry": query, "source_location": location, "location": location,
+                "aggregation": None, "weight": None, "target": None, "default": float(default), "missing": "default"}
+        if self.has(name) and name not in derived:
+            raise ValueError(f"'{name}' holds its own values: it cannot become a geometric variable")
+        derived[name] = spec
+        if not self.has(name):
+            self.register(name, location=location, default=default)
+        elif self.location(name) != location:
+            del derived[name]
+            raise ValueError(f"'{name}' is registered at {self.location(name)}, not at {location}")
+        self.refresh(name)
+        return self.get(name)
+
     def _derivation_order(self, targets=None) -> list:
         derived = self.__dict__.get("_derived", {})
         order, state = [], {}
@@ -555,6 +607,11 @@ class VariableStoreMixin:
         return list(spec["sources"]) + ([spec["weight"]] if spec["weight"] else [])
 
     def _source_stamps(self, target: str) -> dict:
+        query = self.__dict__["_derived"][target].get("geometry")
+        if query is not None:
+            location = self.__dict__["_derived"][target]["location"]
+            return {("geometry",): self.geometry.stamp(None if location == self._default_location else location,
+                                                       by=getattr(query, "by", "area"))}
         stamps = {self._resolve(source): self.write_count(source) for source in self._derived_sources(target)}
         mask = self.__dict__["_derived"][target].get("target")
         if mask is not None:
@@ -575,6 +632,10 @@ class VariableStoreMixin:
             location, store, resolved = self._find(source)
             return store[resolved]
 
+        if spec.get("geometry") is not None:
+            location = spec["location"]
+            return np.asarray(spec["geometry"].evaluate(self, None if location == self._default_location
+                                                        else location), dtype=float)
         if spec["formula"] is not None:
             values = spec["formula"](*(value(source) for source in spec["sources"]))
         else:
@@ -680,12 +741,20 @@ class VariableStoreMixin:
 
     # ── Named masks ─────────────────────
 
-    def define_mask(self, name: str, rule, location: str = None) -> None:
+    def define_mask(self, name: str, rule=None, location: str = None, entities=None) -> None:
         """
         Define mask *name* at *location* (default: the nodes or cells) from *rule*:
           {variable: condition}, every condition holding: ">0" (or "<0", ">=0", "<=0"), a value, or a list of values;
-          a callable ds -> boolean array (recomputed at every mask() call, its sources being unknown).
+          a callable ds -> boolean array (recomputed at every mask() call, its sources being unknown);
+        or from *entities*, a named entity set a component publishes (Component.entity_sets), "Class.set" (e.g.
+        "GranapAnatomy.soil_nodes": the roots' soil nodes), or a tuple of them (their union).
         """
+        if entities is not None:
+            from openalea.metafspm.coupling.declaration import EntitySets, entity_set
+            if rule is not None:
+                raise TypeError(f"mask '{name}': give a rule or entities, not both")
+            names = (entities,) if isinstance(entities, str) else tuple(entities)
+            rule = dict(entity_set(names[0])) if len(names) == 1 else EntitySets(*names)
         if not (callable(rule) or (isinstance(rule, dict) and rule)):
             raise TypeError(f"mask '{name}': rule must be a non-empty {{variable: condition}} dict or a callable")
         masks = self.__dict__.setdefault("_masks", {})
@@ -824,11 +893,39 @@ class VariableStoreMixin:
             raise ValueError(f"{type(self).__name__} is inconsistent:\n  " + "\n  ".join(problems))
 
     def _update_derived(self, targets, force: bool = False) -> None:
-        """Recompute the stale derived variables among *targets* and their derived sources, in dependency order."""
+        """Recompute the stale derived variables among *targets* and their derived sources, in dependency order (their
+        sources by their shared names: a receiver's private names do not apply)."""
         derived = self.__dict__.get("_derived", {})
-        for target in self._derivation_order(targets):
-            if force or derived[target].get("stamps") != self._source_stamps(target):
-                self._compute_derived(target)
+        suspended = self.__dict__.get("_private_names_suspended", False)
+        self.__dict__["_private_names_suspended"] = True
+        try:
+            for target in self._derivation_order(targets):
+                if force or derived[target].get("stamps") != self._source_stamps(target):
+                    self._compute_derived(target)
+        finally:
+            self.__dict__["_private_names_suspended"] = suspended
+
+    @contextmanager
+    def private_names(self, names: dict):
+        """
+        Within the block, *names* ({variable: private name}) resolve to their private names: a receiver's
+        variables a link keeps under another name (Link.names), read during its calls (Component.__call__,
+        read()). Nested blocks add theirs; a variable given two private names raises.
+        """
+        if not names:
+            yield
+            return
+        previous = self.__dict__.get("_private_names")
+        merged = dict(previous or {})
+        for name, private in names.items():
+            if merged.get(name, private) != private:
+                raise ValueError(f"'{name}' has two private names in one call ({merged[name]}, {private})")
+            merged[name] = private
+        self.__dict__["_private_names"] = merged
+        try:
+            yield
+        finally:
+            self.__dict__["_private_names"] = previous
 
     def is_stale(self, name: str) -> bool:
         """True when derived variable *name*, or a derived variable it depends on, would be recomputed at get()."""
@@ -3656,7 +3753,8 @@ class _EntityGeometry:
         from openalea.metafspm.coupling.geometry import Triangles
         selection = self._view._selection()[0]
         drawn = self._drawn_by.triangles(None if where is None else np.asarray(where, dtype=bool)[selection])
-        return Triangles(drawn.vertices, selection[drawn.owner])
+        return Triangles(drawn.vertices, np.where(drawn.owner >= 0, selection[np.maximum(drawn.owner, 0)], -1),
+                         drawn.owner_ids, drawn.attributes)
 
 
 def _check_entities(entities) -> None:

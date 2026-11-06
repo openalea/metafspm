@@ -129,11 +129,20 @@ def test_events_and_stop_conditions():
 
 def test_a_forcing_read_over_the_step():
     """A forcing is its mean over the component's (sub-)step by default (forcing_variable(aggregate="mean")), over
-    [t, t + dt]; the interval read is forcing_interval()."""
+    [t, t + dt]; the interval read is forcing_interval(); over a (start, end) pair, a part of the step, its panels of
+    at most an hour (forcing_panels) averaging to the whole's mean."""
     lit = _scene().populations[0].instance.lit
     lit.__dict__["_clock"] = 2 * DT
     assert lit.forcing_interval() == (2 * DT, 3 * DT)
     assert lit.forcing("PARi") == pytest.approx(2.5 * DT)               # PARi(t) = t
+    assert lit.forcing("PARi", over=(2 * DT, 2.5 * DT)) == pytest.approx(2.25 * DT)   # a part of the step
+    with pytest.raises(ValueError):
+        lit.forcing("PARi", over=(3 * DT, 2 * DT))
+    assert lit.forcing_panels() == [(2 * DT, 3 * DT)]                   # an hourly step: one panel
+    panels = lit.forcing_panels((0., 86400.))                           # a day: 24 panels of an hour
+    assert len(panels) == 24 and panels[0] == (0., 3600.) and panels[-1][1] == 86400.
+    assert np.mean([lit.forcing("PARi", over=panel) for panel in panels]) == pytest.approx(
+        lit.forcing("PARi", over=(0., 86400.)))
 
 
 class CadencedSoil(SceneSoil):

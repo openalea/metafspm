@@ -40,13 +40,12 @@ class LengthSegments(StructuralComponent):
             parent = g.add_component(parent, **PropsConfig(scale=scale, edge_type='/', label=label))
         template = section_template()[0]
         reduction = getattr(g, "reduction", None)
-        if reduction is not None and reduction.reduces("RootSegment"):
-            template = reduction.template_for(template)
         previous = None
         for _ in range(N_SEGMENTS):
             props = PropsConfig(scale=s.SubOrgan, edge_type='<' if previous else '/', label=L.SubOrgan.RootSegment)
             previous = g.add_child(previous, **props) if previous else g.add_component(parent, **props)
-            g.add_instance(previous, template)
+            reduced = reduction is not None and reduction.reduces(g, previous)
+            g.add_instance(previous, reduction.template_for(template) if reduced else template)
 
 
 def _collar(ds):
@@ -113,7 +112,7 @@ def _model(classes):
     class LengthPlant(CompositeModel):
         from_scale, nodes, initiators = "SubOrgan", "Compartment", (LengthSegments,)
         reduction = None if classes is False else Reduction(
-            location="SubOrgan", labels=("RootSegment",), ports=_xylem, keep=_soil_walls,
+            location="SubOrgan", where={"label": "RootSegment"}, ports=_xylem, keep=_soil_walls,
             kind={"length": classes}, systems=(SYSTEM,))
 
         @staticmethod

@@ -248,3 +248,39 @@ def test_a_component_whose_geometry_is_never_drawn_warns():
         warnings.simplefilter("error")
         AtElements(data_structure=ds, time_step=1)
         AtCompartments(data_structure=ds, time_step=1)
+
+
+def test_the_geometry_of_a_data_structure_in_a_domain():
+    """ds.geometry: each element's area fraction and length fraction above the soil surface (ds.soil_surface, the
+    Scene's), the centre of its part there, and a geometric variable (derive_geometry) recomputed when the geometry
+    changes (the segment ends written, or the provider called)."""
+    from openalea.metafspm.coupling.geometry import CentreIn, FractionIn
+    ds, model = _segments()                                      # z from 0 to -1, -1 to -2, the last of no length
+    ds.set("z1", np.array([0.5, -1., -2.]))                      # the first one half above 0
+    np.testing.assert_allclose(ds.geometry.fraction_in("air", by="length"), [1. / 3., 0., 0.])
+    np.testing.assert_allclose(ds.geometry.fraction_in("soil", by="length"), [2. / 3., 1., 1.])
+    by_area = ds.geometry.fraction_in("air")
+    # (a slim cylinder: its sides and its caps, the cap above the soil)
+    triangles = model.triangles()
+    first = triangles.owner == 0
+    expected = (triangles.areas()[first] * triangles.fraction_in(ds.geometry.domain("air"))[first]).sum() / \
+        triangles.areas()[first].sum()
+    assert 1. / 3. < by_area[0] == pytest.approx(expected, rel=1e-12) and by_area[1] == 0. and np.isnan(by_area[2])
+    assert ds.geometry.fraction_in("air", empty=0.)[2] == 0.
+    np.testing.assert_allclose(ds.geometry.centre_in("air", by="length")[0, 2], 0.25)
+    assert 0.25 < ds.geometry.centre_in("air")[0, 2] < 0.5                  # the cap at the top
+    assert np.isnan(ds.geometry.centre_in("air")[1]).all()
+    ds.soil_surface = -1.5                                       # the soil lower: the second one half in the air
+    np.testing.assert_allclose(ds.geometry.fraction_in("air", by="length"), [1., 0.5, 0.])
+    ds.soil_surface = 0.
+    with pytest.raises(KeyError):                                # the segments' cylinders carry no attribute
+        ds.geometry.fraction_in("air", weight="green")
+    values = ds.derive_geometry("emerged", FractionIn("air", by="length"))
+    np.testing.assert_allclose(values, [1. / 3., 0., 0.])
+    centre = ds.derive_geometry("height", CentreIn("air", by="length"))
+    assert centre[0] == pytest.approx(0.25, rel=1e-9) and np.isnan(centre[1])
+    ds.set("z1", np.array([1., -1., -2.]))                       # the ends written: recomputed when read
+    np.testing.assert_allclose(ds.get("emerged"), [0.5, 0., 0.])
+    assert ds.get("height")[0] == pytest.approx(0.5, rel=1e-9)
+    with pytest.raises(ValueError):
+        ds.set("emerged", 0.)                                    # derived: not written

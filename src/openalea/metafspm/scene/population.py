@@ -141,13 +141,15 @@ class Population:
         return {int(vid): str(name) for vid, name in zip(self.plants, self.table["plant"])}
 
 
-def population_data_structure(table: pd.DataFrame, model, time_step: float = 3600., scenario: dict = None) \
-        -> Population:
+def population_data_structure(table: pd.DataFrame, model, time_step: float = 3600., scenario: dict = None,
+                              soil_surface: float = 0.) -> Population:
     """
     The plants of *table* (a planting table's rows of *model*) in one MPG and its MPGDataStructure, *model* built on
     it, every plant's scenario applied: what the Scene builds for each of its models, for a model run without one.
     The model's initiators build each plant's structure (on the nodes of its from_scale, or its own nodes for
-    anatomies), its wiring joins them; *scenario*: the one the model is built with (default: the first plant's).
+    anatomies), its wiring joins them; *scenario*: the one the model is built with (default: the first plant's);
+    *soil_surface*: the soil surface's height (m, the Scene's), the MPG's g.soil_surface while the initiators build
+    (a crown placed below it) and the DataStructure's after (ds.soil_surface).
     """
     from openalea.metafspm.coupling.choregrapher import Choregrapher
     Choregrapher()._set_simulation_time_step(time_step)
@@ -157,7 +159,7 @@ def population_data_structure(table: pd.DataFrame, model, time_step: float = 360
     reduction = _model_reduction(model, table, scenario, read_by_initiators)
     g, plants = _build_population(table, initiators=getattr(model, "initiators", ()),
                                   read_by_initiators=read_by_initiators, reduction=reduction,
-                                  translator=getattr(model, "translator", None))
+                                  translator=getattr(model, "translator", None), soil_surface=soil_surface)
     scale = getattr(model, "from_scale", None) or "SubOrgan"
     scale = getattr(g.scales, scale) if isinstance(scale, str) else scale
     nodes = getattr(model, "nodes", None)
@@ -167,6 +169,7 @@ def population_data_structure(table: pd.DataFrame, model, time_step: float = 360
     wiring = getattr(model, "wiring", None)
     wiring = wiring(g) if callable(wiring) else wiring
     ds = MPGDataStructure(g, from_scale=scale, nodes=nodes, wiring=wiring)
+    ds.soil_surface = soil_surface
     instance = model(data_structure=ds, time_step=time_step, **_model_keywords(model, scenario))
     if getattr(g, "reduction", None) is not None:
         g.reduction.bind(model, instance)
@@ -236,7 +239,7 @@ def _nested_copy(value):
 
 
 def _build_population(table: pd.DataFrame, initiators=(), read_by_initiators: set = None, reduction=None,
-                      translator=None) -> tuple:
+                      translator=None, soil_surface: float = 0.) -> tuple:
     """
     A new MPG with one Plant-scale vertex per row of *table* (Plant properties x, y, z, rotation), each plant's
     initial structure built by every StructuralComponent class of *initiators*, in order. Returns (g, plant vids in
@@ -248,6 +251,7 @@ def _build_population(table: pd.DataFrame, initiators=(), read_by_initiators: se
     from openalea.metafspm.coupling.initiation import apply_link, initiation_links
     links = initiation_links(translator, initiators)
     g = MPG()
+    g.soil_surface = float(soil_surface)          # the soil surface's height, for initiators placing below it
     if reduction is not None:
         g.reduction = reduction.for_population(g)
     plants = []

@@ -8,16 +8,22 @@ recovered on request. Exact when the eliminated interior is linear in the unknow
 Declared on the plant model, before its structure is built (as nodes= and wiring are):
 
     class Plant(CompositeModel):
-        reduction = Reduction(location="SubOrgan", labels=("RootSegment",), ports=conduits, keep=soil_nodes,
+        reduction = Reduction(location="SubOrgan", where={"label": "RootSegment"}, ports="GranapAnatomy.conduits",
+                              keep=("GranapAnatomy.soil_nodes", vapour_path),
                               kind={"barrier": None, "length": Relative(0.1)},
                               inputs={"osmotic_potential": dict(by="tissue", group="tissue_osmotic_potential",
                                                                 kept="conduit_osmotic_potential")},
                               systems=("MechaHydraulics._plant_problem",))
 
-  location, labels   the groups (the entities of a coarse location) and the labels of those reduced (all: ())
-  ports, keep        rules on a full SectionTemplate (template -> mask of its local vertices): the nodes joined across
-                     groups (the structural model's) and the nodes the functional model keeps (its boundary nodes,
-                     the nodes of its explicit terms)
+  location, where    the groups (the entities of a coarse location) and those reduced: a filter on them (the
+                     entities' syntax, {variable: condition}; "label" their label names, "<Scale>.label" their
+                     complex's at that scale, e.g. {"label": "StemElement", "Organ.label": "StemInternode"}: the
+                     internodes' elements, not the sheaths'), or a named entity set ("Class.set"); None: all
+  ports, keep        rules on a full SectionTemplate: the nodes joined across groups (the structural model's) and the
+                     nodes the functional model keeps (its boundary nodes, the nodes of its explicit terms); a rule
+                     is a published entity set's name ("GranapAnatomy.conduits", evaluated on the template's
+                     properties), a {variable: condition} dict, a callable template -> mask of its local vertices, or
+                     a tuple of them (their union)
   explicit_edges     a rule giving the Connections kept between kept nodes (those of the explicit terms)
   kind               the group variables a kind depends on, {name: None (its value) | Relative(width) (its classes:
                      a group between two the blend of their kinds, interpolate=True; its nearest, False)}; the
@@ -208,9 +214,12 @@ def _blend(parts) -> Kind:
 
 
 class Reduction:
-    def __init__(self, location: str = "SubOrgan", labels=(), ports=None, keep=None, explicit_edges=None,
+    def __init__(self, location: str = "SubOrgan", where=None, ports=None, keep=None, explicit_edges=None,
                  kind: dict = None, inputs: dict = None, systems=(), outputs=()):
-        self.location, self.labels = location, tuple(labels)
+        if where is not None and not isinstance(where, (dict, str)):
+            raise TypeError(f"Reduction: where is a {{variable: condition}} filter of the {location}s or an entity "
+                            f"set's name, got {where!r}")
+        self.location, self.where = location, (dict(where) if isinstance(where, dict) else where)
         self.ports, self.keep, self.explicit_edges = ports, keep, explicit_edges
         self.kind, self.inputs, self.systems = dict(kind or {}), dict(inputs or {}), tuple(systems)
         self.output_names = tuple(outputs)
@@ -248,9 +257,57 @@ class Reduction:
 
     # ── Structure ──
 
-    def reduces(self, label_name) -> bool:
-        """Whether the groups labelled *label_name* are reduced."""
-        return not self.labels or label_name in self.labels
+    def reduces(self, g, vertex) -> bool:
+        """Whether the group *vertex* of the MPG *g* is reduced: where= holds for it (its label, its complexes'
+        labels, its properties)."""
+        if self.where is None:
+            return True
+        from openalea.metafspm.coupling.declaration import entity_set, rule_holds
+        rule = entity_set(self.where) if isinstance(self.where, str) else self.where
+        values, scales = self._vertex_values(g, int(vertex), rule)
+
+        def codes(key, condition):                  # label names -> the codes of their scale
+            if key not in scales:
+                return condition
+            names = vars(getattr(g.labels, scales[key]))
+            named = list(condition) if isinstance(condition, (list, tuple, set)) else [condition]
+            unknown = [name for name in named if isinstance(name, str) and name not in names]
+            if unknown:
+                raise KeyError(f"Reduction where: {unknown} are no {scales[key]} labels")
+            coded = [names[name] if isinstance(name, str) else name for name in named]
+            return coded if isinstance(condition, (list, tuple, set)) else coded[0]
+
+        return bool(rule_holds(rule, values, codes)[0])
+
+    @staticmethod
+    def _vertex_values(g, vertex: int, rule: dict) -> tuple:
+        """({key: [the vertex's value]}, {label key: its scale's name}) for the keys of *rule*: "label" its label
+        code, "<Scale>.label" its complex's at that scale, another its property's (NaN without one)."""
+        from openalea.metafspm.coupling.declaration import scale_names
+        names = scale_names(g)
+        values, scales = {}, {}
+        labels = g.property("label")
+        for key in rule:
+            if key == "label" or key.endswith(".label"):
+                at = vertex
+                if key != "label":
+                    scale = getattr(g.scales, key[:-len(".label")], None)
+                    if scale is None:
+                        raise KeyError(f"Reduction where: no scale '{key[:-len('.label')]}'")
+                    at = g.complex_at_scale(vertex, scale)
+                scales[key] = names[g.scale(at)]
+                values[key] = np.array([float(labels.get(at, np.nan))])
+            else:
+                value = g.property(key).get(vertex, np.nan) if key in g.properties() else np.nan
+                values[key] = np.array([value], dtype=float)
+        return values, scales
+
+    def labels(self) -> tuple:
+        """The label names where= names (its "label" filter), () when it names none: e.g. for a port's warning of a
+        label it has no groups of."""
+        rule = self.where if isinstance(self.where, dict) else {}
+        label = rule.get("label", ())
+        return (label,) if isinstance(label, str) else tuple(label)
 
     def template_for(self, full):
         """The reduced template of the full SectionTemplate *full*: its kept nodes (ports and keep), their Cells and
@@ -269,10 +326,11 @@ class Reduction:
         kept nodes (ports and keep), their Cells and Layers, the explicit edges."""
         from openalea.metafspm.data_structure.configs import ScalesConfig
         compartment = full.scale == ScalesConfig.Compartment
+        from openalea.metafspm.coupling.declaration import template_selection
         kept = np.zeros(full.size, dtype=bool)
         for rule in (self.ports, self.keep):
             if rule is not None:
-                kept |= np.asarray(rule(full), dtype=bool)
+                kept |= template_selection(rule, full)
         kept &= compartment
         structure = np.zeros(full.size, dtype=bool)
         above = full.complex[kept & (full.complex >= 0)]
@@ -282,8 +340,12 @@ class Reduction:
             above = above[above >= 0]
         edges = np.zeros(full.size, dtype=bool)
         if self.explicit_edges is not None:
-            edges = np.asarray(self.explicit_edges(full), dtype=bool) & (full.scale == ScalesConfig.Connection)
+            edges = template_selection(self.explicit_edges, full) & (full.scale == ScalesConfig.Connection)
         return kept, kept | structure | edges
+
+    def is_reduced(self, template) -> bool:
+        """Whether *template* (a SectionTemplate) is one of this reduction's reduced templates (template_for's)."""
+        return template.key in self._full
 
     def full_rows(self, key) -> np.ndarray:
         """The rows in its full template of each vertex of the reduced template of key *key* (template_for's, in the

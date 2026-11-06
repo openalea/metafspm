@@ -46,7 +46,7 @@ from openalea.metafspm.coupling.choregrapher import Choregrapher
 from openalea.metafspm.coupling.forcings import forcing_mean, forcing_table, is_spatial, spatial_mean
 from openalea.metafspm.coupling.cross import CrossMapping, Exchanges, UnionDataStructure, UnionMapping
 from openalea.metafspm.coupling.translator import Translator
-from openalea.metafspm.data_structure.data_api import MPGDataStructure
+from openalea.metafspm.data_structure.data_api import MPGDataStructure, _root_data_structure
 from openalea.metafspm.scene.recorder import SceneRecorder
 from openalea.metafspm.scene.population import (Population, _apply_model_scenario, _flat_scenario, _model_arguments,
                                                 _model_keywords, planting as _planting, population_data_structure)
@@ -115,8 +115,13 @@ class Scene:
         stop_when:             a condition(scene), checked after each step: simulate() stops when it holds.
         mappings:              further mappings between DataStructures (e.g. a LayerMapping between a column model and
                                the soil grid), or a callable scene -> mappings, called once the models are built. A
-                               CrossMapping given here replaces the inferred one between its two DataStructures (e.g.
-                               to map only the root surface, mask=).
+                               CrossMapping given here replaces the inferred ones between its two DataStructures. The
+                               inferred ones follow the links: a link's mapping= (Link.mapping: its mask, e.g. the
+                               roots' soil nodes, and method) gives its own (Scene._infer_mappings).
+        soil_surface:          the soil surface's height (m, the plants' frame; 0 by default), the one definition:
+                               every DataStructure's ds.soil_surface (the geometry's "air" and "soil", a light
+                               model's cut), the cross mappings' grid top (CrossMapping(soil_surface=)), the
+                               initiators' g.soil_surface.
         start:                 the calendar of the scene's time 0, (day of year, hour, UTC): every component's
                                calendar() (e.g. a light model's sun), and the forcings of origin "calendar".
         compute:               the run configuration (openalea.metafspm.compute.Compute; default Compute()): the
@@ -134,17 +139,20 @@ class Scene:
     def __init__(self, planting: pd.DataFrame, environment=(), environment_scenarios=None, translator=None,
                  time_step: float = 3600., mapping_method: str = "barycentre", periodic=(True, True, False),
                  flip_z: bool = True, xrange: float = None, yrange: float = None, forcings=None,
-                 events=(), stop_when=None, mappings=(), recorder=None, start=None, compute: Compute = None):
+                 events=(), stop_when=None, mappings=(), recorder=None, start=None, compute: Compute = None,
+                 soil_surface: float = 0.):
         self.compute = Compute() if compute is None else compute
         if not isinstance(self.compute, Compute):
             raise TypeError(f"Scene: compute is a Compute (openalea.metafspm.compute), got {self.compute!r}")
         with self.compute.limits():
             self._build(planting, environment, environment_scenarios, translator, time_step, mapping_method,
-                        periodic, flip_z, xrange, yrange, forcings, events, stop_when, mappings, recorder, start)
+                        periodic, flip_z, xrange, yrange, forcings, events, stop_when, mappings, recorder, start,
+                        soil_surface)
 
     def _build(self, planting, environment, environment_scenarios, translator, time_step, mapping_method, periodic,
-               flip_z, xrange, yrange, forcings, events, stop_when, mappings, recorder, start) -> None:
+               flip_z, xrange, yrange, forcings, events, stop_when, mappings, recorder, start, soil_surface) -> None:
         Choregrapher()._set_simulation_time_step(time_step)
+        self.soil_surface = float(soil_surface)
         self.time_step, self.time, self.iteration = time_step, 0., 0
         self.xrange = xrange if xrange is not None else planting.attrs.get("xrange")
         self.yrange = yrange if yrange is not None else planting.attrs.get("yrange")
@@ -171,6 +179,10 @@ class Scene:
 
         self.components = [c for p in self.populations for c in p.components]
         self.components += [c for model in self.environment for c in model.components]
+        for component in self.components:                  # the one soil surface: every DataStructure's
+            data_structure = getattr(component, "data_structure", None)
+            if data_structure is not None and hasattr(data_structure, "soil_surface"):
+                _root_data_structure(data_structure).soil_surface = self.soil_surface
         self._apply_compute(environment_scenarios)
         names = [type(c).__name__ for c in self.components]
         duplicated = sorted({name for name in names if names.count(name) > 1})
@@ -268,7 +280,8 @@ class Scene:
     def _build_population(self, model, rows: pd.DataFrame) -> Population:
         rows = rows.reset_index(drop=True)
         population = population_data_structure(rows, model, time_step=self.time_step,
-                                               scenario=self._shared_scenario(model, rows))
+                                               scenario=self._shared_scenario(model, rows),
+                                               soil_surface=self.soil_surface)
         if population.emergence:
             self._setup_emergence(population)
         return population
@@ -327,7 +340,13 @@ class Scene:
                 ds.set("emerged", values)
 
     def _infer_mappings(self) -> list:
-        """A CrossMapping per (population, grid) and a UnionMapping per union joined by a translator link."""
+        """
+        A CrossMapping per (population, grid, link options) and a UnionMapping per union joined by a translator link.
+        A link's mapping= options (Link.mapping: "mask", a node mask of the population, e.g. the roots' soil nodes,
+        "method", "barycentre" or "overlap") give its own mapping, the links of the same options sharing it; without,
+        the Scene's mapping_method over every node. A population with emergence times maps its emerged plants only
+        (the mask "emerged", with the link's).
+        """
         by_name = {type(c).__name__: c for c in self.components}
         populations = {id(p.data_structure): p for p in self.populations}
         mappings, done = [], set()
@@ -337,18 +356,39 @@ class Scene:
             for a, b in ((link.receiver, link.provider), (link.provider, link.receiver)):
                 plant_ds, other = by_name[a].data_structure, by_name[b].data_structure
                 plant_ds = plant_ds.__dict__.get("_base", plant_ds)         # a view of the population's
-                if id(plant_ds) not in populations or other is plant_ds or (id(plant_ds), id(other)) in done:
+                if id(plant_ds) not in populations or other is plant_ds:
                     continue
                 if isinstance(other, UnionDataStructure):
                     if id(other) not in done:
                         mappings.append(UnionMapping(other))
                         done.add(id(other))
                 elif hasattr(other, "locate"):
-                    mask = "emerged" if populations[id(plant_ds)].emergence else None
-                    mappings.append(CrossMapping(plant_ds, other, method=self.mapping_method, periodic=self.periodic,
-                                                 flip_z=self.flip_z, mask=mask))
-                done.add((id(plant_ds), id(other)))
+                    key = (id(plant_ds), id(other), link.mapping_options)
+                    if key not in done:
+                        mappings.append(self._cross_mapping(link, plant_ds, other,
+                                                            populations[id(plant_ds)].emergence))
+                        done.add(key)
         return mappings
+
+    def _cross_mapping(self, link, plant_ds, grid, emergence: bool) -> CrossMapping:
+        """The CrossMapping of *link*'s options between a population's DataStructure and a grid."""
+        options = dict(link.mapping or {})
+        mask = options.get("mask")
+        if mask is not None and not plant_ds.has_mask(mask):
+            raise KeyError(f"{link.receiver}.{link.variable} <- {link.provider}: its mapping's mask '{mask}' is not "
+                           f"defined on the population (masks: {plant_ds.masks()}; define_mask(name, entities=...))")
+        if emergence:
+            if mask is None:
+                mask = "emerged"
+            else:
+                combined = f"{mask}&emerged"
+                if not plant_ds.has_mask(combined):
+                    plant_ds.define_mask(combined, AllMasks(mask, "emerged"))
+                mask = combined
+        mapping = CrossMapping(plant_ds, grid, method=options.get("method", self.mapping_method),
+                               periodic=self.periodic, flip_z=self.flip_z, mask=mask, soil_surface=self.soil_surface)
+        mapping.link_options = link.mapping_options
+        return mapping
 
     def _check_forcings(self) -> None:
         """Every required forcing a component declares (forcing_variable) is given."""

@@ -139,7 +139,7 @@ def check_link(link, receiver, provider) -> None:
     name = f"{link.receiver}.{link.variable} <- {link.provider}"
     received = declared_kind(receiver, link.variable)
     for source in ([] if link.formula is not None else link.sources):
-        provided = declared_kind(provider, source)
+        provided = source.kind if not isinstance(source, str) else declared_kind(provider, source)   # a geometric one
         if not kinds_agree(received, provided):
             raise ValueError(f"{link.receiver}.{link.variable} ({received}) <- {link.provider}.{source} ({provided}): "
                              "the kinds do not agree (extensive with extensive, intensive or massic with intensive or "
@@ -148,8 +148,8 @@ def check_link(link, receiver, provider) -> None:
         return
     for source, factor in link.sources.items():
         if isinstance(factor, (int, float)):            # an expression: its conversion is its own
-            check_link_units(declared_unit(receiver, link.variable), declared_unit(provider, source), factor,
-                             f"{name}.{source}")
+            unit = source.unit if not isinstance(source, str) else declared_unit(provider, source)
+            check_link_units(declared_unit(receiver, link.variable), unit, factor, f"{name}.{source}")
 
 
 def link_direction(ds, from_location: str, to_location: str) -> Optional[str]:
@@ -441,3 +441,123 @@ def declared_specs(component_or_class, ds) -> dict:
         if spec is not None:
             specs[f.name] = spec
     return specs
+
+
+# ── Named entity sets (Component.entity_sets) ──────────────────────────────────
+
+def _component_classes(cls=None):
+    from openalea.metafspm.coupling.component import Component
+    cls = Component if cls is None else cls
+    for subclass in cls.__subclasses__():
+        yield subclass
+        yield from _component_classes(subclass)
+
+
+def entity_set(name: str) -> dict:
+    """
+    The rule of the entity set *name*, "Class.set": the set a component class publishes (Component.entity_sets,
+    its own or inherited), e.g. "GranapAnatomy.soil_nodes" ({"kind": 4.}). The class is found among the imported
+    component classes by its name (one class of that name, or several publishing the same rule).
+    """
+    if not isinstance(name, str) or name.count(".") != 1:
+        raise ValueError(f"an entity set is named 'Class.set' (e.g. 'GranapAnatomy.soil_nodes'), got {name!r}")
+    owner, member = name.split(".")
+    classes = {cls for cls in _component_classes() if cls.__name__ == owner}
+    if not classes:
+        raise KeyError(f"entity set '{name}': no component class '{owner}' is imported")
+    rules = []
+    for cls in classes:
+        sets = getattr(cls, "entity_sets", {}) or {}
+        if member in sets and sets[member] not in rules:
+            rules.append(sets[member])
+    if not rules:
+        published = sorted({key for cls in classes for key in (getattr(cls, "entity_sets", {}) or {})})
+        raise KeyError(f"entity set '{name}': {owner} publishes {published or 'none'}")
+    if len(rules) > 1:
+        raise ValueError(f"entity set '{name}': several classes named {owner} publish different rules")
+    return rules[0]
+
+
+class EntitySets:
+    """A mask rule (picklable): the entities of any of the entity sets *names* (their rules' union), on a
+    DataStructure (define_mask(entities=)) or a section template (template_selection)."""
+
+    def __init__(self, *names):
+        self.names = tuple(names)
+        for name in self.names:
+            entity_set(name)
+
+    def __call__(self, ds) -> np.ndarray:
+        selected = None
+        for name in self.names:
+            values = ds._evaluate_mask(name, entity_set(name), ds._default_location)
+            selected = values if selected is None else selected | values
+        return selected
+
+    def __eq__(self, other):
+        return isinstance(other, EntitySets) and other.names == self.names
+
+    def __hash__(self):
+        return hash(self.names)
+
+    def __repr__(self):
+        return f"EntitySets{self.names}"
+
+
+_COMPARISONS = {"<": np.less, "<=": np.less_equal, ">": np.greater, ">=": np.greater_equal, "==": np.equal,
+                "!=": np.not_equal}
+
+
+def rule_holds(rule: dict, values: dict, codes=None) -> np.ndarray:
+    """
+    Where every {variable: condition} of *rule* holds, over arrays *values* ({variable: values}, one per entity): a
+    comparison string (">0", "<=0.03", "!=2"), a value, or a list of values; *codes*(variable, condition) turns
+    label names into codes (None: none).
+    """
+    import re
+    pattern = re.compile(r"^\s*(<=|>=|==|!=|<|>)\s*([-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?)\s*$")
+    result = None
+    for variable, condition in rule.items():
+        if variable not in values:
+            raise KeyError(f"rule {rule}: no '{variable}'")
+        array = np.asarray(values[variable])
+        comparison = pattern.match(condition) if isinstance(condition, str) else None
+        if comparison is not None:
+            selected = _COMPARISONS[comparison.group(1)](array.astype(float), float(comparison.group(2)))
+        else:
+            if codes is not None:
+                condition = codes(variable, condition)
+            if isinstance(condition, (list, tuple, set, np.ndarray)):
+                condition = list(condition)
+                selected = np.isin(array, np.asarray(condition, dtype=array.dtype if array.dtype == object
+                                                     else float))
+            else:
+                selected = array == condition
+        result = selected if result is None else result & selected
+    return result
+
+
+def template_selection(rule, template) -> np.ndarray:
+    """
+    Over the vertices of a section template (data_structure.instances.SectionTemplate), where *rule* holds: an
+    entity set's name ("GranapAnatomy.conduits"), a tuple of them (their union), a {variable: condition} dict on the
+    template's properties (a vertex without a property's value does not hold), or a callable template -> booleans.
+    """
+    if callable(rule) and not isinstance(rule, (str, dict, tuple)):
+        return np.asarray(rule(template), dtype=bool)
+    if isinstance(rule, tuple):
+        selected = np.zeros(template.size, dtype=bool)
+        for part in rule:
+            selected |= template_selection(part, template)
+        return selected
+    if isinstance(rule, str):
+        rule = entity_set(rule)
+    values, present = {}, np.ones(template.size, dtype=bool)
+    for variable in rule:
+        rows, stored = template.properties.get(variable, (np.zeros(0, dtype=np.int64), np.zeros(0)))
+        full = np.full(template.size, np.nan)
+        full[np.asarray(rows, dtype=np.int64)] = np.asarray(stored, dtype=float)
+        has = np.zeros(template.size, dtype=bool)
+        has[np.asarray(rows, dtype=np.int64)] = True
+        values[variable], present = full, present & has
+    return rule_holds(rule, values) & present

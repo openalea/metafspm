@@ -26,7 +26,8 @@ N_SEGMENTS = 4
 
 class ToySegments(StructuralComponent):
     """A chain of root segments under each plant, each an instance of the toy section (reduced when the plant model
-    declares a reduction)."""
+    declares a reduction); its sections' walls published as an entity set."""
+    entity_sets = {"walls": {"kind": WALL}}
 
     @classmethod
     def initiate_plant(cls, g, plant, scenario):
@@ -37,13 +38,12 @@ class ToySegments(StructuralComponent):
             parent = g.add_component(parent, **PropsConfig(scale=scale, edge_type='/', label=label))
         template = section_template()[0]
         reduction = getattr(g, "reduction", None)
-        if reduction is not None and reduction.reduces("RootSegment"):
-            template = reduction.template_for(template)
         previous = None
         for _ in range(N_SEGMENTS):
             props = PropsConfig(scale=s.SubOrgan, edge_type='<' if previous else '/', label=L.SubOrgan.RootSegment)
             previous = g.add_child(previous, **props) if previous else g.add_component(parent, **props)
-            g.add_instance(previous, template)
+            reduced = reduction is not None and reduction.reduces(g, previous)
+            g.add_instance(previous, reduction.template_for(template) if reduced else template)
 
 
 def _collar(ds):
@@ -95,7 +95,7 @@ def _soil_walls(template):
 def _model(reduced):
     class ToyPlant(CompositeModel):
         from_scale, nodes, initiators = "SubOrgan", "Compartment", (ToySegments,)
-        reduction = Reduction(location="SubOrgan", labels=("RootSegment",), ports=_xylem, keep=_soil_walls,
+        reduction = Reduction(location="SubOrgan", where={"label": "RootSegment"}, ports=_xylem, keep=_soil_walls,
                               systems=("NodeHydraulics._hydraulics",)) if reduced else None
 
         @staticmethod
@@ -145,7 +145,7 @@ def test_a_reduced_graph_system_gives_the_full_potentials_on_its_kept_nodes():
 def test_the_full_template_of_a_reduced_template_is_given_by_its_key():
     """Reduction.full_template(key): the full template a reduced one came from (template_for's inverse); a key no
     reduced template has raises."""
-    reduction = Reduction(location="SubOrgan", labels=("RootSegment",), ports=_xylem, keep=_soil_walls,
+    reduction = Reduction(location="SubOrgan", where={"label": "RootSegment"}, ports=_xylem, keep=_soil_walls,
                           systems=("NodeHydraulics._hydraulics",))
     full = section_template()[0]
     reduced = reduction.template_for(full)
@@ -198,7 +198,7 @@ def _model_by_scenario():
         def reduction(scenario):
             if not scenario.get("reduced", False):
                 return None
-            return Reduction(location="SubOrgan", labels=("RootSegment",), ports=_xylem, keep=_soil_walls,
+            return Reduction(location="SubOrgan", where={"label": "RootSegment"}, ports=_xylem, keep=_soil_walls,
                              systems=("NodeHydraulics._hydraulics",))
     return ToyPlantByScenario
 
@@ -329,24 +329,24 @@ def test_the_library_runs_the_reduced_systems_components_and_their_cells_inputs_
 
 def test_a_reduction_chosen_by_the_scenario_owns_its_keys_while_off():
     """The scenario keys a reduction function owns (its attribute scenario_keys) are the model's whether it reads
-    them or not: the reduced labels given while "reduced" is off are accepted (inactive); another unknown entry
+    them or not: the reduced sections given while "reduced" is off are accepted (inactive); another unknown entry
     still raises."""
     def choose(scenario):
         if not scenario.get("reduced", False):
             return None
-        return Reduction(location="SubOrgan", labels=tuple(scenario.get("reduced_labels", ("RootSegment",))),
+        return Reduction(location="SubOrgan", where=scenario.get("reduced_where", {"label": "RootSegment"}),
                          ports=_xylem, keep=_soil_walls, systems=("NodeHydraulics._hydraulics",))
-    choose.scenario_keys = ("reduced", "reduced_labels")
+    choose.scenario_keys = ("reduced", "reduced_where")
 
     class ToyPlantOwningKeys(_model(False)):
         reduction = staticmethod(choose)
 
     for reduced in (False, True):
         population = population_data_structure(planting([Planting()], ToyPlantOwningKeys, {
-            "reduced": reduced, "reduced_labels": ("RootSegment",)}), ToyPlantOwningKeys)
+            "reduced": reduced, "reduced_where": {"label": "RootSegment"}}), ToyPlantOwningKeys)
         assert (population.data_structure.structure.reduction is None) == (not reduced)
-    with pytest.raises(ValueError, match="reduced_lables"):
-        population_data_structure(planting([Planting()], ToyPlantOwningKeys, {"reduced_lables": ("RootSegment",)}),
+    with pytest.raises(ValueError, match="reduced_wher"):
+        population_data_structure(planting([Planting()], ToyPlantOwningKeys, {"reduced_wher": {"label": "RootSegment"}}),
                                   ToyPlantOwningKeys)
 
 
@@ -355,7 +355,7 @@ def test_the_kinds_no_group_has_any_more_are_released():
     the current groups only, the former ones released (their arrays freed, a cache holding one finds it empty); the
     potentials and the recovered interior are those of a plant solved with the new values from the start."""
     class KindedPlant(_model(False)):
-        reduction = Reduction(location="SubOrgan", labels=("RootSegment",), ports=_xylem, keep=_soil_walls,
+        reduction = Reduction(location="SubOrgan", where={"label": "RootSegment"}, ports=_xylem, keep=_soil_walls,
                               kind={"soil_water_potential": None}, systems=("NodeHydraulics._hydraulics",))
 
     def solved(soil_water_potential):
@@ -398,7 +398,7 @@ def test_a_kind_derived_value_is_computed_once_per_kind_while_its_factorisation_
             return kron.shares(np.ones(kron.kept_nodes.size, dtype=bool), np.ones(kron.interior_nodes.size))
 
     class DerivingPlant(_model(False)):
-        reduction = Reduction(location="SubOrgan", labels=("RootSegment",), ports=_xylem, keep=_soil_walls,
+        reduction = Reduction(location="SubOrgan", where={"label": "RootSegment"}, ports=_xylem, keep=_soil_walls,
                               systems=("NodeHydraulics._hydraulics",))
 
         def __init__(self, data_structure, time_step):
@@ -416,3 +416,35 @@ def test_a_kind_derived_value_is_computed_once_per_kind_while_its_factorisation_
     np.testing.assert_allclose(kinds[0].outputs["interior_share"].sum(), interior, rtol=1e-12)
     population.instance.run()
     assert len(calls) == 1
+
+
+def test_entity_sets_select_by_name_on_templates_groups_and_data_structures():
+    """A published entity set ("ToySegments.walls") is the rule assemblies name: on a section template (a
+    reduction's ports or keep), on a DataStructure (define_mask(entities=)); where= filters the reduced groups by
+    their labels and their complexes' (the label names resolved at their scale)."""
+    from openalea.metafspm.coupling.declaration import entity_set, template_selection
+    assert entity_set("ToySegments.walls") == {"kind": WALL}
+    with pytest.raises(KeyError, match="publishes"):
+        entity_set("ToySegments.conduits")
+    with pytest.raises(KeyError, match="no component class"):
+        entity_set("Nowhere.walls")
+    template = section_template()[0]
+    np.testing.assert_array_equal(template_selection("ToySegments.walls", template), _soil_walls(template))
+    np.testing.assert_array_equal(template_selection(("ToySegments.walls", _xylem), template),
+                                  _soil_walls(template) | _xylem(template))
+    by_name = Reduction(where={"label": "RootSegment"}, ports=_xylem, keep="ToySegments.walls")
+    by_rule = Reduction(where={"label": "RootSegment"}, ports=_xylem, keep=_soil_walls)
+    assert by_name.template_for(template).size == by_rule.template_for(template).size < template.size
+    ds = _solved(False).data_structure
+    ds.define_mask("walls", entities="ToySegments.walls")
+    np.testing.assert_array_equal(ds.mask("walls"), ds.get("kind") == WALL)
+    with pytest.raises(TypeError):
+        ds.define_mask("both", {"kind": WALL}, entities="ToySegments.walls")
+    g = ds.structure
+    segment = int(ds.entity_ids("SubOrgan")[0])
+    assert Reduction(where={"label": "RootSegment", "Organ.label": "RootInternode"}).reduces(g, segment)
+    assert not Reduction(where={"label": ["RootApex", "StemElement"]}).reduces(g, segment)
+    assert not Reduction(where={"Organ.label": "Sheath"}).reduces(g, segment)
+    assert Reduction().reduces(g, segment)
+    with pytest.raises(KeyError, match="labels"):
+        Reduction(where={"label": "Rootsegment"}).reduces(g, segment)
