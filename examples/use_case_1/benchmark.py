@@ -78,7 +78,8 @@ class KindCounter:
     """Counts the kinds the reductions evaluate (solve.reduction._evaluate's requests) and the time they take."""
 
     def __init__(self):
-        self.kinds, self.seconds = 0, 0.
+        self.kinds, self.seconds, self.templates = 0, 0., 0
+        self.seen = set()                 # the (reduced template, signature) of the kinds evaluated so far
         self._evaluate = reduction_module._evaluate
 
         def counted(reduction, parameters, requests):
@@ -88,12 +89,16 @@ class KindCounter:
             finally:
                 self.kinds += len(requests)
                 self.seconds += time.perf_counter() - started
+                for key, _, signature in requests:        # the kinds of a template not seen before (a new anatomy)
+                    if (key, signature) not in self.seen:
+                        self.seen.add((key, signature))
+                        self.templates += 1
 
         reduction_module._evaluate = counted
 
     def take(self) -> tuple:
-        out = (self.kinds, self.seconds)
-        self.kinds, self.seconds = 0, 0.
+        out = (self.kinds, self.seconds, self.templates)
+        self.kinds, self.seconds, self.templates = 0, 0., 0
         return out
 
 
@@ -122,11 +127,12 @@ def benchmark(plants: int, days: float, measure_outputs: bool = False, checkpoin
         step_started = time.perf_counter()
         scene.run()
         seconds = time.perf_counter() - step_started
-        kinds, kind_seconds = counter.take()
+        kinds, kind_seconds, templates = counter.take()
         timing = {name: value - previous.get(name, 0.) for name, value in scene.timing.items()}
         previous = dict(scene.timing)
         nodes = sum(population.data_structure.n_nodes() for population in scene.populations)
         steps.append({"hour": hour + 1, "seconds": seconds, "models": timing, "kinds": kinds,
+                      "new_templates": templates,
                       "kind_seconds": kind_seconds, "nodes": nodes, "rss_gb": resident_memory()})
         print(f"h {hour + 1:4d}  {seconds:7.2f} s  kinds {kinds:3d} ({kind_seconds:6.2f} s)  nodes {nodes:6d}  "
               f"RSS {steps[-1]['rss_gb']:.2f} GB", flush=True)

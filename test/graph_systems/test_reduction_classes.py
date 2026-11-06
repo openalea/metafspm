@@ -320,3 +320,24 @@ def test_a_checkpoint_keeps_the_kinds_a_resumed_plant_evaluates_none(tmp_path, m
     assert counter.kinds == 0 and not reduction._libraries
     np.testing.assert_allclose(fresh.data_structure.get("water_potential"), solved.get("water_potential"),
                                rtol=1e-12)
+
+
+class _Shapes:
+    """An object parameter of the default repr (its address), as Adel's LeafShapes."""
+
+    def __init__(self, values):
+        self.values = values
+
+
+def test_the_signature_of_an_object_parameter_is_its_contents_not_its_address():
+    """A plant's object parameter of the default repr is digested by its contents: a copy (a checkpoint's load in
+    another process) keys the same kinds, another content others."""
+    import copy
+    import pickle
+    from openalea.metafspm.solve.reduction import _signature
+    shapes = _Shapes({"blade": np.linspace(0., 1., 5)})
+    assert _signature({"leaves": shapes}) == _signature({"leaves": copy.deepcopy(shapes)})
+    assert _signature({"leaves": shapes}) == _signature({"leaves": pickle.loads(pickle.dumps(shapes))})
+    assert _signature({"leaves": np.array([shapes, None], dtype=object)}) == \
+        _signature({"leaves": np.array([copy.deepcopy(shapes), None], dtype=object)})
+    assert _signature({"leaves": shapes}) != _signature({"leaves": _Shapes({"blade": np.linspace(0., 2., 5)})})
