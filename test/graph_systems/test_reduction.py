@@ -155,14 +155,15 @@ def test_the_full_template_of_a_reduced_template_is_given_by_its_key():
         reduction.full_template(full.key)
 
 
-def test_the_library_keeps_the_scenes_time_step():
-    """The library population built during a solve leaves the scene's time step (the Choregrapher's) as it was: a
-    daily scene's next components still run one step a day."""
-    from openalea.metafspm.coupling.choregrapher import Choregrapher
+def test_the_library_runs_at_the_scenes_time_step():
+    """The library population built during a solve runs at the plants' time step (their DataStructure's), and the
+    plants' step is left as it was: a daily scene's components still run one step a day."""
     model = _model(True)
     population = population_data_structure(planting([Planting()], model, {}), model, time_step=86400.)
     population.instance.run()
-    assert Choregrapher().simulation_step() == 86400.
+    assert population.data_structure.simulation_time_step == 86400.
+    libraries = list(population.data_structure.structure.reduction.__dict__.get("_libraries", {}).values())
+    assert all(library.population.data_structure.simulation_time_step == 86400. for library in libraries)
 
 
 def test_a_reduced_plant_loaded_from_a_checkpoint_solves_as_before(tmp_path):

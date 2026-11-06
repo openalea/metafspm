@@ -7,7 +7,6 @@ from dataclasses import dataclass
 import numpy as np
 import pytest
 
-from openalea.metafspm.coupling.choregrapher import Choregrapher
 
 from openalea.metafspm.coupling.component import state_variable
 from openalea.metafspm.data_structure.configs import ScalesConfig as scales
@@ -29,7 +28,6 @@ def _by_vid(ds, name):
 
 
 def test_structural_steps_run_in_the_growth_rows():
-    Choregrapher().reset()
     _, ds, _ = make_chain()
     model = RootGrowthProbe(data_structure=ds)
     rows = [[f.func.name for f in group] for group in model.__dict__["_choregraphy"][1].values()]
@@ -114,11 +112,9 @@ class _SegmentsProbe(RootGrowthProbe):
 
 
 def test_default_triangles_are_the_segments_cylinders():
-    Choregrapher().reset()
     _, ds, _ = make_chain()
     with pytest.raises(NotImplementedError):
         RootGrowthProbe(data_structure=ds).triangles()
-    Choregrapher().reset()
     _, ds, _ = make_chain()
     model = _SegmentsProbe(data_structure=ds)
     ds.set("z1", np.array([0., -1., -2.]))
@@ -141,7 +137,6 @@ class _DrawnProbe(_SegmentsProbe):
 
 
 def _segments(probe=None):
-    Choregrapher().reset()
     _, ds, _ = make_chain()
     model = (probe or _SegmentsProbe)(data_structure=ds)
     ds.set("z1", np.array([0., -1., -2.]))
@@ -163,7 +158,6 @@ def test_a_data_structure_gives_its_structural_components_triangles():
         ds.triangles()
     ds.geometry_provider = model
     assert len(ds.triangles()) == 16
-    Choregrapher().reset()
     _, bare, _ = make_chain()
     with pytest.raises(ValueError):
         bare.triangles()
@@ -200,7 +194,6 @@ def test_labels_of_a_coarse_scale():
     from growth import RootGrowthProbe
     from scene_doubles import doubles_planting
     from openalea.metafspm.scene.scene import Scene
-    Choregrapher().reset()
 
     class Roots:
         initiators = (RootGrowthProbe,)
@@ -239,9 +232,9 @@ def test_a_component_whose_geometry_is_never_drawn_warns():
     class AtCompartments(StructuralComponent):
         water: float = state_variable(**DOC, default=0., scale=scales.Compartment, location="node")
 
-    Choregrapher().set_simulation_time_step(1)
     g, _, _ = make_rooted_anatomy(n_segments=3)
     ds = MPGDataStructure(g, from_scale=g.scales.SubOrgan, nodes="Compartment", wiring=wiring(g))
+    ds.simulation_time_step = 1
     with pytest.warns(UserWarning, match=r"AtOrgans works at the Organ scale .* ds\.at\('Organ'\), which the frames"):
         AtOrgans(data_structure=ds, time_step=1)
     with warnings.catch_warnings():

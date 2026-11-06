@@ -9,7 +9,6 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from openalea.metafspm.coupling.choregrapher import Choregrapher
 from openalea.metafspm.coupling.component import FunctionalComponent, state_variable
 from openalea.metafspm.data_structure.configs import ScalesConfig as scales
 from openalea.metafspm.data_structure.data_api import MPGDataStructure
@@ -18,11 +17,6 @@ from openalea.metafspm.solve.decorator import boundary_set, graph_system, node_b
 from growth import DOC, RootGrowthProbe
 
 DT, K, EXCHANGE = 2., 0.3, 0.8
-
-
-@pytest.fixture(autouse=True)
-def _simulation_time_step():
-    Choregrapher().set_simulation_time_step(DT)
 
 
 def _population(sizes=(3, 5)):

@@ -13,7 +13,6 @@ import numpy as np
 import pytest
 from scipy.optimize import brentq
 
-from openalea.metafspm.coupling.choregrapher import Choregrapher
 from openalea.metafspm.data_structure.adaptive_grid import AdaptiveGridDataStructure
 from openalea.metafspm.data_structure.data_api import ArrayDataStructure
 from openalea.metafspm.solve.decorator import graph_system
@@ -28,7 +27,7 @@ DAY, HOUR = 86400., 3600.
 
 
 def _soil(grid, time_step, **settings):
-    Choregrapher().set_simulation_time_step(time_step)
+    grid.simulation_time_step = time_step
     return RichardsSoil(data_structure=grid, time_step=time_step, **settings)
 
 
@@ -95,11 +94,10 @@ def test_analytic_jacobian_solves_as_finite_differences(face_conductivity):
 
     results = []
     for component in (AnalyticSoil, FiniteDifferenceSoil):
-        Choregrapher().reset()
         grid = AdaptiveGridDataStructure(shape=(2, 1, 4), dx=(0.1, 0.1, 0.1), max_level=1, periodic=(True, True,
                                                                                                        False))
         grid.refine(np.arange(grid.n_nodes()) == 1)
-        Choregrapher().set_simulation_time_step(600.)
+        grid.simulation_time_step = 600.
         soil = component(data_structure=grid, time_step=600., face_conductivity=face_conductivity,
                          bottom_boundary="water_table")
         soil.set_pressure_head(lambda depth: -0.5 - depth)
@@ -168,7 +166,6 @@ def test_water_balance_closes_with_uptake_and_regridding():
     crossed the boundaries and what the roots took, to round-off, over the whole run (θ V carried over at each
     regridding).
     """
-    Choregrapher().set_simulation_time_step(HOUR)
     model = RichardsSoilModel([], 0.2, 0.2, HOUR, depth=0.4, voxel=0.1, max_level=1,
                               layers=[(0.2, {**LOAM, "saturated_conductivity": 5e-6}), (np.inf, LOAM)],
                               initial_pressure_head=lambda depth: -1. - depth)
@@ -210,7 +207,6 @@ def test_a_rain_forcing_is_followed_within_the_step_and_the_balance_closes():
 
 def test_carry_over_keeps_the_water_volume():
     """Refining then coarsening a non-uniform h: the water θ V is the same before and after, h recomputed from θ."""
-    Choregrapher().set_simulation_time_step(HOUR)
     model = RichardsSoilModel([], 0.2, 0.2, HOUR, depth=0.4, voxel=0.1, max_level=1,
                               initial_pressure_head=lambda depth: -0.2 - 5. * depth ** 2)
     before = model.soil.stored_water()
@@ -273,7 +269,6 @@ def _srivastava_yeh_modes(terms):
 
 
 def _infiltration(cells, face_conductivity, hours):
-    Choregrapher().reset()
     grid = _column(cells, LENGTH)
     soil = _soil(grid, HOUR, retention_model="gardner", bottom_boundary="water_table",
                  face_conductivity=face_conductivity)

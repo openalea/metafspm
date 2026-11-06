@@ -10,7 +10,6 @@ import numpy as np
 import pytest
 from scipy.linalg import expm
 
-from openalea.metafspm.coupling.choregrapher import Choregrapher
 from openalea.metafspm.coupling.component import FunctionalComponent, state_variable
 from openalea.metafspm.data_structure.configs import ScalesConfig as scales
 from openalea.metafspm.solve.decorator import boundary_condition, boundary_set, graph_system, node_balance, node_rate
@@ -19,11 +18,6 @@ from plants import seedling_ds
 DOC = dict(unit="", unit_comment="", description="", min_value=0., max_value=1., value_comment="", references="",
            DOI=[])
 DT, K = 0.5, 0.3
-
-
-@pytest.fixture(autouse=True)
-def _simulation_time_step():
-    Choregrapher().set_simulation_time_step(DT)
 
 
 def _ds():

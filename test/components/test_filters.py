@@ -8,7 +8,6 @@ from dataclasses import dataclass
 import numpy as np
 import pytest
 
-from openalea.metafspm.coupling.choregrapher import Choregrapher
 from openalea.metafspm.coupling.component import FunctionalComponent, state_variable
 from openalea.metafspm.data_structure.data_api import MPGDataStructure
 from openalea.metafspm.solve.decorator import _Filters, graph_output, graph_system, node_balance, rate
@@ -18,11 +17,6 @@ from plants import seedling_ds
 
 DOC = dict(unit="", unit_comment="", description="", min_value=-1e9, max_value=1e9, value_comment="", references="",
            DOI=[])
-
-
-@pytest.fixture(autouse=True)
-def _simulation_time_step():
-    Choregrapher().set_simulation_time_step(1)
 
 
 def _ds():

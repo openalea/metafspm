@@ -16,11 +16,6 @@ from openalea.metafspm.solve.decorator import actual, rate, state
 from growth import DOC, make_chain
 
 
-@pytest.fixture(autouse=True)
-def _simulation_time_step():
-    Choregrapher().set_simulation_time_step(1)
-
-
 @dataclass
 class Tissue(FunctionalComponent):
     mass: float = state_variable(**DOC, default=1., scale=scales.SubOrgan, kind="extensive")

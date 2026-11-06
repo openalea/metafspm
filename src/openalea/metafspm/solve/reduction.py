@@ -1101,9 +1101,9 @@ class _Library:
 
 def _library(reduction: Reduction, parameters: dict) -> _Library:
     """The reduction's library for a plant of *parameters* at the scene's time step (built at its first batch)."""
-    from openalea.metafspm.coupling.choregrapher import Choregrapher
-    time_step = Choregrapher().simulation_step()
-    time_step = 3600. if time_step is None else float(time_step)
+    steps = [component.simulation_step() for component in getattr(reduction.instance, "components", ())
+             if hasattr(component, "simulation_step")]
+    time_step = next((float(step) for step in steps if step is not None), 3600.)    # the plants' DataStructure's
     libraries = reduction.__dict__.setdefault("_libraries", {})
     key = (_signature(parameters), time_step)
     if key not in libraries:

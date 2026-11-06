@@ -12,7 +12,6 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from openalea.metafspm.coupling.choregrapher import Choregrapher
 from openalea.metafspm.coupling.component import (FunctionalComponent, forcing_variable, input_variable, parameter,
                                                    state_variable)
 from openalea.metafspm.coupling.forcings import as_forcing, forcing_mean, forcing_total, pulse
@@ -28,11 +27,6 @@ from growth import RootGrowthProbe
 DOC = dict(unit="", unit_comment="", description="", min_value=0., max_value=1., value_comment="", references="",
            DOI=[])
 DT, K = 2., 0.3
-
-
-@pytest.fixture(autouse=True)
-def _simulation_time_step():
-    Choregrapher().set_simulation_time_step(DT)
 
 
 def _ds():
@@ -508,8 +502,8 @@ class Watered(FunctionalComponent):
 
 
 def _watered(time_step, steps, forcings):
-    Choregrapher().set_simulation_time_step(time_step)
     ds = _ds()
+    ds.simulation_time_step = time_step
     model = Watered(data_structure=ds, time_step=time_step)
     model.set_forcings(forcings)
     lights = []
@@ -534,7 +528,6 @@ def test_forcings_over_the_step_do_not_depend_on_it():
     np.testing.assert_allclose(daily.get("last"), day)                         # "instant": at the step's end
     half, _ = _watered(hour / 2, 29, forcings)
     np.testing.assert_allclose(half.get("water"), 2.5e-3)                      # half of the pulse: by 14.5 h
-    Choregrapher().set_simulation_time_step(DT)
 
 
 def test_forcing_aggregates():

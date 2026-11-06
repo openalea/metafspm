@@ -10,18 +10,12 @@ from dataclasses import dataclass
 import numpy as np
 import pytest
 
-from openalea.metafspm.coupling.choregrapher import Choregrapher
 from openalea.metafspm.coupling.component import FunctionalComponent, state_variable
 from openalea.metafspm.data_structure.data_api import ArrayDataStructure
 from openalea.metafspm.solve.decorator import rate
 
 DOC = dict(unit="", unit_comment="", description="", min_value=0., max_value=1., value_comment="", references="",
            DOI=[])
-
-
-@pytest.fixture(autouse=True)
-def _simulation_time_step():
-    Choregrapher().set_simulation_time_step(1)
 
 
 @dataclass

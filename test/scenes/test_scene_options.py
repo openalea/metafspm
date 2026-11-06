@@ -9,7 +9,6 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from openalea.metafspm.coupling.choregrapher import Choregrapher
 from openalea.metafspm.coupling.component import (FunctionalComponent, StructuralComponent, input_variable,
                                                    state_variable)
 from openalea.metafspm.coupling.cross import CrossMapping, LayerMapping
@@ -129,7 +128,6 @@ def test_environment_scenarios_must_match_the_environment_models():
 def test_the_stand_size_defaults_to_the_planting_table_and_can_be_overridden():
     default = Scene(doubles_planting([Seedlings]), environment=[GridModel], time_step=DT)
     assert (default.xrange, default.yrange) == (0.8, 0.4)
-    Choregrapher().reset()
     scene = Scene(doubles_planting([Seedlings]), environment=[GridModel], time_step=DT, xrange=2., yrange=3.)
     assert (scene.xrange, scene.yrange) == (2., 3.)
     assert (scene.environment[0].xrange, scene.environment[0].yrange) == (2., 3.)
@@ -287,7 +285,6 @@ def test_an_event_fired_before_a_checkpoint_does_not_fire_again_after_the_restor
     scene.run()
     assert fired == [DT]
     scene.checkpoint(str(tmp_path / "c"))
-    Choregrapher().reset()
     restored = _counting_scene(fired, DT)
     restored.load_checkpoint(str(tmp_path / "c"))
     restored.run()
@@ -300,7 +297,6 @@ def test_an_event_due_at_the_checkpoint_time_fires_after_the_restore(tmp_path):
     scene.run()
     scene.run()
     scene.checkpoint(str(tmp_path / "c"))
-    Choregrapher().reset()
     restored = _counting_scene(fired, 2 * DT)
     restored.load_checkpoint(str(tmp_path / "c"))
     restored.run()
@@ -314,8 +310,43 @@ def test_an_event_between_steps_still_fires_after_a_restore(tmp_path):
     scene.run()                                          # started at DT < 1.5 DT: not fired yet
     assert fired == []
     scene.checkpoint(str(tmp_path / "c"))
-    Choregrapher().reset()
     restored = _counting_scene(fired, 1.5 * DT)
     restored.load_checkpoint(str(tmp_path / "c"))
     restored.run()                                       # starts at 2 DT >= 1.5 DT, as without the checkpoint
     assert fired == [2 * DT]
+
+
+# ---------------------------------------------------------------- two Scenes of different steps in one process
+
+@dataclass
+class Counted(FunctionalComponent):
+    """One count per sub-step of an hour."""
+    count: float = state_variable(**DOC, default=0., scale=scales.SubOrgan, kind="extensive")
+
+    @actual
+    def _count(self, count):
+        return count + 1.
+
+
+class CountedPlants:
+    initiators = (RootGrowthProbe,)
+
+    def __init__(self, data_structure, time_step):
+        self.counted = Counted(data_structure=data_structure, time_step=DT)
+        self.components = [self.counted]
+
+    def run(self):
+        self.counted()
+
+
+def test_two_scenes_of_different_time_steps_run_in_one_process():
+    """The time step is each Scene's (its DataStructures'), not the process's: an hourly and a four-hourly scene built
+    and run in turn count one and four sub-steps a step, whichever was built last."""
+    hourly = Scene(doubles_planting([CountedPlants]), time_step=DT)
+    four_hourly = Scene(doubles_planting([CountedPlants]), time_step=4 * DT)
+    for _ in range(2):
+        hourly.run()
+        four_hourly.run()
+    assert np.all(hourly.populations[0].data_structure.get("count") == 2.)
+    assert np.all(four_hourly.populations[0].data_structure.get("count") == 8.)
+    assert hourly.time == 2 * DT and four_hourly.time == 8 * DT

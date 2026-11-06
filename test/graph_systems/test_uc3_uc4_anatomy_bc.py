@@ -12,7 +12,6 @@ import numpy as np
 import pytest
 from scipy.sparse import diags
 
-from openalea.metafspm.coupling.choregrapher import Choregrapher
 from openalea.metafspm.coupling.component import FunctionalComponent, input_variable, parameter, state_variable
 from openalea.metafspm.data_structure.configs import PropsConfig
 from openalea.metafspm.data_structure.data_api import MPGDataStructure
@@ -23,11 +22,6 @@ from simple_seedling import generate_simple_mpg_seedling
 DOC = dict(unit="", unit_comment="", description="", min_value=-10., max_value=10., value_comment="", references="",
            DOI=[])
 SOIL_WEIGHT, XYLEM_WEIGHT = 0.6, 1.0
-
-
-@pytest.fixture(autouse=True)
-def _simulation_time_step():
-    Choregrapher().set_simulation_time_step(1)
 
 
 # ══════════════════════════════════════════════════════════════════════════════

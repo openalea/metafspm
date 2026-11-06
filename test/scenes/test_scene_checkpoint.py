@@ -12,7 +12,6 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from openalea.metafspm.coupling.choregrapher import Choregrapher
 from openalea.metafspm.coupling.component import FunctionalComponent, input_variable, state_variable
 from openalea.metafspm.coupling.translator import Translator
 from openalea.metafspm.data_structure.configs import ScalesConfig as scales
@@ -71,7 +70,6 @@ def test_a_restored_scene_continues_bit_for_bit(tmp_path):
     scene.run()
     expected, expected_solver = _state(scene), dict(scene.environment[0].solver)
 
-    Choregrapher().reset()
     restored = Scene.restore(str(tmp_path / "checkpoint"), **_scene_arguments())
     assert restored.time == 2 * DT and restored.iteration == 2
     assert restored.environment[0].solver["steps"] == 2
@@ -84,11 +82,54 @@ def test_a_restored_scene_continues_bit_for_bit(tmp_path):
     assert restored.environment[0].solver == expected_solver
 
 
+def _rated_arguments(rate):
+    """A scene of two RootPopulation plants, their exudation rate *rate* (a scenario's parameter, per plant)."""
+    table = doubles_planting([RootPopulation, RootPopulation], scenarios=[{"exudation_rate": rate}] * 2)
+    return dict(planting=table, environment=[ExternalSolverSoil], translator=soil_translator("SceneExudation"),
+                time_step=DT)
+
+
+def test_a_restore_takes_the_checkpoints_or_the_current_scenario(tmp_path):
+    """load_checkpoint(scenario=...): "checkpoint" (the default) runs on with the saved parameters whatever the scene
+    was built with; "current" applies the scenario the scene was built with after the load (a resumed run with a
+    changed parameter), the state being the checkpoint's."""
+    scene = Scene(**_rated_arguments(0.1))
+    scene.run()
+    scene.checkpoint(str(tmp_path / "c"))
+    saved = _state(scene)
+    kept = Scene.restore(str(tmp_path / "c"), **_rated_arguments(0.5))
+    changed = Scene.restore(str(tmp_path / "c"), scenario="current", **_rated_arguments(0.5))
+    for restored, rate in ((kept, 0.1), (changed, 0.5)):
+        ds = restored.populations[0].data_structure
+        np.testing.assert_array_equal(ds.get("exudation_rate"), rate)
+        np.testing.assert_array_equal(ds.get("struct_mass"), saved[0]["struct_mass"])       # the checkpoint's state
+    for restored in (kept, changed):
+        restored.run()
+    kept_exudation = kept.populations[0].data_structure.get("exudation")
+    changed_exudation = changed.populations[0].data_structure.get("exudation")
+    np.testing.assert_allclose(changed_exudation, 5. * kept_exudation)          # the rate x the same structure
+    with pytest.raises(ValueError, match="'checkpoint' or 'current'"):
+        Scene.restore(str(tmp_path / "c"), scenario="new", **_rated_arguments(0.5))
+
+
+def test_a_loaded_checkpoint_drops_every_components_caches(tmp_path):
+    """Component.caches() (cached()'s values, keep(saved=False)'s, the graph systems' views and solutions) were
+    built on the topology before the load: Scene.load_checkpoint drops them all (Component.clear_caches)."""
+    scene = Scene(**_rated_arguments(0.1))
+    scene.run()
+    scene.checkpoint(str(tmp_path / "c"))
+    other = Scene(**_rated_arguments(0.1))
+    component = other.components[0]
+    component.cached("probe", lambda: "built before", key=0)
+    component.keep("canopy", "built before", saved=False)
+    other.load_checkpoint(str(tmp_path / "c"))
+    assert "probe" not in component.caches() and component.kept("canopy") is None
+
+
 def test_the_recorder_appends_after_a_restore(tmp_path):
     scene = _scene(str(tmp_path / "out"))
     scene.run()
     scene.checkpoint(str(tmp_path / "c"))
-    Choregrapher().reset()
     restored = Scene.restore(str(tmp_path / "c"), **_scene_arguments(str(tmp_path / "out")))
     restored.run()
     summaries = pd.read_csv(tmp_path / "out" / "Plant" / "RootPopulation" / "summaries.csv")
@@ -102,7 +143,6 @@ def test_a_restore_cuts_the_outputs_of_the_interrupted_run_back(tmp_path):
     scene.checkpoint(str(tmp_path / "c"))
     scene.run()
     scene.run()                                        # the interrupted run went on past its checkpoint
-    Choregrapher().reset()
     restored = Scene.restore(str(tmp_path / "c"), **_scene_arguments(out))
     restored.simulate(2)
     for name in ("Plant/RootPopulation/summaries", "Plant/RootPopulation/segments", "Soil/ExternalSolverSoil/summaries"):
@@ -121,7 +161,6 @@ def test_checkpoints_every_period_the_last_ones_kept(tmp_path):
     assert sorted(os.listdir(out / "checkpoints")) == ["step_000004", "step_000006"]
     with open(out / "run.json") as file:
         assert json.load(file)["last_checkpoint"] == os.path.join("checkpoints", "step_000006")
-    Choregrapher().reset()
     restored = Scene.restore(str(out / "checkpoints" / "step_000006"), **_scene_arguments())
     assert restored.iteration == 6
 
@@ -129,7 +168,6 @@ def test_checkpoints_every_period_the_last_ones_kept(tmp_path):
 def test_a_scene_restored_with_other_arguments_is_refused(tmp_path):
     scene = _scene()
     scene.checkpoint(str(tmp_path / "c"))
-    Choregrapher().reset()
     other = dict(_scene_arguments(), planting=doubles_planting([RootPopulation, RootPopulation]))
     with pytest.raises(ValueError, match="build it with the same arguments"):
         Scene.restore(str(tmp_path / "c"), **other)
@@ -271,12 +309,10 @@ def test_shared_checkpoint_parts_are_written_once_and_pruned_with_their_checkpoi
     scene.simulate(1)                                                   # step_000003 (the old table's last) dropped
     assert sorted(name for name in os.listdir(shared) if name.startswith("soil_table")) != parts
     assert not os.path.exists(first)
-    Choregrapher().reset()
     kept = str(out / "checkpoints" / "step_000005")
     restored = Scene.restore(kept, **dict(arguments, recorder=None))
     np.testing.assert_array_equal(restored.environment[0].table, np.arange(1000.) + 1.)
     for name in sorted(os.listdir(shared)):
         os.remove(shared / name)
-    Choregrapher().reset()
     with pytest.raises(FileNotFoundError, match="shared part"):
         Scene.restore(kept, **dict(arguments, recorder=None))

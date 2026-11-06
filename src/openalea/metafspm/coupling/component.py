@@ -288,6 +288,12 @@ class Component:
             self.choregrapher(instance=self)
         self._after_call(context)
 
+    def simulation_step(self):
+        """The simulation step (s) the component runs in: its DataStructure's (DataStructure.simulation_time_step, the
+        Scene's time step), None outside a Scene (a component alone runs one of its own steps per call)."""
+        ds = getattr(self, "data_structure", None)
+        return None if ds is None else getattr(ds, "simulation_time_step", None)
+
     def private_names(self, components=()):
         """The block in which the component's (and *components*') variables a link keeps under a private name
         (Link.names) resolve to it on their DataStructure (DataStructure.private_names): its calls, read()."""
@@ -315,7 +321,7 @@ class Component:
                 self.write_back_to_mtg()
         # The component's clock (forcings): the start of its next call
         self.__dict__["_clock"] = self.__dict__.get("_clock", 0.) + float(
-            self.choregrapher.simulation_step() or self.time_step or 0.)
+            self.simulation_step() or self.time_step or 0.)
 
     def write_back_to_mtg(self) -> None:
         """Write the component's state variables to the MTG; FunctionalComponent implements it."""
@@ -476,7 +482,7 @@ class DataStructureComponent(Component):
             return start + offset + self.__dict__["_ivp_time"]
         step = self.__dict__.get("_current_dt", None)
         if step is None:                                   # outside a solve: the end of the component's sub-step
-            step = float(getattr(self, "time_step", None) or self.choregrapher.simulation_step() or 0.)
+            step = float(getattr(self, "time_step", None) or self.simulation_step() or 0.)
         return start + offset + step
 
     def forcing_interval(self, over="substep") -> tuple:
@@ -496,7 +502,7 @@ class DataStructureComponent(Component):
             start = self.__dict__.get("_step_clock", self.__dict__.get("_clock", 0.))
             length = self.__dict__.get("_step_length")
             if length is None:
-                length = float(self.choregrapher.simulation_step() or getattr(self, "time_step", None) or 0.)
+                length = float(self.simulation_step() or getattr(self, "time_step", None) or 0.)
             return start, start + length
         raise ValueError(f"forcing(over=...): 'substep', 'step' or a (start, end) pair, got '{over}'")
 
@@ -591,7 +597,7 @@ class DataStructureComponent(Component):
         self._auto_declare_on_ds(ds)
         if not hasattr(self, "pullable_inputs"):
             self.pullable_inputs = {}
-        simulation_step = self.choregrapher.simulation_step()
+        simulation_step = self.simulation_step()
         if self.time_step is None:
             declared = getattr(type(self), "time_step", None)                 # a class attribute of a subclass
             self.time_step = declared if declared is not None else simulation_step
@@ -740,19 +746,21 @@ class DataStructureComponent(Component):
     def keep(self, name: str, value, saved: bool = True) -> None:
         """Keep *value* on the component under *name*: state that is not a DataStructure variable (the time of the
         last lighting), saved by the Scene's checkpoints (checkpoint_state); with *saved* False, a cache that is
-        rebuilt when missing (a kept canopy, incremental meshes), left out of checkpoints. Derived values rebuilt
-        on a key are `cached`'s."""
-        self.__dict__.get("_kept_unsaved" if saved else "_kept", {}).pop(name, None)
-        store = self.__dict__.setdefault("_kept" if saved else "_kept_unsaved", {})
-        store[name] = value
+        rebuilt when missing (a kept canopy, incremental meshes): one of the component's caches (caches()), left out
+        of checkpoints and dropped when one is loaded. Derived values rebuilt on a key are `cached`'s."""
+        if saved:
+            self.caches().pop(("kept", name), None)
+            self.__dict__.setdefault("_kept", {})[name] = value
+        else:
+            self.__dict__.get("_kept", {}).pop(name, None)
+            self.caches()[("kept", name)] = value
 
     def kept(self, name: str, default=None):
         """What keep() kept under *name* (*default* when nothing is)."""
-        for store in ("_kept", "_kept_unsaved"):
-            values = self.__dict__.get(store, {})
-            if name in values:
-                return values[name]
-        return default
+        kept = self.__dict__.get("_kept", {})
+        if name in kept:
+            return kept[name]
+        return self.__dict__.get("_caches", {}).get(("kept", name), default)
 
     def checkpoint_state(self) -> dict:
         """The state checkpoints save: what keep() kept."""
@@ -763,14 +771,25 @@ class DataStructureComponent(Component):
 
     def cached(self, name: str, build, key=None):
         """A value kept on the component: build() at the first call and again when *key* changes (by default the
-        DataStructure's topology version: values read from the structure)."""
+        DataStructure's topology version: values read from the structure). One of the component's caches (caches()):
+        never checkpointed, dropped when a checkpoint is loaded."""
         key = self.data_structure.topology_version if key is None else key
-        store = self.__dict__.setdefault("_cached_values", {})
+        store = self.caches()
         entry = store.get(name)
         if entry is None or entry[0] != key:
             entry = (key, build())
             store[name] = entry
         return entry[1]
+
+    def caches(self) -> dict:
+        """The component's caches, {key: value}: cached()'s values, keep(saved=False)'s, its graph systems' views,
+        pieces and previous solutions. What is built from the DataStructure and rebuilt when missing: never
+        checkpointed, all dropped by clear_caches() (Scene.load_checkpoint: built on the topology before the load)."""
+        return self.__dict__.setdefault("_caches", {})
+
+    def clear_caches(self) -> None:
+        """Drop every cache of the component (caches()): what was built before a checkpoint was loaded."""
+        self.__dict__.pop("_caches", None)
 
     def parameter_values(self, name: str, location: str = "node") -> np.ndarray:
         """
@@ -898,16 +917,12 @@ class FunctionalComponent(DataStructureComponent):
         if not hasattr(ds, "to_graph_view"):
             return None
         version = getattr(ds, "topology_version", None)
-        if "_graph_view_cache" not in self.__dict__ or self.__dict__.get("_graph_view_version") != version:
-            self.__dict__["_graph_view_cache"] = ds.to_graph_view()
-            self.__dict__["_graph_view_version"] = version
-        return self.__dict__["_graph_view_cache"]
+        return self.cached("graph_view", ds.to_graph_view, key=version)
 
     @_graph_view.setter
     def _graph_view(self, view):
         # Explicit views (e.g. with boundary ports built by hand) are kept until the topology changes
-        self.__dict__["_graph_view_cache"] = view
-        self.__dict__["_graph_view_version"] = getattr(self.data_structure, "topology_version", None)
+        self.caches()["graph_view"] = (getattr(self.data_structure, "topology_version", None), view)
 
     @property
     def graph_view(self):

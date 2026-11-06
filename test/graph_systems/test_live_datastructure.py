@@ -18,11 +18,6 @@ from nitrogen import DT, K, Transport, TransportWithAmount, TransportWithOutput,
 from simple_seedling import generate_simple_mpg_seedling
 
 
-@pytest.fixture(autouse=True)
-def _simulation_time_step():
-    Choregrapher().set_simulation_time_step(DT)
-
-
 def _model(component_class=Transport, seed=42):
     ds = nitrogen_ds()
     model = component_class(data_structure=ds)

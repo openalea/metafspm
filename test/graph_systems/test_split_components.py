@@ -8,7 +8,6 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from openalea.metafspm.coupling.choregrapher import Choregrapher
 from openalea.metafspm.coupling.component import FunctionalComponent, parameter, state_variable
 from openalea.metafspm.data_structure.configs import ScalesConfig as scales
 from openalea.metafspm.data_structure.data_api import MPGDataStructure
@@ -17,11 +16,6 @@ from openalea.metafspm.solve.decorator import edge_law, graph_system, node_balan
 from growth import DOC, RootGrowthProbe
 
 DT = 10.
-
-
-@pytest.fixture(autouse=True)
-def _simulation_time_step():
-    Choregrapher().set_simulation_time_step(DT)
 
 
 class _Diffusion:
@@ -111,7 +105,7 @@ def _of_plant(ds, plant, name, location="node"):
 def test_each_piece_is_solved_as_if_its_plant_were_alone():
     sizes, conductances = [4, 7, 5], [0.01, 0.5, 0.08]          # slow and fast plants: their own adaptive steps
     population, plants, model = _run(SplitDiffusion, sizes, conductances)
-    assert len(model.__dict__["_pieces_cache"][1]) == 3
+    assert len(model.caches()["graph_pieces"][1]) == 3
     for plant, size, k in zip(plants, sizes, conductances):
         alone, (alone_plant,), _ = _run(SplitDiffusion, [size], [k])
         np.testing.assert_allclose(_of_plant(population, plant, "sugar"), _of_plant(alone, alone_plant, "sugar"),
@@ -139,7 +133,7 @@ def test_pieces_of_an_active_subgraph():
     model()
     np.testing.assert_array_equal(ds.get("sugar")[owner == plants[0]], before[owner == plants[0]])   # frozen
     assert not np.array_equal(ds.get("sugar")[owner == plants[1]], before[owner == plants[1]])
-    assert len(model.__dict__["_pieces_cache"][1]) == 1
+    assert len(model.caches()["graph_pieces"][1]) == 1
 
 
 def test_split_is_checked():

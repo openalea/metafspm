@@ -11,7 +11,6 @@ import pytest
 
 import doubles
 import doubles_ds
-from openalea.metafspm.coupling.choregrapher import Choregrapher
 from openalea.metafspm.coupling.composite_wrapper import CompositeModel
 from openalea.metafspm.coupling.translator import Translator
 
@@ -123,7 +122,6 @@ def test_links_become_aliases_and_derived_variables(tmp_path):
 
 def test_link_values_seen_by_receivers(tmp_path):
     model, carbon, nitrogen, ds = _coupled_plant(tmp_path)
-    Choregrapher().set_simulation_time_step(1)
     for name in ("soil_temperature", "C_hexose_soil"):   # the soil values of that contract, given by the scene
         ds.set(name, 0.)
 
@@ -156,8 +154,8 @@ def test_python_translator_module(tmp_path):
 
 def test_functional_components_run_once_per_simulation_step(tmp_path):
     """A FunctionalComponent used to register a sub time step of 1: with a 3600 s step it ran 3600 times per call."""
-    Choregrapher().set_simulation_time_step(3600)
     ds = doubles_ds.make_plant_ds()
+    ds.simulation_time_step = 3600
     carbon = doubles_ds.PlantCarbon(data_structure=ds)
     ds.set("soil_temperature", 0.)
     carbon()
@@ -182,7 +180,6 @@ def test_a_receiver_private_name_keeps_the_shared_variable_untouched():
     """Link(names={variable: private}): the receiver reads its variable as the link's values (a formula of the
     provider's variable of the same name), kept under the private name; the provider and everything outside the
     receiver's calls read the shared variable."""
-    Choregrapher().reset()
     ds = doubles_ds.make_plant_ds()
     carbon, nitrogen = doubles_ds.PlantCarbon(data_structure=ds), doubles_ds.PlantNitrogen(data_structure=ds)
     translator = Translator().link("PlantNitrogen", "hexose", "PlantCarbon", ("hexose",), formula=_doubled,

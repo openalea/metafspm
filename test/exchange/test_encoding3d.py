@@ -13,7 +13,6 @@ from openalea import encoding3d
 
 from openalea.encoding3d.validate import validate_bytes
 
-from openalea.metafspm.coupling.choregrapher import Choregrapher
 from openalea.metafspm.coupling.component import StructuralComponent, state_variable
 from openalea.metafspm.data_structure.configs import ScalesConfig as scales
 from openalea.metafspm.data_structure.adaptive_grid import AdaptiveGridDataStructure
@@ -127,7 +126,6 @@ def test_a_simulation_continues_from_a_frame_bit_for_bit():
     _steps(models, 2)
     data = encoding3d.to_bytes(to_frame({"plants": ds}, components={"plants": models}))
     _steps(models, 2)                                         # uninterrupted
-    Choregrapher().reset()
     again = from_frame(encoding3d.from_bytes(data))["plants"]
     _steps(_models(again), 2)                                 # restarted from the frame
     _same_variables(ds, again)
@@ -204,9 +202,9 @@ class SegmentEnds(StructuralComponent):
 def test_an_anatomy_mode_plants_triangles_are_its_suborgans():
     """On an anatomy-mode plant (its nodes the Compartments), the frame's triangles are those its SubOrgan-scale
     architecture draws (the light's), each owned by its SubOrgan, not by the Compartment of the same index."""
-    Choregrapher().set_simulation_time_step(1)
     g, segments, _ = make_rooted_anatomy(n_segments=3)
     ds = MPGDataStructure(g, from_scale=g.scales.SubOrgan, nodes="Compartment", wiring=rooted_wiring(g))
+    ds.simulation_time_step = 1
     ends = SegmentEnds(data_structure=ds)
     view = ds.at("SubOrgan")
     assert ends.data_structure is view

@@ -5,7 +5,6 @@ import numpy as np
 
 import doubles
 import doubles_ds
-from openalea.metafspm.coupling.choregrapher import Choregrapher
 from openalea.metafspm.data_structure.data_api import ArrayDataStructure
 
 
@@ -25,8 +24,8 @@ def test_chain_plant_segments_fall_in_known_voxels():
 
 
 def test_plant_components_build_and_run_standalone():
-    Choregrapher().set_simulation_time_step(doubles.TIME_STEP)
     ds = doubles_ds.make_chain_plant_ds()
+    ds.simulation_time_step = doubles.TIME_STEP
     carbon = doubles_ds.PlantCarbon(data_structure=ds)
     doubles_ds.PlantNitrogen(data_structure=ds)
 

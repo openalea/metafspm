@@ -327,9 +327,8 @@ class ClockedByClass(Clocked):
 
 
 def test_a_component_takes_its_time_step_at_construction_or_from_the_simulation():
-    from openalea.metafspm.coupling.choregrapher import Choregrapher
-    Choregrapher().set_simulation_time_step(3600.)
     grid = ArrayDataStructure(shape=(2,), dx=0.1)
+    grid.simulation_time_step = 3600.                     # a Scene's step
     assert Clocked(data_structure=grid).time_step == Clocked(data_structure=grid).dt == 3600.   # the simulation's
     assert ClockedByClass(data_structure=grid).time_step == 60.                                 # its class's
     assert Clocked(data_structure=grid, time_step=900.).dt == 900.                               # given explicitly
@@ -350,9 +349,8 @@ class Counted(FunctionalComponent):
 
 
 def test_a_component_runs_once_per_time_step_within_the_simulation_step():
-    from openalea.metafspm.coupling.choregrapher import Choregrapher
-    Choregrapher().set_simulation_time_step(3600.)
     grid = ArrayDataStructure(shape=(2,), dx=0.1)
+    grid.simulation_time_step = 3600.
     model = Counted(data_structure=grid, time_step=900.)
     model()
     np.testing.assert_array_equal(grid.get("count"), 4.)                # four sub-steps of 900 s
@@ -362,9 +360,8 @@ def test_a_component_runs_once_per_time_step_within_the_simulation_step():
 
 
 def test_a_time_step_must_divide_the_simulation_step():
-    from openalea.metafspm.coupling.choregrapher import Choregrapher
-    Choregrapher().set_simulation_time_step(3600.)
     grid = ArrayDataStructure(shape=(2,), dx=0.1)
+    grid.simulation_time_step = 3600.
     with pytest.raises(ValueError, match="must divide the simulation time step"):
         Counted(data_structure=grid, time_step=1000.)
     with pytest.raises(ValueError, match="must divide the simulation time step"):

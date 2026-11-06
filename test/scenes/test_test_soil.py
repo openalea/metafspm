@@ -2,12 +2,10 @@
 evaporating surface, fast enough for tests."""
 import numpy as np
 
-from openalea.metafspm.coupling.choregrapher import Choregrapher
 from openalea.metafspm.testing.soil import Soil
 
 
 def test_the_coarse_soil_solves_its_steady_profile():
-    Choregrapher().set_simulation_time_step(3600.)
     soil = Soil([], xrange=0.2, yrange=0.2, time_step=3600.)
     assert soil.grid.n_nodes() == 4 * 4 * 8                      # 5 cm cells, 40 cm deep
     soil.run()

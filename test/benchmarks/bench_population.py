@@ -21,7 +21,6 @@ import pandas as pd
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(HERE, "..", "helpers"))
 
-from openalea.metafspm.coupling.choregrapher import Choregrapher
 from openalea.metafspm.coupling.component import (FunctionalComponent, StructuralComponent, input_variable,
                                                    parameter, state_variable)
 from openalea.metafspm.coupling.translator import Translator
@@ -220,7 +219,6 @@ def _planting(n_plants, side):
 
 
 def bench_segments(n_plants, steps, method):
-    Choregrapher().reset()
     BenchPlant.timings = {}
     start = time.perf_counter()
     with tempfile.TemporaryDirectory() as folder:
@@ -260,11 +258,10 @@ def bench_segments(n_plants, steps, method):
 def bench_anatomy(n_segments, steps):
     from anatomy import make_rooted_anatomy, wiring
     from openalea.metafspm.data_structure.data_api import MPGDataStructure
-    Choregrapher().reset()
-    Choregrapher().set_simulation_time_step(DT)
     start = time.perf_counter()
     g, _, _ = make_rooted_anatomy(n_segments)
     ds = MPGDataStructure(g, from_scale=g.scales.SubOrgan, nodes="Compartment", wiring=wiring(g))
+    ds.simulation_time_step = DT
     built = time.perf_counter() - start
     carbon, phloem = AnatomyCarbon(data_structure=ds), AnatomyPhloem(data_structure=ds)
     carbon()

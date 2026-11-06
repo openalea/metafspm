@@ -8,7 +8,6 @@ from dataclasses import dataclass
 import numpy as np
 import pytest
 
-from openalea.metafspm.coupling.choregrapher import Choregrapher
 from openalea.metafspm.coupling.component import FunctionalComponent, state_variable
 from openalea.metafspm.data_structure import random_streams
 from openalea.metafspm.data_structure.data_api import MPGDataStructure
@@ -18,11 +17,6 @@ from simple_seedling import generate_simple_mpg_seedling
 
 DOC = dict(unit="", unit_comment="", description="", min_value=0., max_value=1., value_comment="", references="",
            DOI=[])
-
-
-@pytest.fixture(autouse=True)
-def _simulation_time_step():
-    Choregrapher().set_simulation_time_step(1)
 
 
 def test_draws_depend_on_the_entity_not_on_the_order_or_the_others():
@@ -72,8 +66,6 @@ def test_component_streams_advance_and_are_reproducible():
     first = ds.get("draw").copy()
     model()
     assert not np.any(ds.get("draw") == first)                 # a new step at each call
-    Choregrapher().reset()
-    Choregrapher().set_simulation_time_step(1)
     again = _ds()
     replay = Emergence(data_structure=again)
     replay()
@@ -89,8 +81,6 @@ def test_streams_continue_across_a_checkpoint(tmp_path):
     ds.checkpoint(str(tmp_path / "c"))
     model()
     expected = ds.get("draw").copy()
-    Choregrapher().reset()
-    Choregrapher().set_simulation_time_step(1)
     restored = MPGDataStructure.restore(str(tmp_path / "c"))
     Emergence(data_structure=restored)()
     np.testing.assert_array_equal(restored.get("draw"), expected)

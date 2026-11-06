@@ -9,7 +9,6 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from openalea.metafspm.coupling.choregrapher import Choregrapher
 from openalea.metafspm.coupling.component import FunctionalComponent, StructuralComponent, input_variable, \
     state_variable
 from openalea.metafspm.data_structure.configs import PropsConfig, ScalesConfig as scales
@@ -61,7 +60,6 @@ def _anatomy_data_structure():
 
 
 def test_an_mpg_style_step_reads_the_inputs_another_component_holds_at_the_suborgans():
-    Choregrapher().set_simulation_time_step(1)
     ds, segments = _anatomy_data_structure()
     elements, cells = Elements(data_structure=ds, time_step=1), Cells(data_structure=ds, time_step=1)
     assert ds.location("length") == "SubOrgan"
@@ -72,7 +70,6 @@ def test_an_mpg_style_step_reads_the_inputs_another_component_holds_at_the_subor
 
 
 def test_the_compartments_an_mpg_style_step_creates_keep_its_values():
-    Choregrapher().set_simulation_time_step(1)
     ds, segments = _anatomy_data_structure()
     cells = Cells(data_structure=ds, time_step=1)
     read = []

@@ -573,7 +573,7 @@ def _pieces_of(instance, base) -> list:
     ds = _live_ds(instance)
     full = instance._graph_view
     key = (ds.topology_version, id(base))
-    cache = instance.__dict__.get("_pieces_cache")
+    cache = instance.caches().get("graph_pieces")
     if cache is not None and cache[0] == key:
         return cache[1]
     view = base.view if base is not None else full
@@ -602,7 +602,7 @@ def _pieces_of(instance, base) -> list:
                                difference=_sliced_difference(view, links, members))
         pieces.append(_Restriction(piece_view, nodes[members], edges[links], full.n_nodes, full.n_edges,
                                    drops_edges=False))
-    instance.__dict__["_pieces_cache"] = (key, pieces)
+    instance.caches()["graph_pieces"] = (key, pieces)
     return pieces
 
 
@@ -622,7 +622,7 @@ def _restriction_for(instance, where):
     if ds.__dict__["_masks"][where]["location"] not in ("node", "cell"):
         raise ValueError(f"{type(instance).__name__}: the filters of a graph system select nodes (or grid cells)")
     key = (ds.topology_version, ds.mask_version(where))
-    cache = instance.__dict__.setdefault("_restriction_cache", {})
+    cache = instance.caches().setdefault("graph_restrictions", {})
     if where in cache and cache[where][0] == key:
         return cache[where][1]
     full = instance._graph_view
@@ -1412,12 +1412,13 @@ def _invoke_graph_system(self, method_name: str) -> None:
                 ds.set(fn, values)
     # The pieces share one dict of previous / solved node fields, copied once and updated at each piece's nodes, so
     # that the bookkeeping stays proportional to each piece
-    saved_key, previous_key = f"_gsol_{method_name}", f"_gprev_{method_name}"
-    saved = getattr(self, saved_key, None)
+    saved_key, previous_key = ("solution", method_name), ("previous_solution", method_name)
+    caches = self.caches()
+    saved = caches.get(saved_key)
     if saved is not None:
         saved = {fn: np.array(values, dtype=np.float64) for fn, values in saved.items()}
-        setattr(self, saved_key, saved)
-        setattr(self, previous_key, saved)
+        caches[saved_key] = saved
+        caches[previous_key] = saved
     self.__dict__["_in_pieces"] = True
     try:
         for piece in _pieces_of(self, restriction):
@@ -1480,26 +1481,26 @@ def _restore(ds, state, instance=None) -> None:
 def _saved_fields(self, key, ds, names) -> None:
     """Keep the node unknowns on every node (attribute *key*), updating only the subgraph's during a restricted solve."""
     restriction = self.__dict__.get("_restriction")
-    saved = getattr(self, key, None)
+    saved = self.caches().get(key)
     if (restriction is None or saved is None
             or any(fn not in saved or np.size(saved[fn]) != restriction.n for fn in names)):
-        setattr(self, key, {fn: np.array(ds.get(fn), dtype=np.float64).reshape(-1) for fn in names})
+        self.caches()[key] = {fn: np.array(ds.get(fn), dtype=np.float64).reshape(-1) for fn in names}
         return
     if self.__dict__.get("_in_pieces"):
         for fn in names:
             saved[fn][restriction.node_idx] = np.asarray(ds.get(fn)).reshape(-1)[restriction.node_idx]
         return
-    # A new dict of the same arrays: _gprev_ (the previous solve's) may hold the old dict, whose arrays it must keep
+    # A new dict of the same arrays: the previous solve's may hold the old dict, whose arrays it must keep
     updated = {}
     for fn in names:
         values = saved[fn] if not _shared_with_previous(self, key, saved[fn]) else np.array(saved[fn])
         values[restriction.node_idx] = np.asarray(ds.get(fn)).reshape(-1)[restriction.node_idx]
         updated[fn] = values
-    setattr(self, key, updated)
+    self.caches()[key] = updated
 
 
 def _shared_with_previous(self, key, array) -> bool:
-    previous = getattr(self, key.replace("_gsol_", "_gprev_"), None) if key.startswith("_gsol_") else None
+    previous = self.caches().get(("previous_solution", key[1])) if key[0] == "solution" else None
     return previous is not None and any(array is other for other in previous.values())
 
 
@@ -1541,7 +1542,7 @@ def _solve_substep(self, method_name, spec_def, h) -> None:
     """One sub-step of length h starting from the current DataStructure state."""
     ds = _live_ds(self)
     # The solver's previous fields are the state at the start of the sub-step
-    _saved_fields(self, f"_gsol_{method_name}", ds, spec_def["node_unknowns"])
+    _saved_fields(self, ("solution", method_name), ds, spec_def["node_unknowns"])
     self.__dict__["_current_dt"] = h
     _solve_once(self, method_name, spec_def)
 
@@ -1607,12 +1608,13 @@ def _solve_once(self, method_name: str, spec_def: dict) -> None:
     """Build, solve and write back one graph system, on the whole graph or on the current active subgraph."""
 
     # ── Advance previous-field bookkeeping ────────────────────────────────────
-    _saved_key = f"_gsol_{method_name}"
-    _prev_key  = f"_gprev_{method_name}"
-    _saved     = getattr(self, _saved_key, None)
+    _saved_key = ("solution", method_name)            # the component's caches (Component.caches)
+    _prev_key  = ("previous_solution", method_name)
+    caches     = self.caches()
+    _saved     = caches.get(_saved_key)
     if _saved is not None:
-        setattr(self, _prev_key, _saved)
-    previous_fields = getattr(self, _prev_key, None)
+        caches[_prev_key] = _saved
+    previous_fields = caches.get(_prev_key)
     dt = self.__dict__.get("_current_dt", getattr(self, "time_step", None))
 
     take = _take(self, "node")

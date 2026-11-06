@@ -42,7 +42,7 @@ import numpy as np
 import pandas as pd
 
 from openalea.metafspm.compute import Compute
-from openalea.metafspm.coupling.choregrapher import Choregrapher
+from openalea.metafspm.coupling.choregrapher import sub_steps
 from openalea.metafspm.coupling.forcings import forcing_mean, forcing_table, is_spatial, spatial_mean
 from openalea.metafspm.coupling.cross import CrossMapping, Exchanges, UnionDataStructure, UnionMapping
 from openalea.metafspm.coupling.translator import Translator
@@ -151,7 +151,6 @@ class Scene:
 
     def _build(self, planting, environment, environment_scenarios, translator, time_step, mapping_method, periodic,
                flip_z, xrange, yrange, forcings, events, stop_when, mappings, recorder, start, soil_surface) -> None:
-        Choregrapher()._set_simulation_time_step(time_step)
         self.soil_surface = float(soil_surface)
         self.time_step, self.time, self.iteration = time_step, 0., 0
         self.xrange = xrange if xrange is not None else planting.attrs.get("xrange")
@@ -179,10 +178,12 @@ class Scene:
 
         self.components = [c for p in self.populations for c in p.components]
         self.components += [c for model in self.environment for c in model.components]
-        for component in self.components:                  # the one soil surface: every DataStructure's
+        for component in self.components:      # the one soil surface and the scene's step: every DataStructure's
             data_structure = getattr(component, "data_structure", None)
             if data_structure is not None and hasattr(data_structure, "soil_surface"):
                 _root_data_structure(data_structure).soil_surface = self.soil_surface
+                _root_data_structure(data_structure).simulation_time_step = time_step
+            _run_in_step(component, time_step)
         self._apply_compute(environment_scenarios)
         names = [type(c).__name__ for c in self.components]
         duplicated = sorted({name for name in names if names.count(name) > 1})
@@ -581,14 +582,24 @@ class Scene:
                        "data_structures": len(self._all_data_structures())}, f)
 
     @classmethod
-    def restore(cls, path: str, *args, **kwargs) -> "Scene":
-        """A scene built with the original arguments, then loaded from the checkpoint of folder *path*."""
+    def restore(cls, path: str, *args, scenario: str = "checkpoint", **kwargs) -> "Scene":
+        """A scene built with the arguments given (the original ones, or a changed scenario), then loaded from the
+        checkpoint of folder *path* (load_checkpoint: *scenario* "checkpoint" or "current")."""
         scene = cls(*args, **kwargs)
-        scene.load_checkpoint(path)
+        scene.load_checkpoint(path, scenario=scenario)
         return scene
 
-    def load_checkpoint(self, path: str) -> None:
-        """Load a scene checkpoint into this (freshly built) scene, in place; the next steps continue the run."""
+    def load_checkpoint(self, path: str, scenario: str = "checkpoint") -> None:
+        """
+        Load a scene checkpoint into this (freshly built) scene, in place; the next steps continue the run. The
+        parameters and settings: *scenario* "checkpoint", the checkpoint's (the run as it was: a scene built with
+        changed scenarios still runs the saved values); "current", this scene's scenarios (its planting table's and
+        environment_scenarios', those this scene was built with) applied again after the load: a run resumed with a
+        changed parameter (a parameter or setting a scenario gives; the others keep the checkpoint's). Every
+        component's caches are dropped (Component.clear_caches: built on the topology before the load).
+        """
+        if scenario not in ("checkpoint", "current"):
+            raise ValueError(f"Scene.load_checkpoint(scenario=...): 'checkpoint' or 'current', got {scenario!r}")
         import json
         import pickle
         from openalea.metafspm.scene.shared import SharedStore, references
@@ -602,11 +613,9 @@ class Scene:
                              f"{len(data_structures)}: build it with the same arguments")
         for i, ds in enumerate(data_structures):
             ds.load_checkpoint(os.path.join(path, f"data_structure_{i}"), shared=store)
-        for component in self.components:          # views and restrictions built on the old topology
-            for key in [k for k in component.__dict__ if k in ("_graph_view_cache", "_graph_view_version",
-                                                                "_restriction_cache", "_pieces_cache")
-                        or k.startswith(("_gsol_", "_gprev_"))]:
-                del component.__dict__[key]
+        for component in self.components:          # views, restrictions, solutions built on the old topology
+            if hasattr(component, "clear_caches"):
+                component.clear_caches()
         for mapping in self.mappings:
             if hasattr(mapping, "refresh"):
                 mapping.refresh()
@@ -617,10 +626,29 @@ class Scene:
         for key, obj in self._stateful().items():
             if key in states and hasattr(obj, "restore_state"):
                 obj.restore_state(states[key])
+        if scenario == "current":
+            self._apply_scenarios()
         self.time, self.iteration, self.stopped = saved["time"], saved["iteration"], saved["stopped"]
         self.events = self.events[saved["events_fired"]:]         # the ones not fired yet, whatever their time
         if self.recorder is not None:
             self.recorder.resume_at(self)              # its tables cut back to this step, appended to from here
+
+    def _apply_scenarios(self) -> None:
+        """This scene's scenarios set again on its models (load_checkpoint(scenario="current")): each population's
+        shared scenario and its plants' own, each environment model's, as when the scene was built."""
+        from openalea.metafspm.scene.population import _apply_plant_scenarios
+        for population in self.populations:
+            model, rows = population.model, population.table
+            _apply_model_scenario(model, population.instance, self._shared_scenario(model, rows),
+                                  population.read_by_initiators)
+            _apply_plant_scenarios(population.data_structure, population.components, rows, population.plants)
+        for model, instance, scenario in zip([type(model) for model in self.environment], self.environment,
+                                             self.environment_scenarios):
+            scenario = dict(scenario)
+            if "interval" in scenario and hasattr(instance, "interval"):
+                interval = scenario.pop("interval")
+                instance.interval = None if interval is None else float(interval)
+            _apply_model_scenario(model, instance, scenario, per_plant=False)
 
     def finish(self, status: str = "finished", error: BaseException = None) -> None:
         """
@@ -640,6 +668,19 @@ class Scene:
         if getattr(self, "_recording", False) and not getattr(self, "_finished", True):
             warnings.warn("a recording Scene was dropped before scene.finish(): its last state and its run status "
                           "were not written (end a loop of run() with finish())", ResourceWarning, stacklevel=2)
+
+
+def _run_in_step(component, time_step: float) -> None:
+    """*component* run in the scene's step *time_step* (s): one of the scene's steps when it has no time step of its
+    own (an environment model's component built without one), else checked to divide it a whole number of times."""
+    if "_choregraphy" not in component.__dict__:
+        return
+    own, groups = component.__dict__["_choregraphy"]
+    if own is None and getattr(component, "time_step", None) is None:
+        component.time_step = own = float(time_step)
+        component.__dict__["_choregraphy"] = (own, groups)
+    if own is not None:
+        sub_steps(time_step, own, type(component).__name__)
 
 
 def _own_data_structures(model) -> list:

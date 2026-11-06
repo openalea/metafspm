@@ -10,7 +10,6 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from openalea.metafspm.coupling.choregrapher import Choregrapher
 from openalea.metafspm.coupling.component import FunctionalComponent, state_variable
 from openalea.metafspm.data_structure.data_api import ArrayDataStructure, MPGDataStructure
 from openalea.metafspm.scene.population import _build_population
@@ -65,7 +64,6 @@ def test_a_restored_population_continues_bit_for_bit(tmp_path):
     _steps(models, 2)                                         # uninterrupted
     expected = _state(ds)
 
-    Choregrapher().reset()
     restored = MPGDataStructure.restore(str(tmp_path / "checkpoint"))
     assert restored.mtg is not ds.mtg and restored.has("hexose_per_length") and restored.has_mask("apices")
     _steps(_models(restored), 2)                              # restarted
@@ -139,7 +137,6 @@ def test_a_restored_grid_continues_bit_for_bit(tmp_path):
     grid.checkpoint(str(tmp_path / "grid"))
     model()
     model()
-    Choregrapher().reset()
     restored = ArrayDataStructure.restore(str(tmp_path / "grid"))
     again = GridDiffusionProbe(data_structure=restored)
     again()

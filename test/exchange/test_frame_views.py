@@ -12,7 +12,6 @@ import pytest
 
 from openalea.encoding3d import views
 
-from openalea.metafspm.coupling.choregrapher import Choregrapher
 from openalea.metafspm.io.encoding3d import default_views, scene_to_frame, write_views
 from openalea.metafspm.scene.scene import Scene, SceneRecorder
 
@@ -122,7 +121,6 @@ def test_given_views_are_checked_against_the_first_frame(tmp_path):
     assert views.read_views(_views_file(out)) == given                              # written as given
     path = str(tmp_path / "given.json")
     views.write_views(path, given)
-    Choregrapher().reset()
     other = str(tmp_path / "other")
     with pytest.warns(UserWarning, match="leaves"):
         _scene(SceneRecorder(other, summaries=False, frame_period=2, frame_views=path)).run()
@@ -136,12 +134,10 @@ def test_a_variables_filter_keeps_what_the_views_show(tmp_path):
                          frame_options={"variables": kept})).run()
     roots = _layers(views.read_views(_views_file(out)))["RootPopulation roots"]       # the unfiltered frame's views
     assert roots["color_by"]["variable"] == "struct_mass" and roots["tube"]["radius"] == "radius"
-    Choregrapher().reset()
     dropped = {"RootPopulation": {"SubOrgan": ["radius"], "*": []}}
     with pytest.raises(ValueError, match="RootPopulation/SubOrgan/struct_mass"):
         _scene(SceneRecorder(str(tmp_path / "dropped"), summaries=False, frame_period=2, frame_views="default",
                              frame_options={"variables": dropped})).run()
-    Choregrapher().reset()
     given = {"encoding3d_views": 1, "configurations": {"mine": {"layers": [
         {"name": "soil", "source": {"data_structure": "SceneSoil", "kind": "grid"},
          "color_by": {"entity_set": "cell", "variable": "soil_nitrate"}}]}}}
@@ -170,7 +166,6 @@ def test_a_restored_run_keeps_its_views(tmp_path):
     scene.checkpoint(str(tmp_path / "checkpoint"))
     saved = views.save_configuration(views.read_views(_views_file(out)), "mine", [])
     views.write_views(_views_file(out), saved)
-    Choregrapher().reset()
     restored = Scene.restore(str(tmp_path / "checkpoint"), planting=doubles_planting([RootPopulation, Seedlings]),
                              environment=[SceneSoil], translator=soil_translator("SceneExudation",
                                                                                  "SeedlingExudation"),
@@ -211,7 +206,6 @@ def test_display_shapes_are_recorded_at_their_own_period(tmp_path):
     steps (and in the last frame) with it; every frame holds the data rows and the triangles."""
     for name, period in (("none", None), ("every_four", 4)):
         out = str(tmp_path / name)
-        Choregrapher().reset()
         scene = _scene(SceneRecorder(out, summaries=False, frame_period=2, display_period=period))
         population = scene.populations[0]
         population.instance.components.append(_Drawing(population.data_structure))

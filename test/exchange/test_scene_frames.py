@@ -9,7 +9,6 @@ import pytest
 from openalea import encoding3d
 from openalea.encoding3d.validate import validate_sequence
 
-from openalea.metafspm.coupling.choregrapher import Choregrapher
 from openalea.metafspm.io.encoding3d import from_frame
 from openalea.metafspm.scene.scene import Scene, SceneRecorder
 
@@ -52,7 +51,6 @@ def test_a_restored_scene_carries_on_its_frames(tmp_path):
         scene.run()
     scene.checkpoint(str(tmp_path / "checkpoint"))
     scene.run()                                            # the interrupted run's frame 4, rewritten after the restore
-    Choregrapher().reset()
     restored = Scene.restore(str(tmp_path / "checkpoint"), **_arguments(out))
     restored.run()
     restored.run()

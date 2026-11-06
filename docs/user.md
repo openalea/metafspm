@@ -198,8 +198,9 @@ carbon()                                  # one time step: every step, in the sc
 - **Public accessors** (rather than the private names behind them): `ds.from_scale`, `ds.sections_of(vids)`,
   `ds.reduction`, `ds.structure_stamp()`, `ds.default(name)`; `MPG.values_at(name, vids)` (bulk, instances
   included), `MPG.anchored(vid)` (its anchored Compartments and Connections), `MPG.has_instances()`, `MPG.last_vid`,
-  `MPG.add_root_at_scale(scale)`; `self.graph_view` in graph-system terms; `Choregrapher().set_simulation_time_step(dt)`
-  for components run without a Scene.
+  `MPG.add_root_at_scale(scale)`; `self.graph_view` in graph-system terms; `ds.simulation_time_step = dt` for components
+  run without a Scene (the Scene sets its time step on each of its DataStructures: Scenes of other steps run in one
+  process; none: a component runs one of its own steps per call).
 - **Outside steps** (structural code, helpers, harnesses): `self.parameter_value(name)` is a parameter's single
   value for the population (it raises when plants differ; `parameter_values(name, location)` gives one per entity);
   `self.cached(name, build, key=None)` keeps a value until *key* changes (by default the topology version), e.g. a

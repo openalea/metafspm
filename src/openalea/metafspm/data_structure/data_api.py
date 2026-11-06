@@ -197,6 +197,18 @@ class DataStructure(ABC):
     def soil_surface(self, value: float) -> None:
         _root_data_structure(self).__dict__["_soil_surface"] = float(value)
 
+    @property
+    def simulation_time_step(self):
+        """The simulation step (s) of the Scene the DataStructure is in (Scene(time_step=), population_data_structure's
+        time_step), None outside one: each component on it runs simulation_time_step / its time_step sub-steps per
+        call (one of its own steps without one). Its Scene's own: Scenes of other time steps run in one process."""
+        value = _root_data_structure(self).__dict__.get("_simulation_time_step")
+        return None if value is None else float(value)
+
+    @simulation_time_step.setter
+    def simulation_time_step(self, value) -> None:
+        _root_data_structure(self).__dict__["_simulation_time_step"] = None if value is None else float(value)
+
 
     def add_geometry_provider(self, component) -> None:
         """Register *component* (a StructuralComponent on this DataStructure, at its construction) as a source of the

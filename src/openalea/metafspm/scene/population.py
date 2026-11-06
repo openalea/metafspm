@@ -123,10 +123,12 @@ def stand(xrange: float, yrange: float, sowing_density: float, row_spacing: floa
 class Population:
     """The plants of one model: their planting rows, Plant vertices, MPGDataStructure and model instance."""
 
-    def __init__(self, model, table: pd.DataFrame, plants: list, data_structure, instance):
+    def __init__(self, model, table: pd.DataFrame, plants: list, data_structure, instance,
+                 read_by_initiators=frozenset()):
         self.model, self.table, self.plants = model, table, list(plants)
         self.data_structure, self.instance = data_structure, instance
         self.emergence = "emergence_time" in table.columns
+        self.read_by_initiators = frozenset(read_by_initiators)   # the scenario keys its initiators read
 
     @property
     def name(self) -> str:
@@ -151,8 +153,6 @@ def population_data_structure(table: pd.DataFrame, model, time_step: float = 360
     *soil_surface*: the soil surface's height (m, the Scene's), the MPG's g.soil_surface while the initiators build
     (a crown placed below it) and the DataStructure's after (ds.soil_surface).
     """
-    from openalea.metafspm.coupling.choregrapher import Choregrapher
-    Choregrapher()._set_simulation_time_step(time_step)
     table = table.reset_index(drop=True)
     scenario = _flat_scenario(table["scenario"].iloc[0] if scenario is None and len(table) else scenario)
     read_by_initiators = set()
@@ -170,10 +170,11 @@ def population_data_structure(table: pd.DataFrame, model, time_step: float = 360
     wiring = wiring(g) if callable(wiring) else wiring
     ds = MPGDataStructure(g, from_scale=scale, nodes=nodes, wiring=wiring)
     ds.soil_surface = soil_surface
+    ds.simulation_time_step = time_step               # the model's components run in it (the Scene's step)
     instance = model(data_structure=ds, time_step=time_step, **_model_keywords(model, scenario))
     if getattr(g, "reduction", None) is not None:
         g.reduction.bind(model, instance)
-    population = Population(model, table, plants, ds, instance)
+    population = Population(model, table, plants, ds, instance, read_by_initiators)
     _apply_model_scenario(model, instance, scenario, read_by_initiators)
     _apply_plant_scenarios(ds, population.components, table, plants)
     return population

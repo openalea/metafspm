@@ -2,56 +2,29 @@ import ast
 from functools import partial
 
 
-# Executor singleton
-class Singleton:
-    _instance = None
-    universal_steps = ["stepinit", "state", "totalstate", "rate", "totalrate", "deficit", 
-                       "axial", "potential", "allocation", "actual", "segmentation", "postsegmentation"]
+# The steps the step decorators register at class definition, {category: {class family: [functors]}}: what a class
+# declares (like its fields), not a run's state. The run's state is on the components: their bound schedule
+# (Choregrapher.bind), their clock, and the simulation step, their DataStructure's (DataStructure.simulation_time_step,
+# the Scene's time step).
+UNIVERSAL_STEPS = ("stepinit", "state", "totalstate", "rate", "totalrate", "deficit", "axial", "potential",
+                   "allocation", "actual", "segmentation", "postsegmentation")
+_PROCESSES = {name: {} for name in UNIVERSAL_STEPS}
 
-    def __new__(class_, *args, **kwargs):
-        if not isinstance(class_._instance, class_):
-            inst = object.__new__(class_, *args, **kwargs)
-            inst._init_state()
-            class_._instance = inst
 
-        return class_._instance
-    
-    def _init_state(self):
-        # centralize state initialization
-        for name in self.universal_steps:
-            setattr(self, name, {})
-    
-
-class Choregrapher(Singleton):
+class Choregrapher:
     """
-    This Singleton class retreives the processes tagged by a decorator in a model class.
-    It also provides a __call__ method to schedule model execution.
+    The schedule of the components' steps: it reads the processes tagged by the step decorators in a component class
+    (registered at class definition) and runs a component's bound steps in the consensus order. It holds no run state
+    (any number of Scenes, of any time steps, run in one process): a component's bound schedule, clock and simulation
+    step are its own (the simulation step its DataStructure's, set by the Scene).
     """
 
+    universal_steps = UNIVERSAL_STEPS
     consensus_scheduling = [
             ["stepinit", "rate", "totalrate", "state", "totalstate"],  # metabolic models
             ["axial"],  # subcategoy for metabolic models
             ["potential", "deficit", "allocation", "actual", "segmentation", "postsegmentation"],  # growth models
         ]
-
-
-    def _init_state(self):
-        super()._init_state()
-        self.scheduled_groups = {}
-
-
-    def reset(self):
-        """
-        Clear run state (bound schedules, the simulation time step) in place.
-
-        The processes registered by step decorators at class definition are kept, so that component classes
-        defined before the reset can still be instantiated and scheduled. The instance is kept as well, since
-        Component.choregrapher is bound at class creation and a new instance would never be called.
-        """
-        self.scheduled_groups = {}
-        if "simulation_time_step" in self.__dict__:
-            del self.simulation_time_step
-
 
     def bind(self, instance, time_step: float, data) -> None:
         """
@@ -59,29 +32,14 @@ class Choregrapher(Singleton):
         its DataStructure *data*, run every *time_step* (s). The bound schedule is kept on the instance, so that
         several instances of one class run their own steps on their own DataStructures.
         """
-        family = family_of(type(instance))
         groups = {priority: [partial(functor, instance, data) for functor in functors]
                   for priority, functors in self.schedule_of(type(instance)).items()}
         instance.__dict__["_choregraphy"] = (time_step, groups)
-        self.scheduled_groups[family] = groups      # introspection: the last bound instance of the class
-
-    def set_simulation_time_step(self, simulation_time_step: float) -> None:
-        """The scene's time step (s): what the Scene sets, for components run without one (a test, a script)."""
-        self._set_simulation_time_step(simulation_time_step)
-
-    def _set_simulation_time_step(self, simulation_time_step: float) -> None:
-        """The scene's time step (s), set by the Scene (and population_data_structure): each component runs
-        simulation_time_step / its time_step sub-steps per call."""
-        self.simulation_time_step = simulation_time_step
-
-    def simulation_step(self):
-        """The scene's time step (s), None when no Scene set one (a component run alone runs one of its steps)."""
-        return self.__dict__.get("simulation_time_step")
 
     def add_process(self, f, name):
         """Register step functor *f* in category *name* for its class, identified by module and qualified name."""
         family = f.family
-        registered = getattr(self, name).setdefault(family, [])
+        registered = _PROCESSES[name].setdefault(family, [])
         for k, other in enumerate(registered):
             if other.name == f.name:        # the class was defined again (e.g. reloaded): the latest definition wins
                 registered[k] = f
@@ -92,7 +50,7 @@ class Choregrapher(Singleton):
         """{step name: (functor, categories)} declared by one class."""
         steps = {}
         for category in self.universal_steps:
-            for functor in getattr(self, category).get(family, []):
+            for functor in _PROCESSES[category].get(family, []):
                 steps.setdefault(functor.name, [functor, set()])[1].add(category)
         return steps
 
@@ -128,7 +86,7 @@ class Choregrapher(Singleton):
         """
         sub_time_step, groups = instance.__dict__["_choregraphy"]
         start = instance.__dict__.get("_clock", 0.)
-        simulation_step = self.simulation_step() or sub_time_step
+        simulation_step = instance.simulation_step() or sub_time_step
         increments = 1 if sub_time_step is None else sub_steps(simulation_step, sub_time_step, type(instance).__name__)
         # the call's whole step, forcing(over="step")'s
         instance.__dict__["_step_clock"], instance.__dict__["_step_length"] = start, simulation_step
@@ -151,7 +109,10 @@ class Choregrapher(Singleton):
         if len(sub_time_steps) > 1:
             raise ValueError(f"{names}: components run together need the same sub time step, got {sub_time_steps}")
         sub_time_step = sub_time_steps.pop()
-        simulation_step = self.simulation_step() or sub_time_step
+        simulation_steps = {instance.simulation_step() for instance in instances}
+        if len(simulation_steps) > 1:
+            raise ValueError(f"{names}: components run together need the same simulation step, got {simulation_steps}")
+        simulation_step = simulation_steps.pop() or sub_time_step
         increments = 1 if sub_time_step is None else sub_steps(simulation_step, sub_time_step, names)
         starts = [instance.__dict__.get("_clock", 0.) for instance in instances]
         for instance, start in zip(instances, starts):                                 # forcing(over="step")

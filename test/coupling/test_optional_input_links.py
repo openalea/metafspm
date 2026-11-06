@@ -11,7 +11,6 @@ from dataclasses import dataclass
 import numpy as np
 import pytest
 
-from openalea.metafspm.coupling.choregrapher import Choregrapher
 from openalea.metafspm.coupling.component import FunctionalComponent, input_variable, state_variable
 from openalea.metafspm.coupling.composite_wrapper import CompositeModel
 from openalea.metafspm.coupling.translator import Link, Translator
@@ -48,9 +47,9 @@ def _link(**options):
 
 def _plant(translator):
     """Three root segments with their anatomies (four Compartments each), the first segment's liquid volume 0."""
-    Choregrapher().set_simulation_time_step(1)
     g, segments, _ = make_rooted_anatomy(n_segments=3)
     ds = MPGDataStructure(g, from_scale=g.scales.SubOrgan, nodes="Compartment", wiring=wiring(g))
+    ds.simulation_time_step = 1
 
     class Plant(CompositeModel):
         def __init__(self, data_structure):

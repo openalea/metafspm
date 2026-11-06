@@ -5,7 +5,6 @@ from dataclasses import dataclass
 import numpy as np
 import pytest
 
-from openalea.metafspm.coupling.choregrapher import Choregrapher
 from openalea.metafspm.coupling.component import FunctionalComponent, setting, state_variable
 from openalea.metafspm.data_structure.configs import ScalesConfig as scales
 from openalea.metafspm.solve.decorator import rate
@@ -32,7 +31,6 @@ class Lamp(FunctionalComponent):
 
 
 def lamp(**settings):
-    Choregrapher().reset()
     _, ds, _ = make_chain()
     return ds, Lamp(data_structure=ds, **settings)
 

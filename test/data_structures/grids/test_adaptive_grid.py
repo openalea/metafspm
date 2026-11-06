@@ -9,7 +9,6 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from openalea.metafspm.coupling.choregrapher import Choregrapher
 from openalea.metafspm.coupling.component import FunctionalComponent, parameter, state_variable
 from openalea.metafspm.coupling.cross import CrossMapping
 from openalea.metafspm.data_structure.adaptive_grid import AdaptiveGridDataStructure
@@ -19,11 +18,6 @@ from openalea.metafspm.solve.decorator import edge_law, graph_system, node_balan
 DOC = dict(unit="", unit_comment="", description="", min_value=0., max_value=1., value_comment="", references="",
            DOI=[])
 DT, D = 0.5, 1e-3
-
-
-@pytest.fixture(autouse=True)
-def _simulation_time_step():
-    Choregrapher().set_simulation_time_step(DT)
 
 
 def _grid(**options):
