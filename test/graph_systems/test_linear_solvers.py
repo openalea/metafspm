@@ -296,3 +296,23 @@ def test_superlu_reuse_keeps_one_factorisation_per_system():
     for k in range(linear.SYSTEMS_KEPT + 5):
         reuse.solve(*_matrix(n=50), key=("system", k))
     assert len(reuse._patterns) == linear.SYSTEMS_KEPT
+
+
+def test_the_patterns_kept_are_bounded_in_bytes(monkeypatch):
+    """A growing plant's pattern changes at every step: its former ones are dropped beyond PATTERN_BYTES_KEPT (the
+    least recently solved first, the one being solved kept), whatever their number; the solutions unchanged."""
+    A, b = _matrix(n=400)
+    one = linear._Pattern(sp.csc_matrix(A)).nbytes()
+    monkeypatch.setattr(linear, "PATTERN_BYTES_KEPT", 3 * one)
+    solver = linear_solver("superlu")
+    for n in range(400, 410):
+        A, b = _matrix(n=n)
+        np.testing.assert_array_equal(solver.solve(A, b, key="growing"), spsolve(sp.csc_matrix(A), b,
+                                                                                  permc_spec="MMD_AT_PLUS_A"))
+    kept = solver._patterns["growing"]
+    assert len(kept) < linear.PATTERNS_KEPT
+    assert sum(pattern.nbytes() for pattern in kept) <= 3 * one + kept[-1].nbytes()
+    assert kept[-1].shape == (409, 409)                          # the last solved kept
+    monkeypatch.setattr(linear, "PATTERN_BYTES_KEPT", 0)
+    solver.solve(*_matrix(n=50), key="other")
+    assert list(solver._patterns) == ["other"] and len(solver._patterns["other"]) == 1

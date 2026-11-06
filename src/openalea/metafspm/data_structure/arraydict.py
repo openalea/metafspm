@@ -1,22 +1,26 @@
 import numpy as np
 from collections.abc import MutableMapping
 
+SEARCHES_BEFORE_INDEX = 64      # the single-key reads by binary search after a change of the keys, before the dict
+
 
 class ArrayDict(MutableMapping):
     """
     Mapping[int -> float] backed by two aligned arrays:
       - order[i] = key at logical position i  (sorted ascending, invariant)
       - arr[i]   = value for order[i]
-    Keys are found by binary search on order in the bulk operations; a dict key -> index (vid2idx) for O(1) lookups
-    one key at a time is built at the first one, and dropped when the keys change in bulk: a property only written
-    and read in bulk (a DataStructure's write-back) holds no dict, a Python object per key.
+    Keys are found by binary search on order in the bulk operations and in the first SEARCHES_BEFORE_INDEX reads of
+    one key after a change of the keys; a dict key -> index (vid2idx) for O(1) lookups one key at a time is built
+    beyond them (or at a write of one key), and dropped when the keys change in bulk: a property only written and
+    read in bulk (a DataStructure's write-back), or read at a few keys (a group's description), holds no dict, a
+    Python object per key.
     """
 
     def __init__(self, init=None, dtype=np.float64, init_capacity=0):
         cap = max(int(init_capacity), 16)
         self.arr   = np.empty(cap, dtype=dtype)
         self.order = np.empty(cap, dtype=np.int64)
-        self._index = None
+        self._index, self._searches = None, 0
         self.size = 0
         self.version = 0          # incremented by every change (keys or values): a reader can tell it is unchanged
 
@@ -47,7 +51,7 @@ class ArrayDict(MutableMapping):
         self.order[:keys.size] = keys[order]
         self.arr[:keys.size] = values[order]
         self.size = int(keys.size)
-        self._index = None
+        self._index, self._searches = None, 0
 
     # --- key positions ---------------------------------------------------------
 
@@ -98,7 +102,30 @@ class ArrayDict(MutableMapping):
     # --- basic mapping protocol ---------------------------------------------
 
     def __getitem__(self, k: int) -> float:
-        return float(self.arr[self.vid2idx[k]])
+        return float(self.arr[self._position(k)])
+
+    def get(self, k, default=None):
+        try:
+            return self[k]
+        except KeyError:
+            return default
+
+    def _position(self, k) -> int:
+        """Key *k*'s position (KeyError when absent): by binary search for the first SEARCHES_BEFORE_INDEX reads
+        after a change of the keys, by the dict (vid2idx, built then) after."""
+        if self._index is None:
+            searches = getattr(self, "_searches", 0)
+            if searches < SEARCHES_BEFORE_INDEX:
+                self._searches = searches + 1
+                try:
+                    key = int(k)
+                except (TypeError, ValueError):
+                    raise KeyError(k) from None
+                position = int(np.searchsorted(self.order[:self.size], key))
+                if position < self.size and int(self.order[position]) == key and key == k:
+                    return position
+                raise KeyError(k)
+        return self.vid2idx[k]
 
     def __len__(self):  # mapping size
         return self.size
@@ -168,7 +195,7 @@ class ArrayDict(MutableMapping):
         self.arr[:kept] = self.arr[:self.size][keep]
         self.order[:kept] = self.order[:self.size][keep]
         self.size = kept
-        self._index = None
+        self._index, self._searches = None, 0
         return int(doomed.size)
 
     def delete_range(self, start: int, stop: int) -> int:
@@ -182,7 +209,7 @@ class ArrayDict(MutableMapping):
         self.arr[low:self.size - removed] = self.arr[high:self.size]
         self.order[low:self.size - removed] = self.order[high:self.size]
         self.size -= removed
-        self._index = None
+        self._index, self._searches = None, 0
         return removed
 
     # --- handy array views ---------------------------------------------------
@@ -256,7 +283,7 @@ class ArrayDict(MutableMapping):
         self._ensure(total)
         self.order[:total], self.arr[:total] = merged[order], merged_values[order]
         self.size = total
-        self._index = None
+        self._index, self._searches = None, 0
 
     def update(self, d: dict):
         if not d:
@@ -308,7 +335,7 @@ class ArrayDict(MutableMapping):
         self.order[:total] = keys[p]
         self.arr[:total] = np.concatenate((ov, nv))[p]
         self.size = total
-        self._index = None
+        self._index, self._searches = None, 0
 
 
 

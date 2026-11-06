@@ -17,6 +17,12 @@
   day-6 anatomy: 16 templates, 480 MB pickled, once per process before). Use case 1, 8 varied plants to day 8: the
   scope's peak 7.27 → 5.08 GB, the time unchanged (358 s), every step's results identical. A spawned pool is sent
   them as before.
+- **The linear solvers' patterns are bounded in bytes** (`PATTERN_BYTES_KEPT`, 64 MB over the systems, the least
+  recently solved dropped first, the one being solved kept): a growing plant's pattern changes at every step, and
+  its 8 former ones per system were kept (159 MB at 8 plants, day 7, growing with the plants' nonzeros).
+- **`ArrayDict` reads a few keys by binary search:** the first `SEARCHES_BEFORE_INDEX` (64) single-key reads after
+  a change of the keys no longer build the {key: index} dict (a Python object per key); a reduction's group
+  descriptions (one key of every property) built one per property at each batch of kinds (96 MB at 8 plants).
 - **A reduction's library keeps its ids bounded:** each batch of kinds replaces the library's former groups, and
   their ids are now given again (`MPG.reuse_ids()`: the id counter back to the last id in use, any property entry
   above it deleted; `MPGDataStructure.forget_ids_above(last)`: the removed entities forgotten, so that a new entity

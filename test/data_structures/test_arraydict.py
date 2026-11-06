@@ -1,3 +1,4 @@
+import pytest
 from openalea.metafspm.data_structure.arraydict import ArrayDict  # adjust import to your file name
 
 # This test checks the invariance of ArrayDict operations
@@ -79,7 +80,15 @@ def test_bulk_operations_hold_no_key_dict():
     d.update({10: 5., 9: 4.5})
     assert d._index is None
     assert 4 in d and 5 not in d and "x" not in d and d._index is None
-    assert d[4] == 4. and d._index is not None                 # a key on its own: the dict, built once
+    assert d[4] == 4. and d.get(5) is None and d.get(7000) == 7. and d._index is None   # a few keys: searched
+    from openalea.metafspm.data_structure.arraydict import SEARCHES_BEFORE_INDEX
+    for _ in range(SEARCHES_BEFORE_INDEX):
+        assert d[4] == 4.
+    assert d._index is not None                               # many keys on their own: the dict, built once
+    d.insert_many(np.array([2]), np.array([2.]))               # the keys changed: searched again
+    assert d._index is None and d[2] == 2. and d._index is None
+    with pytest.raises(KeyError):
+        d[5]
     assert d._check_invariant()
 
 

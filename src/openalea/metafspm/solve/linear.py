@@ -46,6 +46,9 @@ BLOCKS_MAX = 64                     # the blocks a matrix is solved in, at most 
 PATTERNS_KEPT = 8                   # the patterns a system's cache keeps (its pieces', its subgraphs'; a solver's
                                     # factor: the last one's only)
 SYSTEMS_KEPT = 32                   # the systems a solver keeps caches for (the least recently solved dropped)
+PATTERN_BYTES_KEPT = 64 * 2 ** 20   # the patterns a solver keeps, in bytes over its systems, at most (the least
+                                    # recently solved dropped first; the one being solved always kept): a growing
+                                    # plant's pattern changes at every step, its former ones would pile up
 
 
 class SymmetryError(ValueError):
@@ -61,6 +64,11 @@ class _Pattern:
         self.symmetric_checked = False
         self.blocks = None                   # [(rows, the block's csc entries: positions in the matrix's data)]
         self.state = {}                      # {block: a solver's state}
+
+    def nbytes(self) -> int:
+        """Its arrays' bytes (the pattern, its blocks' rows; not a solver's state)."""
+        blocks = sum(rows.nbytes for rows, _ in self.blocks) if self.blocks is not None else 0
+        return self.indptr.nbytes + self.indices.nbytes + blocks
 
     def matches(self, matrix) -> bool:
         return (matrix.shape == self.shape and matrix.indptr.size == self.indptr.size
@@ -148,7 +156,25 @@ class LinearSolver:
                 if isinstance(state, dict):
                     state.pop("factor", None)
         known.append(found)
+        self._bound(found)
         return found
+
+    def _bound(self, current) -> None:
+        """The least recently solved patterns dropped (the systems least recently solved first, the oldest of each
+        first) while those kept exceed PATTERN_BYTES_KEPT; *current*, being solved, kept."""
+        total = sum(pattern.nbytes() for patterns in self._patterns.values() for pattern in patterns)
+        for key in list(self._patterns):
+            if total <= PATTERN_BYTES_KEPT:
+                break
+            patterns = self._patterns[key]
+            for pattern in list(patterns):
+                if total <= PATTERN_BYTES_KEPT:
+                    break
+                if pattern is not current:
+                    patterns.remove(pattern)
+                    total -= pattern.nbytes()
+            if not patterns:
+                del self._patterns[key]
 
 
 class SuperLU(LinearSolver):
