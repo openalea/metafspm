@@ -203,9 +203,10 @@ structure (ids, labels, complex and parent links, the segment ends, the display 
 | the other entity sets, the Connections | none |
 | `RichardsSoilModel` cell | `pressure_head` (the soil's default colour), `water_potential`, `water_content` (its faces and scalars unfiltered) |
 
-The default views colour by kept variables (the recorder raises at the first frame otherwise). A frame drawing the
-sections is 56, 70 and 89 MB at days 1 to 3 (243, 306 and 389 MB with every variable); the sections' drawing (the
-GranapAnatomy mesh, 55 MB at day 3) is most of what is left.
+The default views colour by kept variables (the recorder raises at the first frame otherwise). At day 3 (2 plants,
+`benchmark.py --outputs`), a frame is 1.4 MB, a frame drawing the first plant's sections 34 MB (89 MB when both
+plants' were drawn, their mesh's vertices not shared), and a checkpoint 7 MB, the anatomy templates and the reduced
+sections (169 MB) written once in `checkpoints/shared` (261 MB per checkpoint for one plant before).
 
 Its tests are in `test/test_assembly.py` (the example's own, as the plant's), on one plant grown from its sowing to
 its first blade's emergence by daily steps (Adel and ArchiSimple grow it whatever the step; the light, the gas
