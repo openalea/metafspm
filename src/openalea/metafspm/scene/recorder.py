@@ -56,8 +56,17 @@ import pandas as pd
 from openalea.metafspm.coupling.declaration import EXTENSIVE_KINDS, INTENSIVE_KINDS, MASSIC_KINDS
 
 COMPARTMENTS = ("Plant", "Soil", "Atmosphere")
+_PACKAGE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))   # openalea.metafspm's folder
 _NOT_SUMMARISED = ("edge", "face", "Connection")      # the relations' variables (flows, conductances between nodes)
 CELL_VOLUME = "<cell volume>"                         # the weight of a grid's intensive variables: its cells' volumes
+
+
+def _warn(message: str) -> None:
+    """A warning shown at the caller's line outside metafspm (the user's scene.run()), not the recorder's."""
+    if sys.version_info >= (3, 12):
+        warnings.warn(message, stacklevel=2, skip_file_prefixes=(_PACKAGE,))
+    else:
+        warnings.warn(message, stacklevel=2)
 
 
 def base_of(ds):
@@ -490,9 +499,8 @@ class SceneRecorder:
         key = (id(ds), tuple(sorted(unweighted)))
         if unweighted and key not in self._warned:
             self._warned.add(key)
-            warnings.warn("SceneRecorder: intensive variables averaged without a declared weight (plain means; "
-                          "state_variable(weight=...) gives the weight of their mean): " + ", ".join(unweighted),
-                          stacklevel=2)
+            _warn("SceneRecorder: intensive variables averaged without a declared weight (plain means; "
+                  "state_variable(weight=...) gives the weight of their mean): " + ", ".join(unweighted))
         return plan
 
     @staticmethod
