@@ -4,6 +4,13 @@
 
 ### Scaling fixes (the final benchmark)
 
+- **Plants differing in a parameter the library does not read share their kinds:** a kind is keyed by the
+  parameters and settings of the components the reduction's library runs (`_library_components`: the reduced
+  systems' and those giving them an input at the cells), no longer by every component's. Before, plants with their
+  own root draws (ArchiSimple's `random_choice`) had kinds of their own only: use case 1, 8 plants with
+  `plant_variability`, every plant evaluated its 6 first kinds again (48 at the first hour instead of 6); to day 2: the kinds
+  729 → 154, the run 160 → 61 s, the scope's peak 6.4 → 3.2 GB, every step's results identical. A
+  checkpoint written before keeps its kinds under the former keys: they are evaluated again after a resume.
 - **A reduction's library keeps its ids bounded:** each batch of kinds replaces the library's former groups, and
   their ids are now given again (`MPG.reuse_ids()`: the id counter back to the last id in use, any property entry
   above it deleted; `MPGDataStructure.forget_ids_above(last)`: the removed entities forgotten, so that a new entity

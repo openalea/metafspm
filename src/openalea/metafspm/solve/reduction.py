@@ -749,10 +749,12 @@ class Reduction:
 
     def _plant_parameters(self, ds) -> dict:
         """{plant index: its parameters and the components' settings}, for every plant of *ds*: the fields read once
-        per component class, each parameter's values once for all the plants."""
+        per component class, each parameter's values once for all the plants. Those of the components the library
+        runs only (_library_components): another component's (a root architecture's random draws, a shoot's
+        development) changes no kind, so plants differing in them only share their kinds."""
         plants = len(ds.entity_ids("Plant"))
         out = {p: {} for p in range(plants)}
-        for component in self.instance.components:
+        for component in _library_components(self.instance, self.systems):
             settings, numeric, located, records = _parameter_fields(type(component))
             for name in settings:
                 value = getattr(component, name)

@@ -260,6 +260,52 @@ def test_the_library_gets_every_per_plant_parameter_and_keys_its_kinds_by_them()
     assert _signature(reduction, first) == _signature(reduction, dict(first))     # by content
 
 
+def test_plants_differing_only_in_a_parameter_the_library_does_not_read_share_their_kinds():
+    """The kinds are keyed by the parameters of the components the library runs only: two plants differing in a
+    parameter of another component (a root architecture's random draws, say) share every kind, as many as one
+    plant's, and solve as the full model."""
+    from openalea.metafspm.solve.reduction import _signature
+
+    @dataclass
+    class Drawing(FunctionalComponent):
+        draw: float = parameter(**DOC, default=0.)
+        drawn: float = state_variable(**DOC, default=0., scale=scales.Plant)
+
+        @rate
+        def _drawn(self, drawn):
+            return drawn + 1.
+
+    def drawing(reduced):
+        class DrawingPlant(_model(reduced)):
+            def __init__(self, data_structure, time_step):
+                self.drawing = Drawing(data_structure=data_structure, time_step=time_step)
+                self.hydraulics = NodeHydraulics(data_structure=data_structure, time_step=time_step)
+                self.couple(self.drawing, self.hydraulics)
+
+            def run(self):
+                self.drawing()
+                self.hydraulics()
+        return DrawingPlant
+
+    solved = {}
+    for reduced in (False, True):
+        model = drawing(reduced)
+        population = population_data_structure(planting([Planting(), Planting(x=1.)], model, plant_scenarios=[
+            {"draw": 1.}, {"draw": 2.}]), model)
+        population.instance.run()
+        solved[reduced] = population.data_structure
+    full, reduced = solved[False], solved[True]
+    reduction = reduced.structure.reduction
+    np.testing.assert_allclose(np.asarray(full.get("draw")), [1., 2.])          # the plants do differ
+    first, second = (reduction._parameters(reduced, k) for k in (0, 1))
+    assert "draw" not in first
+    assert _signature(reduction, first) == _signature(reduction, second)
+    assert len(reduction._kinds) == len(_solved(True).data_structure.structure.reduction._kinds)
+    row = {place: i for i, place in enumerate(_places(full))}
+    rows = [row[place] for place in _places(reduced)]
+    np.testing.assert_allclose(reduced.get("water_potential"), full.get("water_potential")[rows], rtol=1e-11)
+
+
 @pytest.mark.parametrize("n_plants", [1, 2])
 def test_a_subclass_of_the_reduced_component_with_a_per_plant_parameter_gives_the_full_potentials(n_plants):
     """A reduction declares its systems by their component ("NodeHydraulics._hydraulics"): a subclass of it (here
