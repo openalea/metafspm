@@ -2715,6 +2715,25 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
         with self.mtg_ahead():
             self._update_topology()
 
+    def forget_ids_above(self, last: int) -> None:
+        """
+        The entities of ids above *last* forgotten by the next update_topology: their MPG gives those ids again
+        (MPG.reuse_ids), so that an entity of such an id then is a new one (its declared default, or its parent's
+        value), not the removed one's values carried over.
+        """
+        stored_ids = self.__dict__.setdefault("_stored_ids", {})
+        for location, store in self._var_stores().items():
+            if location == "scalar" or not store:
+                continue
+            size = len(next(iter(store.values())))
+            keys = stored_ids.get(location)               # the ids the arrays were built for (_update_topology's)
+            if keys is None or keys.size != size:
+                keys = np.asarray(self.entity_ids(location), dtype=np.int64)[:size]
+            keys = np.array(keys, dtype=np.int64)
+            above = keys > last
+            keys[above] = -1 - np.arange(int(above.sum()), dtype=np.int64)    # ids no entity has: matched by none
+            stored_ids[location] = keys
+
     def _update_topology(self) -> None:
         """
         Extend the graph after the MTG's structure changed (growth, pruning) and carry the registered variables

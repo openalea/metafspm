@@ -216,22 +216,60 @@ class Instances:
     def __init__(self):
         self.templates = {}                               # {key: SectionTemplate}
         self.codes = {}                                   # {key: integer code}, in order of registration
-        self.code = np.zeros(0, dtype=np.int64)           # the template code of each row
-        self.owner = np.zeros(0, dtype=np.int64)
-        self.first = np.zeros(0, dtype=np.int64)
-        self.size = np.zeros(0, dtype=np.int64)
+        # the rows' owner, first id, size and template code (owner, first, size, code: views of their first
+        # _count entries), in buffers that grow by doubling, so that adding rows in increasing ids is amortised O(1)
+        self._columns = {name: np.zeros(0, dtype=np.int64) for name in self.COLUMNS}
+        self._count = 0
         self.template = []                                # the template key of each row
         self.edits = 0                                    # additions and removals
         self.removals = 0                                 # removals alone (an addition extends, a removal rebuilds)
         self._cache = {}
 
+    COLUMNS = ("owner", "first", "size", "code")
+
+    def _column(self, name: str) -> np.ndarray:
+        """The rows' column *name*, a read-only view of its buffer."""
+        view = self._columns[name][:self._count]
+        view.flags.writeable = False
+        return view
+
+    owner = property(lambda self: self._column("owner"))
+    first = property(lambda self: self._column("first"))
+    size = property(lambda self: self._column("size"))
+    code = property(lambda self: self._column("code"))
+
     def __len__(self) -> int:
-        return int(self.first.size)
+        return self._count
 
     def __getstate__(self):
-        state = dict(self.__dict__)
+        state = {name: value for name, value in self.__dict__.items() if name not in ("_columns", "_count")}
+        state.update({name: getattr(self, name).copy() for name in self.COLUMNS})
         state["_cache"] = {}
         return state
+
+    def __setstate__(self, state):
+        state = dict(state)
+        columns = {name: np.asarray(state.pop(name), dtype=np.int64) for name in self.COLUMNS}
+        self.__dict__.update(state)
+        self._set_columns(columns)
+
+    def _set_columns(self, columns: dict) -> None:
+        """The rows' columns replaced by *columns* ({name: array}, equal sizes)."""
+        self._columns = {name: np.array(columns[name], dtype=np.int64) for name in self.COLUMNS}
+        self._count = int(self._columns["first"].size)
+
+    def _append(self, values: dict) -> None:
+        """A row of *values* ({column: value}) added after the last one, its buffers doubled when full."""
+        count = self._count
+        if count == self._columns["first"].size:
+            capacity = max(16, 2 * count)
+            for name, column in self._columns.items():
+                grown = np.zeros(capacity, dtype=np.int64)
+                grown[:count] = column[:count]
+                self._columns[name] = grown
+        for name, value in values.items():
+            self._columns[name][count] = value
+        self._count = count + 1
 
     def _changed(self) -> None:
         self.edits += 1
@@ -244,15 +282,21 @@ class Instances:
             self.codes[template.key] = len(self.codes)
         elif known is not template and not known.same_as(template):
             raise ValueError(f"another template has the key {template.key!r}")
-        if owner in self.rows_by_owner():
+        owners = self.rows_by_owner()
+        if owner in owners:
             raise ValueError(f"vertex {owner} already holds an instance")
         at = int(np.searchsorted(self.first, first))
-        self.owner = np.insert(self.owner, at, owner)
-        self.first = np.insert(self.first, at, first)
-        self.size = np.insert(self.size, at, template.size)
-        self.code = np.insert(self.code, at, self.codes[template.key])
+        values = {"owner": owner, "first": first, "size": template.size, "code": self.codes[template.key]}
+        appended = at == self._count
+        if appended:
+            self._append(values)
+        else:
+            self._set_columns({name: np.insert(getattr(self, name), at, value) for name, value in values.items()})
         self.template.insert(at, template.key)
         self._changed()
+        if appended:            # the usual case (ids grow): the owners' rows kept, the new one added (no rebuild per add)
+            owners[int(owner)] = at
+            self._cache["owners"] = owners
 
     def remove(self, owner: int) -> tuple:
         """Remove *owner*'s instance; returns its (first id, size), or None when it holds none."""
@@ -260,8 +304,7 @@ class Instances:
         if row is None:
             return None
         block = (int(self.first[row]), int(self.size[row]))
-        self.owner, self.first, self.size, self.code = (np.delete(a, row) for a in (self.owner, self.first,
-                                                                                   self.size, self.code))
+        self._set_columns({name: np.delete(getattr(self, name), row) for name in self.COLUMNS})
         del self.template[row]
         self.removals = getattr(self, "removals", 0) + 1
         self._changed()

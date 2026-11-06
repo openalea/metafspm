@@ -347,6 +347,35 @@ class MPG(MTG):
         self.instances.add(int(owner), template, first)
         return list(range(first, first + template.size))
 
+    def reuse_ids(self) -> int:
+        """
+        The ids above the last one in use (a vertex's, an instance block's) given again: the id counter brought back
+        to it, so that the ids freed by removing the last vertices are allocated again (e.g. a reduction's library,
+        whose batches of groups replace each other: its id range, and every array indexed by id, stays bounded
+        instead of growing with every batch). Any property entry left above it is deleted. Returns the last id in
+        use. A DataStructure on this MPG must forget its entities of those ids (MPGDataStructure.forget_ids_above)
+        before its next update_topology, else a new entity would take a removed one's values.
+        """
+        from openalea.metafspm.data_structure.arraydict import ArrayDict
+        last = max(self._scale, default=0)
+        instances = self.__dict__.get("_instances")
+        if instances is not None and len(instances):
+            last = max(last, int((instances.first + instances.size).max()) - 1)
+        if last >= self._id:
+            return int(self._id)
+        for prop in self.properties().values():
+            if isinstance(prop, ArrayDict):
+                if prop.size and prop.order[prop.size - 1] > last:
+                    prop.delete_range(last + 1, self._id + 1)
+            else:
+                for v in [v for v in prop if isinstance(v, (int, np.integer)) and v > last]:
+                    del prop[v]
+        self._id = last
+        self.__dict__["_id_reuses"] = self.__dict__.get("_id_reuses", 0) + 1     # every id cache renewed
+        self.__dict__.pop("_topology_arrays", None)
+        self.__dict__.pop("_bulk_created", None)
+        return int(last)
+
     def remove_instance(self, owner: int) -> bool:
         """Remove *owner*'s instance and the properties written at its vertices; False when it holds none."""
         instances = self.__dict__.get("_instances")
@@ -701,7 +730,7 @@ class MPG(MTG):
         """Changes with any structural edit: vertices added or removed, Compartments or Cells moved (complex edits),
         instances added or removed."""
         return (self.nb_vertices(), getattr(self, "_id", None), self.__dict__.get("_complex_edits", 0),
-                self._instance_edits())
+                self._instance_edits(), self.__dict__.get("_id_reuses", 0))
 
     def wire_junctions(self, from_scale, rules, children=None, filter_in=None, filter_out=None) -> list:
         """

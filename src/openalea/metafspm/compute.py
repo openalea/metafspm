@@ -66,7 +66,8 @@ MEMORY = ("trim", "keep")
 WARM_UP_GROUP = "openalea.metafspm.warm_up"   # the entry points of the ports' warm_up() (warm_up runs them)
 _ACTIVE = []                  # the Computes whose limits() are entered, the innermost last
 POOL_WORK = 1.                # s: the estimated work of a batch above which "auto" starts a pool
-SECONDS_PER_CELL = 1e-5       # s per interior cell of a kind: its evaluation's estimated cost
+SECONDS_PER_CELL = 3e-5       # s per interior cell of a kind: its evaluation's estimated cost (measured on use case 1:
+                              # 3.2e-5 s per cell over 2 plants to day 8, the library's update included)
 START_METHOD = "fork" if sys.platform.startswith("linux") else "spawn"     # the pool's processes
 
 

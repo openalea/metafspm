@@ -2,6 +2,22 @@
 
 ## Unreleased (release2026)
 
+### Scaling fixes (the final benchmark)
+
+- **A reduction's library keeps its ids bounded:** each batch of kinds replaces the library's former groups, and
+  their ids are now given again (`MPG.reuse_ids()`: the id counter back to the last id in use, any property entry
+  above it deleted; `MPGDataStructure.forget_ids_above(last)`: the removed entities forgotten, so that a new entity
+  of a reused id takes its default, not the removed one's values). Before, the library's ids grew with every batch
+  (3.8M at day 3 with 2 plants) and its topology arrays, rebuilt after each batch, with them. The kinds are the same
+  bit for bit (use case 1, 2 plants to day 8: every step's results identical); the kinds' time drops by a fifth at
+  day 8 and no longer grows with the run's length; the main process' peak 3.0 → 2.4 GB.
+- **`Instances.add` is amortised O(1)** when the ids grow (the usual case): its columns (`owner`, `first`, `size`,
+  `code`, now read-only views) live in buffers that double, and the owners' rows are kept instead of rebuilt at each
+  addition (80k instances: 0.14 s, was minutes). Pickles hold the columns as before.
+- **`"auto"`'s estimate recalibrated:** `SECONDS_PER_CELL` 1e-5 → 3e-5 s per interior cell, measured on use case 1
+  (3.2e-5 s over 2 plants to day 8, the library's update included), so that a batch of about a second of work does
+  go to the pool.
+
 ### An optional GPU backend, and repeated runs in a process pool (O-8)
 
 - **`Compute(device="cuda")`** selects the CuPy backend (`openalea.metafspm.backend`: `HostBackend` numpy/scipy,
@@ -29,7 +45,7 @@
 ### Parallel kinds and the sparse solvers (O-6)
 
 - **The kinds in a process pool:** `Compute(workers="auto")` (the default) starts a pool when a batch of missing
-  kinds is worth it (at least 2 kinds and about a second of estimated work, 1e-5 s per interior cell), of
+  kinds is worth it (at least 2 kinds and about a second of estimated work, 3e-5 s per interior cell: measured on use case 1), of
   `min(processors // 2, kinds)` processes, one processor left free, kept for the run and grown to the largest
   batch's need; an integer forces it (`1`: in the process). Each process holds a copy of the reduction (its
   declaration, plant model, templates and the plants' saved registries: sent only when new) and its own library

@@ -399,6 +399,35 @@ def test_the_kinds_no_group_has_any_more_are_released():
     np.testing.assert_allclose(values, fresh_values, rtol=1e-12)
 
 
+def test_the_librarys_ids_stay_bounded_and_its_kinds_do_not_depend_on_the_batches_before():
+    """Each batch of kinds replaces the library's former groups and is given their ids again (MPG.reuse_ids, its
+    DataStructure forgetting the removed entities): the library's id range stays the same batch after batch, and a
+    kind evaluated after other batches is the one a fresh library gives, bit for bit."""
+    class KindedPlant(_model(False)):
+        reduction = Reduction(location="SubOrgan", where={"label": "RootSegment"}, ports=_xylem, keep=_soil_walls,
+                              kind={"soil_water_potential": None}, systems=("NodeHydraulics._hydraulics",))
+
+    def solved(population, soil_water_potential):
+        ds = population.data_structure
+        ds.set("soil_water_potential", np.full(ds.n_nodes(), soil_water_potential))
+        population.instance.run()
+        reduction = ds.structure.reduction
+        (library,) = reduction.__dict__["_libraries"].values()
+        (by_system,) = reduction._kinds.values()
+        return library.population.data_structure.structure._id, {name: kind.D.copy()
+                                                                 for name, kind in by_system.items()}
+
+    population = population_data_structure(planting([Planting()], KindedPlant, {}), KindedPlant)
+    ids = [solved(population, value)[0] for value in (-0.2, -0.3, -0.4)]
+    last_id, kinds = solved(population, -0.5)
+    assert ids[1] == ids[2] == last_id                  # bounded: the second batch on, the same ids
+    fresh = population_data_structure(planting([Planting()], KindedPlant, {}), KindedPlant)
+    _, fresh_kinds = solved(fresh, -0.5)
+    assert kinds.keys() == fresh_kinds.keys()
+    for name in kinds:
+        np.testing.assert_array_equal(kinds[name], fresh_kinds[name])
+
+
 def test_a_kind_derived_value_is_computed_once_per_kind_while_its_factorisation_is_live():
     """@kind_derived(name) on the reduced system's component: run once per kind, on the library (its
     DataStructure's full group nodes given, in the kron's order), the kind's factorisation live; its value in

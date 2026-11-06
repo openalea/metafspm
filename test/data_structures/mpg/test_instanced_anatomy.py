@@ -129,6 +129,44 @@ def test_a_vertex_holds_one_instance_and_a_template_key_one_template():
         h.add_instance(h.add_child(segments[-1]), impostor)
 
 
+def test_the_instances_rows_follow_their_additions_and_removals():
+    """Instances' rows (owner, first id, size, code) stay sorted by first id and their owners' rows right through
+    additions at the end (amortised: no rebuild per addition), additions before others, removals and a pickle."""
+    import pickle
+    import types
+    from openalea.metafspm.data_structure.instances import Instances
+    template = types.SimpleNamespace(key="t", size=10)
+    instances = Instances()
+    instances.templates["t"], instances.codes["t"] = template, 0
+    for k in range(40):                                    # appended: the buffers grow past their first capacity
+        instances.add(100 + k, template, 1000 + 10 * k)
+    instances.add(7, template, 5)                          # before the others
+    assert instances.remove(110) == (1100, 10)
+    assert len(instances) == 40
+    assert np.all(np.diff(instances.first) > 0)
+    assert instances.rows_by_owner() == {int(o): i for i, o in enumerate(instances.owner.tolist())}
+    assert instances.block(7) == (5, 10) and instances.block(139) == (1390, 10) and instances.block(110) is None
+    restored = pickle.loads(pickle.dumps(instances))
+    for name in ("owner", "first", "size", "code"):
+        np.testing.assert_array_equal(getattr(restored, name), getattr(instances, name))
+    restored.add(200, restored.templates["t"], 5000)
+    assert restored.block(200) == (5000, 10) and len(restored) == 41 and len(instances) == 40
+
+
+def test_the_ids_freed_at_the_end_are_given_again():
+    """MPG.reuse_ids: once the last vertices are removed (an instance's block with them), the id counter comes back
+    to the last id in use, the next vertex gets the first freed id; nothing changes while the last id is in use."""
+    _, (h, segments, sections, ds) = _pair()
+    last = h._id
+    assert h.reuse_ids() == last                           # nothing freed
+    child = h.add_child(segments[-1], label=h.labels.SubOrgan.RootSegment, edge_type="<")
+    h.add_instance(child, h.instances.template_of(segments[0]))
+    assert h._id > child
+    h.remove_vertex(child)
+    assert h.reuse_ids() == last and h._id == last
+    assert h.add_child(segments[-1], label=h.labels.SubOrgan.RootSegment, edge_type="<") == last + 1
+
+
 def test_a_view_reads_vertex_by_vertex_as_the_copy():
     (g, segments, sections, _), (h, other_segments, other_sections, _) = _pair()
     for name in ("vessel_index", "kind", "label", "n_id_a"):

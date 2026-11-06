@@ -1335,7 +1335,8 @@ class _Library:
             g = ds.structure
             plant = int(ds.entity_ids("Plant")[0])
             self.remove(g)
-            made = self.place(g, plant, items)
+            ds.forget_ids_above(g.reuse_ids())   # the removed groups' ids given to the new ones, as new entities:
+            made = self.place(g, plant, items)    # the library's ids stay bounded (no growth with the batches)
             self._reset_components()
             ds.update_topology()
             self._read_structure()
