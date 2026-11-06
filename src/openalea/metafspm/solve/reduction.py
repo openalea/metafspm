@@ -32,7 +32,10 @@ Declared on the plant model, before its structure is built (as nodes= and wiring
 The kinds of classes are kept once evaluated while their family (template, exact values, parameters) is in use: they
 saturate; an exact kind no group has any more is released. The missing kinds are evaluated in batches of at most
 Compute.current().kind_batch interior cells, in one library population per plant parameters kept on the Reduction;
-the kinds are checkpointed (shared parts, saved once), so a resumed run evaluates none again.
+the kinds are checkpointed (shared parts, saved once), so a resumed run evaluates none again. The groups are arrays
+(group_table, cached per topology; assignment: each group's corners, their weights and kinds), batched by template
+and kind: the solve's terms fill a sparse pattern cached per topology and node set, the outputs (outputs,
+kept_outputs) and the recoveries are the kinds' values weighted; no Python loop over the groups.
 
 A value a kind derives (a section's condensed volumes, say) is a method of the reduced system's component tagged
 @kind_derived(name) (solve.decorator): run once per kind on the library, while the kind's interior factorisation
@@ -96,27 +99,39 @@ class Relative:
 
     def classify(self, value) -> float:
         """The nearest class of *value* (a value not positive or not finite: itself)."""
-        value = float(value)
-        if value <= 0 or not np.isfinite(value):
-            return value
-        base = np.log1p(float(self.width))
-        return float(np.exp(np.round(np.log(value) / base) * base))
+        return float(self._nearest(np.array([float(value)]))[0])
 
     def corners(self, value) -> tuple:
         """((weight, class), ...) of *value*: its two neighbouring classes weighted by its place between them (one at a
         class value), or its nearest class without interpolation (a value not positive or not finite: itself)."""
-        value = float(value)
-        if not self.interpolate or value <= 0 or not np.isfinite(value):
-            return ((1., self.classify(value)),)
+        options = self.corner_arrays(np.array([float(value)]))
+        return tuple((float(weight[0]), float(classes[0])) for weight, classes in options if weight[0] > 0)
+
+    def _nearest(self, values) -> np.ndarray:
+        special = ~(values > 0) | ~np.isfinite(values)
         base = np.log1p(float(self.width))
-        k = np.floor(np.log(value) / base)
-        low, high = float(np.exp(k * base)), float(np.exp((k + 1) * base))
-        weight = (value - low) / (high - low)
-        if weight <= CLASS_ROUNDING:
-            return ((1., low),)
-        if weight >= 1. - CLASS_ROUNDING:
-            return ((1., high),)
-        return ((1. - weight, low), (weight, high))
+        nearest = np.exp(np.round(np.log(np.where(special, 1., values)) / base) * base)
+        return np.where(special, values, nearest)
+
+    def corner_arrays(self, values) -> tuple:
+        """corners of each of *values* at once: ((weights, classes),) without interpolation, else ((low weights, low
+        classes), (high weights, high classes)), the high weight 0 (and its class the low one) for a value at a class
+        or not positive or not finite (corners' one class)."""
+        values = np.asarray(values, dtype=float)
+        if not self.interpolate:
+            return ((np.ones(values.shape), self._nearest(values)),)
+        special = ~(values > 0) | ~np.isfinite(values)
+        safe = np.where(special, 1., values)
+        base = np.log1p(float(self.width))
+        k = np.floor(np.log(safe) / base)
+        low, high = np.exp(k * base), np.exp((k + 1) * base)
+        weight = (safe - low) / (high - low)
+        at_low = weight <= CLASS_ROUNDING
+        at_high = ~at_low & (weight >= 1. - CLASS_ROUNDING)
+        single = special | at_low | at_high
+        first = np.where(special, values, np.where(at_high, high, low))
+        return ((np.where(single, 1., 1. - weight), first),
+                (np.where(single, 0., weight), np.where(single, first, high)))
 
 
 CLASS_ROUNDING = 1e-12          # a value within this fraction of the class interval from a class: that class alone
@@ -208,6 +223,7 @@ class Reduction:
     def __getstate__(self):
         state = dict(self.__dict__)        # a checkpoint: the declaration, the templates and the kinds (shared parts)
         state.update(_blends={}, _libraries={}, model=None, instance=None, g=None)
+        state.pop("_table", None)          # the groups' arrays: per DataStructure and topology
         return state
 
     def __setstate__(self, state):
@@ -221,6 +237,7 @@ class Reduction:
         """A copy for one population's MPG *g* (the templates shared, the kinds its own)."""
         out = copy.copy(self)
         out._kinds, out._blends, out._libraries, out.g = {}, {}, {}, g
+        out.__dict__.pop("_table", None)
         return out
 
     def bind(self, model, instance) -> None:
@@ -279,47 +296,48 @@ class Reduction:
         not give)."""
         return self._full[key]
 
+    def group_table(self, ds):
+        """The DataStructure's reduced groups as arrays (_GroupTable: their entity indices, vertices, templates, first
+        nodes, plants, kept nodes), None without any; cached per topology (read-only arrays)."""
+        stamp = ds._topology_stamp() if hasattr(ds, "_topology_stamp") else ds.topology_version
+        cached = self.__dict__.get("_table")
+        if cached is not None and cached[0] == stamp and cached[1] == id(ds):
+            return cached[2]
+        table = _GroupTable.build(self, ds)
+        self.__dict__["_table"] = (stamp, id(ds), table)
+        return table
+
     def reduced_groups(self, ds) -> dict:
         """{group entity index: (its vertex, its reduced template key)} of the DataStructure's reduced groups."""
-        g = ds.structure
-        if not g._instanced():
+        table = self.group_table(ds)
+        if table is None:
             return {}
-        instances = g.instances
-        ids = ds.entity_ids(self.location)
-        index = {int(v): i for i, v in enumerate(ids.tolist())}
-        out = {}
-        for owner, key in zip(instances.owner.tolist(), instances.template):
-            if key in self._full and owner in index:
-                out[index[owner]] = (owner, key)
-        return out
+        return dict(zip(table.index.tolist(), zip(table.owner.tolist(), table.template)))
 
     # ── The terms of a graph system's solve ──
 
     def terms(self, component, system: str, ds, node_ids) -> tuple:
         """(D, e) on the solved nodes *node_ids*: the reduced groups' interiors' terms (sparse, nodes × nodes, and a
-        vector), or None when no solved group is reduced."""
-        groups = self.reduced_groups(ds)
-        if not groups or self.library:
+        vector), or None when no solved group is reduced. Batched by template and kind: the sparse pattern is cached
+        per topology and node set, only its values (each group's kinds' weighted D) filled at each call."""
+        if self.library:
             return None
-        n = node_ids.size
-        position = {int(v): i for i, v in enumerate(node_ids.tolist())}
-        kinds = self.group_kinds(ds, groups, release=True)
-        rows, cols, values, e = [], [], [], np.zeros(n)
-        g = ds.structure
-        for i, (owner, key) in groups.items():
-            first, _ = g.instances.block(owner)
-            kept = first + np.flatnonzero(self._reduced_scale(key) == g.scales.Compartment)
-            local = np.array([position.get(int(v), -1) for v in kept.tolist()])
-            if (local < 0).any():
-                continue                                   # the group is not solved (a filter)
-            kind = kinds[i][system]
-            e[local] += kind.e + self._input_terms(ds, kind, i, kept, owner)
-            r, c = np.meshgrid(local, local, indexing="ij")
-            rows.append(r.ravel()), cols.append(c.ravel()), values.append(kind.D.ravel())
-        if not rows:
+        assignment = self.assignment(ds, release=True)
+        if assignment is None:
             return None
-        D = coo_matrix((np.concatenate(values), (np.concatenate(rows), np.concatenate(cols))), shape=(n, n)).tocsr()
-        return D, e
+        pattern = assignment.table.pattern(node_ids)
+        if pattern is None:
+            return None
+        n = pattern.size
+        values, e = [], np.zeros(n)
+        for rows, local in pattern.blocks:
+            D = assignment.combine(rows, lambda kind: kind[system].D)
+            vector = assignment.combine(rows, lambda kind: kind[system].e)
+            vector = vector + self._input_terms(ds, assignment, system, rows)
+            e[local.reshape(-1)] += vector.reshape(-1)
+            values.append(D.reshape(-1))
+        data = np.concatenate(values)[pattern.permutation]
+        return csr_matrix((data, pattern.indices, pattern.indptr), shape=(n, n)), e
 
     def term_values(self, component, system: str, ds, values) -> np.ndarray:
         """D x + e of *system*'s reduced groups for the node values *values* (DataStructure order): the interiors'
@@ -334,127 +352,214 @@ class Reduction:
         return out
 
     def outputs(self, ds, name: str) -> np.ndarray:
-        """Group variable *name* of each group of the location: its kind's (its library full group's value) for a
-        reduced group, NaN elsewhere."""
+        """Group variable *name* of each group of the location: its kind's (its library full group's value; a blend's
+        its parts' weighted) for a reduced group, NaN elsewhere."""
         out = np.full(len(ds.entity_ids(self.location)), np.nan)
-        groups = self.reduced_groups(ds)
-        if not groups or self.library:
+        assignment = None if self.library else self.assignment(ds)
+        if assignment is None:
             return out
-        kinds = self.group_kinds(ds, groups)
-        for i, by_system in kinds.items():
-            kind = next(iter(by_system.values()))
-            out[i] = (kind.outputs or {}).get(name, np.nan)
+        rows = np.arange(assignment.table.index.size)
+
+        def value(kind):
+            found = (next(iter(kind.values())).outputs or {}).get(name, np.nan)
+            try:
+                return float(found)
+            except (TypeError, ValueError):
+                return np.nan
+        out[assignment.table.index] = assignment.combine(rows, value)
         return out
+
+    def kept_outputs(self, ds, name: str, system: str = None) -> list:
+        """[(kept nodes, values), ...] per reduced template: a kind's output *name* of one value per kept node (a
+        @kind_derived vector, e.g. the condensed volumes) on each reduced group's kept nodes (DataStructure indices,
+        groups × kept), its kinds' weighted; [] without a reduced group."""
+        assignment = None if self.library else self.assignment(ds)
+        if assignment is None:
+            return []
+        system = system or self.systems[0]
+        table = assignment.table
+        return [(table.kept_of(rows), assignment.combine(rows, lambda kind: kind[system].outputs[name]))
+                for rows in table.by_template]
 
     def _reduced_scale(self, key):
         return self._reduced[self._full[key].key].scale
 
-    def _input_terms(self, ds, kind, group, kept, owner) -> np.ndarray:
-        """The change of a group's kept sources for its own inputs: the kept nodes' (kept input, NaN: the kind's)
-        and its categories' ({category: value} group input)."""
-        if kind.parts:
-            return sum(weight * self._input_terms(ds, part, group, kept, owner) for weight, part in kind.parts)
-        out = np.zeros(kind.D.shape[0])
+    def _input_terms(self, ds, assignment, system: str, rows) -> np.ndarray:
+        """The change of the groups *rows* (table rows of one template)'s kept sources for their own inputs, their
+        kinds' weighted (groups × kept): the kept nodes' (kept input, NaN: the kind's) and their categories'
+        ({category: value} group input, read per group: a record each)."""
+        table = assignment.table
+        kept = table.kept_of(rows)
+        out = np.zeros(kept.shape)
+        if not self.inputs:
+            return out
+        for corner in range(assignment.kind.shape[1]):
+            chosen = assignment.kind[rows, corner]
+            for k in np.unique(chosen[chosen >= 0]).tolist():
+                at = np.flatnonzero(chosen == k)
+                weight = assignment.weights[rows[at], corner][:, None]
+                out[at] += weight * self._part_input_terms(ds, assignment.kinds[k][system], table.index[rows[at]],
+                                                           kept[at])
+        return out
+
+    def _part_input_terms(self, ds, kind, groups, kept) -> np.ndarray:
+        """One (not blended) kind's input terms for its *groups* (entity indices) of *kept* nodes (DataStructure
+        indices, groups × kept)."""
+        out = np.zeros(kept.shape)
         for name, response in kind.inputs.items():
             declared = self.inputs[name]
             if declared.get("kept") and ds.has(declared["kept"]):
-                values = np.asarray(ds.get(declared["kept"]), dtype=float)[ds.index_of(kept)]
+                values = np.asarray(ds.get(declared["kept"]), dtype=float)[kept]
                 delta = np.where(np.isfinite(values), values - response["base_kept"], 0.)
-                out += response["kept"] @ delta
+                out += delta @ np.asarray(response["kept"]).T
             if declared.get("group") and ds.has(declared["group"]):
                 given = np.asarray(ds.get(declared["group"]), dtype=object).reshape(-1)
-                chosen = given[group] if group < given.size else None
-                for category, value in (chosen or {}).items():
-                    if category in response["categories"]:
-                        unit, base = response["categories"][category]
-                        out += float(value) * unit - base
+                for row, group in enumerate(groups.tolist()):
+                    chosen = given[group] if group < given.size else None
+                    for category, value in (chosen or {}).items():
+                        if category in response["categories"]:
+                            unit, base = response["categories"][category]
+                            out[row] += float(value) * unit - base
         return out
 
     # ── Kinds ──
 
-    def _kind_corners(self, ds, groups) -> dict:
-        """{group: ((weight, the kind variables' values or classes), ...)}: one kind's values, or the corners of its
-        classes it lies between (Relative(interpolate=True): two per such variable, their weights' products)."""
-        per_variable = {i: [] for i in groups}
-        owner = None
+    def _corners(self, ds, table) -> tuple:
+        """(weights, values): each group's corners (groups × corners) and their kind variables' values or classes
+        (groups × corners × variables): one kind's values, or the corners of the classes it lies between
+        (Relative(interpolate=True): two per such variable, their weights' products; a corner of weight 0 pads a
+        group of fewer corners)."""
+        size = table.index.size
+        weights, values = np.ones((size, 1)), np.zeros((size, 1, 0))
         for name, classes in self.kind.items():
-            values = np.asarray(ds.get(name))
-            if ds.location(name) == "node":
-                if owner is None:
-                    owner = np.asarray(ds.owner(self.location))
-                first = _first_nodes(owner)
-                picked = {i: float(values[first[i]]) for i in groups}
-            else:
-                picked = {i: float(values[i]) for i in groups}
-            for i, value in picked.items():
-                per_variable[i].append(((1., value),) if classes is None else classes.corners(value))
-        out = {}
-        for i, choices in per_variable.items():
-            corners = [(1., ())]
-            for options in choices:
-                corners = [(weight * w, values + (v,)) for weight, values in corners for w, v in options]
-            out[i] = tuple(corners)
-        return out
+            raw = np.asarray(ds.get(name))
+            picked = np.asarray(raw[table.first_node] if ds.location(name) == "node" else raw[table.index],
+                                dtype=float)
+            options = ((np.ones(size), picked),) if classes is None else classes.corner_arrays(picked)
+            option_weights = np.stack([weight for weight, _ in options], axis=1)
+            option_values = np.stack([value for _, value in options], axis=1)
+            corners, count = weights.shape[1], option_weights.shape[1]
+            weights = (weights[:, :, None] * option_weights[:, None, :]).reshape(size, corners * count)
+            values = np.concatenate([np.repeat(values, count, axis=1),
+                                     np.tile(option_values, (1, corners))[:, :, None]], axis=2)
+        return weights, values
 
     def _parameters(self, ds, plant_index) -> dict:
         """The plant's parameters and the components' settings ({name: value}), for its kinds' key and library."""
-        from dataclasses import fields
-        out = {}
+        return self._plant_parameters(ds)[plant_index]
+
+    def _plant_parameters(self, ds) -> dict:
+        """{plant index: its parameters and the components' settings}, for every plant of *ds*: the fields read once
+        per component class, each parameter's values once for all the plants."""
+        plants = len(ds.entity_ids("Plant"))
+        out = {p: {} for p in range(plants)}
         for component in self.instance.components:
-            for f in fields(component):
-                meta = f.metadata
-                if meta.get("variable_type") == "setting":
-                    out[f.name] = getattr(component, f.name)
-            located = {f.name for f in fields(component)
-                       if f.metadata.get("scale") is not None or f.metadata.get("location") is not None}
-            for name in type(component)._plant_parameter_fields():
-                if name in located:              # per entity (an edge's, a node's): the DataStructure's, not a kind's
+            settings, numeric, located, records = _parameter_fields(type(component))
+            for name in settings:
+                value = getattr(component, name)
+                for p in out:
+                    out[p][name] = value
+            for name in numeric:
+                if name in located:          # per entity (an edge's, a node's): the DataStructure's, not a kind's
                     continue
                 try:
                     values = np.asarray(component.parameter_values(name, "Plant"), dtype=float).reshape(-1)
                 except (KeyError, ValueError, AttributeError):
                     values = np.asarray([getattr(component, name)], dtype=float)
-                out[name] = float(values[plant_index] if values.size > plant_index else values[0])
-            for f in fields(component):                  # its Plant-scale parameters, any value (a dict, a boolean)
-                if (f.metadata.get("variable_type") == "parameter" and f.name not in out
-                        and f.metadata.get("scale") == _plant_scale() and ds.has(f.name)
-                        and ds.location(f.name) == "Plant"):
-                    values = ds.get(f.name)
-                    value = values[plant_index] if len(values) > plant_index else values[0]
-                    out[f.name] = value.item() if isinstance(value, np.generic) else value
+                for p in out:
+                    out[p][name] = float(values[p] if values.size > p else values[0])
+            for name in records:             # its Plant-scale parameters, any value (a dict, a boolean)
+                if not (ds.has(name) and ds.location(name) == "Plant"):
+                    continue
+                values = ds.get(name)
+                for p in out:
+                    if name in out[p]:
+                        continue
+                    value = values[p] if len(values) > p else values[0]
+                    out[p][name] = value.item() if isinstance(value, np.generic) else value
         return out
+
+    def assignment(self, ds, release: bool = False):
+        """
+        The kinds of the DataStructure's reduced groups (_Assignment: each group's corners, their weights and kinds),
+        None without a reduced group; the missing kinds evaluated (per plant's parameters, in batches:
+        _evaluate_missing). Vectorised: the groups' corners as arrays, a loop over the distinct kinds only. *release*:
+        the kinds no group has are released (their memory freed, evaluated again if a group comes back to one),
+        except a class's whose exact kind values, template and parameters a current group has (a growing section's
+        former classes: kept, a bounded set, so that the kinds saturate). Without classes the kinds kept are those of
+        the plant's current groups only.
+        """
+        table = self.group_table(ds)
+        if table is None:
+            return None
+        weights, values = self._corners(ds, table)
+        parameters = self._plant_parameters(ds)
+        signatures = {p: _signature(parameters[p]) for p in np.unique(table.plant).tolist()}
+        signature_names = sorted(set(signatures.values()))
+        lookup = np.zeros(int(table.plant.max()) + 1 if table.plant.size else 0, dtype=np.int64)
+        for p, signature in signatures.items():
+            lookup[p] = signature_names.index(signature)
+        signature_code = lookup[table.plant]
+        group, corner = np.nonzero(weights > 0)          # group by group, corner by corner (their declared order)
+        chosen = np.ascontiguousarray(values[group, corner])
+        rows = np.column_stack([table.code[group], signature_code[group], chosen.view(np.int64)])
+        _, first, inverse = np.unique(rows, axis=0, return_index=True, return_inverse=True)
+        keys, position, local = [], {}, np.empty(first.size, dtype=np.int64)
+        missing = {}
+        for u in np.argsort(first, kind="stable").tolist():                 # in order of first appearance
+            at = int(first[u])
+            g = int(group[at])
+            kind_values = tuple(float(value) for value in chosen[at])
+            signature = signature_names[int(signature_code[g])]
+            key = (table.keys[int(table.code[g])], kind_values, signature)
+            if key not in position:                      # -0. and 0.: one key
+                position[key] = len(keys)
+                keys.append(key)
+                if key not in self._kinds:
+                    plant = int(table.plant[g])
+                    missing.setdefault(signature, (parameters[plant], {}))[1].setdefault(
+                        key, (int(table.owner[g]), key[0], kind_values))
+            local[u] = position[key]
+        for plant_parameters, requests in missing.values():
+            self._evaluate_missing(plant_parameters, requests)
+        kind = np.full(weights.shape, -1, dtype=np.int64)
+        kind[group, corner] = local[np.asarray(inverse).reshape(-1)]
+        out = _Assignment(table=table, weights=weights, kind=kind, keys=keys,
+                          kinds=[self._kinds[key] for key in keys])
+        if release:
+            self._release(set(keys))
+        return out
+
+    def _release(self, used: set) -> None:
+        """The kinds not in *used* released, a class's of a current family kept (assignment's rule); the blends
+        dropped (made again when asked)."""
+        exact = [position for position, classes in enumerate(self.kind.values()) if classes is None]
+        current = {self._class_family(kind_key, exact) for kind_key in used}
+        for kind_key in [k for k in self._kinds if k not in used]:
+            if len(exact) < len(self.kind) and self._class_family(kind_key, exact) in current:
+                continue                              # a class of a current group's family: kept
+            for kind in self._kinds.pop(kind_key).values():
+                kind.release()
+        self.__dict__["_blends"] = {}
 
     def group_kinds(self, ds, groups, release: bool = False) -> dict:
         """
-        {group: {system: Kind}}: the kinds of *groups*, the missing ones evaluated (per plant's parameters, in
-        batches: _evaluate_missing); a group between two classes of a Relative variable gets their blend (_blend,
-        kept while its weights are the same). *release*: *groups* are all the DataStructure's reduced groups (a
-        solve's terms), and the kinds none of them has are released (their memory freed, evaluated again if a group
-        comes back to one), except a class's whose exact kind values, template and parameters a current group has (a
-        growing section's former classes: kept, a bounded set, so that the kinds saturate). Without classes the kinds
-        kept are those of the plant's current groups only.
+        {group: {system: Kind}}: the kinds of *groups* (entity indices, e.g. reduced_groups' keys), the missing ones
+        evaluated (assignment's); a group between two classes of a Relative variable gets their blend (_blend, kept
+        until the next release). *release*: as assignment's (*groups* all the DataStructure's reduced groups). For
+        a group's own kind; the solve's terms, the outputs and the recoveries use assignment's arrays.
         """
-        corners = self._kind_corners(ds, groups)
-        plant = np.asarray(ds.owner("Plant"))
-        owner = np.asarray(ds.owner(self.location))
-        first = _first_nodes(owner)
-        by_plant, keys, missing = {}, {}, {}
-        for i, (vertex, key) in groups.items():
-            p = int(plant[first[i]])
-            if p not in by_plant:
-                parameters = self._parameters(ds, p)
-                by_plant[p] = (parameters, _signature(parameters))
-            parameters, signature = by_plant[p]
-            keys[i] = tuple((weight, (key, values, signature)) for weight, values in corners[i])
-            for _, kind_key in keys[i]:
-                if kind_key not in self._kinds:
-                    missing.setdefault(signature, (parameters, {}))[1].setdefault(kind_key, (vertex, key,
-                                                                                             kind_key[1]))
-        for parameters, requests in missing.values():
-            self._evaluate_missing(parameters, requests)
+        assignment = self.assignment(ds, release=release)
+        if assignment is None:
+            return {}
+        table = assignment.table
+        row_of = dict(zip(table.index.tolist(), range(table.index.size)))
         blends = self.__dict__.setdefault("_blends", {})
         out = {}
-        for i, chosen in keys.items():
+        for i in groups:
+            row = row_of[int(i)]
+            on = np.flatnonzero(assignment.kind[row] >= 0)
+            chosen = tuple((float(assignment.weights[row, c]), assignment.keys[assignment.kind[row, c]]) for c in on)
             if len(chosen) == 1:
                 out[i] = self._kinds[chosen[0][1]]
                 continue
@@ -463,17 +568,6 @@ class Reduction:
                                                   for weight, kind_key in chosen])
                                   for system in self._kinds[chosen[0][1]]}
             out[i] = blends[chosen]
-        if release:
-            used = {kind_key for chosen in keys.values() for _, kind_key in chosen}
-            exact = [position for position, classes in enumerate(self.kind.values()) if classes is None]
-            current = {self._class_family(kind_key, exact) for kind_key in used}
-            for kind_key in [k for k in self._kinds if k not in used]:
-                if len(exact) < len(self.kind) and self._class_family(kind_key, exact) in current:
-                    continue                              # a class of a current group's family: kept
-                for kind in self._kinds.pop(kind_key).values():
-                    kind.release()
-            for chosen in [c for c in blends if c not in set(keys.values())]:
-                del blends[chosen]
         return out
 
     @staticmethod
@@ -522,41 +616,219 @@ class Reduction:
         interior for all its groups (its columns at once), freed after. For outputs (a frame's sections drawn whole):
         the DataStructure stays reduced.
         """
-        every = self.reduced_groups(ds)
-        if not every or self.library:
+        assignment = None if self.library else self.assignment(ds)
+        if assignment is None:
             return {}
-        chosen = every if groups is None else {int(i): every[int(i)] for i in groups if int(i) in every}
+        table = assignment.table
+        if groups is None:
+            rows = np.arange(table.index.size)
+        else:
+            row_of = np.full(int(max(table.index.max(), max((int(i) for i in groups), default=0))) + 1, -1,
+                             dtype=np.int64)
+            row_of[table.index] = np.arange(table.index.size)
+            asked = np.asarray([int(i) for i in groups], dtype=np.int64)
+            rows = row_of[asked[(asked >= 0) & (asked < row_of.size)]]
+            rows = np.unique(rows[rows >= 0])
         system = system or self.systems[0]
         values = np.asarray(ds.get(self.unknown(system)), dtype=float)
-        kinds = self.group_kinds(ds, chosen)
-        g = ds.structure
-        by_kind = {}
-        for i, (owner, key) in chosen.items():
-            kind = kinds[i][system]
-            first, _ = g.instances.block(owner)
-            kept = first + np.flatnonzero(self._reduced_scale(key) == g.scales.Compartment)
-            column = values[ds.index_of(kept)]
-            for weight, part in (kind.parts or ((1., kind),)):              # a blend's parts, each solved once
-                by_kind.setdefault(id(part), (part, []))[1].append((i, weight, column))
         out = {}
-        for part, members in by_kind.values():
-            interior = part.recover(np.column_stack([member[2] for member in members]))
-            interior = np.asarray(interior).reshape(len(part.interior_rows), len(members))
-            for column, (i, weight, _) in enumerate(members):
-                if i in out:
-                    out[i][4][...] += weight * interior[:, column]
-                else:
-                    owner, key = chosen[i]
-                    out[i] = (owner, key, self._full[key], part.interior_rows, weight * interior[:, column])
-            del interior
-        return out
+        for code_rows in table.by_template:
+            at = code_rows[np.isin(code_rows, rows)]
+            if not at.size:
+                continue
+            columns = values[table.kept_of(at)]                          # groups × kept
+            chosen = assignment.kind[at]
+            for k in np.unique(chosen[chosen >= 0]).tolist():          # each kind solved once, its groups at once
+                part = assignment.kinds[k][system]
+                members, corners = np.nonzero(chosen == k)
+                interior = np.asarray(part.recover(columns[members].T)).reshape(len(part.interior_rows),
+                                                                               members.size)
+                weights = assignment.weights[at[members], corners]
+                for column, (member, weight) in enumerate(zip(members.tolist(), weights.tolist())):
+                    row = int(at[member])
+                    i = int(table.index[row])
+                    if i in out:
+                        out[i][4][...] += weight * interior[:, column]
+                    else:
+                        key = table.template[row]
+                        out[i] = (int(table.owner[row]), key, self._full[key], part.interior_rows,
+                                  weight * interior[:, column])
+                del interior
+        return dict(sorted(out.items()))
 
     def recover(self, ds, group: int, values, system: str = None) -> tuple:
         """A reduced group's interior: (its full template's local rows, the values of the system's unknown there),
         from its kind and its kept nodes' *values* (the unknown on them, DataStructure order)."""
-        groups = self.reduced_groups(ds)
-        kind = self.group_kinds(ds, {group: groups[group]})[group][system or self.systems[0]]
+        kind = self.group_kinds(ds, (group,))[group][system or self.systems[0]]
         return kind.interior_rows, kind.recover(values)
+
+
+class _GroupTable:
+    """
+    A DataStructure's reduced groups as arrays, in their instances' order (Reduction.group_table, cached per
+    topology): their entity indices at the location (index), vertices (owner), reduced template keys (template, and
+    code: the position in keys), first vertex (first), first node (first_node, a DataStructure index), plant (an
+    entity index); by template, the table rows of each (by_template) and their kept nodes' vertices (kept_vids,
+    rows × kept). Every array read-only.
+    """
+
+    def __init__(self, ds, index, owner, template, keys, code, first, first_node, plant, offsets):
+        self.ds_id = id(ds)
+        self.index, self.owner, self.template, self.keys, self.code = index, owner, template, keys, code
+        self.first, self.first_node, self.plant = first, first_node, plant
+        self.by_template = [np.flatnonzero(code == c) for c in range(len(keys))]
+        self.within = np.empty(code.size, dtype=np.int64)          # each row's position in its template's rows
+        for rows in self.by_template:
+            self.within[rows] = np.arange(rows.size)
+        self.kept_vids = [first[rows][:, None] + offsets[c][None, :] for c, rows in enumerate(self.by_template)]
+        self._kept_nodes = [None] * len(keys)
+        self._index_of = ds.index_of
+        self._patterns = {}
+        for array in (index, owner, code, first, first_node, plant, self.within, *self.by_template, *self.kept_vids):
+            array.setflags(write=False)
+
+    @classmethod
+    def build(cls, reduction, ds):
+        g = ds.structure
+        if not g._instanced():
+            return None
+        instances = g.instances
+        code_of = {code: key for key, code in instances.codes.items()}
+        reduced = np.array([code for key, code in instances.codes.items() if key in reduction._full], dtype=np.int64)
+        rows = np.flatnonzero(np.isin(instances.code, reduced))
+        ids = np.asarray(ds.entity_ids(reduction.location), dtype=np.int64)
+        owner = instances.owner[rows]
+        position = np.searchsorted(ids, owner).clip(0, max(ids.size - 1, 0))
+        located = (ids.size > 0) & (ids[position] == owner) if ids.size else np.zeros(owner.size, dtype=bool)
+        rows, owner, index = rows[located], owner[located], position[located]
+        if not rows.size:
+            return None
+        instance_code = instances.code[rows]
+        used, code = np.unique(instance_code, return_inverse=True)
+        keys = [code_of[int(c)] for c in used.tolist()]
+        template = [keys[c] for c in code.tolist()]
+        from openalea.metafspm.data_structure.configs import ScalesConfig
+        offsets = [np.flatnonzero(reduction._reduced_scale(key) == ScalesConfig.Compartment) for key in keys]
+        location_owner = np.asarray(ds.owner(reduction.location))
+        first_node = _first_nodes(location_owner)
+        first_node = np.where(index < first_node.size, first_node[np.minimum(index, max(first_node.size - 1, 0))],
+                              -1) if first_node.size else np.full(index.size, -1, dtype=np.int64)
+        plant_of = np.asarray(ds.owner("Plant"))
+        plant = np.where(first_node >= 0, plant_of[np.maximum(first_node, 0)], -1) if plant_of.size else \
+            np.full(index.size, -1, dtype=np.int64)
+        return cls(ds, index.astype(np.int64), owner.astype(np.int64), template, keys,
+                   np.asarray(code, dtype=np.int64).reshape(-1), instances.first[rows].astype(np.int64),
+                   first_node.astype(np.int64), plant.astype(np.int64), offsets)
+
+    def kept_of(self, rows) -> np.ndarray:
+        """The kept nodes (DataStructure indices, rows × kept) of the table *rows*, all of one template."""
+        rows = np.asarray(rows, dtype=np.int64)
+        if not rows.size:
+            return np.zeros((0, 0), dtype=np.int64)
+        c = int(self.code[rows[0]])
+        if self._kept_nodes[c] is None:
+            vids = self.kept_vids[c]
+            nodes = np.asarray(self._index_of(vids.reshape(-1)), dtype=np.int64).reshape(vids.shape)
+            nodes.setflags(write=False)
+            self._kept_nodes[c] = nodes
+        return self._kept_nodes[c][self.within[rows]]
+
+    def pattern(self, node_ids):
+        """The sparse pattern of the groups' terms on the solved nodes *node_ids* (_Pattern), None when none of the
+        groups is solved (all its kept nodes among them); cached per node set."""
+        node_ids = np.asarray(node_ids, dtype=np.int64)
+        key = (node_ids.size, hash(node_ids.tobytes()))
+        if key not in self._patterns:
+            self._patterns.clear()                       # one node set at a time (a step's solve)
+            self._patterns[key] = _Pattern.build(self, node_ids)
+        return self._patterns[key]
+
+
+class _Pattern:
+    """The COO pattern of the reduced groups' terms on a node set, as CSR: blocks [(table rows, their kept nodes'
+    positions: rows × kept)], one per template; permutation: the CSR order of the blocks' entries (each group's
+    kept × kept, row by row), indices and indptr."""
+
+    def __init__(self, size, blocks, permutation, indices, indptr):
+        self.size, self.blocks = size, blocks
+        self.permutation, self.indices, self.indptr = permutation, indices, indptr
+
+    @classmethod
+    def build(cls, table, node_ids):
+        n = node_ids.size
+        order = np.argsort(node_ids, kind="stable")
+        sorted_ids = node_ids[order]
+        blocks, rows_all, columns_all = [], [], []
+        for rows, vids in zip(table.by_template, table.kept_vids):
+            if not rows.size:
+                continue
+            position = np.searchsorted(sorted_ids, vids).clip(0, max(n - 1, 0))
+            found = (sorted_ids[position] == vids) if n else np.zeros(vids.shape, dtype=bool)
+            solved = found.all(axis=1)                      # a group not solved (a filter) left out
+            if not solved.any():
+                continue
+            local = order[position[solved]]
+            local.setflags(write=False)
+            blocks.append((rows[solved], local))
+            k = local.shape[1]
+            rows_all.append(np.repeat(local, k, axis=1).reshape(-1))
+            columns_all.append(np.tile(local, (1, k)).reshape(-1))
+        if not blocks:
+            return None
+        rows_all, columns_all = np.concatenate(rows_all), np.concatenate(columns_all)
+        entries = np.arange(1, rows_all.size + 1, dtype=np.float64)       # 1-based: no explicit zero dropped
+        csr = coo_matrix((entries, (rows_all, columns_all)), shape=(n, n)).tocsr()
+        permutation = csr.data.astype(np.int64) - 1
+        return cls(n, blocks, permutation, csr.indices.copy(), csr.indptr.copy())
+
+
+@dataclass
+class _Assignment:
+    """The kinds of a DataStructure's reduced groups (Reduction.assignment): table (its _GroupTable); weights and
+    kind (table rows × corners: each corner's weight and its kind's position in keys and kinds, -1 for a padding
+    corner of weight 0); keys and kinds ({system: Kind}) the distinct kinds."""
+    table: _GroupTable
+    weights: np.ndarray
+    kind: np.ndarray
+    keys: list
+    kinds: list
+
+    def combine(self, rows, value_of) -> np.ndarray:
+        """Each of the table *rows*' value: its corners' kinds' value_of(kind) weighted ((rows,) + the values'
+        shape), in the corners' order (a single kind's value as it is); a loop over the distinct kinds only."""
+        rows = np.asarray(rows, dtype=np.int64)
+        chosen = self.kind[rows]
+        used = np.unique(chosen[chosen >= 0])
+        if not used.size:
+            return np.zeros(rows.size)
+        stacked = np.stack([np.asarray(value_of(self.kinds[k]), dtype=float) for k in used.tolist()])
+        out = np.zeros((rows.size,) + stacked.shape[1:])
+        trailing = (1,) * (stacked.ndim - 1)
+        for corner in range(chosen.shape[1]):
+            on = np.flatnonzero(chosen[:, corner] >= 0)
+            if not on.size:
+                continue
+            weight = self.weights[rows[on], corner].reshape((-1,) + trailing)
+            out[on] += weight * stacked[np.searchsorted(used, chosen[on, corner])]
+        return out
+
+
+_FIELDS = {}
+
+
+def _parameter_fields(component_class) -> tuple:
+    """(settings, Plant parameters, those located per entity, Plant-scale parameters of any value) of a component
+    class: its fields read once (Reduction._plant_parameters)."""
+    if component_class not in _FIELDS:
+        from dataclasses import fields
+        declared = fields(component_class)
+        settings = tuple(f.name for f in declared if f.metadata.get("variable_type") == "setting")
+        located = frozenset(f.name for f in declared
+                            if f.metadata.get("scale") is not None or f.metadata.get("location") is not None)
+        records = tuple(f.name for f in declared if f.metadata.get("variable_type") == "parameter"
+                        and f.metadata.get("scale") == _plant_scale())
+        _FIELDS[component_class] = (settings, tuple(component_class._plant_parameter_fields()), located, records)
+    return _FIELDS[component_class]
 
 
 def _first_nodes(owner) -> np.ndarray:

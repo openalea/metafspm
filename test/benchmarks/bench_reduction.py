@@ -4,10 +4,14 @@ of a few hundred cells (a chain of cortical cells and their walls, two xylem ves
 kept), standalone (no port). Not part of the test suite: it asserts nothing and prints a table.
 
     python test/benchmarks/bench_reduction.py [--cells 200] [--kinds 8] [--groups 1000,10000,80000] [--workers 1,4]
+                                              [--check]
 
 - the time per kind evaluation (Reduction.group_kinds on --kinds groups of distinct kinds: their soil potentials
   differ, so each is its own kind);
-- Reduction.terms() on a plant of 1k, 10k, 80k groups of one kind (the kind evaluated before the timed call);
+- Reduction.terms() on a plant of 1k, 10k, 80k groups of one kind (the kind evaluated before the timed call; the
+  first call builds the groups' table and the terms' sparse pattern, the next ones fill its values), and
+  Reduction.assignment (the groups' kinds, group_kinds' arrays): linear in the groups (O-5), --check asserts it
+  (10× the groups within 15× the time);
 - the kinds' pool at 1 and 4 workers (Compute.workers: O-6; reported as not available before it).
 """
 import argparse
@@ -188,8 +192,8 @@ def kind_evaluation(kinds: int, cells: int) -> tuple:
 
 
 def terms(groups: int, cells: int) -> tuple:
-    """(seconds of one terms() call, seconds of its first call, which evaluates the kind) on *groups* groups of one
-    kind."""
+    """(seconds of one terms() call, seconds of its first call, which evaluates the kind, seconds of one
+    assignment) on *groups* groups of one kind."""
     population, reduction = plant(groups, cells)
     ds = population.data_structure
     component, system = population.instance.hydraulics, "BenchHydraulics._hydraulics"
@@ -199,7 +203,10 @@ def terms(groups: int, cells: int) -> tuple:
     first = time.perf_counter() - started
     started = time.perf_counter()
     reduction.terms(component, system, ds, nodes)
-    return time.perf_counter() - started, first
+    seconds = time.perf_counter() - started
+    started = time.perf_counter()
+    reduction.assignment(ds)
+    return seconds, first, time.perf_counter() - started
 
 
 def main(argv=None):
@@ -208,15 +215,27 @@ def main(argv=None):
     parser.add_argument("--kinds", type=int, default=8)
     parser.add_argument("--groups", default="1000,10000,80000")
     parser.add_argument("--workers", default="1,4")
+    parser.add_argument("--check", action="store_true", help="assert terms() and assignment linear in the groups")
     arguments = parser.parse_args(argv)
     per_kind, interior = kind_evaluation(arguments.kinds, arguments.cells)
     print(f"{'measure':<40} {'value':>12}")
     print(f"{f'kind evaluation ({interior} interior nodes)':<40} {per_kind:>10.3f} s")
+    measured = {}
     for groups in [int(value) for value in arguments.groups.split(",") if value]:
-        seconds, first = terms(groups, arguments.cells)
-        print(f"{f'terms() at {groups} groups':<40} {seconds:>10.3f} s   (first call {first:.3f} s)")
+        seconds, first, assigned = terms(groups, arguments.cells)
+        measured[groups] = (seconds, assigned)
+        print(f"{f'terms() at {groups} groups':<40} {seconds:>10.3f} s   (first call {first:.3f} s, "
+              f"assignment {assigned:.3f} s)")
     for workers in [int(value) for value in arguments.workers.split(",") if value]:
         print(f"{f'kinds pool at {workers} workers':<40} {'n/a (O-6)':>12}")
+    if arguments.check:
+        sizes = sorted(measured)
+        for small, large in zip(sizes, sizes[1:]):
+            factor = 1.5 * large / small
+            for position, name in ((0, "terms()"), (1, "assignment")):
+                ratio = measured[large][position] / max(measured[small][position], 1e-4)
+                assert ratio <= factor, f"{name}: {large} groups {ratio:.1f}× the time of {small} (at most {factor:g}×)"
+        print("linear in the groups: checked")
 
 
 if __name__ == "__main__":
