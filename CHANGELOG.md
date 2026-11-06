@@ -28,6 +28,9 @@
   (`ds.remember_previous`, `scene.keep_previous(ds, *names)`) for the variables a `Summary(max_change=[...])` asks
   for (`<name>_max_change`); `Summary(population=)` may name an environment model's DataStructure (a grid's
   `"cell"`).
+- **Fixed: a leak of every reduction library.** Its structure class closed over the library and was held by the
+  planting table's object column (invisible to the garbage collector): each library population, its plants'
+  reduction and their templates stayed alive until the process ended (the port suites' memory growth).
 - **Timing per component.** `scene.timing` holds `"<Model>.<Component>"` entries next to the models'
   (`Component.wall_time(reset=)`: its calls and its steps run together), in run.json.
 
