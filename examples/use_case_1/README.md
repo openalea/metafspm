@@ -213,7 +213,7 @@ scope's peak, the pool's processes included; each row the day's mean step):
 
 | plants, day | workers | s per step | kinds evaluated that day (s per step) | nodes | memory peak |
 |---|---|---|---|---|---|
-| 2, day 8 (identical plants, metafspm 917377f) | auto (7) | 1.54 | 139 (0.50) | 13,924 | 5.3 GB |
+| 2, day 8 (identical plants, metafspm c2de038) | auto (7) | 1.52 | 139 | 13,924 | 3.5 GB |
 | 8, day 8 | 4 | 2.49 | 115 (0.34) | 56,598 | 4.4 GB |
 | 16, day 8 | 4 | 4.70 | 122 (0.33) | 113,438 | 5.3 GB |
 | 16, day 9 | 4 | 5.86 | 61 (0.21) | 154,204 | 5.7 GB |
