@@ -7,7 +7,8 @@ A scene's outputs, written as it runs::
   outputs/
     run.json                          the run: status (running, finished, stopped, failed, interrupted; a failure's
                                       error), started, ended, wall time, iterations, simulated time, time step, wall
-                                      time per model, versions, the threads in use (BLAS libraries, numba) and the
+                                      time per model and per component ("<Model>.<Component>": Scene.timing),
+                                      versions, the threads in use (BLAS libraries, numba) and the
                                       process pool (None: in the process); rewritten after every step (a running
                                       run's progress)
     scenario.json                     the scene: time step, size, populations (model, plants and their scenarios),
@@ -24,7 +25,11 @@ A scene's outputs, written as it runs::
                                       environment model's compartment
     <name>.csv                        the tables given as tables={name: function(scene) -> a row (dict), a
                                       DataFrame, or None for no row}, or declared: Summary(location, where, sum, mean,
-                                      min, max, per)
+                                      min, max, max_change, per)
+    conservation.csv                  the balances of the quantities the graph systems conserve
+                                      (graph_system(conserved=...)), at the summaries' period: time, model,
+                                      component, system, quantity, inflow, outflow, change, residual (change - inflow
+                                      + outflow, since the last row), unit
     frames/frame_<step>.glb, frames/scene.fspm.json
                                       the whole scene (encoding3d), every frame_period steps: every scale, every
                                       row; the components' display shapes (e.g. GRANAP's sections) every
@@ -164,6 +169,8 @@ def _scene_location(ds, location: str) -> str:
             return "node"
     except (AttributeError, StopIteration, IndexError, TypeError, ValueError):
         pass
+    if location == "cell" and hasattr(ds, "cell_volume"):        # a grid's cells
+        return location
     raise ValueError(f"Summary: location '{location}' is not one of the DataStructure's ('node', the scale of its "
                      f"nodes, or {ds._coarse_scale_names() if hasattr(ds, '_coarse_scale_names') else []})")
 
@@ -187,29 +194,54 @@ class Summary:
       mean    [names] the means weighted by their declared weight (state_variable(weight=...), else plain), or
               {name: weight}: weighted by that variable (None: plain)
       min, max  [names]: the extremes (columns <name>_min, <name>_max)
+      max_change [names]: the largest change since the step before, |value - ds.previous(value)| (column
+              <name>_max_change), over the entities there at both (NaN at the first row): the Scene keeps the values
+              before each step (ds.previous)
 
     The entities without a value (NaN) are left out; a mean or an extreme over no entity is NaN, a sum 0.
-    *population*: one population's (its model's name), by default every population holding *location*.
+    *population*: one population's (its model's name), by default every population holding *location*; or an
+    environment model's DataStructure (its id in Scene.data_structures(), e.g. "RichardsSoilModel": a grid's
+    "cell"), per="scene" only.
     """
 
-    def __init__(self, location: str, where: dict = None, sum=(), mean=(), min=(), max=(), per: str = "scene",
-                 population: str = None):
+    def __init__(self, location: str, where: dict = None, sum=(), mean=(), min=(), max=(), max_change=(),
+                 per: str = "scene", population: str = None):
         if per not in ("scene", "plant"):
             raise ValueError(f"Summary(per=...): 'scene' or 'plant', got '{per}'")
         self.location, self.where, self.per, self.population = location, dict(where or {}), per, population
         self.sum = dict(sum) if isinstance(sum, dict) else {name: None for name in sum}
         self.mean = dict(mean) if isinstance(mean, dict) else {name: "declared" for name in mean}
-        self.min, self.max = list(min), list(max)
+        self.min, self.max, self.max_change = list(min), list(max), list(max_change)
         columns = list(self.sum) + list(self.mean) + [f"{n}_min" for n in self.min] + [f"{n}_max" for n in self.max]
+        columns += [f"{n}_max_change" for n in self.max_change]
         twice = sorted({column for column in columns if columns.count(column) > 1})
         if twice:
             raise ValueError(f"Summary: columns {twice} asked twice")
         if not columns:
-            raise ValueError("Summary: give what it holds (sum=, mean=, min=, max=)")
+            raise ValueError("Summary: give what it holds (sum=, mean=, min=, max=, max_change=)")
 
     def __repr__(self) -> str:
         return (f"Summary({self.location!r}, where={self.where}, sum={self.sum}, mean={self.mean}, min={self.min}, "
-                f"max={self.max}, per={self.per!r})")
+                f"max={self.max}, max_change={self.max_change}, per={self.per!r})")
+
+    def _data_structures(self, scene) -> list:
+        """[(population or None, ds)] the table covers: the populations (or the one named), or the environment
+        DataStructure named."""
+        found = [(population, population.data_structure) for population in scene.populations
+                 if self.population is None or population.name == self.population]
+        if not found and self.population is not None:
+            entry = scene.data_structures().get(self.population)
+            if entry is not None:
+                if self.per == "plant":
+                    raise ValueError(f"Summary(per='plant'): '{self.population}' is no population")
+                found = [(None, entry[0])]
+        return found
+
+    def previous_variables(self, scene) -> list:
+        """[(ds, names)] whose values before each step the Scene keeps (ds.previous) for max_change."""
+        if not self.max_change:
+            return []
+        return [(ds, list(self.max_change)) for _, ds in self._data_structures(scene)]
 
     def _selected(self, ds, location: str) -> np.ndarray:
         """Whether each entity at *location* of *ds* is selected by *where*."""
@@ -254,10 +286,7 @@ class Summary:
     def __call__(self, scene) -> pd.DataFrame:
         recorder = scene.recorder if isinstance(getattr(scene, "recorder", None), SceneRecorder) else SceneRecorder()
         parts = []                                       # (population, ds, location, group of each entity, names)
-        for population in scene.populations:
-            if self.population is not None and population.name != self.population:
-                continue
-            ds = population.data_structure
+        for population, ds in self._data_structures(scene):
             location = _scene_location(ds, self.location)
             selected = self._selected(ds, location)
             if self.per == "plant":
@@ -267,7 +296,7 @@ class Summary:
             parts.append((population, ds, location, np.where(selected, owner, -1)))
         if not parts:
             raise ValueError(f"Summary: no population{' ' + repr(self.population) if self.population else ''} in "
-                             "the scene")
+                             "the scene (nor environment DataStructure of that id)")
         rows = []
         if self.per == "plant":
             for population, ds, location, owner in parts:
@@ -301,7 +330,19 @@ class Summary:
             out[f"{name}_min"] = grouped(pooled(name), owner, groups, "min")
         for name in self.max:
             out[f"{name}_max"] = grouped(pooled(name), owner, groups, "max")
+        for name in self.max_change:
+            change = np.concatenate([np.abs(self._values(ds, name, location) - _previous(ds, name, location))
+                                     for ds, location, _ in parts])
+            out[f"{name}_max_change"] = grouped(change, owner, groups, "max")
         return out
+
+
+def _previous(ds, name: str, location: str) -> np.ndarray:
+    """*name*'s values before the step at *location* (NaN: new entities, or none kept yet: the first row)."""
+    try:
+        return np.asarray(ds.previous(name), dtype=float).reshape(-1)
+    except KeyError:
+        return np.full(int(np.prod(ds._location_shape(location))), np.nan)
 
 
 class SceneRecorder:
@@ -330,9 +371,11 @@ class SceneRecorder:
     def __init__(self, folder: str = None, summaries: bool = True, summary_period: int = 1, segment_plants=(),
                  segment_period: int = 24, frame_period: int = None, frame_options: dict = None,
                  checkpoint_period: int = None, keep_checkpoints: int = 2, tables: dict = None,
-                 table_period: int = 1, frame_views=None, display_period: int = None, display_plants=None):
+                 table_period: int = 1, frame_views=None, display_period: int = None, display_plants=None,
+                 conservation: bool = True):
         self.folder = os.fspath(folder) if folder is not None else None
         self.summaries, self.summary_period = bool(summaries), int(summary_period)
+        self.conservation = bool(conservation)
         self.segment_plants, self.segment_period = {str(name) for name in segment_plants}, int(segment_period)
         self.frame_period = int(frame_period) if frame_period else None
         self.frame_options = dict(frame_options or {})
@@ -420,6 +463,9 @@ class SceneRecorder:
         if (self.segment_plants and (iteration % self.segment_period == 0 or final)
                 and self._due("segments", iteration)):
             self.write_segments(scene)
+        if (self.conservation and not initial and (iteration % self.summary_period == 0 or final)
+                and self._due("conservation", iteration)):
+            self.write_conservation(scene)
         for name, function in self.tables.items():
             if (iteration % self.table_period == 0 or final) and self._due(f"table {name}", iteration):
                 row = function(scene)
@@ -592,6 +638,20 @@ class SceneRecorder:
         for name, ds in self.environment_data_structures(scene):
             self._append(name, self.environment_summary(scene, ds))
 
+    def write_conservation(self, scene) -> None:
+        """conservation.csv: a row per conserved quantity of every graph system (graph_system(conserved=...)), its
+        balance since the last row (Component.conservation, reset)."""
+        rows = []
+        for key, (_, model, components) in scene.data_structures().items():
+            for component in components:
+                if not hasattr(component, "conservation"):
+                    continue
+                for (system, quantity), balance in component.conservation(reset=True).items():
+                    rows.append({"time": float(scene.time), "model": key, "component": type(component).__name__,
+                                 "system": system, "quantity": quantity, **balance})
+        if rows:
+            self._append("conservation", pd.DataFrame(rows))
+
     def selected_segments(self, scene, population) -> pd.DataFrame:
         """The node state variables of the segment_plants' nodes: time, plant, one row per node (indexed by vid)."""
         ds = population.data_structure
@@ -758,7 +818,7 @@ class SceneRecorder:
         run's later rows removed), the frames' index to its steps up to that iteration; appended to from here."""
         self.resume = True
         self._columns, self._frames = {}, None
-        self._called = {output: scene.iteration for output in ("frames", "summaries", "segments",
+        self._called = {output: scene.iteration for output in ("frames", "summaries", "segments", "conservation",
                                                               *(f"table {name}" for name in self.tables))}
         if self.folder is None:
             self._memory = {}
@@ -839,5 +899,5 @@ class SceneRecorder:
                          "display_period": self.display_period, "display_plants": self.display_plants,
                          "frame_views": self.frame_views if self.frame_views in (None, "default") else "given",
                          "checkpoint_period": self.checkpoint_period, "tables": sorted(self.tables),
-                         "table_period": self.table_period}}
+                         "table_period": self.table_period, "conservation": self.conservation}}
         _write_json(os.path.join(self.folder, "scenario.json"), content)

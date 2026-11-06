@@ -207,6 +207,45 @@ class DataStructure(ABC):
         holder = root.__dict__.get("_mtg")
         return objects_of(holder if holder is not None and hasattr(holder, "objects") else root, name, saved)
 
+    def remember_previous(self, names) -> None:
+        """Keep the values of the variables *names* as they are now, with their entities' ids (the Scene, at the
+        start of each step, for the variables its Summaries' max_change ask for, or Scene.keep_previous's):
+        previous(name) gives them back at the step's end, aligned by id."""
+        root = _root_data_structure(self)
+        kept = {}
+        for name in names:
+            location = self.location(name)
+            ids = None if location == "scalar" else np.array(self.entity_ids(location), copy=True)
+            kept[name] = (ids, np.array(self.get(name), copy=True))
+        root.__dict__["_previous_values"] = kept
+
+    def previous(self, name: str, missing=np.nan) -> np.ndarray:
+        """
+        The values of variable *name* before the step (what remember_previous() kept: the Scene keeps those its
+        Summaries and Scene.keep_previous ask for), one per entity there now, aligned by id: an entity new since
+        (a grown segment, a refined cell) gets *missing*. KeyError when they were not kept.
+        """
+        kept = _root_data_structure(self).__dict__.get("_previous_values", {})
+        if name not in kept:
+            raise KeyError(f"ds.previous('{name}'): its values before the step were not kept (Scene.keep_previous("
+                           f"ds, '{name}'), a Summary's max_change=; kept: {sorted(kept)})")
+        ids, values = kept[name]
+        if ids is None:
+            return values.copy()
+        now = np.asarray(self.entity_ids(self.location(name)))
+        per_entity = values.reshape(ids.size, -1) if ids.size else values.reshape(0, 1)
+        dtype = np.result_type(values.dtype, np.asarray(missing).dtype)
+        out = np.full((now.size, per_entity.shape[1]), missing, dtype=dtype)
+        if ids.size and now.size:
+            order = np.argsort(ids, kind="stable")
+            position = np.minimum(np.searchsorted(ids[order], now), ids.size - 1)
+            found = ids[order][position] == now
+            out[found] = per_entity[order[position[found]]]
+        current = np.shape(self.get(name))                  # the variable's own shape (a grid's (nx, ny, nz))
+        if int(np.prod(current)) == out.size:
+            return out.reshape(current)
+        return out[:, 0] if out.shape[1] == 1 else out
+
     @property
     def simulation_time_step(self):
         """The simulation step (s) of the Scene the DataStructure is in (Scene(time_step=), population_data_structure's

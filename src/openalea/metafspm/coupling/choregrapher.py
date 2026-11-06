@@ -1,5 +1,6 @@
 import ast
 from functools import partial
+from time import perf_counter
 
 
 # The steps the step decorators register at class definition, {category: {class family: [functors]}}: what a class
@@ -124,8 +125,10 @@ class Choregrapher:
                 instance.__dict__["_clock"] = start + increment * (sub_time_step or 0.)
             for priority in priorities:
                 for instance in instances:
+                    started = perf_counter()
                     for functor in instance.__dict__["_choregraphy"][1].get(priority, ()):
                         functor()
+                    instance.__dict__["_wall_time"] = instance.__dict__.get("_wall_time", 0.) + perf_counter() - started
         for instance, start in zip(instances, starts):
             instance.__dict__["_clock"] = start
 

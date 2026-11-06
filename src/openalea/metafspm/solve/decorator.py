@@ -56,6 +56,8 @@ _SCALE_INT_TO_LOC: dict = {
 # ── Choregrapher (unchanged) ──────────────────────────────────────────────────
 from openalea.metafspm.coupling.choregrapher import Choregrapher
 from openalea.metafspm.solve.functor import Functor
+from openalea.metafspm.solve import conservation
+from openalea.metafspm.solve.conservation import check_conserved
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -1366,6 +1368,17 @@ def _reduced_terms(instance, spec_def, ds, gv):
 
 
 def _invoke_graph_system(self, method_name: str) -> None:
+    """One call of a graph system (_solve_call), its conserved quantities' balance kept (solve.conservation)."""
+    conserved = type(self)._graph_system_specs[method_name].get("conserved")
+    if not conserved:
+        _solve_call(self, method_name)
+        return
+    conservation.begin_call(self, _live_ds(self), method_name, conserved)
+    _solve_call(self, method_name)
+    conservation.end_call(self, _live_ds(self), method_name, conserved)
+
+
+def _solve_call(self, method_name: str) -> None:
     """
     Build, solve, and write back one named graph-system.
 
@@ -1571,9 +1584,11 @@ def _integrate_adaptive(self, method_name, spec_def, time_step, names) -> None:
         failure = None
         try:
             self.__dict__["_solve_offset"] = t
+            trial = conservation.mark(self)
             _solve_substep(self, method_name, spec_def, h)
             coarse = _capture(ds, spec_def["node_unknowns"], self)
             _restore(ds, start, self)
+            conservation.reject(self, trial)              # the coarse step only measures the error
             _solve_substep(self, method_name, spec_def, h / 2.)
             self.__dict__["_solve_offset"] = t + h / 2.
             _solve_substep(self, method_name, spec_def, h / 2.)
@@ -1590,6 +1605,7 @@ def _integrate_adaptive(self, method_name, spec_def, time_step, names) -> None:
             h *= min(2., max(0.2, 0.9 / np.sqrt(max(error, 1e-12))))
             continue
         _restore(ds, start, self)
+        conservation.reject(self, trial)
         rejected += 1
         h *= 0.5 if failure is not None else max(0.2, 0.9 / np.sqrt(error))
         if h < min_step:
@@ -1661,6 +1677,8 @@ def _solve_once(self, method_name: str, spec_def: dict) -> None:
         else:
             location = ds.location(oname)
             restriction.scatter(ds, oname, arr, location, dropped=None if location == "node" else 0.)
+    if spec_def.get("conserved"):                          # its flows, pending until the sub-step is accepted
+        conservation.record_substep(self, ds, spec_def["conserved"], float(dt))
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -1747,6 +1765,7 @@ def graph_system(
     split                  = "whole",
     pool_unknowns          = None,
     condense               = None,
+    conserved              = None,
     **renamed,
 ):
     """
@@ -1812,6 +1831,11 @@ def graph_system(
         coarse location (e.g. "SubOrgan": each section's interior eliminated, one factorisation per kind of section),
         or a function of the component giving that location or None (e.g. a setting choosing the solver). The nodes
         of a Robin or Dirichlet condition are kept. Newton solvers, one node unknown, no edge or pool unknowns.
+
+    conserved: the quantities the system conserves, {quantity: solve.conservation.Conservation(amount=, inflow=,
+        outflow=, unit=)}: over each call, the inflow and outflow integrated over the accepted sub-steps and the
+        change of the amount held, residual = change - (inflow - outflow) (Component.conservation(); the
+        SceneRecorder's conservation.csv after every step).
 
     The former names max_iter, tol, fd_eps, n_substeps and integrate="step" are accepted with a warning for one
     release.
@@ -1899,6 +1923,7 @@ def graph_system(
         "transient"     : rate_solver if transient is None else bool(transient),
         "rate_solver"   : rate_solver,
         "condense"      : condense,
+        "conserved"     : check_conserved(conserved),
     }
 
     def decorator(cls):

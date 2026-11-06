@@ -1,6 +1,7 @@
 from contextlib import nullcontext
 from dataclasses import dataclass, field, fields, MISSING
 from typing import Literal, Optional
+from time import perf_counter
 import numpy as np
 
 from openalea.metafspm.solve.decorator import *
@@ -282,11 +283,21 @@ class Component:
     entity_sets = {}
 
     def __call__(self):
+        started = perf_counter()
         context = self._before_call()
         with self.private_names():
             self.pull_available_inputs()
             self.choregrapher(instance=self)
         self._after_call(context)
+        self.__dict__["_wall_time"] = self.__dict__.get("_wall_time", 0.) + perf_counter() - started
+
+    def wall_time(self, reset: bool = False) -> float:
+        """The wall time (s) of its calls (and of its steps run together with others, CompositeModel.run_together)
+        since the last reset: the Scene's timing per component ("<Model>.<Component>") reads and resets it."""
+        seconds = self.__dict__.get("_wall_time", 0.)
+        if reset:
+            self.__dict__.pop("_wall_time", None)
+        return seconds
 
     def simulation_step(self):
         """The simulation step (s) the component runs in: its DataStructure's (DataStructure.simulation_time_step, the
@@ -786,6 +797,13 @@ class DataStructureComponent(Component):
         pieces and previous solutions. What is built from the DataStructure and rebuilt when missing: never
         checkpointed, all dropped by clear_caches() (Scene.load_checkpoint: built on the topology before the load)."""
         return self.__dict__.setdefault("_caches", {})
+
+    def conservation(self, reset: bool = False) -> dict:
+        """The balances of the quantities its graph systems conserve (graph_system(conserved=...),
+        solve.conservation), {(system, quantity): {"inflow", "outflow", "change", "residual", "unit"}} since the last
+        reset (*reset*: a new balance from now on; the SceneRecorder resets it after each step)."""
+        from openalea.metafspm.solve.conservation import balances
+        return balances(self, reset=reset)
 
     def clear_caches(self) -> None:
         """Drop every cache of the component (caches()): what was built before a checkpoint was loaded."""

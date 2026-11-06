@@ -222,7 +222,13 @@ class Scene:
             if hasattr(model, "spin_up"):
                 model.spin_up(self)
 
-        self.timing = {}                # wall time (s) per model, the exchanges and the recording
+        self.timing = {}                # wall time (s) per model, per component ("Model.Component"), the exchanges
+                                        # and the recording
+        self._previous = {}             # {id(ds): (ds, names)} whose values before each step are kept (ds.previous)
+        self._previous_asked = False    # the recorder's tables asked theirs (at the first step)
+        for component in self.components:                       # the construction's calls: not the run's
+            if hasattr(component, "wall_time"):
+                component.wall_time(reset=True)
         self.recorder = SceneRecorder(recorder) if isinstance(recorder, (str, os.PathLike)) else recorder
         self._recording = False         # the recorder began (at this object's first step)
         self._finished = False
@@ -461,6 +467,7 @@ class Scene:
             action(self)
         self._update_emergence()
         self._write_forcings()
+        self._remember_previous()
         for component in self.components:
             component.__dict__["_clock"] = self.time        # forcings read at the scene time
         for model in self.environment:
@@ -473,6 +480,7 @@ class Scene:
             model.run()
             self._time("exchanges", exchanged - started)
             self._time(type(model).__name__, perf_counter() - exchanged)
+            self._time_components(type(model).__name__, model.components)
         for population in self.populations:
             if not self._due(population.instance):
                 continue
@@ -482,6 +490,7 @@ class Scene:
             population.instance.run()
             self._time("exchanges", exchanged - started)
             self._time(population.name, perf_counter() - exchanged)
+            self._time_components(population.name, population.components)
         self.time += self.time_step
         self.iteration += 1
         if self.recorder is not None:
@@ -491,6 +500,28 @@ class Scene:
 
     def _time(self, key: str, seconds: float) -> None:
         self.timing[key] = self.timing.get(key, 0.) + seconds
+
+    def _time_components(self, model: str, components) -> None:
+        """Each component's wall time in its model's run (its calls, Component.wall_time): "<model>.<component>"."""
+        for component in components:
+            if hasattr(component, "wall_time"):
+                self._time(f"{model}.{type(component).__name__}", component.wall_time(reset=True))
+
+    def keep_previous(self, data_structure, *names) -> None:
+        """Keep the values of *names* of *data_structure* (a population's, a grid) before each step: ds.previous(name)
+        gives them after it, aligned by id (a Summary's max_change asks for its own)."""
+        known = self._previous.setdefault(id(data_structure), (data_structure, []))[1]
+        known.extend(name for name in names if name not in known)
+
+    def _remember_previous(self) -> None:
+        """At the start of a step: the values ds.previous gives after it (keep_previous's, the recorder's tables')."""
+        if not self._previous_asked:
+            self._previous_asked = True
+            for table in getattr(self.recorder, "tables", {}).values():
+                for ds, names in getattr(table, "previous_variables", lambda scene: [])(self):
+                    self.keep_previous(ds, *names)
+        for ds, names in self._previous.values():
+            ds.remember_previous(names)
 
     def _due(self, model) -> bool:
         """Whether *model* runs at this step: an internal hook, _run_when(scene) -> bool (the cadence is
