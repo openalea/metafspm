@@ -224,6 +224,7 @@ class Reduction:
         state = dict(self.__dict__)        # a checkpoint: the declaration, the templates and the kinds (shared parts)
         state.update(_blends={}, _libraries={}, model=None, instance=None, g=None)
         state.pop("_table", None)          # the groups' arrays: per DataStructure and topology
+        state.pop("_assigned", None)
         return state
 
     def __setstate__(self, state):
@@ -238,6 +239,7 @@ class Reduction:
         out = copy.copy(self)
         out._kinds, out._blends, out._libraries, out.g = {}, {}, {}, g
         out.__dict__.pop("_table", None)
+        out.__dict__.pop("_assigned", None)
         return out
 
     def bind(self, model, instance) -> None:
@@ -492,9 +494,16 @@ class Reduction:
         table = self.group_table(ds)
         if table is None:
             return None
-        weights, values = self._corners(ds, table)
         parameters = self._plant_parameters(ds)
         signatures = {p: _signature(parameters[p]) for p in np.unique(table.plant).tolist()}
+        stamp = (id(table), tuple(ds.write_count(name) for name in self.kind), tuple(sorted(signatures.items())))
+        cached = self.__dict__.get("_assigned")
+        if (cached is not None and cached[0] == stamp
+                and all(self._kinds.get(key) is kind for key, kind in zip(cached[1].keys, cached[1].kinds))):
+            if release:                    # the same groups, values and parameters as the last call: its kinds
+                self._release(set(cached[1].keys))
+            return cached[1]
+        weights, values = self._corners(ds, table)
         signature_names = sorted(set(signatures.values()))
         lookup = np.zeros(int(table.plant.max()) + 1 if table.plant.size else 0, dtype=np.int64)
         for p, signature in signatures.items():
@@ -528,6 +537,7 @@ class Reduction:
                           kinds=[self._kinds[key] for key in keys])
         if release:
             self._release(set(keys))
+        self.__dict__["_assigned"] = (stamp, out)
         return out
 
     def _release(self, used: set) -> None:
@@ -842,10 +852,16 @@ def _first_nodes(owner) -> np.ndarray:
     return out
 
 
+_PICKLES = {}            # the plants' parameter objects' pickles (content_key's): pickled once, not at every solve
+PICKLES_KEPT = 4096      # at most (the dict emptied beyond)
+
+
 def _signature(parameters: dict) -> str:
     """A digest of a plant's parameters, by content (dicts, records and numbers alike)."""
     from openalea.metafspm.solve.memo import content_key
-    return content_key({name: parameters[name] for name in sorted(parameters)})
+    if len(_PICKLES) > PICKLES_KEPT:
+        _PICKLES.clear()
+    return content_key({name: parameters[name] for name in sorted(parameters)}, pickles=_PICKLES)
 
 
 def _plant_scale() -> int:

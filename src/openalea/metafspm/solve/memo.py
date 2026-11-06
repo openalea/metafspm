@@ -15,11 +15,21 @@ def _by_content(value) -> bool:
             and type(value).__repr__ is object.__repr__)
 
 
-def content_key(*values) -> str:
+def content_key(*values, pickles: dict = None) -> str:
     """A digest of *values* (arrays, numbers, strings, dicts of them, other objects by their pickle): equal values,
     equal keys, from one process to the next (an object of the default repr, its address, is digested by content: a
-    model's LeafShapes, the same after a checkpoint's load)."""
+    model's LeafShapes, the same after a checkpoint's load). *pickles*: {id: (object, its pickle)}, the objects'
+    pickles kept from one call to the next (the same digest; an object changed in place is then not seen: the
+    plants' parameter objects of a reduction's kinds, read at every solve)."""
     digest = hashlib.blake2b(digest_size=16)
+
+    def pickled(value) -> bytes:
+        if pickles is None:
+            return pickle.dumps(value, protocol=4)
+        hit = pickles.get(id(value))
+        if hit is None or hit[0] is not value:
+            hit = pickles[id(value)] = (value, pickle.dumps(value, protocol=4))
+        return hit[1]
 
     def add(value):
         if isinstance(value, dict):
@@ -34,7 +44,7 @@ def content_key(*values) -> str:
         elif _by_content(value):
             digest.update(type(value).__qualname__.encode())
             try:
-                digest.update(pickle.dumps(value, protocol=4))
+                digest.update(pickled(value))
             except (pickle.PicklingError, TypeError, AttributeError):
                 digest.update(repr(value).encode())          # unpicklable: by identity, as before
         else:

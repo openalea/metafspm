@@ -104,3 +104,30 @@ def test_the_topology_arrays_are_read_only_shared_and_rebuilt_after_growth():
     expected_D, expected_e = _group_by_group(reduction, population.instance.hydraulics, ds, grown)
     np.testing.assert_array_equal(D.toarray(), expected_D.toarray())
     np.testing.assert_array_equal(e, expected_e)
+
+
+def test_the_assignment_is_kept_until_a_kind_variable_or_the_topology_changes():
+    population = _population(CLASS, LENGTHS)
+    ds = population.data_structure
+    reduction = ds.structure.reduction
+    first = reduction.assignment(ds)
+    assert reduction.assignment(ds, release=True) is first                   # a step's solves and outputs: once
+    ds.set("length", np.asarray(ds.get("length")) * 1.01)                    # its groups grown: assigned again
+    second = reduction.assignment(ds)
+    assert second is not first and not np.array_equal(second.weights, first.weights)
+
+
+class Shapes:
+    """A plant's parameter object of the default repr (Adel's LeafShapes): digested by its pickle."""
+
+    def __init__(self):
+        self.table = [1., 2.]
+
+
+def test_a_signatures_kept_pickles_give_the_same_digest():
+    from openalea.metafspm.solve.memo import content_key
+
+    shapes, pickles = Shapes(), {}
+    expected = content_key({"leaves": shapes, "a": 1.})
+    assert content_key({"leaves": shapes, "a": 1.}, pickles=pickles) == expected
+    assert content_key({"leaves": shapes, "a": 1.}, pickles=pickles) == expected and len(pickles) == 1
