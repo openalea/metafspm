@@ -805,6 +805,11 @@ Its README describes each file and shows the figures.
 
 - Steps, graph systems, tree kernels and exchanges work on whole-population arrays: a step of 1000 plants of 2 000
   segments takes about 2 s in one process.
+- A reduction's groups are arrays (`Reduction.group_table`, `assignment`): its terms, outputs (`outputs`, a value per
+  group; `kept_outputs`, a value per kept node) and recoveries batched by template and kind, the terms' sparse
+  pattern cached per topology (80k groups: 0.03 s per solve's terms).
+- The DataStructure's topology arrays (`entity_ids`, `owner`) are cached until the topology changes and read-only:
+  copy one (`np.array(ds.owner("SubOrgan"))`) before writing into it.
 - Growth bookkeeping is incremental: only new vertices are read from the MTG.
 - An MPG-style step sees only the MTG properties its component declares; keep MTG reads in such steps to those.
 - `split="components"` is not parallel; graph systems are solved by sparse LU (SuperLU).
@@ -834,8 +839,12 @@ being given it: a reduction's batches); outside, a default `Compute()`. `scenari
 
 ### Compiled kernels (numba)
 
-Loops that numpy cannot vectorise (a z-buffer, a tree walk, a disc of form factors) are compiled with numba. What the
-ports learned:
+Loops that numpy cannot vectorise (a z-buffer, a tree walk, a disc of form factors) are compiled with numba, each
+`@njit(cache=True)` in its package's `kernels.py` (`openalea.metafspm.kernels`, Adel's, Caribu's; conventions.md,
+"Performance rules"). They compile at their first call, about a minute and a half for metafspm and the ports together,
+once per machine: `python -m openalea.metafspm warm_up` (or `compute.warm_up()`) does it at install, running each
+package's `kernels.warm_up` on tiny inputs (a port registers its own under the entry points `openalea.metafspm.warm_up`
+of its `pyproject.toml`: `"caribu" = "openalea.caribu.kernels:warm_up"`). What the ports learned:
 
 - **Array arguments cost.** Each array passed to a compiled function, and each view taken in it (`a[i]`, a slice),
   updates reference counts with atomic operations. In a function called millions of times, or in threads sharing

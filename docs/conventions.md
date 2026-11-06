@@ -144,6 +144,24 @@ Models never write traversals: they call the DataStructure's kernels, which run 
 
 Chains are `"axis"` ('<' successors) by default, or declared with `define_chain(name, group=, rank=)`.
 
+## Performance rules
+
+For metafspm and every port: no Python loop over groups, nodes or entities in a step.
+
+1. **numpy first.** Per-group quantities by `np.unique(owner, return_index=True)`, `np.bincount`/`np.add.at`,
+   `searchsorted`; work batched by kind or template (all groups of a kind at once: groups × members arrays), not
+   group by group (`Reduction.assignment`, `kept_outputs`; MECHA's condensed volumes and kr).
+2. **Topology-derived arrays cached per topology version** and read-only (`setflags(write=False)`): `entity_ids` of
+   every location, `owner`, the index maps, `Reduction.group_table`, the sparse pattern of a reduction's terms
+   (only its values filled at each solve). Copy one before writing into it.
+3. **numba only where a loop stays sequential** (tree scans, z-buffers, form factors, a turtle): numba is a hard
+   dependency, no fallback. Every kernel is `@njit(cache=True)` in its package's `kernels.py` (one module to warm up,
+   review and port), `parallel=True` only for independent iterations (numba's threads are `Compute.threads`).
+4. **Cold start.** `python -m openalea.metafspm warm_up` (`compute.warm_up`) runs every kernel on tiny inputs:
+   metafspm's (`kernels.warm_up`) and each port's `kernels.warm_up`, registered as an entry point of group
+   `openalea.metafspm.warm_up` in its `pyproject.toml`; at install and in CI before the suites. `NUMBA_CACHE_DIR`
+   for a read-only install. No ahead-of-time compilation.
+
 ## Couplings and derived variables
 
 - **Identity links:** components on one DataStructure share variables by name.

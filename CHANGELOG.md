@@ -2,6 +2,23 @@
 
 ## Unreleased (release2026)
 
+### Vectorisation: no loop over groups or nodes; numba's kernels in kernels.py, warm_up
+
+- A reduction's groups are arrays (`Reduction.group_table`, cached per topology; `Reduction.assignment`: each group's
+  corners, weights and kinds, a loop over the distinct kinds only). `terms()` fills a sparse pattern cached per
+  topology and node set (the toy's 1k/10k/80k groups: 0.017/0.38/16.6 s before, 0.0004/0.004/0.032 s after,
+  bit-identical); `outputs`, the new `kept_outputs` (a kind's output of a value per kept node, its groups × kept)
+  and `recover_interiors` are batched by kind; `Relative.corner_arrays`.
+- The DataStructure's topology arrays are read-only and shared until the topology changes: `entity_ids` of every
+  location (no copy per call), `owner`. **Breaking**: a caller writing into one copies it first.
+- `update_topology` carries object variables over in bulk; no junction rewiring without wiring rules (a
+  reduction's library).
+- numba: metafspm's kernels in `openalea.metafspm.kernels` (the tree kernels' compiled loops, the turtle's frame
+  operations, **moved from `coupling.geometry`**: `follow_parents`, `left_of`, `roll_right`, `down`, `turn_left`,
+  `roll_to_vertical`; the segment pieces); `python -m openalea.metafspm warm_up` (`compute.warm_up`) compiles every
+  kernel of metafspm and of the ports registered under the entry points `openalea.metafspm.warm_up`, at install and
+  before the conda recipe's tests. conventions.md "Performance rules".
+
 ### Breaking: forcings read over the step; summaries of every component; checkpoint parts saved once
 
 - Forcings are read over the step, not at an instant (the results no longer depend on the time step through them):

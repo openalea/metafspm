@@ -60,6 +60,13 @@ mamba activate metafspm
 pip install -e .
 ```
 
+- Compile the numba kernels once (metafspm's and every installed port's; a first run otherwise spends about 1.5 min
+  compiling them). Run it again after installing a port:
+```
+python -m openalea.metafspm warm_up
+```
+  For a read-only installation, set `NUMBA_CACHE_DIR` to a writable folder (numba's cache), the same when running.
+
 ## Example use
 
 A component is a dataclass deriving from `FunctionalComponent`, built on a DataStructure (here a plant population

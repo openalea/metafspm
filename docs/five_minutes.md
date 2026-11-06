@@ -81,6 +81,14 @@ git clone https://github.com/openalea/encoding3d.git encoding3d        # openale
 Keep the folder names above: the environment files find metafspm, encoding3d (and GRANAP) next to the package. Each package's
 README gives the same steps. To update, `git pull` in each repository; the editable installs follow.
 
+Then compile the numba kernels once, metafspm's and those of every port installed (Adel's, Caribu's): without it,
+the first run spends about a minute and a half compiling them. Run it again after installing or updating a port; for
+a read-only installation, set `NUMBA_CACHE_DIR` to a writable folder, the same when running:
+
+```bash
+python -m openalea.metafspm warm_up
+```
+
 Adel and Caribu are also on `openalea3` (`mamba install -c openalea3 -c conda-forge openalea.adel openalea.caribu`),
 but these are their released versions, the original models **without** the metafspm components above: for the
 components and the tutorials, install from the branches.
