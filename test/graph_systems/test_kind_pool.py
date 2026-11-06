@@ -112,6 +112,36 @@ def test_the_pool_is_kept_and_each_process_sent_only_what_it_lacks(start_method)
         np.testing.assert_array_equal(grown[i].e, expected[i].e)
 
 
+@pytest.mark.skipif(compute_module.START_METHOD != "fork", reason="processes forked on Linux only")
+def test_a_forked_pool_is_forked_again_when_templates_were_added_since():
+    """Templates added after the processes' start are not sent (each process would hold its own unpickled copy):
+    the pool is forked again, its processes sharing the main process' templates; the same kinds."""
+    from layered_anatomy import section_template
+    compute = Compute(workers=2)
+    try:
+        population, _ = _pool_kinds(compute, start_method="fork")
+        reduction = population.data_structure.structure.reduction
+        processes = [worker.process.pid for worker in compute._pool.workers]
+        assert not any(reduction_module._lacks_templates(reduction, worker) for worker in compute._pool.workers)
+        added = reduction.template_for(section_template("another section")[0])
+        assert all(reduction_module._lacks_templates(reduction, worker) for worker in compute._pool.workers)
+        ds = population.data_structure
+        ds.set("length", np.asarray(ds.get("length")) * 1.7)
+        with compute.limits():
+            grown = _kinds(population)
+        assert not set(processes) & {worker.process.pid for worker in compute._pool.workers}
+        token = reduction.__dict__["_token"]
+        assert all(added.key in worker.known[("reduction", token)]["_full"] for worker in compute._pool.workers)
+    finally:
+        compute.close()
+    with Compute(workers=1).limits():
+        alone = length_population(ExactLengthPlant, LENGTHS)
+        ds = alone.data_structure
+        ds.set("length", np.asarray(ds.get("length")) * 1.7)
+        expected = _kinds(alone)
+    _assert_same(grown, expected)
+
+
 def test_auto_starts_no_pool_for_a_small_batch(reference):
     compute = Compute()                           # "auto": a few toy kinds are far below a second of work
     _, kinds = _pool_kinds(compute)

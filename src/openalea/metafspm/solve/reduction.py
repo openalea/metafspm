@@ -1586,6 +1586,18 @@ def _sync_for(reduction: Reduction, worker) -> dict:
     return sync
 
 
+def _lacks_templates(reduction: Reduction, worker) -> bool:
+    """Whether *worker* lacks some of *reduction*'s templates or registry entries (a forked process started before
+    they were added)."""
+    known = worker.known.get(("reduction", reduction.__dict__["_token"]))
+    if known is None:
+        return True
+    if any(not set(reduction.__dict__.get(table, {})) <= known[table] for table in _TEMPLATE_TABLES):
+        return True
+    return any(len(registry) > known["objects"].get(name, 0)
+               for name, registry in _saved_registries(reduction).items())
+
+
 def _known_copy(known):
     """A copy of a process's record of what it was sent of a reduction (_sync_for's), its sets copied."""
     if known is None:
@@ -1621,6 +1633,9 @@ def _evaluate_in_pool(reduction: Reduction, compute, workers: int, described: di
                for kind_key, request in requests.items()]
     workers = min(workers, len(entries))
     pool = compute.pool(workers)
+    if pool.start_method == "fork" and any(_lacks_templates(reduction, worker) for worker in pool.workers[:workers]):
+        compute.close()              # forked again rather than sent the new templates: each process would hold its
+        pool = compute.pool(workers)  # own copy of them (unpickled), a fork shares the main process' one
     cells = [reduction._interior_cells(request[1]) for _, _, request in entries]
     loads, shares = [0] * workers, [[] for _ in range(workers)]
     for position in sorted(range(len(entries)), key=lambda i: -cells[i]):
