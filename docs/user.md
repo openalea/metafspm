@@ -378,7 +378,11 @@ class SoilDiffusion(FunctionalComponent):
   sees the contracted nodes (`nodes`, the kron's order): `kind.contract(values)` sums per-Compartment values of the
   full template into them; `recover_interiors` gives a member its node's value. MECHA's
   `plant_reduction(leaf_ports="bundles", vapour_path="air_spaces")` lumps the shoot's conduits per vascular bundle
-  and a leaf's evaporating walls per air space this way.
+  and a leaf's evaporating walls per air space this way. Measured on use case 1 (16 plants, day 8):
+  `leaf_ports="bundles"` takes MECHA's time per step down by 34 %, the transpiration and uptake unchanged, the
+  leaves' water potential 0.36 % above on average (0.54 % at most); both options together cut more (2 plants: the
+  plant solve 60 % less) but put the leaves' water potential 3 % above. The defaults (`"conduits"`, `"cells"`) are
+  kept; bundles suit scenes of 8 plants or more when that leaf ψ bias is acceptable (the use case's README).
 - **Drawing a reduction's groups (any reduction, at any location).** Nothing here is specific to anatomies: a
   section's cells, a coarse soil cell's sub-cells, a leaf's reduced vein network or any group a `Reduction`
   eliminates are drawn the same way. A group's interior is a linear function of its kept values, so a frame stores

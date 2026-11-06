@@ -24,6 +24,7 @@ with step-by-step user tutorials (`example/tutorials/user/`) for newcomers and d
 | [Caribu](https://github.com/openalea/caribu/tree/to_metafspm) (`to_metafspm`) | light in canopies | `CaribuLight`, `CaribuLightModel` (environment model), `SimplePlant` |
 | [GRANAP](https://github.com/openalea-incubator/GRANAP-dev/tree/to_metafspm) (`to_metafspm`) | cross-section anatomies | `GranapAnatomy`, `RootAxis`, `Needle` |
 | [MECHA](https://github.com/openalea-incubator/MECHA-dev/tree/to_metafspm) (`to_metafspm`) | water and solutes across root and needle tissues | `MechaHydraulics`, `MechaSolutes`, `MechaOsmoticPresets` |
+| [CNW-Grass](https://github.com/openalea/cnwgrass/tree/to_metafspm) (`to_metafspm`) | leaves' gas exchange (photosynthesis, stomata, transpiration) | `GasExchange` (plant model `ExchangingWheat`, on Adel's shoots lit by Caribu) |
 
 None of them is on the `openalea3` channel in these versions yet (Adel's and Caribu's packages there are the original
 models, without these components): clone each one on its branch next to metafspm and install both with
@@ -114,6 +115,12 @@ a `SceneRecorder`, `simulate`, then the outputs read back (`run.json`, the `Plan
 frames), and `variants` of a scenario within the declared bounds. [From a scenario to its outputs](docs/tutorial.md)
 goes through it on a seedling in a soil column (`examples/soil_plant_atmosphere/scenario_to_outputs.py`).
 
+How a run uses the machine is its `Compute` (`Scene(..., compute=Compute(threads=1, workers="auto", device="cpu",
+memory="trim", linear_solver=None))`, the default): the threads, the process pool of a reduction's kinds, an
+optional GPU, the memory given back after each step and the Newton steps' sparse solver. `scene.timing` gives the
+time per model and per component. See the user guide's *Performance notes* and [Running on a GPU](docs/gpu.md),
+which also covers repeated runs (`run_variants`).
+
 For a model built on MetaFSPM, see [Root_CyNAPS](https://github.com/GeraultTr/Root_CyNAPS).
 
 ## Exchange with other platforms
@@ -136,6 +143,13 @@ export_scene("scene.glb", scene)                         # one frame now
 data_structures = import_frame("scene.glb")              # {id: DataStructure}
 scene = Scene(..., recorder=SceneRecorder("outputs", frame_period=24))   # a frame every 24 steps, in outputs/frames
 ```
+
+A reduction's groups (e.g. the cells of reduced cross sections) are written as instances of their templates
+(`SceneRecorder(display="instances")`, the default; `"full"` draws every recovered interior, `None` leaves them out):
+the templates and the kinds' recovery operators are shared parts written once, and the reader rebuilds the values
+of the instances it selects. `SceneRecorder(pack_at_finish=True)` packs the frames into one `frames.fspm.zip` at
+the end (`recorder.pack()`; `encoding3d unpack ARCHIVE.fspm.zip FOLDER` restores the folder; encoding3d and its
+ParaView reader also read the archive as it is).
 
 encoding3d's Python package, `openalea.encoding3d`, is a dependency of metafspm. Until it is published, clone
 [encoding3d](https://github.com/openalea/encoding3d) next to metafspm; `conda/environment.yml` installs it from there

@@ -56,6 +56,7 @@ The models ported to metafspm are in their own packages, on their development br
 | [Caribu](https://github.com/openalea/caribu/tree/to_metafspm) (`to_metafspm`) | the light absorbed by each element of a canopy | `CaribuLight` (functional), `CaribuLightModel` (the scene's light, an environment model), `SimplePlant` (a simple plant to light) |
 | [GRANAP](https://github.com/openalea-incubator/GRANAP-dev/tree/to_metafspm) (`to_metafspm`) | the anatomy of plant organs' cross sections: their tissues and cells | `GranapAnatomy` (structural: the sections' cells), `RootAxis` and `Needle` (organs to carry the sections) |
 | [MECHA](https://github.com/openalea-incubator/MECHA-dev/tree/to_metafspm) (`to_metafspm`) | the flow of water (and solutes) across a root's or a needle's tissues | `MechaHydraulics` (water), `MechaSolutes` (sucrose and starch), `MechaOsmoticPresets` (osmotic potentials); on GRANAP's anatomies |
+| [CNW-Grass](https://github.com/openalea/cnwgrass/tree/to_metafspm) (`to_metafspm`) | the gas exchange of wheat leaves: photosynthesis, stomatal conductance, transpiration, leaf temperature | `GasExchange` (functional); the plant model `ExchangingWheat` puts it on Adel's shoots, lit by Caribu |
 
 ## Installing them
 
