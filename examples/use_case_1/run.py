@@ -3,9 +3,9 @@ Use case 1's scenario: a few wheat plants in their soil and their light, hour by
 their sowing: each plant's shoot (Adel's) on its crown, its roots (ArchiSimple's) from its seed and its crown, the
 anatomy of every section (GRANAP's), the water from the soil (Richards' equation on an adaptive grid) through the
 roots, the crown and the stems to the leaves' stomata (MECHA's), each leaf's transpiration from its gas exchange
-(CNW-Grass's) and the light it absorbs (Caribu's). After each hour, the water balance diagnostics (models.WaterBalance),
-the leaves' gas exchange and the roots' water (LEAVES, ROOTS: declared summaries); at the end, the time each model
-took.
+(CNW-Grass's) and the light it absorbs (Caribu's). After each hour, the water diagnostics (models.WATER_TABLES), the
+leaves' gas exchange and the roots' water (LEAVES, ROOTS: declared summaries), the plant's and the soil's water balances
+(their solves' declared conservation, conservation.csv); at the end, the time each model and component took.
 
     python run.py [output folder] [days] [plants]       by default outputs/from_sowing, 14 days, 2 plants
 
@@ -16,8 +16,8 @@ The weather (weather()): a clear day's PAR (Caribu's clear_day_PAR), the air's t
 course, a constant CO2 and wind, the soil at a constant temperature, a rain of 5 mm in the afternoon of the second
 day (a pulse: its total reaches the soil whatever the time step). Every model reads them over its step (their means:
 the PAR of an hour is the hour's mean, not its value at one instant). The outputs (with a folder): the SceneRecorder's
-summaries, the water balance (water_balance.csv), the leaves' gas exchange and the roots' water (leaves.csv,
-roots.csv), and an encoding3d frame every 12 hours with its views (frames/views.json, the default layers: the shoot,
+summaries, the water diagnostics (plant_water.csv, leaf_water.csv, soil_water.csv) and balances
+(conservation.csv), the leaves' gas exchange and the roots' water (leaves.csv, roots.csv), and an encoding3d frame every 12 hours with its views (frames/views.json, the default layers: the shoot,
 the roots, the soil, the anatomies hidden) holding a few variables (FRAME_VARIABLES), the sections of the first plant
 drawn in the frames of every 24 hours and the last, a checkpoint every day (the last two kept, their unchanging parts
 saved once: Scene.load_checkpoint resumes the run from one), and run.log (the lines printed). The tables are
@@ -37,7 +37,7 @@ from openalea.metafspm.scene.recorder import SceneRecorder, Summary
 from openalea.metafspm.scene.scene import Scene
 
 from component import RichardsSoilModel
-from models import HPA_PER_MPA, SCENE_TRANSLATOR, WHEAT_SCENARIO, WaterBalance, WheatPlant
+from models import HPA_PER_MPA, SCENE_TRANSLATOR, WATER_TABLES, WHEAT_SCENARIO, WheatPlant
 
 OUTPUTS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "outputs")
 HOUR = 3600.
@@ -110,14 +110,15 @@ def scene(plants=2, folder=None, frame_period=12, display_period=24, checkpoint_
           forcings=None, start_hour=0., frame_variables=FRAME_VARIABLES, compute=None):
     """The use case's Scene: *plants* wheat plants (WHEAT_SCENARIO, updated by *scenario*), the soil and the light,
     the forcings of weather() (updated by *forcings*), recorded in *folder* (None: in memory) with the water
-    balance, the leaves' gas exchange and the roots' water (LEAVES, ROOTS) and, every *frame_period* hours, a frame
+    diagnostics (WATER_TABLES) and balances (conservation), the leaves' gas exchange and the roots' water (LEAVES,
+    ROOTS) and, every *frame_period* hours, a frame
     with the default views (with the sections of DISPLAY_PLANTS drawn every *display_period* hours and in the last
     frame) holding the *frame_variables* (None: all), a
     checkpoint every *checkpoint_period* hours; *compute*: the run configuration (None: Compute(), one BLAS thread,
     the memory trimmed after each step)."""
     table = planting(stand(plants), WheatPlant, {**WHEAT_SCENARIO, **(scenario or {})},
                      xrange=plants * PLANT_SPACING, yrange=ROW_SPACING)
-    recorder = SceneRecorder(folder, tables={"water_balance": WaterBalance(), "leaves": LEAVES, "roots": ROOTS},
+    recorder = SceneRecorder(folder, tables={**WATER_TABLES, "leaves": LEAVES, "roots": ROOTS},
                              frame_period=frame_period if folder else None,
                              frame_views="default" if folder else None,
                              display_period=display_period if folder else None,
@@ -151,14 +152,20 @@ def main(folder=os.path.join(OUTPUTS, "from_sowing"), days=14, plants=2):
     try:
         for hour in range(hours):
             built.run()
-            row = built.recorder.table("water_balance").iloc[-1]
+            plant, leaf, soil = (built.recorder.table(name).iloc[-1] for name in WATER_TABLES)
+            balances = built.recorder.table("conservation")
+            balances = balances[balances["time"] == built.time].set_index("component")
             leaves = built.recorder.table("leaves").iloc[-1]
             roots = built.recorder.table("roots").iloc[-1]
-            report(f"day {hour // 24 + 1:2d} h {hour % 24 + 1:2d}  transpiration {row['transpiration']:.3g} cm3 d-1, "
-                   f"uptake {row['root_uptake']:.3g} (plant balance {row['plant_balance']:.1e}), soil's to the roots "
-                   f"{row['soil_uptake']:.3g}; soil change {row['soil_change']:.3e} m3, exchanged "
-                   f"{row['soil_exchanged']:.3e}; largest changes of the potentials: plant "
-                   f"{row['plant_potential_change']:.2e} MPa, soil {row['soil_potential_change']:.2e} MPa; leaves "
+            plant_balance = balances.loc["MechaHydraulics"] if "MechaHydraulics" in balances.index else None
+            imbalance = (plant_balance["residual"] / plant_balance["outflow"]
+                         if plant_balance is not None and plant_balance["outflow"] else np.nan)
+            report(f"day {hour // 24 + 1:2d} h {hour % 24 + 1:2d}  transpiration {leaf['leaf_transpiration']:.3g} "
+                   f"cm3 d-1, uptake {plant['root_uptake']:.3g} (plant balance {imbalance:.1e}), soil's to the roots "
+                   f"{soil['plant_uptake'] * 1e6 * 86400.:.3g}; soil change {balances.loc['RichardsSoil', 'change']:.3e} "
+                   f"m3, residual {balances.loc['RichardsSoil', 'residual']:.1e}; largest changes of the potentials: "
+                   f"plant {plant['psi_max_change'] / HPA_PER_MPA:.2e} MPa, soil {soil['water_potential_max_change']:.2e} "
+                   f"MPa; leaves "
                    f"{leaves['green_area'] * 1e4:.3g} cm2, PARa {leaves['PARa']:.0f}, An {leaves['An']:.3g} µmol s-1, "
                    f"gs {leaves['gs']:.3g}, leaf ψ {leaves['leaf_water_potential']:.3g} MPa, roots' ψ "
                    f"{roots['psi'] / HPA_PER_MPA:.3g} MPa ({time.perf_counter() - started:.0f} s)")
@@ -168,7 +175,7 @@ def main(folder=os.path.join(OUTPUTS, "from_sowing"), days=14, plants=2):
             log.close()
         raise
     built.finish()
-    report(f"{hours} h in {time.perf_counter() - started:.1f} s; per model (s): "
+    report(f"{hours} h in {time.perf_counter() - started:.1f} s; per model and component (s): "
            + ", ".join(f"{name} {seconds:.1f}" for name, seconds in sorted(built.timing.items())))
     if log is not None:
         log.close()

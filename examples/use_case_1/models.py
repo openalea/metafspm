@@ -24,9 +24,11 @@ translators linking their components.
                         cells, the soil's water potential back to the roots, through the roots' soil nodes: the
                         links' mapping, the plant's mask root_surface, GRANAP's entity set soil_nodes); the light's
                         PARa and the optics are the Scene's default identity links
-    WaterBalance        the diagnostics of decision U-6 after each step (a SceneRecorder table): the plant's balance
-                        (transpiration, uptake), the soil's (its water stored, exchanged, given to the roots), the
-                        largest changes of the plant's and the soil's water potentials since the previous step
+    WATER_TABLES        the water diagnostics of decision U-6 after each step (the SceneRecorder's declared tables,
+                        Summary): the plants' root uptake and the largest change of MECHA's ψ since the step before
+                        (plant_water), their organs' transpiration (leaf_water), the soil's water given to the roots
+                        and the largest change of its water potential (soil_water); the balances themselves are
+                        the solves' declared conservation (MECHA's plant water, the soil's water: conservation.csv)
 
 Units: the plant's lengths in m (GRANAP's and MECHA's sections in mm and cm), MECHA's potentials in hPa and its flows
 in cm3 d-1, the gas exchange's transpiration in mmol s-1, the soil's potentials in MPa and its flows in m3 s-1. A
@@ -38,7 +40,6 @@ of the step before (the gas exchange runs first: a lagged feedback, decisions U-
 water potential over the element's liquid (weighted by liquid_volume: CNW-Grass's mecha_links). An element without
 liquid node (a section without anatomy) keeps the gas exchange's default (metafspm's missing="default").
 """
-import numpy as np
 
 from openalea.adel.architecture import ShootArchitecture
 from openalea.adel.development import ScenarioDevelopment, ScenarioShoot
@@ -52,13 +53,13 @@ from openalea.mecha.component import MechaHydraulics, scenario_reduction
 from openalea.mecha.stand_ins import Development
 
 from openalea.metafspm.coupling.translator import Translator
+from openalea.metafspm.scene.recorder import Summary
 
-from component import NodalRootEmergence, RichardsSoilModel, WheatCrown, scene_translator
+from component import NodalRootEmergence, WheatCrown, scene_translator
 
 WATER_MOLAR_VOLUME = 18e-3                   # cm3 mmol-1 (1 g of water is 1 cm3)
 SECONDS_PER_DAY = 86400.
 HPA_PER_MPA = 1e4
-CM3_PER_M3 = 1e6
 
 # The root sections' barriers (the segments' and the apices') by their distance from the tip (MECHA's Development,
 # ArchiSimple's distance: from the section's base, an apex's its length): none at the tip (a section of distance 0:
@@ -165,55 +166,13 @@ class WheatPlant(ScenarioShoot):
         self.hydraulics()
 
 
-class WaterBalance:
-    """
-    The water balance diagnostics after each step (decision U-6: the plant and the soil exchange once per step, the
-    lag accepted), a SceneRecorder table (tables={"water_balance": WaterBalance()}), one row per step:
-
-        transpiration, root_uptake      the plants' (cm3 d-1: MECHA's leaf transpiration and root uptake), equal for
-                                        a steady plant
-        plant_balance                   their difference relative to the transpiration
-        soil_uptake                     what the soil's cells gave the roots (cm3 d-1, the soil's plant_uptake)
-        soil_stored, soil_change, soil_exchanged
-                                        the soil's water (m3), its change since the first run and what crossed its
-                                        boundaries or went to the roots (RichardsSoilModel.water_balance): equal
-        plant_potential_change, soil_potential_change
-                                        the largest change of MECHA's ψ (MPa) and of the soil's water potential (MPa)
-                                        since the previous step, over the nodes and the cells there at both (NaN at
-                                        the first)
-    """
-
-    def __init__(self):
-        self.previous = {}
-
-    def _change(self, key, ids, values) -> float:
-        """The largest change of *values* (of the entities *ids*) since the previous call of *key*, over the entities
-        there at both (a grown plant's new nodes, a refined grid's new cells left out); NaN at the first."""
-        ids, values = np.asarray(ids).reshape(-1), np.asarray(values, dtype=float).reshape(-1)
-        before = self.previous.get(key)
-        self.previous[key] = (ids.copy(), values.copy())
-        if before is None:
-            return np.nan
-        _, now, then = np.intersect1d(ids, before[0], assume_unique=True, return_indices=True)
-        return float(np.max(np.abs(values[now] - before[1][then]))) if now.size else 0.
-
-    def __call__(self, scene) -> dict:
-        row = {"time": scene.time}
-        plants = [population.data_structure for population in scene.populations]
-        transpiration = sum(float(np.sum(ds.get("leaf_transpiration"))) for ds in plants)
-        uptake = sum(float(np.sum(ds.get("root_uptake"))) for ds in plants)
-        row.update(transpiration=transpiration, root_uptake=uptake,
-                   plant_balance=(transpiration - uptake) / transpiration if transpiration else np.nan)
-        row["plant_potential_change"] = max(
-            (self._change(("plant", k), ds.entity_ids("node"), np.asarray(ds.get("psi")) / HPA_PER_MPA)
-             for k, ds in enumerate(plants)),
-            default=np.nan)
-        for model in scene.environment:
-            if isinstance(model, RichardsSoilModel):
-                balance = model.water_balance()
-                row.update(soil_uptake=float(np.sum(model.grid.get("plant_uptake"))) * CM3_PER_M3 * SECONDS_PER_DAY,
-                           soil_stored=balance["stored"], soil_change=balance["change"],
-                           soil_exchanged=balance["exchanged"],
-                           soil_potential_change=self._change("soil", model.grid.entity_ids("cell"),
-                                                              model.grid.get("water_potential")))
-        return row
+# The water diagnostics after each step (decision U-6: the plant and the soil exchange once per step, the lag
+# accepted): the plants' uptake (cm3 d-1) and the largest change of MECHA's ψ (hPa) since the step before, over the
+# nodes there at both (NaN at the first row: ds.previous); their organs' transpiration (cm3 d-1); the soil's water
+# given to the roots (m3 s-1) and the largest change of its water potential (MPa). Their balances are the solves'
+# (graph_system(conserved=...): MECHA's PLANT_WATER, the soil's WATER), in conservation.csv: residual the plant's
+# imbalance (cm3 per step), the soil's closure (m3)
+WATER_TABLES = {"plant_water": Summary("node", sum=["root_uptake"], max_change=["psi"]),
+                "leaf_water": Summary("Organ", sum=["leaf_transpiration"]),
+                "soil_water": Summary("cell", sum=["plant_uptake"], max_change=["water_potential"],
+                                      population="RichardsSoilModel")}

@@ -35,6 +35,11 @@ def _column(cells, depth=1., width=0.1):
     return ArrayDataStructure(shape=(1, 1, cells), dx=(width, width, depth / cells))
 
 
+def _balance(soil) -> dict:
+    """The soil's water balance since the start (its declared conservation, Component.conservation): m3."""
+    return soil.conservation()[("_water", "water")]
+
+
 def _values(grid, name):
     return np.asarray(grid.get(name), dtype=float).reshape(-1)
 
@@ -83,7 +88,7 @@ def test_layers_and_declarations():
 def test_analytic_jacobian_solves_as_finite_differences(face_conductivity):
     """One solve (no step doubling) of infiltration with a root sink on an adaptive grid (hanging faces): with the
     analytic Jacobian and with a finite-difference one, Newton converges to the same h."""
-    options = dict(node_unknowns=["pressure_head", "exchanged_water"], transient=True, integrate="once",
+    options = dict(node_unknowns=["pressure_head"], transient=True, integrate="once",
                    tolerance=1e-11, max_iterations=30, linesearch=True, schedule_as="state")
 
     class AnalyticSoil(RichardsSoil):
@@ -164,7 +169,8 @@ def test_water_balance_closes_with_uptake_and_regridding():
     RichardsSoilModel on an adaptive grid: rain, evaporation, free drainage and a root sink in one cell, the grid
     refined around the sink and the front and coarsened behind them at each step. The water stored changes by what
     crossed the boundaries and what the roots took, to round-off, over the whole run (θ V carried over at each
-    regridding).
+    regridding): the soil's declared conservation (graph_system(conserved=...): Component.conservation, its balance
+    since the start without a reset, the regriddings between the steps included).
     """
     model = RichardsSoilModel([], 0.2, 0.2, HOUR, depth=0.4, voxel=0.1, max_level=1,
                               layers=[(0.2, {**LOAM, "saturated_conductivity": 5e-6}), (np.inf, LOAM)],
@@ -177,12 +183,12 @@ def test_water_balance_closes_with_uptake_and_regridding():
         uptake[grid.locate([[0.05, 0.05, 0.15]])[0]] = 2e-10
         grid.set("plant_uptake", uptake)
         model.run()
-        balance = model.water_balance()
-        assert balance["change"] == pytest.approx(balance["exchanged"], rel=1e-11)
+        balance = _balance(model.soil)
+        assert balance["change"] == pytest.approx(balance["inflow"] - balance["outflow"], rel=1e-11)
     levels = np.array(model.history)
     assert (levels[:, 1] > 0).any()                                   # refined at some step
     assert len({grid_cells.sum() for grid_cells in levels}) > 1      # the grid changed
-    assert abs(model.water_balance()["change"]) > 1e-5               # a run that moved water
+    assert abs(_balance(model.soil)["change"]) > 1e-5                 # a run that moved water
 
 
 def test_a_rain_forcing_is_followed_within_the_step_and_the_balance_closes():
@@ -198,7 +204,9 @@ def test_a_rain_forcing_is_followed_within_the_step_and_the_balance_closes():
     soil()
     assert soil._last_integration["steps"] > 4                        # sub-steps following the pulse
     change = soil.stored_water() - stored
-    assert change == pytest.approx(soil.exchanged_water_volume(), rel=1e-11)
+    balance = _balance(soil)
+    assert change == pytest.approx(balance["change"], rel=1e-12)
+    assert change == pytest.approx(balance["inflow"] - balance["outflow"], rel=1e-11)
     assert change == pytest.approx(0.5 * peak * 0.5 * DAY * area, rel=5e-3)
     assert np.all(_values(grid, "rainfall") == 0.) and np.all(_values(grid, "runoff") == 0.)
     soil()                                                              # the next day: dry
@@ -284,7 +292,8 @@ def _infiltration(cells, face_conductivity, hours):
         soil()
         if hour in hours:
             errors[hour] = np.abs(_values(grid, "pressure_head") - srivastava_yeh(height, hour * HOUR)).max()
-    assert soil.stored_water() - stored == pytest.approx(soil.exchanged_water_volume(), rel=1e-10)
+    balance = _balance(soil)
+    assert soil.stored_water() - stored == pytest.approx(balance["inflow"] - balance["outflow"], rel=1e-10)
     return errors
 
 

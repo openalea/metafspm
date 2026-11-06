@@ -1,9 +1,10 @@
 """
 Use case 1's benchmark (devplan_release_optimisation.md §5): the use case's scene (run.scene, in memory: no frames,
-no checkpoints) run hour by hour from the sowing, each step's time by model (Scene.timing), the kinds of the
-reduction evaluated (their number and time), the plants' nodes, the step's results (results(): transpiration,
-uptake, the leaves' gas exchange, the roots' water potential, to compare runs), and the memory (RSS after each step;
-after malloc_trim and the peak at the end).
+no checkpoints) run hour by hour from the sowing, each step's time by model and by component (Scene.timing: "Model"
+and "Model.Component"), the kinds of the reduction evaluated (their number and time), the plants' nodes, the step's
+results (results(): transpiration, uptake, the leaves' gas exchange, the roots' water potential, the plant's and the
+soil's balance residuals, to compare runs), and the memory (RSS after each step; after malloc_trim and the peak at the
+end).
 
     python benchmark.py [--plants 2] [--days 3] [--label text] [--outputs] [--checkpoint-at 168 ...]
                         [--resume outputs/benchmarks/checkpoints/<label>/step_000168]
@@ -104,13 +105,19 @@ class KindCounter:
 
 
 def results(scene) -> dict:
-    """The step's results, to compare runs (a change's effect on them): the water balance's transpiration and uptake,
-    the leaves' green area, PARa, An and gs (run.LEAVES), the roots' water potential (run.ROOTS)."""
-    rows = {name: scene.recorder.table(name).iloc[-1] for name in ("water_balance", "leaves", "roots")}
-    picked = {"transpiration": rows["water_balance"]["transpiration"],
-              "root_uptake": rows["water_balance"]["root_uptake"],
+    """The step's results, to compare runs (a change's effect on them): the organs' transpiration and the roots'
+    uptake (models.WATER_TABLES), the leaves' green area, PARa, An and gs (run.LEAVES), the roots' water potential
+    (run.ROOTS), the plant's and the soil's water balance residuals (their declared conservation)."""
+    rows = {name: scene.recorder.table(name).iloc[-1] for name in ("leaf_water", "plant_water", "leaves", "roots")}
+    picked = {"transpiration": rows["leaf_water"]["leaf_transpiration"],
+              "root_uptake": rows["plant_water"]["root_uptake"],
               "green_area": rows["leaves"]["green_area"], "PARa": rows["leaves"]["PARa"], "An": rows["leaves"]["An"],
               "gs": rows["leaves"]["gs"], "roots_psi": rows["roots"]["psi"]}
+    balances = scene.recorder.table("conservation")
+    balances = balances[balances["time"] == scene.time]
+    for component, name in (("MechaHydraulics", "plant_residual"), ("RichardsSoil", "soil_residual")):
+        row = balances[balances["component"] == component]
+        picked[name] = row["residual"].iloc[0] if len(row) else np.nan
     return {name: float(value) for name, value in picked.items()}
 
 
@@ -143,7 +150,9 @@ def benchmark(plants: int, days: float, measure_outputs: bool = False, checkpoin
         timing = {name: value - previous.get(name, 0.) for name, value in scene.timing.items()}
         previous = dict(scene.timing)
         nodes = sum(population.data_structure.n_nodes() for population in scene.populations)
-        steps.append({"hour": hour + 1, "seconds": seconds, "models": timing, "kinds": kinds,
+        steps.append({"hour": hour + 1, "seconds": seconds,
+                      "models": {name: value for name, value in timing.items() if "." not in name},
+                      "components": {name: value for name, value in timing.items() if "." in name}, "kinds": kinds,
                       "new_templates": templates,
                       "kind_seconds": kind_seconds, "nodes": nodes, "rss_gb": resident_memory(),
                       "results": results(scene)})
@@ -226,8 +235,12 @@ def summary(result: dict) -> str:
                  f"{sum(step['kind_seconds'] for step in steps):.1f} s")
     lines.append(f"memory: RSS at the end {result['rss_end_gb']:.2f} GB, after trim {result['rss_after_trim_gb']:.2f} GB, "
                  f"peak {result['peak_rss_gb']:.2f} GB")
+    by_model = {name: value for name, value in result["timing"].items() if "." not in name}
+    by_component = {name: value for name, value in result["timing"].items() if "." in name}
     lines.append("per model (s): " + ", ".join(f"{name} {value:.1f}" for name, value in
-                                               sorted(result["timing"].items(), key=lambda item: -item[1])))
+                                               sorted(by_model.items(), key=lambda item: -item[1])))
+    lines.append("per component (s): " + ", ".join(f"{name} {value:.1f}" for name, value in
+                                                   sorted(by_component.items(), key=lambda item: -item[1])))
     if result.get("outputs"):
         lines.append("outputs: " + ", ".join(
             f"{name} {entry['MB']:.1f} MB in {entry['seconds']:.2f} s"

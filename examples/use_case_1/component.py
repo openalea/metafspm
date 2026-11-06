@@ -37,17 +37,21 @@ thermal times are in °Cd.
 from dataclasses import dataclass, fields
 
 import numpy as np
-from scipy.sparse import csr_matrix, diags, identity, bmat
+from scipy.sparse import csr_matrix, diags
 
 from openalea.metafspm.coupling.component import (FunctionalComponent, StructuralComponent, input_variable,
                                                   parameter, planting_variable, setting, state_variable)
 from openalea.metafspm.coupling.translator import Translator
 from openalea.metafspm.data_structure.configs import PropsConfig, ScalesConfig
 from openalea.metafspm.scene.environment import EnvironmentModel
+from openalea.metafspm.solve.conservation import Conservation
 from openalea.metafspm.solve.decorator import (boundary_condition, graph_jacobian, graph_output, graph_system,
                                                node_balance, state)
 
 WATER_DENSITY, GRAVITY = 1000., 9.81                          # kg m-3, m s-2
+# The soil's water, conserved by its solve: held θ V, in through the surface, out through the bottom and to the roots
+WATER = Conservation(amount=("water_content", "volume"), inflow="surface_inflow", outflow=("drainage", "plant_uptake"),
+                     unit="m3")
 MPA_PER_METRE = WATER_DENSITY * GRAVITY * 1e-6                # MPa per m of pressure head
 
 VAN_GENUCHTEN_REFERENCES = ("van Genuchten M.Th. (1980) A closed-form equation for predicting the hydraulic "
@@ -309,9 +313,10 @@ class RichardsSoil(FunctionalComponent):
 
     Solved by Newton with its analytic Jacobian (dθ/dh, dK/dh) and an Armijo line search (multi-day steps through
     a dry soil), to 1e-13 of the water contents, over the time step by step doubling (integrate="adaptive",
-    rtol 1e-3 and atol 1e-4 m on h). A second unknown, exchanged_water, integrates over the sub-steps the water each cell
-    gained through the grid's boundaries and lost to the roots (per cell volume, since the start), so that the water
-    balance can be checked over any run: Σ θ V - Σ θ_0 V = Σ exchanged_water V.
+    rtol 1e-3 and atol 1e-4 m on h). The water is declared conserved (graph_system(conserved=...)): over each
+    call, the water held Σ θ V, what entered through the surface and what left through the bottom and to the roots,
+    integrated over the accepted sub-steps by metafspm, so that the balance is checked at every step
+    (Component.conservation(), the recorder's conservation.csv): its residual is the solver's tolerance.
 
     When an adaptive grid changes, the water is carried over as a volume (θ, volume-averaged, so θ V is conserved)
     and h is recomputed from it (carry_over()): RichardsSoilModel does it after each refinement.
@@ -320,10 +325,6 @@ class RichardsSoil(FunctionalComponent):
     pressure_head: float = state_variable(unit="m", description="Pressure head of the soil water (negative: "
                                                                 "suction).", default=-1., location="cell",
                                           kind="intensive")
-    exchanged_water: float = state_variable(unit="m3 m-3", description="Water a cell gained through the grid's "
-                                                                       "boundaries minus what the roots took up, "
-                                                                       "since the start, per cell volume.",
-                                            default=0., location="cell", kind="intensive")
     water_content: float = state_variable(unit="m3 m-3", description="Volumetric water content θ(h).", default=0.3,
                                           location="cell", kind="intensive")
     water_potential: float = state_variable(unit="MPa", description="Matric potential of the soil water, ρ g h.",
@@ -488,18 +489,13 @@ class RichardsSoil(FunctionalComponent):
         water_content, volume = self._cell_values("water_content", "volume")
         return float((water_content * volume).sum())
 
-    def exchanged_water_volume(self):
-        """The water the soil gained through its boundaries minus the roots' uptake since the start, Σ E V (m3)."""
-        exchanged, volume = self._cell_values("exchanged_water", "volume")
-        return float((exchanged * volume).sum())
-
     # ── the equations ─────────────────────────────────────────────────────────
 
-    @graph_system(node_unknowns=["pressure_head", "exchanged_water"], solver="newton", transient=True,
+    @graph_system(node_unknowns=["pressure_head"], solver="newton", transient=True,
                   integrate="adaptive", rtol=1e-3, atol=1e-4, tolerance=1e-13, max_iterations=30, linesearch=True,
-                  schedule_as="state")
+                  schedule_as="state", conserved={"water": WATER})
     class _water:
-        """Richards' equation in mixed form, per cell volume, and the water exchanged at the boundaries."""
+        """Richards' equation in mixed form, per cell volume."""
 
         @node_balance(field="pressure_head")
         def _balance(self, pressure_head, residual_water_content, saturated_water_content, van_genuchten_alpha,
@@ -535,28 +531,14 @@ class RichardsSoil(FunctionalComponent):
                                                van_genuchten_alpha, van_genuchten_n, saturated_conductivity,
                                                pore_connectivity, boundary_area, half_height, water_table_head)[0]
 
-        @node_balance(field="exchanged_water")
-        def _exchanged(self, exchanged_water, pressure_head, residual_water_content, saturated_water_content,
-                       van_genuchten_alpha, van_genuchten_n, saturated_conductivity, pore_connectivity,
-                       boundary_area, half_height, rainfall, potential_evaporation, surface_minimum_head,
-                       water_table_head, is_surface, is_bottom, plant_uptake, volume):
-            """E = E_prev + dt / V (surface inflow - bottom outflow - uptake)."""
-            soil = (pressure_head, residual_water_content, saturated_water_content, van_genuchten_alpha,
-                    van_genuchten_n, saturated_conductivity, pore_connectivity, boundary_area, half_height)
-            inflow = _surface(self, *soil, rainfall, potential_evaporation, surface_minimum_head)[0]
-            outflow = _bottom(self, *soil, water_table_head)[0]
-            exchange = (is_surface > 0) * inflow - (is_bottom > 0) * outflow - plant_uptake
-            return exchanged_water - self.previous("exchanged_water") - self.dt / volume * exchange
-
         @graph_jacobian
         def _jacobian(self, pressure_head, residual_water_content, saturated_water_content, van_genuchten_alpha,
                       van_genuchten_n, saturated_conductivity, pore_connectivity, face_area, face_distance, gravity,
                       boundary_area, half_height, rainfall, potential_evaporation, surface_minimum_head,
                       water_table_head, is_surface, is_bottom, volume):
             """
-            The balances' derivatives: in h, dθ/dh on the diagonal, dt / V B dq/dh (dq/dh through Δh and K_f(h)),
-            minus the boundaries' inflow slopes; the exchanged water's, the identity and minus dt / V times the
-            boundaries' slopes.
+            The balance's derivative in h: dθ/dh on the diagonal, dt / V B dq/dh (dq/dh through Δh and K_f(h)),
+            minus the boundaries' inflow slopes.
             """
             soil = (residual_water_content, saturated_water_content, van_genuchten_alpha, van_genuchten_n,
                     saturated_conductivity, pore_connectivity)
@@ -568,11 +550,8 @@ class RichardsSoil(FunctionalComponent):
             outflow_slope = _bottom(self, *arguments, water_table_head)[1]
             exchange_slope = (is_surface > 0) * inflow_slope - (is_bottom > 0) * outflow_slope
             scale = diags(self.dt / volume)
-            head_rows = (diags(capacity) + scale @ self.graph_view.incidence @ flux_derivative
-                         - diags(self.dt / volume * exchange_slope))
-            cells = pressure_head.size
-            return bmat([[head_rows, None], [diags(-self.dt / volume * exchange_slope), identity(cells)]],
-                        format="csr")
+            return (diags(capacity) + scale @ self.graph_view.incidence @ flux_derivative
+                    - diags(self.dt / volume * exchange_slope)).tocsr()
 
         @graph_output("water_content", location="node")
         def _water_content(self, pressure_head, residual_water_content, saturated_water_content,
@@ -694,26 +673,18 @@ class RichardsSoilModel(EnvironmentModel):
         self.refine_uptake_fraction, self.coarsen_uptake_fraction = refine_uptake_fraction, coarsen_uptake_fraction
         self.refine_gradient, self.coarsen_gradient = refine_gradient, coarsen_gradient
         self.uptake_floor = uptake_floor
-        self.initial_water = None
         self.history = []                                    # cells per level after each adaptation
+        self._water_set = False
 
     def full_run(self):
-        if self.initial_water is None:                       # the scenario's parameters are set: θ from h, once
+        if not self._water_set:                              # the scenario's parameters are set: θ from h, once
             self.soil.update_water_content()
-            self.initial_water = self.soil.stored_water()
+            self._water_set = True
         super().full_run()
 
     def after_run(self):
         if self.adaptive:
             self.adapt()
-
-    def water_balance(self) -> dict:
-        """The water stored (Σ θ V), its change since the first run, and the water exchanged through the boundaries
-        and with the roots over the same time (m3): the change and the exchange are equal to the solver's
-        tolerance."""
-        stored = self.soil.stored_water()
-        initial = stored if self.initial_water is None else self.initial_water
-        return {"stored": stored, "change": stored - initial, "exchanged": self.soil.exchanged_water_volume()}
 
     def uptake_density(self):
         """The roots' uptake per cell volume (m3 s-1 m-3)."""
@@ -749,11 +720,11 @@ class RichardsSoilModel(EnvironmentModel):
         self.history.append(np.bincount(self.grid.refinement_level(), minlength=self.grid.max_level + 1))
 
     def checkpoint_state(self) -> dict:
-        return {**super().checkpoint_state(), "initial_water": self.initial_water}
+        return {**super().checkpoint_state(), "water_set": self._water_set}
 
     def restore_state(self, state: dict) -> None:
         super().restore_state(state)
-        self.initial_water = state.get("initial_water")
+        self._water_set = state.get("water_set", True)
 
 
 ROOT_SURFACE = {"mask": "root_surface", "method": "overlap"}

@@ -32,7 +32,7 @@ EXAMPLE = os.path.join(os.path.dirname(__file__), "..")
 sys.path.insert(0, os.path.abspath(EXAMPLE))
 
 from component import RichardsSoilModel                                               # noqa: E402
-from models import (PLANT_TRANSLATOR, SCENE_TRANSLATOR, WHEAT_SCENARIO, WATER_MOLAR_VOLUME, WaterBalance,  # noqa: E402
+from models import (PLANT_TRANSLATOR, SCENE_TRANSLATOR, WATER_MOLAR_VOLUME, WATER_TABLES, WHEAT_SCENARIO,  # noqa: E402
                     WheatPlant)
 
 HOUR, DAY = 3600., 86400.
@@ -51,7 +51,7 @@ def _scene(time_step=HOUR):
                                              bottom_boundary="no_flux"),
                                         dict(sun=True, interval=HOUR)],
                  translator=SCENE_TRANSLATOR, time_step=time_step, forcings=forcings,
-                 recorder=SceneRecorder(tables={"water_balance": WaterBalance()}), start=(130, 11.))
+                 recorder=SceneRecorder(tables=WATER_TABLES), start=(130, 11.))
 
 
 def _soil(scene):
@@ -67,8 +67,7 @@ def stepped(tmp_path_factory):
     """The plant grown from its sowing by EMERGENCE_DAYS daily steps (Adel and ArchiSimple grow it whatever the step;
     the light, the gas exchange, MECHA and the soil run at each), checkpointed, resumed by an hourly scene
     (Scene.load_checkpoint); then the scene after each of STEPS hours: the plant's uptake and the soil's (the uptake
-    it received at the step's start: the plant's previous one, decision U-6's lag), and the soil's water balance at
-    the resumption."""
+    it received at the step's start: the plant's previous one, decision U-6's lag)."""
     daily = _scene(DAY)
     for _ in range(EMERGENCE_DAYS):
         daily.run()
@@ -79,7 +78,7 @@ def stepped(tmp_path_factory):
     scene.load_checkpoint(checkpoint)
     ds = scene.populations[0].data_structure
     soil = _soil(scene)
-    history = [{"soil_balance": soil.water_balance()}]
+    history = [{}]
     for _ in range(STEPS):
         history[-1]["compartments"] = np.asarray(ds.entity_ids("node")).copy()   # before the next step
         scene.run()
@@ -229,13 +228,20 @@ def test_the_blades_leaf_water_potential_is_mechas(stepped):
 
 
 def test_the_plant_is_steady(stepped):
-    """What the roots take up is what the leaves transpire (MECHA's steady plant), at every step."""
+    """What the roots take up is what the leaves transpire (MECHA's steady plant), at every step: the plant's
+    declared conservation (MechaHydraulics' PLANT_WATER, conservation.csv) closes, its uptake (plant_water) is its
+    organs' transpiration (leaf_water); the largest change of its ψ since the step before (ds.previous)."""
     scene, _ = stepped
-    rows = scene.recorder.table("water_balance")
-    rows = rows[rows["time"] > 0.]                                     # the steps' (not the initial state's)
-    assert len(rows) == STEPS
-    np.testing.assert_allclose(rows["root_uptake"], rows["transpiration"], rtol=1e-8)
-    assert (rows["transpiration"] > 0.).all()
+    balances = scene.recorder.table("conservation")
+    plant = balances[balances["component"] == "MechaHydraulics"]
+    assert len(plant) == STEPS and set(plant["unit"]) == {"cm3"} and (plant["change"] == 0.).all()
+    assert (plant["outflow"] > 0.).all()
+    np.testing.assert_allclose(plant["residual"], 0., atol=1e-8 * plant["outflow"].max())
+    uptake, transpiration = (scene.recorder.table(name) for name in ("plant_water", "leaf_water"))
+    uptake, transpiration = uptake[uptake["time"] > 0.], transpiration[transpiration["time"] > 0.]
+    assert len(uptake) == STEPS
+    np.testing.assert_allclose(uptake["root_uptake"], transpiration["leaf_transpiration"], rtol=1e-8)
+    assert (uptake["psi_max_change"] > 0.).all()
 
 
 def test_the_uptake_reaches_the_soil_in_its_units(stepped):
@@ -283,13 +289,16 @@ def test_the_light_reaches_the_gas_exchange(stepped):
 
 def test_the_soil_water_balance_closes_with_the_uptake(stepped):
     """The soil closed at its bottom, without rain or evaporation: over the hourly steps, its water changes by what it
-    gave the roots, and its own balance (stored against exchanged, since the sowing) closes."""
+    gave the roots, its declared conservation (RichardsSoil's WATER, conservation.csv) closing at each step."""
     scene, history = stepped
-    balance, resumed = _soil(scene).water_balance(), history[0]["soil_balance"]
-    assert balance["change"] == pytest.approx(balance["exchanged"], rel=1e-9, abs=1e-15)
+    balances = scene.recorder.table("conservation")
+    soil = balances[balances["component"] == "RichardsSoil"]
+    assert len(soil) == STEPS and set(soil["unit"]) == {"m3"} and (soil["inflow"] == 0.).all()
     given = sum(step["soil_uptake"] for step in history[1:]) * HOUR
     assert given > 0.
-    assert balance["change"] - resumed["change"] == pytest.approx(-given, rel=1e-6)
+    assert soil["outflow"].sum() == pytest.approx(given, rel=1e-9)
+    assert soil["change"].sum() == pytest.approx(-given, rel=1e-6)
+    np.testing.assert_allclose(soil["residual"], 0., atol=1e-9 * given)
 
 
 def test_the_frames_keep_what_the_default_views_show(stepped):

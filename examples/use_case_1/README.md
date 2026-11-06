@@ -25,8 +25,10 @@ an `AdaptiveGridDataStructure`.
     neighbour's root would come in. The frames draw it at its own position (the plant's architecture), out of the
     grid; a root below the grid exchanges with its bottom cells.
 - **Solver.** Newton with the analytic Jacobian, and adaptive time steps (step doubling).
-- **Water balance.** A second unknown, `exchanged_water`, integrates what crosses the boundaries and what the roots
-  take, so Σ θ V − Σ θ₀ V = Σ exchanged_water V over any run.
+- **Water balance.** The water is declared conserved by the solve (`graph_system(conserved={"water": WATER})`,
+  metafspm's `Conservation`: held θ V, in through the surface, out through the bottom and to the roots): metafspm
+  integrates what crosses over the accepted sub-steps and checks the balance at every step
+  (`RichardsSoil.conservation()`, the recorder's `conservation.csv`: its residual is the solver's tolerance).
 
 `RichardsSoilModel` is the soil of a Scene: the grid over the stand's pattern, adaptive by default.
 
@@ -166,12 +168,16 @@ step), in a loam 50 cm deep (`SOIL_SCENARIO`: ten layers of 5 cm
 cells, refined once where the roots take up water). Every step is an hour from the sowing: an older plant is a
 resumed run (a checkpoint), not a later start of one model. The first blade emerges after about 100 °Cd (a week);
 before, the plant has no light and transpires nothing. After each hour it prints, and writes to the folder's
-`run.log`, `WaterBalance`'s diagnostics (decision U-6: the plant and the soil exchange once per step), the leaves'
-gas exchange and the roots' water (`run.LEAVES`, `run.ROOTS`: declared tables, `Summary`):
+`run.log`, the water diagnostics (`models.WATER_TABLES`, decision U-6: the plant and the soil exchange once per
+step), the plant's and the soil's water balances (their solves' declared conservation: MECHA's `PLANT_WATER`, the
+soil's `WATER`), the leaves' gas exchange and the roots' water (`run.LEAVES`, `run.ROOTS`; all declared tables,
+`Summary`):
 
-- the plant's transpiration and uptake (equal for a steady plant), and what the soil gave the roots;
-- the soil's water change and what crossed its boundaries (equal);
-- the largest changes of the plant's and the soil's water potentials since the previous hour;
+- the plant's transpiration and uptake (equal for a steady plant: its balance's residual relative to the
+  transpiration), and what the soil gave the roots;
+- the soil's water change and its balance's residual (round-off);
+- the largest changes of the plant's and the soil's water potentials since the previous hour (`Summary(max_change=)`,
+  from the values before the step the Scene keeps: `ds.previous`);
 - the blades' green area, PARa, An, gs and leaf water potential (`LEAVES`: over the blade elements of some green
   area, An per area times the area summed, the means weighted by the green area), the roots' water potential
   (`ROOTS`: MECHA's psi averaged over the root sections by its declared weight, the liquid volume: the soil nodes
@@ -182,8 +188,10 @@ not depend on the time step through the forcings.
 
 The SceneRecorder writes the summaries (`Plant/WheatPlant/summaries.csv`: every component's state variables per
 plant, those of the components on the SubOrgans, Adel's, ArchiSimple's, the gas exchange's, the light's, too: the
-lengths summed, the potentials, conductances and light averaged by their declared weights), `water_balance.csv`,
-`leaves.csv` and `roots.csv` (appended to after every hour), `run.json` (the run's progress, after every hour), a
+lengths summed, the potentials, conductances and light averaged by their declared weights), `plant_water.csv`,
+`leaf_water.csv`, `soil_water.csv`, `conservation.csv` (each conserved quantity's inflow, outflow, change and
+residual per step), `leaves.csv` and `roots.csv` (appended to after every hour), `run.json` (the run's progress,
+after every hour, with the wall time per model and per component), a
 frame every 12 hours with its views (`frame_views="default"`), the sections of the first plant (`DISPLAY_PLANTS`,
 the recorder's `display_plants`) drawn in the frames of every 24 hours and the last (`display_period`), and a
 checkpoint every day (the last two kept; the anatomy templates and the reduced sections saved once, in
