@@ -16,57 +16,13 @@ extensive up "sum", down "split" (weight= required); intensive up "weighted_mean
 from typing import Mapping, Optional
 
 import numpy as np
-from numba import njit
 
 from openalea.metafspm.coupling.declaration import (DOWN_MAPPINGS, INTENSIVE_KINDS, MASSIC_KINDS, POOLED_UP_MAPPINGS,
                                                     check_link, declared_kind, default_mapping)
 from openalea.metafspm.data_structure.data_api import DataStructure, LocatedView, VariableStoreMixin
+from openalea.metafspm.kernels import _count_pieces, _pieces
 
 SEGMENT_COORDINATES = ("x1", "x2", "y1", "y2", "z1", "z2")
-
-
-# ── Segment pieces in cells (length overlap) ─────────────────────────────────────
-
-@njit(cache=True)
-def _count_pieces(p1, p2, origin, dx):
-    n, d = p1.shape
-    counts = np.empty(n, np.int64)
-    for i in range(n):
-        c = 1
-        for a in range(d):
-            lo, hi = min(p1[i, a], p2[i, a]), max(p1[i, a], p2[i, a])
-            c += int(np.floor((hi - origin[a]) / dx[a]) - np.floor((lo - origin[a]) / dx[a]))
-        counts[i] = c
-    return counts
-
-
-@njit(cache=True)
-def _pieces(p1, p2, origin, dx, counts, offsets, middles, fractions):
-    """Pieces of each segment between the cell faces it crosses: middle point and length fraction."""
-    n, d = p1.shape
-    for i in range(n):
-        m = counts[i]
-        ts = np.empty(m + 1)
-        ts[0], j = 0., 1
-        for a in range(d):
-            delta = p2[i, a] - p1[i, a]
-            if delta == 0.:
-                continue
-            lo, hi = min(p1[i, a], p2[i, a]), max(p1[i, a], p2[i, a])
-            first = np.floor((lo - origin[a]) / dx[a]) + 1.
-            last = np.floor((hi - origin[a]) / dx[a])
-            k = first
-            while k <= last:
-                ts[j] = (origin[a] + k * dx[a] - p1[i, a]) / delta
-                j += 1
-                k += 1.
-        ts[j] = 1.
-        ts = np.sort(ts[:j + 1])
-        for q in range(m):
-            t = 0.5 * (ts[q] + ts[q + 1])
-            for a in range(d):
-                middles[offsets[i] + q, a] = p1[i, a] + t * (p2[i, a] - p1[i, a])
-            fractions[offsets[i] + q] = ts[q + 1] - ts[q]
 
 
 class CrossMapping:

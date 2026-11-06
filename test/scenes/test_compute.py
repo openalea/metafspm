@@ -174,3 +174,31 @@ def test_scenario_and_run_record_the_compute(tmp_path):
         run = json.load(f)["compute"]
     assert run["threads"]["numba"] == 1 and run["pool"] is None
     assert all(threads == 1 for threads in run["threads"]["blas"].values())
+
+
+def test_warm_up_runs_metafspms_kernels_and_every_registered_ports(monkeypatch):
+    from importlib import metadata
+
+    from openalea.metafspm import compute as compute_module, kernels
+    calls = []
+    monkeypatch.setattr(kernels, "warm_up", lambda: calls.append("metafspm"))
+
+    class Entry:
+        def __init__(self, name):
+            self.name = name
+
+        def load(self):
+            return lambda: calls.append(self.name)
+    monkeypatch.setattr(metadata, "entry_points",
+                        lambda group: [Entry("zeta"), Entry("alpha")] if group == compute_module.WARM_UP_GROUP else [])
+    seconds = compute_module.warm_up()
+    assert calls == ["metafspm", "alpha", "zeta"] and set(seconds) == {"metafspm", "alpha", "zeta"}
+    calls.clear()
+    assert set(compute_module.warm_up(ports=False)) == {"metafspm"} and calls == ["metafspm"]
+
+
+def test_the_kernels_warm_up_compiles_them():
+    from openalea.metafspm import kernels
+    kernels.warm_up()
+    compiled = [name for name in dir(kernels) if hasattr(getattr(kernels, name), "signatures")]
+    assert compiled and all(getattr(kernels, name).signatures for name in compiled)

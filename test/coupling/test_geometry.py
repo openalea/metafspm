@@ -3,8 +3,8 @@ PlantGL's PglTurtle."""
 import numpy as np
 import pytest
 
-from openalea.metafspm.coupling.geometry import (Triangles, down, follow_parents, left_of, place, roll_right,
-                                                 roll_to_vertical, segment_triangles, slim_cylinders, turn_left)
+from openalea.metafspm.coupling.geometry import Triangles, place, segment_triangles, slim_cylinders
+from openalea.metafspm.kernels import down, follow_parents, left_of, roll_right, roll_to_vertical, turn_left
 
 
 def test_triangles_per_owner():

@@ -9,7 +9,9 @@ Exactness: chain scans and path windows add their terms in the same sequential o
 (e.g. rhizodep's distance_from_tip and supply for elongation), so their results are identical bit for bit.
 """
 import numpy as np
-from numba import njit, prange
+
+from openalea.metafspm.kernels import (_chain_positions, _count_window, _follow_chains, _path_window, _segmented_scan,
+                                       _window_contributions)
 
 
 # ── Chains ─────────────────────────────────────────────────────────────────────
@@ -47,55 +49,6 @@ def chains_from_groups(group: np.ndarray, rank: np.ndarray) -> dict:
     position = np.empty(order.size, dtype=np.int64)
     _chain_positions(order, offsets, chain, position)
     return {"order": order, "offsets": offsets, "chain": chain, "position": position}
-
-
-@njit(cache=True)
-def _follow_chains(starts, successor, n):
-    order = np.empty(n, dtype=np.int64)
-    offsets = np.empty(starts.size + 1, dtype=np.int64)
-    k = 0
-    for c in range(starts.size):
-        offsets[c] = k
-        v = starts[c]
-        while v >= 0 and k < n:
-            order[k] = v
-            k += 1
-            v = successor[v]
-    offsets[starts.size] = k
-    return order[:k], offsets
-
-
-@njit(cache=True)
-def _chain_positions(order, offsets, chain, position):
-    for c in range(offsets.size - 1):
-        for i in range(offsets[c], offsets[c + 1]):
-            chain[order[i]] = c
-            position[order[i]] = i - offsets[c]
-
-
-@njit(cache=True, parallel=True)
-def _segmented_scan(values, order, offsets, op_max, reverse, exclusive):
-    """Inclusive or exclusive scan (sum or max) of values (n, k) along each chain, sequentially, in parallel over chains."""
-    out = np.zeros_like(values)
-    for c in prange(offsets.size - 1):
-        start, end = offsets[c], offsets[c + 1]
-        for j in range(values.shape[1]):
-            acc = 0.
-            first = True
-            for t in range(end - start):
-                i = order[end - 1 - t] if reverse else order[start + t]
-                if exclusive:
-                    out[i, j] = acc if not first else (-np.inf if op_max else 0.)
-                if first:
-                    acc = values[i, j]
-                    first = False
-                elif op_max:
-                    acc = max(acc, values[i, j])
-                else:
-                    acc = acc + values[i, j]
-                if not exclusive:
-                    out[i, j] = acc
-    return out
 
 
 def chain_scan(values, chains: dict, op: str = "sum", reverse: bool = False, exclusive: bool = False) -> np.ndarray:
@@ -323,29 +276,6 @@ def chain_recurrence(update, values, chains: dict) -> np.ndarray:
 
 # ── Windows towards the base ───────────────────────────────────────────────────
 
-@njit(cache=True, parallel=True)
-def _path_window(targets, parents, budget, extent, values, include):
-    sums = np.zeros((targets.size, values.shape[1]))
-    for t in prange(targets.size):
-        node = targets[t]
-        remaining = budget[node]
-        current = node
-        while remaining > 0:
-            if remaining > extent[current]:
-                if include[current]:
-                    for j in range(values.shape[1]):
-                        sums[t, j] += values[current, j]
-                    remaining = remaining - extent[current]
-                current = parents[current]
-                if current < 0:
-                    break
-            else:
-                # value * remaining / extent, in this order (rhizodep's), for identical rounding
-                for j in range(values.shape[1]):
-                    sums[t, j] += values[current, j] * remaining / extent[current]
-                remaining = 0.
-    return sums
-
 
 def path_window(parents, budget, extent, values, where=None, include=None) -> np.ndarray:
     """
@@ -364,47 +294,6 @@ def path_window(parents, budget, extent, values, where=None, include=None) -> np
     out = np.zeros_like(array)
     out[targets] = sums
     return out if vector else out[:, 0]
-
-
-@njit(cache=True)
-def _count_window(targets, parents, budget, extent, include):
-    counts = np.zeros(targets.size, dtype=np.int64)
-    for t in range(targets.size):
-        remaining, current, count = budget[targets[t]], targets[t], 0
-        while remaining > 0:
-            if remaining > extent[current]:
-                if include[current]:
-                    count += 1
-                    remaining = remaining - extent[current]
-                current = parents[current]
-                if current < 0:
-                    break
-            else:
-                count += 1
-                remaining = 0.
-        counts[t] = count
-    return counts
-
-
-@njit(cache=True)
-def _window_contributions(targets, parents, budget, extent, values, include, offsets, supplier, contribution):
-    for t in prange(targets.size):
-        remaining, current, k = budget[targets[t]], targets[t], offsets[t]
-        while remaining > 0:
-            if remaining > extent[current]:
-                if include[current]:
-                    supplier[k] = current
-                    contribution[k] = values[current]
-                    k += 1
-                    remaining = remaining - extent[current]
-                current = parents[current]
-                if current < 0:
-                    break
-            else:
-                supplier[k] = current
-                contribution[k] = values[current] * remaining / extent[current]
-                k += 1
-                remaining = 0.
 
 
 def path_contributions(parents, budget, extent, values, targets, include=None) -> tuple:

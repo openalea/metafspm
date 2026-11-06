@@ -57,6 +57,7 @@ test:
 
 
   commands:
+    - python -m openalea.metafspm warm_up      # numba's cache filled before the suites (compute.warm_up)
     - cd test
     - pytest -v
 

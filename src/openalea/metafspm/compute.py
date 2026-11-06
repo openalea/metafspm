@@ -21,18 +21,29 @@ A scene's run configuration: how many threads and processes it uses, its device 
 Within limits() (the Scene's build and each of its steps), Compute.current() is that Compute: what the code run
 there reads of it (a reduction's kind batches) without being given it; outside, a default Compute().
 
+numba's kernels compile at their first call (a cold start of about 95 s for metafspm and the ports together, once
+per machine: their cache, NUMBA_CACHE_DIR for a read-only install): warm_up(), or
+
+    python -m openalea.metafspm warm_up
+
+runs every kernel on tiny inputs, metafspm's (kernels.warm_up) and every installed port's (the entry points of group
+"openalea.metafspm.warm_up"): once at install, and in CI before the suites.
+
 The allocator's arenas are not set here (MALLOC_ARENA_MAX=2 saves 0.6 GB on use case 1): an environment variable read
 when the process starts, set in the examples' environment.yaml (docs/user.md).
 """
+import argparse
 import ctypes
 import ctypes.util
 import os
+import time
 from contextlib import contextmanager
 from dataclasses import dataclass, field, fields
 
 DEVICES = ("cpu", "cuda")
 MEMORY = ("trim", "keep")
 LINEAR_SOLVERS = ("superlu",)
+WARM_UP_GROUP = "openalea.metafspm.warm_up"   # the entry points of the ports' warm_up() (warm_up runs them)
 _ACTIVE = []                  # the Computes whose limits() are entered, the innermost last
 POOL_WORK = 1.                # s: the estimated work of a batch above which "auto" starts a pool
 SECONDS_PER_CELL = 1e-5       # s per interior cell of a kind: its evaluation's estimated cost
@@ -145,3 +156,33 @@ def _malloc_trim():
             function.argtypes, function.restype = [ctypes.c_size_t], ctypes.c_int
         _LIBC.append(function)
     return _LIBC[0]
+
+
+def warm_up(ports: bool = True) -> dict:
+    """
+    numba's cache filled: every kernel of metafspm (kernels.warm_up) and, with *ports*, of every installed port (its
+    warm_up(), an entry point of group WARM_UP_GROUP) compiled on tiny inputs, or loaded when cached. {name: seconds}.
+    """
+    from importlib.metadata import entry_points
+    from openalea.metafspm import kernels
+    seconds = {}
+    started = time.perf_counter()
+    kernels.warm_up()
+    seconds["metafspm"] = time.perf_counter() - started
+    if ports:
+        for entry in sorted(entry_points(group=WARM_UP_GROUP), key=lambda entry: entry.name):
+            started = time.perf_counter()
+            entry.load()()
+            seconds[entry.name] = time.perf_counter() - started
+    return seconds
+
+
+def main(argv=None) -> None:
+    """python -m openalea.metafspm warm_up [--no-ports]: warm_up's, each package's time printed."""
+    parser = argparse.ArgumentParser(prog="python -m openalea.metafspm",
+                                     description="metafspm's run configuration tools")
+    parser.add_argument("command", choices=("warm_up",))
+    parser.add_argument("--no-ports", action="store_true", help="metafspm's kernels only")
+    arguments = parser.parse_args(argv)
+    for name, value in warm_up(ports=not arguments.no_ports).items():
+        print(f"{name:<20} {value:7.2f} s")
