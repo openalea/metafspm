@@ -231,7 +231,7 @@ class Reduction:
 
     def __getstate__(self):
         state = dict(self.__dict__)        # a checkpoint: the declaration, the templates and the kinds (shared parts)
-        state.update(_blends={}, _libraries={}, model=None, instance=None, g=None)
+        state.update(_blends={}, _libraries={}, _pickles={}, model=None, instance=None, g=None)
         state.pop("_table", None)          # the groups' arrays: per DataStructure and topology
         state.pop("_assigned", None)
         return state
@@ -244,9 +244,11 @@ class Reduction:
     # ── The population's own (Scene, population_data_structure) ──
 
     def for_population(self, g) -> "Reduction":
-        """A copy for one population's MPG *g* (the templates shared, the kinds its own)."""
+        """A copy for one population's MPG *g*: its templates (full and reduced) and kinds its own, nothing kept on
+        the model's Reduction (two Scenes of the model in one process share none: each freed with its population)."""
         out = copy.copy(self)
-        out._kinds, out._blends, out._libraries, out.g = {}, {}, {}, g
+        out._kinds, out._blends, out._libraries, out._pickles, out.g = {}, {}, {}, {}, g
+        out._reduced, out._full, out._kept, out._rows = {}, {}, {}, {}
         out.__dict__.pop("_table", None)
         out.__dict__.pop("_assigned", None)
         return out
@@ -557,7 +559,7 @@ class Reduction:
         if table is None:
             return None
         parameters = self._plant_parameters(ds)
-        signatures = {p: _signature(parameters[p]) for p in np.unique(table.plant).tolist()}
+        signatures = {p: _signature(self, parameters[p]) for p in np.unique(table.plant).tolist()}
         stamp = (id(table), tuple(ds.write_count(name) for name in self.kind), tuple(sorted(signatures.items())))
         cached = self.__dict__.get("_assigned")
         if (cached is not None and cached[0] == stamp
@@ -914,16 +916,17 @@ def _first_nodes(owner) -> np.ndarray:
     return out
 
 
-_PICKLES = {}            # the plants' parameter objects' pickles (content_key's): pickled once, not at every solve
-PICKLES_KEPT = 4096      # at most (the dict emptied beyond)
+PICKLES_KEPT = 4096      # the parameter objects' pickles a reduction keeps, at most (emptied beyond)
 
 
-def _signature(parameters: dict) -> str:
-    """A digest of a plant's parameters, by content (dicts, records and numbers alike)."""
+def _signature(reduction, parameters: dict) -> str:
+    """A digest of a plant's parameters, by content (dicts, records and numbers alike); their objects' pickles kept
+    on the population's *reduction* (content_key's pickles=: pickled once, not at every solve; freed with it)."""
     from openalea.metafspm.solve.memo import content_key
-    if len(_PICKLES) > PICKLES_KEPT:
-        _PICKLES.clear()
-    return content_key({name: parameters[name] for name in sorted(parameters)}, pickles=_PICKLES)
+    pickles = reduction.__dict__.setdefault("_pickles", {})
+    if len(pickles) > PICKLES_KEPT:
+        pickles.clear()
+    return content_key({name: parameters[name] for name in sorted(parameters)}, pickles=pickles)
 
 
 def _plant_scale() -> int:
@@ -1046,6 +1049,8 @@ class _Library:
                                                time_step=self.time_step)       # the scene's step (_library)
         ds, instance = population.data_structure, population.instance
         own = reduction.for_population(ds.structure)         # the library knows its reduced groups, evaluates none
+        own._reduced, own._full, own._kept, own._rows = reduction._reduced, reduction._full, reduction._kept, \
+            reduction._rows                                   # the plants' templates, which its groups are
         own.library = True
         own.bind(model, instance)
         ds.structure.reduction = own
@@ -1106,7 +1111,7 @@ def _library(reduction: Reduction, parameters: dict) -> _Library:
              if hasattr(component, "simulation_step")]
     time_step = next((float(step) for step in steps if step is not None), 3600.)    # the plants' DataStructure's
     libraries = reduction.__dict__.setdefault("_libraries", {})
-    key = (_signature(parameters), time_step)
+    key = (_signature(reduction, parameters), time_step)
     if key not in libraries:
         libraries[key] = _Library(reduction, parameters, time_step)
     return libraries[key]

@@ -240,8 +240,8 @@ def test_the_library_gets_every_per_plant_parameter_and_keys_its_kinds_by_them()
     reduction = population.data_structure.structure.reduction
     first, second = (reduction._parameters(population.data_structure, k) for k in (0, 1))
     assert first["options"] == {"suberin": 1} and second["options"] == {"suberin": 2}
-    assert _signature(first) != _signature(second)
-    assert _signature(first) == _signature(dict(first))                 # by content
+    assert _signature(reduction, first) != _signature(reduction, second)
+    assert _signature(reduction, first) == _signature(reduction, dict(first))     # by content
 
 
 @pytest.mark.parametrize("n_plants", [1, 2])

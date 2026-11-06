@@ -333,10 +333,13 @@ def test_the_signature_of_an_object_parameter_is_its_contents_not_its_address():
     another process) keys the same kinds, another content others."""
     import copy
     import pickle
-    from openalea.metafspm.solve.reduction import _signature
+    from openalea.metafspm.solve.reduction import Reduction, _signature
+    reduction = Reduction()                                  # the pickles kept on it
     shapes = _Shapes({"blade": np.linspace(0., 1., 5)})
-    assert _signature({"leaves": shapes}) == _signature({"leaves": copy.deepcopy(shapes)})
-    assert _signature({"leaves": shapes}) == _signature({"leaves": pickle.loads(pickle.dumps(shapes))})
-    assert _signature({"leaves": np.array([shapes, None], dtype=object)}) == \
-        _signature({"leaves": np.array([copy.deepcopy(shapes), None], dtype=object)})
-    assert _signature({"leaves": shapes}) != _signature({"leaves": _Shapes({"blade": np.linspace(0., 2., 5)})})
+    assert _signature(reduction, {"leaves": shapes}) == _signature(reduction, {"leaves": copy.deepcopy(shapes)})
+    assert _signature(reduction, {"leaves": shapes}) == \
+        _signature(reduction, {"leaves": pickle.loads(pickle.dumps(shapes))})
+    assert _signature(reduction, {"leaves": np.array([shapes, None], dtype=object)}) == \
+        _signature(reduction, {"leaves": np.array([copy.deepcopy(shapes), None], dtype=object)})
+    assert _signature(reduction, {"leaves": shapes}) != \
+        _signature(reduction, {"leaves": _Shapes({"blade": np.linspace(0., 2., 5)})})
