@@ -16,7 +16,8 @@
              DataStructureComponent, FunctionalComponent, StructuralComponent, NewNodes, NewComplexes
 
 .. automodule:: openalea.metafspm.coupling.declaration
-   :members: VariableSpec, DeclarationError, resolve_declaration, default_mapping, kinds_agree, scale_names
+   :members: VariableSpec, DeclarationError, resolve_declaration, default_mapping, kinds_agree, scale_names,
+             entity_set, EntitySets, rule_holds, template_selection
 ```
 
 ## Steps and graph systems

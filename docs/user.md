@@ -305,16 +305,20 @@ class SoilDiffusion(FunctionalComponent):
 - **Outputs and Jacobians.** `@graph_output(name, location=...)` derives outputs after the solve; `@graph_jacobian`
   gives an analytic Jacobian (finite differences with graph colouring otherwise).
 
-- **Reductions.** A plant model may reduce its graph systems by groups (`solve.reduction.Reduction(location=, labels=,
-  ports=, keep=, explicit_edges=, kind=, inputs=, systems=, outputs=)`): the groups of a location (e.g. the SubOrgans
-  of some labels) keep their ports and kept nodes, their interiors eliminated once per kind (a library population of
+- **Reductions.** A plant model may reduce its graph systems by groups (`solve.reduction.Reduction(location=, where=,
+  ports=, keep=, explicit_edges=, kind=, inputs=, systems=, outputs=)`): the groups of a location (the SubOrgans
+  `where=` selects: a filter of the entities' syntax, `{"label": "RootSegment"}`, `"<Scale>.label"` their complex's
+  label, `{"label": "StemElement", "Organ.label": "StemInternode"}` the internodes' elements and not the sheaths', or
+  a published entity set's name; all without) keep their ports and kept nodes (`ports=`, `keep=`: entity set names,
+  `"GranapAnatomy.conduits"`, `{variable: condition}` rules on the template's properties, callables, or tuples of
+  them), their interiors eliminated once per kind (a library population of
   the model's own components, each kind its group's template, kind values and the plant's parameters, objects
   included, digested by content; the library runs the components of the reduced systems and those giving them inputs
   at the cells (per-cell osmotic presets), not the others (a shoot's development, its tables)). It is the model's
   `reduction` class attribute, or a function of its scenario choosing one, or None: `reduction = staticmethod(lambda
   scenario: Reduction(...) if scenario.get("reduced") else None)`; the entries it reads are the model's, the same for
   every plant of a population. The entries it owns but may not read (the reduced labels while `reduced` is off) are
-  its attribute `scenario_keys` (`choose.scenario_keys = ("reduced", "reduced_labels")`): accepted, inactive. A graph
+  its attribute `scenario_keys` (`choose.scenario_keys = ("reduced", "reduced_where")`): accepted, inactive. A graph
   system's terms the reduction must keep explicit are declared `@explicit_term`, its inputs' derivatives
   `@input_jacobian`. A structural model takes a group's reduced template from `reduction.template_for(full)`; a
   component reading a reduced group's full template (its volumes, its geometry) gets it from
@@ -343,8 +347,8 @@ class SoilDiffusion(FunctionalComponent):
   `reduction.recover_interiors(ds)` gives every reduced group's interior values at once (batched by kind, one
   factorisation each), `reduction.full_rows(key)` the full template's rows a reduced template holds and
   `reduction.unknown()` the reduced system's node unknown; a plant model's structural component asks
-  `reduction.reduces(label)` with its own kinds' names (GRANAP's anatomy kinds: a sheath's elements are the kind
-  `Sheath`, not their label `StemElement`).
+  `reduction.reduces(g, vertex)` for each group it instances (where= on the vertex as it is: its label, its
+  complexes', its properties), and `reduction.is_reduced(template)` whether an instance's template is a reduced one.
 ## 4. Structure: `StructuralComponent`
 
 A structural component edits the plant (growth, segmentation, anatomy). Its steps come in two styles:
@@ -391,8 +395,36 @@ On an anatomy-mode DataStructure, the frames and the light models take the trian
 declaration at Organ) registers its geometry on `ds.at("Organ")`, never drawn nor lit, and warns at its construction;
 declare one of its variables at the SubOrgan scale (or its `entities`) for its elements to be drawn.
 `ds.triangles(where)` takes a node mask or a mask's name (`"emerged"`: plants not yet emerged left out; every node
-when the DataStructure has no such mask). `Triangles.clip_below(z)` cuts them at the soil (a buried part receives no
-light), `Triangles.mean_per_owner(values, n)` averages per element by area.
+when the DataStructure has no such mask). `Triangles.mean_per_owner(values, n)` averages per element by area.
+A triangle may carry attributes (`Triangles(..., attributes={"green": shares})`: Adel's green share of each
+triangle's area, 1 by default where a part does not carry it), kept through `select`, `clip` and `concatenate`.
+
+**The soil surface and the geometry in a domain.** `Scene(soil_surface=0.)` is the one definition of the soil's
+surface (m, the plants' frame): every DataStructure's `ds.soil_surface` (a component's `self.soil_surface`), the
+cross mappings' grid top (`CrossMapping(soil_surface=)`: the grid's depth is `soil_surface - z`), and the MPG's
+`g.soil_surface` while the initiators build (a crown placed below it). `ds.geometry` answers what of the elements
+lies in a domain, vectorised: `"air"` and `"soil"` (the half spaces of the soil surface) or a `HalfSpace(level,
+axis="z", above=True)`:
+
+```python
+ds.geometry.clipped("air", where="emerged")                 # the triangles above the soil (Caribu lights them)
+ds.geometry.fraction_in("air", location="SubOrgan", by="area", weight="green")   # each element's green share there
+ds.geometry.fraction_in("soil", by="length")                # each segment's length fraction in the soil
+ds.geometry.centre_in("air")                                # (n, 3): the centre of each element's part above it
+```
+
+`Triangles.clip(domain)` cuts the triangles at the plane (one or two triangles each, exact),
+`Triangles.fraction_in(domain)` gives each one's area fraction inside, without a loop. A translator link takes such
+quantities as sources: `FractionIn(domain, by=, weight=, empty=)` and `CentreIn(domain, axis=, by=, weight=)`
+(`coupling.geometry`) are geometric variables the DataStructure derives (`ds.derive_geometry(name, query,
+location=)`) and recomputes when the geometry changes (`Geometry.stamp`: the topology, the providers'
+`geometry_stamp()`, by default their calls and their segment ends' writes):
+
+```python
+Translator().link("GasExchange", "green_area", "ShootArchitecture",
+                  ("green_area", FractionIn("air", weight="green", empty=0.)), formula=np.multiply,
+                  names={"green_area": "green_area_in_air"})        # CNW-Grass's emerged_links
+```
 
 **Labels.** `ds.labels()` gives each node's MTG label name (`"LeafElement"`, `"RootSegment"`, ...), and
 `ds.labels(location="Organ")` the label of its entity at a coarser scale; a `UnionDataStructure` gives its parts'. They are
@@ -509,8 +541,13 @@ factor (a share, a calibration). Undeclared units agree with anything; unreadabl
 Links between components on different DataStructures are exchanged by `coupling.cross.Exchanges` at fixed points,
 through a mapping:
 
-- `CrossMapping(plants, grid, method="barycentre" | "overlap")`: segments to cells (by middle point, or by the
-  length fraction in each cell), rebuilt after growth or coordinate changes. On an anatomy-mode plant (its nodes the
+- `CrossMapping(plants, grid, method="barycentre" | "overlap", mask=, soil_surface=)`: segments to cells (by middle
+  point, or by the length fraction in each cell), rebuilt after growth or coordinate changes. The Scene infers one
+  from the scene translator's links: a link's `mapping=` (`Link(..., mapping={"mask": "root_surface", "method":
+  "overlap"})`) gives its own, shared by the links of the same options (a population with emergence times: its mask
+  and `"emerged"`); a CrossMapping given by `mappings=` replaces the inferred ones of its pair. The entities with a
+  part outside the grid along its non-periodic axes (above the soil, below its bottom) are clipped into its border
+  cells, counted (`mapping.outside()`, their indices) and warned of once. On an anatomy-mode plant (its nodes the
   Compartments) it maps its SubOrgans, where the segments' ends are (`mapping.location`): a SubOrgan variable
   through its segment's cells; a Compartment variable (MECHA's root uptake, the soil's potential it receives)
   through its SubOrgan's cells, at its masked Compartments only (`mask="root_surface"`, a node mask: the roots'
@@ -594,8 +631,8 @@ scene = Scene.from_scenario(scenario, stand(...), Wheat, environment=[RhizoSoil,
   the initiators read (`parameters.get("n_segments")`) are theirs. Any other entry raises: a typo, or a parameter
   no component declares. A parameter not stored per plant must be the same for every plant.
 - **A step** runs each environment model after the exchanges into it, then each population after the exchanges into
-  it. Mappings between populations and grids or unions are inferred from the scene translator; others are given by
-  `mappings=`.
+  it. Mappings between populations and grids or unions are inferred from the scene translator's links (their
+  `mapping=` options); others are given by `mappings=`.
 - **Forcings, the time-varying inputs.** `forcings={name: forcing}`, or a DataFrame indexed by time (s) with one
   column each. A forcing is a number, a callable of the scene time (s), a Series indexed by time, or a `(times,
   values)` pair; tables are interpolated linearly; a callable of the time and the entity ids, `(time, ids) -> one

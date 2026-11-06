@@ -74,7 +74,7 @@ from openalea.metafspm.scene.scene import Scene
 forcings = scenario.pop("forcings")
 recorder = SceneRecorder("outputs/dry", frame_period=6, checkpoint_period=12, keep_checkpoints=1)
 scene = Scene(table, environment=[Soil], environment_scenarios=[scenario["Soil"]], translator=SCENE_TRANSLATOR,
-              time_step=3600, mappings=root_surface_mappings, forcings=forcings, recorder=recorder)
+              time_step=3600, forcings=forcings, recorder=recorder)
 scene.simulate(48)
 ```
 
@@ -94,8 +94,7 @@ scene.simulate(48)
 - **`simulate(n)`** runs *n* steps, or fewer if `stop_when=` holds. It then records the last state and the run's
   status: finished, stopped, or failed with its error. A loop of `scene.run()` ends with `scene.finish()`.
 - **In one call.** `Scene.from_scenario(scenarios["dry"], [Planting(x=0.1, y=0.1)], SeedlingWater, environment=[Soil],
-  xrange=0.2, yrange=0.2, translator=SCENE_TRANSLATOR, time_step=3600, mappings=root_surface_mappings,
-  recorder=recorder)` does steps 2 and 3 from the table's column: each model's entries go to it, the forcings to
+  xrange=0.2, yrange=0.2, translator=SCENE_TRANSLATOR, time_step=3600, recorder=recorder)` does steps 2 and 3 from the table's column: each model's entries go to it, the forcings to
   the scene.
 
 The folder then holds:

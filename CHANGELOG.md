@@ -2,6 +2,38 @@
 
 ## Unreleased (release2026)
 
+### API generalisations (O-11: soil surface, receiver-private names, entity sets, link mappings)
+
+- **One soil surface.** `Scene(soil_surface=0.)` (m): every DataStructure's `ds.soil_surface` (a component's
+  `soil_surface`), the cross mappings' grid top (`CrossMapping(soil_surface=)`, the grid's depth `soil_surface - z`),
+  the MPG's `g.soil_surface` while the initiators build (`population_data_structure(soil_surface=)`).
+- **Geometry in a domain, vectorised.** `ds.geometry` (`coupling.geometry.Geometry`): `clipped(domain, where=)`,
+  `fraction_in(domain, location=, by="area" | "length", weight=, empty=)`, `centre_in(...)`; domains `"air"`,
+  `"soil"` (the soil surface's half spaces) or `HalfSpace(level, axis, above)`. `Triangles.clip(domain)` (one or two
+  triangles per crossing one, in the triangles' order) and `Triangles.fraction_in(domain)` (exact area fractions)
+  replace **`Triangles.clip_below` (removed)** and its per-triangle loop. Triangles carry per-triangle `attributes`
+  (`"green"`: a triangle's green share; through `select`, `clip`, `concatenate`, an entity view's geometry).
+  Geometric link sources `FractionIn`, `CentreIn`: variables the DataStructure derives (`ds.derive_geometry`) and
+  recomputes when the geometry changes (`Geometry.stamp`, `StructuralComponent.geometry_stamp()`).
+- **Receiver-private link names.** `Link(..., names={"green_area": "exchanging_area"})`: the link's values kept
+  under the private name, which the receiver reads as its variable during its calls and `read()`
+  (`ds.private_names(...)`, `Component.private_names()`), the shared variable untouched: a same-name variable can
+  receive a formula or factor link.
+- **Named entity sets.** `Component.entity_sets = {name: {variable: condition}}`, named `"Class.set"`
+  (`declaration.entity_set`): `ds.define_mask(name, entities="GranapAnatomy.soil_nodes")`, and a Reduction's rules.
+  **Breaking**: `Reduction(labels=)` is `Reduction(where=)`, a filter of the groups (`"label"`, `"<Scale>.label"`,
+  properties) or a set name; `reduction.reduces(g, vertex)` (was `reduces(label)`); `ports=`, `keep=`,
+  `explicit_edges=` take set names, `{variable: condition}` rules on a template's properties
+  (`declaration.template_selection`), callables or tuples of them; `Reduction.is_reduced(template)`.
+- **Mappings from the links.** `Link(..., mapping={"mask": ..., "method": ...})`: the Scene infers one CrossMapping
+  per (population, grid, options) (`Scene._infer_mappings`, the mask combined with `"emerged"` under emergence
+  times), `Exchanges` picks each link's; the hand-made `mappings=` CrossMappings of the examples are gone.
+  `CrossMapping.outside()`: the entities with a part outside the grid's non-periodic axes, clipped into its border
+  cells, warned once.
+- **Forcings by panel.** `Component.forcing(name, over=(start, end))` and `forcing_panels(over=)` (the step in panels
+  of at most an hour, `forcings.panels`): a model whose response to a forcing is not its mean's reads it panel by
+  panel (Caribu's sun over a daily step).
+
 ### Vectorisation: no loop over groups or nodes; numba's kernels in kernels.py, warm_up
 
 - A reduction's groups are arrays (`Reduction.group_table`, cached per topology; `Reduction.assignment`: each group's
