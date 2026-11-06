@@ -227,7 +227,9 @@ memory (about 10 kB per node beyond 1.5 GB). Extrapolated, 40 plants at day 14 w
 take about 50 s per step and need about 19 GB: beyond this laptop (the run is a workstation's, or fewer plants, or a
 coarser root anatomy). On a large scene the pool's forked processes add 1 to 2.5 GB (the pages of the main process
 they touch are copied): beyond about 150,000 nodes, `--workers 1` or `2` keeps the memory down at little cost (the
-kinds take a few tenths of a second per step there).
+kinds take a few tenths of a second per step there). Recorded (`benchmark.py --frames`: a frame a day, p0's sections
+drawn as instances), 8 plants to day 8 take 357 s (334 s unrecorded), the frames 1.1 MB at the sowing to 25 MB at day
+8 (about 0.45 kB per node), the parts 81 MB (77 files), the folder 176 MB.
 On a machine with an NVIDIA GPU and CuPy, `benchmark.py --device cuda` runs the kinds' Kron reductions and the
 linear solves on the device (metafspm's docs/gpu.md, "Running on a GPU": what is offloaded, how to compare it with
 the CPU run, the transfers in the entry's `device`); not measured yet (no GPU on the development laptop).
@@ -251,7 +253,7 @@ options: the leaves' water potential (Tuzet's stomata read it) drifts beyond the
 while the step gains less than 15 % at two plants (the kinds' evaluation and the other models dominate it there; the
 plant solve, which the options shrink, dominates a larger scene's). At 16 plants (their own root draws), day 8:
 `leaf_ports="bundles"` keeps 98,526 nodes (113,438), 8.8M dense nonzeros (15.7M), MECHA 1.44 s per step (2.18;
-the step 3.28 s, 4.66), the scope's peak 4.7 GB (5.3), the transpiration and uptake unchanged, gs within 0.04 %, the
+the step 3.28 s, 4.66 measured before GRANAP's faster junctions, 5f5b34b), the scope's peak 4.7 GB (5.3), the transpiration and uptake unchanged, gs within 0.04 %, the
 leaves' water potential 0.36 % above on average, 0.54 % at most (0.8 % of their drop below the roots').
 
 The frames keep a few variables, the run's explicit choice (`run.FRAME_VARIABLES`, the recorder's
