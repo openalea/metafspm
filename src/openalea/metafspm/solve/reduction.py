@@ -1037,6 +1037,7 @@ class _Library:
         class LibraryStructure(StructuralComponent):
             @classmethod
             def initiate_plant(cls, g, plant, scenario):
+                g.share_objects(reduction.g)          # the plants' registries (their templates: ds.objects)
                 made.update(library.place(g, plant, items))
 
         self.model = model = type(f"Library{reduction.model.__name__}", (reduction.model,),

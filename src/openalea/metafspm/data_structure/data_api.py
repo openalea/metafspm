@@ -197,6 +197,16 @@ class DataStructure(ABC):
     def soil_surface(self, value: float) -> None:
         _root_data_structure(self).__dict__["_soil_surface"] = float(value)
 
+    def objects(self, name: str, saved=None):
+        """The registry *name* of the objects the DataStructure's components share by content (data_structure.objects
+        .ObjectRegistry: e.g. GRANAP's anatomy templates), made at its first request; *saved*: the form its objects
+        are checkpointed in. An MPG-backed DataStructure's are its MPG's (MPG.objects: the initiators' too). Saved by
+        the checkpoints, each object once (a shared part)."""
+        from openalea.metafspm.data_structure.objects import objects_of
+        root = _root_data_structure(self)
+        holder = root.__dict__.get("_mtg")
+        return objects_of(holder if holder is not None and hasattr(holder, "objects") else root, name, saved)
+
     @property
     def simulation_time_step(self):
         """The simulation step (s) of the Scene the DataStructure is in (Scene(time_step=), population_data_structure's
@@ -1045,7 +1055,7 @@ class VariableStoreMixin:
 
     # DataStructure state kept by a checkpoint, besides the variables: metadata, links, masks, counters
     _CHECKPOINT_STATE = ("_var_meta", "_aliases", "_derived", "_masks", "_writes", "_version", "_topology_version",
-                         "_random_steps",
+                         "_random_steps", "_objects",
                          "_stored_ids", "_mtg_tracked", "_mtg_synced")
 
     def checkpoint(self, path: str, include_mtg: bool = True, shared=None) -> None:

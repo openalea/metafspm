@@ -38,6 +38,17 @@ class MPG(MTG):
         self.convert_properties_to_arraydict()
     
 
+    def objects(self, name: str, saved=None):
+        """The registry *name* of the objects the plants' components share by content (data_structure.objects
+        .ObjectRegistry: e.g. GRANAP's anatomy templates): the MPG's, its DataStructure's (ds.objects), saved with it."""
+        from openalea.metafspm.data_structure.objects import objects_of
+        return objects_of(self, name, saved)
+
+    def share_objects(self, other: "MPG") -> None:
+        """This MPG's registries made *other*'s (the same objects: a reduction's library population, built on the
+        plants' templates)."""
+        self.__dict__["_objects"] = other.__dict__.setdefault("_objects", {})
+
     def _add_system_root_at_scale(self, scale, **propargs):
         """
         Method used to create a root for current modelled achitecture at one of the systematic scales of the MPG
