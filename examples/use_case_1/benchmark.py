@@ -10,7 +10,7 @@ end).
                         [--resume outputs/benchmarks/checkpoints/<label>/step_000168]
                         [--scenario leaf_ports=bundles vapour_path=air_spaces ...]
                         [--workers auto|n] [--linear-solver superlu|superlu_reuse|cholmod|cupy]
-                        [--device cpu|cuda]
+                        [--device cpu|cuda] [--variability SEED] [--frames] [--profile-hours FIRST LAST]
 
 By default 2 plants to day 3 (the use case's fast regime); --days 8 for the day-8 numbers, --plants 8 --days 4 for the
 scaling; --outputs measures the outputs at the end (outputs()): a frame without the sections drawn, two display
@@ -23,7 +23,13 @@ time and memory, then each step's: a resumed run evaluates no kind again); --sce
 --linear-solver the Compute's (the pool of the kinds, the sparse solver), --device its device (cuda: the kinds' Kron
 reductions and the linear solves on the GPU, CuPy needed, docs/gpu.md; the device's transfers recorded at the end,
 "device"), the pool recorded per step and the peak
-memory of the process's control group (the pool's processes included: run it in its own systemd-run --scope). Each step records the
+memory of the process's control group (the pool's processes included: run it in its own systemd-run --scope), now
+and at its peak. --variability gives each plant its own seeded root draws (plant_variability: ArchiSimple's
+random_choice; identical plants share every kind, which flatters a scaling); --frames records the run (a frame every
+24 h, the sections of run.DISPLAY_PLANTS drawn as instances, no checkpoint) under outputs/benchmarks/frames/<label>,
+its size at the end; --profile-hours cProfiles the main process over those steps (outputs/benchmarks/profiles/).
+Each step also records its kinds' batches (kinds, interior cells, seconds, processes: "auto"'s estimate checked
+against them). Each step records the
 plants' nodes and the reduced groups' dense blocks (their nonzeros: kept nodes squared, summed), the end the kinds
 held and their pickled size (as checkpointed). The results go to
 outputs/benchmarks/<commit>.json (untracked), one entry per mode ("2p_3d") updated in place, and a summary is
@@ -85,6 +91,18 @@ def scope_peak_memory() -> float:
         return float("nan")
 
 
+def scope_memory() -> float:
+    """The memory of the process's control group now (GB: its memory.current, cgroup v2), the pool's processes
+    included, NaN where there is none."""
+    try:
+        with open("/proc/self/cgroup") as cgroup:
+            relative = cgroup.read().strip().split("\n")[0].split("::", 1)[1]
+        with open(os.path.join("/sys/fs/cgroup", relative.lstrip("/"), "memory.current")) as current:
+            return int(current.read()) / 2 ** 30
+    except (OSError, IndexError, ValueError):
+        return float("nan")
+
+
 def peak_memory() -> float:
     """The process's peak resident memory (GB)."""
     peak = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
@@ -105,16 +123,24 @@ class KindCounter:
 
     def __init__(self):
         self.kinds, self.seconds, self.templates = 0, 0., 0
+        self.batches = []                 # each evaluation's (kinds, interior cells, seconds, processes)
         self.seen = set()                 # the (reduced template, signature) of the kinds evaluated so far
         self._evaluate = evaluate = reduction_module.Reduction._evaluate_requests
         counter = self
 
         def counted(reduction, missing):
+            from openalea.metafspm.compute import Compute, in_worker
             started = time.perf_counter()
             try:
                 return evaluate(reduction, missing)
             finally:
-                counter.seconds += time.perf_counter() - started
+                seconds = time.perf_counter() - started
+                counter.seconds += seconds
+                kinds = sum(len(requests) for _, requests in missing.values())
+                cells = sum(reduction._interior_cells(request[1]) for _, requests in missing.values()
+                            for request in requests.values())
+                processes = 1 if (reduction.library or in_worker()) else Compute.current().pool_size(kinds, cells)
+                counter.batches.append((kinds, cells, seconds, processes))
                 for _, requests in missing.values():
                     counter.kinds += len(requests)
                     for key, _, signature in requests:    # the kinds of a template not seen before (a new anatomy)
@@ -125,8 +151,8 @@ class KindCounter:
         reduction_module.Reduction._evaluate_requests = counted
 
     def take(self) -> tuple:
-        out = (self.kinds, self.seconds, self.templates)
-        self.kinds, self.seconds, self.templates = 0, 0., 0
+        out = (self.kinds, self.seconds, self.templates, self.batches)
+        self.kinds, self.seconds, self.templates, self.batches = 0, 0., 0, []
         return out
 
 
@@ -172,11 +198,23 @@ def kinds_size(scene) -> tuple:
     return count, size / 1e6
 
 
+def plant_variability(plants: int, seed: int) -> list:
+    """Each plant's own scenario entries, seeded: ArchiSimple's random_choice (its root system's random draws: the
+    daughter roots' diameters, CVDD), so that the plants differ in shape (identical plants share every kind)."""
+    draws = np.random.default_rng(seed).integers(1, 2 ** 31 - 1, size=plants)
+    return [{"random_choice": int(draw)} for draw in draws]
+
+
 def benchmark(plants: int, days: float, measure_outputs: bool = False, checkpoint_at=(), resume: str = None,
-              label: str = "run", scenario: dict = None, compute=None) -> dict:
+              label: str = "run", scenario: dict = None, compute=None, variability: int = None,
+              frames: bool = False, profile_hours=()) -> dict:
     counter = KindCounter()
     started = time.perf_counter()
-    scene = run.scene(plants, folder=None, scenario=scenario, compute=compute)
+    plant_scenarios = plant_variability(plants, variability) if variability is not None else None
+    folder = os.path.join(BENCHMARKS, "frames", label) if frames else None
+    options = dict(frame_period=24, display_period=24, checkpoint_period=None) if frames else {}
+    scene = run.scene(plants, folder=folder, scenario=scenario, compute=compute, plant_scenarios=plant_scenarios,
+                      **options)
     built = time.perf_counter() - started
     counter.take()
     loaded, first_hour = None, 0
@@ -193,11 +231,22 @@ def benchmark(plants: int, days: float, measure_outputs: bool = False, checkpoin
     checkpoints = os.path.join(BENCHMARKS, "checkpoints", label)
     steps = []
     previous = dict(scene.timing)
+    profiler, profiled = None, os.path.join(BENCHMARKS, "profiles", f"{label}.prof")
     for hour in range(first_hour, int(round(days * 24))):
+        if profile_hours and hour + 1 == profile_hours[0]:
+            import cProfile
+            profiler = cProfile.Profile()
+            profiler.enable()
         step_started = time.perf_counter()
         scene.run()
         seconds = time.perf_counter() - step_started
-        kinds, kind_seconds, templates = counter.take()
+        if profiler is not None and hour + 1 == profile_hours[-1]:
+            profiler.disable()
+            os.makedirs(os.path.dirname(profiled), exist_ok=True)
+            profiler.dump_stats(profiled)
+            profiler = None
+            print(f"profile of h {profile_hours[0]}-{profile_hours[-1]} written to {profiled}", flush=True)
+        kinds, kind_seconds, templates, batches = counter.take()
         timing = {name: value - previous.get(name, 0.) for name, value in scene.timing.items()}
         previous = dict(scene.timing)
         nodes = sum(population.data_structure.n_nodes() for population in scene.populations)
@@ -207,10 +256,12 @@ def benchmark(plants: int, days: float, measure_outputs: bool = False, checkpoin
                       "models": {name: value for name, value in timing.items() if "." not in name},
                       "components": {name: value for name, value in timing.items() if "." in name}, "kinds": kinds,
                       "new_templates": templates,
-                      "kind_seconds": kind_seconds, "nodes": nodes, "rss_gb": resident_memory(),
+                      "kind_seconds": kind_seconds, "kind_batches": batches, "nodes": nodes,
+                      "rss_gb": resident_memory(), "scope_gb": scope_memory(),
                       "results": results(scene)})
         print(f"h {hour + 1:4d}  {seconds:7.2f} s  kinds {kinds:3d} ({kind_seconds:6.2f} s)  nodes {nodes:6d}  "
-              f"dense {dense:8d}  RSS {steps[-1]['rss_gb']:.2f} GB", flush=True)
+              f"dense {dense:8d}  RSS {steps[-1]['rss_gb']:.2f} GB  scope {steps[-1]['scope_gb']:.2f} GB "
+              f"(peak {scope_peak_memory():.2f})", flush=True)
         if hour + 1 in checkpoint_at:
             checkpoint_started = time.perf_counter()
             path = os.path.join(checkpoints, f"step_{hour + 1:06d}")
@@ -240,7 +291,9 @@ def benchmark(plants: int, days: float, measure_outputs: bool = False, checkpoin
               "rss_end_gb": rss, "rss_after_trim_gb": after_trim, "peak_rss_gb": peak,
               "scope_peak_gb": scope_peak_memory(), "pool": pool, "scenario": scenario or {},
               "device": compute.device_info() if compute is not None else None,
-              "kinds_held": kinds_held, "kinds_MB": kinds_mb,
+              "kinds_held": kinds_held, "kinds_MB": kinds_mb, "variability": variability,
+              "plant_scenarios": plant_scenarios,
+              "frames": {"folder": folder, "MB": folder_size(folder) / 1e6} if folder else None,
               "timing": timing, "steps": steps, "outputs": measured}
     return result
 
@@ -326,6 +379,8 @@ def summary(result: dict) -> str:
     lines.append(f"nodes at the end {steps[-1]['nodes']}, dense blocks {steps[-1]['dense_nnz']} nonzeros; kinds held "
                  f"{result['kinds_held']} ({result['kinds_MB']:.1f} MB pickled)"
                  + (f"; scenario {result['scenario']}" if result.get("scenario") else ""))
+    if result.get("frames"):
+        lines.append(f"frames: {result['frames']['folder']}, {result['frames']['MB']:.1f} MB")
     if result.get("device"):
         lines.append(f"device: {result['device']}")
     by_model = {name: value for name, value in result["timing"].items() if "." not in name}
@@ -371,13 +426,21 @@ def main(argv=None):
     parser.add_argument("--linear-solver", default=None,
                         help="Compute(linear_solver=): the device's default (superlu on cpu, cupy on cuda)")
     parser.add_argument("--device", default="cpu", choices=("cpu", "cuda"), help="Compute(device=)")
+    parser.add_argument("--variability", type=int, default=None, metavar="SEED",
+                        help="the plants differ (plant_variability: each its own seeded root draws)")
+    parser.add_argument("--frames", action="store_true",
+                        help="record to outputs/benchmarks/frames/<label>: a frame every 24 h, the sections of "
+                             "run.DISPLAY_PLANTS drawn as instances (no checkpoint)")
+    parser.add_argument("--profile-hours", type=int, nargs=2, default=(), metavar=("FIRST", "LAST"),
+                        help="cProfile the main process over these steps (outputs/benchmarks/profiles/<label>.prof)")
     arguments = parser.parse_args(argv)
     from openalea.metafspm.compute import Compute
     compute = Compute(workers=arguments.workers if arguments.workers == "auto" else int(arguments.workers),
                       linear_solver=arguments.linear_solver, device=arguments.device)
     label = arguments.label or f"{arguments.plants}p_{arguments.days:g}d"
     result = benchmark(arguments.plants, arguments.days, arguments.outputs, tuple(arguments.checkpoint_at),
-                       arguments.resume, label, scenario_entries(arguments.scenario), compute)
+                       arguments.resume, label, scenario_entries(arguments.scenario), compute, arguments.variability,
+                       arguments.frames, tuple(arguments.profile_hours))
     os.makedirs(BENCHMARKS, exist_ok=True)
     path = os.path.join(BENCHMARKS, f"{result['commit']}.json")
     entries = {}

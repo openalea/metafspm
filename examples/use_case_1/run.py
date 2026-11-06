@@ -108,7 +108,7 @@ def stand(plants=2):
 
 def scene(plants=2, folder=None, frame_period=12, display_period=24, checkpoint_period=24, scenario=None,
           forcings=None, start_hour=0., frame_variables=FRAME_VARIABLES, compute=None, display="instances",
-          pack_at_finish=False):
+          pack_at_finish=False, plant_scenarios=None):
     """The use case's Scene: *plants* wheat plants (WHEAT_SCENARIO, updated by *scenario*), the soil and the light,
     the forcings of weather() (updated by *forcings*), recorded in *folder* (None: in memory) with the water
     diagnostics (WATER_TABLES) and balances (conservation), the leaves' gas exchange and the roots' water (LEAVES,
@@ -118,8 +118,10 @@ def scene(plants=2, folder=None, frame_period=12, display_period=24, checkpoint_
     checkpoint every *checkpoint_period* hours; *compute*: the run configuration (None: Compute(), one BLAS thread,
     the memory trimmed after each step); *display*: how the frames draw the reduced sections (the recorder's:
     "instances", each section an instance of its template, psi rebuilt by the reader for the sections selected;
-    "full": every cell's psi in every frame); *pack_at_finish*: the frames packed into frames.fspm.zip at the end."""
-    table = planting(stand(plants), WheatPlant, {**WHEAT_SCENARIO, **(scenario or {})},
+    "full": every cell's psi in every frame); *pack_at_finish*: the frames packed into frames.fspm.zip at the end;
+    *plant_scenarios*: one dict per plant added to its scenario (planting's: e.g. ArchiSimple's random_choice, each
+    plant its own root system)."""
+    table = planting(stand(plants), WheatPlant, {**WHEAT_SCENARIO, **(scenario or {})}, plant_scenarios=plant_scenarios,
                      xrange=plants * PLANT_SPACING, yrange=ROW_SPACING)
     recorder = SceneRecorder(folder, tables={**WATER_TABLES, "leaves": LEAVES, "roots": ROOTS},
                              frame_period=frame_period if folder else None,
