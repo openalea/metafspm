@@ -43,7 +43,7 @@ import pandas as pd
 
 from openalea.metafspm.compute import Compute
 from openalea.metafspm.coupling.choregrapher import Choregrapher
-from openalea.metafspm.coupling.forcings import forcing_table, forcing_value, is_spatial
+from openalea.metafspm.coupling.forcings import forcing_mean, forcing_table, is_spatial, spatial_mean
 from openalea.metafspm.coupling.cross import CrossMapping, Exchanges, UnionDataStructure, UnionMapping
 from openalea.metafspm.coupling.translator import Translator
 from openalea.metafspm.data_structure.data_api import MPGDataStructure
@@ -105,10 +105,12 @@ class Scene:
                                by time (s), one column each; a forcing is a number, a callable of the time (s), a
                                Series indexed by time or a (times, values) pair, linearly interpolated; a callable
                                of the time and the entity ids, (time, ids) -> one value per entity, varies in space
-                               (written by the Scene, not read with forcing(name)). A component
-                               declaring the name (forcing_variable) reads it with forcing(name), when it has no
-                               forcing of its own; otherwise the Scene writes it at the start of each step into the
-                               input or parameter of that name of the components declaring it (not coupled).
+                               (written by the Scene, not read with forcing(name)); a pulse (forcings.pulse) a rate
+                               given by its total. A component declaring the name (forcing_variable) reads it with
+                               forcing(name), over the (sub-)step it computes, as declared (its mean, its total or
+                               its value at the step's end), when it has no forcing of its own; otherwise the Scene
+                               writes its mean over the step at the start of each step into the input or parameter
+                               of that name of the components declaring it (not coupled).
         events:                (time, action) pairs: action(scene) runs at the start of the first step at or after time.
         stop_when:             a condition(scene), checked after each step: simulate() stops when it holds.
         mappings:              further mappings between DataStructures (e.g. a LayerMapping between a column model and
@@ -387,15 +389,17 @@ class Scene:
         return targets
 
     def _write_forcings(self) -> None:
-        """The forced inputs and parameters at the step's start: the same for every entity of their location, or
-        each entity's (a forcing of the time and the entity ids)."""
+        """The forced inputs and parameters at the step's start: their mean over the step [t, t + dt] (forcings'
+        forcing_mean; for a forcing of the time and the entity ids, each entity's, spatial_mean), the same for every
+        entity of their location, or each entity's."""
+        start, end = self.time, self.time + self.time_step
         for name, ds in self._forced:
             forcing = self.forcings[name]
             if is_spatial(forcing):
-                values = np.asarray(forcing(self.time, ds.entity_ids(ds.location(name))), dtype=float)
+                values = spatial_mean(forcing, ds.entity_ids(ds.location(name)), start, end)
                 ds.set(name, np.broadcast_to(values, np.shape(ds.get(name))).copy())
                 continue
-            value = forcing_value(forcing, self.time)
+            value = forcing_mean(forcing, start, end)
             ds.set(name, np.full(np.shape(ds.get(name)), value, dtype=float))
 
     # ── running ───────────────────────────────────────────────────────────────
@@ -509,20 +513,28 @@ class Scene:
         objects.update({f"component_{type(c).__name__}": c for c in self.components})
         return objects
 
-    def checkpoint(self, path: str) -> None:
+    def checkpoint(self, path: str, shared: str = None) -> None:
         """
         Save the scene to folder *path*: every DataStructure (ds.checkpoint), the checkpoint_state() of the models
-        and components defining it (e.g. an external solver's state), and the scene's time and iteration.
+        and components defining it (e.g. an external solver's state), and the scene's time and iteration. The parts
+        saved once (scene.shared: a component's Shared values, the sections' templates) go to folder *shared* (by
+        default path/shared; SceneRecorder's checkpoints share checkpoints/shared), each written when it is not there
+        yet; shared.json lists those the checkpoint refers to.
         """
         import json
-        import pickle
+        from openalea.metafspm.scene.shared import SharedStore
         os.makedirs(path, exist_ok=True)
+        folder = os.path.abspath(os.path.join(path, "shared") if shared is None else os.fspath(shared))
+        stores = self.__dict__.setdefault("_shared_stores", {})
+        store = stores.setdefault(folder, SharedStore(folder))      # the values written already: not pickled again
+        store.referenced = set()
         for i, ds in enumerate(self._all_data_structures()):
-            ds.checkpoint(os.path.join(path, f"data_structure_{i}"))
+            ds.checkpoint(os.path.join(path, f"data_structure_{i}"), shared=store)
         states = {key: obj.checkpoint_state() for key, obj in self._stateful().items()
                   if hasattr(obj, "checkpoint_state")}
         with open(os.path.join(path, "states.pkl"), "wb") as f:
-            pickle.dump(states, f)
+            store.dump(states, f)
+        store.write_references(os.path.abspath(path))
         with open(os.path.join(path, "scene.json"), "w") as f:
             json.dump({"time": self.time, "iteration": self.iteration, "stopped": self.stopped,
                        "events_fired": self._n_events - len(self.events),
@@ -539,14 +551,17 @@ class Scene:
         """Load a scene checkpoint into this (freshly built) scene, in place; the next steps continue the run."""
         import json
         import pickle
+        from openalea.metafspm.scene.shared import SharedStore, references
         with open(os.path.join(path, "scene.json")) as f:
             saved = json.load(f)
+        folder, _ = references(path)
+        store = SharedStore(folder) if folder is not None else None      # one object per shared part, every file
         data_structures = self._all_data_structures()
         if saved["data_structures"] != len(data_structures):
             raise ValueError(f"{path} holds {saved['data_structures']} DataStructures, the scene has "
                              f"{len(data_structures)}: build it with the same arguments")
         for i, ds in enumerate(data_structures):
-            ds.load_checkpoint(os.path.join(path, f"data_structure_{i}"))
+            ds.load_checkpoint(os.path.join(path, f"data_structure_{i}"), shared=store)
         for component in self.components:          # views and restrictions built on the old topology
             for key in [k for k in component.__dict__ if k in ("_graph_view_cache", "_graph_view_version",
                                                                 "_restriction_cache", "_pieces_cache")
@@ -556,7 +571,9 @@ class Scene:
             if hasattr(mapping, "refresh"):
                 mapping.refresh()
         with open(os.path.join(path, "states.pkl"), "rb") as f:
-            states = pickle.load(f)
+            states = pickle.load(f) if store is None else store.load(f)
+        if store is not None:
+            store.end_load()
         for key, obj in self._stateful().items():
             if key in states and hasattr(obj, "restore_state"):
                 obj.restore_state(states[key])

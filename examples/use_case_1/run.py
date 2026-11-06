@@ -3,8 +3,9 @@ Use case 1's scenario: a few wheat plants in their soil and their light, hour by
 their sowing: each plant's shoot (Adel's) on its crown, its roots (ArchiSimple's) from its seed and its crown, the
 anatomy of every section (GRANAP's), the water from the soil (Richards' equation on an adaptive grid) through the
 roots, the crown and the stems to the leaves' stomata (MECHA's), each leaf's transpiration from its gas exchange
-(CNW-Grass's) and the light it absorbs (Caribu's). After each hour, the water balance diagnostics (models.WaterBalance)
-and the leaves' gas exchange (gas_exchange); at the end, the time each model took.
+(CNW-Grass's) and the light it absorbs (Caribu's). After each hour, the water balance diagnostics (models.WaterBalance),
+the leaves' gas exchange and the roots' water (LEAVES, ROOTS: declared summaries); at the end, the time each model
+took.
 
     python run.py [output folder] [days] [plants]       by default outputs/from_sowing, 14 days, 2 plants
 
@@ -13,12 +14,14 @@ first days are those of the seed's roots and the hidden shoot (no light, no tran
 
 The weather (weather()): a clear day's PAR (Caribu's clear_day_PAR), the air's temperature and humidity in a daily
 course, a constant CO2 and wind, the soil at a constant temperature, a rain of 5 mm in the afternoon of the second
-day. The outputs (with a folder): the SceneRecorder's summaries, the water balance (water_balance.csv), and an
-encoding3d frame every 12 hours with its views (frames/views.json, the default layers: the shoot, the roots, the soil,
-the anatomies hidden) holding a few variables (FRAME_VARIABLES), the sections' drawings in the frames of every 24
-hours and the last, a checkpoint every day (the last two kept: Scene.load_checkpoint resumes the run from one), and
-run.log (the lines printed). The tables are appended to after each hour and run.json shows the run's progress: both
-can be read while it runs.
+day (a pulse: its total reaches the soil whatever the time step). Every model reads them over its step (their means:
+the PAR of an hour is the hour's mean, not its value at one instant). The outputs (with a folder): the SceneRecorder's
+summaries, the water balance (water_balance.csv), the leaves' gas exchange and the roots' water (leaves.csv,
+roots.csv), and an encoding3d frame every 12 hours with its views (frames/views.json, the default layers: the shoot,
+the roots, the soil, the anatomies hidden) holding a few variables (FRAME_VARIABLES), the sections of the first plant
+drawn in the frames of every 24 hours and the last, a checkpoint every day (the last two kept, their unchanging parts
+saved once: Scene.load_checkpoint resumes the run from one), and run.log (the lines printed). The tables are
+appended to after each hour and run.json shows the run's progress: both can be read while it runs.
 """
 import os
 import sys
@@ -28,10 +31,9 @@ import numpy as np
 
 from openalea.caribu.component import CaribuLightModel
 from openalea.caribu.simulation import clear_day_PAR
-from openalea.granap.metafspm.build import SOIL_NODE
-from openalea.metafspm.coupling.forcings import as_forcing
+from openalea.metafspm.coupling.forcings import as_forcing, pulse
 from openalea.metafspm.scene.population import Planting, planting
-from openalea.metafspm.scene.recorder import SceneRecorder
+from openalea.metafspm.scene.recorder import SceneRecorder, Summary
 from openalea.metafspm.scene.scene import Scene
 
 from component import RichardsSoilModel
@@ -43,6 +45,7 @@ DAY_OF_YEAR, LATITUDE = 130, 48.85             # a May day at Paris' latitude, C
 SOWING_DEPTH = 0.03                            # m
 ROW_SPACING, PLANT_SPACING = 0.15, 0.05        # m
 RAIN = (24. + 14., 24. + 15., 5e-3)            # the rain: from and to (h of scene time), its depth (m)
+DISPLAY_PLANTS = ("p0",)                       # the plants whose sections the frames draw
 
 # The soil: a loam 50 cm deep (ten layers of 5 cm cells, below the roots of two weeks), refined once where the roots
 # take up water, its water at -1 m of head
@@ -69,10 +72,17 @@ def daily_course(minimum, maximum, warmest=15.):
     return lambda hour: minimum + 0.5 * (maximum - minimum) * (1. + np.cos(2. * np.pi * (hour - warmest) / 24.))
 
 
-def rainfall(time):
-    """The rain (m s-1) at the scene's *time* (s): RAIN's depth over its hours."""
-    start, end, depth = RAIN
-    return depth / ((end - start) * HOUR) if start * HOUR < time <= end * HOUR else 0.
+# The leaves' gas exchange after each step, over the plants' blade elements of some green area: their green area, net
+# assimilation An (µmol s-1: An per area times the area, summed) and transpiration (mmol s-1, summed), their PARa
+# (µmol m-2 s-1), stomatal conductance gs (mol m-2 s-1) and leaf water potential (MPa) weighted by the green area, the
+# lowest leaf water potential
+LEAVES = Summary("SubOrgan", where={"label": "LeafElement", "green_area": ">0"},
+                 sum={"green_area": None, "An": "green_area", "transpiration": None},
+                 mean={"PARa": "green_area", "gs": "green_area", "leaf_water_potential": "green_area"},
+                 min=["leaf_water_potential"])
+# The roots' water after each step: MECHA's water potential (psi, hPa) averaged over the root sections' nodes by its
+# declared weight (their liquid volume: the soil nodes and the air spaces have none), their uptake (cm3 d-1)
+ROOTS = Summary("node", where={"SubOrgan.label": ["RootSegment", "RootApex"]}, mean=["psi"], sum=["root_uptake"])
 
 
 def weather() -> dict:
@@ -84,7 +94,7 @@ def weather() -> dict:
             "air_temperature": as_forcing(daily_course(10., 20.), **by_hour),
             "relative_humidity": as_forcing(lambda hour: 0.8 - 0.25 * daily_course(0., 1.)(hour), **by_hour),
             "ambient_CO2": 410., "wind_speed": 2., "soil_temperature": 12.,
-            "rainfall": rainfall, "potential_evaporation": 0.}
+            "rainfall": pulse(RAIN[0] * HOUR, RAIN[1] * HOUR, RAIN[2]), "potential_evaporation": 0.}
 
 
 def stand(plants=2):
@@ -93,54 +103,22 @@ def stand(plants=2):
             for k in range(plants)]
 
 
-def gas_exchange(scene) -> dict:
-    """The leaves' gas exchange after a step (a SceneRecorder table), over the plants' blade elements of some green
-    area: their PARa (µmol m-2 s-1), stomatal conductance gs (mol m-2 s-1) and leaf water potential (MPa), their
-    means weighted by the green area; their net assimilation An (µmol s-1, An per area summed over the areas) and
-    transpiration (mmol s-1, summed); the roots' water potential (MPa, MECHA's mean over the root sections' liquid
-    nodes, their soil nodes left out) and uptake (cm3 d-1)."""
-    row = {"time": scene.time}
-    totals = {name: [] for name in ("area", "PARa", "gs", "An", "leaf_water_potential", "transpiration")}
-    root_potentials, uptake = [], 0.
-    for population in scene.populations:
-        ds = population.data_structure
-        elements = ds.at("SubOrgan")
-        blades = (np.asarray(elements.labels()) == "LeafElement") & (np.asarray(elements.get("green_area")) > 0.)
-        totals["area"].append(np.asarray(elements.get("green_area"))[blades])
-        for name in ("PARa", "gs", "An", "leaf_water_potential", "transpiration"):
-            totals[name].append(np.asarray(elements.get(name))[blades])
-        owner = np.asarray(ds.owner("SubOrgan"))
-        roots = np.isin(np.asarray(elements.labels()), ["RootSegment", "RootApex"])[owner]
-        liquid = roots & (np.asarray(ds.get("kind")) != SOIL_NODE) & (np.asarray(ds.get("liquid_volume")) > 0.)
-        root_potentials.append(np.asarray(ds.get("psi"))[liquid] / HPA_PER_MPA)
-        uptake += float(np.sum(ds.get("root_uptake")))
-    area = np.concatenate(totals["area"])
-    weighted = {name: float(np.sum(np.concatenate(totals[name]) * area) / np.sum(area)) if area.size else np.nan
-                for name in ("PARa", "gs", "leaf_water_potential")}
-    roots = np.concatenate(root_potentials)
-    row.update(green_area=float(np.sum(area)), **weighted,
-               An=float(np.sum(np.concatenate(totals["An"]) * area)),
-               transpiration=float(np.sum(np.concatenate(totals["transpiration"]))),
-               leaf_water_potential_min=float(np.min(np.concatenate(totals["leaf_water_potential"])))
-               if area.size else np.nan,
-               root_water_potential=float(np.mean(roots)) if roots.size else np.nan, root_uptake=uptake)
-    return row
-
-
 def scene(plants=2, folder=None, frame_period=12, display_period=24, checkpoint_period=24, scenario=None,
           forcings=None, start_hour=0., frame_variables=FRAME_VARIABLES, compute=None):
     """The use case's Scene: *plants* wheat plants (WHEAT_SCENARIO, updated by *scenario*), the soil and the light,
     the forcings of weather() (updated by *forcings*), recorded in *folder* (None: in memory) with the water
-    balance and the gas exchange and, every *frame_period* hours, a frame with the default views (with the sections'
-    drawings every *display_period* hours and in the last frame) holding the *frame_variables* (None: all), a
+    balance, the leaves' gas exchange and the roots' water (LEAVES, ROOTS) and, every *frame_period* hours, a frame
+    with the default views (with the sections of DISPLAY_PLANTS drawn every *display_period* hours and in the last
+    frame) holding the *frame_variables* (None: all), a
     checkpoint every *checkpoint_period* hours; *compute*: the run configuration (None: Compute(), one BLAS thread,
     the memory trimmed after each step)."""
     table = planting(stand(plants), WheatPlant, {**WHEAT_SCENARIO, **(scenario or {})},
                      xrange=plants * PLANT_SPACING, yrange=ROW_SPACING)
-    recorder = SceneRecorder(folder, tables={"water_balance": WaterBalance(), "gas_exchange": gas_exchange},
+    recorder = SceneRecorder(folder, tables={"water_balance": WaterBalance(), "leaves": LEAVES, "roots": ROOTS},
                              frame_period=frame_period if folder else None,
                              frame_views="default" if folder else None,
                              display_period=display_period if folder else None,
+                             display_plants=DISPLAY_PLANTS if folder and display_period else None,
                              frame_options={"variables": frame_variables} if frame_variables is not None else None,
                              checkpoint_period=checkpoint_period if folder else None)
     return Scene(table, environment=[RichardsSoilModel, CaribuLightModel],
@@ -171,7 +149,8 @@ def main(folder=os.path.join(OUTPUTS, "from_sowing"), days=14, plants=2):
         for hour in range(hours):
             built.run()
             row = built.recorder.table("water_balance").iloc[-1]
-            leaves = built.recorder.table("gas_exchange").iloc[-1]
+            leaves = built.recorder.table("leaves").iloc[-1]
+            roots = built.recorder.table("roots").iloc[-1]
             report(f"day {hour // 24 + 1:2d} h {hour % 24 + 1:2d}  transpiration {row['transpiration']:.3g} cm3 d-1, "
                    f"uptake {row['root_uptake']:.3g} (plant balance {row['plant_balance']:.1e}), soil's to the roots "
                    f"{row['soil_uptake']:.3g}; soil change {row['soil_change']:.3e} m3, exchanged "
@@ -179,7 +158,7 @@ def main(folder=os.path.join(OUTPUTS, "from_sowing"), days=14, plants=2):
                    f"{row['plant_potential_change']:.2e} MPa, soil {row['soil_potential_change']:.2e} MPa; leaves "
                    f"{leaves['green_area'] * 1e4:.3g} cm2, PARa {leaves['PARa']:.0f}, An {leaves['An']:.3g} µmol s-1, "
                    f"gs {leaves['gs']:.3g}, leaf ψ {leaves['leaf_water_potential']:.3g} MPa, roots' ψ "
-                   f"{leaves['root_water_potential']:.3g} MPa ({time.perf_counter() - started:.0f} s)")
+                   f"{roots['psi'] / HPA_PER_MPA:.3g} MPa ({time.perf_counter() - started:.0f} s)")
     except BaseException as error:
         built.finish("failed", error)
         if log is not None:

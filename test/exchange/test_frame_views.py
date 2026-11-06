@@ -190,6 +190,8 @@ class _Drawing:
     def display_triangles(self, where=None):
         from openalea.metafspm.coupling.geometry import Triangles
         nodes = np.arange(self.data_structure.n_nodes())
+        if where is not None:
+            nodes = nodes[np.asarray(where, dtype=bool)]
         corners = np.stack([np.zeros((nodes.size, 3)), np.eye(3)[[0] * nodes.size], np.eye(3)[[1] * nodes.size]], 1)
         return Triangles(corners + nodes[:, None, None], nodes)
 
@@ -221,6 +223,31 @@ def test_display_shapes_are_recorded_at_their_own_period(tmp_path):
         drawn = [step for step, names in meshes.items() if "_Drawing" in names]
         assert drawn == ([] if period is None else [0, 4, 5])
         assert all("triangles" in names for names in meshes.values())
+
+
+def test_display_shapes_of_some_plants(tmp_path):
+    """display_plants: the display shapes of the plants named only; their mesh's vertices shared by its triangles
+    (indices)."""
+    from openalea import encoding3d
+    out = str(tmp_path / "some")
+    scene = Scene(planting=doubles_planting([RootPopulation, RootPopulation]), time_step=DT,
+                  recorder=SceneRecorder(out, summaries=False, frame_period=1, display_period=1,
+                                         display_plants=["p1"]))
+    population = scene.populations[0]
+    population.instance.components.append(_Drawing(population.data_structure))
+    scene.run()
+    scene.finish()
+    ds = population.data_structure
+    frame = encoding3d.read(os.path.join(out, "frames", "frame_000001.glb"))
+    mesh = next(mesh for mesh in frame.data_structure("RootPopulation").meshes if mesh.name == "_Drawing")
+    plants = np.asarray(ds.entity_ids("Plant"))[np.asarray(ds.owner("Plant"))]
+    p1 = {name: vid for vid, name in population.plant_names().items()}["p1"]
+    assert mesh.indices is not None and mesh.indices.size == 3 * int(np.sum(plants == p1))
+    assert len(mesh.positions) == mesh.indices.size                     # no vertex shared by two of these triangles
+    with open(os.path.join(out, "scenario.json")) as file:
+        assert json.load(file)["recorder"]["display_plants"] == ["p1"]
+    with pytest.raises(ValueError, match="display_period"):
+        SceneRecorder(out, frame_period=1, display_plants=["p0"])
 
 
 def test_display_period_is_a_multiple_of_frame_period(tmp_path):

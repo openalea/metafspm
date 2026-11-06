@@ -939,12 +939,14 @@ class VariableStoreMixin:
                          "_random_steps",
                          "_stored_ids", "_mtg_tracked", "_mtg_synced")
 
-    def checkpoint(self, path: str, include_mtg: bool = True) -> None:
+    def checkpoint(self, path: str, include_mtg: bool = True, shared=None) -> None:
         """
         Write the DataStructure to the folder *path*: numeric variables in arrays.npz, a JSON manifest
         (class, construction, variables with location and dtype, counters), and state.pkl with what JSON cannot hold
         (object variables, derivation formulas, mask rules, metadata; the MPG itself when *include_mtg*).
-        restore() rebuilds an equal DataStructure: the next steps give the same values, bit for bit.
+        restore() rebuilds an equal DataStructure: the next steps give the same values, bit for bit. *shared*: a
+        scene.shared.SharedStore (Scene.checkpoint's), the folder of the parts saved once (its sections' templates,
+        a reduction's full sections), the manifest naming it; None: everything in state.pkl.
         """
         import json
         import os
@@ -963,9 +965,9 @@ class VariableStoreMixin:
         np.savez(os.path.join(path, "arrays.npz"), **arrays)
         state = {name: self.__dict__[name] for name in self._CHECKPOINT_STATE + self._checkpoint_extra()
                  if name in self.__dict__}
+        content = {"objects": objects, "state": state, "mtg": getattr(self, "_mtg", None) if include_mtg else None}
         try:
-            payload = pickle.dumps({"objects": objects, "state": state,
-                                    "mtg": getattr(self, "_mtg", None) if include_mtg else None})
+            payload = pickle.dumps(content) if shared is None else shared.dumps(content)
         except (pickle.PicklingError, AttributeError, TypeError) as error:
             raise TypeError(f"checkpoint: {error}. Derivation formulas and mask rules are kept by reference: define "
                             "them as module-level functions (or picklable objects), not lambdas") from None
@@ -973,7 +975,8 @@ class VariableStoreMixin:
             f.write(payload)
         with open(os.path.join(path, "manifest.json"), "w") as f:
             json.dump({"format": 1, "class": type(self).__name__, "construction": self._construction(),
-                       "variables": variables, "version": self.version, "topology_version": self.topology_version},
+                       "variables": variables, "version": self.version, "topology_version": self.topology_version,
+                       **({"shared": os.path.relpath(shared.folder, path)} if shared is not None else {})},
                       f, indent=1)
 
     # Caches built on the topology or the values, dropped when a checkpoint is loaded
@@ -982,7 +985,7 @@ class VariableStoreMixin:
                         "_parent_pairs_cache")
 
     @staticmethod
-    def _read_checkpoint(path: str, class_name: str) -> tuple:
+    def _read_checkpoint(path: str, class_name: str, shared=None) -> tuple:
         import json
         import os
         import pickle
@@ -990,24 +993,30 @@ class VariableStoreMixin:
             manifest = json.load(f)
         if manifest["class"] != class_name:
             raise TypeError(f"{path} holds a {manifest['class']}, not a {class_name}")
+        if shared is None and "shared" in manifest:          # its shared parts' folder, named by the manifest
+            from openalea.metafspm.scene.shared import SharedStore
+            shared = SharedStore(os.path.normpath(os.path.join(path, manifest["shared"])))
         with open(os.path.join(path, "state.pkl"), "rb") as f:
-            saved = pickle.load(f)
+            saved = pickle.load(f) if shared is None else shared.load(f)
         with np.load(os.path.join(path, "arrays.npz"), allow_pickle=False) as npz:
             arrays = {key: npz[key] for key in npz.files}
         return manifest, saved, arrays
 
     @classmethod
-    def restore(cls, path: str, **construction):
-        """The DataStructure checkpointed in folder *path* (see checkpoint(); *construction* overrides, e.g. mtg=)."""
-        manifest, saved, arrays = cls._read_checkpoint(path, cls.__name__)
+    def restore(cls, path: str, shared=None, **construction):
+        """The DataStructure checkpointed in folder *path* (see checkpoint(); *construction* overrides, e.g. mtg=;
+        *shared*: the SharedStore its shared parts are read from, by default the manifest's folder)."""
+        manifest, saved, arrays = cls._read_checkpoint(path, cls.__name__, shared)
         ds = cls._from_construction(dict(manifest["construction"], **construction), saved)
         ds._apply_checkpoint(path, manifest, saved, arrays)
         return ds
 
-    def load_checkpoint(self, path: str, **construction) -> None:
+    def load_checkpoint(self, path: str, shared=None, **construction) -> None:
         """
         Load the checkpoint of folder *path* into this DataStructure, in place: components, mappings and
-        scenes keep their references to it. An MPG DataStructure takes the checkpointed MTG (or *mtg*).
+        scenes keep their references to it. An MPG DataStructure takes the checkpointed MTG (or *mtg*). *shared*:
+        the SharedStore its shared parts are read from (Scene.load_checkpoint's: one object per part across the
+        scene's files), by default the manifest's folder.
 
         A DataStructure its models coupled (CompositeModel.couple: the links of their current translator) keeps its
         links: its derived variables are its own, not the checkpoint's (a run resumed with a changed translator
@@ -1017,7 +1026,7 @@ class VariableStoreMixin:
         otherwise: an alias has no values of its own to resume from). A DataStructure no model coupled takes the
         checkpoint's links.
         """
-        manifest, saved, arrays = self._read_checkpoint(path, type(self).__name__)
+        manifest, saved, arrays = self._read_checkpoint(path, type(self).__name__, shared)
         links = self._current_links() if self.__dict__.get("_links_coupled") else None
         self._load_construction(dict(manifest["construction"], **construction), saved)
         self._apply_checkpoint(path, manifest, saved, arrays)

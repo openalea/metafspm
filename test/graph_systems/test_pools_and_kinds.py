@@ -174,22 +174,22 @@ class Forced(FunctionalComponent):
         @node_balance(field="sugar")
         def _balance(self, sugar):
             supply = self.forcing("supply")
-            type(self).seen.add((self.forcing_time(), supply))
+            type(self).seen.add((self.forcing_time(), supply, self.forcing("supply", over="step")))
             return (sugar - self.previous("sugar")) / self.dt - supply
 
 
-def test_forcings_are_read_at_the_end_of_each_substep():
+def test_forcings_are_their_mean_over_each_substep():
     ds, _ = _population()
     model = Forced(data_structure=ds)
-    model.set_forcings({"supply": pd.Series([0., 10.], index=[0., 10.])})                        # supply(t) = t
+    model.set_forcings({"supply": pd.Series([0., 100.], index=[0., 100.])})                      # supply(t) = t
     Forced.seen = set()
     model()
     model()
-    times = sorted(t for t, _ in Forced.seen)
+    times = sorted(t for t, _, _ in Forced.seen)
     np.testing.assert_allclose(times, DT * np.arange(1, 9) / 4.)                  # two calls of 4 sub-steps
-    assert all(supply == pytest.approx(t) for t, supply in Forced.seen)
-    expected = sum(DT / 4. * t for t in DT * np.arange(1, 9) / 4.)              # implicit Euler of d(sugar)/dt = t
-    np.testing.assert_allclose(ds.get("sugar"), expected)
+    assert all(supply == pytest.approx(t - DT / 8.) for t, supply, _ in Forced.seen)   # the mean over [t - h, t]
+    assert all(whole == pytest.approx(DT / 2. if t <= DT else 1.5 * DT) for t, _, whole in Forced.seen)  # over="step"
+    np.testing.assert_allclose(ds.get("sugar"), (2. * DT) ** 2 / 2.)            # the integral of t, exactly
 
 
 def test_pools_need_a_newton_solver():

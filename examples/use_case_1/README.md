@@ -153,22 +153,33 @@ exchange's canopy height was 0 and no element exchanged (gs, An and the transpir
 
 `run.py` runs two plants over two weeks of May, hour by hour, from their sowing (`python run.py [folder] [days]
 [plants]`, by default `outputs/from_sowing`, 14 days, 2 plants): a clear day's PAR, the air's temperature and
-humidity in a daily course, a rain on the second day, in a loam 50 cm deep (`SOIL_SCENARIO`: ten layers of 5 cm
+humidity in a daily course, a rain on the second day (`forcings.pulse`: its 5 mm reach the soil whatever the
+step), in a loam 50 cm deep (`SOIL_SCENARIO`: ten layers of 5 cm
 cells, refined once where the roots take up water). Every step is an hour from the sowing: an older plant is a
 resumed run (a checkpoint), not a later start of one model. The first blade emerges after about 100 °Cd (a week);
 before, the plant has no light and transpires nothing. After each hour it prints, and writes to the folder's
-`run.log`, `WaterBalance`'s diagnostics (decision U-6: the plant and the soil exchange once per step) and the
-leaves' gas exchange (`gas_exchange`):
+`run.log`, `WaterBalance`'s diagnostics (decision U-6: the plant and the soil exchange once per step), the leaves'
+gas exchange and the roots' water (`run.LEAVES`, `run.ROOTS`: declared tables, `Summary`):
 
 - the plant's transpiration and uptake (equal for a steady plant), and what the soil gave the roots;
 - the soil's water change and what crossed its boundaries (equal);
 - the largest changes of the plant's and the soil's water potentials since the previous hour;
-- the blades' green area, PARa, An, gs and leaf water potential, the roots' water potential.
+- the blades' green area, PARa, An, gs and leaf water potential (`LEAVES`: over the blade elements of some green
+  area, An per area times the area summed, the means weighted by the green area), the roots' water potential
+  (`ROOTS`: MECHA's psi averaged over the root sections by its declared weight, the liquid volume: the soil nodes
+  and the air spaces have none) and uptake.
 
-The SceneRecorder writes the summaries, `water_balance.csv` and `gas_exchange.csv` (appended to after every hour),
-`run.json` (the run's progress, after every hour), a frame every 12 hours with its views (`frame_views="default"`),
-the sections' drawings in the frames of every 24 hours and the last (`display_period`), and a checkpoint every day
-(the last two kept): `Scene.load_checkpoint` resumes the run from it, bit for bit.
+Every model reads the weather over its step (the forcings' means over the hour, the rain's total): the results do
+not depend on the time step through the forcings.
+
+The SceneRecorder writes the summaries (`Plant/WheatPlant/summaries.csv`: every component's state variables per
+plant, those of the components on the SubOrgans, Adel's, ArchiSimple's, the gas exchange's, the light's, too: the
+lengths summed, the potentials, conductances and light averaged by their declared weights), `water_balance.csv`,
+`leaves.csv` and `roots.csv` (appended to after every hour), `run.json` (the run's progress, after every hour), a
+frame every 12 hours with its views (`frame_views="default"`), the sections of the first plant (`DISPLAY_PLANTS`,
+the recorder's `display_plants`) drawn in the frames of every 24 hours and the last (`display_period`), and a
+checkpoint every day (the last two kept; the anatomy templates and the reduced sections saved once, in
+`checkpoints/shared`): `Scene.load_checkpoint` resumes the run from it, bit for bit.
 
 The run's configuration is metafspm's default `Compute()` (`scene(compute=...)`): one BLAS and numba thread (the
 work is many small sparse solves: more threads oversubscribe the cores), the memory freed given back after each hour

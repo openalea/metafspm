@@ -130,6 +130,8 @@ class Choregrapher(Singleton):
         start = instance.__dict__.get("_clock", 0.)
         simulation_step = self.simulation_step() or sub_time_step
         increments = 1 if sub_time_step is None else sub_steps(simulation_step, sub_time_step, type(instance).__name__)
+        # the call's whole step, forcing(over="step")'s
+        instance.__dict__["_step_clock"], instance.__dict__["_step_length"] = start, simulation_step
         for increment in range(increments):
             instance.__dict__["_clock"] = start + increment * (sub_time_step or 0.)
             for step in groups:
@@ -152,6 +154,8 @@ class Choregrapher(Singleton):
         simulation_step = self.simulation_step() or sub_time_step
         increments = 1 if sub_time_step is None else sub_steps(simulation_step, sub_time_step, names)
         starts = [instance.__dict__.get("_clock", 0.) for instance in instances]
+        for instance, start in zip(instances, starts):                                 # forcing(over="step")
+            instance.__dict__["_step_clock"], instance.__dict__["_step_length"] = start, simulation_step
         priorities = sorted({priority for instance in instances for priority in instance.__dict__["_choregraphy"][1]},
                             key=lambda priority: tuple(ast.literal_eval(priority)))
         for increment in range(increments):

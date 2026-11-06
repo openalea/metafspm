@@ -279,14 +279,21 @@ class SoilDiffusion(FunctionalComponent):
 - **Active subgraphs and pieces.** `@graph_system(filters=...)` solves on the subgraph of the selected nodes (the
   others frozen, dropped edges without flux), e.g. `filters="active"`; `split="components"`
   solves each connected piece (each plant) on its own, with its own convergence and adaptive steps.
-- **Forcings.** `self.forcing(name)` interpolates a time series of the scene's forcings at the end of the current
-  (sub-)step, or at the evaluation time of an IVP solver. A component declares the forcings it
-  reads, `PARi: float = forcing_variable(unit="µmol m-2 s-1", description="...")`: unlike an input, written per
-  entity by another model through the translator, a forcing is a time series given from outside, the same for every
-  entity. It is listed by `declarations()` (role "forcing"), not stored on the DataStructure, and a `Scene` checks
-  at its construction that every required one is given (`required=False`: an optional one, which raises KeyError
-  when read). A forcing is read at the end of the step by default; `forcing_variable(at="start")`, or
-  `self.forcing(name, at="start")`, reads it at the step's start (a meteo table whose hour begins with the step).
+- **Forcings.** `self.forcing(name)` reads a time series of the scene's forcings **over the (sub-)step** being
+  computed, `[t, t + dt]` (`over="substep"`, the default; `over="step"`: the call's whole step, all its sub-steps), so
+  that the results do not depend on the time step through the forcings; inside an IVP solve, at its evaluation time.
+  A component declares the forcings it reads, `PARi: float = forcing_variable(unit="µmol m-2 s-1",
+  description="...")`: unlike an input, written per entity by another model through the translator, a forcing is a
+  time series given from outside, the same for every entity. It is listed by `declarations()` (role "forcing"), not
+  stored on the DataStructure, and a `Scene` checks at its construction that every required one is given
+  (`required=False`: an optional one, which raises KeyError when read). What a read gives is declared once,
+  `forcing_variable(aggregate=...)`: `"mean"` (the default: its mean over the step, a rate or a state of the air),
+  `"total"` (its integral, a rain's depth from its rate; not readable inside an IVP solve) or `"instant"` (its value
+  at the step's end). The mean is exact for numbers, tables (piecewise linear) and pulses
+  (`forcings.pulse(start, end, total)`: a rate given by its total over `(start, end]`, a rain shower, whose mean is
+  exact at any step), and the 4-point Gauss-Legendre rule on panels of at most an hour for other callables (a daily
+  course read by the hour or by the day); `forcing_mean`, `forcing_total` and `forcing_over` compute them outside a
+  component, `self.forcing_interval(over)` gives the interval read.
   Outside a Scene, `component.set_forcings(forcings, start=None)` gives a component the forcings a Scene would
   (`{name: forcing}` or a DataFrame indexed by time, the Scene's `start=` calendar), read at the component's clock
   (0 at its first call); `self.has_forcing(name)` tells whether one is given as a time series, e.g. for an input
@@ -582,7 +589,9 @@ scene = Scene.from_scenario(scenario, stand(...), Wheat, environment=[RhizoSoil,
   column each. A forcing is a number, a callable of the scene time (s), a Series indexed by time, or a `(times,
   values)` pair; tables are interpolated linearly; a callable of the time and the entity ids, `(time, ids) -> one
   value per entity`, varies in space (a soil temperature by depth). A component declaring the name
-  (`forcing_variable`) reads it with `self.forcing(name)` (any component). Otherwise the Scene writes it at the start of each step into the input or parameter of that
+  (`forcing_variable`) reads it with `self.forcing(name)` (any component), as declared. Otherwise the Scene writes
+  its mean over the step (each entity's for a forcing varying in space) at the start of each step into the input or
+  parameter of that
   name, on every component declaring it and not coupled to another (a measured soil temperature, a shoot's
   supply; an input declared without a place is a plant's value, per plant). A forcing nothing takes raises. `as_forcing(value, time_unit=86400.)` (or `time_unit="d"`) turns an input given by day (a
   number, a function of the day, a Series indexed by day, one value per day) into one. `events=[(time, action)]`
@@ -600,13 +609,25 @@ scene = Scene.from_scenario(scenario, stand(...), Wheat, environment=[RhizoSoil,
 - **Outputs: the SceneRecorder.** `recorder=SceneRecorder(folder, ...)` (or `recorder=folder`) writes:
   - `run.json`: status (running, finished, stopped, failed with its error), times, wall time per model, versions;
   - `scenario.json`: the planting, the scenarios, the environment models, the forcings (tables in `forcings/`);
-  - `Plant/<Model>/summaries.csv`: one row per plant and step, its state variables summed (extensive) or averaged;
+  - `Plant/<Model>/summaries.csv`: one row per plant and step, the float state variables of every component on the
+    plants' DataStructure **and on its views** (a structural component's SubOrgans, Adel's or ArchiSimple's
+    entities: each variable over the entities of the components declaring it), at every location (nodes, SubOrgans,
+    Organs, ...; a light model's union of the plants too): extensive ones summed, intensive ones their mean
+    weighted by their declared weight (`state_variable(kind="intensive", weight="green_area")`, a variable at the
+    same location: a volume, a mass, an area), plain without one (a warning lists them once), Plant ones as they are;
+    descriptors, the relations' variables (edges) and the entities without a value (NaN) left out;
   - `Plant/<Model>/segments.csv`: the `segment_plants`' nodes every `segment_period` steps;
   - `Soil/<Model>/summaries.csv` and `Atmosphere/<Model>/summaries.csv`: each environment model's grid, by its
-    `compartment` attribute;
-  - your own tables, `tables={name: function(scene) -> row}`, as `<name>.csv`;
+    `compartment` attribute (intensive variables weighted by their declared weight, else by the cells' volumes);
+  - your own tables, `tables={name: function(scene) -> row}`, as `<name>.csv`, or declared:
+    `Summary(location, where={...}, sum=[...] or {name: factor}, mean=[...] or {name: weight}, min=[...], max=[...],
+    per="scene" | "plant")`, e.g. the leaves' gas exchange `Summary("SubOrgan", where={"label": "LeafElement",
+    "green_area": ">0"}, sum={"An": "green_area", "transpiration": None}, mean={"gs": "green_area"})`: the
+    entities at the location where every condition holds (a variable, at that location or a coarser one; `"label"`;
+    `"<Scale>.label"`, their owner's at a scale), the sums (of name × factor: an integral), the means (by their
+    declared weight with a list), the extremes (`<name>_min`, `<name>_max`);
   - `frames/` (encoding3d, every `frame_period` steps) and `checkpoints/step_<n>` (every `checkpoint_period`, the last
-    `keep_checkpoints` kept).
+    `keep_checkpoints` kept; their unchanging parts saved once in `checkpoints/shared`, below).
 
   Each output is switched on its own (`summaries=False`, `frame_period=None`, ...); the initial state is recorded
   at the first step and the last one at the end. Without a folder the tables stay in memory, and
@@ -614,7 +635,13 @@ scene = Scene.from_scenario(scenario, stand(...), Wheat, environment=[RhizoSoil,
   ends with `scene.finish()` (a recording scene dropped without it warns).
 - **Restarts.** `scene.checkpoint(path)` and `Scene.restore(path, **arguments)` continue a run bit for bit; models
   keep non-variable state through `checkpoint_state()` / `restore_state(state)` (e.g. a registry of their own, such
-  as GRANAP's anatomy templates, which a new process does not have). A restored scene cuts its recorder's tables
+  as GRANAP's anatomy templates, which a new process does not have). What does not change from one checkpoint to the
+  next is saved once (`scene.shared`): a `checkpoint_state()` returns `Shared(name, value)` for such a value (at any
+  depth), and the sections' templates (reduced or instanced) are shared the same way; each part is written once in
+  the shared folder (`scene.checkpoint(path, shared=folder)`, by default `path/shared`; the SceneRecorder's
+  `checkpoints/shared`) under its content's key, the checkpoint's `shared.json` lists those it refers to, and the
+  recorder removes the parts no kept checkpoint refers to. A checkpoint is restored with its shared folder (a
+  missing part raises). A restored scene cuts its recorder's tables
   and frames back to the checkpoint's step, so a run that went past its checkpoint leaves no duplicate rows. A scene
   rebuilt with a changed translator and resumed uses the changed links: a DataStructure its models coupled keeps
   their derived variables (formulas, factors, aggregations) on `load_checkpoint`, not the checkpoint's (a changed
@@ -642,7 +669,9 @@ scene = Scene.from_scenario(scenario, stand(...), Wheat, environment=[RhizoSoil,
   every row, every variable (what another platform reads, and a complete log), with the triangles light models get;
   the components' display shapes (e.g. GRANAP's sections), drawings only, are a recording choice:
   `display_period=96` writes them every 96 steps (a multiple of `frame_period`) and in the last frame, `None` (the
-  default) never; their data rows (the Compartments) are in every frame either way, with the DataStructure's values
+  default) never, and `display_plants=("p0", "p3")` draws them for those plants only (a stand's frames bounded by
+  the plants drawn; the others' reduced sections' interiors not recovered; `scene_to_frame(display_plants=)` too);
+  their meshes share their vertices (indices); their data rows (the Compartments) are in every frame either way, with the DataStructure's values
   (those of an instanced or reduced section's Compartments too, which the MPG holds as their template's).
   A reduced section is drawn whole in those frames: a component's display shapes may own triangles by id
   (`Triangles(vertices, owner, owner_ids)`, owner -1 and `owner_ids` the display ids of

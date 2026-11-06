@@ -149,5 +149,5 @@ def test_a_structural_component_reads_the_calendar_and_forcings_and_an_unplaced_
     scene.run()
     ds = scene.populations[0].data_structure
     assert ds.location("air_temperature") == "Plant"
-    np.testing.assert_allclose(ds.get("warmth"), 15.)                 # written at the step's start
+    np.testing.assert_allclose(ds.get("warmth"), 15.5)                # written at the step's start: its mean
     assert seen["calendar"] == (100., 9.) and seen["PARi"] == 7.

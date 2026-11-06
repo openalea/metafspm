@@ -77,7 +77,7 @@ def _declare(role: str, unit: str = "", description: str = "", default=None, def
     """
     The metadata of a declared field, shared by state_variable, input_variable, parameter, setting and
     forcing_variable (see them for the arguments). *role*: "state_variable", "input", "parameter", "setting" or
-    "forcing"; *extra*: the role's own keys (a setting's choices, a forcing's required and at).
+    "forcing"; *extra*: the role's own keys (a setting's choices, a forcing's required and aggregate).
     """
     if aggregation in ("proximal", "distal"):
         raise ValueError(f"aggregation='{aggregation}' is 'child' or 'parent' (the value of the edge's child or "
@@ -213,18 +213,21 @@ def setting(unit: str = "", description: str = "", default=None, choices=None, u
                     references=references, DOI=DOI, choices=tuple(choices) if choices is not None else None)
 
 
-def forcing_variable(unit: str = "", description: str = "", required: bool = True, at: str = "end",
+def forcing_variable(unit: str = "", description: str = "", required: bool = True, aggregate: str = "mean",
                      unit_comment: str = "", references: str = "", DOI=None):
     """Declare a forcing: a time series given to the scene (its `forcings` table, shared by every model), read by
-    `self.forcing(name)` at the step's time, the same for every entity (meteo, an imposed supply). Not a
-    DataStructure variable: listed by declarations(). A Scene raises at its construction when a *required* forcing
-    is not given; an optional one (required=False) raises KeyError when read, for the component to fall back. *at*:
-    when a step reads it, "end" (the end of the (sub-)step, metafspm's convention for implicit solves) or "start"
-    (the step's start, e.g. a meteo table read as the hour begins)."""
-    if at not in ("start", "end"):
-        raise ValueError(f"forcing_variable(at=...): 'start' or 'end', got '{at}'")
+    `self.forcing(name)` over the (sub-)step the component computes, the same for every entity (meteo, an imposed
+    supply). Not a DataStructure variable: listed by declarations(). A Scene raises at its construction when a
+    *required* forcing is not given; an optional one (required=False) raises KeyError when read, for the component to
+    fall back. *aggregate*: what a read gives, declared once so that the steps do not say it: "mean" (its mean over
+    the step, a rate or a state of the air: PAR, temperature), "total" (its integral over the step: a rain's depth
+    from its rate, in the forcing's unit times s) or "instant" (its value at the step's end, metafspm's convention for
+    implicit solves: what a step longer than the forcing's changes may miss)."""
+    from openalea.metafspm.coupling.forcings import AGGREGATES
+    if aggregate not in AGGREGATES:
+        raise ValueError(f"forcing_variable(aggregate=...): one of {AGGREGATES}, got '{aggregate}'")
     return _declare("forcing", unit=unit, description=description, default=None, unit_comment=unit_comment,
-                    references=references, DOI=DOI, required=required, at=at)
+                    references=references, DOI=DOI, required=required, aggregate=aggregate)
 
 
 class _PlantParameter:
@@ -450,24 +453,47 @@ class DataStructureComponent(Component):
             step = float(getattr(self, "time_step", None) or self.choregrapher.simulation_step() or 0.)
         return start + offset + step
 
-    def forcing(self, name: str, at: str = None):
+    def forcing_interval(self, over: str = "substep") -> tuple:
         """
-        Forcing *name* at forcing_time() (coupling.forcings): a number, a callable of the time, or a table linearly
-        interpolated, as a Series indexed by time or a (times, values) pair. *at*: "end" or "start" of the step (by
-        default its declaration's, forcing_variable(at=...), else "end").
+        (start, end), the scene times a forcing is read over: *over* "substep", the (sub-)step being computed (the
+        component's sub-step, a graph-system solve's sub-step: [t, t + dt]); "step", the whole step of the call (the
+        scene's step, all its sub-steps).
         """
-        if at is None:
-            declared = getattr(type(self), "__dataclass_fields__", {}).get(name)
-            at = declared.metadata.get("at", "end") if declared is not None else "end"
+        if over == "substep":
+            return self.forcing_time("start"), self.forcing_time("end")
+        if over == "step":
+            start = self.__dict__.get("_step_clock", self.__dict__.get("_clock", 0.))
+            length = self.__dict__.get("_step_length")
+            if length is None:
+                length = float(self.choregrapher.simulation_step() or getattr(self, "time_step", None) or 0.)
+            return start, start + length
+        raise ValueError(f"forcing(over=...): 'substep' or 'step', got '{over}'")
+
+    def forcing(self, name: str, over: str = "substep"):
+        """
+        Forcing *name* (coupling.forcings: a number, a callable of the time, a table linearly interpolated, a pulse)
+        over the (sub-)step being computed (*over* "substep", [t, t + dt]) or the call's whole step ("step"), as its
+        declaration aggregates it (forcing_variable(aggregate=...): its mean by default, its total, or its value at the
+        end; an undeclared name: its mean). Inside an IVP solve, its value at the evaluation time (the integrator
+        averages it; a "total" has no value at an instant and raises).
+        """
+        declared = getattr(type(self), "__dataclass_fields__", {}).get(name)
+        aggregate = declared.metadata.get("aggregate", "mean") if declared is not None else "mean"
         forcings = self.__dict__.get("_scene_forcings") or {}
         if name not in forcings:
             raise KeyError(f"{type(self).__name__} has no forcing '{name}' (the Scene's forcings=, or "
                            "set_forcings())")
-        from openalea.metafspm.coupling.forcings import forcing_value, is_spatial
+        from openalea.metafspm.coupling.forcings import forcing_over, forcing_value, is_spatial
         if is_spatial(forcings[name]):
             raise TypeError(f"forcing '{name}' varies in space ((time, ids) -> values): the Scene writes it into an "
                             "input or parameter, a component does not read it with forcing()")
-        return forcing_value(forcings[name], self.forcing_time(at))
+        if "_ivp_time" in self.__dict__:
+            if aggregate == "total":
+                raise ValueError(f"forcing '{name}' is a total over the step (aggregate='total'): an IVP solve reads "
+                                 "rates at instants, declare it aggregate='mean'")
+            return forcing_value(forcings[name], self.forcing_time())
+        start, end = self.forcing_interval(over)
+        return forcing_over(forcings[name], start, end, aggregate)
 
     def pool_exchange(self, name: str):
         """

@@ -2,6 +2,32 @@
 
 ## Unreleased (release2026)
 
+### Breaking: forcings read over the step; summaries of every component; checkpoint parts saved once
+
+- Forcings are read over the step, not at an instant (the results no longer depend on the time step through them):
+  `self.forcing(name, over="substep" | "step")` gives the forcing over the (sub-)step being computed `[t, t + dt]`
+  (or the call's whole step) as `forcing_variable(aggregate="mean" | "total" | "instant")` declares it (the mean by
+  default; the total, a rain's depth; the value at the step's end). `forcing_variable(at=)` and `forcing(name, at=)`
+  are gone. `coupling.forcings`: `forcing_mean` (exact for numbers, tables and pulses, the 4-point Gauss-Legendre
+  rule on panels of at most an hour for callables), `forcing_total`, `forcing_over`, `spatial_mean`, `pulse(start,
+  end, total)` (a rate given by its total); `as_forcing`'s inputs have an exact mean. The Scene writes the
+  undeclared forcings' means over the step into their inputs and parameters (a spatial forcing's per entity).
+  `Component.forcing_interval(over)`.
+- The recorder's summaries hold every component on the plants' DataStructure and on its views (located and entity
+  views: Adel's, ArchiSimple's, the gas exchange's, the light's union), at every location, each variable over the
+  entities of the components declaring it; intensive variables averaged by their declared weight
+  (`state_variable(weight=)`, now also kept on grid and union declarations), a grid's by its cells' volumes, plain
+  otherwise with one warning listing them; descriptors, edge variables and NaN values left out
+  (`SceneRecorder.summary_plan`, `recorder.grouped`). Declarative tables: `Summary(location, where=, sum=, mean=,
+  min=, max=, per=)`.
+- `SceneRecorder(display_plants=)` and `scene_to_frame(display_plants=)`: the display shapes drawn for some plants
+  only (the others' reduced interiors not recovered); display meshes share their vertices (`Mesh.indices`;
+  `filter_frame` filters indexed meshes).
+- `scene.shared`: `Shared(name, value)` parts of a `checkpoint_state()` and the sections' templates saved once in
+  the checkpoints' shared folder (`Scene.checkpoint(path, shared=)`, `DataStructure.checkpoint(path, shared=)`;
+  `shared.json`; the recorder's `checkpoints/shared`, pruned with its checkpoints). Use case 1 at day 3: 261 MB per
+  checkpoint before, 4 MB per checkpoint and 169 MB shared once after.
+
 ### Reduction of graph systems by groups
 
 - `solve.reduction.Reduction`, declared on a plant model (`reduction = Reduction(location=, labels=, ports=, keep=, explicit_edges=, kind=, inputs=, systems=)`): each group of the location holds only its kept nodes (its ports and the nodes the model keeps), its interior eliminated exactly, once per kind (its full template, its kind variables' values or `Relative` classes, the plant's parameters, the settings), from a library population of the plant model's own components; the group's term is the full instance's Kron reduction minus what the model computes on the reduced structure. `Reduction.template_for` (a structural model's reduced templates), `full_template(key)` (the full template of a reduced one's key), `recover` (a group's interior), per-group inputs through the graph system's `@input_jacobian`.

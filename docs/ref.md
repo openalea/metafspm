@@ -4,8 +4,8 @@
 
 ```{eval-rst}
 .. automodule:: openalea.metafspm
-   :members: FunctionalComponent, StructuralComponent, CompositeModel, Scene, SceneRecorder, Compute, Planting,
-             Stand, planting, stand, read_scenarios, variants, parameter_table, as_forcing
+   :members: FunctionalComponent, StructuralComponent, CompositeModel, Scene, SceneRecorder, Summary, Compute,
+             Planting, Stand, planting, stand, read_scenarios, variants, parameter_table, as_forcing, pulse
 ```
 
 ## Components and declarations
@@ -97,7 +97,8 @@ The solvers are chosen by key in `graph_system(solver=...)`: `"newton"`, `"newto
    :members: read_observations, compare, residuals, objective, Objective
 
 .. automodule:: openalea.metafspm.coupling.forcings
-   :members: as_forcing, forcing_value, forcing_table, is_spatial, seconds, time_unit_label
+   :members: as_forcing, pulse, forcing_value, forcing_mean, forcing_total, forcing_over, spatial_mean, quadrature,
+             forcing_table, is_spatial, seconds, time_unit_label
 
 .. automodule:: openalea.metafspm.scene.scene
    :members: Scene, AllMasks
@@ -109,7 +110,10 @@ The solvers are chosen by key in `graph_system(solver=...)`: `"newton"`, `"newto
    :members: EnvironmentModel
 
 .. automodule:: openalea.metafspm.scene.recorder
-   :members: SceneRecorder, compartment
+   :members: SceneRecorder, Summary, compartment, grouped, base_of
+
+.. automodule:: openalea.metafspm.scene.shared
+   :members: Shared, SharedStore, references, prune
 ```
 
 ## Exchange with other platforms

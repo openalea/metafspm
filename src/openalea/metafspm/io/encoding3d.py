@@ -17,8 +17,9 @@ What a frame holds:
   Compartment; ids are the vids), the Connections as a relation (n_id_a → n_id_b); as columns, every MPG property
   and every variable of the DataStructure at that scale's location; its scalars; the triangles of its geometry
   provider as a mesh, by node and by coarser scale, and a mesh for each component drawing shapes for display only
-  (display_triangles(), e.g. GRANAP's sections; display_meshes=False leaves them out, SceneRecorder writes them every
-  display_period steps only). The MPG's own links (the raw complex and parent of each
+  (display_triangles(), e.g. GRANAP's sections, its vertices shared by its triangles; display_meshes=False leaves them
+  out, SceneRecorder writes them every display_period steps only; display_plants= draws them for some plants only).
+  The MPG's own links (the raw complex and parent of each
   vertex, its raw edge type) are the metafspm_complex, metafspm_parent and metafspm_edge_type columns, and the
   label codes, variable metadata and construction arguments go in the data structure's extras, so that
   from_frame rebuilds the same MPG (vertices, links, properties) and the same variables, bit for bit;
@@ -356,7 +357,7 @@ def _location_scales(ds) -> dict:
 
 
 def _mpg_data_structure(identifier: str, ds, metadata: dict, standard_names: dict, geometry: bool, components=(),
-                        display_meshes: bool = True):
+                        display_meshes: bool = True, display_plants=None):
     encoding3d = _encoding3d()
     ds.flush_mtg()                     # the MPG holds the variables' current values, as ds.mtg gives it
     g = ds.structure
@@ -521,7 +522,7 @@ def _mpg_data_structure(identifier: str, ds, metadata: dict, standard_names: dic
                                              **({"column": column} if column != name else {}),
                                              **({"encoding": encoding} if encoding else {}))
     if geometry and display_meshes and any(callable(getattr(c, "display_triangles", None)) for c in components):
-        _display_interiors(ds, tables, extras, names, translator)    # the reduced sections' interiors, drawn whole
+        _display_interiors(ds, tables, extras, names, translator, display_plants)   # the reduced sections' interiors
     scalars = _scalar_table(ds, extras)
     extras["tracked"] = [name for name in extras["tracked"] if name in extras["variables"]]
     extras.update(_anchor_and_empty_properties(g, anchors))
@@ -561,13 +562,20 @@ def _mpg_data_structure(identifier: str, ds, metadata: dict, standard_names: dic
                                                     "(-1: none)",
                                  "metafspm_edge_type": "metafspm: the MPG's edge type (0 none, 1 '/', 2 '<', "
                                                        "3 '+')"}[column])
-    meshes = _meshes(ds, entity_sets, scale_of, names, components, display_meshes) if geometry else []
+    meshes = _meshes(ds, entity_sets, scale_of, names, components, display_meshes, display_plants) if geometry else []
     return encoding3d.DataStructure(identifier, kind="graph", entity_sets=entity_sets, relations=relations,
                                  scalars=scalars, meshes=meshes, platform=PLATFORM, model="MPGDataStructure",
                                  extras={EXTRAS: extras})
 
 
-def _display_interiors(ds, tables: dict, extras: dict, names: dict, translator: dict) -> None:
+def _plants_mask(ds, plants, location: str = "node") -> np.ndarray:
+    """Whether each entity at *location* of *ds* belongs to one of the Plant vids *plants*."""
+    plant_ids = np.asarray(ds.entity_ids("Plant"), dtype=np.int64)
+    owner = np.asarray(ds.owner("Plant") if location == "node" else ds.owner("Plant", of=location), dtype=np.int64)
+    return (owner >= 0) & np.isin(plant_ids[np.maximum(owner, 0)], np.asarray(list(plants), dtype=np.int64))
+
+
+def _display_interiors(ds, tables: dict, extras: dict, names: dict, translator: dict, plants=None) -> None:
     """
     The reduced sections' interiors as display rows (the frame's display meshes draw the sections whole): each reduced
     group's full template vertices its reduced template does not hold (its eliminated Compartments, and the Cells and
@@ -576,7 +584,7 @@ def _display_interiors(ds, tables: dict, extras: dict, names: dict, translator: 
     to the group's vertices (kept or displayed) and to its owner. Their values: the reduced system's unknown recovered
     from the kept nodes' (Reduction.recover_interiors: exact for the linear Kron reduction), their full template's
     properties, NaN (or the column's empty value) otherwise. from_frame leaves them out: the DataStructure stays
-    reduced.
+    reduced. *plants*: the Plant vids whose sections are drawn (None: all), the others' interiors not recovered.
     """
     from openalea.metafspm.data_structure.instances import ANCHOR, OWNER
     from openalea.metafspm.solve.reduction import display_ids
@@ -585,10 +593,13 @@ def _display_interiors(ds, tables: dict, extras: dict, names: dict, translator: 
     if reduction is None or not g._instanced():
         return
     groups = reduction.reduced_groups(ds)
+    if plants is not None and groups:
+        drawn = _plants_mask(ds, plants, reduction.location)
+        groups = {i: group for i, group in groups.items() if drawn[i]}
     if not groups:
         return
     if reduction.systems and reduction.instance is not None and not reduction.library:
-        recovered, unknown = reduction.recover_interiors(ds), reduction.unknown()
+        recovered, unknown = reduction.recover_interiors(ds, groups=list(groups)), reduction.unknown()
     else:                                           # no system bound: the interiors' structure, their values NaN
         recovered, unknown = {i: (owner, key, reduction.full_template(key), np.zeros(0, dtype=np.int64),
                                   np.zeros(0)) for i, (owner, key) in groups.items()}, None
@@ -792,29 +803,33 @@ def _edge_rows(columns: dict, ids: np.ndarray) -> np.ndarray:
         return _rows_of(columns["target"], ids)
 
 
-def _meshes(ds, entity_sets: list, scale_of: dict, names: dict, components=(), display_meshes: bool = True) -> list:
+def _meshes(ds, entity_sets: list, scale_of: dict, names: dict, components=(), display_meshes: bool = True,
+            display_plants=None) -> list:
     """The DataStructure's triangles (its geometry provider's, those light models get), and with *display_meshes*
-    each component's display_triangles() (shapes drawn for display only, e.g. GRANAP's sections), one mesh each."""
+    each component's display_triangles() (shapes drawn for display only, e.g. GRANAP's sections; those of the Plant
+    vids *display_plants* only when given), one mesh each, its vertices shared by its triangles."""
     drawn = []
     # the plants' triangles (those light models get): on an anatomy-mode DataStructure its SubOrgans' (the view at
     # its from_scale, where the architectures draw them), their owners SubOrgans; the Compartments are not drawn
     drawn_on = ds.at(ds._scale_name(ds.from_scale)) if getattr(ds, "_anatomy", False) and hasattr(ds, "at") else ds
     try:
-        drawn.append(("triangles", drawn_on, drawn_on.triangles()))
+        drawn.append(("triangles", drawn_on, drawn_on.triangles(), False))
     except (ValueError, NotImplementedError):
         pass
+    where = None if display_plants is None else _plants_mask(ds, display_plants)
     for component in components if display_meshes else ():
         display = getattr(component, "display_triangles", None)
         if callable(display):
-            drawn.append((type(component).__name__, ds, display()))
-    return [_mesh_of(on, entity_sets, scale_of, names, name, triangles) for name, on, triangles in drawn
-            if len(triangles)]
+            drawn.append((type(component).__name__, ds, display() if where is None else display(where=where), True))
+    return [_mesh_of(on, entity_sets, scale_of, names, name, triangles, shared=shared)
+            for name, on, triangles, shared in drawn if len(triangles)]
 
 
-def _mesh_of(ds, entity_sets: list, scale_of: dict, names: dict, name: str, triangles):
+def _mesh_of(ds, entity_sets: list, scale_of: dict, names: dict, name: str, triangles, shared: bool = False):
     """The mesh of *triangles*, owned by the nodes of *ds* (a DataStructure, or a view of it at a coarse location:
     an anatomy-mode plant's SubOrgans), each vertex with the rows of its owner and of its owner's containing
-    entities."""
+    entities; *shared*: the vertices of equal position and rows written once, the triangles by their indices (a
+    display shape's polygons: about a third of the vertices)."""
     encoding3d = _encoding3d()
     sets = {entity_set.name: entity_set for entity_set in entity_sets}
     node_ids = np.asarray(ds.entity_ids("node"), dtype=np.int64)
@@ -847,7 +862,26 @@ def _mesh_of(ds, entity_sets: list, scale_of: dict, names: dict, name: str, tria
         found = _rows_up(sets, unique, [node_set.name] + coarse)
         for set_name, rows in found.items():
             feature_rows[set_name][shown] = rows[inverse]
-    return encoding3d.Mesh(name, positions=triangles.vertices.reshape(-1, 3), feature_rows=feature_rows)
+    positions = triangles.vertices.reshape(-1, 3)
+    if not shared:
+        return encoding3d.Mesh(name, positions=positions, feature_rows=feature_rows)
+    positions, feature_rows, indices = _shared_vertices(positions, feature_rows)
+    return encoding3d.Mesh(name, positions=positions, feature_rows=feature_rows, indices=indices)
+
+
+def _shared_vertices(positions: np.ndarray, feature_rows: dict) -> tuple:
+    """(positions, feature rows, indices): the vertices of equal position and rows once, in their first order."""
+    keys = np.column_stack([np.ascontiguousarray(positions, dtype=np.float64).view(np.int64)]
+                           + [np.asarray(rows, dtype=np.int64)[:, None] for rows in feature_rows.values()])
+    keys = np.ascontiguousarray(keys)
+    void = keys.view(np.dtype((np.void, keys.dtype.itemsize * keys.shape[1]))).ravel()
+    _, first, inverse = np.unique(void, return_index=True, return_inverse=True)
+    order = np.argsort(first, kind="stable")                 # the vertices in the order they first appear
+    position_of = np.empty(order.size, dtype=np.int64)
+    position_of[order] = np.arange(order.size)
+    kept = first[order]
+    return (positions[kept], {name: np.asarray(rows)[kept] for name, rows in feature_rows.items()},
+            position_of[inverse.reshape(-1)])
 
 
 def _rows_up(sets: dict, ids: np.ndarray, set_names: list) -> dict:
@@ -930,13 +964,16 @@ def _grid_data_structure(identifier: str, ds, metadata: dict, standard_names: di
 
 def to_frame(data_structures: dict, components: dict = None, mappings: dict = None, time: float = 0.,
              step: int = 0, time_unit="s", geometry: bool = True, standard_names: dict = None,
-             scales=None, entities=None, variables=None, plant_names: dict = None, display_meshes: bool = True):
+             scales=None, entities=None, variables=None, plant_names: dict = None, display_meshes: bool = True,
+             display_plants=None):
     """
     The encoding3d frame of *data_structures* ({id: DataStructure}; ids are identifiers), their variables declared
     by *components* ({id: [components]}), with *mappings* ({name: (CrossMapping, source id, target id)}), at *time*
     (in *time_unit*: "s", "min", "h", "d" or its number of seconds, as as_forcing's) and *step*. *geometry*: the
     MPGDataStructures' triangles as meshes; *display_meshes*: with them, the components' display_triangles() (shapes
-    drawn for display only, e.g. GRANAP's sections; their data rows are written either way). *standard_names*:
+    drawn for display only, e.g. GRANAP's sections; their data rows are written either way); *display_plants*: the
+    plants whose display shapes are drawn, {id: [Plant vids or plant names (plant_names')]} or one list for every
+    DataStructure (None: all; the others' reduced sections' interiors not recovered). *standard_names*:
     {metafspm name: standard name} on top of the vocabulary's metafspm column (a None value drops one).
 
     For logging, *scales*, *entities* and *variables* filter what is written (see filter_frame), each a value for
@@ -953,8 +990,10 @@ def to_frame(data_structures: dict, components: dict = None, mappings: dict = No
     for identifier, ds in data_structures.items():
         metadata = _declarations((components or {}).get(identifier, ()))
         if isinstance(ds, MPGDataStructure):
+            drawn = _display_plants_of(display_plants, identifier, (plant_names or {}).get(identifier, {}))
             frame.data_structures.append(_mpg_data_structure(identifier, ds, metadata, names, geometry,
-                                                             (components or {}).get(identifier, ()), display_meshes))
+                                                             (components or {}).get(identifier, ()), display_meshes,
+                                                             drawn))
         elif isinstance(ds, (ArrayDataStructure, AdaptiveGridDataStructure)):
             frame.data_structures.append(_grid_data_structure(identifier, ds, metadata, names))
         else:
@@ -976,12 +1015,31 @@ def to_frame(data_structures: dict, components: dict = None, mappings: dict = No
     return frame
 
 
+def _display_plants_of(display_plants, identifier: str, names: dict):
+    """The Plant vids of DataStructure *identifier* whose display shapes are drawn (None: all), from *display_plants*
+    (to_frame's) and its plant names {name: vid}."""
+    if display_plants is None:
+        return None
+    given = display_plants.get(identifier, None) if isinstance(display_plants, dict) else display_plants
+    if given is None:
+        return None
+    vids = []
+    for plant in ([given] if isinstance(given, (str, int, np.integer)) else list(given)):
+        if isinstance(plant, str):
+            if plant not in names:
+                raise ValueError(f"display_plants: no plant '{plant}' in '{identifier}' ({sorted(names)})")
+            plant = names[plant]
+        vids.append(int(plant))
+    return vids
+
+
 def scene_to_frame(scene, geometry: bool = True, standard_names: dict = None, data_structures=None, scales=None,
-                   entities=None, variables=None, display_meshes: bool = True):
+                   entities=None, variables=None, display_meshes: bool = True, display_plants=None):
     """The frame of a Scene now: each population's DataStructure (id: the population's name), each environment
     model's (id: the model's class name, numbered when it has several), the scene's CrossMappings.
 
-    *geometry* and *display_meshes*: as in to_frame. For logging: *data_structures*, the ids of those to write (default:
+    *geometry*, *display_meshes* and *display_plants* (the planting table's plant names, e.g. ("p0", "p3"), or a
+    {population: names} dict): as in to_frame. For logging: *data_structures*, the ids of those to write (default:
     all); *scales*, *entities* and *variables*, as in to_frame (filter_frame), *entities* also given by the planting
     table's plant names (e.g. "p0")."""
     found = scene.data_structures()
@@ -1009,7 +1067,7 @@ def scene_to_frame(scene, geometry: bool = True, standard_names: dict = None, da
     return to_frame(written, components=components, mappings=mappings, time=scene.time,
                     step=scene.iteration, time_unit="s", geometry=geometry, standard_names=standard_names,
                     scales=scales, entities=entities, variables=variables, plant_names=plant_names,
-                    display_meshes=display_meshes)
+                    display_meshes=display_meshes, display_plants=display_plants)
 
 
 def export_frame(path: str, data_structures: dict, **options) -> None:
@@ -1302,8 +1360,6 @@ def _keep_entities(data_structure, ids: list) -> None:
 def _mesh_rows(mesh, old_rows: dict):
     """*mesh* with the triangles of the kept entities, its feature rows renumbered (None: no triangle left)."""
     encoding3d = _encoding3d()
-    if mesh.indices is not None:
-        raise ValueError(f"mesh '{mesh.name}': indexed meshes are not filtered")
     renumber = {}
     for name, rows in old_rows.items():
         if name in mesh.feature_rows:
@@ -1313,6 +1369,19 @@ def _mesh_rows(mesh, old_rows: dict):
     finest = next(name for name in reversed(list(mesh.feature_rows)) if name in renumber) if renumber else None
     if finest is None:
         return mesh
+    if mesh.indices is not None:                       # the kept triangles, then the vertices they use
+        triangles = mesh.indices.reshape(-1, 3)
+        corners = mesh.feature_rows[finest][triangles[:, 0]]
+        kept_triangles = (corners >= 0) & (renumber[finest][np.maximum(corners, 0)] >= 0)
+        if not kept_triangles.any():
+            return None
+        used, indices = np.unique(triangles[kept_triangles], return_inverse=True)
+        rows = {name: np.where(values[used] >= 0, renumber[name][np.maximum(values[used], 0)], NO_ID)
+                if name in renumber else values[used] for name, values in mesh.feature_rows.items()}
+        return encoding3d.Mesh(mesh.name, positions=mesh.positions[used], feature_rows=rows,
+                               indices=indices.reshape(-1), display={name: values[used] for name, values in
+                                                                     mesh.display.items()},
+                               display_sources=dict(mesh.display_sources))
     corners = mesh.feature_rows[finest].reshape(-1, 3)[:, 0]
     keep = np.repeat((corners >= 0) & (renumber[finest][np.maximum(corners, 0)] >= 0), 3)
     if not keep.any():

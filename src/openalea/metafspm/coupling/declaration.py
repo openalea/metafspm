@@ -337,13 +337,13 @@ def resolve_declaration(f, ds) -> Optional[VariableSpec]:
         if location == "node" and raw_scale is None and "cell" in getattr(ds, "_var_stores", dict)():
             location = "cell"
         if location in ("cell", "scalar", "edge") and raw_scale is None and mapping is None:
-            return VariableSpec(location=location, **common)
+            return VariableSpec(location=location, weight=weight, **common)
         element_scale = getattr(ds, "element_scale", None)
         if element_scale is not None and (raw_scale is not None or location == "node"):
             # The elements of several populations (UnionDataStructure): their nodes' scale, and "node"
             scale = _scale_value(ds, raw_scale) if raw_scale is not None else element_scale
             if scale == element_scale and location in (None, "node") and mapping is None:
-                return VariableSpec(location="node", **common)
+                return VariableSpec(location="node", weight=weight, **common)
             raise DeclarationError(f"'{f.name}': a union of populations holds their nodes only (scale "
                                    f"{scale_names(ds).get(element_scale, element_scale)}), not scale "
                                    f"{scale_names(ds).get(scale, scale)} at {location}")

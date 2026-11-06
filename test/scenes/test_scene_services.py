@@ -74,9 +74,9 @@ def test_components_read_the_scene_forcings():
     scene = _scene()
     ds = scene.populations[0].data_structure
     scene.run()
-    np.testing.assert_allclose(ds.get("light"), DT)                 # at the end of the first step
+    np.testing.assert_allclose(ds.get("light"), DT / 2)             # its mean over the first step
     scene.run()
-    np.testing.assert_allclose(ds.get("light"), 2 * DT)
+    np.testing.assert_allclose(ds.get("light"), 1.5 * DT)
 
 
 def test_declared_forcings():
@@ -111,7 +111,7 @@ def test_a_model_runs_when_its_condition_holds():
     scene.run()
     np.testing.assert_array_equal(ds.get("light"), 0.)              # not run: its outputs kept
     scene.run()
-    np.testing.assert_allclose(ds.get("light"), 3 * DT)
+    np.testing.assert_allclose(ds.get("light"), 2.5 * DT)
 
 
 def test_events_and_stop_conditions():
@@ -127,13 +127,13 @@ def test_events_and_stop_conditions():
     assert scene.environment[0].grid.get("soil_nitrate").max() > 50.
 
 
-def test_a_forcing_read_at_the_steps_start():
-    """A forcing is read at the end of the component's step by default, at its start when asked (or declared
-    forcing_variable(at="start"))."""
+def test_a_forcing_read_over_the_step():
+    """A forcing is its mean over the component's (sub-)step by default (forcing_variable(aggregate="mean")), over
+    [t, t + dt]; the interval read is forcing_interval()."""
     lit = _scene().populations[0].instance.lit
     lit.__dict__["_clock"] = 2 * DT
-    assert lit.forcing("PARi") == pytest.approx(3 * DT)                 # PARi(t) = t
-    assert lit.forcing("PARi", at="start") == pytest.approx(2 * DT)
+    assert lit.forcing_interval() == (2 * DT, 3 * DT)
+    assert lit.forcing("PARi") == pytest.approx(2.5 * DT)               # PARi(t) = t
 
 
 class CadencedSoil(SceneSoil):

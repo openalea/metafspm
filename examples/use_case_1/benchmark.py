@@ -4,10 +4,12 @@ no checkpoints) run hour by hour from the sowing, each step's time by model (Sce
 reduction evaluated (their number and time), the plants' nodes, and the memory (RSS after each step; after
 malloc_trim and the peak at the end).
 
-    python benchmark.py [--plants 2] [--days 3] [--label text]
+    python benchmark.py [--plants 2] [--days 3] [--label text] [--outputs]
 
 By default 2 plants to day 3 (the use case's fast regime); --days 8 for the day-8 numbers, --plants 8 --days 4 for the
-scaling. The results go to outputs/benchmarks/<commit>.json (untracked), one entry per mode ("2p_3d") updated in place,
+scaling; --outputs measures the outputs at the end (outputs()): a frame without and with the sections drawn (those of
+run.DISPLAY_PLANTS, the use case's frame variables), two checkpoints sharing their unchanging parts, their size and
+time. The results go to outputs/benchmarks/<commit>.json (untracked), one entry per mode ("2p_3d") updated in place,
 and a summary is printed. Run it under a memory bound, one at a time (systemd-run --user --scope -p MemoryMax=8G ...).
 """
 import argparse
@@ -91,7 +93,7 @@ class KindCounter:
         return out
 
 
-def benchmark(plants: int, days: float) -> dict:
+def benchmark(plants: int, days: float, measure_outputs: bool = False) -> dict:
     counter = KindCounter()
     started = time.perf_counter()
     scene = run.scene(plants, folder=None)
@@ -112,8 +114,11 @@ def benchmark(plants: int, days: float) -> dict:
         print(f"h {hour + 1:4d}  {seconds:7.2f} s  kinds {kinds:3d} ({kind_seconds:6.2f} s)  nodes {nodes:6d}  "
               f"RSS {steps[-1]['rss_gb']:.2f} GB", flush=True)
     scene.finish()
+    timing, total = dict(scene.timing), time.perf_counter() - started    # the steps' (outputs() runs one more)
     rss = resident_memory()
     trim_memory()
+    after_trim, peak = resident_memory(), peak_memory()
+    measured = outputs(scene) if measure_outputs else None
     compute = getattr(scene, "compute", None)
     result = {"commit": commit(), "date": time.strftime("%Y-%m-%d %H:%M:%S"), "plants": plants, "days": days,
               "machine": {"processors": os.cpu_count(), "platform": platform.platform(),
@@ -121,10 +126,46 @@ def benchmark(plants: int, days: float) -> dict:
               "compute": compute.as_dict() if compute is not None else None,
               "environment": {name: os.environ.get(name) for name in
                               ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS", "MALLOC_ARENA_MAX")},
-              "build_seconds": built, "total_seconds": time.perf_counter() - started,
-              "rss_end_gb": rss, "rss_after_trim_gb": resident_memory(), "peak_rss_gb": peak_memory(),
-              "timing": dict(scene.timing), "steps": steps}
+              "build_seconds": built, "total_seconds": total,
+              "rss_end_gb": rss, "rss_after_trim_gb": after_trim, "peak_rss_gb": peak,
+              "timing": timing, "steps": steps, "outputs": measured}
     return result
+
+
+def folder_size(path: str) -> int:
+    """The bytes of the files under *path*."""
+    return sum(os.path.getsize(os.path.join(folder, name)) for folder, _, names in os.walk(path) for name in names)
+
+
+def outputs(scene) -> dict:
+    """The outputs of *scene* now, written under outputs/benchmarks/outputs (removed after): a frame of the data, a
+    frame with the sections of run.DISPLAY_PLANTS drawn (the recorder's display frames), two checkpoints one step
+    apart into one shared folder (the second refers to the first's parts); their size (MB) and time (s)."""
+    import shutil
+    from openalea.metafspm.io.encoding3d import _encoding3d, scene_to_frame
+    folder = os.path.join(BENCHMARKS, "outputs")
+    shutil.rmtree(folder, ignore_errors=True)
+    os.makedirs(folder)
+    encoding3d, found = _encoding3d(), {}
+    for name, options in (("frame", {}), ("display_frame", {"display_meshes": True,
+                                                              "display_plants": list(run.DISPLAY_PLANTS)})):
+        started = time.perf_counter()
+        frame = scene_to_frame(scene, variables=run.FRAME_VARIABLES, **{"display_meshes": False, **options})
+        path = os.path.join(folder, name + ".glb")
+        encoding3d.write(path, frame)
+        found[name] = {"seconds": time.perf_counter() - started, "MB": os.path.getsize(path) / 1e6}
+        del frame
+    shared = os.path.join(folder, "checkpoints", "shared")
+    for k in (1, 2):
+        path = os.path.join(folder, "checkpoints", f"step_{k}")
+        started = time.perf_counter()
+        scene.checkpoint(path, shared=shared)
+        found[f"checkpoint_{k}"] = {"seconds": time.perf_counter() - started, "MB": folder_size(path) / 1e6,
+                                    "shared_MB": folder_size(shared) / 1e6}
+        if k == 1:
+            scene.run()
+    shutil.rmtree(folder)
+    return found
 
 
 def summary(result: dict) -> str:
@@ -141,6 +182,11 @@ def summary(result: dict) -> str:
                  f"peak {result['peak_rss_gb']:.2f} GB")
     lines.append("per model (s): " + ", ".join(f"{name} {value:.1f}" for name, value in
                                                sorted(result["timing"].items(), key=lambda item: -item[1])))
+    if result.get("outputs"):
+        lines.append("outputs: " + ", ".join(
+            f"{name} {entry['MB']:.1f} MB in {entry['seconds']:.2f} s"
+            + (f" (shared {entry['shared_MB']:.1f} MB)" if "shared_MB" in entry else "")
+            for name, entry in result["outputs"].items()))
     return "\n".join(lines)
 
 
@@ -149,8 +195,9 @@ def main(argv=None):
     parser.add_argument("--plants", type=int, default=2)
     parser.add_argument("--days", type=float, default=3.)
     parser.add_argument("--label", default=None, help="the entry's name (default: <plants>p_<days>d)")
+    parser.add_argument("--outputs", action="store_true", help="measure a frame and two checkpoints at the end")
     arguments = parser.parse_args(argv)
-    result = benchmark(arguments.plants, arguments.days)
+    result = benchmark(arguments.plants, arguments.days, arguments.outputs)
     os.makedirs(BENCHMARKS, exist_ok=True)
     path = os.path.join(BENCHMARKS, f"{result['commit']}.json")
     entries = {}

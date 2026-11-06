@@ -121,13 +121,13 @@ def test_a_population_without_a_scene():
 
 
 def test_a_forcing_varying_in_space():
-    """A forcing (time, ids) -> one value per entity: the Scene writes each entity's."""
+    """A forcing (time, ids) -> one value per entity: the Scene writes each entity's mean over the step."""
     scene = Scene(_roots_table(), time_step=DT, forcings={"temperature": lambda time, ids: time + np.asarray(ids)})
     ds = scene.populations[0].data_structure
     scene.run()
-    np.testing.assert_allclose(ds.get("temperature"), ds.entity_ids("node"))
+    np.testing.assert_allclose(ds.get("temperature"), DT / 2 + np.asarray(ds.entity_ids("node")))
     scene.run()
-    np.testing.assert_allclose(ds.get("temperature"), DT + np.asarray(ds.entity_ids("node")))
+    np.testing.assert_allclose(ds.get("temperature"), 1.5 * DT + np.asarray(ds.entity_ids("node")))
 
 
 def test_the_scenario_entries_are_set_once():

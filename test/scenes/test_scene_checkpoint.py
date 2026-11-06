@@ -1,6 +1,7 @@
 """
 State outside variables: a scene checkpointed and restored continues bit for bit, with the
-non-variable state of models kept by checkpoint_state() / restore_state() hooks; vector-valued variables
+non-variable state of models kept by checkpoint_state() / restore_state() hooks, its large unchanging parts saved once
+(Shared); vector-valued variables
 (MIMICS-like pools per cell) in steps, growth, exchanges, outputs and checkpoints.
 """
 import json
@@ -17,6 +18,7 @@ from openalea.metafspm.coupling.translator import Translator
 from openalea.metafspm.data_structure.configs import ScalesConfig as scales
 from openalea.metafspm.data_structure.data_api import ArrayDataStructure
 from openalea.metafspm.scene.scene import Scene, SceneRecorder
+from openalea.metafspm.scene.shared import Shared
 from openalea.metafspm.solve.decorator import rate
 
 from growth import DOC, RootGrowthProbe
@@ -229,3 +231,52 @@ def test_kept_state_is_checkpointed_and_caches_are_not():
     restored.restore_state(component.checkpoint_state())
     assert restored.kept("last_lighting") == 7200. and restored.kept("canopy") is None
     assert restored.kept("missing", default=1) == 1
+
+
+class SharedSolverSoil(ExternalSolverSoil):
+    """A soil whose solver holds a large table that changes rarely: a shared part of the checkpoints."""
+
+    def __init__(self, plant_data_structures, xrange, yrange, time_step):
+        super().__init__(plant_data_structures, xrange, yrange, time_step)
+        self.table = np.arange(1000.)
+
+    def checkpoint_state(self):
+        return {"solver": dict(self.solver), "table": Shared("soil_table", self.table)}
+
+    def restore_state(self, state):
+        self.solver, self.table = dict(state["solver"]), state["table"]
+
+
+def test_shared_checkpoint_parts_are_written_once_and_pruned_with_their_checkpoints(tmp_path):
+    """A component's Shared value is written once in checkpoints/shared, every checkpoint referring to it
+    (shared.json); a new value is a new part, and the part no kept checkpoint refers to is removed; a checkpoint whose
+    part was removed cannot be restored (a clear error)."""
+    from openalea.metafspm.scene.shared import references
+    out = tmp_path / "out"
+    arguments = dict(_scene_arguments(str(out), checkpoint_period=1, keep_checkpoints=2),
+                     environment=[SharedSolverSoil])
+    scene = Scene(**arguments)
+    scene.simulate(3)
+    shared = out / "checkpoints" / "shared"
+    parts = sorted(name for name in os.listdir(shared) if name.startswith("soil_table"))
+    assert len(parts) == 1
+    written = os.path.getmtime(shared / parts[0])
+    first = str(out / "checkpoints" / "step_000002")
+    assert references(first)[1] >= {parts[0][:-4]}
+    assert not any(name.startswith("section_template") for name in os.listdir(shared))       # no section here
+    scene.environment[0].table = np.arange(1000.) + 1.                  # a new value: a new part
+    scene.simulate(1)
+    assert os.path.getmtime(shared / parts[0]) == written and len(
+        [name for name in os.listdir(shared) if name.startswith("soil_table")]) == 2
+    scene.simulate(1)                                                   # step_000003 (the old table's last) dropped
+    assert sorted(name for name in os.listdir(shared) if name.startswith("soil_table")) != parts
+    assert not os.path.exists(first)
+    Choregrapher().reset()
+    kept = str(out / "checkpoints" / "step_000005")
+    restored = Scene.restore(kept, **dict(arguments, recorder=None))
+    np.testing.assert_array_equal(restored.environment[0].table, np.arange(1000.) + 1.)
+    for name in sorted(os.listdir(shared)):
+        os.remove(shared / name)
+    Choregrapher().reset()
+    with pytest.raises(FileNotFoundError, match="shared part"):
+        Scene.restore(kept, **dict(arguments, recorder=None))

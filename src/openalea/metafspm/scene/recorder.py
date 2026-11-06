@@ -14,13 +14,17 @@ A scene's outputs, written as it runs::
                                       environment models and their scenarios, forcings, the run configuration
                                       (Compute), the recorder's settings
     forcings/<name>.csv               the forcings given as tables
-    Plant/<Model>/summaries.csv       one row per plant and recorded step: time, plant, its float state variables
-                                      (extensive ones summed over its nodes, the others averaged, Plant ones as is)
+    Plant/<Model>/summaries.csv       one row per plant and recorded step: time, plant, the float state variables of
+                                      every component on its DataStructure or a view of it (each over the entities of
+                                      the components declaring it; extensive ones summed, intensive ones averaged by
+                                      their declared weight, Plant ones as is; descriptors and edges left out)
     Plant/<Model>/segments.csv        the node state variables of the segment_plants, every segment_period steps
     Soil/<Model>/summaries.csv        one row per recorded step: time, the grid's float state variables (extensive
-    Atmosphere/<Model>/summaries.csv  ones summed, the others averaged), by the environment model's compartment
+    Atmosphere/<Model>/summaries.csv  ones summed, the others averaged by their weight or the cells' volumes), by the
+                                      environment model's compartment
     <name>.csv                        the tables given as tables={name: function(scene) -> a row (dict), a
-                                      DataFrame, or None for no row}
+                                      DataFrame, or None for no row}, or declared: Summary(location, where, sum, mean,
+                                      min, max, per)
     frames/frame_<step>.glb, frames/scene.fspm.json
                                       the whole scene (encoding3d), every frame_period steps: every scale, every
                                       row; the components' display shapes (e.g. GRANAP's sections) every
@@ -28,6 +32,8 @@ A scene's outputs, written as it runs::
     frames/views.json                 with frame_views: the layers ParaView shows (encoding3d's views), written at the
                                       first frame
     checkpoints/step_<iteration>/     Scene.checkpoint every checkpoint_period steps, the last keep_checkpoints kept
+    checkpoints/shared/               the checkpoints' parts saved once (scene.shared: anatomy templates, sections),
+                                      those no kept checkpoint refers to removed
 
 Every output is switched on or off by its own argument (summaries=False, frame_period=None, ...). The initial state
 is recorded when the run begins, then every period, and the last state when it finishes (Scene.stop). Without an
@@ -38,6 +44,7 @@ back to the restored time and appended to from there.
 import json
 import os
 import platform
+import re
 import shutil
 import sys
 import warnings
@@ -49,6 +56,43 @@ import pandas as pd
 from openalea.metafspm.coupling.declaration import EXTENSIVE_KINDS, INTENSIVE_KINDS, MASSIC_KINDS
 
 COMPARTMENTS = ("Plant", "Soil", "Atmosphere")
+_NOT_SUMMARISED = ("edge", "face", "Connection")      # the relations' variables (flows, conductances between nodes)
+CELL_VOLUME = "<cell volume>"                         # the weight of a grid's intensive variables: its cells' volumes
+
+
+def base_of(ds):
+    """The DataStructure *ds* is a view of (a component's located or entity view), else *ds* itself."""
+    while ds is not None and "_base" in getattr(ds, "__dict__", {}):
+        ds = ds.__dict__["_base"]
+    return ds
+
+
+def grouped(values, owner, groups: int, how: str, weights=None) -> np.ndarray:
+    """
+    *values* aggregated by group (*owner*: each entity's group index, -1 for none): "sum", "mean" (weighted by
+    *weights* when given), "min" or "max"; the entities with a NaN value (or a NaN weight) left out; NaN for a group
+    without entities (a mean, an extreme) or with no weight.
+    """
+    values = np.asarray(values, dtype=float)
+    owner = np.asarray(owner, dtype=np.int64)
+    kept = (owner >= 0) & np.isfinite(values)
+    if weights is not None:
+        weights = np.asarray(weights, dtype=float)
+        kept &= np.isfinite(weights)
+    owner, values = owner[kept], values[kept]
+    if how == "sum":
+        return np.bincount(owner, weights=values, minlength=groups)
+    if how == "mean":
+        weights = np.ones(values.size) if weights is None else weights[kept]
+        total = np.bincount(owner, weights=weights, minlength=groups)
+        sums = np.bincount(owner, weights=values * weights, minlength=groups)
+        return np.divide(sums, total, out=np.full(groups, np.nan), where=total > 0)
+    if how in ("min", "max"):
+        out = np.full(groups, np.inf if how == "min" else -np.inf)
+        (np.minimum if how == "min" else np.maximum).at(out, owner, values)
+        out[~np.isfinite(out)] = np.nan
+        return out
+    raise ValueError(f"grouped(how=...): 'sum', 'mean', 'min' or 'max', got '{how}'")
 
 
 def compartment(model) -> str:
@@ -101,6 +145,156 @@ def _versions() -> dict:
     return found
 
 
+def _scene_location(ds, location: str) -> str:
+    """*location* named as *ds* stores it: "node" for the scale of its nodes (SubOrgan on a segment-mode MPG,
+    Compartment on an anatomy-mode one), else as given."""
+    if location in ("node", "scalar") or location in getattr(ds, "_coarse_scale_names", lambda: [])():
+        return location
+    try:
+        if ds._scale_name(ds._node_scale()) == location:
+            return "node"
+    except (AttributeError, StopIteration, IndexError, TypeError, ValueError):
+        pass
+    raise ValueError(f"Summary: location '{location}' is not one of the DataStructure's ('node', the scale of its "
+                     f"nodes, or {ds._coarse_scale_names() if hasattr(ds, '_coarse_scale_names') else []})")
+
+
+_COMPARISON = re.compile(r"^\s*(<=|>=|==|!=|<|>)\s*([-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?)\s*$")
+_OPERATORS = {"<": np.less, "<=": np.less_equal, ">": np.greater, ">=": np.greater_equal, "==": np.equal,
+              "!=": np.not_equal}
+
+
+class Summary:
+    """
+    A table of the recorder declared by what it holds (SceneRecorder(tables={"leaves": Summary(...)})): after each
+    recorded step, one row (per="scene": every population's entities together; per="plant": one row per plant, its
+    planting name in column plant) of aggregates over the entities at *location* ("node", a scale: "SubOrgan",
+    "Organ", ...; the scale of a DataStructure's nodes is its "node") where every condition of *where* holds:
+
+      where   {name: condition}: name a variable (at *location* or at a coarser one: each entity reads its owner's),
+              "label" (the entities' MTG labels) or "<Scale>.label" (their owner's at that scale); condition a value,
+              a list of values (label names for labels), or a comparison (">0", "<=0.03", "!=4")
+      sum     [names] the sums, or {name: factor}: the sum of name × factor (an integral: An per area × the area)
+      mean    [names] the means weighted by their declared weight (state_variable(weight=...), else plain), or
+              {name: weight}: weighted by that variable (None: plain)
+      min, max  [names]: the extremes (columns <name>_min, <name>_max)
+
+    The entities without a value (NaN) are left out; a mean or an extreme over no entity is NaN, a sum 0.
+    *population*: one population's (its model's name), by default every population holding *location*.
+    """
+
+    def __init__(self, location: str, where: dict = None, sum=(), mean=(), min=(), max=(), per: str = "scene",
+                 population: str = None):
+        if per not in ("scene", "plant"):
+            raise ValueError(f"Summary(per=...): 'scene' or 'plant', got '{per}'")
+        self.location, self.where, self.per, self.population = location, dict(where or {}), per, population
+        self.sum = dict(sum) if isinstance(sum, dict) else {name: None for name in sum}
+        self.mean = dict(mean) if isinstance(mean, dict) else {name: "declared" for name in mean}
+        self.min, self.max = list(min), list(max)
+        columns = list(self.sum) + list(self.mean) + [f"{n}_min" for n in self.min] + [f"{n}_max" for n in self.max]
+        twice = sorted({column for column in columns if columns.count(column) > 1})
+        if twice:
+            raise ValueError(f"Summary: columns {twice} asked twice")
+        if not columns:
+            raise ValueError("Summary: give what it holds (sum=, mean=, min=, max=)")
+
+    def __repr__(self) -> str:
+        return (f"Summary({self.location!r}, where={self.where}, sum={self.sum}, mean={self.mean}, min={self.min}, "
+                f"max={self.max}, per={self.per!r})")
+
+    def _selected(self, ds, location: str) -> np.ndarray:
+        """Whether each entity at *location* of *ds* is selected by *where*."""
+        n = int(np.prod(ds._location_shape(location)))
+        selected = np.ones(n, dtype=bool)
+        for name, condition in self.where.items():
+            if name == "label" or name.endswith(".label"):
+                scale = None if name == "label" else name[:-len(".label")]
+                if scale is None:
+                    values = ds.labels() if location == "node" else ds.labels(location, per_node=False)
+                elif location == "node":
+                    values = ds.labels(scale)
+                else:
+                    index = np.asarray(ds.owner(scale, of=location))
+                    values = np.where(index >= 0, ds.labels(scale, per_node=False)[np.maximum(index, 0)], None)
+                wanted = condition if isinstance(condition, (list, tuple, set)) else [condition]
+                selected &= np.isin(np.asarray(values, dtype=object), list(wanted))
+                continue
+            if not ds.has(name):
+                raise KeyError(f"Summary: where's variable '{name}' is not on the DataStructure")
+            values = np.asarray(ds.get(name), dtype=float)
+            source = ds.location(name)
+            if source != location:
+                values = ds._mask_values_at("Summary", name, values, location) if location == "node" else \
+                    np.asarray(ds._map(values, source, location, "broadcast"))
+            comparison = _COMPARISON.match(condition) if isinstance(condition, str) else None
+            if comparison is not None:
+                selected &= _OPERATORS[comparison.group(1)](values, float(comparison.group(2)))
+            elif isinstance(condition, (list, tuple, set, np.ndarray)):
+                selected &= np.isin(values, np.asarray(list(condition), dtype=float))
+            else:
+                selected &= values == condition
+        return selected
+
+    def _values(self, ds, name: str, location: str) -> np.ndarray:
+        if not ds.has(name):
+            raise KeyError(f"Summary: variable '{name}' is not on the DataStructure")
+        if ds.location(name) != location:
+            raise ValueError(f"Summary at {self.location}: '{name}' is at {ds.location(name)}")
+        return np.asarray(ds.get(name), dtype=float).reshape(-1)
+
+    def __call__(self, scene) -> pd.DataFrame:
+        recorder = scene.recorder if isinstance(getattr(scene, "recorder", None), SceneRecorder) else SceneRecorder()
+        parts = []                                       # (population, ds, location, group of each entity, names)
+        for population in scene.populations:
+            if self.population is not None and population.name != self.population:
+                continue
+            ds = population.data_structure
+            location = _scene_location(ds, self.location)
+            selected = self._selected(ds, location)
+            if self.per == "plant":
+                owner = np.asarray(ds.owner("Plant") if location == "node" else ds.owner("Plant", of=location))
+            else:
+                owner = np.zeros(selected.size, dtype=np.int64)
+            parts.append((population, ds, location, np.where(selected, owner, -1)))
+        if not parts:
+            raise ValueError(f"Summary: no population{' ' + repr(self.population) if self.population else ''} in "
+                             "the scene")
+        rows = []
+        if self.per == "plant":
+            for population, ds, location, owner in parts:
+                names = population.plant_names()
+                plants = np.asarray(ds.entity_ids("Plant"))
+                table = self._aggregated(recorder, scene, [(ds, location, owner)], plants.size)
+                rows.append(pd.DataFrame({"time": float(scene.time),
+                                          "plant": [names.get(int(v), str(v)) for v in plants], **table}))
+            return pd.concat(rows, ignore_index=True)
+        return pd.DataFrame({"time": [float(scene.time)], **self._aggregated(
+            recorder, scene, [(ds, location, owner) for _, ds, location, owner in parts], 1)})
+
+    def _aggregated(self, recorder, scene, parts, groups: int) -> dict:
+        """{column: values per group} over the *parts* [(ds, location, group of each entity)] pooled."""
+        def pooled(name, factor=None):
+            values = np.concatenate([self._values(ds, name, location) for ds, location, _ in parts])
+            if factor is not None:
+                values = values * np.concatenate([self._values(ds, factor, location) for ds, location, _ in parts])
+            return values
+        owner = np.concatenate([np.asarray(owner, dtype=np.int64) for _, _, owner in parts])
+        out = {}
+        for name, factor in self.sum.items():
+            out[name] = grouped(pooled(name, factor), owner, groups, "sum")
+        for name, weight in self.mean.items():
+            if weight == "declared":
+                plans = [recorder.summary_plan(scene, ds).get(name) for ds, _, _ in parts]
+                declared = {plan[2] for plan in plans if plan is not None}
+                weight = declared.pop() if len(declared) == 1 else None
+            out[name] = grouped(pooled(name), owner, groups, "mean", None if weight is None else pooled(weight))
+        for name in self.min:
+            out[f"{name}_min"] = grouped(pooled(name), owner, groups, "min")
+        for name in self.max:
+            out[f"{name}_max"] = grouped(pooled(name), owner, groups, "max")
+        return out
+
+
 class SceneRecorder:
     """
     The outputs of a Scene (see the module): *folder* (None: in memory, no files); *summaries* and their
@@ -109,7 +303,9 @@ class SceneRecorder:
     *display_period*: the frames that also carry the components' display shapes (display_triangles(), e.g. GRANAP's
     sections: drawings only, their data rows are in every frame), every display_period steps (a multiple of
     frame_period) and in the last frame; None (the default): none, the frames hold the data and the geometry
-    light models get. A light log leaves out data explicitly, by frame_options (e.g. scales={"Wheat": ["Plant",
+    light models get. *display_plants*: the plants (planting names, e.g. ("p0", "p3")) whose shapes those frames
+    draw, None for all: a stand's frames bounded by the few plants drawn (the others' reduced sections' interiors
+    not recovered). A light log leaves out data explicitly, by frame_options (e.g. scales={"Wheat": ["Plant",
     "Axis", "Organ", "SubOrgan"]}: no anatomy rows in population Wheat's; variables={"Wheat": {"Compartment": ["psi",
     "tissue"], "SubOrgan": ["length", "radius"], "*": []}}: a few variables, the structure kept, see
     io.encoding3d.filter_frame); a variables filter must keep what the frames' views select, colour and size tubes
@@ -125,7 +321,7 @@ class SceneRecorder:
     def __init__(self, folder: str = None, summaries: bool = True, summary_period: int = 1, segment_plants=(),
                  segment_period: int = 24, frame_period: int = None, frame_options: dict = None,
                  checkpoint_period: int = None, keep_checkpoints: int = 2, tables: dict = None,
-                 table_period: int = 1, frame_views=None, display_period: int = None):
+                 table_period: int = 1, frame_views=None, display_period: int = None, display_plants=None):
         self.folder = os.fspath(folder) if folder is not None else None
         self.summaries, self.summary_period = bool(summaries), int(summary_period)
         self.segment_plants, self.segment_period = {str(name) for name in segment_plants}, int(segment_period)
@@ -135,6 +331,11 @@ class SceneRecorder:
             raise ValueError("SceneRecorder: the frames' display shapes are given by display_period (steps; None: "
                              "none), not frame_options['display_meshes']")
         self.display_period = int(display_period) if display_period else None
+        self.display_plants = None if display_plants is None else (
+            [str(display_plants)] if isinstance(display_plants, str) else [str(name) for name in display_plants])
+        if self.display_plants is not None and not self.display_period:
+            raise ValueError("SceneRecorder(display_plants=...) are the plants whose display shapes the frames draw: "
+                             "give it a display_period")
         if self.display_period and (not self.frame_period or self.display_period % self.frame_period):
             raise ValueError(f"SceneRecorder(display_period={display_period}): the frames carrying display shapes, a "
                              f"multiple of frame_period ({self.frame_period})")
@@ -153,6 +354,7 @@ class SceneRecorder:
         self._called = {}              # {table: the last iteration its function was called at}
         self._run = None
         self._started = None
+        self._warned = set()           # the unweighted means warned of
         if self.folder is not None:
             os.makedirs(self.folder, exist_ok=True)
         if self.frame_period:
@@ -227,59 +429,146 @@ class SceneRecorder:
 
     @staticmethod
     def _components_on(scene, ds) -> list:
-        """The scene's components working on *ds* (an environment component on a population's MPG included)."""
-        return [c for c in scene.components if getattr(c, "data_structure", None) is ds]
+        """The scene's components working on *ds* or on a view of it (an environment component on a population's MPG
+        included)."""
+        return [c for c in scene.components if base_of(getattr(c, "data_structure", None)) is ds]
 
-    @classmethod
-    def _state_variables(cls, scene, ds) -> dict:
-        """{name: kind} of the float state variables the components on *ds* declare."""
-        found = {}
-        for component in cls._components_on(scene, ds):
-            for name, spec in getattr(component, "_variable_specs", {}).items():
-                if spec.variable_type == "state_variable" and ds.has(name) and ds.get(name).dtype.kind == "f":
-                    found.setdefault(name, spec.kind)
-        return found
+    def summary_plan(self, scene, ds) -> dict:
+        """
+        {name: (location, kind, weight, holder, part, entities)} of what summaries.csv holds for *ds*: the float state
+        variables of every component on *ds* or on one of its views (each at its location on *ds*: a view's
+        SubOrgans', the nodes', a Plant's), and of a light model's union of the plants (at the union's entities of
+        *ds*); descriptors, the relations' variables (edges, faces) and variables of no kind (below the Plant) left out.
+        *weight*: the weight of an intensive variable's mean, its declared weight (state_variable(weight=...)) when
+        it is at the same location, else a grid's cell volumes (CELL_VOLUME), else None (a plain mean; a warning
+        once, listing them). *holder*: the
+        DataStructure the values are read from (*ds*, or the union); *part*: the union's part of *ds* (else None);
+        *entities*: the entities of the location the declaring components own (a boolean mask: the entity views' of
+        the components declaring it, e.g. a root model's radius over the roots only), None for all.
+        """
+        plan, unweighted = {}, []
+        for component in scene.components:
+            on = getattr(component, "data_structure", None)
+            parts = [(on, None)] if base_of(on) is ds else [
+                (on, part) for part in getattr(on, "parts", ()) if base_of(part) is ds]
+            for holder, part in parts:
+                for name, spec in getattr(component, "_variable_specs", {}).items():
+                    if spec.variable_type != "state_variable" or not holder.has(name):
+                        continue
+                    if part is None:
+                        location = ds.location(name)
+                    elif holder.location(name) != "node" or name in plan:
+                        continue
+                    else:                                 # a union's node: the part's entity
+                        location = part.__dict__.get("_at", "node")
+                    kind = spec.kind
+                    if (location in _NOT_SUMMARISED or kind == "descriptor"
+                            or (kind is None and location not in ("Plant", "scalar"))
+                            or np.asarray(holder.get(name)).dtype.kind != "f"):
+                        continue
+                    entities = None
+                    if part is None and "_entities" in on.__dict__ and on.__dict__["_at"] == location:
+                        # a variable at an entity view's entities: theirs only
+                        entities = np.zeros(int(np.prod(ds._location_shape(location))), dtype=bool)
+                        entities[np.asarray(ds.index_of(on.entity_ids("node"), location), dtype=np.int64)] = True
+                    if name in plan:                      # declared by several components: their entities together
+                        known = plan[name]
+                        merged = None if known[5] is None or entities is None else known[5] | entities
+                        plan[name] = known[:5] + (merged,)
+                        continue
+                    weight = spec.weight if kind in INTENSIVE_KINDS + MASSIC_KINDS else None
+                    if weight is not None and not ((ds if part is None else holder).has(weight) and (
+                            ds.location(weight) if part is None else part.__dict__.get("_at", "node")) == location):
+                        weight = None
+                    if (kind in INTENSIVE_KINDS + MASSIC_KINDS and weight is None and location == "cell"
+                            and callable(getattr(ds, "cell_volume", None))):
+                        weight = CELL_VOLUME                  # a grid's cells: their volumes
+                    if (kind in INTENSIVE_KINDS + MASSIC_KINDS and weight is None
+                            and location not in ("Plant", "scalar")):
+                        unweighted.append(f"{type(component).__name__}.{name}")
+                    plan[name] = (location, kind, weight, holder, part, entities)
+        key = (id(ds), tuple(sorted(unweighted)))
+        if unweighted and key not in self._warned:
+            self._warned.add(key)
+            warnings.warn("SceneRecorder: intensive variables averaged without a declared weight (plain means; "
+                          "state_variable(weight=...) gives the weight of their mean): " + ", ".join(unweighted),
+                          stacklevel=2)
+        return plan
 
     @staticmethod
-    def _columns_of(ds, name: str) -> dict:
+    def _columns_of(ds, name: str, values=None, location: str = None) -> dict:
         """{column: values per entity} of variable *name*: one column, or one per component of a vector variable."""
-        stored = np.asarray(ds.get(name), dtype=float)
-        n_entities = int(np.prod(ds._location_shape(ds.location(name))))
+        stored = np.asarray(ds.get(name) if values is None else values, dtype=float)
+        n_entities = int(np.prod(ds._location_shape(location or ds.location(name))))
         flat = stored.reshape(n_entities, -1)
         if flat.shape[1] == 1:
             return {name: flat[:, 0]}
         return {f"{name}_{j}": flat[:, j] for j in range(flat.shape[1])}
 
+    @staticmethod
+    def _planned_values(ds, name, holder, part):
+        """The values of a summarised variable at its entities of *ds*: a union's at the entities of *ds*'s part it
+        holds (by their ids: the union's layout may be a step behind the part's growth), NaN elsewhere."""
+        if name == CELL_VOLUME:
+            cells = int(np.prod(ds._location_shape("cell")))
+            return np.broadcast_to(np.asarray(ds.cell_volume(), dtype=float), (cells,))
+        if part is None:                                   # a view's variable: the base's, every entity
+            return np.asarray(ds.get(name), dtype=float)
+        k = next(j for j, other in enumerate(holder.parts) if other is part)
+        offset = int(sum(len(ids) for ids in holder._ids[:k]))
+        ids = np.asarray(holder._ids[k], dtype=np.int64)
+        held = np.asarray(holder.get(name), dtype=float)[offset:offset + ids.size]
+        location = part.__dict__.get("_at", "node")
+        known = np.asarray(ds.entity_ids(location), dtype=np.int64)
+        out = np.full(known.size, np.nan)
+        present = np.isin(ids, known)
+        out[np.asarray(ds.index_of(ids[present], location), dtype=np.int64)] = held[present]
+        return out
+
     def plant_summaries(self, scene, population) -> pd.DataFrame:
-        """One row per plant: time, plant (its planting name), its float state variables."""
+        """One row per plant: time, plant (its planting name), its float state variables: extensive ones summed over
+        its entities, intensive ones their mean weighted by their declared weight (else plain), Plant ones as is;
+        the entities without a value (NaN) left out."""
         ds = population.data_structure
         plants = np.asarray(ds.entity_ids("Plant"))
-        owner = np.asarray(ds.owner("Plant"))
-        counts = np.bincount(owner, minlength=plants.size)
         names = population.plant_names()
         table = {"time": float(scene.time), "plant": [names.get(int(v), str(v)) for v in plants]}
-        for name, kind in self._state_variables(scene, ds).items():
-            location = ds.location(name)
-            for column, values in self._columns_of(ds, name).items():
-                if location == "Plant":
-                    table[column] = values
-                elif location == "node" and kind in EXTENSIVE_KINDS:
-                    table[column] = np.bincount(owner, weights=values, minlength=plants.size)
-                elif location == "node" and (kind in INTENSIVE_KINDS or kind in MASSIC_KINDS):
-                    sums = np.bincount(owner, weights=values, minlength=plants.size)
-                    table[column] = np.divide(sums, counts, out=np.full(plants.size, np.nan), where=counts > 0)
+        owners = {}
+        for name, (location, kind, weight, holder, part, entities) in self.summary_plan(scene, ds).items():
+            values = self._planned_values(ds, name, holder, part)
+            weights = None if weight is None else self._planned_values(ds, weight, holder, part)
+            if location == "Plant":
+                table.update(self._columns_of(ds, name, values, location))
+                continue
+            if location == "scalar":
+                for column, value in self._columns_of(ds, name, values, location).items():
+                    table[column] = np.full(plants.size, float(np.ravel(value)[0]))
+                continue
+            if location not in owners:
+                owners[location] = np.asarray(ds.owner("Plant") if location == "node" else
+                                              ds.owner("Plant", of=location), dtype=np.int64)
+            owner = owners[location] if entities is None else np.where(entities, owners[location], -1)
+            for column, column_values in self._columns_of(ds, name, values, location).items():
+                table[column] = grouped(column_values, owner, plants.size,
+                                        "sum" if kind in EXTENSIVE_KINDS else "mean", weights)
         return pd.DataFrame(table)
 
     def environment_summary(self, scene, ds) -> pd.DataFrame:
         """One row: time, the float state variables of *ds* (an environment model's), extensive ones summed over
-        their entities, the others averaged."""
+        their entities, intensive ones their mean weighted by their declared weight (a grid's: its cells' volume),
+        else plain; the entities without a value (NaN) left out."""
         row = {"time": float(scene.time)}
-        for name, kind in self._state_variables(scene, ds).items():
-            for column, values in self._columns_of(ds, name).items():
-                if kind in EXTENSIVE_KINDS:
-                    row[column] = float(np.nansum(values))
-                else:
-                    row[column] = float(np.nanmean(values)) if values.size else np.nan
+        for name, (location, kind, weight, holder, part, entities) in self.summary_plan(scene, ds).items():
+            values = self._planned_values(ds, name, holder, part)
+            weights = None if weight is None else self._planned_values(ds, weight, holder, part)
+            for column, column_values in self._columns_of(ds, name, values, location).items():
+                if location == "scalar":
+                    row[column] = float(np.ravel(column_values)[0])
+                    continue
+                owner = np.zeros(column_values.size, dtype=np.int64) if entities is None else \
+                    np.where(entities, 0, -1)
+                row[column] = float(grouped(column_values, owner, 1, "sum" if kind in EXTENSIVE_KINDS else "mean",
+                                            weights)[0])
         return pd.DataFrame([row])
 
     def environment_data_structures(self, scene) -> list:
@@ -302,7 +591,12 @@ class SceneRecorder:
         selected = [vid for vid, name in names.items() if name in self.segment_plants]
         if not selected:
             return None
-        variables = [n for n in self._state_variables(scene, ds) if ds.location(n) == "node"]
+        variables = []
+        for component in self._components_on(scene, ds):
+            for name, spec in getattr(component, "_variable_specs", {}).items():
+                if (spec.variable_type == "state_variable" and name not in variables and ds.has(name)
+                        and ds.location(name) == "node" and np.asarray(ds.get(name)).dtype.kind == "f"):
+                    variables.append(name)
         frame = ds.to_dataframe(names=variables, location="node")
         plant_of = np.asarray(ds.entity_ids("Plant"))[np.asarray(ds.owner("Plant"))]
         frame.insert(0, "plant", [names[int(v)] for v in plant_of])
@@ -398,7 +692,8 @@ class SceneRecorder:
                 unfiltered = frame
                 if self.frame_options.get("variables") is not None:
                     options = {key: value for key, value in self.frame_options.items() if key != "variables"}
-                    unfiltered = scene_to_frame(scene, display_meshes=display, **options)
+                    unfiltered = scene_to_frame(scene, display_meshes=display, display_plants=self.display_plants,
+                                                **options)
                 content = default_views(scene, unfiltered)
                 self._check_views_kept(content)
             for issue in views.check_views(content, frame).issues:
@@ -422,7 +717,7 @@ class SceneRecorder:
                 for entry in self._frames:
                     entry.pop("path", None)
         name = f"frame_{scene.iteration:06d}.glb"
-        frame = scene_to_frame(scene, display_meshes=display, **self.frame_options)
+        frame = scene_to_frame(scene, display_meshes=display, display_plants=self.display_plants, **self.frame_options)
         encoding3d.write(os.path.join(folder, name), frame)
         if self.frame_views is not None and not self._views_written:
             self._write_views(scene, frame, folder, display)
@@ -432,14 +727,19 @@ class SceneRecorder:
         return os.path.join(folder, name)
 
     def _checkpoint(self, scene) -> str:
-        """Scene.checkpoint into checkpoints/step_<iteration>, the older ones beyond keep_checkpoints removed."""
+        """Scene.checkpoint into checkpoints/step_<iteration>, their parts saved once in checkpoints/shared; the older
+        ones beyond keep_checkpoints removed, and the shared parts none of those kept refers to."""
+        from openalea.metafspm.scene.shared import prune
         folder = os.path.join(self.folder, "checkpoints")
         path = os.path.join(folder, f"step_{scene.iteration:06d}")
-        scene.checkpoint(path)
+        shared = os.path.join(folder, "shared")
+        scene.checkpoint(path, shared=shared)
         if self.keep_checkpoints is not None:
             kept = sorted(name for name in os.listdir(folder) if name.startswith("step_"))
             for name in kept[:max(0, len(kept) - int(self.keep_checkpoints))]:
                 shutil.rmtree(os.path.join(folder, name))
+            prune(shared, [os.path.join(folder, name) for name in sorted(os.listdir(folder))
+                           if name.startswith("step_")])
         if self._run is not None:
             self._run["last_checkpoint"] = os.path.relpath(path, self.folder)
             self._write_run(scene)
@@ -528,7 +828,7 @@ class SceneRecorder:
             "recorder": {"summary_period": self.summary_period if self.summaries else None,
                          "segment_plants": sorted(self.segment_plants), "segment_period": self.segment_period,
                          "frame_period": self.frame_period, "frame_options": _described(self.frame_options),
-                         "display_period": self.display_period,
+                         "display_period": self.display_period, "display_plants": self.display_plants,
                          "frame_views": self.frame_views if self.frame_views in (None, "default") else "given",
                          "checkpoint_period": self.checkpoint_period, "tables": sorted(self.tables),
                          "table_period": self.table_period}}

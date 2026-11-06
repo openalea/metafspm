@@ -24,8 +24,8 @@ def test_an_uncoupled_input_is_written_at_each_step_start(forcing):
     ds = scene.populations[0].data_structure
     for step in range(3):
         n_nodes = ds.n_nodes()
-        scene.run()                                     # its value at the step's start (segments grown since: 0)
-        np.testing.assert_allclose(ds.get("soil_nitrate")[:n_nodes], 1. + step)
+        scene.run()                                     # its mean over the step (segments grown since: 0)
+        np.testing.assert_allclose(ds.get("soil_nitrate")[:n_nodes], 1.5 + step)
 
 
 def test_a_table_of_forcings_and_a_forced_parameter():
@@ -34,9 +34,9 @@ def test_a_table_of_forcings_and_a_forced_parameter():
     ds = scene.populations[0].data_structure
     scene.run()
     np.testing.assert_allclose(ds.get("soil_nitrate"), 2.)
-    np.testing.assert_allclose(ds.get("exudation_rate"), 0.)                # per plant, every plant
+    np.testing.assert_allclose(ds.get("exudation_rate"), 0.5)               # per plant, every plant: the step's mean
     scene.run()
-    np.testing.assert_allclose(ds.get("exudation_rate"), 1.)
+    np.testing.assert_allclose(ds.get("exudation_rate"), 1.)                # held beyond the table's end
 
 
 def test_a_constant_forcing():

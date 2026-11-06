@@ -35,7 +35,11 @@ class SectionTemplate:
       properties   {name: (local rows, ascending, values)}: numeric values as float arrays (the MPG's ArrayDict
                    properties), others as object arrays
       links        the properties whose values are local indices of the block (vertex ids once instanced)
+
+    Immutable once built: a checkpoint saves each template once, under its content's key (scene.shared), every later
+    checkpoint referring to it.
     """
+    shared_in_checkpoints = "section_template"     # class attribute (not a field): scene.shared's part name
     key: object
     scale: np.ndarray
     complex: np.ndarray

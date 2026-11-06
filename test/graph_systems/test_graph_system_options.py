@@ -13,12 +13,14 @@ import pandas as pd
 import pytest
 
 from openalea.metafspm.coupling.choregrapher import Choregrapher
-from openalea.metafspm.coupling.component import FunctionalComponent, input_variable, parameter, state_variable
+from openalea.metafspm.coupling.component import (FunctionalComponent, forcing_variable, input_variable, parameter,
+                                                   state_variable)
+from openalea.metafspm.coupling.forcings import as_forcing, forcing_mean, forcing_total, pulse
 from openalea.metafspm.data_structure.configs import ScalesConfig as scales
 from openalea.metafspm.data_structure.data_api import MPGDataStructure
 from openalea.metafspm.scene.population import _build_population
 from openalea.metafspm.solve.decorator import (boundary_condition, boundary_set, edge_law, graph_output, graph_system, node_balance,
-                                               pool_balance)
+                                               pool_balance, state)
 from openalea.metafspm.solve.solver import NewtonSolver
 from simple_seedling import generate_simple_mpg_seedling
 from growth import RootGrowthProbe
@@ -485,7 +487,68 @@ def test_forcings_given_as_callables_or_times_and_values(supply):
     model = Supplied(data_structure=ds)
     model.set_forcings({"supply": supply})
     model()
-    np.testing.assert_allclose(ds.get("u"), DT * 3. * DT)                   # read at the end of the step, t = DT
+    np.testing.assert_allclose(ds.get("u"), DT * 1.5 * DT)                  # its mean over the step [0, DT]
+
+
+@dataclass
+class Watered(FunctionalComponent):
+    """A component reading a rain's depth over its step (aggregate="total") and the light's mean (by default) and its
+    value at the step's end ("instant")."""
+    water: float = state_variable(**DOC, default=0., scale=scales.SubOrgan, kind="extensive")
+    light: float = state_variable(**DOC, default=0., scale=scales.SubOrgan)
+    last: float = state_variable(**DOC, default=0., scale=scales.SubOrgan)
+    rain: float = forcing_variable(unit="m", description="The rain's depth", aggregate="total")
+    PARi: float = forcing_variable(unit="µmol m-2 s-1", description="The incident PAR")
+    temperature: float = forcing_variable(unit="°C", description="At the step's end", aggregate="instant")
+
+    @state
+    def _watered(self, water):
+        return {"water": water + self.forcing("rain"), "light": np.full_like(water, self.forcing("PARi")),
+                "last": np.full_like(water, self.forcing("temperature"))}
+
+
+def _watered(time_step, steps, forcings):
+    Choregrapher().set_simulation_time_step(time_step)
+    ds = _ds()
+    model = Watered(data_structure=ds, time_step=time_step)
+    model.set_forcings(forcings)
+    lights = []
+    for _ in range(steps):
+        model()
+        lights.append(float(ds.get("light")[0]))
+    return ds, lights
+
+
+def test_forcings_over_the_step_do_not_depend_on_it():
+    """A rain given by its total (pulse) reaches the soil whole at any step; a daily course's mean over a day is the
+    mean of its hourly means; the totals and the means are exact (tables, pulses) or the 4-point Gauss-Legendre
+    rule's (functions)."""
+    hour, day = 3600., 86400.
+    course = lambda t: 1. + np.sin(2. * np.pi * t / day) ** 2                    # noqa: E731
+    forcings = {"rain": pulse(14 * hour, 15 * hour, 5e-3), "PARi": course, "temperature": lambda t: t}
+    hourly, lights = _watered(hour, 24, forcings)
+    daily, light = _watered(day, 1, forcings)
+    np.testing.assert_allclose(hourly.get("water"), 5e-3)
+    np.testing.assert_allclose(daily.get("water"), 5e-3)                     # the instant at 24 h has no rain
+    assert np.mean(lights) == pytest.approx(light[0], rel=1e-6) and light[0] == pytest.approx(1.5, rel=1e-6)
+    np.testing.assert_allclose(daily.get("last"), day)                         # "instant": at the step's end
+    half, _ = _watered(hour / 2, 29, forcings)
+    np.testing.assert_allclose(half.get("water"), 2.5e-3)                      # half of the pulse: by 14.5 h
+    Choregrapher().set_simulation_time_step(DT)
+
+
+def test_forcing_aggregates():
+    with pytest.raises(ValueError, match="aggregate"):
+        forcing_variable(aggregate="sum")
+    series = pd.Series([0., 10., 0.], index=[0., 10., 20.])
+    assert forcing_mean(series, 0., 20.) == pytest.approx(5.)                   # exact: piecewise linear
+    assert forcing_mean(series, -10., 0.) == 0. and forcing_mean(series, 5., 5.) == pytest.approx(5.)
+    assert forcing_total(pulse(10., 20., 5.), 15., 25.) == pytest.approx(2.5)
+    assert forcing_mean(lambda t: t ** 7, 0., 1.) == pytest.approx(1. / 8.)      # Gauss-Legendre: degree 7 exact
+    in_hours = as_forcing([0., 1., 2., 3.], time_unit="h")
+    assert forcing_mean(in_hours, 0., 3 * 3600.) == pytest.approx(1.5)
+    with pytest.raises(ValueError, match="end after its start"):
+        pulse(2., 1., 1.)
 
 
 def test_a_missing_forcing_raises():
@@ -500,10 +563,10 @@ def test_forcings_set_outside_a_scene_are_those_a_scene_gives():
     assert not model.has_forcing("supply")
     hourly = as_forcing(np.arange(24.), time_unit="h", origin="calendar")      # the hour of the day
     model.set_forcings(pd.DataFrame({"supply": [0., 30.]}, index=[0., 10.]))         # a table, as a Scene's
-    assert model.has_forcing("supply") and model.forcing("supply") == pytest.approx(3. * DT)
+    assert model.has_forcing("supply") and model.forcing("supply") == pytest.approx(1.5 * DT)
     model.set_forcings({"hourly": hourly, "by_entity": lambda time, ids: np.ones(len(ids))}, start=(100, 6.))
     assert not model.has_forcing("supply") and not model.has_forcing("by_entity")     # replaced; varies in space
-    assert model.forcing("hourly") == pytest.approx(6. + DT / 3600.)
+    assert model.forcing("hourly") == pytest.approx(6. + DT / 7200.)                  # its mean over [0, DT]
     assert model.calendar(0.) == (100., 6.)
     with pytest.raises(ValueError, match="needs start"):
         model.set_forcings({"hourly": as_forcing(np.arange(24.), time_unit="h", origin="calendar")})
