@@ -4,6 +4,20 @@
 
 ### Scaling fixes (the final benchmark)
 
+- **Incremental topology updates** (devplan_release_optimisation.md O-14): each structural change of an MPG is
+  logged as the ids it removed and added (`MPG.structure_epoch`, `MPG.structure_delta(since)`, computed from the
+  topology arrays: no hook in the editing methods, so every port takes part as it is). The arrays derived from the
+  structure are patched from it instead of rebuilt after each `update_topology`: `compartment_owners()`,
+  `owned_compartments()` (no longer building `compartments_by_owner`'s dict, now built only when asked),
+  `connection_vids()` (new), `structural_links()` (new: the Connections' endpoints at a scale), the nodes' owners
+  at each coarse scale and the vertices of each scale in the plants (anatomy mode). A delta exists when no kept
+  vertex changed its scale, complex, parent or anchor flag and no id was given again; otherwise the arrays are
+  rebuilt as before. `METAFSPM_CHECK_TOPOLOGY=1` checks every patch against a build. `Instances.vids_having` and
+  `vids_at_scale` are one vectorised gather per template (a Python loop per instance before) and are extended, not
+  rebuilt, when an instance is appended. New `ds.edge_endpoints()`: the edges as a read-only (edges, 2) array
+  (`edges()` builds Python tuples); `_parent_pairs` uses it. Use case 1, 8 varied plants resumed at h240 to h264:
+  every step's results identical, the step 4.51 → 3.95 s.
+
 - **Plants differing in a parameter the library does not read share their kinds:** a kind is keyed by the
   parameters and settings of the components the reduction's library runs (`_library_components`: the reduced
   systems' and those giving them an input at the cells), no longer by every component's. Before, plants with their

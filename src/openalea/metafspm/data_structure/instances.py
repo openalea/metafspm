@@ -293,10 +293,16 @@ class Instances:
         else:
             self._set_columns({name: np.insert(getattr(self, name), at, value) for name, value in values.items()})
         self.template.insert(at, template.key)
+        kept = self._cache
         self._changed()
         if appended:            # the usual case (ids grow): the owners' rows kept, the new one added (no rebuild per add)
             owners[int(owner)] = at
             self._cache["owners"] = owners
+            for table in ("at_scale", "having"):      # the vertex tables extended by the new block (ascending ids)
+                extended = {query: np.concatenate((vids, first + self._rows(template, *_query(table, query))))
+                            for query, vids in kept.get(table, {}).items()}
+                if extended:
+                    self._cache[table] = extended
 
     def remove(self, owner: int) -> tuple:
         """Remove *owner*'s instance; returns its (first id, size), or None when it holds none."""
@@ -344,27 +350,47 @@ class Instances:
         """The instanced vertices at *scale*, ascending."""
         cache = self._cache.setdefault("at_scale", {})
         if scale not in cache:
-            parts = [self.first[i] + self.templates[key].rows_at_scale(scale) for i, key in enumerate(self.template)]
-            cache[scale] = np.concatenate(parts).astype(np.int64) if parts else np.zeros(0, dtype=np.int64)
+            cache[scale] = self._gather(lambda template: self._rows(template, None, scale))
         return cache[scale]
 
     def vids_having(self, name: str, scale: int = None) -> np.ndarray:
         """The instanced vertices carrying property *name* (at *scale*), ascending."""
         cache = self._cache.setdefault("having", {})
         if (name, scale) not in cache:
-            parts = []
-            for i, key in enumerate(self.template):
-                template = self.templates[key]
-                entry = template.properties.get(name)
-                if entry is None:
-                    continue
-                rows = entry[0]
-                if scale is not None:
-                    rows = rows[template.scale[rows] == scale]
-                parts.append(self.first[i] + rows)
-            cache[(name, scale)] = (np.concatenate(parts).astype(np.int64) if parts
-                                    else np.zeros(0, dtype=np.int64))
+            cache[(name, scale)] = self._gather(lambda template: self._rows(template, name, scale))
         return cache[(name, scale)]
+
+    @staticmethod
+    def _rows(template: SectionTemplate, name, scale) -> np.ndarray:
+        """The local rows of *template* carrying property *name* (None: every row) at *scale* (None: any)."""
+        if name is None:
+            return template.rows_at_scale(scale)
+        entry = template.properties.get(name)
+        if entry is None:
+            return np.zeros(0, dtype=np.int64)
+        rows = entry[0]
+        return rows if scale is None else rows[template.scale[rows] == scale]
+
+    def _gather(self, rows_of) -> np.ndarray:
+        """Each instance's first id plus its template's local rows (*rows_of(template)*), in instance order (ascending
+        ids): one gather over the instances, the rows computed once per template."""
+        if self._count == 0:
+            return np.zeros(0, dtype=np.int64)
+        templates = [None] * len(self.codes)
+        for key, code in self.codes.items():
+            templates[code] = self.templates[key]
+        per_code = [np.asarray(rows_of(template), dtype=np.int64) for template in templates]
+        lengths = np.array([rows.size for rows in per_code], dtype=np.int64)
+        offsets = np.cumsum(lengths) - lengths
+        flat = np.concatenate(per_code) if per_code else np.zeros(0, dtype=np.int64)
+        codes = self.code
+        counts = lengths[codes]
+        total = int(counts.sum())
+        if total == 0:
+            return np.zeros(0, dtype=np.int64)
+        starts = np.cumsum(counts) - counts
+        local = np.arange(total, dtype=np.int64) - np.repeat(starts, counts)
+        return np.repeat(self.first, counts) + flat[np.repeat(offsets[codes], counts) + local]
 
     def plan(self, vids) -> tuple:
         """locate(vids) and its grouping by template, for reading several properties at the same *vids* (values)."""
@@ -416,6 +442,11 @@ class Instances:
                 resolved = np.where(codes == ANCHOR, -2 - template.scale[here], resolved)
                 out[at] = resolved
         return scale, complex_, parent
+
+
+def _query(table: str, query) -> tuple:
+    """The (name, scale) of a cached query of Instances' *table* ("at_scale": by scale, "having": by (name, scale))."""
+    return (None, query) if table == "at_scale" else query
 
 
 class InstancedView:

@@ -38,6 +38,8 @@ ds = MPGDataStructure(g, from_scale=g.scales.SubOrgan, nodes="Compartment", wiri
   segment; `"Layer"` and `"Cell"` are then locations, and the walls, owned by no Cell, read the defaults there.
 - After the MTG's structure changes (growth, pruning), `ds.update_topology()` extends the graph incrementally and
   carries every variable over (by id; new entities get the default or their parent's value, `on_grow="inherit"`).
+  The arrays derived from the structure (node and edge ids, owners, the index maps) are patched from what changed,
+  not rebuilt (conventions.md, "Performance rules"); `ds.edge_endpoints()` gives the edges as an (edges, 2) array.
 - Each node belongs to coarser entities: `ds.owner("Plant")`, `ds.entity_ids("Plant")`, so the variables of a whole
   population are arrays, and per-plant values are coarse-scale variables.
 

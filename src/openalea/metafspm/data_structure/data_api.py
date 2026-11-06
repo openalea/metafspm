@@ -178,6 +178,11 @@ class DataStructure(ABC):
         """
         ...
 
+    def edge_endpoints(self) -> np.ndarray:
+        """The edges' (parent, child) ids as an (edges, 2) int64 array, in edges()' order (read it without modifying
+        it: a DataStructure may share it until its topology changes)."""
+        return np.asarray(self.edges(), dtype=np.int64).reshape(-1, 2)
+
     # ── The elements' geometry, for light models ─────────────────────────────
 
     @property
@@ -1140,7 +1145,7 @@ class VariableStoreMixin:
     # Caches built on the topology or the values, dropped when a checkpoint is loaded
     _TOPOLOGY_CACHES = ("_parameter_views", "_index_cache", "_traversal_cache", "_levels_cache", "_edges_cache",
                         "_openalea_post", "_vid_to_idx_dict", "_sorted_to_local", "_chain_cache", "_membership_cache",
-                        "_parent_pairs_cache")
+                        "_parent_pairs_cache", "_node_patch_bases")
 
     @staticmethod
     def _read_checkpoint(path: str, class_name: str, shared=None) -> tuple:
@@ -1589,6 +1594,10 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
         """
         return [tuple(pair) for pair in self._edges_cached().tolist()]
 
+    def edge_endpoints(self) -> np.ndarray:
+        """edges() as a read-only (edges, 2) int64 array, shared until the topology changes (no Python tuples)."""
+        return self._edges_cached()
+
     def _edges_cached(self) -> np.ndarray:
         """edges() as an (edges, 2) array, cached until the topology version or the MTG (vertex count, last vid)
         changes; read-only."""
@@ -1623,11 +1632,11 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
         if cache is not None and cache[0] == key:
             return cache[1]
         n = self.n_nodes()
-        pairs = self.edges()
+        pairs = self._edges_cached()
         parent = np.full(n, -1, dtype=np.int64)
-        if pairs:
-            a = self.index_of(np.array([p for p, _ in pairs], dtype=np.int64))
-            b = self.index_of(np.array([c for _, c in pairs], dtype=np.int64))
+        if len(pairs):
+            a = self.index_of(np.array(pairs[:, 0], dtype=np.int64))
+            b = self.index_of(np.array(pairs[:, 1], dtype=np.int64))
             if np.unique(b).size < b.size:
                 raise ValueError("the graph is not a tree: a node has several parents (traversal orders need one)")
             parent[b] = a
@@ -2022,13 +2031,47 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
         if cache is not None and cache[0] == key:
             return cache[1]
         vids, owners = self._mtg.compartment_owners()
-        nodes = self._idx_to_vid
-        result = np.full(nodes.size, -1, dtype=np.int64)
-        if nodes.size and vids.size:
-            position = np.searchsorted(vids, nodes).clip(0, vids.size - 1)
-            present = vids[position] == nodes                # nodes already gone from the MPG (pruned) own nothing
-            result[present] = owners[position[present]]
+
+        def owners_of(nodes):
+            result = np.full(nodes.size, -1, dtype=np.int64)
+            if nodes.size and vids.size:
+                position = np.searchsorted(vids, nodes).clip(0, vids.size - 1)
+                present = vids[position] == nodes            # nodes already gone from the MPG (pruned) own nothing
+                result[present] = owners[position[present]]
+            return result
+
+        result = self._patched_per_node("node_owners", owners_of)
         self.__dict__["_node_owner_cache"] = (key, result)
+        return result
+
+    def _patched_per_node(self, name: str, compute) -> np.ndarray:
+        """
+        A per-node array *compute(node ids)* (an entry per node, each depending on its node only), patched (O-14):
+        after a structural change of the MPG, the kept nodes' entries are kept and the new nodes' (the last ones,
+        their ids being larger) computed alone; computed whole when the MPG gives no delta (structure_delta) or the
+        nodes are not the kept ones followed by new ones. With METAFSPM_CHECK_TOPOLOGY=1 a patch is checked against
+        the whole computation.
+        """
+        from openalea.metafspm.data_structure import mpg as mpg_module
+        g, nodes = self._mtg, self._idx_to_vid
+        bases = self.__dict__.setdefault("_node_patch_bases", {})
+        epoch = g.structure_epoch if hasattr(g, "structure_epoch") else None
+        base = bases.get(name)
+        result = None
+        if base is not None and epoch is not None:
+            delta = g.structure_delta(base[0])
+            if delta is not None:
+                old_nodes, old_values = base[1], base[2]
+                keep = mpg_module._kept(old_nodes, delta[0])
+                count = int(keep.sum())
+                if nodes.size >= count and np.array_equal(nodes[:count], old_nodes[keep]):
+                    result = np.concatenate((old_values[keep], np.asarray(compute(nodes[count:]))))
+                    if mpg_module._CHECK_TOPOLOGY:
+                        mpg_module._check_same(name, result, np.asarray(compute(nodes)))
+        if result is None:
+            result = np.asarray(compute(nodes))
+        if epoch is not None:
+            bases[name] = (epoch, nodes, result)
         return result
 
     def _finest_owner_scale(self) -> int:
@@ -2102,7 +2145,10 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
             vids = self._idx_to_vid
             if getattr(self, "_anatomy", False):
                 # Through each node's owner (its Cell, or its segment), -1 where the owner is finer than the scale
-                owners = self._mtg.owners_at_scale(self._node_owners(), scale)
+                node_owners = self._node_owners()
+                owners = self._patched_per_node(           # the node ids given are the last ones (or all)
+                    ("owners", scale_name),
+                    lambda nodes: self._mtg.owners_at_scale(node_owners[node_owners.size - nodes.size:], scale))
             elif hasattr(self._mtg, "complex_at_scale_array"):
                 owners = self._mtg.complex_at_scale_array(vids, scale) if scale != self._node_scale_of(vids) else vids
             else:
@@ -2112,15 +2158,41 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
             if getattr(self, "_anatomy", False) and scale > plant:
                 # every vertex of the scale in the plants, those without Compartments too (a root apex, a seed):
                 # their variables are held there (a component working at that scale, LocatedView)
-                arrays = self._mtg.topology_arrays()
-                candidates = np.flatnonzero((arrays["scale"] == scale) & ~arrays["is_anchor"])
-                plants = np.unique(self._mtg.owners_at_scale(self._node_owners(), plant))
-                in_plants = np.isin(self._mtg.owners_at_scale(candidates, plant), plants[plants >= 0])
-                entities = np.union1d(entities, candidates[in_plants])
+                entities = np.union1d(entities, self._scale_vertices_in_plants(scale))
             index = np.full(owners.size, -1, dtype=np.int64)
             index[owners >= 0] = np.searchsorted(entities, owners[owners >= 0])
             cache[scale_name] = (_read_only(np.asarray(entities, dtype=np.int64)), _read_only(index))
         return cache[scale_name]
+
+    def _scale_vertices_in_plants(self, scale: int) -> np.ndarray:
+        """Anatomy mode: the vertices of *scale* (anchors aside) in the plants the nodes are in, ascending; patched
+        from the MPG's structural delta while those plants are the same (O-14)."""
+        g = self._mtg
+        plants = self._membership("Plant")[0]
+
+        def in_plants(candidates):
+            return candidates[np.isin(g.owners_at_scale(candidates, g.scales.Plant), plants)]
+
+        arrays = g.topology_arrays()
+        epoch = g.structure_epoch
+        bases = self.__dict__.setdefault("_node_patch_bases", {})
+        base = bases.get(("in_plants", scale))
+        result = None
+        if base is not None and np.array_equal(base[1], plants):
+            delta = g.structure_delta(base[0])
+            if delta is not None:
+                from openalea.metafspm.data_structure.mpg import _kept, _check_same, _CHECK_TOPOLOGY
+                removed, added = delta
+                kept = base[2][_kept(base[2], removed)]
+                new = added[(arrays["scale"][added] == scale) & ~arrays["is_anchor"][added]]
+                result = np.concatenate((kept, in_plants(new)))
+                if _CHECK_TOPOLOGY:
+                    _check_same(("in_plants", scale), result,
+                                in_plants(np.flatnonzero((arrays["scale"] == scale) & ~arrays["is_anchor"])))
+        if result is None:
+            result = in_plants(np.flatnonzero((arrays["scale"] == scale) & ~arrays["is_anchor"]))
+        bases[("in_plants", scale)] = (epoch, plants, result)
+        return result
 
     def _node_scale_of(self, vids) -> int:
         return int(self._mtg.scale(int(vids[0]))) if len(vids) else -1
@@ -2145,13 +2217,13 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
         return vids
 
     def _connection_vids_uncached(self) -> np.ndarray:
-        scale_prop, n_id_a = self._mtg.property("scale"), self._mtg.property("n_id_a")
-        connections = scale_prop.order[:scale_prop.size][scale_prop.values_array() == self._mtg.scales.Connection]
+        g = self._mtg
+        if hasattr(g, "connection_vids"):
+            return np.array(g.connection_vids())          # kept and patched by the MPG (O-14)
+        scale_prop, n_id_a = g.property("scale"), g.property("n_id_a")
+        connections = scale_prop.order[:scale_prop.size][scale_prop.values_array() == g.scales.Connection]
         keys = n_id_a.keys_array() if hasattr(n_id_a, "keys_array") else np.array(sorted(n_id_a), dtype=np.int64)
-        vids = np.intersect1d(np.asarray(connections, dtype=np.int64), np.asarray(keys, dtype=np.int64))
-        if getattr(self._mtg, "_instanced", lambda: False)():
-            vids = np.union1d(vids, self._mtg.instances.vids_having("n_id_a", self._mtg.scales.Connection))
-        return vids
+        return np.intersect1d(np.asarray(connections, dtype=np.int64), np.asarray(keys, dtype=np.int64))
 
     def entity_ids(self, location: str) -> np.ndarray:
         """
@@ -2167,7 +2239,7 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
             cached = self.__dict__.get("_edge_ids_cache")
             if cached is None or cached[0] != stamp:
                 cached = self.__dict__["_edge_ids_cache"] = (
-                    stamp, _read_only(np.array([b for _, b in self.edges()], dtype=np.int64)))
+                    stamp, _read_only(np.array(self._edges_cached()[:, 1], dtype=np.int64)))
             return cached[1]
         if location in self._coarse_scale_names():
             return self._membership(location)[0]

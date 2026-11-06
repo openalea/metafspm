@@ -155,6 +155,14 @@ For metafspm and every port: no Python loop over groups, nodes or entities in a 
 2. **Topology-derived arrays cached per topology version** and read-only (`setflags(write=False)`): `entity_ids` of
    every location, `owner`, the index maps, `Reduction.group_table`, the sparse pattern of a reduction's terms
    (only its values filled at each solve). Copy one before writing into it.
+   After a structural edit they are **patched, not rebuilt** (O-14): the MPG logs what each structural change
+   removed and added (`MPG.structure_epoch`, `MPG.structure_delta(since)`, from its topology arrays), and the
+   structure-derived arrays (`compartment_owners`, `owned_compartments`, `connection_vids`, `structural_links`,
+   the nodes' owners at each coarse scale) drop the removed ids and append the added ones (larger ids: arrays
+   sorted by id stay sorted). A port edits the MPG as before and calls `ds.update_topology()`, nothing else; a cache
+   of its own derived from the structure can use `MPG._derived(name, build, patch)`. A change no delta describes (a
+   kept vertex moved, ids given again) rebuilds. `METAFSPM_CHECK_TOPOLOGY=1` checks every patch against a build.
+   Read edges as arrays: `ds.edge_endpoints()` ((edges, 2), read-only), not `ds.edges()` (Python tuples).
 3. **numba only where a loop stays sequential** (tree scans, z-buffers, form factors, a turtle): numba is a hard
    dependency, no fallback. Every kernel is `@njit(cache=True)` in its package's `kernels.py` (one module to warm up,
    review and port), `parallel=True` only for independent iterations (numba's threads are `Compute.threads`).
