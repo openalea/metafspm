@@ -980,7 +980,8 @@ says how the scene uses the machine:
   batch's need; an integer forces it from the first batch, `1` sequential and in the process. The results are the
   same, bit for bit, whatever the number (the kinds dealt by their interior cells, each process evaluating its
   share in its own library population, the results added in the requests' order). The processes are forked on
-  Linux (they inherit the scene's state at their start: the templates are then sent only when new) and spawned on
+  Linux (they inherit the scene's state at their start, its templates shared with the main process: when new
+  templates appear, the pool is forked again rather than sent them, each process would hold its own copy) and spawned on
   macOS and Windows (each receives the reduction at its first task: the plant model class must be importable by
   name, a module-level class, and the reduction's `merge=` rules picklable). Each holds its own libraries: a pool
   of n adds about n library populations to the memory (use case 1, 2 plants, day 1: 1.4 → 2.1 GB for 4 processes);

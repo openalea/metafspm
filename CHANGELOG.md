@@ -11,6 +11,12 @@
   `plant_variability`, every plant evaluated its 6 first kinds again (48 at the first hour instead of 6); to day 2: the kinds
   729 → 154, the run 160 → 61 s, the scope's peak 6.4 → 3.2 GB, every step's results identical. A
   checkpoint written before keeps its kinds under the former keys: they are evaluated again after a resume.
+- **A forked pool is forked again when new templates appear:** when templates (or registry entries) were added
+  since its processes started, the kinds' pool is closed and forked anew (`_lacks_templates`) instead of sending
+  them; its processes then share the main process' templates instead of each holding its own unpickled copy (a
+  day-6 anatomy: 16 templates, 480 MB pickled, once per process before). Use case 1, 8 varied plants to day 8: the
+  scope's peak 7.27 → 5.08 GB, the time unchanged (358 s), every step's results identical. A spawned pool is sent
+  them as before.
 - **A reduction's library keeps its ids bounded:** each batch of kinds replaces the library's former groups, and
   their ids are now given again (`MPG.reuse_ids()`: the id counter back to the last id in use, any property entry
   above it deleted; `MPGDataStructure.forget_ids_above(last)`: the removed entities forgotten, so that a new entity
