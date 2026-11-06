@@ -1,3 +1,4 @@
+from openalea.metafspm.compute import Compute
 from openalea.metafspm.coupling.component import FunctionalComponent, StructuralComponent
 from openalea.metafspm.coupling.composite_wrapper import CompositeModel
 from openalea.metafspm.coupling.forcings import as_forcing

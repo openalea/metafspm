@@ -763,6 +763,26 @@ Its README describes each file and shows the figures.
 - An MPG-style step sees only the MTG properties its component declares; keep MTG reads in such steps to those.
 - `split="components"` is not parallel; graph systems are solved by sparse LU (SuperLU).
 
+### The run configuration: `Compute`
+
+`Scene(..., compute=Compute(threads=1, workers="auto", device="cpu", memory="trim"))` (`Compute()` when omitted)
+says how the scene uses the machine:
+
+- `threads`: the BLAS, OpenMP and numba threads of the process while the scene builds and runs (`threadpoolctl` and
+  `numba.set_num_threads`, within each `run()` only: numpy outside the scene keeps its own). 1 by default: the work
+  is many small sparse solves, which more threads only oversubscribe (use case 1: 10 → 6.4 s per step).
+- `workers`: the process pool of the scene's parallel work (a reduction's kinds). `"auto"` (default) starts none
+  until a batch is worth it (more than about a second of work, at least two kinds), then
+  `min(processors // 2, kinds)`; an integer forces it, `1` sequential and in the process. A component's setting
+  named `workers` that its scenario does not give takes the Compute's (Caribu's projection threads).
+- `device`: `"cpu"` or `"cuda"`, the default of the components' setting named `device` (Caribu's near field).
+- `memory="trim"`: glibc's `malloc_trim(0)` after each step, the memory freed given back (use case 1 at day 8: 4.7 →
+  2.5 GB); `"keep"`: nothing. The allocator's arenas are an environment variable read when the process starts:
+  `MALLOC_ARENA_MAX=2` (0.6 GB less at the peak, no time cost), set in the examples' `environment.yaml`
+  (`variables:`) or in the shell (`export MALLOC_ARENA_MAX=2`).
+
+`scenario.json` records the Compute, `run.json` the threads in use and the pool.
+
 ### Compiled kernels (numba)
 
 Loops that numpy cannot vectorise (a z-buffer, a tree walk, a disc of form factors) are compiled with numba. What the

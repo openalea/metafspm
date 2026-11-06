@@ -41,6 +41,7 @@ from typing import Mapping
 import numpy as np
 import pandas as pd
 
+from openalea.metafspm.compute import Compute
 from openalea.metafspm.coupling.choregrapher import Choregrapher
 from openalea.metafspm.coupling.forcings import forcing_table, forcing_value, is_spatial
 from openalea.metafspm.coupling.cross import CrossMapping, Exchanges, UnionDataStructure, UnionMapping
@@ -116,6 +117,10 @@ class Scene:
                                to map only the root surface, mask=).
         start:                 the calendar of the scene's time 0, (day of year, hour, UTC): every component's
                                calendar() (e.g. a light model's sun), and the forcings of origin "calendar".
+        compute:               the run configuration (openalea.metafspm.compute.Compute; default Compute()): the
+                               threads while the scene builds and runs, the process pool, the device, the memory
+                               trimmed after each step. A component's setting named workers or device that its
+                               model's scenario does not give takes the Compute's (Caribu's).
 
     A model's cadence is an environment model's interval (s, EnvironmentModel: due() and between(); its scenario's
     "interval" too). An environment model's spin_up(scene) runs once, after the scene is built. An environment model's
@@ -127,7 +132,16 @@ class Scene:
     def __init__(self, planting: pd.DataFrame, environment=(), environment_scenarios=None, translator=None,
                  time_step: float = 3600., mapping_method: str = "barycentre", periodic=(True, True, False),
                  flip_z: bool = True, xrange: float = None, yrange: float = None, forcings=None,
-                 events=(), stop_when=None, mappings=(), recorder=None, start=None):
+                 events=(), stop_when=None, mappings=(), recorder=None, start=None, compute: Compute = None):
+        self.compute = Compute() if compute is None else compute
+        if not isinstance(self.compute, Compute):
+            raise TypeError(f"Scene: compute is a Compute (openalea.metafspm.compute), got {self.compute!r}")
+        with self.compute.limits():
+            self._build(planting, environment, environment_scenarios, translator, time_step, mapping_method,
+                        periodic, flip_z, xrange, yrange, forcings, events, stop_when, mappings, recorder, start)
+
+    def _build(self, planting, environment, environment_scenarios, translator, time_step, mapping_method, periodic,
+               flip_z, xrange, yrange, forcings, events, stop_when, mappings, recorder, start) -> None:
         Choregrapher()._set_simulation_time_step(time_step)
         self.time_step, self.time, self.iteration = time_step, 0., 0
         self.xrange = xrange if xrange is not None else planting.attrs.get("xrange")
@@ -155,6 +169,7 @@ class Scene:
 
         self.components = [c for p in self.populations for c in p.components]
         self.components += [c for model in self.environment for c in model.components]
+        self._apply_compute(environment_scenarios)
         names = [type(c).__name__ for c in self.components]
         duplicated = sorted({name for name in names if names.count(name) > 1})
         if duplicated:
@@ -196,6 +211,22 @@ class Scene:
         self.recorder = SceneRecorder(recorder) if isinstance(recorder, (str, os.PathLike)) else recorder
         self._recording = False         # the recorder began (at this object's first step)
         self._finished = False
+
+    def _apply_compute(self, environment_scenarios) -> None:
+        """The Compute's workers and device given to the components' settings of those names that their model's
+        scenario does not set (Caribu's projection threads and near field device)."""
+        from dataclasses import fields
+        given = [set().union(*(_flat_scenario(row) for row in population.table["scenario"]))
+                 for population in self.populations]
+        given += [set(scenario) for scenario in environment_scenarios]
+        owners = [population.components for population in self.populations]
+        owners += [model.components for model in self.environment]
+        for components, named in zip(owners, given):
+            for component in components:
+                settings = {f.name for f in fields(component) if f.metadata.get("variable_type") == "setting"}
+                for name in ("workers", "device"):
+                    if name in settings and name not in named:
+                        setattr(component, name, getattr(self.compute, name))
 
     @classmethod
     def from_scenario(cls, scenario: dict, plants, plant_model, environment=(), plant_scenarios: list = None,
@@ -370,7 +401,13 @@ class Scene:
     # ── running ───────────────────────────────────────────────────────────────
 
     def run(self) -> None:
-        """One scene step: the environment, then the populations, each after the exchanges into it."""
+        """One scene step: the environment, then the populations, each after the exchanges into it; the process's
+        threads limited to the Compute's while it runs, and the freed memory given back after (memory "trim")."""
+        with self.compute.limits():
+            self._step()
+        self.compute.trim()
+
+    def _step(self) -> None:
         if self.recorder is not None and not self._recording:
             self._recording = True
             self.recorder.begin(self)                        # run.json, scenario.json, the initial state

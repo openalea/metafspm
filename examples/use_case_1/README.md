@@ -170,6 +170,15 @@ The SceneRecorder writes the summaries, `water_balance.csv` and `gas_exchange.cs
 the sections' drawings in the frames of every 24 hours and the last (`display_period`), and a checkpoint every day
 (the last two kept): `Scene.load_checkpoint` resumes the run from it, bit for bit.
 
+The run's configuration is metafspm's default `Compute()` (`scene(compute=...)`): one BLAS and numba thread (the
+work is many small sparse solves: more threads oversubscribe the cores), the memory freed given back after each hour
+(`malloc_trim`), and the environment's `MALLOC_ARENA_MAX=2` (`environment.yaml`'s `variables:`; outside the conda
+environment, `export MALLOC_ARENA_MAX=2` before running).
+
+`benchmark.py` times it (`python benchmark.py [--plants 2] [--days 3]`, under a memory bound): each hour's time by
+model, the kinds of the reduction evaluated, the nodes, the memory (after each hour, after `malloc_trim` and the
+peak), written to `outputs/benchmarks/<commit>.json`, one entry per mode.
+
 The frames keep a few variables, the run's explicit choice (`run.FRAME_VARIABLES`, the recorder's
 `frame_options={"variables": ...}`; `scene(frame_variables=None)` keeps them all). Every entity set keeps its
 structure (ids, labels, complex and parent links, the segment ends, the display rows' marker), and:

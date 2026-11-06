@@ -7,10 +7,12 @@ A scene's outputs, written as it runs::
   outputs/
     run.json                          the run: status (running, finished, stopped, failed, interrupted; a failure's
                                       error), started, ended, wall time, iterations, simulated time, time step, wall
-                                      time per model, versions; rewritten after every step (a running run's
-                                      progress)
+                                      time per model, versions, the threads in use (BLAS libraries, numba) and the
+                                      process pool (None: in the process); rewritten after every step (a running
+                                      run's progress)
     scenario.json                     the scene: time step, size, populations (model, plants and their scenarios),
-                                      environment models and their scenarios, forcings, the recorder's settings
+                                      environment models and their scenarios, forcings, the run configuration
+                                      (Compute), the recorder's settings
     forcings/<name>.csv               the forcings given as tables
     Plant/<Model>/summaries.csv       one row per plant and recorded step: time, plant, its float state variables
                                       (extensive ones summed over its nodes, the others averaged, Plant ones as is)
@@ -168,7 +170,8 @@ class SceneRecorder:
             previous = self._read_run() if self.resume else {}
             self._run = {"status": "running", "started": previous.get("started", self._started.isoformat()),
                          "time_step": float(scene.time_step), "versions": _versions(), "host": platform.node(),
-                         "command": " ".join(sys.argv)}
+                         "command": " ".join(sys.argv),
+                         "compute": {"threads": scene.compute.thread_info(), "pool": None}}
             if self.resume:
                 self._run["wall_time_before"] = previous.get("wall_time", 0.)
                 self._run["resumed"] = previous.get("resumed", []) + [
@@ -521,7 +524,7 @@ class SceneRecorder:
             "environment": [{"model": _described(type(model)), "compartment": compartment(model),
                              "scenario": _described(scenario)}
                             for model, scenario in zip(scene.environment, scene.environment_scenarios)],
-            "forcings": forcings,
+            "forcings": forcings, "compute": scene.compute.as_dict(),
             "recorder": {"summary_period": self.summary_period if self.summaries else None,
                          "segment_plants": sorted(self.segment_plants), "segment_period": self.segment_period,
                          "frame_period": self.frame_period, "frame_options": _described(self.frame_options),

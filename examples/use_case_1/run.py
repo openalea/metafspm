@@ -128,12 +128,13 @@ def gas_exchange(scene) -> dict:
 
 
 def scene(plants=2, folder=None, frame_period=12, display_period=24, checkpoint_period=24, scenario=None,
-          forcings=None, start_hour=0., frame_variables=FRAME_VARIABLES):
+          forcings=None, start_hour=0., frame_variables=FRAME_VARIABLES, compute=None):
     """The use case's Scene: *plants* wheat plants (WHEAT_SCENARIO, updated by *scenario*), the soil and the light,
     the forcings of weather() (updated by *forcings*), recorded in *folder* (None: in memory) with the water
     balance and the gas exchange and, every *frame_period* hours, a frame with the default views (with the sections'
     drawings every *display_period* hours and in the last frame) holding the *frame_variables* (None: all), a
-    checkpoint every *checkpoint_period* hours."""
+    checkpoint every *checkpoint_period* hours; *compute*: the run configuration (None: Compute(), one BLAS thread,
+    the memory trimmed after each step)."""
     table = planting(stand(plants), WheatPlant, {**WHEAT_SCENARIO, **(scenario or {})},
                      xrange=plants * PLANT_SPACING, yrange=ROW_SPACING)
     recorder = SceneRecorder(folder, tables={"water_balance": WaterBalance(), "gas_exchange": gas_exchange},
@@ -145,7 +146,7 @@ def scene(plants=2, folder=None, frame_period=12, display_period=24, checkpoint_
     return Scene(table, environment=[RichardsSoilModel, CaribuLightModel],
                  environment_scenarios=[SOIL_SCENARIO, LIGHT_SCENARIO], translator=SCENE_TRANSLATOR,
                  time_step=HOUR, forcings={**weather(), **(forcings or {})}, mappings=root_surface_mappings,
-                 recorder=recorder, start=(DAY_OF_YEAR, start_hour))
+                 recorder=recorder, start=(DAY_OF_YEAR, start_hour), compute=compute)
 
 
 def main(folder=os.path.join(OUTPUTS, "from_sowing"), days=14, plants=2):

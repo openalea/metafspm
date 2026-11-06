@@ -60,6 +60,7 @@ dependencies = [
     "numba",
     "pandas",
     "scipy",
+    "threadpoolctl",        # Compute's threads (the BLAS libraries' thread pools)
     "openalea.encoding3d",   # the encoding3d exchange format (io.encoding3d); in development: pip install -e ../encoding3d
 ]
 

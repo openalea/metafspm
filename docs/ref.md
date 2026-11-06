@@ -4,8 +4,8 @@
 
 ```{eval-rst}
 .. automodule:: openalea.metafspm
-   :members: FunctionalComponent, StructuralComponent, CompositeModel, Scene, SceneRecorder, Planting, Stand,
-             planting, stand, read_scenarios, variants, parameter_table, as_forcing
+   :members: FunctionalComponent, StructuralComponent, CompositeModel, Scene, SceneRecorder, Compute, Planting,
+             Stand, planting, stand, read_scenarios, variants, parameter_table, as_forcing
 ```
 
 ## Components and declarations
@@ -101,6 +101,9 @@ The solvers are chosen by key in `graph_system(solver=...)`: `"newton"`, `"newto
 
 .. automodule:: openalea.metafspm.scene.scene
    :members: Scene, AllMasks
+
+.. automodule:: openalea.metafspm.compute
+   :members: Compute
 
 .. automodule:: openalea.metafspm.scene.environment
    :members: EnvironmentModel
