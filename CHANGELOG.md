@@ -13,8 +13,9 @@
   at each coarse scale and the vertices of each scale in the plants (anatomy mode). A delta exists when no kept
   vertex changed its scale, complex, parent or anchor flag and no id was given again; otherwise the arrays are
   rebuilt as before. `METAFSPM_CHECK_TOPOLOGY=1` checks every patch against a build. `Instances.vids_having` and
-  `vids_at_scale` are one vectorised gather per template (a Python loop per instance before) and are extended, not
-  rebuilt, when an instance is appended. New `ds.edge_endpoints()`: the edges as a read-only (edges, 2) array
+  `vids_at_scale` are one vectorised gather per template (a Python loop per instance before) and, after instances
+  are appended, extended at their next read by the new rows alone (not at each addition: 541 additions in 3 steps
+  at day 14 cost 1.8 s when each extended every table). New `ds.edge_endpoints()`: the edges as a read-only (edges, 2) array
   (`edges()` builds Python tuples); `_parent_pairs` uses it. Use case 1, 8 varied plants resumed at h240 to h264:
   every step's results identical, the step 4.51 → 3.95 s.
 
