@@ -92,6 +92,13 @@ def test_the_pool_is_kept_and_each_process_sent_only_what_it_lacks(start_method)
         sync = reduction_module._sync_for(reduction, compute._pool.workers[0])
         assert sync["declaration"] is None and not any(sync["tables"].values())     # nothing new to send
         assert all(known["_full"] for known in sent)
+        assert sent[0] == sent[1]                     # both sent the same (pickled once: _sync_blob)
+        import types
+        fresh = [types.SimpleNamespace(known={}) for _ in range(3)]
+        record = []
+        blobs = [reduction_module._sync_blob(reduction, worker, record) for worker in fresh]
+        assert blobs[0] is blobs[1] is blobs[2] and len(record) == 1
+        assert fresh[0].known == fresh[2].known and fresh[0].known is not fresh[2].known
     finally:
         compute.close()
     with Compute(workers=1).limits():

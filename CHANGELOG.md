@@ -14,6 +14,9 @@
 - **`Instances.add` is amortised O(1)** when the ids grow (the usual case): its columns (`owner`, `first`, `size`,
   `code`, now read-only views) live in buffers that double, and the owners' rows are kept instead of rebuilt at each
   addition (80k instances: 0.14 s, was minutes). Pickles hold the columns as before.
+- **The pool pickles what it sends once:** new templates and registry entries (tens to hundreds of MB when new
+  anatomies appear) are pickled once for all the processes that lack the same (`_sync_blob`), not once per process;
+  use case 1, 2 plants to day 7: the kinds' time 87.7 → 58.8 s (a pool call with new templates 8.5 → 1.6 s).
 - **`"auto"`'s estimate recalibrated:** `SECONDS_PER_CELL` 1e-5 → 3e-5 s per interior cell, measured on use case 1
   (3.2e-5 s over 2 plants to day 8, the library's update included), so that a batch of about a second of work does
   go to the pool.

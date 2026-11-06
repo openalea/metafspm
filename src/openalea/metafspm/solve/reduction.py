@@ -78,6 +78,7 @@ computes it live or the kind holds it.
 """
 import copy
 import itertools
+import pickle
 import weakref
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -1583,6 +1584,29 @@ def _sync_for(reduction: Reduction, worker) -> dict:
     return sync
 
 
+def _known_copy(known):
+    """A copy of a process's record of what it was sent of a reduction (_sync_for's), its sets copied."""
+    if known is None:
+        return None
+    return {name: dict(value) if name == "objects" else set(value) for name, value in known.items()}
+
+
+def _sync_blob(reduction: Reduction, worker, sent: list) -> bytes:
+    """_sync_for(reduction, worker), pickled: once for all the processes that lack the same (*sent*, this call's
+    [(what they knew, what they know after, the pickled sync)]), so that new templates and registry entries are
+    pickled once, not once per process."""
+    key = ("reduction", reduction.__dict__["_token"])
+    before = worker.known.get(key)
+    for known, after, blob in sent:
+        if known == before:
+            worker.known[key] = _known_copy(after)
+            return blob
+    known = _known_copy(before)
+    blob = pickle.dumps(_sync_for(reduction, worker), protocol=pickle.HIGHEST_PROTOCOL)
+    sent.append((known, _known_copy(worker.known[key]), blob))
+    return blob
+
+
 def _evaluate_in_pool(reduction: Reduction, compute, workers: int, described: dict) -> dict:
     """{kind key: {system: Kind}} of the requests *described* ({signature: (parameters, {kind key: request})}) over
     *workers* processes of *compute*'s pool: the kinds dealt by their interior cells (the largest first, each to the
@@ -1602,22 +1626,25 @@ def _evaluate_in_pool(reduction: Reduction, compute, workers: int, described: di
         shares[target].append(position)
         loads[target] += cells[position]
     time_step = _time_step(reduction)
-    calls = []
+    calls, sent = [], []
     for worker, share in zip(pool.workers, shares):
         groups = {}
         for position in sorted(share):
             signature, kind_key, request = entries[position]
             groups.setdefault(signature, (described[signature][0], []))[1].append((kind_key, request))
-        calls.append((_worker_evaluate, (token, _sync_for(reduction, worker), time_step, list(groups.values()))))
+        calls.append((_worker_evaluate, (token, _sync_blob(reduction, worker, sent), time_step,
+                                         list(groups.values()))))
     evaluated = {}
     for result in pool.run(calls):
         evaluated.update(result)
     return evaluated
 
 
-def _worker_evaluate(token: int, sync: dict, time_step: float, groups: list) -> dict:
+def _worker_evaluate(token: int, sync: bytes, time_step: float, groups: list) -> dict:
     """In a pool's process: the kinds of *groups* ([(parameters, [(kind key, request)])]) of the reduction *token*,
-    its copy updated with *sync* (_sync_for), evaluated in batches in its library for those parameters; none kept."""
+    its copy updated with *sync* (_sync_for's, pickled: _sync_blob), evaluated in batches in its library for those
+    parameters; none kept."""
+    sync = pickle.loads(sync)
     from openalea.metafspm.compute import worker_state
     held = worker_state().setdefault("reductions", {})
     reduction = held.get(token)
