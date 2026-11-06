@@ -152,7 +152,12 @@ class Light(EnvironmentModel):
         self.components = [self.projector]
 
 
-def test_a_components_workers_and_device_settings_default_to_the_computes():
+def test_a_components_workers_and_device_settings_default_to_the_computes(monkeypatch):
+    import fake_cupy
+    from openalea.metafspm import backend
+    modules = fake_cupy.modules()                         # device="cuda" without a GPU: the fake CuPy
+    monkeypatch.setattr(backend, "cupy_modules", lambda: modules)
+
     def scene(scenario, compute):
         return Scene(doubles_planting([Seedlings]), environment=[Light], environment_scenarios=[scenario],
                      time_step=DT, compute=compute).environment[0].projector

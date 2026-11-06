@@ -907,6 +907,9 @@ class SceneRecorder:
         pool = scene.compute.pool_info()        # the pool used (the largest since the run began), None: none
         if pool is not None or "compute" not in self._run:
             self._run.setdefault("compute", {})["pool"] = pool
+        device = scene.compute.device_info()     # the GPU used and its transfers, None on the cpu (not recorded)
+        if device is not None:
+            self._run.setdefault("compute", {})["device"] = device
         if ended:
             self._run["ended"] = now.isoformat()
         else:

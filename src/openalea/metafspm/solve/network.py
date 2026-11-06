@@ -261,6 +261,10 @@ class KronReduction:
     and X = A_II⁻¹ A_IK (dense, interior × kept: S's) solved once, both kept until release(): what a reduction needs
     of them (its injection, its shares) is computed before. After release, the reduction keeps the sparse blocks of
     *A* only.
+
+    The interior's factorisation and its solves are the current Compute's device's (Compute.current().backend():
+    backend.HostBackend's SuperLU on the cpu; on "cuda", SuperLU's factors copied to the GPU and X's many right-hand
+    sides solved there, A_IK sent sparse and densified on the device, X copied back once).
     """
 
     def __init__(self, matrix, kept):
@@ -275,16 +279,17 @@ class KronReduction:
         difference = abs(A - A.T)
         self.symmetric = bool(difference.nnz == 0 or difference.max() <= 1e-14 * abs(A).max())
         self._lu, self._keep = None, True
-        self._X = (self._factorisation().solve(self._A_IK.toarray()) if I.size and K.size
+        self._X = (self._factorisation().solve(self._A_IK) if I.size and K.size
                    else np.zeros((I.size, K.size)))
         self.reduced = np.asarray(A[K][:, K].toarray() - self._A_KI @ self._X)
 
     def _factorisation(self):
-        """The interior's LU factorisation: the kept one, else a new one (kept unless released)."""
+        """The interior's LU factorisation (the current Compute's backend's: solve(rhs, trans)): the kept one, else a
+        new one (kept unless released)."""
         if self._lu is not None:
             return self._lu
-        from scipy.sparse.linalg import splu
-        lu = splu(self._A_II)
+        from openalea.metafspm.compute import Compute
+        lu = Compute.current().backend().factorize(self._A_II)
         if self._keep:
             self._lu = lu
         return lu
@@ -319,7 +324,7 @@ class KronReduction:
             return np.zeros((self.kept_nodes.size, 0))
         if self.symmetric and self._X is not None:
             return -self._X.T
-        return -np.asarray(self._factorisation().solve(self._A_KI.T.toarray(), trans="T")).T
+        return -np.asarray(self._factorisation().solve(self._A_KI.T.tocsr(), trans="T")).T
 
     def shares(self, targets, interior_values) -> np.ndarray:
         """

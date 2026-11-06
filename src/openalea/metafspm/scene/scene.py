@@ -144,7 +144,7 @@ class Scene:
         self.compute = Compute() if compute is None else compute
         if not isinstance(self.compute, Compute):
             raise TypeError(f"Scene: compute is a Compute (openalea.metafspm.compute), got {self.compute!r}")
-        self.compute.check_linear_solver()          # its optional package: now, with the install line
+        self.compute.check()                        # its optional packages, its device: now, with the install line
         with self.compute.limits():
             self._build(planting, environment, environment_scenarios, translator, time_step, mapping_method,
                         periodic, flip_z, xrange, yrange, forcings, events, stop_when, mappings, recorder, start,

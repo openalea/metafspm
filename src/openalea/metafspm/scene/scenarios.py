@@ -24,6 +24,9 @@ variants() builds scenarios around a base one, within the bounds the components 
 a grid of every combination, one entry changed at a time, or a Latin hypercube sampling; from_samples() takes the
 samples of an analysis tool (e.g. SALib's saltelli or morris) within the same bounds, and design_table() lays any of
 them out as a table, to join with the outputs. Sensitivity indices are left to that tool.
+
+run_variants(run, scenarios, workers="auto", compute=Compute(workers=1)) runs a function building and running
+one scene per scenario, in a process pool (the total of processes bounded: variant_processes).
 """
 import itertools
 import json
@@ -308,3 +311,97 @@ def design_table(scenarios: dict, names=None) -> pd.DataFrame:
         if len({repr(scenario.get(key)) for scenario in scenarios.values()}) > 1]
     rows = [{name: scenario.get(name) for name in names} for scenario in scenarios.values()]
     return pd.DataFrame(rows, index=pd.Index(list(scenarios), name="scenario"), columns=names)
+
+
+def variant_processes(workers, compute=None, variants: int = None) -> tuple:
+    """
+    (processes, compute): how run_variants runs *variants* scenes at once. *workers*: the variants' processes, an
+    integer or "auto" (processors − 1, at most one per variant); *compute*: each scene's Compute (default
+    Compute(workers=1)). With more than one process, a scene's workers="auto" becomes 1 (the variants are the
+    parallel work: no pool in each); an integer is kept when processes × that many (a scene's pool, its main
+    process waiting on it) and processes × its threads stay within the processors, else ValueError (oversubscribed).
+    """
+    from dataclasses import replace
+    from openalea.metafspm.compute import Compute
+    processors = os.cpu_count() or 1
+    compute = Compute(workers=1) if compute is None else compute
+    if workers == "auto":
+        workers = max(1, processors - 1)
+        if variants is not None:
+            workers = min(workers, max(1, variants))
+    if isinstance(workers, bool) or not isinstance(workers, int) or workers < 1:
+        raise ValueError(f"run_variants: workers is 'auto' or a positive integer, got {workers!r}")
+    if workers > 1 and compute.workers == "auto":
+        compute = replace(compute, workers=1)
+    per_scene = 1 if compute.workers == "auto" else int(compute.workers)
+    if workers > 1 and (workers * per_scene > processors or workers * compute.threads > processors):
+        raise ValueError(f"run_variants: {workers} variant processes × Compute(workers={compute.workers}, "
+                         f"threads={compute.threads}) oversubscribe the {processors} processors: lower one of them")
+    return workers, compute
+
+
+def run_variants(run, scenarios: dict, workers="auto", compute=None, start_method: str = None) -> dict:
+    """
+    {name: run(name, scenario, compute)} for each of *scenarios* ({name: scenario}: variants', from_samples'), in
+    their order. *run* is a module-level function (picklable by name) that builds its scene with
+    Scene(..., compute=compute), runs it, finishes it and returns what is kept (a table, a path: picklable; a
+    scene's recorder folder named after *name*).
+
+    The variants run in *workers* processes at once (variant_processes: "auto" processors − 1; each scene's Compute
+    *compute*, default Compute(workers=1), a scene's "auto" pool replaced by 1 when several run at once: the total
+    of processes stays within the processors), each in a fresh process (its memory given back when it ends), forked
+    on Linux and spawned elsewhere or with device="cuda" (each its own device context; *start_method* to choose).
+    workers=1: one after the other in this process. A failing variant raises (its name in the message), the others
+    not yet started not run, the running ones stopped.
+    """
+    import multiprocessing
+    from multiprocessing.connection import wait
+    from openalea.metafspm.compute import START_METHOD
+    names = list(scenarios)
+    workers, compute = variant_processes(workers, compute, len(names))
+    if workers == 1 or len(names) < 2:
+        return {name: run(name, scenarios[name], compute) for name in names}
+    if start_method is None:
+        start_method = "spawn" if compute.device == "cuda" else START_METHOD
+    context = multiprocessing.get_context(start_method)
+    pending, running, results = list(names), {}, {}
+    try:
+        while pending or running:
+            while pending and len(running) < workers:     # a fresh process per variant (not a daemon: its scene
+                name = pending.pop(0)                     # may start its own pool)
+                ours, theirs = context.Pipe(duplex=False)
+                process = context.Process(target=_variant_main, args=(theirs, run, name, scenarios[name], compute),
+                                          name=f"metafspm-variant-{name}")
+                process.start()
+                theirs.close()
+                running[ours] = (name, process)
+            for connection in wait(list(running)):
+                name, process = running.pop(connection)
+                try:
+                    status, value = connection.recv()
+                except EOFError:
+                    process.join()
+                    status, value = "error", f"its process ended (exit code {process.exitcode}: killed, e.g. out " \
+                                             "of memory?)"
+                connection.close()
+                process.join()
+                if status == "error":
+                    raise RuntimeError(f"run_variants: the variant {name!r} failed:\n{value}")
+                results[name] = value
+    finally:
+        for connection, (_, process) in running.items():
+            process.terminate()
+            process.join()
+            connection.close()
+    return {name: results[name] for name in names}
+
+
+def _variant_main(connection, run, name, scenario, compute) -> None:
+    """A variant's process: run's result (or its traceback) sent back."""
+    import traceback
+    try:
+        value = ("ok", run(name, scenario, compute))
+    except BaseException:      # noqa: BLE001 — every failure goes back to the main process
+        value = ("error", traceback.format_exc())
+    connection.send(value)
+    connection.close()

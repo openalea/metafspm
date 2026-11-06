@@ -11,7 +11,11 @@ The sparse solvers of the graph systems' linear steps (J δ = −R), chosen by C
                    scikit-sparse), its symbolic analysis kept while the pattern does not change, for the systems
                    declared @graph_system(symmetric=True) (symmetric definite: a negative definite one factorised as
                    its opposite); the others are solved by SuperLU
-  ("cupy"          the GPU's, with Compute(device="cuda"): a later release)
+  "cupy"           the GPU's (Compute(device="cuda"), its default there; CuPy optional): a system of at least
+                   backend.DEVICE_MIN_NONZEROS entries solved on the device whole, its independent blocks together in
+                   one call (one copy each way: the batch), by cuDSS when nvmath-python is installed, else cupyx's
+                   spsolve; its pattern copied once per pattern, its values and right-hand side at each solve; a
+                   smaller one by SuperLU on the host (backend's module)
 
 A system declared symmetric=True has its matrix checked once per pattern (|A − Aᵀ| ≤ SYMMETRY_TOLERANCE |A|), its
 held rows aside (a row holding its diagonal alone: a Dirichlet node's, δ = rhs / its diagonal, whose column stays
@@ -33,6 +37,8 @@ import scipy.sparse as sp
 from scipy.sparse import csc_matrix, issparse
 from scipy.sparse.csgraph import connected_components
 from scipy.sparse.linalg import splu, spsolve
+
+from openalea.metafspm.backend import INSTALL_CUPY
 
 SYMMETRY_TOLERANCE = 1e-10          # a symmetric=True system's |A − Aᵀ|_max / |A|_max, at most
 BLOCKS_MIN_NONZEROS = 200_000       # a matrix solved block by block (its independent blocks) from this size on
@@ -206,7 +212,39 @@ class Cholmod(LinearSolver):
         return x, state
 
 
-LINEAR_SOLVERS = {solver.name: solver for solver in (SuperLU, SuperLUReuse, Cholmod)}
+class Cupy(LinearSolver):
+    """The device's (Compute.backend(): backend.CupyBackend.spsolve), a system of at least DEVICE_MIN_NONZEROS
+    entries whole, its device pattern kept per pattern; a smaller one SuperLU's on the host."""
+    name = "cupy"
+    package = "cupy"
+    install = INSTALL_CUPY
+
+    @classmethod
+    def check(cls) -> None:
+        """CuPy importable (backend.cupy_modules: its ImportError gives the install line)."""
+        from openalea.metafspm import backend
+        backend.cupy_modules()
+
+    def solve(self, matrix, rhs, key=None, symmetric: bool = False) -> np.ndarray:
+        from openalea.metafspm import backend
+        from openalea.metafspm.compute import Compute
+        if not issparse(matrix) or matrix.nnz < backend.DEVICE_MIN_NONZEROS:
+            return super().solve(matrix, rhs, key=key, symmetric=symmetric)
+        matrix = csc_matrix(matrix, dtype=np.float64)
+        matrix.sort_indices()
+        pattern = self._pattern(matrix, key)
+        if symmetric and not pattern.symmetric_checked:
+            _check_symmetric(matrix, key)
+            pattern.symmetric_checked = True
+        state = pattern.state.setdefault(0, {})
+        device = state.setdefault("factor", {})   # "factor": freed with the other patterns' (_pattern)
+        return Compute.current().backend().spsolve(matrix, np.asarray(rhs, dtype=np.float64), device)
+
+    def factor_solve(self, matrix, rhs, state, symmetric: bool):
+        return np.asarray(spsolve(matrix, rhs, permc_spec="MMD_AT_PLUS_A"), dtype=np.float64), None
+
+
+LINEAR_SOLVERS = {solver.name: solver for solver in (SuperLU, SuperLUReuse, Cholmod, Cupy)}
 
 
 def linear_solver(name: str) -> LinearSolver:

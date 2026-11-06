@@ -14,12 +14,16 @@ A scene's run configuration: how many threads and processes it uses, its device 
                  the process; n: a pool of n from the first batch). Deterministic: the work is independent and its
                  results merged in a fixed order, bit-identical whatever the number. The components' own setting
                  named workers (Caribu's projection threads) defaults to it
-  device         "cpu" (default) or "cuda": the default of the components' setting named device (Caribu's near
-                 field)
+  device         "cpu" (default) or "cuda": the array backend of the scene's heavy linear algebra (backend: the
+                 kinds' Kron reductions, their dense solves on the GPU; the linear solves with linear_solver "cupy",
+                 its default there) and the default of the components' setting named device (Caribu's near field).
+                 "cuda" needs CuPy (optional: a missing CuPy, or no CUDA device, raises when the Scene is built, with
+                 the install line); nothing imports cupy otherwise. The pool's processes are then spawned (CUDA does
+                 not survive a fork), each its own device context
   memory         "trim" (default): glibc's malloc_trim(0) after each step, the memory freed given back to the system
                  (a no-op where there is no malloc_trim: macOS, Windows); "keep": nothing
   linear_solver  the sparse solver of the graph systems' linear steps (solve.linear's registry): "superlu"
-                 (default, scipy's), "superlu_reuse" (its column ordering kept while the matrix's pattern does not
+                 (the default on the cpu, scipy's), "cupy" (the default on cuda: the device's), "superlu_reuse" (its column ordering kept while the matrix's pattern does not
                  change), "cholmod" (scikit-sparse, optional: the systems declared @graph_system(symmetric=True),
                  the others SuperLU's); a missing optional package raises when the Scene is built
   kind_batch     the most interior cells evaluated at once in a reduction's library (its kinds' batches; the
@@ -72,11 +76,12 @@ class Compute:
     workers: object = "auto"
     device: str = "cpu"
     memory: str = "trim"
-    linear_solver: str = "superlu"
+    linear_solver: str = None              # None: "superlu" on the cpu, "cupy" on cuda
     kind_batch: int = 200_000
     _controller: object = field(default=None, init=False, repr=False, compare=False)
     _pool: object = field(default=None, init=False, repr=False, compare=False)
     _linear: object = field(default=None, init=False, repr=False, compare=False)
+    _backend: object = field(default=None, init=False, repr=False, compare=False)
 
     def __post_init__(self):
         from openalea.metafspm.solve.linear import LINEAR_SOLVERS
@@ -85,10 +90,14 @@ class Compute:
         if self.workers != "auto" and (isinstance(self.workers, bool) or not isinstance(self.workers, int)
                                        or self.workers < 1):
             raise ValueError(f"Compute: workers is 'auto' or a positive integer, got {self.workers!r}")
+        if self.linear_solver is None:
+            self.linear_solver = "cupy" if self.device == "cuda" else "superlu"
         for name, value, choices in (("device", self.device, DEVICES), ("memory", self.memory, MEMORY),
                                      ("linear_solver", self.linear_solver, tuple(LINEAR_SOLVERS))):
             if value not in choices:
                 raise ValueError(f"Compute: {name} is one of {choices}, got {value!r}")
+        if self.linear_solver == "cupy" and self.device != "cuda":
+            raise ValueError("Compute: linear_solver 'cupy' solves on the GPU: give device='cuda'")
         if isinstance(self.kind_batch, bool) or not isinstance(self.kind_batch, int) or self.kind_batch < 1:
             raise ValueError(f"Compute: kind_batch is a positive integer (interior cells), got {self.kind_batch!r}")
 
@@ -98,7 +107,7 @@ class Compute:
 
     def __getstate__(self):
         state = dict(self.__dict__)
-        state.update(_controller=None, _pool=None, _linear=None)
+        state.update(_controller=None, _pool=None, _linear=None, _backend=None)
         return state
 
     @staticmethod
@@ -151,7 +160,9 @@ class Compute:
         """The Compute's pool, started at its first request (*start_method*: START_METHOD's by default) and kept,
         grown to *size* processes when it has fewer."""
         if self._pool is None or self._pool.closed:
-            self._pool = WorkerPool(self, start_method or START_METHOD)
+            if start_method is None:              # CUDA does not survive a fork: spawned, each its own context
+                start_method = "spawn" if self.device == "cuda" else START_METHOD
+            self._pool = WorkerPool(self, start_method)
             weakref.finalize(self, self._pool.close)
         self._pool.grow(size)
         return self._pool
@@ -177,11 +188,31 @@ class Compute:
             self._linear = linear_solver(self.linear_solver)
         return self._linear
 
-    def check_linear_solver(self) -> None:
-        """linear_solver's optional package importable, else an ImportError giving its install line (at the
-        Scene's build)."""
+    def check(self) -> None:
+        """What the Compute needs present (at the Scene's build): linear_solver's optional package, the device's
+        (CuPy and a CUDA device for "cuda"), else an ImportError giving the install line (or a RuntimeError: no
+        device)."""
+        from openalea.metafspm.backend import BACKENDS
         from openalea.metafspm.solve.linear import LINEAR_SOLVERS
+        BACKENDS[self.device].check()
         LINEAR_SOLVERS[self.linear_solver].check()
+
+    # ── the device ──
+
+    def backend(self):
+        """The device's array backend (backend: HostBackend, CupyBackend), made once and kept for the run (its
+        transfers counted)."""
+        if self._backend is None:
+            from openalea.metafspm.backend import make_backend
+            self._backend = make_backend(self.device)
+        return self._backend
+
+    def device_info(self):
+        """The device used ({"name": "cuda", "solver": ..., "transfers": {...}}), None on the cpu: run.json's
+        record."""
+        if self.device == "cpu":
+            return None
+        return self.backend().info()
 
     # ── memory ──
 
