@@ -1098,7 +1098,7 @@ Its README describes each file and shows the figures.
 - Growth bookkeeping is incremental: only new vertices are read from the MTG.
 - An MPG-style step sees only the MTG properties its component declares; keep MTG reads in such steps to those.
 - `split="components"` solves its pieces one after the other; a whole system made of independent blocks (the
-  plants of a population) has its blocks solved apart, in threads (solve.linear, below); graph systems are solved
+  plants of a population) has its blocks solved apart, in `Compute.threads` threads (solve.linear, below); graph systems are solved
   by sparse LU (SuperLU) unless `Compute(linear_solver=)` says otherwise.
 
 ### The run configuration: `Compute`
@@ -1106,11 +1106,15 @@ Its README describes each file and shows the figures.
 `Scene(..., compute=Compute(threads=1, workers="auto", device="cpu", memory="trim"))` (`Compute()` when omitted)
 says how the scene uses the machine:
 
-- `threads`: the BLAS, OpenMP and numba threads of the process while the scene builds and runs (`threadpoolctl` and
-  `numba.set_num_threads`, within each `run()` only: numpy outside the scene keeps its own). 1 by default: the work
-  is many small sparse solves, which more threads only oversubscribe (use case 1: 10 → 6.4 s per step).
-- `workers`: the process pool of the scene's parallel work: a reduction's missing kinds, and the independent blocks
-  of a linear solve (in threads). `"auto"` (default) starts none until a batch of kinds is worth it (more than
+- `threads`: the threads of the scene's parallel work while it builds and runs: numba's kernels
+  (`numba.set_num_threads`) and the independent blocks of a linear solve (in threads, each block factorised in one;
+  SuperLU's at most `solve.linear.SUPERLU_BLOCK_THREADS`, 4: its factorisations are bound by the memory bandwidth and
+  get slower beyond on a laptop). BLAS and OpenMP stay at one thread within the scene, whatever `threads`
+  (`compute.BLAS_THREADS`, through `threadpoolctl`; numpy outside the scene keeps its own): a threaded BLAS changes
+  the results' last bits with its thread count (up to 1.5e-11 relative on use case 1's potentials) and only
+  oversubscribes the step's small dense work. The results are the same, bit for bit, at any number of threads: the
+  kernels' chunks and the blocks come from the work only. 1 by default (the blocks then solved in sequence).
+- `workers`: the process pool of the scene's parallel work: a reduction's missing kinds. `"auto"` (default) starts none until a batch of kinds is worth it (more than
   about a second of work, estimated from their interior cells, and at least two kinds), then
   `min(processors // 2, kinds)` processes, one processor left free, kept for the run and grown to the largest
   batch's need; an integer forces it from the first batch, `1` sequential and in the process. The results are the
@@ -1133,11 +1137,21 @@ says how the scene uses the machine:
   `"cupy"` (the default with `device="cuda"`, not allowed on the cpu: [Running on a GPU](gpu.md));
   `"cholmod"` (scikit-sparse, optional: `pip install scikit-sparse` or `conda install -c conda-forge
   scikit-sparse`), CHOLMOD's Cholesky for the systems declared `@graph_system(symmetric=True)`, its symbolic
-  analysis kept while the pattern does not change, the other systems SuperLU's. A missing optional package raises
-  when the Scene is built, with its install line. A matrix of independent diagonal blocks of at least
-  `solve.linear.BLOCKS_MIN_NONZEROS` (200k) entries is solved block by block (the blocks found once per pattern),
-  the blocks in threads per `workers` (SuperLU releases the GIL: 4 threads run as fast as 4 processes); the same
-  blocks whatever the threads, so the same results.
+  analysis kept while the pattern does not change, the other systems SuperLU's; `"pardiso"` (MKL's PARDISO through
+  pypardiso, optional, x86 only: `pip install "openalea.metafspm[pardiso]"` or `pip install pypardiso`) and
+  `"mumps"` (MUMPS through python-mumps, optional: `conda install -c conda-forge python-mumps`), registered only when
+  their package is importable, each keeping its analysis (ordering, symbolic factorisation) per block while the
+  pattern does not change; PARDISO's blocks in `threads` threads, MUMPS's in sequence (it is not thread-safe). A
+  missing optional package raises when the Scene is built (or at the `Compute` for an unregistered one), with its
+  install line. SuperLU stays the default: on use case 1 the plants grow every hour, so every step brings a new
+  pattern and an analysis is not reused, where SuperLU is the fastest (8 plants, day 13: 0.74 s at 1 thread, 0.35
+  at 4; PARDISO 1.43 and 0.60 with its analysis; MUMPS 1.49); PARDISO pays when the pattern stays (0.53 s at 1
+  thread, 0.16 at 8, without its analysis). The optional solvers' solutions differ from SuperLU's by up to 3e-12
+  relative a solve (another pivoting, the same residual; 8e-10 on the potentials over 3 days at 2 plants), the
+  same at any thread count. A matrix of independent diagonal
+  blocks of at least `solve.linear.BLOCKS_MIN_NONZEROS` (200k) entries is solved block by block (the blocks found
+  once per pattern, each block's matrix gathered from the whole one's values), the blocks in threads per `threads`;
+  the same blocks whatever the threads, so the same results.
 - `device`: `"cpu"` (default) or `"cuda"`: the array backend of the heavy linear algebra (`openalea.metafspm.backend`:
   numpy/scipy or CuPy). On `"cuda"`, the kinds' Kron reductions solve their many right-hand sides on the GPU (SuperLU's
   factors copied once), the linear solves go to `linear_solver="cupy"` (its default there: a system of at least

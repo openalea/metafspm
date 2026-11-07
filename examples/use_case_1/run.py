@@ -50,7 +50,8 @@ scene = Scene(
     forcings=weather(START),                  # a clear May day's light and air, a rain on the second day
     time_step=TIME_STEP,
     start=START,
-    # threads: the BLAS threads of each solve; workers: the processes evaluating the sections' reduced kinds
+    # threads: the kernels' and the plant solve's blocks (BLAS stays at one); workers: the processes evaluating
+    # the sections' reduced kinds
     compute=Compute(threads=1, workers="auto"),
     recorder=SceneRecorder(
         FOLDER,

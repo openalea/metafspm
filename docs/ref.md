@@ -37,8 +37,8 @@
    :members: Reduction, Relative, Kind, RecoveryTerms, display_ids, is_display_id
 
 .. automodule:: openalea.metafspm.solve.linear
-   :members: LinearSolver, SuperLU, SuperLUReuse, Cholmod, Cupy, LINEAR_SOLVERS, linear_solver, solve, held_rows,
-             SymmetryError
+   :members: LinearSolver, SuperLU, SuperLUReuse, Cholmod, Cupy, Pardiso, Mumps, LINEAR_SOLVERS, OPTIONAL_SOLVERS,
+             linear_solver, solve, held_rows, SymmetryError
 
 .. automodule:: openalea.metafspm.solve.conservation
    :members: Conservation

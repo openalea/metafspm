@@ -616,11 +616,7 @@ def thread_scaling(captured: Captured, threads=(1, 2, 4, 8, 12), nodes: int = 20
         matrix = csc_matrix(matrix, dtype=np.float64)
         matrix.sort_indices()
         blocks = _blocks(matrix)
-        pieces = []
-        for rows, _ in blocks:
-            block = matrix[rows][:, rows].tocsc()
-            block.sort_indices()
-            pieces.append((block, rhs[rows]))
+        pieces = [(block.matrix(matrix.data), rhs[block.rows]) for block in blocks]
         solves.append({"key": str(key), "nnz": int(matrix.nnz), "rows": int(matrix.shape[0]), "blocks": len(blocks),
                        "block_nnz": [int(block.nnz) for block, _ in pieces], "captured_seconds": seconds,
                        "pieces": pieces})

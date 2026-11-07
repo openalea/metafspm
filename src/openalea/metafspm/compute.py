@@ -3,13 +3,15 @@ A scene's run configuration: how many threads and processes it uses, its device 
 
     scene = Scene(planting, ..., compute=Compute(threads=1, workers="auto", memory="trim"))
 
-  threads        the BLAS, OpenMP and numba threads of the process while the scene builds and runs (threadpoolctl
-                 and numba.set_num_threads, as a context: a user's own numpy outside the scene is untouched); 1 by
-                 default, the measured optimum when the work is many small solves (more threads oversubscribe the
-                 cores: +36 % step time on use case 1)
-  workers        the process pool of the scene's parallel work (the kinds of a reduction, the independent blocks of
-                 a linear solve): "auto" (default) starts none until a batch is worth it (pool_size: at least 2
-                 kinds and about 1 s of estimated work), then a pool kept for the run (WorkerPool: started once,
+  threads        the threads of the scene's parallel work while it builds and runs: numba's kernels
+                 (numba.set_num_threads) and the linear solves' independent blocks (solve.linear: in threads, each
+                 block's factorisation sequential); BLAS and OpenMP are held at one thread within the scene
+                 (threadpoolctl, BLAS_THREADS), whatever threads: a threaded BLAS changes the results' last bits with
+                 its thread count and only oversubscribes the step's small dense work. As a context: a user's own
+                 numpy outside the scene is untouched. 1 by default; the results are the same, bit for bit, at any
+                 number (the kernels' chunks and the blocks come from the work only)
+  workers        the process pool of the scene's parallel work (the kinds of a reduction): "auto" (default) starts
+                 none until a batch is worth it (pool_size: at least 2 kinds and about 1 s of estimated work), then a pool kept for the run (WorkerPool: started once,
                  grown to the largest batch's need, closed by Scene.finish); an integer forces it (1: sequential, in
                  the process; n: a pool of n from the first batch). Deterministic: the work is independent and its
                  results merged in a fixed order, bit-identical whatever the number. The components' own setting
@@ -23,9 +25,12 @@ A scene's run configuration: how many threads and processes it uses, its device 
   memory         "trim" (default): glibc's malloc_trim(0) after each step, the memory freed given back to the system
                  (a no-op where there is no malloc_trim: macOS, Windows); "keep": nothing
   linear_solver  the sparse solver of the graph systems' linear steps (solve.linear's registry): "superlu"
-                 (the default on the cpu, scipy's), "cupy" (the default on cuda: the device's), "superlu_reuse" (its column ordering kept while the matrix's pattern does not
-                 change), "cholmod" (scikit-sparse, optional: the systems declared @graph_system(symmetric=True),
-                 the others SuperLU's); a missing optional package raises when the Scene is built
+                 (the default on the cpu, scipy's), "cupy" (the default on cuda: the device's), "superlu_reuse" (its
+                 column ordering kept while the matrix's pattern does not change), "cholmod" (scikit-sparse,
+                 optional: the systems declared @graph_system(symmetric=True), the others SuperLU's), "pardiso"
+                 (pypardiso, MKL) and "mumps" (python-mumps), optional and registered when their package is
+                 importable; a missing optional package raises when the Scene is built (or, for an unregistered one,
+                 at the Compute), with its install line
   kind_batch     the most interior cells evaluated at once in a reduction's library (its kinds' batches; the
                  library's transients freed between batches)
 
@@ -68,6 +73,9 @@ _ACTIVE = []                  # the Computes whose limits() are entered, the inn
 POOL_WORK = 1.                # s: the estimated work of a batch above which "auto" starts a pool
 SECONDS_PER_CELL = 3e-5       # s per interior cell of a kind: its evaluation's estimated cost (measured on use case 1:
                               # 3.2e-5 s per cell over 2 plants to day 8, the library's update included)
+BLAS_THREADS = 1              # the BLAS/OpenMP threads within a scene, whatever Compute.threads: a threaded BLAS
+                              # changes the results' last bits with its thread count (up to 1.5e-11 relative on use
+                              # case 1's potentials) and only oversubscribes the step's small dense work (measured)
 START_METHOD = "fork" if sys.platform.startswith("linux") else "spawn"     # the pool's processes
 
 
@@ -85,7 +93,7 @@ class Compute:
     _backend: object = field(default=None, init=False, repr=False, compare=False)
 
     def __post_init__(self):
-        from openalea.metafspm.solve.linear import LINEAR_SOLVERS
+        from openalea.metafspm.solve.linear import LINEAR_SOLVERS, unknown_solver
         if isinstance(self.threads, bool) or not isinstance(self.threads, int) or self.threads < 1:
             raise ValueError(f"Compute: threads is a positive integer, got {self.threads!r}")
         if self.workers != "auto" and (isinstance(self.workers, bool) or not isinstance(self.workers, int)
@@ -93,10 +101,11 @@ class Compute:
             raise ValueError(f"Compute: workers is 'auto' or a positive integer, got {self.workers!r}")
         if self.linear_solver is None:
             self.linear_solver = "cupy" if self.device == "cuda" else "superlu"
-        for name, value, choices in (("device", self.device, DEVICES), ("memory", self.memory, MEMORY),
-                                     ("linear_solver", self.linear_solver, tuple(LINEAR_SOLVERS))):
+        for name, value, choices in (("device", self.device, DEVICES), ("memory", self.memory, MEMORY)):
             if value not in choices:
                 raise ValueError(f"Compute: {name} is one of {choices}, got {value!r}")
+        if self.linear_solver not in LINEAR_SOLVERS:
+            raise ValueError(f"Compute: {unknown_solver(self.linear_solver)}")
         if self.linear_solver == "cupy" and self.device != "cuda":
             raise ValueError("Compute: linear_solver 'cupy' solves on the GPU: give device='cuda'")
         if isinstance(self.kind_batch, bool) or not isinstance(self.kind_batch, int) or self.kind_batch < 1:
@@ -120,14 +129,14 @@ class Compute:
 
     @contextmanager
     def limits(self):
-        """The process's BLAS/OpenMP threads (threadpoolctl) and numba's limited to *threads* within the context,
-        restored after; Compute.current() is this Compute within it."""
+        """numba's threads limited to *threads* within the context, the process's BLAS/OpenMP threads (threadpoolctl)
+        held at 1 (BLAS_THREADS), both restored after; Compute.current() is this Compute within it."""
         from threadpoolctl import ThreadpoolController
         import numba
         if self._controller is None:
             self._controller = ThreadpoolController()
         numba_threads = numba.get_num_threads()
-        with self._controller.limit(limits=self.threads):
+        with self._controller.limit(limits=BLAS_THREADS):
             numba.set_num_threads(min(self.threads, numba.config.NUMBA_NUM_THREADS))
             _ACTIVE.append(self)
             try:

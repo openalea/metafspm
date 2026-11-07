@@ -22,8 +22,8 @@ case's frame variables, and two checkpoints sharing their unchanging parts: thei
 shared parts once); --resume loads one into the freshly built scene and runs on from its hour to --days (the load's
 time and memory, then each step's: a resumed run evaluates no kind again); --scenario updates the plants' scenario
 (models.WHEAT_SCENARIO; a value read as JSON when it is, e.g. length_classes=0.2, else a string); --threads, --workers
-and --linear-solver the Compute's (the BLAS and numba threads, the pool of the kinds, the sparse solver), --device its
-device (cuda: the kinds' Kron
+and --linear-solver the Compute's (the threads of the kernels and solves, the pool of the kinds, the sparse solver),
+--device its device (cuda: the kinds' Kron
 reductions and the linear solves on the GPU, CuPy needed, docs/gpu.md; the device's transfers recorded at the end,
 "device"), the pool recorded per step and the peak
 memory of the process's control group (the pool's processes included: run it in its own systemd-run --scope), now
@@ -497,10 +497,12 @@ def main(argv=None):
     parser.add_argument("--resume", default=None, help="a checkpoint folder to resume from")
     parser.add_argument("--scenario", nargs="*", default=(), metavar="KEY=VALUE",
                         help="the plants' scenario entries (e.g. leaf_ports=bundles vapour_path=air_spaces)")
-    parser.add_argument("--threads", type=int, default=1, help="Compute(threads=): the BLAS and numba threads")
+    parser.add_argument("--threads", type=int, default=1,
+                        help="Compute(threads=): numba's kernels and the solves' blocks (BLAS stays at 1)")
     parser.add_argument("--workers", default="auto", help="Compute(workers=): auto (default) or a number")
     parser.add_argument("--linear-solver", default=None,
-                        help="Compute(linear_solver=): the device's default (superlu on cpu, cupy on cuda)")
+                        help="Compute(linear_solver=): the device's default (superlu on cpu, cupy on cuda), "
+                             "superlu_reuse, cholmod, pardiso, mumps")
     parser.add_argument("--device", default="cpu", choices=("cpu", "cuda"), help="Compute(device=)")
     parser.add_argument("--variability", type=int, default=None, metavar="SEED",
                         help="the plants differ (plant_variability: each its own seeded root draws)")

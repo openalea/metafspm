@@ -2,6 +2,30 @@
 
 ## Unreleased (release2026)
 
+### The solve and the threads' budget (devplan_scene_parallel P3)
+
+- **One thread budget, `Compute(threads=)`:** numba's kernels and the independent blocks of a linear solve (in
+  threads; they followed `workers`, the process pool's setting). BLAS and OpenMP are held at one thread within the
+  scene (`compute.BLAS_THREADS`), whatever `threads`: a threaded BLAS changed the results' last bits with its thread
+  count (up to 1.5e-11 relative on use case 1's potentials) and only oversubscribed the step's small dense work. The
+  results are now the same, bit for bit, at any number of threads. SuperLU's blocks use at most
+  `solve.linear.SUPERLU_BLOCK_THREADS` (4) threads: its factorisations are bound by the memory bandwidth and got
+  slower beyond on a laptop. `Compute()`'s default (threads 1) solves the blocks in sequence.
+- **A block's matrix gathered, not sliced:** a matrix's independent blocks are closed (their columns hold their rows
+  only), so each block's matrix is a gather of the matrix's values at positions found once per pattern
+  (`solve.linear._Block`), bit-identical to `matrix[rows][:, rows]` (8 plants, day 13: 0.14 s a solve → 0.09 with a
+  new pattern, 0.02 with the same).
+- **Optional solvers PARDISO and MUMPS** (`Compute(linear_solver="pardiso" | "mumps")`, extras
+  `openalea.metafspm[pardiso]`, `[mumps]`): registered only when their package (pypardiso, python-mumps) is
+  importable; naming a missing one raises with its install line. Each keeps its analysis per block while the pattern
+  does not change. PARDISO's blocks run in threads (each call on one MKL thread), MUMPS's in sequence (it is not
+  thread-safe). SuperLU stays the default: use case 1's plants grow every hour, so every step has a new pattern, and
+  SuperLU is then the fastest at 2, 8 and 16 plants. Their solutions differ from SuperLU's by up to 3e-12 relative
+  a solve (another pivoting, the same residual), 8e-10 on the potentials over 3 days at 2 plants; each gives the
+  same bits at any thread count.
+- **Kernel:** `scatter_weighted_blocks` keeps one k × k buffer a chunk instead of allocating one per group in the
+  parallel loop (bit-identical).
+
 ### Kernels for the scene's serial parts (devplan_scene_parallel P2)
 
 - **Traversals of the whole scene:** `MPG.components_at_scale` lists each scale's components in one loop, in

@@ -34,7 +34,7 @@ def _blas_threads() -> set:
 
 
 @pytest.mark.parametrize("given", [dict(threads=0), dict(threads=1.5), dict(workers=0), dict(workers="all"),
-                                   dict(device="gpu"), dict(memory="free"), dict(linear_solver="pardiso"),
+                                   dict(device="gpu"), dict(memory="free"), dict(linear_solver="umfpack"),
                                    dict(kind_batch=0)])
 def test_a_compute_checks_its_values(given):
     with pytest.raises(ValueError):
@@ -71,6 +71,25 @@ def test_the_threads_are_limited_while_the_scene_runs_and_restored_after(monkeyp
             numba.set_num_threads(before_numba)
     assert seen == [({1}, 1)]
     assert after == ({2}, outside)
+
+
+def test_blas_stays_at_one_thread_whatever_the_threads(monkeypatch):
+    """Compute.threads goes to numba's kernels and the solves' blocks; BLAS is held at BLAS_THREADS (1) within the
+    scene: a threaded BLAS changes the last bits with its thread count."""
+    if not _blas_threads():
+        pytest.skip("no BLAS library reports its threads")
+    seen = []
+    original = SceneSoil.run
+
+    def run(self):
+        seen.append((_blas_threads(), numba.get_num_threads()))
+        original(self)
+
+    monkeypatch.setattr(SceneSoil, "run", run, raising=False)
+    threads = min(2, numba.config.NUMBA_NUM_THREADS)
+    scene = _scene(compute=Compute(threads=threads))
+    scene.run()
+    assert seen == [({1}, threads)]
 
 
 def test_the_current_compute_is_the_scenes_within_its_steps(monkeypatch):

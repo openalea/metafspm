@@ -86,8 +86,8 @@ are then spawned rather than forked (CUDA does not survive a fork), and each one
 
 `variant_processes` checks the bound before anything starts:
 - several variant processes turn a scene's `workers="auto"` into 1;
-- an integer is kept if `workers × Compute.workers ≤ processors`, and so are the BLAS threads
-  (`workers × Compute.threads ≤ processors`);
+- an integer is kept if `workers × Compute.workers ≤ processors`, and so are the threads
+  (`workers × Compute.threads ≤ processors`: numba's kernels and the solves' blocks);
 - anything else raises "oversubscribe".
 
 ## Installing CuPy
