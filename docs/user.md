@@ -1098,22 +1098,33 @@ Its README describes each file and shows the figures.
 - Growth bookkeeping is incremental: only new vertices are read from the MTG.
 - An MPG-style step sees only the MTG properties its component declares; keep MTG reads in such steps to those.
 - `split="components"` solves its pieces one after the other; a whole system made of independent blocks (the
-  plants of a population) has its blocks solved apart, in `Compute.threads` threads (solve.linear, below); graph systems are solved
+  plants of a population) has its blocks solved apart, in threads within `Compute.threads` (solve.linear, below); graph systems are solved
   by sparse LU (SuperLU) unless `Compute(linear_solver=)` says otherwise.
 
 ### The run configuration: `Compute`
 
-`Scene(..., compute=Compute(threads=1, workers="auto", device="cpu", memory="trim"))` (`Compute()` when omitted)
-says how the scene uses the machine:
+`Scene(..., compute=Compute(threads="auto", workers="auto", device="cpu", memory="trim"))` (`Compute()` when
+omitted) says how the scene uses the machine:
 
-- `threads`: the threads of the scene's parallel work while it builds and runs: numba's kernels
-  (`numba.set_num_threads`) and the independent blocks of a linear solve (in threads, each block factorised in one;
-  SuperLU's at most `solve.linear.SUPERLU_BLOCK_THREADS`, 4: its factorisations are bound by the memory bandwidth and
-  get slower beyond on a laptop). BLAS and OpenMP stay at one thread within the scene, whatever `threads`
-  (`compute.BLAS_THREADS`, through `threadpoolctl`; numpy outside the scene keeps its own): a threaded BLAS changes
-  the results' last bits with its thread count (up to 1.5e-11 relative on use case 1's potentials) and only
-  oversubscribes the step's small dense work. The results are the same, bit for bit, at any number of threads: the
-  kernels' chunks and the blocks come from the work only. 1 by default (the blocks then solved in sequence).
+- `threads`: the threads' budget of the scene's parallel work while it builds and runs: numba's kernels
+  (`numba.set_num_threads`) and the independent blocks of a linear solve (in threads, each block factorised in one).
+  `"auto"` (default): the processors the process may run on (its CPU affinity: `compute.machine()`, which also
+  records the core types of a hybrid CPU), one in a pool's process (the pool is the parallel work there); an
+  integer: that many. Each parallel section takes at most the budget, one thread per independent work unit (a
+  kernel's chunks, a solve's blocks) and its ceiling: the reduction's scatter, bound by the memory bandwidth, at most
+  `compute.BANDWIDTH_THREADS_RULE` (4); SuperLU's block factorisations, bound by the bandwidth too, the count found
+  fastest on the system's own solves (`solve.linear.BlockThreads`: 1, 2, 4, … and the most allowed tried twice each,
+  the fewest within 10 % of the fastest kept, tried again when the system has grown fourfold; on a laptop, 8 plants,
+  day 13: 0.74 s at 1 thread, 0.35 at 4, 0.38–0.60 at 8 and 12). So a small scene (one block, a few chunks) runs in
+  one thread whatever the budget, a large one on the cores that pay, and each machine finds its own ceiling. BLAS
+  and OpenMP stay at one thread within the scene, whatever `threads` (`compute.BLAS_THREADS`, through
+  `threadpoolctl`; numpy outside the scene keeps its own): a threaded BLAS changes the results' last bits with its
+  thread count (up to 1.5e-11 relative on use case 1's potentials) and only oversubscribes the step's small dense
+  work. The results are the same, bit for bit, at any number of threads (`"auto"`, 1, 4, 12): the kernels' chunks and
+  the blocks come from the work only. `run.json` records the threads chosen (`"compute": {"threads": {"requested",
+  "budget", "processors", "core_types", ...}}`) and each kernel's and solver's time, calls and threads (`"compute":
+  {"timing": {"solve.superlu": {"seconds", "calls", "threads": {threads: calls}}, "kernels.scatter_weighted_blocks":
+  ...}}`).
 - `workers`: the process pool of the scene's parallel work: a reduction's missing kinds. `"auto"` (default) starts none until a batch of kinds is worth it (more than
   about a second of work, estimated from their interior cells, and at least two kinds), then
   `min(processors // 2, kinds)` processes, one processor left free, kept for the run and grown to the largest
@@ -1141,7 +1152,8 @@ says how the scene uses the machine:
   pypardiso, optional, x86 only: `pip install "openalea.metafspm[pardiso]"` or `pip install pypardiso`) and
   `"mumps"` (MUMPS through python-mumps, optional: `conda install -c conda-forge python-mumps`), registered only when
   their package is importable, each keeping its analysis (ordering, symbolic factorisation) per block while the
-  pattern does not change; PARDISO's blocks in `threads` threads, MUMPS's in sequence (it is not thread-safe). A
+  pattern does not change; PARDISO's blocks in the budget's threads (they scale), MUMPS's in sequence (it is not
+  thread-safe). A
   missing optional package raises when the Scene is built (or at the `Compute` for an unregistered one), with its
   install line. SuperLU stays the default: on use case 1 the plants grow every hour, so every step brings a new
   pattern and an analysis is not reused, where SuperLU is the fastest (8 plants, day 13: 0.74 s at 1 thread, 0.35
@@ -1150,8 +1162,8 @@ says how the scene uses the machine:
   relative a solve (another pivoting, the same residual; 8e-10 on the potentials over 3 days at 2 plants), the
   same at any thread count. A matrix of independent diagonal
   blocks of at least `solve.linear.BLOCKS_MIN_NONZEROS` (200k) entries is solved block by block (the blocks found
-  once per pattern, each block's matrix gathered from the whole one's values), the blocks in threads per `threads`;
-  the same blocks whatever the threads, so the same results.
+  once per pattern, each block's matrix gathered from the whole one's values), the blocks in threads within
+  `threads`; the same blocks whatever the threads, so the same results.
 - `device`: `"cpu"` (default) or `"cuda"`: the array backend of the heavy linear algebra (`openalea.metafspm.backend`:
   numpy/scipy or CuPy). On `"cuda"`, the kinds' Kron reductions solve their many right-hand sides on the GPU (SuperLU's
   factors copied once), the linear solves go to `linear_solver="cupy"` (its default there: a system of at least
@@ -1167,7 +1179,7 @@ says how the scene uses the machine:
   memory freed between them: a blade's kind is about 10k cells, a stem's 45k).
 
 Within the scene's build and steps, `Compute.current()` is the scene's Compute (what runs there reads it without
-being given it: a reduction's batches); outside, a default `Compute()`. `scenario.json` records the Compute, `run.json` the threads in use and the pool.
+being given it: a reduction's batches); outside, a default `Compute()`. `scenario.json` records the Compute, `run.json` the threads chosen, the kernels' and solvers' timing and the pool.
 
 ### Repeated runs: `run_variants`
 
@@ -1178,7 +1190,8 @@ in a process pool: *run* is a module-level function `run(name, scenario, compute
 in the scenarios' order. Each variant has a fresh process (its memory given back when it ends), forked on Linux and
 spawned on macOS, Windows or with `device="cuda"`; `workers=1` runs them one after the other in the process. The
 processes stay within the processors (`variant_processes`): `"auto"` is processors − 1, at most one per variant; with
-several variant processes, a scene's `workers="auto"` becomes 1 (the variants are the parallel work); an integer is
+several variant processes, a scene's `workers="auto"` becomes 1 (the variants are the parallel work) and its
+`threads="auto"` `processors // processes`; an integer is
 kept when `workers × Compute.workers` and `workers × Compute.threads` fit the processors, else it raises. On a laptop:
 `workers="auto"` and scenes of `Compute(workers=1)`; on a many-core workstation, k variants of a pool of w each
 (k × w ≤ processors); on a GPU workstation, one or two variants on the device ([Running on a GPU](gpu.md)).

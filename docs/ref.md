@@ -38,7 +38,7 @@
 
 .. automodule:: openalea.metafspm.solve.linear
    :members: LinearSolver, SuperLU, SuperLUReuse, Cholmod, Cupy, Pardiso, Mumps, LINEAR_SOLVERS, OPTIONAL_SOLVERS,
-             linear_solver, solve, held_rows, SymmetryError
+             linear_solver, solve, held_rows, SymmetryError, block_threads, BlockThreads
 
 .. automodule:: openalea.metafspm.solve.conservation
    :members: Conservation
@@ -140,7 +140,7 @@ The solvers are chosen by key in `graph_system(solver=...)`: `"newton"`, `"newto
    :members: Scene, AllMasks
 
 .. automodule:: openalea.metafspm.compute
-   :members: Compute, WorkerPool, WorkerError, worker_state, in_worker
+   :members: Compute, WorkerPool, WorkerError, worker_state, in_worker, machine, processors, core_types
 
 .. automodule:: openalea.metafspm.scene.environment
    :members: EnvironmentModel

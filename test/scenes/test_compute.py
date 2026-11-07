@@ -1,7 +1,8 @@
 """
 The run configuration (openalea.metafspm.compute.Compute): the threads limited while a scene runs and restored after,
-the memory trimmed after each step, the pool's size, the components' workers and device settings, and what
-scenario.json and run.json record.
+the memory trimmed after each step, threads="auto" (the processors, 1 in a pool's process) and each parallel
+section's threads, the kernels' and solvers' timing, the pool's size, the components' workers and device settings,
+and what scenario.json and run.json record.
 """
 import json
 from dataclasses import dataclass
@@ -33,7 +34,8 @@ def _blas_threads() -> set:
     return {info["num_threads"] for info in threadpool_info() if info["user_api"] == "blas"}
 
 
-@pytest.mark.parametrize("given", [dict(threads=0), dict(threads=1.5), dict(workers=0), dict(workers="all"),
+@pytest.mark.parametrize("given", [dict(threads=0), dict(threads=1.5), dict(threads="all"), dict(workers=0),
+                                   dict(workers="all"),
                                    dict(device="gpu"), dict(memory="free"), dict(linear_solver="umfpack"),
                                    dict(kind_batch=0)])
 def test_a_compute_checks_its_values(given):
@@ -43,7 +45,7 @@ def test_a_compute_checks_its_values(given):
 
 def test_a_scene_without_compute_has_the_default_one():
     scene = _scene()
-    assert scene.compute == Compute() and scene.compute.threads == 1 and scene.compute.workers == "auto"
+    assert scene.compute == Compute() and scene.compute.threads == "auto" and scene.compute.workers == "auto"
     with pytest.raises(TypeError):
         _scene(compute={"threads": 1})
 
@@ -90,6 +92,66 @@ def test_blas_stays_at_one_thread_whatever_the_threads(monkeypatch):
     scene = _scene(compute=Compute(threads=threads))
     scene.run()
     assert seen == [({1}, threads)]
+
+
+def test_auto_threads_are_the_processors_one_in_a_pools_process(monkeypatch):
+    """threads="auto": the processors this process may run on (its CPU affinity), 1 in a pool's process (the pool is
+    the parallel work there); an integer is the budget itself."""
+    assert Compute().threads == "auto"
+    assert Compute().thread_count() == len(compute_module.processors()) == compute_module.machine()["processors"]
+    assert Compute(threads=3).thread_count() == 3
+    monkeypatch.setitem(compute_module._WORKER, "index", 0)
+    assert compute_module.in_worker() and Compute().thread_count() == 1 and Compute(threads=3).thread_count() == 3
+
+
+def test_a_sections_threads_are_its_work_and_its_ceiling_within_the_budget():
+    """section_threads: min(the budget, the section's independent work units, its ceiling: "bandwidth"
+    BANDWIDTH_THREADS_RULE at most), at least 1: a small scene's sections run in one thread whatever the budget."""
+    rule = compute_module.BANDWIDTH_THREADS_RULE
+    for threads, work, section, expected in ((12, 8, "compute", 8), (12, 100, "compute", 12), (2, 100, "compute", 2),
+                                             (12, 100, "bandwidth", rule), (2, 100, "bandwidth", 2),
+                                             (12, 1, "bandwidth", 1), (12, 0, "compute", 1)):
+        assert Compute(threads=threads).section_threads(work, section) == expected
+    with pytest.raises(ValueError):
+        Compute().section_threads(4, "memory")
+
+
+def test_a_kernels_call_runs_in_its_sections_threads_and_is_timed():
+    """Compute.parallel: numba's threads set to the section's within the call, restored after, the call's time and
+    threads counted (timing_info: run.json's)."""
+    compute = Compute(threads=min(3, numba.config.NUMBA_NUM_THREADS))
+    with compute.limits():
+        before = numba.get_num_threads()
+        with compute.parallel("kernels.toy", 2) as threads:
+            seen = numba.get_num_threads()
+        assert numba.get_num_threads() == before
+    assert threads == seen == min(2, compute.threads)
+    with compute.timed("solve.toy", 4):
+        pass
+    timing = compute.timing_info()
+    assert timing["kernels.toy"]["calls"] == 1 and timing["kernels.toy"]["threads"] == {str(threads): 1}
+    assert timing["solve.toy"]["threads"] == {"4": 1} and timing["solve.toy"]["seconds"] >= 0.
+
+
+def test_the_core_types_of_a_hybrid_cpu(monkeypatch, tmp_path):
+    """core_types: Linux's cpu_core and cpu_atom processor lists, those of the processors given; None without."""
+    assert compute_module._cpu_list("0-3,8,10-11\n") == {0, 1, 2, 3, 8, 10, 11}
+    real_open = open
+
+    def fake_open(path, *args, **kwargs):
+        files = {"/sys/devices/cpu_core/cpus": "0-3\n", "/sys/devices/cpu_atom/cpus": "4-13\n"}
+        if path in files:
+            target = tmp_path / path.replace("/", "_")
+            target.write_text(files[path])
+            return real_open(target, *args, **kwargs)
+        if str(path).startswith("/sys/devices/"):
+            raise OSError(path)
+        return real_open(path, *args, **kwargs)
+    monkeypatch.setattr("builtins.open", fake_open)
+    assert compute_module.core_types(range(14)) == {"performance": 4, "efficient": 10}
+    assert compute_module.core_types([0, 1, 5]) == {"performance": 2, "efficient": 1}
+    monkeypatch.setattr("builtins.open", lambda path, *args, **kwargs: (_ for _ in ()).throw(OSError(path)))
+    assert compute_module.core_types([0]) is None
 
 
 def test_the_current_compute_is_the_scenes_within_its_steps(monkeypatch):
@@ -196,8 +258,12 @@ def test_scenario_and_run_record_the_compute(tmp_path):
         assert json.load(f)["compute"] == Compute(workers=2).as_dict()
     with open(tmp_path / "run.json") as f:
         run = json.load(f)["compute"]
-    assert run["threads"]["numba"] == 1 and run["pool"] is None
+    budget = Compute().thread_count()
+    assert run["threads"]["requested"] == "auto" and run["threads"]["budget"] == budget
+    assert run["threads"]["numba"] == min(budget, numba.config.NUMBA_NUM_THREADS) and run["pool"] is None
+    assert run["threads"]["processors"] == compute_module.machine()["processors"]
     assert all(threads == 1 for threads in run["threads"]["blas"].values())
+    assert isinstance(run["timing"], dict)                    # the kernels' and solvers' (none in this toy scene)
 
 
 def test_warm_up_runs_metafspms_kernels_and_every_registered_ports(monkeypatch):

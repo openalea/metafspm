@@ -628,12 +628,15 @@ class Reduction:
         pattern = assignment.table.pattern(node_ids)
         if pattern is None:
             return None
+        from openalea.metafspm.compute import Compute
+        compute = Compute.current()
         n = pattern.size
         data, e = np.empty(pattern.indices.size), np.zeros(n)
         blocks = assignment.blocks(system, "D")
         for (rows, local), slots, chunks in zip(pattern.blocks, pattern.slots, pattern.chunks):
-            kernels.scatter_weighted_blocks(data, slots, assignment.kind[rows], assignment.weights[rows], blocks,
-                                            chunks)
+            with compute.parallel("kernels.scatter_weighted_blocks", chunks.size - 1, "bandwidth"):
+                kernels.scatter_weighted_blocks(data, slots, assignment.kind[rows], assignment.weights[rows], blocks,
+                                                chunks)
             vector = assignment.combine(rows, lambda kind: kind[system].e)
             vector = vector + self._input_terms(ds, assignment, system, rows)
             e[local.reshape(-1)] += vector.reshape(-1)
@@ -1170,7 +1173,9 @@ class _Pattern:
             return None
         local = np.concatenate([nodes.reshape(-1) for _, nodes in blocks]).astype(np.int64)
         sizes = np.concatenate([np.full(nodes.shape[0], nodes.shape[1], dtype=np.int64) for _, nodes in blocks])
-        indptr, indices, slots = kernels.group_pattern(local, np.concatenate(([0], np.cumsum(sizes))), n)
+        from openalea.metafspm.compute import Compute
+        with Compute.current().timed("kernels.group_pattern"):
+            indptr, indices, slots = kernels.group_pattern(local, np.concatenate(([0], np.cumsum(sizes))), n)
         per_block, chunks, at = [], [], 0
         for _, nodes in blocks:
             groups, k = nodes.shape

@@ -2,6 +2,29 @@
 
 ## Unreleased (release2026)
 
+### One knob: `Compute(threads="auto")` (devplan_scene_parallel P5)
+
+- **`threads="auto"`, the default:** the threads' budget is the processors the process may run on (its CPU affinity,
+  `compute.machine()`, which also records a hybrid CPU's core types), one in a pool's process (the pool is the
+  parallel work there), `processors // processes` for each scene of several `run_variants` processes; an integer is
+  the budget itself. `Compute()`'s default (threads 1 since P3) solved the plants' blocks in sequence: they are in
+  threads again.
+- **Each parallel section takes the threads that pay:** at most the budget and one per independent work unit (a
+  kernel's chunks, a solve's blocks), within its ceiling (`Compute.section_threads`, `Compute.parallel` around a
+  kernel's call). The reduction's scatter, bound by the memory bandwidth, takes at most
+  `compute.BANDWIDTH_THREADS_RULE` (4). SuperLU's blocks find their count on the system's own solves
+  (`solve.linear.BlockThreads`: 1, 2, 4, ... and the most allowed tried twice each, the fewest within 10 % of the
+  fastest kept, tried again when the system has grown fourfold); it replaces `solve.linear.SUPERLU_BLOCK_THREADS`.
+  A solver says how its blocks run (`LinearSolver.block_section`: `"bandwidth"`, `"compute"`, `"sequence"`; it
+  replaces `block_threads_max`). A synthetic calibration was measured and rejected: SuperLU on synthetic blocks
+  scales to 2 threads or not at all on a laptop where the plant system's blocks reach 4. The results are the same,
+  bit for bit, at any number of threads.
+- **run.json** records the threads chosen (`"compute": {"threads": {"requested", "budget", "bandwidth_threads",
+  "processors", "core_types", "blas", "numba"}}`) and each kernel's and solver's time, calls and threads
+  (`"compute": {"timing": {...}}`: `solve.<solver>`, `solve.kron_reduction`, `kernels.scatter_weighted_blocks`,
+  `kernels.group_pattern`, `kernels.chain_scan`, `kernels.path_window`); `benchmark.py --threads auto|n` (default
+  `auto`) records them per step.
+
 ### The solve and the threads' budget (devplan_scene_parallel P3)
 
 - **One thread budget, `Compute(threads=)`:** numba's kernels and the independent blocks of a linear solve (in

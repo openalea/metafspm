@@ -4,7 +4,8 @@ reusing its ordering and its factorisation (the same solution, bit for bit), CHO
 tests skipped without it, its adapter tested on a stand-in), PARDISO and MUMPS (optional, registered when importable:
 their tests skipped without them), a missing package raising at the Scene's build with its install line; a system declared @graph_system(symmetric=True) checked once per pattern (its held rows, a Dirichlet
 node's, aside: CHOLMOD solves them first); a matrix of independent blocks solved block by block (each block's matrix
-gathered from the whole one's values), in Compute.threads threads, the same whatever the threads.
+gathered from the whole one's values), in threads within the Compute's budget (SuperLU's count found on its own
+solves: BlockThreads), the same whatever the threads.
 """
 import sys
 import types
@@ -101,15 +102,54 @@ def test_independent_blocks_are_solved_apart_the_same_whatever_the_threads(monke
     np.testing.assert_allclose(A @ solutions[0], b, atol=1e-10)
 
 
-def test_the_blocks_threads_are_the_computes_threads(monkeypatch):
-    """At most one a block, and at most the solver's block_threads_max: SuperLU's factorisations are bandwidth
-    bound, slower beyond SUPERLU_BLOCK_THREADS threads."""
-    for threads, blocks, most, expected in ((1, 8, None, 1), (4, 8, None, 4), (12, 8, None, 8), (12, 8, 4, 4),
-                                            (2, 8, 4, 2), (12, 8, 1, 1)):
-        with Compute(threads=threads, workers=1).limits():
-            assert linear._block_threads(blocks, most) == expected
-    assert linear.SuperLU.block_threads_max == linear.SUPERLU_BLOCK_THREADS
-    assert linear.Mumps.block_threads_max == 1                     # MUMPS is not thread-safe
+def test_the_blocks_threads_are_within_the_computes_budget(monkeypatch):
+    """At most the budget and one a block; MUMPS's in sequence (not thread-safe); one in a pool's process."""
+    from openalea.metafspm import compute as compute_module
+    for threads, blocks, section, expected in ((1, 8, "bandwidth", 1), (4, 8, "bandwidth", 4), (12, 8, "compute", 8),
+                                               (2, 8, "compute", 2), (12, 8, "sequence", 1)):
+        assert linear.block_threads(Compute(threads=threads), blocks, section) == expected
+    assert linear.SuperLU.block_section == linear.SuperLUReuse.block_section == "bandwidth"
+    assert linear.Mumps.block_section == "sequence"                 # MUMPS is not thread-safe
+    with pytest.raises(ValueError):
+        linear.block_threads(Compute(), 8, "memory")
+    monkeypatch.setitem(compute_module._WORKER, "index", 0)
+    assert linear.block_threads(Compute(threads=12), 8, "compute") == 1
+
+
+def test_superlus_block_threads_are_found_on_the_solves():
+    """BlockThreads: 1, 2, 4, ... and the most allowed tried twice each (up, then down), timed per nonzero; the
+    fewest within TUNE_TOLERANCE of the fastest kept; tried again when the system has grown TUNE_GROWTH times or the
+    most allowed changes."""
+    seconds = {1: 1.0, 2: 0.6, 4: 0.45, 7: 0.47}            # a laptop's: bandwidth bound beyond 4
+    tuner, seen = linear.BlockThreads(), []
+    for _ in range(10):
+        threads = tuner.threads(7, 1000)
+        seen.append(threads)
+        tuner.observe(threads, seconds[threads], 1000)
+    assert seen == [1, 2, 4, 7, 7, 4, 2, 1, 4, 4] and tuner.chosen == 4
+    assert tuner.threads(7, 4000) == 4                         # grown 4 times: not more
+    assert tuner.threads(7, 4001) == 1                         # more: tried again
+    assert linear.BlockThreads().threads(1, 1000) == 1
+    flat = linear.BlockThreads()
+    for _ in range(6):
+        threads = flat.threads(3, 10)
+        flat.observe(threads, {1: 1.0, 2: 0.95, 3: 0.92}[threads], 10)
+    assert flat.chosen == 1                                    # within 10 % of the fastest: the fewest
+
+
+def test_the_solves_threads_change_nothing_and_are_timed(monkeypatch):
+    """A system's blocks solved through BlockThreads' trials (1, 2, 3 threads: the budget, one a block): the same
+    bits at every count; each solve's time and threads in the Compute's timing ("solve.superlu")."""
+    monkeypatch.setattr(linear, "BLOCKS_MIN_NONZEROS", 100)
+    A, b = _matrix(n=150, pieces=3)
+    compute = Compute(threads=3)
+    with compute.limits():
+        solver = compute.linear()
+        solutions = [solver.solve(A, b, key="plants") for _ in range(7)]
+    for solution in solutions[1:]:
+        np.testing.assert_array_equal(solution, solutions[0])
+    timing = compute.timing_info()["solve.superlu"]
+    assert timing["calls"] == 7 and timing["threads"]["1"] >= 2 and timing["threads"]["3"] >= 2
 
 
 def test_a_blocks_matrix_is_the_slice_of_the_matrix_bit_for_bit(monkeypatch):

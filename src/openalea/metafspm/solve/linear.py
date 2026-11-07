@@ -18,8 +18,8 @@ The sparse solvers of the graph systems' linear steps (J δ = −R), chosen by C
                    smaller one by SuperLU on the host (backend's module)
   "pardiso"        MKL's PARDISO (pypardiso, optional, x86 only: pip install pypardiso), its analysis (ordering,
                    symbolic factorisation) kept per block while the pattern does not change, each block factorised
-                   and solved on one MKL thread, the blocks in Compute.threads threads (no bound: they scale to 12 on
-                   a laptop where SuperLU's stop at 4)
+                   and solved on one MKL thread, the blocks in the Compute's threads (no bandwidth bound: they scale
+                   to 12 on a laptop where SuperLU's stop at 4)
   "mumps"          MUMPS (python-mumps, optional, its sequential build: conda install -c conda-forge python-mumps),
                    its analysis kept per block while the pattern does not change; its blocks in sequence (MUMPS is
                    not thread-safe)
@@ -37,14 +37,17 @@ coupled): a matrix that is not raises. CHOLMOD solves its held rows first and th
 columns moved to the right-hand side: exact). A matrix of independent diagonal blocks (unconnected pieces: the plants of a population,
 coupled only through the soil once per step) of at least BLOCKS_MIN_NONZEROS entries is solved block by block (its
 blocks found once per pattern, each block's matrix a gather of the matrix's values at positions kept with the
-pattern), the blocks in Compute.threads threads, at most the solver's block_threads_max (SuperLU releases the GIL
-while it factorises; SUPERLU_BLOCK_THREADS: bandwidth bound beyond): deterministic, each block factorised in one
-thread, the same blocks whatever the number of threads.
+pattern), the blocks in threads, at most the Compute's budget and one a block (block_threads), per the solver's
+block_section: SuperLU's "bandwidth" (it releases the GIL while it factorises, bound by the memory bandwidth: the
+count found fastest on the system's own solves, BlockThreads), PARDISO's "compute" (the most allowed), MUMPS's
+"sequence" (one): deterministic, each block factorised in one thread, the same blocks whatever the number of
+threads. Each solve's time and threads are counted in the Compute's timing ("solve.<name>": run.json).
 
 A solver: LinearSolver.solve(matrix, rhs, key=None, symmetric=False); key names the system (its caches: patterns,
 orderings, factors), None for none. A new one is registered in LINEAR_SOLVERS by name.
 """
 from concurrent.futures import ThreadPoolExecutor
+from time import perf_counter
 
 import numpy as np
 import scipy.sparse as sp
@@ -56,9 +59,11 @@ from openalea.metafspm.backend import INSTALL_CUPY
 
 SYMMETRY_TOLERANCE = 1e-10          # a symmetric=True system's |A − Aᵀ|_max / |A|_max, at most
 BLOCKS_MIN_NONZEROS = 200_000       # a matrix solved block by block (its independent blocks) from this size on
-SUPERLU_BLOCK_THREADS = 4           # SuperLU's blocks in at most this many threads: its factorisations are bound by
-                                    # the memory bandwidth, slower beyond 4 threads on a laptop (8 plants, day 13:
-                                    # 0.74 s at 1 thread, 0.32-0.35 at 4, 0.38-0.60 at 8 and 12)
+BLOCK_SECTIONS = ("bandwidth", "compute", "sequence")    # a solver's block_section: its blocks' threads found on
+                                    # its solves (BlockThreads; SuperLU: its factorisations are bound by the memory
+                                    # bandwidth, slower beyond 4 threads on a laptop), the most allowed, or one
+TUNE_GROWTH = 4.                    # BlockThreads tries its counts again when the system has grown this many times
+TUNE_TOLERANCE = 0.1                # BlockThreads keeps the fewest threads within this fraction of the fastest time
 BLOCKS_MAX = 64                     # the blocks a matrix is solved in, at most (its pieces gathered in order)
 PATTERNS_KEPT = 8                   # the patterns a system's cache keeps (its pieces', its subgraphs'; a solver's
                                     # factor: the last one's only)
@@ -129,11 +134,11 @@ class LinearSolver:
     name = None
     package = None                           # an optional package it needs (check), and how to install it
     install = None
-    block_threads_max = SUPERLU_BLOCK_THREADS  # the threads its blocks are solved in, at most (Compute.threads
-                                               # otherwise; 1: in sequence, None: no bound)
+    block_section = "bandwidth"              # its blocks' threads (BLOCK_SECTIONS, block_threads)
 
     def __init__(self):
         self._patterns = {}                  # {key: [_Pattern]}
+        self._block_threads = {}             # {key: BlockThreads}: a "bandwidth" solver's blocks' threads per system
 
     @classmethod
     def check(cls) -> None:
@@ -148,7 +153,17 @@ class LinearSolver:
 
     def solve(self, matrix, rhs, key=None, symmetric: bool = False) -> np.ndarray:
         """x of matrix · x = rhs (a sparse matrix, a vector); *key* the system's (its caches), *symmetric* its
-        declaration (checked once per pattern)."""
+        declaration (checked once per pattern); its time counted as "solve.<name>" (Compute.timed)."""
+        from openalea.metafspm.compute import Compute
+        compute = Compute.current()
+        threads = [1]                                # the blocks' threads, set by _solve
+        started = perf_counter()
+        try:
+            return self._solve(matrix, rhs, key, symmetric, compute, threads)
+        finally:
+            compute.count(f"solve.{self.name}", perf_counter() - started, threads[0])
+
+    def _solve(self, matrix, rhs, key, symmetric: bool, compute, threads: list) -> np.ndarray:
         if not issparse(matrix):
             return np.linalg.solve(np.asarray(matrix, dtype=np.float64), rhs)
         matrix = csc_matrix(matrix, dtype=np.float64)
@@ -171,12 +186,26 @@ class LinearSolver:
                                                         pattern.state.get(b), symmetric)
             return block.rows, value
 
-        threads = _block_threads(len(pattern.blocks), self.block_threads_max)
-        if threads > 1:
-            with ThreadPoolExecutor(threads) as pool:
+        most = block_threads(compute, len(pattern.blocks), self.block_section)
+        tuner = None
+        if self.block_section == "bandwidth" and most > 1:
+            if key is None:                          # no system to tune for: the bandwidth-bound kernels' ceiling
+                most = compute.section_threads(most, "bandwidth")
+            else:
+                tuner = self._block_threads.pop(key, None) or BlockThreads()
+                self._block_threads[key] = tuner     # the most recently solved last
+                while len(self._block_threads) > SYSTEMS_KEPT:
+                    del self._block_threads[next(iter(self._block_threads))]
+                most = tuner.threads(most, matrix.nnz)
+        threads[0] = most
+        started = perf_counter()
+        if threads[0] > 1:
+            with ThreadPoolExecutor(threads[0]) as pool:
                 solved = list(pool.map(block_solve, range(len(pattern.blocks))))
         else:
             solved = [block_solve(b) for b in range(len(pattern.blocks))]
+        if tuner is not None:
+            tuner.observe(threads[0], perf_counter() - started, matrix.nnz)
         for rows, value in solved:
             x[rows] = value
         return x
@@ -312,7 +341,9 @@ class Cupy(LinearSolver):
             pattern.symmetric_checked = True
         state = pattern.state.setdefault(0, {})
         device = state.setdefault("factor", {})   # "factor": freed with the other patterns' (_pattern)
-        return Compute.current().backend().spsolve(matrix, np.asarray(rhs, dtype=np.float64), device)
+        compute = Compute.current()
+        with compute.timed(f"solve.{self.name}"):
+            return compute.backend().spsolve(matrix, np.asarray(rhs, dtype=np.float64), device)
 
     def factor_solve(self, matrix, rhs, state, symmetric: bool):
         return np.asarray(spsolve(matrix, rhs, permc_spec="MMD_AT_PLUS_A"), dtype=np.float64), None
@@ -353,7 +384,7 @@ class Pardiso(LinearSolver):
     name = "pardiso"
     package = "pypardiso"
     install = "pip install pypardiso (or conda install -c conda-forge pypardiso; MKL: x86 only)"
-    block_threads_max = None
+    block_section = "compute"
 
     def factor_solve(self, matrix, rhs, state, symmetric: bool):
         if state is None or state.get("factor") is None:
@@ -368,7 +399,7 @@ class Mumps(LinearSolver):
     name = "mumps"
     package = "mumps"
     install = "conda install -c conda-forge python-mumps (pip builds MUMPS from source)"
-    block_threads_max = 1
+    block_section = "sequence"
 
     def factor_solve(self, matrix, rhs, state, symmetric: bool):
         import mumps
@@ -472,11 +503,51 @@ def _blocks(matrix) -> list:
     return [_Block(matrix, order[bounds[b]:bounds[b + 1]]) for b in range(count) if bounds[b + 1] > bounds[b]]
 
 
-def _block_threads(blocks: int, most=None) -> int:
-    """The threads a matrix's *blocks* are solved in: the current Compute's threads, at most one per block and
-    *most* (a solver's block_threads_max; None: no bound), one in a pool's process."""
-    from openalea.metafspm.compute import Compute, in_worker
-    if in_worker():
+def block_threads(compute, blocks: int, section: str) -> int:
+    """The most threads a matrix's *blocks* are solved in: *compute*'s budget, at most one a block (section_threads);
+    one for a solver's block_section "sequence" and in a pool's process. A "bandwidth" solver's own count within it
+    is BlockThreads' (LinearSolver.solve)."""
+    from openalea.metafspm.compute import in_worker
+    if section not in BLOCK_SECTIONS:
+        raise ValueError(f"block_threads: section is one of {BLOCK_SECTIONS}, got {section!r}")
+    if in_worker() or section == "sequence":
         return 1
-    threads = min(Compute.current().threads, blocks)
-    return max(1, threads if most is None else min(threads, most))
+    return compute.section_threads(blocks)
+
+
+class BlockThreads:
+    """
+    The threads of a system's bandwidth-bound block solves (SuperLU's), found on its solves: the results are the
+    same at any count (each block one sequential factorisation, the same blocks), so its first solves of blocks try
+    1, 2, 4, ... and the most allowed (block_threads: the budget, one a block), each twice (in turn up, then down: a
+    growing system's trend cancels), timed per nonzero; then the fewest threads within TUNE_TOLERANCE of the fastest
+    is kept, until the system has grown TUNE_GROWTH times or the most allowed changes (tried again then). Measured on
+    a laptop (8 plants, day 13): 0.74 s at 1 thread, 0.35 at 4, 0.38-0.60 at 8 and 12; a synthetic calibration
+    (independent sparse blocks, any size) did not find that ceiling, the solves themselves do.
+    """
+
+    def __init__(self):
+        self.chosen, self.most, self.tuned_at = None, None, 0
+        self.trials, self.samples = [], {}
+
+    def threads(self, most: int, nonzeros: int) -> int:
+        """The threads of the next solve of *nonzeros* entries, *most* allowed: a trial's, else the chosen count."""
+        if most <= 1:
+            return 1
+        if not self.trials and (self.chosen is None or most != self.most or nonzeros > TUNE_GROWTH * self.tuned_at):
+            candidates = sorted({1 << power for power in range(most.bit_length()) if 1 << power <= most} | {most})
+            self.trials, self.samples = candidates + candidates[::-1], {}
+            self.most, self.tuned_at = most, nonzeros
+        return self.trials[0] if self.trials else self.chosen
+
+    def observe(self, threads: int, seconds: float, nonzeros: int) -> None:
+        """A solve of *nonzeros* entries in *threads* threads took *seconds*: a trial's time recorded, the count chosen
+        after the last trial."""
+        if not self.trials or threads != self.trials[0]:
+            return
+        self.trials.pop(0)
+        self.samples.setdefault(threads, []).append(seconds / max(nonzeros, 1))
+        if not self.trials:
+            means = {count: sum(values) / len(values) for count, values in self.samples.items()}
+            fastest = min(means.values())
+            self.chosen = min(count for count, value in means.items() if value <= fastest * (1 + TUNE_TOLERANCE))

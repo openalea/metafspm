@@ -9,7 +9,7 @@ end).
     python benchmark.py [--plants 2] [--days 3] [--label text] [--outputs] [--checkpoint-at 168 ...]
                         [--resume outputs/benchmarks/checkpoints/<label>/step_000168]
                         [--scenario leaf_ports=bundles vapour_path=air_spaces ...]
-                        [--threads n] [--workers auto|n] [--linear-solver superlu|superlu_reuse|cholmod|cupy]
+                        [--threads auto|n] [--workers auto|n] [--linear-solver superlu|superlu_reuse|cholmod|cupy]
                         [--device cpu|cuda] [--variability SEED] [--frames] [--profile-hours FIRST LAST]
                         [--cadence WheatPlant.anatomy="1 d" CaribuLightModel.light="3 h" ...]
                         [--memory] [--tracemalloc FRAMES] [--thread-scaling]
@@ -22,7 +22,9 @@ case's frame variables, and two checkpoints sharing their unchanging parts: thei
 shared parts once); --resume loads one into the freshly built scene and runs on from its hour to --days (the load's
 time and memory, then each step's: a resumed run evaluates no kind again); --scenario updates the plants' scenario
 (models.WHEAT_SCENARIO; a value read as JSON when it is, e.g. length_classes=0.2, else a string); --threads, --workers
-and --linear-solver the Compute's (the threads of the kernels and solves, the pool of the kinds, the sparse solver),
+and --linear-solver the Compute's (the threads' budget of the kernels and solves, "auto" by default, the pool of the
+kinds, the sparse solver; the threads chosen recorded, "threads", and each kernel's and solver's time, per step and
+in all, "kernels"),
 --device its device (cuda: the kinds' Kron
 reductions and the linear solves on the GPU, CuPy needed, docs/gpu.md; the device's transfers recorded at the end,
 "device"), the pool recorded per step and the peak
@@ -289,6 +291,7 @@ def benchmark(plants: int, days: float, measure_outputs: bool = False, checkpoin
     checkpoints = os.path.join(BENCHMARKS, "checkpoints", label)
     steps = []
     previous = dict(scene.timing)
+    previous_kernels = scene.compute.timing_info()
     profiler, profiled = None, os.path.join(BENCHMARKS, "profiles", f"{label}.prof")
     last_hour, captured = int(round(days * 24)), None
     for hour in range(first_hour, last_hour):
@@ -312,12 +315,17 @@ def benchmark(plants: int, days: float, measure_outputs: bool = False, checkpoin
         kinds, kind_seconds, templates, batches = counter.take()
         timing = {name: value - previous.get(name, 0.) for name, value in scene.timing.items()}
         previous = dict(scene.timing)
+        kernels = scene.compute.timing_info()
+        kernel_seconds = {name: entry["seconds"] - previous_kernels.get(name, {}).get("seconds", 0.)
+                          for name, entry in kernels.items()}
+        previous_kernels = kernels
         nodes = sum(population.data_structure.n_nodes() for population in scene.populations)
         dense = dense_blocks(scene)
         steps.append({"hour": hour + 1, "seconds": seconds, "dense_nnz": dense,
                       "pool": scene.compute.pool_info(),
                       "models": {name: value for name, value in timing.items() if "." not in name},
                       "components": {name: value for name, value in timing.items() if "." in name}, "kinds": kinds,
+                      "kernels": kernel_seconds,
                       "new_templates": templates,
                       "kind_seconds": kind_seconds, "kind_batches": batches, "nodes": nodes,
                       "rss_gb": resident_memory(), "scope_gb": scope_memory(),
@@ -357,6 +365,8 @@ def benchmark(plants: int, days: float, measure_outputs: bool = False, checkpoin
               "machine": {"processors": os.cpu_count(), "platform": platform.platform(),
                           "python": platform.python_version()},
               "compute": compute.as_dict() if compute is not None else None,
+              "threads": compute.thread_info() if compute is not None else None,
+              "kernels": compute.timing_info() if compute is not None else None,
               "environment": {name: os.environ.get(name) for name in
                               ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS", "MALLOC_ARENA_MAX")},
               "build_seconds": built, "total_seconds": total, "resumed": loaded,
@@ -497,8 +507,9 @@ def main(argv=None):
     parser.add_argument("--resume", default=None, help="a checkpoint folder to resume from")
     parser.add_argument("--scenario", nargs="*", default=(), metavar="KEY=VALUE",
                         help="the plants' scenario entries (e.g. leaf_ports=bundles vapour_path=air_spaces)")
-    parser.add_argument("--threads", type=int, default=1,
-                        help="Compute(threads=): numba's kernels and the solves' blocks (BLAS stays at 1)")
+    parser.add_argument("--threads", default="auto",
+                        help="Compute(threads=): auto (default) or a number, the budget of numba's kernels and the "
+                             "solves' blocks (BLAS stays at 1)")
     parser.add_argument("--workers", default="auto", help="Compute(workers=): auto (default) or a number")
     parser.add_argument("--linear-solver", default=None,
                         help="Compute(linear_solver=): the device's default (superlu on cpu, cupy on cuda), "
@@ -521,7 +532,7 @@ def main(argv=None):
                         help="time the last step's large solves and parallel kernels at 1-12 threads")
     arguments = parser.parse_args(argv)
     from openalea.metafspm.compute import Compute
-    compute = Compute(threads=arguments.threads,
+    compute = Compute(threads=arguments.threads if arguments.threads == "auto" else int(arguments.threads),
                       workers=arguments.workers if arguments.workers == "auto" else int(arguments.workers),
                       linear_solver=arguments.linear_solver, device=arguments.device)
     label = arguments.label or f"{arguments.plants}p_{arguments.days:g}d"

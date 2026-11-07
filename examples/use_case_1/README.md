@@ -179,7 +179,7 @@ exchange's canopy height was 0 and no element exchanged (gs, An and the transpir
 `run.py` is the script to read first: two plants over two weeks of May, hour by hour, from their sowing (`python
 run.py [days] [plants] [folder]`, by default 14 days, 2 plants, `outputs/from_sowing`). It reads top to bottom: the
 settings (days, plants, the time step, the sowing's date), the stand (one row, 5 cm apart, 3 cm deep), the Scene
-(the plants, the soil and the light, the weather, the run configuration `Compute(threads=1, workers="auto")`), its
+(the plants, the soil and the light, the weather, the run configuration `Compute(threads="auto", workers="auto")`), its
 recorder (the tables, frames every 12 hours with their views, the first plant's sections once a day, a checkpoint a
 day), `scene.simulate(...)`, then `scene.recorder.pack()`, the frames in one archive. What it assembles lives in
 `models.py`: the plant model and its scenario, the soil's and the light's scenarios (`SOIL_SCENARIO`: a loam 50 cm
@@ -209,16 +209,19 @@ every hour (the tables can be read while it runs):
   residual per step (their solves' declared conservation: MECHA's `PLANT_WATER`, the soil's `WATER`; the residuals
   are round-off);
 - `run.json`: the run's progress after every hour, then its end, with the wall time per model and per component
-  (`timing`), the calls per component and the frames' archive;
+  (`timing`), the calls per component, the threads chosen and each kernel's and solver's time and threads
+  (`compute`) and the frames' archive;
 - `frames/`: a frame every 12 hours with its views (`frame_views="default"`), the sections of the first plant
   (`display_plants=["p0"]`) drawn in the frames of every 24 hours and the last (`display_period`), packed at the end
   into `frames.fspm.zip`;
 - `checkpoints/`: one a day (the last two kept; the anatomy templates and the reduced sections saved once, in
   `checkpoints/shared`): `Scene.load_checkpoint` resumes the run from it, bit for bit.
 
-The run's configuration, `Compute(threads=1, workers="auto")` (metafspm's default, shown in `run.py`): one thread for
-numba's kernels and the plant system's blocks (BLAS stays at one thread at any `threads`: the results are the same
-bit for bit at any number; 8 plants, day 13: 5.27 s per hour at 1 thread, 5.18 at 4, 5.19 at 12), the memory freed given
+The run's configuration, `Compute(threads="auto", workers="auto")` (metafspm's default, shown in `run.py`): the
+processors for numba's kernels and the plant system's blocks, each part taking those that pay (the plant system's
+blocks in the count found fastest on its own solves: 4 on this laptop; BLAS stays at one thread at any `threads`:
+the results are the same bit for bit at any number; 8 plants, day 13: 5.34 s per hour at 1 thread, 5.25 with
+"auto", 5.12 at 4, 5.16 at 12), the memory freed given
 back after each hour (`malloc_trim`), and the environment's `MALLOC_ARENA_MAX=2` (`environment.yaml`'s
 `variables:`; outside the conda environment, `export MALLOC_ARENA_MAX=2` before running). Its `workers="auto"` starts a pool of processes for the
 reduction's kinds when a batch is worth it (the first hours, the days the organs emerge): measured on a 14-thread
@@ -226,7 +229,8 @@ laptop (2026-11-06), the same results bit for bit with 1, "auto" (6) or 4 proces
 with 1, 212 s with "auto" (last day 1.97 → 1.83 s per hour, first hour 6.3 → 4.1 s), 208 s with 4 (1.68 s), the
 memory's peak, the processes included, 3.4, 4.3 and 5.0 GB; 8 plants to day 4, last day 1.08 → 0.97 s; 16 plants,
 1.78 → 1.52 s. `benchmark.py --workers 1|auto|n --linear-solver superlu|superlu_reuse|cholmod|pardiso|mumps` compares them
-(`--threads n`: numba's kernels and the plant system's blocks; BLAS stays at one thread).
+(`--threads auto|n`: the budget of numba's kernels and the plant system's blocks, "auto" by default; BLAS stays at
+one thread; the benchmark's entry records the threads chosen and each kernel's and solver's time, per step).
 
 **Scaling** (measured 2026-11-07 on the same laptop, metafspm f3a2148, GRANAP c626201, after the incremental
 topology updates; `benchmark.py --variability 1`: each plant its own root draws, the plants sharing their kinds;

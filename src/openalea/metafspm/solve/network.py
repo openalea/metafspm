@@ -279,8 +279,10 @@ class KronReduction:
         difference = abs(A - A.T)
         self.symmetric = bool(difference.nnz == 0 or difference.max() <= 1e-14 * abs(A).max())
         self._lu, self._keep = None, True
-        self._X = (self._factorisation().solve(self._A_IK) if I.size and K.size
-                   else np.zeros((I.size, K.size)))
+        from openalea.metafspm.compute import Compute
+        with Compute.current().timed("solve.kron_reduction"):          # run.json's timing (a kind's reduction)
+            self._X = (self._factorisation().solve(self._A_IK) if I.size and K.size
+                       else np.zeros((I.size, K.size)))
         self.reduced = np.asarray(A[K][:, K].toarray() - self._A_KI @ self._X)
 
     def _factorisation(self):

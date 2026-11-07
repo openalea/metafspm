@@ -1,15 +1,23 @@
 """
 A scene's run configuration: how many threads and processes it uses, its device and its memory behaviour::
 
-    scene = Scene(planting, ..., compute=Compute(threads=1, workers="auto", memory="trim"))
+    scene = Scene(planting, ..., compute=Compute(threads="auto", workers="auto", memory="trim"))
 
-  threads        the threads of the scene's parallel work while it builds and runs: numba's kernels
+  threads        the threads' budget of the scene's parallel work while it builds and runs: numba's kernels
                  (numba.set_num_threads) and the linear solves' independent blocks (solve.linear: in threads, each
-                 block's factorisation sequential); BLAS and OpenMP are held at one thread within the scene
-                 (threadpoolctl, BLAS_THREADS), whatever threads: a threaded BLAS changes the results' last bits with
-                 its thread count and only oversubscribes the step's small dense work. As a context: a user's own
-                 numpy outside the scene is untouched. 1 by default; the results are the same, bit for bit, at any
-                 number (the kernels' chunks and the blocks come from the work only)
+                 block's factorisation sequential). "auto" (default): the processors this process may run on
+                 (machine(): its CPU affinity), 1 in a pool's process (the pool is the parallel work there); an
+                 integer: that many. Each parallel section takes min(the budget, its independent work units: chunks,
+                 blocks; the section's ceiling): the reduction's scatter (bandwidth bound) at most
+                 BANDWIDTH_THREADS_RULE, SuperLU's block factorisations (bandwidth bound) the count found fastest on
+                 the solves themselves (solve.linear.BlockThreads: 1, 2, 4, ... tried in turn, again when the system
+                 has grown). So a small scene (one block, few chunks) runs in one thread whatever the budget, and a
+                 machine finds its own ceiling. BLAS and OpenMP are held at one thread within
+                 the scene (threadpoolctl, BLAS_THREADS), whatever threads: a threaded BLAS changes the results'
+                 last bits with its thread count and only oversubscribes the step's small dense work. As a context:
+                 a user's own numpy outside the scene is untouched. The results are the same, bit for bit, at any
+                 number (the kernels' chunks and the blocks come from the work only); run.json records the threads
+                 chosen (thread_info) and the time of each kernel and solver (timing_info)
   workers        the process pool of the scene's parallel work (the kinds of a reduction): "auto" (default) starts
                  none until a batch is worth it (pool_size: at least 2 kinds and about 1 s of estimated work), then a pool kept for the run (WorkerPool: started once,
                  grown to the largest batch's need, closed by Scene.finish); an integer forces it (1: sequential, in
@@ -77,11 +85,15 @@ BLAS_THREADS = 1              # the BLAS/OpenMP threads within a scene, whatever
                               # changes the results' last bits with its thread count (up to 1.5e-11 relative on use
                               # case 1's potentials) and only oversubscribes the step's small dense work (measured)
 START_METHOD = "fork" if sys.platform.startswith("linux") else "spawn"     # the pool's processes
+BANDWIDTH_THREADS_RULE = 4    # the bandwidth-bound kernels' threads, at most (the reduction's scatter): a laptop's
+                              # measured ceiling (Core Ultra 7 255U: the scatter 1.7x at 2-4 threads, flat beyond; a
+                              # triad 1.5x at 4 then flat)
+SECTIONS = ("compute", "bandwidth")   # a parallel section's ceiling: the budget, or machine()'s bandwidth_threads
 
 
 @dataclass
 class Compute:
-    threads: int = 1
+    threads: object = "auto"
     workers: object = "auto"
     device: str = "cpu"
     memory: str = "trim"
@@ -91,11 +103,13 @@ class Compute:
     _pool: object = field(default=None, init=False, repr=False, compare=False)
     _linear: object = field(default=None, init=False, repr=False, compare=False)
     _backend: object = field(default=None, init=False, repr=False, compare=False)
+    _timings: dict = field(default_factory=dict, init=False, repr=False, compare=False)
 
     def __post_init__(self):
         from openalea.metafspm.solve.linear import LINEAR_SOLVERS, unknown_solver
-        if isinstance(self.threads, bool) or not isinstance(self.threads, int) or self.threads < 1:
-            raise ValueError(f"Compute: threads is a positive integer, got {self.threads!r}")
+        if self.threads != "auto" and (isinstance(self.threads, bool) or not isinstance(self.threads, int)
+                                       or self.threads < 1):
+            raise ValueError(f"Compute: threads is 'auto' or a positive integer, got {self.threads!r}")
         if self.workers != "auto" and (isinstance(self.workers, bool) or not isinstance(self.workers, int)
                                        or self.workers < 1):
             raise ValueError(f"Compute: workers is 'auto' or a positive integer, got {self.workers!r}")
@@ -117,7 +131,7 @@ class Compute:
 
     def __getstate__(self):
         state = dict(self.__dict__)
-        state.update(_controller=None, _pool=None, _linear=None, _backend=None)
+        state.update(_controller=None, _pool=None, _linear=None, _backend=None, _timings={})
         return state
 
     @staticmethod
@@ -127,17 +141,36 @@ class Compute:
 
     # ── threads ──
 
+    def thread_count(self) -> int:
+        """The threads' budget: an integer threads itself; "auto" the processors this process may run on
+        (machine()), 1 in a pool's process (the pool is the parallel work there: no threads within its processes)."""
+        if self.threads != "auto":
+            return self.threads
+        if in_worker():
+            return 1
+        return machine()["processors"]
+
+    def section_threads(self, work: int, section: str = "compute") -> int:
+        """The threads a parallel section of *work* independent units (chunks, blocks) is given: min(the budget,
+        *work*, the section's ceiling: "compute" none, "bandwidth" machine()'s bandwidth_threads), at least 1."""
+        if section not in SECTIONS:
+            raise ValueError(f"Compute.section_threads: section is one of {SECTIONS}, got {section!r}")
+        threads = min(self.thread_count(), int(work))
+        if section == "bandwidth":
+            threads = min(threads, machine()["bandwidth_threads"])
+        return max(1, threads)
+
     @contextmanager
     def limits(self):
-        """numba's threads limited to *threads* within the context, the process's BLAS/OpenMP threads (threadpoolctl)
-        held at 1 (BLAS_THREADS), both restored after; Compute.current() is this Compute within it."""
+        """numba's threads limited to the budget (thread_count) within the context, the process's BLAS/OpenMP threads
+        (threadpoolctl) held at 1 (BLAS_THREADS), both restored after; Compute.current() is this Compute within it."""
         from threadpoolctl import ThreadpoolController
         import numba
         if self._controller is None:
             self._controller = ThreadpoolController()
         numba_threads = numba.get_num_threads()
         with self._controller.limit(limits=BLAS_THREADS):
-            numba.set_num_threads(min(self.threads, numba.config.NUMBA_NUM_THREADS))
+            numba.set_num_threads(min(self.thread_count(), numba.config.NUMBA_NUM_THREADS))
             _ACTIVE.append(self)
             try:
                 yield self
@@ -145,11 +178,57 @@ class Compute:
                 _ACTIVE.pop()
                 numba.set_num_threads(numba_threads)
 
+    @contextmanager
+    def parallel(self, name: str, work: int, section: str = "compute"):
+        """A numba kernel's call: numba's threads set to section_threads(*work*, *section*) within it (restored
+        after), its time counted under *name* (timed). Yields the threads."""
+        import numba
+        threads = min(self.section_threads(work, section), numba.config.NUMBA_NUM_THREADS)
+        previous = numba.get_num_threads()
+        numba.set_num_threads(threads)
+        try:
+            with self.timed(name, threads):
+                yield threads
+        finally:
+            numba.set_num_threads(previous)
+
+    @contextmanager
+    def timed(self, name: str, threads: int = None):
+        """The context's wall time and call counted under *name* (count), with *threads*."""
+        started = time.perf_counter()
+        try:
+            yield
+        finally:
+            self.count(name, time.perf_counter() - started, threads)
+
+    def count(self, name: str, seconds: float, threads: int = None) -> None:
+        """A call of *seconds* counted under *name* (a kernel's, a solver's: run.json's "compute"/"timing"), and its
+        *threads* ("threads": {threads: calls})."""
+        entry = self._timings.setdefault(name, {"seconds": 0., "calls": 0})
+        entry["seconds"] += seconds
+        entry["calls"] += 1
+        if threads is not None:
+            counts = entry.setdefault("threads", {})
+            counts[str(int(threads))] = counts.get(str(int(threads)), 0) + 1
+
+    def timing_info(self) -> dict:
+        """{name: {"seconds", "calls", "threads": {threads: calls}}} of the kernels and solvers timed since the run
+        began (timed, count): run.json's record."""
+        return {name: {**entry, "seconds": round(entry["seconds"], 6),
+                       **({"threads": dict(entry["threads"])} if "threads" in entry else {})}
+                for name, entry in sorted(self._timings.items())}
+
     def thread_info(self) -> dict:
-        """The threads in use now ({"blas": {library: threads}, "numba": n}): run.json's record of a run."""
+        """The threads chosen and in use now: {"requested": threads, "budget": thread_count(), "bandwidth_threads",
+        "processors", "core_types" (machine()'s), "blas": {library: threads}, "numba": n}: run.json's record of a
+        run (each section's threads: timing_info)."""
         import numba
         from threadpoolctl import threadpool_info
-        return {"blas": {f"{info['internal_api']} ({os.path.basename(info['filepath'])})": info["num_threads"]
+        found = machine()
+        return {"requested": self.threads, "budget": self.thread_count(),
+                "bandwidth_threads": found["bandwidth_threads"], "processors": found["processors"],
+                "core_types": found["core_types"],
+                "blas": {f"{info['internal_api']} ({os.path.basename(info['filepath'])})": info["num_threads"]
                          for info in threadpool_info()},
                 "numba": numba.get_num_threads()}
 
@@ -397,6 +476,58 @@ def _malloc_trim():
     return _LIBC[0]
 
 
+# ── the machine ───────────────────────────────────────────────────────────
+
+_MACHINE = {}                 # {processors (the CPU affinity, a tuple): machine()'s}, found once per process and set
+
+
+def processors() -> tuple:
+    """The processors this process may run on: its CPU affinity (os.sched_getaffinity, Linux), else all."""
+    try:
+        return tuple(sorted(os.sched_getaffinity(0)))
+    except AttributeError:                        # macOS, Windows
+        return tuple(range(os.cpu_count() or 1))
+
+
+def _cpu_list(text: str) -> set:
+    """The processors of a sysfs list ("0-3,8,10-11")."""
+    found = set()
+    for part in text.strip().split(","):
+        if part:
+            first, _, last = part.partition("-")
+            found.update(range(int(first), int(last or first) + 1))
+    return found
+
+
+def core_types(among=None) -> dict:
+    """On a hybrid CPU (Linux's /sys/devices/cpu_core and cpu_atom), {"performance": n, "efficient": m} of the
+    processors *among* (default: processors()); None where the kernel does not tell them apart."""
+    among = set(processors() if among is None else among)
+    found = {}
+    for device, kind in (("cpu_core", "performance"), ("cpu_atom", "efficient")):
+        try:
+            with open(f"/sys/devices/{device}/cpus") as file:
+                found[kind] = len(_cpu_list(file.read()) & among)
+        except (OSError, ValueError):
+            continue
+    return found or None
+
+
+def machine() -> dict:
+    """
+    This process's processors: {"processors": n (its CPU affinity), "core_types" (core_types()),
+    "bandwidth_threads": min(n, BANDWIDTH_THREADS_RULE), the bandwidth-bound kernels' ceiling (the reduction's
+    scatter)}. Found once per process and processor set. (The linear solves' blocks find theirs on the solves
+    themselves: solve.linear's BlockThreads.)
+    """
+    among = processors()
+    if among not in _MACHINE:
+        count = len(among)
+        _MACHINE[among] = {"processors": count, "core_types": core_types(among),
+                           "bandwidth_threads": min(count, BANDWIDTH_THREADS_RULE)}
+    return _MACHINE[among]
+
+
 def warm_up(ports: bool = True) -> dict:
     """
     numba's cache filled: every kernel of metafspm (kernels.warm_up) and, with *ports*, of every installed port (its
@@ -417,7 +548,8 @@ def warm_up(ports: bool = True) -> dict:
 
 
 def main(argv=None) -> None:
-    """python -m openalea.metafspm warm_up [--no-ports]: warm_up's, each package's time printed."""
+    """python -m openalea.metafspm warm_up [--no-ports]: warm_up's, each package's time printed, then the machine's
+    processors (machine())."""
     parser = argparse.ArgumentParser(prog="python -m openalea.metafspm",
                                      description="metafspm's run configuration tools")
     parser.add_argument("command", choices=("warm_up",))
@@ -425,3 +557,5 @@ def main(argv=None) -> None:
     arguments = parser.parse_args(argv)
     for name, value in warm_up(ports=not arguments.no_ports).items():
         print(f"{name:<20} {value:7.2f} s")
+    found = machine()
+    print(f"threads=\"auto\": {found['processors']} processors (core types {found['core_types']})")

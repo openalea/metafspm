@@ -2,8 +2,9 @@
 metafspm's numba kernels, in one place (conventions.md, "Performance rules"): the loops that stay sequential (tree
 scans, chains, path windows, segment pieces, the turtle, a reduction's groups' terms), each @njit(cache=True),
 nogil=True for those a step runs on the whole scene, parallel=True only where the iterations are independent and the
-work is large (numba's threads are Compute.threads), over chunks made from the work only (work_chunks). Called
-through their modules' functions (data_structure.tree_kernels, coupling.geometry, coupling.cross, solve.reduction).
+work is large (numba's threads Compute.parallel's: the Compute's threads, at most one per chunk and the section's
+ceiling), over chunks made from the work only (work_chunks). Called through their modules' functions
+(data_structure.tree_kernels, coupling.geometry, coupling.cross, solve.reduction), which time them (run.json).
 warm_up() runs every one on tiny inputs, which fills numba's on-disk cache (NUMBA_CACHE_DIR for a read-only install):
 compute.warm_up runs it with every port's.
 """

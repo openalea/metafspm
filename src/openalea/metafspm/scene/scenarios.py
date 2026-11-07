@@ -318,8 +318,9 @@ def variant_processes(workers, compute=None, variants: int = None) -> tuple:
     (processes, compute): how run_variants runs *variants* scenes at once. *workers*: the variants' processes, an
     integer or "auto" (processors − 1, at most one per variant); *compute*: each scene's Compute (default
     Compute(workers=1)). With more than one process, a scene's workers="auto" becomes 1 (the variants are the
-    parallel work: no pool in each); an integer is kept when processes × that many (a scene's pool, its main
-    process waiting on it) and processes × its threads stay within the processors, else ValueError (oversubscribed).
+    parallel work: no pool in each) and its threads="auto" processors // processes (the processors shared); an
+    integer is kept when processes × that many (a scene's pool, its main process waiting on it) and processes × its
+    threads stay within the processors, else ValueError (oversubscribed).
     """
     from dataclasses import replace
     from openalea.metafspm.compute import Compute
@@ -333,8 +334,10 @@ def variant_processes(workers, compute=None, variants: int = None) -> tuple:
         raise ValueError(f"run_variants: workers is 'auto' or a positive integer, got {workers!r}")
     if workers > 1 and compute.workers == "auto":
         compute = replace(compute, workers=1)
+    if workers > 1 and compute.threads == "auto":
+        compute = replace(compute, threads=max(1, processors // workers))
     per_scene = 1 if compute.workers == "auto" else int(compute.workers)
-    if workers > 1 and (workers * per_scene > processors or workers * compute.threads > processors):
+    if workers > 1 and (workers * per_scene > processors or workers * compute.thread_count() > processors):
         raise ValueError(f"run_variants: {workers} variant processes × Compute(workers={compute.workers}, "
                          f"threads={compute.threads}) oversubscribe the {processors} processors: lower one of them")
     return workers, compute

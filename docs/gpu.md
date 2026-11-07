@@ -85,7 +85,8 @@ are then spawned rather than forked (CUDA does not survive a fork), and each one
 | GPU workstation | `run_variants(..., workers=1 or 2, compute=Compute(device="cuda", workers=1))` | the device shared by few processes (each has its own context and memory); the other cores free for Caribu's threads |
 
 `variant_processes` checks the bound before anything starts:
-- several variant processes turn a scene's `workers="auto"` into 1;
+- several variant processes turn a scene's `workers="auto"` into 1 and its `threads="auto"` into
+  `processors // workers` (the processors shared);
 - an integer is kept if `workers × Compute.workers ≤ processors`, and so are the threads
   (`workers × Compute.threads ≤ processors`: numba's kernels and the solves' blocks);
 - anything else raises "oversubscribe".

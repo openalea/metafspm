@@ -53,6 +53,8 @@ def test_the_processes_are_bounded(monkeypatch):
         variant_processes(3, Compute(workers=4))
     with pytest.raises(ValueError, match="oversubscribe"):
         variant_processes(4, Compute(threads=4))
+    assert variant_processes(4, Compute())[1].threads == 2                     # "auto": the processors shared
+    assert variant_processes(1, Compute())[1].threads == "auto"
     with pytest.raises(ValueError):
         variant_processes(0)
 

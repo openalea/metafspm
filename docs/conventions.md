@@ -178,8 +178,9 @@ For metafspm and every port: no Python loop over groups, nodes or entities in a 
 3. **numba where a loop stays sequential or a scatter is irregular** (tree scans, z-buffers, form factors, a turtle,
    a reduction's dense blocks into the scene's sparse matrix): numba is a hard dependency, no fallback. Every kernel
    is `@njit(cache=True)` in its package's `kernels.py` (one module to warm up, review and port), `nogil=True` when a
-   step runs it on the whole scene, `parallel=True` only for independent iterations and large work (numba's threads
-   are `Compute.threads`). **Determinism:** a parallel kernel loops over chunks made from the work only, never the
+   step runs it on the whole scene, `parallel=True` only for independent iterations and large work, called within
+   `Compute.parallel(name, work, section)` (numba's threads: the Compute's budget, at most one per chunk and the
+   section's ceiling; its time in run.json). **Determinism:** a parallel kernel loops over chunks made from the work only, never the
    thread count (`kernels.work_chunks`), sums in a fixed order within a chunk and combines chunks in chunk order, so
    that its result is the same for any thread count. A kernel replacing Python is checked bit for bit against it at
    one chunk before the Python goes (no dual path).

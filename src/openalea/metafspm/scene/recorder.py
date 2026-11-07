@@ -12,9 +12,12 @@ scene's steps, or "step" (every step); an output is written when the scene's tim
                                       error), started, ended, wall time, iterations, simulated time, time step, wall
                                       time per model and per component ("<Model>.<Component>": Scene.timing), the
                                       calls that ran per component (Scene.calls: a cadence's fewer than the steps),
-                                      versions, the threads in use (BLAS libraries, numba) and the
-                                      process pool (None: in the process); rewritten after every step (a running
-                                      run's progress)
+                                      versions, the threads chosen and in use ("compute": "threads": the
+                                      Compute's threads, its budget, the bandwidth-bound sections' ceiling and its
+                                      source, the processors and core types, BLAS libraries, numba:
+                                      Compute.thread_info), the time, calls and threads of each kernel and solver
+                                      ("timing": Compute.timing_info) and the process pool (None: in the process);
+                                      rewritten after every step (a running run's progress)
     scenario.json                     the scene: time step, size, populations (model, plants and their scenarios),
                                       environment models and their scenarios, forcings, the run configuration
                                       (Compute), the recorder's settings
@@ -979,6 +982,7 @@ class SceneRecorder:
         pool = scene.compute.pool_info()        # the pool used (the largest since the run began), None: none
         if pool is not None or "compute" not in self._run:
             self._run.setdefault("compute", {})["pool"] = pool
+        self._run.setdefault("compute", {})["timing"] = scene.compute.timing_info()     # the kernels' and solvers'
         device = scene.compute.device_info()     # the GPU used and its transfers, None on the cpu (not recorded)
         if device is not None:
             self._run.setdefault("compute", {})["device"] = device

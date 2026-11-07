@@ -58,8 +58,10 @@ def chain_scan(values, chains: dict, op: str = "sum", reverse: bool = False, exc
     """
     if op not in ("sum", "max"):
         raise ValueError(f"chain_scan: op must be 'sum' or 'max', got '{op}'")
+    from openalea.metafspm.compute import Compute
     array, vector = _as_columns(values)
-    out = _segmented_scan(array, chains["order"], chains["offsets"], op == "max", reverse, exclusive)
+    with Compute.current().parallel("kernels.chain_scan", chains["offsets"].size - 1):
+        out = _segmented_scan(array, chains["order"], chains["offsets"], op == "max", reverse, exclusive)
     return out if vector else out[:, 0]
 
 
@@ -289,8 +291,11 @@ def path_window(parents, budget, extent, values, where=None, include=None) -> np
     n = array.shape[0]
     targets = np.arange(n, dtype=np.int64) if where is None else np.flatnonzero(np.asarray(where, dtype=bool))
     include = np.ones(n, dtype=np.bool_) if include is None else np.asarray(include, dtype=np.bool_)
-    sums = _path_window(targets, np.asarray(parents, dtype=np.int64), np.broadcast_to(np.asarray(budget, float), (n,)).copy(),
-                        np.asarray(extent, dtype=np.float64), np.ascontiguousarray(array), include)
+    from openalea.metafspm.compute import Compute
+    with Compute.current().parallel("kernels.path_window", targets.size):
+        sums = _path_window(targets, np.asarray(parents, dtype=np.int64),
+                            np.broadcast_to(np.asarray(budget, float), (n,)).copy(),
+                            np.asarray(extent, dtype=np.float64), np.ascontiguousarray(array), include)
     out = np.zeros_like(array)
     out[targets] = sums
     return out if vector else out[:, 0]
