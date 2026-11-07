@@ -396,15 +396,15 @@ def test_what_numbers_and_text_alone_cannot_hold():
     g = ds.structure
     segment = int(ds.entity_ids("node")[0])
     g.add_property("anatomy_class")
-    g.property("anatomy_class")[segment] = ("root", 3, 0.5)
+    g.set_values("anatomy_class", [segment], [("root", 3, 0.5)])
     g.add_property("anatomy_settings")
-    g.property("anatomy_settings")[segment] = {"layers": [1, 2], "kind": "monocot", 3: (1, 2)}
+    g.set_values("anatomy_settings", [segment], [{"layers": [1, 2], "kind": "monocot", 3: (1, 2)}])
     g.add_property("tissue")                             # a property of a variable's name, holding other values
     for vid in ds.entity_ids("node"):
-        g.property("tissue")[int(vid)] = "epidermis"
+        g.set_values("tissue", [int(vid)], ["epidermis"])
     g.add_property("track_id")
     anchor = g.scales.anchors[g.scales.SubOrgan + 1]
-    g.property("x")[anchor] = -1.0
+    g.set_values("x", [anchor], [-1.0])
     again = _round_trip({"plants": ds}, components={"plants": models})["plants"]
     _same_mpg(ds.structure, again.structure)
     _same_variables(ds, again)

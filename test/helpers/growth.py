@@ -60,7 +60,7 @@ class RootGrowthProbe(StructuralComponent):
     elongation_rate: float = parameter(**DOC, by="RootGrowthProbe", default=0.4)
 
     def _prop(self, name):
-        return self.mtg.property(name)
+        return self.mtg.properties().setdefault(name, {})        # the stored column, written vertex by vertex
 
     def _apices(self):
         active = set(self.active_ids().tolist())
@@ -89,7 +89,7 @@ class RootGrowthProbe(StructuralComponent):
                                 ("struct_mass", DENSITY * length), ("radius", 1.), ("potential_elongation", 0.),
                                 ("distance_from_tip", 0.), ("x1", x), ("x2", x), ("y1", y), ("y2", y),
                                 ("z1", top), ("z2", top - length)):
-                g.property(name)[v] = value
+                g.set_values(name, [v], [value])
             top -= length
 
     @potential

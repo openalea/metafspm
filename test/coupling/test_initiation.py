@@ -35,11 +35,11 @@ class Organs(StructuralComponent):
             complex_ = g.add_component(complex_, **PropsConfig(scale=scale, edge_type='/', label=label))
         for diameter, areas in zip(DIAMETERS, AREAS):
             organ = g.add_component(complex_, **PropsConfig(scale=s.Organ, edge_type='/', label=L.Organ.StemInternode))
-            g.property("diameter")[organ] = diameter
+            g.set_values("diameter", [organ], [diameter])
             for area in areas:
                 element = g.add_component(organ, **PropsConfig(scale=s.SubOrgan, edge_type='/',
                                                                label=L.SubOrgan.StemElement))
-                g.property("element_area")[element] = area
+                g.set_values("element_area", [element], [area])
 
 
 @dataclass

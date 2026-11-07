@@ -153,7 +153,7 @@ class Branching(StructuralComponent):
     @actual
     def _emerge(self):
         if getattr(self, "primordium", None) is not None and getattr(self, "emerge", False):
-            self.mtg.property("struct_mass")[self.primordium] = 0.5
+            self.mtg.set_values("struct_mass", [self.primordium], [0.5])
 
 
 def _branching_plant():

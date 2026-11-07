@@ -455,7 +455,6 @@ class Reduction:
         from openalea.metafspm.coupling.declaration import scale_names
         names = scale_names(g)
         values, scales = {}, {}
-        labels = g.property("label")
         for key in rule:
             if key == "label" or key.endswith(".label"):
                 at = vertex
@@ -465,10 +464,11 @@ class Reduction:
                         raise KeyError(f"Reduction where: no scale '{key[:-len('.label')]}'")
                     at = g.complex_at_scale(vertex, scale)
                 scales[key] = names[g.scale(at)]
-                values[key] = np.array([float(labels.get(at, np.nan))])
+                found, label = g.values_at("label", [at])
+                values[key] = np.array([float(label[0]) if found.size else np.nan])
             else:
-                value = g.property(key).get(vertex, np.nan) if key in g.properties() else np.nan
-                values[key] = np.array([value], dtype=float)
+                found, value = g.values_at(key, [vertex])
+                values[key] = np.array([value[0] if found.size else np.nan], dtype=float)
         return values, scales
 
     def labels(self) -> tuple:
@@ -1315,7 +1315,7 @@ class _Library:
                     vertices.append(parent)
                 group = g.add_component(parent, **PropsConfig(scale=scale, edge_type='/', label=label))
                 for name, value in properties.items():
-                    g.property(name)[group] = value
+                    g.set_values(name, [group], [value])
                 g.add_instance(group, template)
                 made[group] = (k, which)
                 self.placed.append(vertices + [group])
@@ -1465,17 +1465,15 @@ def _describe(plant_g, vertex: int) -> tuple:
     while v is not None and plant_g.scale(v) > plant_g.scales.Plant:
         chain.append((plant_g.scale(v), plant_g.label(v)))
         v = plant_g.complex(v)
-    from openalea.metafspm.data_structure.arraydict import ArrayDict
     properties = {}
     at = np.array([vertex], dtype=np.int64)
     for name, prop in plant_g.properties().items():
-        if name in _STRUCTURAL or not hasattr(prop, "get"):
+        if name in _STRUCTURAL or not hasattr(prop, "at"):
             continue
-        if isinstance(prop, ArrayDict):         # by binary search: a read at one vertex builds no key dict (vid2idx,
-            positions, found = prop._positions(at)    # ~100 B per entry of every property, kept while its keys last)
-            value = float(prop.arr[positions[0]]) if found[0] else None
-        else:
-            value = prop.get(vertex)
+        found, values = prop.at(at)             # by binary search: a read at one vertex builds no key dict (vid2idx,
+        value = values[0] if found[0] else None  # ~100 B per entry of every property, kept while its keys last)
+        if value is not None and values.dtype != object:
+            value = value.item()                 # a Python number (float, int) as the column's
         if value is not None:
             properties[name] = value
     return tuple(reversed(chain)), (plant_g.scale(vertex), plant_g.label(vertex)), properties

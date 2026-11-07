@@ -38,8 +38,8 @@ def _complexes(g, plant, axis, organ):
 
 
 def _length(g, vid, value):
-    g.property("length")[vid] = value
-    g.property("radius")[vid] = 0.1
+    g.set_values("length", [vid], [value])
+    g.set_values("radius", [vid], [0.1])
 
 
 def _build_shoot(g, plant, n_stems=2):
@@ -102,9 +102,10 @@ class Shoot(StructuralComponent):
         """MPG-style: each element's rank from its seed, on the MTG."""
         ds = self.data_structure
         g = self.mtg
-        rank = g.property("rank")
+        rank = dict(g.property("rank"))
         for vid in ds.entity_ids("node")[ds.order("pre")].tolist():
             rank[vid] = 0. if g.label(vid) == g.labels.SubOrgan.Seed else rank[g.parent(vid)] + 1.
+        g.set_values("rank", list(rank), list(rank.values()))
 
 
 @dataclass

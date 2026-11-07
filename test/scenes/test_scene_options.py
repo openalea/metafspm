@@ -247,7 +247,7 @@ class Branching(StructuralComponent):
     @actual
     def _emerge(self):
         if getattr(self, "primordium", None) is not None and getattr(self, "emerge", False):
-            self.mtg.property("struct_mass")[self.primordium] = 0.5
+            self.mtg.set_values("struct_mass", [self.primordium], [0.5])
 
 
 def test_an_active_rule_given_as_a_callable_defines_the_active_mask():

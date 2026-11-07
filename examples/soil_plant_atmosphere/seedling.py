@@ -142,7 +142,7 @@ def build_seedling(g, plant, parameters):
     for vid, (organ, length, start, end) in segments.items():
         for name, value in (("length", length), ("x1", start[0]), ("x2", end[0]), ("y1", start[1]),
                             ("y2", end[1]), ("z1", start[2]), ("z2", end[2])):
-            g.property(name)[vid] = float(value)
+            g.set_values(name, [vid], [float(value)])
         xylem[vid] = _anatomy(g, vid, organ, length, p["leaf_width"])
     for vid in segments:
         parent = g.parent(vid)

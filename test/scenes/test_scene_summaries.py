@@ -48,11 +48,11 @@ class Shoot(StructuralComponent):
         s, labels = g.scales, g.labels
         parent = g.add_component(_complexes(g, plant, "Shoot", "StemInternode"),
                                  **PropsConfig(scale=s.SubOrgan, edge_type='/', label=labels.SubOrgan.Seed))
-        g.property("length")[parent] = SEED
+        g.set_values("length", [parent], [SEED])
         for _ in range(2):
             parent = g.add_child(parent, **PropsConfig(scale=s.SubOrgan, edge_type='<',
                                                        label=labels.SubOrgan.StemElement))
-            g.property("length")[parent] = STEM
+            g.set_values("length", [parent], [STEM])
 
     @rate
     def _exchange(self, length):
@@ -83,8 +83,8 @@ class Roots(StructuralComponent):
         roots.append(g.add_child(roots[-1], **PropsConfig(scale=s.SubOrgan, edge_type='<',
                                                           label=labels.SubOrgan.RootApex)))
         for k, vid in enumerate(roots):
-            g.property("length")[vid] = ROOT
-            g.property("radius")[vid] = 0.1 * (k + 1)
+            g.set_values("length", [vid], [ROOT])
+            g.set_values("radius", [vid], [0.1 * (k + 1)])
 
 
 @dataclass

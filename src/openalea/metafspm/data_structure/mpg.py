@@ -1,9 +1,12 @@
 from collections import defaultdict
 from openalea.mtg import MTG
 import os
+import re
+
+from types import MappingProxyType
 
 import numpy as np
-from openalea.metafspm.data_structure.arraydict import ArrayDict
+from openalea.metafspm.data_structure.arraydict import ArrayDict, typed_array
 from openalea.metafspm.data_structure.configs import ScalesConfig, PropsConfig, LabelsConfig
 from dataclasses import dataclass, field, fields
 from typing import Literal
@@ -34,6 +37,8 @@ class MPG(MTG):
 
     def __init__(self):
         super().__init__()
+        from openalea.metafspm.data_structure.columns import ColumnStore
+        self._properties = ColumnStore(self._properties)      # every property a column
         
         self.scales = ScalesConfig() # declared twice so MTG scales are discovered by LSPs
         self.labels = LabelsConfig()
@@ -146,21 +151,21 @@ class MPG(MTG):
         else:
             vid = self.add_component_with_topo(complex, parent, **PropsConfig(edge_type=edge or '+', **props))
         for name, value in values.items():
-            self.property(name)[vid] = value
+            self._column(name)[vid] = value
         if direction is not None:
             if parent is not None:
-                base = [float(self.property(name)[parent]) for name in ("x2", "y2", "z2")]
+                base = [float(self._column(name)[parent]) for name in ("x2", "y2", "z2")]
             else:
                 plant = self.complex_at_scale(vid, scales.Plant)
-                base = [float(self.property(name).get(plant, 0.)) for name in ("x", "y", "z")]
-            length = float(values.get("length", self.property("length").get(vid, 0.)) or 0.)
+                base = [float(self._column(name).get(plant, 0.)) for name in ("x", "y", "z")]
+            length = float(values.get("length", self._column("length").get(vid, 0.)) or 0.)
             end = [b + float(d) * length for b, d in zip(base, direction)]
             for name, value in zip(("x1", "y1", "z1", "x2", "y2", "z2"), base + end):
-                self.property(name)[vid] = value
+                self._column(name)[vid] = value
         if display is not None:
             start, finish = display
             for name, value in zip(DISPLAY_ENDS, list(start) + list(finish)):
-                self.property(name)[vid] = float(value)
+                self._column(name)[vid] = float(value)
         return vid
 
     def populate_graph(self, from_scale, filter_in=None, filter_out=None):
@@ -186,16 +191,16 @@ class MPG(MTG):
         """
         node_anchor = self.scales.anchors[self.scales.Compartment]
         edge_anchor = self.scales.anchors[self.scales.Connection]
-        scale_prop  = self.property('scale')
+        scale_prop  = self._column('scale')
 
         # Pre-filter — valid from_scale VIDs via numpy intersection.
         valid_keys = scale_prop.order[:scale_prop.size][scale_prop.values_array() == from_scale]
         for fp_name, fp_val in (filter_in or {}).items():
-            fp = self.property(fp_name)
+            fp = self._column(fp_name)
             match = fp.order[:fp.size][fp.values_array() == fp_val]
             valid_keys = valid_keys[np.isin(valid_keys, match, assume_unique=False)]
         for fp_name, fp_val in (filter_out or {}).items():
-            fp = self.property(fp_name)
+            fp = self._column(fp_name)
             match = fp.order[:fp.size][fp.values_array() == fp_val]
             valid_keys = valid_keys[~np.isin(valid_keys, match, assume_unique=False)]
         valid_vids = set(int(v) for v in valid_keys)
@@ -273,8 +278,8 @@ class MPG(MTG):
                     label=self.labels.Connection.Symplastic,
                     edge_type='/',
                 ))
-                self.property("n_id_a")[ev] = group[i - 1]
-                self.property("n_id_b")[ev] = group[i]
+                self._column("n_id_a")[ev] = group[i - 1]
+                self._column("n_id_b")[ev] = group[i]
 
 
     def add_components_bulk(self, complex_id, count: int, topo_parents=None, **properties) -> list:
@@ -315,14 +320,96 @@ class MPG(MTG):
             self.set_values(name, vids, values if per_vertex else [values] * count)
         return vids
 
-    def set_values(self, name, vids, values) -> None:
-        """property(name)[v] = value for each of *vids* and *values*, in one append when the property is
-        array-backed and the vids are new and ascending (e.g. vertices just created)."""
-        prop = self._properties.setdefault(name, {})
-        if isinstance(prop, ArrayDict):
-            prop.extend(vids, values)
+    # ── Properties: typed columns (data_structure.arraydict, data_structure.columns), read and written in bulk ──
+
+    def _column(self, name):
+        """Property *name*'s column (an ArrayDict, or a DataStructure's column's view), created when absent: the
+        MPG's own access, vertex by vertex or in bulk."""
+        prop = self._properties.get(name)
+        if prop is None:
+            self.add_property(name)
+            prop = self._properties[name]
+        return prop
+
+    def add_property(self, property_name):
+        """A new property, an empty column (its values Python objects until convert_properties_to_arraydict types
+        a numeric one)."""
+        self._properties[property_name] = ArrayDict(dtype=object)
+
+    def column(self, name) -> tuple:
+        """
+        (values, present) of property *name* over the vid index: two arrays of g._id + 1 entries, values[v] the value
+        of vertex v where present[v] (NaN, or None for an object property, elsewhere), built from the column in one
+        pass. Read it once and index it in bulk (values[vids][present[vids]]). A missing property gives no value
+        present. An instanced vertex without an entry of its own has its template's value.
+        """
+        size = int(self._id) + 1
+        prop = self._properties.get(name)
+        if self._instanced():
+            vids = np.arange(size, dtype=np.int64)
+            keys, values = self._property_at(name, vids)
+        elif prop is None:
+            keys, values = np.empty(0, dtype=np.int64), np.empty(0)
         else:
-            prop.update(zip(vids, values))
+            keys, values = prop.items_arrays()
+        if values.dtype == object:
+            out = np.empty(size, dtype=object)
+        else:
+            out = np.full(size, np.nan if values.dtype.kind == "f" else 0, dtype=values.dtype)
+        present = np.zeros(size, dtype=bool)
+        present[keys] = True
+        out[keys] = values
+        return out, present
+
+    def set_values(self, name, vids, values) -> None:
+        """property *name* = *values* at *vids* (a sequence aligned with them, or one value for all), in bulk: in
+        place at the vids having one, one insert for the others (one append when they are new and ascending, e.g.
+        vertices just created)."""
+        self._column(name).extend(np.asarray(vids, dtype=np.int64), values)
+
+    # openalea.mtg's methods reading a property vertex by vertex: on the column (property() builds a mapping)
+
+    def label(self, vid):
+        return self._properties["label"].get(vid, '') if "label" in self._properties else ''
+
+    def edge_type(self, vid):
+        return self._properties["edge_type"].get(vid, '') if "edge_type" in self._properties else ''
+
+    def class_name(self, vid):
+        label = self._properties["label"].get(vid) if "label" in self._properties else None
+        if not label:
+            return ''
+        match = re.match(r'[a-zA-Z]+', label)
+        return match.group(0) if match else ''
+
+    def index(self, vid):
+        label = self._properties["label"].get(vid) if "label" in self._properties else None
+        if not label:
+            return vid
+        match = re.search(r'[0-9]+$', label)
+        return match.group(0) if match else vid
+
+    def EdgeType(self, v1, v2):
+        return self._column("edge_type").get(v2)
+
+    def order(self, v1):
+        edge_type = self._properties.get("edge_type")
+        if not edge_type:
+            return 0
+        _order, vid = 0, v1
+        while vid is not None:
+            if edge_type.get(vid) == '+':
+                _order += 1
+            vid = self.parent(vid)
+        return _order
+
+    def _remove_vertex_properties(self, vid):
+        for prop in self._properties.values():
+            if vid in prop:
+                del prop[vid]
+
+    def get_vertex_property(self, vid):
+        return {name: prop[vid] for name, prop in self._properties.items() if vid in prop}
 
     # ── Anchors: an initiator building onto another's structure ──
 
@@ -348,10 +435,10 @@ class MPG(MTG):
                                                              f"several scales have it ({sorted(groups)}): give scale="))
         (scale_name, group), = groups.items()
         code = getattr(group, label)
-        labels = self.property("label")
+        labels = self._column("label")
         candidates = [int(v) for v in self.components_at_scale(plant, scale=group.scale) if labels.get(v) == code]
         for name, value in (where or {}).items():
-            values = self.property(name)
+            values = self._column(name)
             candidates = [v for v in candidates if values.get(v) == value]
         selector = f"{scale_name} '{label}'" + (f" with {where}" if where else "")
         if not candidates:
@@ -426,7 +513,6 @@ class MPG(MTG):
         use. A DataStructure on this MPG must forget its entities of those ids (MPGDataStructure.forget_ids_above)
         before its next update_topology, else a new entity would take a removed one's values.
         """
-        from openalea.metafspm.data_structure.arraydict import ArrayDict
         last = max(self._scale, default=0)
         instances = self.__dict__.get("_instances")
         if instances is not None and len(instances):
@@ -434,12 +520,9 @@ class MPG(MTG):
         if last >= self._id:
             return int(self._id)
         for prop in self.properties().values():
-            if isinstance(prop, ArrayDict):
-                if prop.size and prop.order[prop.size - 1] > last:
-                    prop.delete_range(last + 1, self._id + 1)
-            else:
-                for v in [v for v in prop if isinstance(v, (int, np.integer)) and v > last]:
-                    del prop[v]
+            span = prop.key_range()
+            if span is not None and span[1] > last:
+                prop.delete_range(last + 1, self._id + 1)
         self._id = last
         self.__dict__["_id_reuses"] = self.__dict__.get("_id_reuses", 0) + 1     # every id cache renewed
         self.__dict__.pop("_topology_arrays", None)
@@ -454,12 +537,9 @@ class MPG(MTG):
             return False
         first, size = block
         for prop in self.properties().values():
-            if isinstance(prop, ArrayDict):
-                if prop.size and prop.order[0] < first + size and prop.order[prop.size - 1] >= first:
-                    prop.delete_range(first, first + size)           # the block's ids: a range of sorted keys
-            elif prop:
-                for v in [v for v in prop if isinstance(v, (int, np.integer)) and first <= v < first + size]:
-                    del prop[v]
+            span = prop.key_range()
+            if span is not None and span[0] < first + size and span[1] >= first:
+                prop.delete_range(first, first + size)               # the block's ids: a range of sorted keys
         return True
 
     def _instanced_mask(self, vids) -> np.ndarray:
@@ -473,7 +553,7 @@ class MPG(MTG):
         view (instances.InstancedView) giving the instanced vertices' values too. A missing property reads as empty
         (it is not created)."""
         if not self._instanced():
-            return self._properties.get(name, {})
+            return self._properties.get(name, MappingProxyType({}))
         from openalea.metafspm.data_structure.instances import InstancedView
         return InstancedView(self, name)
 
@@ -523,7 +603,7 @@ class MPG(MTG):
         for vid in sorted(candidates):
             parent = self.linked_parent(vid, from_scale, valid)
             ev = incoming.get(vid)
-            current = int(self.property("n_id_a")[ev]) if ev is not None and ev not in stale_set else None
+            current = int(self._column("n_id_a")[ev]) if ev is not None and ev not in stale_set else None
             if parent != current:
                 if ev is not None and ev not in stale_set:
                     self.remove_connections([ev])
@@ -579,7 +659,7 @@ class MPG(MTG):
         filter_in, filter_out : dict, optional
             Passed verbatim to populate_graph().
         """
-        isanchor_p = self.property('isanchor')
+        isanchor_p = self._column('isanchor')
         props      = self.properties()
 
         for scale in (self.scales.Connection, self.scales.Compartment):
@@ -603,7 +683,7 @@ class MPG(MTG):
 
     def _vertices_at_scale(self, scale) -> np.ndarray:
         """Vertices whose "scale" property is *scale*, sorted (an array read, no traversal)."""
-        prop = self.property("scale")
+        prop = self._column("scale")
         if isinstance(prop, ArrayDict):
             vids = prop.order[:prop.size][prop.values_array() == scale].copy()
         else:
@@ -613,12 +693,14 @@ class MPG(MTG):
         return vids
 
     def _as_arraydict(self, name) -> None:
-        """Property *name* as an ArrayDict when it is a plain dict of values: a property first written after the
-        conversion to ArrayDicts (e.g. the Connections' n_id_a of a plant that had a single element)."""
+        """Property *name* as a float64 column when it is an object column of numbers: a property first written after
+        the conversion to float64 columns (e.g. the Connections' n_id_a of a plant that had a single element)."""
         properties = self.properties()
         prop = properties.get(name)
-        if isinstance(prop, dict) and not isinstance(prop, ArrayDict) and len(prop) > 0:
-            properties[name] = ArrayDict.from_items(list(prop.keys()), list(prop.values()))
+        if type(prop) is ArrayDict and prop.arr.dtype == object and prop.size:
+            values = prop.values_array().tolist()
+            if all(isinstance(value, (int, float, np.integer, np.floating)) for value in values):
+                properties[name] = ArrayDict.from_items(prop.keys_array(), values)
 
     def values_at(self, name, vids) -> tuple:
         """(the vertices of sorted *vids* having property *name*, their values), in bulk; an instanced vertex without
@@ -649,16 +731,11 @@ class MPG(MTG):
         return ids[order], merged[order]
 
     def _explicit_property_at(self, name, vids) -> tuple:
-        prop, vids = self._properties.get(name, {}), np.asarray(vids, dtype=np.int64)
-        if isinstance(prop, ArrayDict):
-            order, values = prop.order[:prop.size], prop.values_array()
-            if order.size == 0 or vids.size == 0:
-                return vids[:0], values[:0]
-            position = np.searchsorted(order, vids).clip(0, order.size - 1)
-            found = order[position] == vids
-            return vids[found], values[position[found]]
-        found = np.array([v in prop for v in vids.tolist()], dtype=bool)
-        return vids[found], _values_array([prop[v] for v in vids[found].tolist()])
+        prop, vids = self._properties.get(name), np.asarray(vids, dtype=np.int64)
+        if prop is None:
+            return vids[:0], np.empty(0)
+        found, values = prop.at(vids)
+        return vids[found], (_values_array(values.tolist()) if values.dtype == object else values)
 
     def _valid_vids_at(self, from_scale, filter_in=None, filter_out=None, as_array=False):
         """Non-anchor vertices at *from_scale* passing the filters (a set, or a sorted array). Without filters, cached
@@ -679,15 +756,15 @@ class MPG(MTG):
 
     def _valid_vids_at_uncached(self, from_scale, filter_in=None, filter_out=None, as_array=False):
         """_valid_vids_at, computed (the valid keys as an array when no conversion is asked)."""
-        scale_prop    = self.property('scale')
-        isanchor_prop = self.property('isanchor')
+        scale_prop    = self._column('scale')
+        isanchor_prop = self._column('isanchor')
         valid_keys = scale_prop.order[:scale_prop.size][scale_prop.values_array() == from_scale]
         for fp_name, fp_val in (filter_in or {}).items():
-            fp = self.property(fp_name)
+            fp = self._column(fp_name)
             match = fp.order[:fp.size][fp.values_array() == fp_val]
             valid_keys = valid_keys[np.isin(valid_keys, match, assume_unique=False)]
         for fp_name, fp_val in (filter_out or {}).items():
-            fp = self.property(fp_name)
+            fp = self._column(fp_name)
             match = fp.order[:fp.size][fp.values_array() == fp_val]
             valid_keys = valid_keys[~np.isin(valid_keys, match, assume_unique=False)]
         anchor_keys = isanchor_prop.order[:isanchor_prop.size][isanchor_prop.values_array() != 0]
@@ -710,7 +787,7 @@ class MPG(MTG):
         The vertex at *from_scale* that *vid* is linked to, as populate_graph links them: its within-scale parent,
         or, when it has none in *valid_vids*, the tip of its complex parent (multiscale branching). None at a root.
         """
-        scale_prop = self.property('scale')
+        scale_prop = self._column('scale')
         valid_vids = self._valid_vids_at(from_scale) if valid_vids is None else valid_vids
 
         def _tip_component(complex_v, exclude):
@@ -771,7 +848,7 @@ class MPG(MTG):
         """The Connections carrying endpoints (n_id_a), ascending, read-only: their own or their template's (instanced
         ones); kept between structural edits and patched from their delta."""
         def connections(among):
-            scale_prop, n_id_a = self.property("scale"), self.property("n_id_a")
+            scale_prop, n_id_a = self._column("scale"), self._column("n_id_a")
             explicit = scale_prop.order[:scale_prop.size][scale_prop.values_array() == self.scales.Connection]
             keys = n_id_a.keys_array() if hasattr(n_id_a, "keys_array") else \
                 np.array(sorted(n_id_a), dtype=np.int64)
@@ -904,7 +981,7 @@ class MPG(MTG):
         """
         edge_anchor = self.scales.anchors[self.scales.Connection]
         valid_vids = self._valid_vids_at(from_scale, filter_in, filter_out)
-        label_prop = self.property('label')
+        label_prop = self._column('label')
         targets = sorted(valid_vids if children is None else set(children) & valid_vids)
         parents = {vid: self.linked_parent(vid, from_scale, valid_vids) for vid in targets}
         owners = self.compartments_by_owner(from_scale)
@@ -955,7 +1032,7 @@ class MPG(MTG):
             return [(n_a, n_b) for n_a in n_as for n_b in n_bs]
         if ordering is None:
             raise ValueError(f"junction rule {rule}: match '{match}' needs an ordering property")
-        ordering_p = self.values_of(ordering, n_as + n_bs) if self._instanced() else self.property(ordering)
+        ordering_p = self.values_of(ordering, n_as + n_bs) if self._instanced() else self._column(ordering)
 
         def _val(nv):
             v = ordering_p.get(nv)
@@ -1113,18 +1190,10 @@ class MPG(MTG):
         return order
 
     def _delete_properties(self, vids) -> None:
-        """Delete the property entries of *vids*, one compaction per array-backed property."""
-        from openalea.metafspm.data_structure.arraydict import ArrayDict
-        doomed = set(vids)
+        """Delete the property entries of *vids*, one compaction per column."""
+        vids = np.asarray(list(vids), dtype=np.int64)
         for prop in self.properties().values():
-            if isinstance(prop, ArrayDict):
-                prop.delete_many(vids)
-            else:
-                for v in doomed.intersection(prop):
-                    try:
-                        del prop[v]
-                    except (KeyError, TypeError):
-                        pass
+            prop.delete_many(vids)
 
     def array_filtering(self, name: str, filter_in: dict = None, filter_out: dict = None):
         """Return the values of property *name* for the subset of vertices that
@@ -1178,39 +1247,39 @@ class MPG(MTG):
             self._as_arraydict(property_name)
         if self._instanced():
             return self._array_filtering_instanced(name, filter_in, filter_out)
-        prop = self.property(name)
-        if not isinstance(prop, ArrayDict):          # a property no vertex has (e.g. no Connection yet)
+        prop = self._column(name)
+        if not prop.size:                            # a property no vertex has (e.g. no Connection yet)
             return np.array([], dtype=float)
+        keys, values = prop.items_arrays()
         if filter_in is None and filter_out is None:
-            return prop.values_array()
+            return values
 
         # Step 1-2: build valid_keys by intersecting each filter condition.
         valid_keys = None   # sorted int64 numpy array, shrinks each iteration
 
         for fp_name, fp_val in (filter_in or {}).items():
-            fp    = self.property(fp_name)
-            match = fp.order[:fp.size][fp.values_array() == fp_val]
+            filter_keys, filter_values = self._column(fp_name).items_arrays()
+            match = filter_keys[filter_values == fp_val]
             valid_keys = match if valid_keys is None else \
                          valid_keys[np.isin(valid_keys, match, assume_unique=True)]
 
         for fp_name, fp_val in (filter_out or {}).items():
-            fp    = self.property(fp_name)
-            match = fp.order[:fp.size][fp.values_array() != fp_val]
+            filter_keys, filter_values = self._column(fp_name).items_arrays()
+            match = filter_keys[filter_values != fp_val]
             valid_keys = match if valid_keys is None else \
                          valid_keys[np.isin(valid_keys, match, assume_unique=True)]
 
         if valid_keys is None or len(valid_keys) == 0:
-            return np.array([], dtype=prop.arr.dtype)
+            return np.array([], dtype=values.dtype)
 
         # Step 3: restrict to vertices that carry the requested property.
-        prop_keys = prop.order[:prop.size]
-        ids = valid_keys[np.isin(valid_keys, prop_keys, assume_unique=True)]
+        ids = valid_keys[np.isin(valid_keys, keys, assume_unique=True)]
 
         if len(ids) == 0:
-            return np.array([], dtype=prop.arr.dtype)
+            return np.array([], dtype=values.dtype)
 
         # Step 4: convert VIDs to array positions and read values.
-        return prop.values_array()[np.searchsorted(prop_keys, ids)]
+        return values[np.searchsorted(keys, ids)]
 
 
     def _array_filtering_instanced(self, name, filter_in, filter_out):
@@ -1246,9 +1315,8 @@ class MPG(MTG):
         """(vids, values) of array_filtering with instanced vertices, among the vertices *among* (ascending; None:
         every vertex)."""
         if among is None:
-            prop = self._properties.get(name, {})
-            explicit = prop.order[:prop.size] if isinstance(prop, ArrayDict) else \
-                np.array(sorted(int(v) for v in prop), dtype=np.int64)
+            prop = self._properties.get(name)
+            explicit = prop.keys_array() if prop is not None else np.empty(0, dtype=np.int64)
             ids = np.union1d(explicit, self.instances.vids_having(name))
         else:
             ids = self._property_at(name, np.asarray(among, dtype=np.int64))[0]
@@ -1273,7 +1341,7 @@ class MPG(MTG):
         """
         if vid not in self._components:
             return
-        edge_type = self.property('edge_type')
+        edge_type = self._column('edge_type')
         own_complex = self._complex
         children = self._children
         for root in self.component_roots_iter(vid):
@@ -1423,7 +1491,7 @@ class MPG(MTG):
             arrays = grown
         parent, complex_, scale = arrays["parent"], arrays["complex"], arrays["scale"]
         edge_type, is_anchor = arrays["edge_type"], arrays["is_anchor"]
-        types, anchors = self.property('edge_type'), self.property('isanchor')
+        types, anchors = self._column('edge_type'), self._column('isanchor')
         codes = self._EDGE_TYPE_CODES
         bulk_vids = np.concatenate([b[0] for b in bulk]) if bulk else np.zeros(0, dtype=np.int64)
         if not new and not bulk_vids.size:
@@ -1492,7 +1560,7 @@ class MPG(MTG):
         else:
             raise ValueError(f"the MTG's parent links contain a cycle (vertices {missing[:5].tolist()})")
         edge_type = np.zeros(size, dtype=np.int64)
-        types = self.property('edge_type')
+        types = self._column('edge_type')
         if types:
             keys = np.fromiter(types.keys(), dtype=np.int64, count=len(types))
             names = np.array([t if isinstance(t, str) else "" for t in types.values()])
@@ -1502,7 +1570,7 @@ class MPG(MTG):
             inside = keys < size
             edge_type[keys[inside]] = codes[inside]
         is_anchor = np.zeros(size, dtype=bool)
-        anchors = self.property('isanchor')
+        anchors = self._column('isanchor')
         if isinstance(anchors, ArrayDict):
             keys, flags = anchors.order[:anchors.size], anchors.values_array() != 0
         else:
@@ -1629,7 +1697,7 @@ class MPG(MTG):
         if vtx_id is None:
             vtx_id = self.root
 
-        isanchor = self.property('isanchor') if skip_anchors else {}
+        isanchor = self._column('isanchor') if skip_anchors else {}
 
         stack = [vtx_id]
         while stack:
@@ -1676,7 +1744,7 @@ class MPG(MTG):
         if vtx_id is None:
             vtx_id = self.root
 
-        isanchor = self.property('isanchor') if skip_anchors else {}
+        isanchor = self._column('isanchor') if skip_anchors else {}
 
         def _make_entry(v):
             """Return (v, iterator-over-post-ordered-components-of-v)."""
@@ -1700,22 +1768,43 @@ class MPG(MTG):
 
 
     def convert_properties_to_arraydict(self, ignore=()):
-        """The MPG's numeric properties as ArrayDicts (vectorised reads), after its structure is built (the Scene and
-        population_data_structure call it); *ignore*: properties left as dicts."""
+        """The MPG's numeric properties as float64 columns (vectorised reads), after its structure is built (the Scene
+        and population_data_structure call it): an object column (or a dict) whose first value is a number; *ignore*:
+        properties left as they are. A DataStructure's column's view is left as it is."""
+        from openalea.metafspm.data_structure.columns import DataStructureColumn
         props = self.properties()
-
+        numeric = (float, int, np.int32, np.int64, np.float64)
         for k, v in props.items():
-            # print(k, v)
-            if isinstance(v, dict) and len(v) > 0 and k not in ignore:
-                assigned_values = [value for value in v.values() if value is not None]
-                if len(assigned_values) > 0:
-                    first_element = assigned_values[0]
-                    if isinstance(first_element, float) or isinstance(first_element, int) or isinstance(first_element, np.int32) or isinstance(first_element, np.int64) or isinstance(first_element, np.float64):
-                        props[k] = ArrayDict.from_items(list(v.keys()), list(v.values()))
-
-            # If any was already existing, recreate it to make sure this is the right version with the invariant vid ordering # TODO remove after ArrayDict is stable
+            if k in ignore or isinstance(v, DataStructureColumn):
+                continue
+            if isinstance(v, ArrayDict) and v.arr.dtype == object:
+                keys, values = v.keys_array(), v.values_array().tolist()
+            elif isinstance(v, dict) and not isinstance(v, ArrayDict):
+                keys, values = list(v.keys()), list(v.values())
             elif isinstance(v, ArrayDict):
+                # recreated, with the invariant vid ordering # TODO remove after ArrayDict is stable
                 props[k] = ArrayDict.from_items(v.keys_array(), v.values_array().copy())
+                continue
+            else:
+                continue
+            assigned_values = [value for value in values if value is not None]
+            if assigned_values and isinstance(assigned_values[0], numeric):
+                props[k] = ArrayDict.from_items(keys, values)
+            elif isinstance(v, dict) and not isinstance(v, ArrayDict):
+                props[k] = ArrayDict.from_items(keys, values, dtype=object)
+
+    # (last in the class: the name shadows the builtin decorator in the class body below it)
+    def property(self, name):
+        """
+        openalea.mtg's read API: {vid: value} of property *name*, a read-only mapping built on demand (a copy, slow:
+        read in bulk with values_at or column, write with set_values). A missing property reads as empty (it is not
+        created).
+        """
+        prop = self._properties.get(name)
+        if prop is None:
+            return MappingProxyType({})
+        keys, values = prop.items_arrays()
+        return MappingProxyType(dict(zip(keys.tolist(), values.tolist())))
 
 
 _CHECK_TOPOLOGY = os.environ.get("METAFSPM_CHECK_TOPOLOGY", "") not in ("", "0")

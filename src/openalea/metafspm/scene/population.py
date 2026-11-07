@@ -286,8 +286,8 @@ def _build_population(table: pd.DataFrame, initiators=(), read_by_initiators: se
     for row in table.itertuples(index=False):
         plant = g.add_component(g.root, **PropsConfig(scale=g.scales.Plant, edge_type='/'))
         for name in ("x", "y", "rotation"):
-            g.property(name)[plant] = float(getattr(row, name))
-        g.property("z")[plant] = float(soil_surface) - float(row.depth)
+            g.set_values(name, [plant], [float(getattr(row, name))])
+        g.set_values("z", [plant], [float(soil_surface) - float(row.depth)])
         plants.append(plant)
     from openalea.metafspm.data_structure.mpg import AnchorError
     for k, initiator in enumerate(initiators):

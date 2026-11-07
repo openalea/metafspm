@@ -87,7 +87,7 @@ class BenchGrowth(StructuralComponent):
             top = z - depth[i] * SEGMENT_LENGTH
             for name, value in (("length", SEGMENT_LENGTH), ("is_apex", float(v in tips)), ("x1", x), ("x2", x),
                                 ("y1", y), ("y2", y), ("z1", top), ("z2", top - SEGMENT_LENGTH)):
-                g.property(name)[v] = value
+                g.set_values(name, [v], [value])
 
     @actual
     def _length(self, length, is_apex, elongation):

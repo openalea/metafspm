@@ -91,10 +91,9 @@ def apply_link(g, plant: int, link, receiver, provider) -> None:
                 out = np.full(vids.size, np.nan)
                 (np.fmax if aggregation == "max" else np.fmin).at(out, owner[kept], values[kept])
             out = np.where(np.bincount(owner[kept], minlength=vids.size) > 0, out, np.nan)
-    prop = g.property(link.variable)
-    for vid, value in zip(vids.tolist(), np.asarray(out, dtype=float).tolist()):
-        if np.isfinite(value):                       # no source value: none written (the declared default applies)
-            prop[vid] = value
+    out = np.asarray(out, dtype=float)
+    written = np.isfinite(out)                       # no source value: none written (the declared default applies)
+    g.set_values(link.variable, np.asarray(vids, dtype=np.int64)[written], out[written].tolist())
 
 
 def _metadata(component, name):
@@ -127,9 +126,12 @@ def _vertices(g, plant: int, scale: int) -> np.ndarray:
 
 
 def _values(g, name, vids) -> np.ndarray:
-    prop = g.properties().get(name, {})
-    return np.array([float(prop[v]) if v in prop and prop[v] is not None else np.nan for v in vids.tolist()],
-                    dtype=float)
+    unique, inverse = np.unique(np.asarray(vids, dtype=np.int64), return_inverse=True)
+    found, values = g.values_at(name, unique)
+    out = np.full(unique.size, np.nan)
+    known = np.array([value is not None for value in values.tolist()], dtype=bool)
+    out[np.searchsorted(unique, found[known])] = np.asarray(values[known], dtype=float)
+    return out[inverse]
 
 
 def _owners(g, vids, scale) -> list:

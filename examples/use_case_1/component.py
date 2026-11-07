@@ -827,7 +827,7 @@ class WheatCrown(StructuralComponent):
             raise ValueError(f"WheatCrown: the crown ({-crown_height} m deep) must lie above the seed "
                              f"({-seed_height} m deep): crown_depth below the sowing depth")
         organ = g.add_organ(plant, "StemInternode", kind="Shoot")
-        g.property("diameter")[organ] = 2. * float(parameters["subcrown_radius"])
+        g.set_values("diameter", [organ], [2. * float(parameters["subcrown_radius"])])
         half_grain = 0.5 * float(parameters["seed_length"])
         element = g.add_element("Seed", complex=organ, direction=(0., 0., 0.), length=float(parameters["seed_length"]),
                                 radius=float(parameters["seed_radius"]),

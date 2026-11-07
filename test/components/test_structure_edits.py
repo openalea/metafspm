@@ -36,7 +36,7 @@ class Emerging(StructuralComponent):
         if self.insert_above >= 0:
             self.inserted = g.insert_parent(self.insert_above, **PropsConfig(scale=g.scales.SubOrgan, edge_type='<',
                                                                              label=g.labels.SubOrgan.RootSegment))
-            g.property("mass")[self.inserted] = 0.5
+            g.set_values("mass", [self.inserted], [0.5])
             self.insert_above = -1
         if self.remove >= 0:
             g.remove_vertex(self.remove, reparent_child=True)

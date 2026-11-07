@@ -28,9 +28,9 @@ class SeedAndStem(StructuralComponent):
         organ = _organ(g, plant)
         seed = g.add_component(organ, **PropsConfig(scale=s.SubOrgan, edge_type='/', label=L.SubOrgan.Seed))
         stem = g.add_child(seed, **PropsConfig(scale=s.SubOrgan, edge_type='<', label=L.SubOrgan.StemElement))
-        g.property("rank")[stem] = 1
+        g.set_values("rank", [stem], [1])
         top = g.add_child(stem, **PropsConfig(scale=s.SubOrgan, edge_type='<', label=L.SubOrgan.StemElement))
-        g.property("rank")[top] = 2
+        g.set_values("rank", [top], [2])
 
 
 class RootsOnTheSeed(StructuralComponent):

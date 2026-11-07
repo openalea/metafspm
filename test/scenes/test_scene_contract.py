@@ -39,7 +39,7 @@ class ContractSeedling:
             top = z - doubles.SEGMENT_LENGTH * rank
             for name, value in (("x1", x), ("x2", x), ("y1", y), ("y2", y), ("z1", top),
                                 ("z2", top - doubles.SEGMENT_LENGTH)):
-                g.property(name)[v] = value
+                g.set_values(name, [v], [value])
 
 
 class ContractPlant(CompositeModel):

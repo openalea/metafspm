@@ -352,16 +352,17 @@ _MISSING = object()
 
 def _lookup(prop, vids: np.ndarray) -> tuple:
     """(present, values) of the MPG property *prop* at *vids*: a mask, and the values (a float array, NaN where
-    absent, for an ArrayDict, read in bulk from its sorted keys; a list, None where absent, for a dict)."""
+    absent, for a float column; a list, None where absent, for another), read in bulk from its sorted keys."""
     if isinstance(prop, _InstancedProperty):
         return prop.lookup(np.asarray(vids, dtype=np.int64))
     if isinstance(prop, ArrayDict):
-        keys, stored = prop.order[:prop.size], prop.arr[:prop.size]
-        if keys.size == 0:
-            return np.zeros(vids.size, dtype=bool), np.full(vids.size, np.nan)
-        position = np.clip(np.searchsorted(keys, vids), 0, keys.size - 1)
-        present = keys[position] == vids
-        return present, np.where(present, stored[position], np.nan)
+        present, values = prop.at(np.asarray(vids, dtype=np.int64))
+        if values.dtype.kind == "f":
+            out = np.full(present.size, np.nan)
+            out[present] = values
+            return present, out
+        listed = iter(values.tolist())
+        return present, [next(listed) if here else None for here in present.tolist()]
     get = prop.get
     values = [get(v, _MISSING) for v in vids.tolist()]
     present = np.array([value is not _MISSING for value in values], dtype=bool)
@@ -376,7 +377,7 @@ class _InstancedProperty:
         self.g, self.name = g, name
         prop = g.properties().get(name)
         if prop is not None and len(prop):
-            self.numeric = isinstance(prop, ArrayDict)
+            self.numeric = isinstance(prop, ArrayDict) and prop.dtype.kind == "f"
         else:
             self.numeric = all(template.properties[name][1].dtype != object
                                for template in g.instances.templates.values() if name in template.properties)
@@ -458,7 +459,7 @@ def _mpg_data_structure(identifier: str, ds, metadata: dict, standard_names: dic
                      dict(zip(virtual.tolist(), own_parent.tolist())))
     connection = g.scales.Connection
     translator = dict(g.labels.translator)
-    properties = _mpg_properties(g)                # read only: g.property() would create a missing property
+    properties = _mpg_properties(g)                # the columns (g.property() builds a mapping)
     label_property, edge_property = properties.get("label", {}), properties.get("edge_type", {})
     extras = {"class": "MPGDataStructure", "construction": ds._construction(), "last_id": int(g._id),
               "anchors": sorted(int(v) for v in anchors), "scales": {}, "label_codes": {}, "properties": {},
@@ -529,7 +530,9 @@ def _mpg_data_structure(identifier: str, ds, metadata: dict, standard_names: dic
             if not re.fullmatch(r"[a-zA-Z_][a-zA-Z0-9_]*", column):
                 warnings.warn(f"MPG property '{property_name}' is not exchanged: its name is not an identifier")
                 continue
-            if isinstance(prop, ArrayDict) or (isinstance(prop, _InstancedProperty) and prop.numeric):
+            numeric = (isinstance(prop, ArrayDict) and prop.dtype.kind == "f") or \
+                (isinstance(prop, _InstancedProperty) and prop.numeric)          # a float column; else its values
+            if numeric:
                 kind, data = "float64", values
             else:
                 assigned = [value for value in values if value is not None]
@@ -551,7 +554,6 @@ def _mpg_data_structure(identifier: str, ds, metadata: dict, standard_names: dic
                     except TypeError as error:
                         warnings.warn(f"MPG property '{property_name}' is not exchanged at {name}: {error}")
                         continue
-            numeric = isinstance(prop, ArrayDict) or (isinstance(prop, _InstancedProperty) and prop.numeric)
             entry = extras["properties"].setdefault(property_name, {
                 "container": "ArrayDict" if numeric else "dict", "column": column})
             entry.setdefault("dtypes", {})[name] = kind
@@ -1027,7 +1029,7 @@ def _anchor_and_empty_properties(g, anchors: set) -> dict:
     fresh = MPG()
     anchor_values, empty = {}, {}
     for name, prop in g.properties().items():
-        container = "ArrayDict" if isinstance(prop, ArrayDict) else "dict"
+        container = "ArrayDict" if isinstance(prop, ArrayDict) and prop.dtype.kind == "f" else "dict"   # an object column
         if len(prop) == 0:
             empty[name] = container
             continue
@@ -1991,7 +1993,8 @@ def _mpg_from(data_structure, extras: dict):
     for property_name, entry in extras.get("anchor_properties", {}).items():
         prop = g._properties.get(property_name)
         if prop is None:
-            prop = g._properties[property_name] = ArrayDict() if entry["container"] == "ArrayDict" else {}
+            prop = g._properties[property_name] = ArrayDict(dtype=np.float64 if entry["container"] == "ArrayDict"
+                                                            else object)
         for vid, text in entry["values"].items():
             if text is None:
                 prop.pop(int(vid), None)
@@ -2036,11 +2039,10 @@ def _anchor_vids(g) -> list:
 def _merge_arrays(g, name: str, parts: list) -> None:
     """Add [(vids, values)] to the MPG's ArrayDict property *name* (created when missing), at once."""
     existing = g._properties.get(name)
-    if isinstance(existing, ArrayDict):
-        keys, values = [existing.order[:existing.size]], [existing.arr[:existing.size]]
-    else:                                              # a new MPG's dict (its anchors' values), or none
-        keys = [np.fromiter(existing.keys(), dtype=np.int64)] if existing else []
-        values = [np.array(list(existing.values()), dtype=np.float64)] if existing else []
+    keys, values = [], []
+    if existing is not None and len(existing):       # a new MPG's column (its anchors' values), or none
+        existing_keys, existing_values = existing.items_arrays()
+        keys, values = [np.asarray(existing_keys)], [np.asarray(existing_values, dtype=np.float64)]
     keys += [np.asarray(vids, dtype=np.int64) for vids, _ in parts]
     values += [np.asarray(part, dtype=np.float64) for _, part in parts]
     g._properties[name] = _arraydict(np.concatenate(keys) if keys else np.zeros(0, dtype=np.int64),
@@ -2048,7 +2050,8 @@ def _merge_arrays(g, name: str, parts: list) -> None:
 
 
 def _merge(g, name: str, container: str, values: dict) -> None:
-    """Add *values* ({vid: value}) to the MPG's property *name* (created as an ArrayDict or a dict)."""
+    """Add *values* ({vid: value}) to the MPG's property *name* (created as a float column, "ArrayDict", or an object
+    column, "dict")."""
     existing = g._properties.get(name)
     if container == "ArrayDict":
         keys = list(existing.keys()) if existing is not None else []
@@ -2057,9 +2060,10 @@ def _merge(g, name: str, container: str, values: dict) -> None:
         g._properties[name] = ArrayDict.from_items(np.asarray(keys + new_keys, dtype=np.int64),
                                                    np.asarray(old + [values[k] for k in new_keys], dtype=np.float64))
     else:
-        merged = dict(existing or {})
+        merged = dict(zip(*(existing.items_arrays()[0].tolist(), existing.items_arrays()[1].tolist()))) \
+            if existing is not None else {}
         merged.update(values)
-        g._properties[name] = merged
+        g._properties[name] = ArrayDict.from_items(list(merged), list(merged.values()), dtype=object)
 
 
 def _restore_variables(ds, data_structure, extras: dict, tables: dict) -> None:

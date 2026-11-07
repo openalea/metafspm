@@ -17,7 +17,7 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
-from openalea.metafspm.data_structure.arraydict import ArrayDict
+from openalea.metafspm.data_structure.arraydict import ArrayDict, typed_array
 
 OWNER, ANCHOR, NONE = -1, -2, -3        # a local complex or parent: the instance's owner, its scale's anchor, none
 LINKS = ("n_id_a", "n_id_b")            # properties whose values are vertex ids (stored as local indices)
@@ -187,16 +187,13 @@ class SectionTemplate:
         parent = local(g._parent, NONE, False)
         properties = {}
         for name, prop in g.properties().items():
-            if isinstance(prop, ArrayDict):
-                found, values = g._property_at(name, vids)
-                if found.size:
-                    properties[name] = (found - first, np.asarray(values, dtype=np.float64).copy())
+            found, values = g._property_at(name, vids)
+            if not found.size:
+                continue
+            if prop.dtype != object:                     # a float column; an object column's values kept as they are
+                properties[name] = (found - first, np.asarray(values, dtype=np.float64).copy())
             else:
-                rows = [i for i, v in enumerate(vids.tolist()) if v in prop]
-                if rows:
-                    values = np.empty(len(rows), dtype=object)
-                    values[:] = [prop[int(vids[i])] for i in rows]
-                    properties[name] = (np.asarray(rows, dtype=np.int64), values)
+                properties[name] = (np.searchsorted(vids, found), typed_array(values, object))
         for name in links:
             if name in properties:
                 rows, values = properties[name]

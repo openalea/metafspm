@@ -57,7 +57,7 @@ def test_an_instanced_vertex_value_is_its_own_entry_else_its_template():
     _, (h, segments, sections, ds) = _pair()
     x1 = sections[segments[0]]["x1"]
     assert h.values_of("vessel_index", [x1]) == {x1: 1.}
-    h.property("vessel_index")[x1] = 5.
+    h.set_values("vessel_index", [x1], [5.])
     assert h.values_of("vessel_index", [x1]) == {x1: 5.}
     other = sections[segments[1]]["x1"]
     assert h.values_of("vessel_index", [other]) == {other: 1.}             # the other instance keeps the template's
@@ -83,7 +83,7 @@ def test_growth_differentiation_and_pruning_as_on_copies():
     assert copied[3].rewired == instanced[3].rewired
 
     for g, segments, sections, ds in (copied, instanced):
-        g.property("vessel_index")[sections[segments[1]]["x1"]] = 5.
+        g.set_values("vessel_index", [sections[segments[1]]["x1"]], [5.])
         ds.update_topology()
     _same(copied, instanced)
     assert copied[3].rewired == instanced[3].rewired

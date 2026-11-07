@@ -22,7 +22,8 @@ from dataclasses import dataclass, field
 from typing      import Optional, Union
 
 from openalea.metafspm.coupling.declaration import UP_MAPPINGS
-from openalea.metafspm.data_structure.arraydict import ArrayDict
+from openalea.metafspm.data_structure.arraydict import ArrayDict, typed_array
+from openalea.metafspm.data_structure.columns import DataStructureColumn
 from types import MappingProxyType
 import re
 
@@ -544,7 +545,8 @@ class VariableStoreMixin:
             except ValueError as error:
                 raise ValueError(f"Cannot register '{name}' at {location} of shape {shape}: {error}") from None
         for other_location, store in stores.items():
-            if other_location != location:
+            if other_location != location and name in store:
+                self._release_column(name)
                 store.pop(name, None)
         stores[location][name] = array
         self.mark_written(name)
@@ -560,10 +562,14 @@ class VariableStoreMixin:
         location, store, target = self._find(name)
         if target != name:
             raise ValueError(f"'{name}' is an alias of '{target}', not a registered variable")
+        self._release_column(name)
         del store[name]
         self._variable_meta().pop(name, None)
         self.__dict__.get("_derived", {}).pop(name, None)
         self._bump_version()
+
+    def _release_column(self, name: str) -> None:
+        """The MPG's view of column *name* becomes a stored column (the DataStructure lets the variable go)."""
 
     def alias(self, name: str, target: str) -> None:
         """Make *name* resolve to *target*: get(name) is get(target), set(name) writes the target in place."""
@@ -1154,11 +1160,14 @@ class VariableStoreMixin:
         state = {name: self.__dict__[name] for name in self._CHECKPOINT_STATE + self._checkpoint_extra()
                  if name in self.__dict__}
         content = {"objects": objects, "state": state, "mtg": getattr(self, "_mtg", None) if include_mtg else None}
+        self.__dict__["_columns_detached"] = True  # the MPG's views of the columns pickled without them (arrays.npz)
         try:
             payload = pickle.dumps(content) if shared is None else shared.dumps(content)
         except (pickle.PicklingError, AttributeError, TypeError) as error:
             raise TypeError(f"checkpoint: {error}. Derivation formulas and mask rules are kept by reference: define "
                             "them as module-level functions (or picklable objects), not lambdas") from None
+        finally:
+            self.__dict__.pop("_columns_detached", None)
         with open(os.path.join(path, "state.pkl"), "wb") as f:
             f.write(payload)
         with open(os.path.join(path, "manifest.json"), "w") as f:
@@ -1276,6 +1285,10 @@ class VariableStoreMixin:
         self.__dict__.update(saved["state"])
         for name in self._TOPOLOGY_CACHES:
             self.__dict__.pop(name, None)
+        self._bind_columns()
+
+    def _bind_columns(self) -> None:
+        """The checkpointed MPG's views of this DataStructure's columns (pickled without it) read from it again."""
 
     def _construction(self) -> dict:
         """JSON arguments rebuilding an empty DataStructure of this class (restore)."""
@@ -1864,7 +1877,7 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
         g = self._mtg
         vids = self.entity_ids("node").tolist()
         local = {v: i for i, v in enumerate(vids)}
-        edge_type = g.property("edge_type")
+        edge_type = g._column("edge_type")
         parents = self.parents()
 
         def visiting(v):
@@ -2351,9 +2364,9 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
         g = self._mtg
         if hasattr(g, "connection_vids"):
             return np.array(g.connection_vids())          # kept and patched by the MPG (O-14)
-        scale_prop, n_id_a = g.property("scale"), g.property("n_id_a")
-        connections = scale_prop.order[:scale_prop.size][scale_prop.values_array() == g.scales.Connection]
-        keys = n_id_a.keys_array() if hasattr(n_id_a, "keys_array") else np.array(sorted(n_id_a), dtype=np.int64)
+        scale_keys, scale_values = g._column("scale").items_arrays()
+        connections = scale_keys[scale_values == g.scales.Connection]
+        keys = g._column("n_id_a").keys_array()
         return np.intersect1d(np.asarray(connections, dtype=np.int64), np.asarray(keys, dtype=np.int64))
 
     def entity_ids(self, location: str) -> np.ndarray:
@@ -2520,23 +2533,22 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
         if prop is None or len(prop) == 0:
             return None
         if ((scale is None or scale == self._node_scale()) and fast_idx is not None and isinstance(prop, ArrayDict)
-                and prop.size == len(self._bio_vids_sorted) and np.array_equal(prop.keys_array(), self._bio_vids_sorted)):
+                and not isinstance(prop, DataStructureColumn) and prop.size == len(self._bio_vids_sorted)
+                and np.array_equal(prop.keys_array(), self._bio_vids_sorted)):
             return prop.values_array()[fast_idx].astype(np.float64, copy=True)
-        if isinstance(prop, ArrayDict) and prop.arr.dtype.kind in "fiub":       # numeric: looked up in bulk
+        if isinstance(prop, ArrayDict) and prop.dtype.kind in "fiub":           # numeric: looked up in bulk
             keys = (np.asarray(vids, dtype=np.int64) if scale is None or scale == self._node_scale()
                     else self._owners_at(vids, scale))
-            stored = prop.order[:prop.size]
-            at = np.minimum(np.searchsorted(stored, keys), max(prop.size - 1, 0))
-            found = (prop.size > 0) & (stored[at] == keys) if prop.size else np.zeros(keys.size, dtype=bool)
+            found, values = prop.at(keys)
             if not found.all():
                 missing = keys[~found]
                 if fill is None:
                     raise ValueError(f"MTG property '{name}' has no value for vertices "
                                      f"{sorted(set(missing.tolist()))[:10]} ({np.unique(missing).size} missing).")
                 out = np.full(keys.size, float(fill))
-                out[found] = prop.values_array()[at[found]]
+                out[found] = values
                 return out
-            return prop.values_array()[at].astype(np.float64, copy=True)
+            return values.astype(np.float64, copy=True)
         keys = self._keys_at_scale(vids, scale)
         missing = [k for k in keys if k not in prop]
         if missing and fill is None:
@@ -2559,10 +2571,8 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
         try:
             if prop is not None and len(prop):                        # the vertices' own entries
                 if isinstance(prop, ArrayDict):
-                    order = prop.order[:prop.size]
-                    position = np.searchsorted(order, unique).clip(0, prop.size - 1)
-                    known = order[position] == unique
-                    out[known] = prop.values_array()[position[known]]
+                    known, values = prop.at(unique)
+                    out[known] = values
                 else:
                     known = np.array([int(v) in prop for v in unique.tolist()], dtype=bool)
                     out[known] = [float(prop[int(v)]) for v in unique[known].tolist()]
@@ -2636,10 +2646,10 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
         props = self._mtg.properties()
         prop = props.get(name)
         if prop is None:
-            props[name] = prop = ArrayDict() if numeric else {}
-        elif numeric and type(prop) is dict and all(isinstance(v, (int, float, np.integer, np.floating))
-                                                    for v in prop.values()):
-            props[name] = prop = ArrayDict(dict(sorted(prop.items())))
+            props[name] = prop = ArrayDict(dtype=np.float64 if numeric else object)
+        elif (numeric and type(prop) is ArrayDict and prop.arr.dtype == object
+              and all(isinstance(v, (int, float, np.integer, np.floating)) for v in prop.values_array().tolist())):
+            props[name] = prop = ArrayDict.from_items(prop.keys_array(), prop.values_array().tolist())
         return prop
 
     def _write_node_to_mtg(self, name: str, arr: np.ndarray) -> None:
@@ -2653,7 +2663,7 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
         if arr.shape != (self.n_nodes(),):
             raise ValueError(f"write_node_to_mtg('{name}'): expected shape ({self.n_nodes()},), got {arr.shape}.")
         prop = self._mtg_property_for_write(name)
-        if (isinstance(prop, ArrayDict) and prop.size == len(self._bio_vids_sorted)
+        if (type(prop) is ArrayDict and prop.size == len(self._bio_vids_sorted)
                 and np.array_equal(prop.keys_array(), self._bio_vids_sorted)):
             prop.assign_at(self._bio_node_idx, arr)
         else:
@@ -2680,7 +2690,7 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
             raise ValueError(f"write_edge_to_mtg('{name}'): several edges share a parent, their values cannot all "
                              "be written to it (use the child mapping)")
         prop = self._mtg_property_for_write(name)
-        if (isinstance(prop, ArrayDict) and prop.size == len(self._bio_vids_sorted)
+        if (type(prop) is ArrayDict and prop.size == len(self._bio_vids_sorted)
                 and np.array_equal(prop.keys_array(), self._bio_vids_sorted)):
             prop.assign_at(idx, arr)
         else:
@@ -2738,6 +2748,10 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
         """
         if not spec.mtg_backed or self._mtg is None:
             return None
+        own = self._own_view(spec)
+        if own is not None and own.pure() and "_carrying" not in self.__dict__:
+            values = self._var_stores()[spec.location][spec.name]      # the MPG reads them: the same values
+            return values.tolist() if values.dtype == object else np.array(values, dtype=np.float64)
         dtype = getattr(spec, "dtype", float)
         if dtype is object:
             if spec.mapping is not None or spec.location == "edge":
@@ -2793,6 +2807,8 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
             # the spec of the component holding it (another's, reading it mapped from its scale, is replaced)
             tracked[spec.name] = spec
             self.__dict__.setdefault("_mtg_synced", {})[spec.name] = None
+            if self._viewable(spec):
+                self._view(spec)
 
     @contextmanager
     def mtg_ahead(self):
@@ -2827,6 +2843,141 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
         """Record that the MTG holds the current values of *name* (e.g. just read from it)."""
         if name in self.__dict__.get("_mtg_tracked", {}):
             self.__dict__["_mtg_synced"][name] = (self.write_count(name), self.topology_version)
+            view = self._mtg.properties().get(name)
+            if isinstance(view, DataStructureColumn) and view.bound_to(self):
+                view.drop_at_entities()
+
+    # ── One storage: a tracked variable's MPG property is a view of its column (data_structure.columns) ──
+
+    def _viewable(self, spec) -> bool:
+        """Whether *spec*'s MTG property is keyed by the entity ids of its location (held at its own scale, with no
+        mapping): the MPG then reads this DataStructure's column (DataStructureColumn), not a copy."""
+        name, location = spec.name, spec.location
+        if not spec.mtg_backed or self._mtg is None or location == "scalar" or not self.has(name) \
+                or self.location(name) != location or name in self.__dict__.get("_aliases", {}):
+            return False
+        array = self._var_stores()[location].get(name)
+        if array is None or array.ndim != 1:
+            return False
+        scales = self._mtg.scales
+        if location == "node":
+            return spec.mapping is None and (spec.scale is None or spec.scale == self._node_scale())
+        if location == "edge":
+            if self._anatomy:
+                return spec.scale == scales.Connection
+            return _EDGE_CONVENTIONS.get(spec.mapping, spec.mapping) == "proximal" and \
+                (spec.scale is None or spec.scale == self._node_scale())
+        return spec.mapping is None and spec.scale == getattr(scales, location, None)
+
+    def _own_view(self, spec):
+        """The MPG's view of *spec*'s column when it is this DataStructure's at *spec*'s location, else None."""
+        view = self._mtg.properties().get(spec.name) if self._mtg is not None else None
+        if isinstance(view, DataStructureColumn) and view.bound_to(self) and view.location == spec.location:
+            return view
+        return None
+
+    def _view(self, spec):
+        """
+        Make *spec*'s MPG property a view of its column (DataStructureColumn), and return it (None when another
+        DataStructure's view holds it). The stored property's entries stay in the view's overlay until the next
+        synchronisation drops them at the DataStructure's entities (flush_mtg, as writing its values over them did);
+        the entities the stored property has no entry for are absent from the MPG until then.
+        """
+        properties = self._mtg.properties()
+        prop = properties.get(spec.name)
+        if isinstance(prop, DataStructureColumn):
+            if prop.bound_to(self) and prop.location == spec.location:
+                return prop
+            if prop._ds is not None and not prop.bound_to(self):
+                return None
+        array = self._var_stores()[spec.location][spec.name]
+        view = DataStructureColumn(self, spec.name, spec.location, dtype=object if array.dtype == object else
+                                   np.float64 if array.dtype.kind == "f" else array.dtype)
+        held = view._source_index()[0]
+        if prop is not None and len(prop):
+            keys, values = prop.items_arrays() if isinstance(prop, ArrayDict) else \
+                (np.fromiter(prop.keys(), dtype=np.int64, count=len(prop)), list(prop.values()))
+            if isinstance(prop, ArrayDict) and prop.dtype != view.overlay.arr.dtype:
+                view.overlay = ArrayDict(dtype=prop.dtype)
+            view.overlay.insert_many(np.array(keys, dtype=np.int64), values if isinstance(values, list)
+                                     else np.array(values))
+            view._absent = np.setdiff1d(held, keys)
+            view.version = getattr(prop, "version", 0) + 1
+        else:
+            view._absent = np.array(held, dtype=np.int64)
+        properties[spec.name] = view
+        return view
+
+    def _column_index(self, name: str, location: str) -> tuple:
+        """
+        (sorted keys, positions in the array, the array) of variable *name*'s column at *location*, for the MPG's
+        view of it: the ids its array was built for, sorted once per topology (shared by the location's variables),
+        at the explicit entities only on an MPG with instances; while update_topology carries the variables over,
+        the arrays carried (the old values). Empty when the DataStructure does not hold *name* there.
+        """
+        carrying = self.__dict__.get("_carrying")
+        if carrying is not None and location in carrying and name in carrying[location][1]:
+            keys, variables = carrying[location]
+            sorted_keys, positions = self._sorted_ids(("carrying", location), keys)
+            return sorted_keys, positions, variables[name]
+        store = self._var_stores().get(location)
+        array = None if store is None else store.get(name)
+        if array is None:
+            empty = np.empty(0, dtype=np.int64)
+            return empty, empty, np.empty(0)
+        stored_ids = self.__dict__.get("_stored_ids", {}).get(location)
+        keys = stored_ids if stored_ids is not None and stored_ids.size == array.shape[0] else \
+            np.asarray(self.entity_ids(location), dtype=np.int64)
+        if keys.size != array.shape[0]:
+            keys = keys[:array.shape[0]]
+        sorted_keys, positions = self._sorted_ids(location, keys)
+        return sorted_keys, positions, array
+
+    def _column_source(self, name: str, location: str) -> tuple:
+        """(sorted keys, values) of _column_index: the values gathered."""
+        keys, positions, array = self._column_index(name, location)
+        return keys, array[positions]
+
+    def _sorted_ids(self, tag, keys) -> tuple:
+        """(the ids *keys* sorted, their positions in *keys*), without the instanced ones at the nodes and edges,
+        cached while *keys* is the same array (an entity location's ids, until the topology changes)."""
+        cache = self.__dict__.setdefault("_sorted_ids_cache", {})
+        g = self._mtg
+        instanced = getattr(g, "_instanced", lambda: False)()
+        stamp = (g._instance_edits() if instanced else 0)
+        hit = cache.get(tag)
+        if hit is not None and hit[0] is keys and hit[1] == stamp:
+            return hit[2], hit[3]
+        positions = np.argsort(keys, kind="stable")
+        sorted_keys = keys[positions]
+        location = tag[1] if isinstance(tag, tuple) else tag
+        if instanced and location in ("node", "edge") and sorted_keys.size:
+            explicit = ~g._instanced_mask(sorted_keys)
+            sorted_keys, positions = sorted_keys[explicit], positions[explicit]
+        sorted_keys.flags.writeable = False
+        cache[tag] = (keys, stamp, sorted_keys, positions)
+        return sorted_keys, positions
+
+    def _views(self) -> list:
+        """The MPG's views of this DataStructure's columns."""
+        if self._mtg is None:
+            return []
+        return [prop for prop in self._mtg.properties().values()
+                if isinstance(prop, DataStructureColumn) and prop.bound_to(self)]
+
+    def _bind_columns(self) -> None:
+        """The checkpointed MPG's views of this DataStructure's columns (pickled without it) read from it again."""
+        if self._mtg is None:
+            return
+        for prop in self._mtg.properties().values():
+            if isinstance(prop, DataStructureColumn) and prop._ds is None:
+                prop.bind(self)
+
+    def _release_column(self, name: str) -> None:
+        """The MPG's view of column *name* becomes a stored column (the DataStructure lets the variable go)."""
+        view = self._mtg.properties().get(name) if self._mtg is not None else None
+        if isinstance(view, DataStructureColumn) and view.bound_to(self):
+            self._mtg.properties()[name] = view.stored()
 
     def _write_mtg(self, spec) -> None:
         """
@@ -2840,6 +2991,11 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
         """
         if not spec.mtg_backed or self._mtg is None:
             return
+        if self._viewable(spec):
+            view = self._view(spec)
+            if view is not None:            # the MPG reads the column: its overlay's entries at the entities dropped
+                view.drop_at_entities()
+                return
         values = self.get(spec.name)
         if getattr(self._mtg, "_instanced", lambda: False)() and spec.location in ("node", "edge"):
             self._write_explicit_to_mtg(spec, values)
@@ -2958,7 +3114,35 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
             if keys is None or keys.size != size:
                 keys = np.asarray(self.entity_ids(location), dtype=np.int64)[:size]
             old[location] = (keys, {name: arr.copy() for name, arr in store.items()})
+        self.__dict__["_carrying"] = old         # the MPG's views read the carried (old) values meanwhile
+        try:
+            self._carry_variables(old, stored_ids)
+        finally:
+            self.__dict__.pop("_carrying", None)
+        self._views_follow(old)
 
+    def _views_follow(self, old: dict) -> None:
+        """After the variables were carried over: the new entities of each location absent from the MPG's views
+        until their next synchronisation (the MPG had no entry for them), the removed ones forgotten."""
+        views = self._views()
+        if not views:
+            return
+        added = {}
+        for location, (old_keys, _) in old.items():
+            keys = np.asarray(self.entity_ids(location), dtype=np.int64)
+            added[location] = np.setdiff1d(keys, old_keys)
+        for view in views:
+            new = added.get(view.location)
+            if new is None:
+                continue
+            if view._absent.size:
+                held = self._column_index(view.name, view.location)[0]
+                view._absent = np.union1d(view._absent[np.isin(view._absent, held)], new)
+            else:
+                view._absent = new
+
+    def _carry_variables(self, old: dict, stored_ids: dict) -> None:
+        """_update_topology's rebuild: the topology extended or rewired, every variable carried over to it."""
         if self._anatomy:
             self._rewire_junctions()
         else:
@@ -3051,10 +3235,8 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
                 found, values = g._property_at(name, vids)
                 column[np.searchsorted(vids, found)] = values.tolist()
             elif isinstance(prop, ArrayDict) and prop.size:                  # in bulk: None where there is no value
-                order, values = prop.order[:prop.size], prop.values_array()
-                position = np.searchsorted(order, vids).clip(0, prop.size - 1)
-                found = order[position] == vids
-                column[found] = values[position[found]].tolist()
+                found, values = prop.at(vids)
+                column[found] = values.tolist()
             else:
                 column[:] = [prop.get(nv) for nv in vids.tolist()]
             columns.append(column)
@@ -3116,7 +3298,7 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
                   if vid not in old_parents or old_parents[vid] != parent or vid in changed
                   or (parent is not None and (parent not in old_parents or parent in changed))}
         alive = g.owned_compartments(self._from_scale)
-        n_id_a, n_id_b = g.property("n_id_a"), g.property("n_id_b")
+        n_id_a, n_id_b = g._column("n_id_a"), g._column("n_id_b")
         junctions = np.asarray(g.junction_vids(), dtype=np.int64)
         tails, heads = _values_at(n_id_a, junctions), _values_at(n_id_b, junctions)
         head_alive = np.isin(heads, alive)
@@ -3158,8 +3340,7 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
         scales = g.topology_arrays()["scale"]
         if key >= scales.size or scales[key] != g.scales.Compartment:
             return None
-        labels = g.values_of("label", [key]) if g._instanced() else g.property("label")
-        label = labels.get(key)
+        label = g.values_of("label", [key]).get(key)
         owners = g.compartments_by_owner(self._from_scale)
         section = int(self._sections_of([key])[0])
         if section < 0:
@@ -3167,7 +3348,7 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
         vertex = g.linked_parent(section, self._from_scale)
         while vertex is not None:
             candidates = owners.get(vertex, [])
-            labels = g.values_of("label", candidates) if g._instanced() else g.property("label")
+            labels = g.values_of("label", candidates)
             for nv in candidates:
                 if nv in values_by_key and labels.get(nv) == label:
                     return nv
@@ -3331,10 +3512,10 @@ def _read_only(array: np.ndarray) -> np.ndarray:
 def _values_at(prop, vids: np.ndarray) -> np.ndarray:
     """The integer values of property *prop* at *vids* (every one having one): in bulk on an ArrayDict."""
     if isinstance(prop, ArrayDict):
-        positions, found = prop._positions(vids)
+        found, values = prop.at(vids)
         if not found.all():
             raise KeyError(int(vids[~found][0]))
-        return prop.values_array()[positions].astype(np.int64)
+        return values.astype(np.int64)
     return np.array([int(prop[v]) for v in vids.tolist()], dtype=np.int64)
 
 
@@ -3366,6 +3547,10 @@ def _fill(out: np.ndarray, at: np.ndarray, value) -> None:
 def _scatter(prop, vids: np.ndarray, values: np.ndarray, integer: bool = False) -> None:
     """Write *values* at *vids* of MTG property *prop*: in place for the vids it has, one batched insert for the others."""
     values = np.asarray(values)
+    if isinstance(prop, DataStructureColumn) or (isinstance(prop, ArrayDict) and prop.arr.dtype == object):
+        convert = int if integer else (lambda value: value)       # Python values (an object column's as a dict's)
+        prop.update(dict(zip(vids.tolist(), (convert(v) for v in values.tolist()))))
+        return
     if isinstance(prop, ArrayDict) and prop.size:
         order = prop.order[:prop.size]
         position = np.searchsorted(order, vids).clip(0, prop.size - 1)

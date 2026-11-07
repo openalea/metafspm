@@ -38,7 +38,7 @@ class Elements(StructuralComponent):
         for area in AREAS:
             element = g.add_component(complex_, **PropsConfig(scale=s.SubOrgan, edge_type='/',
                                                               label=L.SubOrgan.StemElement))
-            g.property("element_area")[element] = area
+            g.set_values("element_area", [element], [area])
 
 
 @dataclass

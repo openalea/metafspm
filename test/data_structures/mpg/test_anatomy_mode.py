@@ -114,7 +114,7 @@ def test_growth_keeps_every_connection_and_wires_the_new_segment_only():
 def test_differentiation_rewires_only_the_junctions_it_touches():
     g, segments, anatomies, ds = _plant()
     anatomy_connections = set(ds.entity_ids("edge")) - set(g.junction_vids())
-    g.property("vessel_index")[anatomies[segments[1]]["xylem"][1]] = 5.         # the middle segment differentiates
+    g.set_values("vessel_index", [anatomies[segments[1]]["xylem"][1]], [5.])     # the middle segment differentiates
     ds.update_topology()
     assert ds.rewired == sorted([segments[1], segments[2]])                      # its link and its child's link
     assert anatomy_connections <= set(ds.entity_ids("edge"))

@@ -237,7 +237,6 @@ def test_ordered_connections():
     def _setup():
         g, _ = generate_simple_mpg_seedling()
         node_anchor = g.scales.anchors[g.scales.Compartment]
-        angle_p     = g.property('angle')
         for vid in g.vertices(scale=g.scales.SubOrgan):
             if g.property('isanchor').get(vid, False):
                 continue
@@ -245,8 +244,7 @@ def test_ordered_connections():
                 scale=g.scales.Compartment, edge_type='/', label=g.labels.Cell.MetaXylem))
             nv_far  = g.add_component_with_topo(node_anchor, vid, **PropsConfig(
                 scale=g.scales.Compartment, edge_type='/', label=g.labels.Cell.MetaXylem))
-            angle_p[nv_near] = 30.0
-            angle_p[nv_far]  = 150.0
+            g.set_values('angle', [nv_near, nv_far], [30.0, 150.0])
         return g
 
     def _inter_edges(g):
@@ -333,8 +331,7 @@ if __name__ == "__main__":
                 scale=g_x.scales.Compartment, edge_type='/', label=g_x.labels.Cell.MetaXylem))
             nv_far  = g_x.add_component_with_topo(node_anchor, vid, **PropsConfig(
                 scale=g_x.scales.Compartment, edge_type='/', label=g_x.labels.Cell.MetaXylem))
-            angle_p[nv_near] = 30.0
-            angle_p[nv_far]  = 150.0
+            g.set_values('angle', [nv_near, nv_far], [30.0, 150.0])
         return g_x
 
     g_ord = _xylem_setup()

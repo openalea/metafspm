@@ -1230,7 +1230,7 @@ class StructuralComponent(DataStructureComponent):
         Build the initial structure of one plant under its Plant-scale vertex *plant* in the population MPG *g*,
         from that plant's *scenario* ({name: value}), before any component is constructed. Several structural components
         may each add their part, in order (e.g. roots, then anatomies). The planting writes the plant's position
-        before any initiator builds: g.property("x"/"y"/"z"/"rotation")[plant], which the initiator may read to place
+        before any initiator builds: g.values_at("x"/"y"/"z"/"rotation", [plant]), which the initiator may read to place
         its initial elements; a step placing the elements later declares them (planting_variable) and takes them as
         arguments. An initiator's inputs linked from an earlier initiator are written before it builds (the plant
         model's translator, coupling.initiation).
@@ -1389,9 +1389,8 @@ class StructuralComponent(DataStructureComponent):
         written back), which is kept."""
         ds, g = self.data_structure, self.data_structure._mtg
         ids = ds.entity_ids(spec.location)
-        prop = g.properties().get(spec.name, {})
-        own = np.isin(ids, prop.keys_array()) if hasattr(prop, "keys_array") else \
-            np.array([int(v) in prop for v in ids.tolist()], dtype=bool)
+        prop = g.properties().get(spec.name)
+        own = np.isin(ids, prop.keys_array()) if prop is not None else np.zeros(len(ids), dtype=bool)
         keep = ds._instanced_at(spec.location) & np.isin(ids, known_ids) & ~own
         if not keep.any():
             return values
@@ -1423,9 +1422,7 @@ class StructuralComponent(DataStructureComponent):
             ids, labels = new.relabel
             ids = np.asarray(ids, dtype=np.int64).reshape(-1)
             labels = np.broadcast_to(np.asarray(labels, dtype=object), ids.shape)
-            label = g.property("label")
-            for vid, value in zip(ids.tolist(), labels.tolist()):
-                label[vid] = value
+            g.set_values("label", ids, labels.tolist())
         if n == 0:
             if new.relabel is not None:
                 ds._invalidate_topology()

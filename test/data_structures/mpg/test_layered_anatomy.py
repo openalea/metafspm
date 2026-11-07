@@ -192,7 +192,7 @@ def test_growth_wires_the_new_section_only_and_keeps_every_connection():
 
 def test_differentiation_rewires_only_the_junctions_it_touches():
     g, segments, sections, ds = _plant(3)
-    g.property("vessel_index")[sections[segments[1]]["x1"]] = 5.         # the middle section's vessel 1 changes
+    g.set_values("vessel_index", [sections[segments[1]]["x1"]], [5.])     # the middle section's vessel 1 changes
     ds.update_topology()
     assert ds.rewired == sorted(segments[1:])                            # its link and its child's
     assert len(g.junction_vids()) == 2 * 2 - 2                           # vessel 5 matches neither neighbour
