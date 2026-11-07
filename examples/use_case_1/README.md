@@ -257,6 +257,22 @@ plant solve, which the options shrink, dominates a larger scene's). At 16 plants
 the step 3.28 s, 4.66 measured before GRANAP's faster junctions, 5f5b34b), the scope's peak 4.7 GB (5.3), the transpiration and uptake unchanged, gs within 0.04 %, the
 leaves' water potential 0.36 % above on average, 0.54 % at most (0.8 % of their drop below the roots').
 
+**Running a model less often** (metafspm's per-component cadence, `Component(cadence=)`; measured 2026-11-07, 2
+plants, 3 days from the sowing, `benchmark.py --cadence ...`, against the hourly run; the steps' time without the
+build). The use case keeps every model hourly:
+
+| | calls | steps (hourly 56 s) | the model's own time | what changes |
+|---|---|---|---|---|
+| GRANAP's anatomies every 3 h (`GranapAnatomy="3 h"`) | 24 | 52 s | 10.0 → 8.8 s; MECHA 34 → 31 s | fluxes within 1e-7; the roots' mean ψ up to 74 hPa off (its range −131 to −50 hPa): the sections wait for their anatomy |
+| GRANAP's anatomies every day | 3 | 36 s | 10.0 → 7.6 s; MECHA 34 → 17 s (fewer sections), the kinds 27 → 11 s | fluxes within 1e-6; the roots' ψ up to 98 hPa off (−4 instead of −102 hPa at the first day's end) |
+| Caribu's light every 3 h, from the interval's start (`CaribuLight="3 h@start"`) | 24 | 50 s | 2.8 → 1.0 s | PARa held at its 3-hour mean: up to 36 % off at an hour; over the run PARa +1.5 %, An +6 %, transpiration +0.5 % |
+| Caribu's light every day, from its start | 3 | 52 s | 2.8 → 0.2 s | PARa held at the day's mean, night included: transpiration ×1.9, An −14 % |
+| the light model's `interval` of 3 h or 1 d (`CaribuLightModel="1 d"`) | 72 | 52 s | unchanged | identical: the light is relit whenever elements appear (its geometry_input), every hour here |
+
+A call of a cadenced component costs what it builds (the sections new since the last call), so GRANAP gains little
+until the day; the light's cadence holds PARa (its output) between calls, where the light model's interval keeps
+PARa hourly from the held relative light (between()) but relights at every new element.
+
 The frames keep a few variables, the run's explicit choice (`run.FRAME_VARIABLES`, the recorder's
 `frame_options={"variables": ...}`; `scene(frame_variables=None)` keeps them all). Every entity set keeps its
 structure (ids, labels, complex and parent links, the segment ends), and:

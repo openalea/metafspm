@@ -11,6 +11,7 @@ end).
                         [--scenario leaf_ports=bundles vapour_path=air_spaces ...]
                         [--workers auto|n] [--linear-solver superlu|superlu_reuse|cholmod|cupy]
                         [--device cpu|cuda] [--variability SEED] [--frames] [--profile-hours FIRST LAST]
+                        [--cadence GranapAnatomy="1 d" CaribuLight="3 h@start" ...]
 
 By default 2 plants to day 3 (the use case's fast regime); --days 8 for the day-8 numbers, --plants 8 --days 4 for the
 scaling; --outputs measures the outputs at the end (outputs()): a frame without the sections drawn, two display
@@ -27,7 +28,10 @@ memory of the process's control group (the pool's processes included: run it in 
 and at its peak. --variability gives each plant its own seeded root draws (plant_variability: ArchiSimple's
 random_choice; identical plants share every kind, which flatters a scaling); --frames records the run (a frame every
 24 h, the sections of run.DISPLAY_PLANTS drawn as instances, no checkpoint) under outputs/benchmarks/frames/<label>,
-its size at the end; --profile-hours cProfiles the main process over those steps (outputs/benchmarks/profiles/).
+its size at the end; --profile-hours cProfiles the main process over those steps (outputs/benchmarks/profiles/);
+--cadence gives components (by class name) a cadence (coupling.cadence.Cadence: the duration, "@start" for at="start",
+the interval's end by default), or an environment model (by class name) its interval (a full run every interval,
+between() at the other steps), to measure what running them less often saves and changes.
 Each step also records its kinds' batches (kinds, interior cells, seconds, processes: "auto"'s estimate checked
 against them). Each step records the
 plants' nodes and the reduced groups' dense blocks (their nonzeros: kept nodes squared, summed), the end the kinds
@@ -207,7 +211,7 @@ def plant_variability(plants: int, seed: int) -> list:
 
 def benchmark(plants: int, days: float, measure_outputs: bool = False, checkpoint_at=(), resume: str = None,
               label: str = "run", scenario: dict = None, compute=None, variability: int = None,
-              frames: bool = False, profile_hours=()) -> dict:
+              frames: bool = False, profile_hours=(), cadences: dict = None) -> dict:
     counter = KindCounter()
     started = time.perf_counter()
     plant_scenarios = plant_variability(plants, variability) if variability is not None else None
@@ -215,6 +219,17 @@ def benchmark(plants: int, days: float, measure_outputs: bool = False, checkpoin
     options = dict(frame_period="1 d", display_period="1 d", checkpoint_period=None) if frames else {}
     scene = run.scene(plants, folder=folder, scenario=scenario, compute=compute, plant_scenarios=plant_scenarios,
                       **options)
+    from openalea.metafspm.coupling.cadence import Cadence
+    for name, given in (cadences or {}).items():           # by class name: every population's
+        interval, _, at = given.partition("@")
+        models = [model for model in scene.environment if type(model).__name__ == name]
+        for model in models:                               # an environment model: its interval (between() else)
+            model.interval = interval
+        found = [component for component in scene.components if type(component).__name__ == name]
+        if not found and not models:
+            raise KeyError(f"--cadence: no component or environment model {name} in the scene")
+        for component in found:
+            component.cadence = Cadence(interval, at=at or "end")
     built = time.perf_counter() - started
     counter.take()
     loaded, first_hour = None, 0
@@ -292,6 +307,7 @@ def benchmark(plants: int, days: float, measure_outputs: bool = False, checkpoin
               "scope_peak_gb": scope_peak_memory(), "pool": pool, "scenario": scenario or {},
               "device": compute.device_info() if compute is not None else None,
               "kinds_held": kinds_held, "kinds_MB": kinds_mb, "variability": variability,
+              "cadences": dict(cadences or {}), "calls": dict(scene.calls),
               "plant_scenarios": plant_scenarios,
               "frames": {"folder": folder, "MB": folder_size(folder) / 1e6} if folder else None,
               "timing": timing, "steps": steps, "outputs": measured}
@@ -433,6 +449,8 @@ def main(argv=None):
                              "run.DISPLAY_PLANTS drawn as instances (no checkpoint)")
     parser.add_argument("--profile-hours", type=int, nargs=2, default=(), metavar=("FIRST", "LAST"),
                         help="cProfile the main process over these steps (outputs/benchmarks/profiles/<label>.prof)")
+    parser.add_argument("--cadence", nargs="*", default=(), metavar="COMPONENT=DURATION[@start]",
+                        help='components\' cadences, e.g. GranapAnatomy="1 d" CaribuLight="3 h@start"')
     arguments = parser.parse_args(argv)
     from openalea.metafspm.compute import Compute
     compute = Compute(workers=arguments.workers if arguments.workers == "auto" else int(arguments.workers),
@@ -440,7 +458,8 @@ def main(argv=None):
     label = arguments.label or f"{arguments.plants}p_{arguments.days:g}d"
     result = benchmark(arguments.plants, arguments.days, arguments.outputs, tuple(arguments.checkpoint_at),
                        arguments.resume, label, scenario_entries(arguments.scenario), compute, arguments.variability,
-                       arguments.frames, tuple(arguments.profile_hours))
+                       arguments.frames, tuple(arguments.profile_hours),
+                       dict(given.split("=", 1) for given in arguments.cadence))
     os.makedirs(BENCHMARKS, exist_ok=True)
     path = os.path.join(BENCHMARKS, f"{result['commit']}.json")
     entries = {}
