@@ -1,7 +1,7 @@
 """
-Use case 1's benchmark (devplan_release_optimisation.md §5): the use case's scene (run.scene, in memory: no frames,
-no checkpoints) run hour by hour from the sowing, each step's time by model and by component (Scene.timing: "Model"
-and "Model.Component"), the kinds of the reduction evaluated (their number and time), the plants' nodes, the step's
+Use case 1's benchmark (devplan_release_optimisation.md §5): the use case's scene (build_scene: run.py's, in memory:
+no frames, no checkpoints) run hour by hour from the sowing, each step's time by model and by component
+(Scene.timing: "Model" and "Model.Component"), the kinds of the reduction evaluated (their number and time), the plants' nodes, the step's
 results (results(): transpiration, uptake, the leaves' gas exchange, the roots' water potential, the plant's and the
 soil's balance residuals, to compare runs), and the memory (RSS after each step; after malloc_trim and the peak at the
 end).
@@ -15,19 +15,19 @@ end).
 
 By default 2 plants to day 3 (the use case's fast regime); --days 8 for the day-8 numbers, --plants 8 --days 4 for the
 scaling; --outputs measures the outputs at the end (outputs()): a frame without the sections drawn, two display
-frames one step apart with the sections of run.DISPLAY_PLANTS drawn as instances (display="instances", the
+frames one step apart with the sections of DISPLAY_PLANTS drawn as instances (display="instances", the
 recorder's default: their frames, the parts they share, the folder packed with deflate) and whole ("full"), the use
 case's frame variables, and two checkpoints sharing their unchanging parts: their size and time. --checkpoint-at writes the scene's checkpoint after those hours (outputs/benchmarks/checkpoints/<label>/, the
 shared parts once); --resume loads one into the freshly built scene and runs on from its hour to --days (the load's
 time and memory, then each step's: a resumed run evaluates no kind again); --scenario updates the plants' scenario
-(run.WHEAT_SCENARIO; a value read as JSON when it is, e.g. length_classes=0.2, else a string); --workers and
+(models.WHEAT_SCENARIO; a value read as JSON when it is, e.g. length_classes=0.2, else a string); --workers and
 --linear-solver the Compute's (the pool of the kinds, the sparse solver), --device its device (cuda: the kinds' Kron
 reductions and the linear solves on the GPU, CuPy needed, docs/gpu.md; the device's transfers recorded at the end,
 "device"), the pool recorded per step and the peak
 memory of the process's control group (the pool's processes included: run it in its own systemd-run --scope), now
 and at its peak. --variability gives each plant its own seeded root draws (plant_variability: ArchiSimple's
 random_choice; identical plants share every kind, which flatters a scaling); --frames records the run (a frame every
-24 h, the sections of run.DISPLAY_PLANTS drawn as instances, no checkpoint) under outputs/benchmarks/frames/<label>,
+24 h, the sections of DISPLAY_PLANTS drawn as instances, no checkpoint) under outputs/benchmarks/frames/<label>,
 its size at the end; --profile-hours cProfiles the main process over those steps (outputs/benchmarks/profiles/);
 --cadence gives a model's schedule steps ("<model>.<step>": WheatPlant.anatomy, GRANAP's; CaribuLightModel.light, the
 lighting, its PARa every step) a cadence (coupling.cadence.Cadence: the duration, "@start" or "@end", the step's declared
@@ -57,7 +57,35 @@ sys.path.insert(0, HERE)
 
 from openalea.metafspm.solve import reduction as reduction_module    # noqa: E402
 
-import run                                                           # noqa: E402
+from openalea.caribu.component import CaribuLightModel             # noqa: E402
+from openalea.metafspm.scene.population import planting, stand       # noqa: E402
+from openalea.metafspm.scene.recorder import SceneRecorder           # noqa: E402
+from openalea.metafspm.scene.scene import Scene                      # noqa: E402
+
+from component import RichardsSoilModel                              # noqa: E402
+from models import (FRAME_VARIABLES, LIGHT_SCENARIO, SCENE_TRANSLATOR, SOIL_SCENARIO, TABLES,  # noqa: E402
+                    WHEAT_SCENARIO, WheatPlant, weather)
+
+START = "2026-05-10 00:00"                                           # run.py's
+DISPLAY_PLANTS = ("p0",)                                             # the plants whose sections frames draw
+
+
+def build_scene(plants=2, folder=None, frame_period="12 h", display_period="1 d", checkpoint_period="1 d", scenario=None,
+          compute=None, plant_scenarios=None):
+    """run.py's scene with the benchmark's options: *plants* plants (WHEAT_SCENARIO updated by *scenario*, each plant's
+    *plant_scenarios* added), recorded in *folder* (None: in memory: no frames, no checkpoints) with run.py's tables,
+    frames and views; *compute*: the run configuration (None: Compute())."""
+    sown = stand(plants, row_spacing=0.15, plant_spacing=0.05, depth=0.03, rotation=120.)
+    table = planting(sown, WheatPlant, {**WHEAT_SCENARIO, **(scenario or {})}, plant_scenarios=plant_scenarios)
+    recorder = SceneRecorder(folder, tables=TABLES, frame_period=frame_period if folder else None,
+                             frame_views="default" if folder else None,
+                             frame_options={"variables": FRAME_VARIABLES},
+                             display_period=display_period if folder else None,
+                             display_plants=DISPLAY_PLANTS if folder and display_period else None,
+                             checkpoint_period=checkpoint_period if folder else None)
+    return Scene(table, environment=[RichardsSoilModel, CaribuLightModel],
+                 environment_scenarios=[SOIL_SCENARIO, LIGHT_SCENARIO], translator=SCENE_TRANSLATOR,
+                 forcings=weather(START), time_step="1 h", start=START, compute=compute, recorder=recorder)
 
 BENCHMARKS = os.path.join(HERE, "outputs", "benchmarks")
 HOUR = 3600.
@@ -163,8 +191,8 @@ class KindCounter:
 
 def results(scene) -> dict:
     """The step's results, to compare runs (a change's effect on them): the organs' transpiration and the roots'
-    uptake (models.WATER_TABLES), the leaves' green area, PARa, An and gs (run.LEAVES), the roots' water potential
-    (run.ROOTS), the plant's and the soil's water balance residuals (their declared conservation)."""
+    uptake (models.WATER_TABLES), the leaves' green area, PARa, An and gs (models.LEAVES), the roots' water potential
+    (models.ROOTS), the plant's and the soil's water balance residuals (their declared conservation)."""
     rows = {name: scene.recorder.table(name).iloc[-1] for name in ("leaf_water", "plant_water", "leaves", "roots")}
     picked = {"transpiration": rows["leaf_water"]["leaf_transpiration"],
               "root_uptake": rows["plant_water"]["root_uptake"],
@@ -218,8 +246,8 @@ def benchmark(plants: int, days: float, measure_outputs: bool = False, checkpoin
     plant_scenarios = plant_variability(plants, variability) if variability is not None else None
     folder = os.path.join(BENCHMARKS, "frames", label) if frames else None
     options = dict(frame_period="1 d", display_period="1 d", checkpoint_period=None) if frames else {}
-    scene = run.scene(plants, folder=folder, scenario=scenario, compute=compute, plant_scenarios=plant_scenarios,
-                      **options)
+    scene = build_scene(plants, folder=folder, scenario=scenario, compute=compute, plant_scenarios=plant_scenarios,
+                        **options)
     from openalea.metafspm.coupling.cadence import Cadence
     for name, given in (cadences or {}).items():           # "<model>.<step>": a model's schedule step
         model, _, step = name.rpartition(".")
@@ -320,14 +348,15 @@ def folder_size(path: str) -> int:
 
 def outputs(scene) -> dict:
     """The outputs of *scene* now, written under outputs/benchmarks/outputs (removed after): a frame of the data; a
-    display frame with the sections of run.DISPLAY_PLANTS drawn as instances (display_instances_<k>: the frame, the
+    display frame with the sections of DISPLAY_PLANTS drawn as instances (display_instances_<k>: the frame, the
     parts it adds to the frames' parts/ folder, their count) and whole (display_full_<k>), at this step (k 1) and
     the next (k 2: the parts it shares with the first not written again), the instances' two frames and parts packed
     (display_instances_packed: deflate, encoding3d.pack); two checkpoints one step apart into one shared folder (the
     second refers to the first's parts); their size (MB) and time (s)."""
     import shutil
-    from openalea.metafspm.io.encoding3d import _encoding3d, scene_to_frame
+    from openalea.metafspm.io.encoding3d import _encoding3d, default_views, scene_to_frame, with_view_columns
     folder = os.path.join(BENCHMARKS, "outputs")
+    variables = with_view_columns(FRAME_VARIABLES, default_views(scene), list(scene.data_structures()))  # run.py's
     shutil.rmtree(folder, ignore_errors=True)
     os.makedirs(folder)
     encoding3d, found = _encoding3d(), {}
@@ -337,7 +366,7 @@ def outputs(scene) -> dict:
         parts = os.path.join(folder, subfolder, "parts")
         before = folder_size(parts) if os.path.isdir(parts) else 0
         started = time.perf_counter()
-        frame = scene_to_frame(scene, variables=run.FRAME_VARIABLES, **{"display_meshes": False, **options})
+        frame = scene_to_frame(scene, variables=variables, **{"display_meshes": False, **options})
         path = os.path.join(folder, subfolder, file)
         keys = encoding3d.write(path, frame)
         found[name] = {"seconds": time.perf_counter() - started, "MB": os.path.getsize(path) / 1e6}
@@ -346,7 +375,7 @@ def outputs(scene) -> dict:
                                parts_MB=folder_size(parts) / 1e6)
         del frame
         return keys
-    drawn = {"display_meshes": True, "display_plants": list(run.DISPLAY_PLANTS)}
+    drawn = {"display_meshes": True, "display_plants": list(DISPLAY_PLANTS)}
     write("frame", "data", "frame.glb")
     keys = set()
     for k in (1, 2):
@@ -445,7 +474,7 @@ def main(argv=None):
                         help="the plants differ (plant_variability: each its own seeded root draws)")
     parser.add_argument("--frames", action="store_true",
                         help="record to outputs/benchmarks/frames/<label>: a frame every 24 h, the sections of "
-                             "run.DISPLAY_PLANTS drawn as instances (no checkpoint)")
+                             "DISPLAY_PLANTS drawn as instances (no checkpoint)")
     parser.add_argument("--profile-hours", type=int, nargs=2, default=(), metavar=("FIRST", "LAST"),
                         help="cProfile the main process over these steps (outputs/benchmarks/profiles/<label>.prof)")
     parser.add_argument("--cadence", nargs="*", default=(), metavar="MODEL.STEP=DURATION[@start|@end]",

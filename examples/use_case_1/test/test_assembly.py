@@ -32,7 +32,7 @@ EXAMPLE = os.path.join(os.path.dirname(__file__), "..")
 sys.path.insert(0, os.path.abspath(EXAMPLE))
 
 from component import RichardsSoilModel                                               # noqa: E402
-from models import (PLANT_TRANSLATOR, SCENE_TRANSLATOR, WATER_MOLAR_VOLUME, WATER_TABLES, WHEAT_SCENARIO,  # noqa: E402
+from models import (FRAME_VARIABLES, PLANT_TRANSLATOR, SCENE_TRANSLATOR, WATER_TABLES, WHEAT_SCENARIO,  # noqa: E402
                     WheatPlant)
 
 HOUR, DAY = 3600., 86400.
@@ -89,15 +89,26 @@ def stepped(tmp_path_factory):
 
 
 def test_the_links_factors_are_their_units_conversions():
-    """The plant's links, the soil's and the stems' class input: each factor its units' conversion (the
-    transpiration's amount of water into its volume by its molar volume; a diameter into a radius)."""
+    """The plant's links, the soil's and the stems' class input: each factor its units' conversion, checked; where
+    the quantity changes a named equivalence, its factor computed from the units (the transpiration's amount of water
+    into its volume by the water's molar volume; a diameter into a radius)."""
+    from openalea.adel.architecture import ShootArchitecture
+    from openalea.granap.metafspm.component import GranapAnatomy
+    from openalea.mecha.component import MechaHydraulics
+    from openalea.metafspm.coupling.declaration import check_link
+    from openalea.metafspm.coupling.units import RADIUS_OF_DIAMETER, WATER_MOLAR_VOLUME
     links = {(link.receiver, link.variable): link for link in PLANT_TRANSLATOR.links + SCENE_TRANSLATOR.links}
     transpiration = links[("MechaHydraulics", "leaf_transpiration")]
     assert transpiration.provider == "GasExchange" and transpiration.aggregation == "sum"
-    assert transpiration.sources["transpiration"] == pytest.approx(
-        WATER_MOLAR_VOLUME * conversion_factor("cm3 d-1", "cm3 s-1"), rel=1e-12)
-    assert transpiration.sources["transpiration"] == pytest.approx(1555.2, rel=1e-12)       # 18e-3 × 86400
-    assert links[("GranapAnatomy", "stem_radius")].sources == {"diameter": 0.5}
+    assert transpiration.sources["transpiration"] is WATER_MOLAR_VOLUME and transpiration.unit_check
+    resolved = check_link(transpiration, MechaHydraulics.__new__(MechaHydraulics), GasExchange.__new__(GasExchange))
+    assert resolved.sources["transpiration"] == pytest.approx(
+        WATER_MOLAR_VOLUME.value * conversion_factor("cm3 d-1", "cm3 s-1"), rel=1e-12)
+    assert resolved.sources["transpiration"] == 18e-3 * 86400.                              # as written before
+    radius = links[("GranapAnatomy", "stem_radius")]
+    assert radius.sources == {"diameter": RADIUS_OF_DIAMETER}
+    assert check_link(radius, GranapAnatomy.__new__(GranapAnatomy),
+                      ShootArchitecture.__new__(ShootArchitecture)).sources == {"diameter": 0.5}
     potential = links[("MechaHydraulics", "soil_psi")]
     assert potential.sources["water_potential"] == pytest.approx(conversion_factor("hPa", "MPa"), rel=1e-12)
     uptake = links[("RichardsSoil", "plant_uptake")]
@@ -302,21 +313,24 @@ def test_the_soil_water_balance_closes_with_the_uptake(stepped):
 
 
 def test_the_frames_keep_what_the_default_views_show(stepped):
-    """run.py's frames keep a few variables (FRAME_VARIABLES): the default views' colour, selection and tube
-    variables among them, the Compartments' potential and tissue, a valid encoding3d frame marked filtered. The
-    reduced sections are instances of their templates (display="instances", the default): the sections' derived psi
-    is the recovered one of display="full" (its interior rows), the kept nodes' their own; the views declare the
-    instances layer."""
+    """run.py's frames keep a few variables (models.FRAME_VARIABLES) and what the default views colour, select and
+    size tubes by (the recorder adds them), the Compartments' potential and tissue, a valid encoding3d frame marked
+    filtered. The reduced sections are instances of their templates (display="instances", the default): the
+    sections' derived psi is the recovered one of display="full" (its interior rows), the kept nodes' their own; the
+    views declare the instances layer."""
     from openalea import encoding3d
     from openalea.encoding3d.validate import validate_bytes
     from openalea.metafspm.io.encoding3d import DISPLAY_ONLY, default_views, filtered_view_columns, scene_to_frame
-    from run import FRAME_VARIABLES
+    from openalea.metafspm.io.encoding3d import with_view_columns
     scene, _ = stepped
     views = default_views(scene, scene_to_frame(scene))
-    assert filtered_view_columns(views, FRAME_VARIABLES) == []
+    # the frames' filter names the data; the recorder adds what the views show (SceneRecorder.frame_variables)
+    assert "default/WheatPlant shoot: WheatPlant/Organ/organ_rank" in filtered_view_columns(views, FRAME_VARIABLES)
+    kept = with_view_columns(FRAME_VARIABLES, views, ["WheatPlant", "RichardsSoilModel"])
+    assert filtered_view_columns(views, kept) == []
     layers = {layer["name"]: layer for layer in views["configurations"]["default"]["layers"]}
     assert layers["WheatPlant GranapAnatomy instances"]["color_by"] == {"entity_set": "Compartment", "variable": "psi"}
-    frame = scene_to_frame(scene, variables=FRAME_VARIABLES)
+    frame = scene_to_frame(scene, variables=kept)
     plant = frame.data_structure("WheatPlant")
     compartments = plant.entity_set("Compartment")
     assert set(compartments.columns) == {"id", "label", "complex", "parent", "edge_type", "psi", "water_potential",
@@ -326,7 +340,7 @@ def test_the_frames_keep_what_the_default_views_show(stepped):
     assert {"An", "PARa", "radius", "length"} <= set(plant.entity_set("SubOrgan").columns)
     assert plant.extras["metafspm"]["filtered"]["variables"]["Compartment"] == ["psi", "tissue", "water_potential"]
     assert validate_bytes(encoding3d.to_bytes(frame, embed_parts=True)).ok
-    full = scene_to_frame(scene, variables=FRAME_VARIABLES, display="full").data_structure("WheatPlant")
+    full = scene_to_frame(scene, variables=kept, display="full").data_structure("WheatPlant")
     rows = full.entity_set("Compartment").columns
     shown = np.asarray(rows[DISPLAY_ONLY], dtype=bool)
     assert shown.any() and not full.instance_sets                  # the interiors as display rows

@@ -24,16 +24,21 @@ translators linking their components.
                         cells, the soil's water potential back to the roots, through the roots' soil nodes: the
                         links' mapping, the plant's mask root_surface, GRANAP's entity set soil_nodes); the light's
                         PARa and the optics are the Scene's default identity links
-    WATER_TABLES        the water diagnostics of decision U-6 after each step (the SceneRecorder's declared tables,
-                        Summary): the plants' root uptake and the largest change of MECHA's ψ since the step before
-                        (plant_water), their organs' transpiration (leaf_water), the soil's water given to the roots
-                        and the largest change of its water potential (soil_water); the balances themselves are
-                        the solves' declared conservation (MECHA's plant water, the soil's water: conservation.csv)
+    SOIL_SCENARIO, LIGHT_SCENARIO
+                        the environment's scenarios: a loam 50 cm deep, refined once where the roots take up water;
+                        Caribu's light with the sun, every hour
+    weather(start)      the Scene's forcings: a clear May day's PAR, the air's daily course, a rain on the second day
+    TABLES              what the recorder writes after each step besides its summaries (declared tables, Summary):
+                        the water diagnostics of decision U-6 (WATER_TABLES: plant_water, leaf_water, soil_water), the
+                        leaves' gas exchange (leaves) and the roots' water (roots); the balances themselves are the
+                        solves' declared conservation (MECHA's plant water, the soil's water: conservation.csv)
+    FRAME_VARIABLES     the variables the frames keep, besides their structure and what their views show
 
 Units: the plant's lengths in m (GRANAP's and MECHA's sections in mm and cm), MECHA's potentials in hPa and its flows
 in cm3 d-1, the gas exchange's transpiration in mmol s-1, the soil's potentials in MPa and its flows in m3 s-1. A
-link's factor is its units' conversion, checked by metafspm, except where the quantity changes: a diameter halved
-into a radius (geometry), an amount of water into its volume (the water's molar volume).
+link's factor is its units' conversion, checked by metafspm; where the quantity changes, a named equivalence
+(metafspm's coupling.units: a diameter into a radius, RADIUS_OF_DIAMETER; an amount of water into its volume, the
+water's molar volume, WATER_MOLAR_VOLUME) whose factor metafspm computes from the units and checks.
 
 The stomata are Tuzet's (decision U-5): each element's conductance limited by its leaf water potential, MECHA's
 of the step before (the gas exchange runs first: a lagged feedback, decisions U-5 and U-6), the mean of MECHA's
@@ -51,15 +56,17 @@ from openalea.granap.metafspm.component import GranapAnatomy, junction_rules
 from openalea.mecha.component import MechaHydraulics, scenario_reduction
 from openalea.mecha.stand_ins import Development
 
+import numpy as np
+
+from openalea.caribu.simulation import clear_day_PAR
 from openalea.metafspm.coupling.composite_wrapper import CompositeModel
+from openalea.metafspm.coupling.durations import start_date
+from openalea.metafspm.coupling.forcings import as_forcing, pulse
 from openalea.metafspm.coupling.translator import Translator
+from openalea.metafspm.coupling.units import RADIUS_OF_DIAMETER, WATER_MOLAR_VOLUME
 from openalea.metafspm.scene.recorder import Summary
 
 from component import NodalRootEmergence, WheatCrown, scene_translator
-
-WATER_MOLAR_VOLUME = 18e-3                   # cm3 mmol-1 (1 g of water is 1 cm3)
-SECONDS_PER_DAY = 86400.
-HPA_PER_MPA = 1e4
 
 # The root sections' barriers (the segments' and the apices') by their distance from the tip (MECHA's Development,
 # ArchiSimple's distance: from the section's base, an apex's its length): none at the tip (a section of distance 0:
@@ -103,12 +110,12 @@ PLANT_TRANSLATOR = (
     Translator(mecha_links().links + emerged_links().links)
     # GRANAP's stems (and the seed) classed by their radius: their organ's diameter halved (Adel's organs', the
     # subcrown internode's WheatCrown gives), broadcast to its elements
-    .link("GranapAnatomy", "stem_radius", "ShootArchitecture", {"diameter": 0.5}, source_scale="Organ",
-          scale="SubOrgan", aggregation="broadcast", unit_check=False)
-    # each organ's transpiration (mmol s-1, the sum of its elements') leaving at its leaf surface (cm3 d-1)
-    .link("MechaHydraulics", "leaf_transpiration", "GasExchange",
-          {"transpiration": WATER_MOLAR_VOLUME * SECONDS_PER_DAY}, source_scale="SubOrgan", scale="Organ",
-          aggregation="sum", unit_check=False)
+    .link("GranapAnatomy", "stem_radius", "ShootArchitecture", {"diameter": RADIUS_OF_DIAMETER},
+          source_scale="Organ", scale="SubOrgan", aggregation="broadcast")
+    # each organ's transpiration (mmol s-1, the sum of its elements') leaving at its leaf surface as a volume of
+    # water (cm3 d-1)
+    .link("MechaHydraulics", "leaf_transpiration", "GasExchange", {"transpiration": WATER_MOLAR_VOLUME},
+          source_scale="SubOrgan", scale="Organ", aggregation="sum")
 )
 
 SCENE_TRANSLATOR = scene_translator()
@@ -158,3 +165,55 @@ WATER_TABLES = {"plant_water": Summary("node", sum=["root_uptake"], max_change=[
                 "leaf_water": Summary("Organ", sum=["leaf_transpiration"]),
                 "soil_water": Summary("cell", sum=["plant_uptake"], max_change=["water_potential"],
                                       population="RichardsSoilModel")}
+
+# The leaves' gas exchange after each step, over the plants' blade elements of some green area: their green area, net
+# assimilation An (µmol s-1: An per area times the area, summed) and transpiration (mmol s-1, summed), their PARa
+# (µmol m-2 s-1), stomatal conductance gs (mol m-2 s-1) and leaf water potential (MPa) weighted by the green area, the
+# lowest leaf water potential
+LEAVES = Summary("SubOrgan", where={"label": "LeafElement", "green_area": ">0"},
+                 sum={"green_area": None, "An": "green_area", "transpiration": None},
+                 mean={"PARa": "green_area", "gs": "green_area", "leaf_water_potential": "green_area"},
+                 min=["leaf_water_potential"])
+# The roots' water after each step: MECHA's water potential (psi, hPa) averaged over the root sections' nodes by its
+# declared weight (their liquid volume: the soil nodes and the air spaces have none), their uptake (cm3 d-1)
+ROOTS = Summary("node", where={"SubOrgan.label": ["RootSegment", "RootApex"]}, mean=["psi"], sum=["root_uptake"])
+TABLES = {**WATER_TABLES, "leaves": LEAVES, "roots": ROOTS}
+
+# The variables the frames keep (the recorder's frame_options variables=), besides each entity set's structure (ids,
+# labels, complex and parent links, the segment ends) and what the frames' views show (the shoot's organ ranks, the
+# roots' types and radii, MECHA's ψ in the sections, the soil's pressure head): MECHA's water potential (MPa) of the
+# solved nodes and their tissue, the elements' length, anatomy and gas exchange, the soil's water
+FRAME_VARIABLES = {
+    "WheatPlant": {"Compartment": ["water_potential", "tissue"], "Cell": ["tissue"], "Layer": ["tissue"],
+                   "SubOrgan": ["length", "anatomy_class", "anatomy_template", "anatomy_kind", "PARa", "An", "gs",
+                                "transpiration"],
+                   "*": []},
+    "RichardsSoilModel": {"cell": ["water_potential", "water_content"]}}
+
+# The soil: a loam 50 cm deep (ten layers of 5 cm cells, below the roots of two weeks), refined once where the roots
+# take up water, its water at -1 m of head
+SOIL_SCENARIO = {"depth": 0.5, "voxel": 0.05, "max_level": 1, "initial_pressure_head": -1.}
+# The light: Caribu with the sun at Paris' latitude, lit every hour (its lighting step's cadence)
+LATITUDE = 48.85
+LIGHT_SCENARIO = {"sun": True, "latitude": LATITUDE, "cadence": {"light": "1 h"}}
+# The rain: 5 mm in the afternoon of the second day (a pulse: its total reaches the soil whatever the time step)
+RAIN = ("38 h", "39 h", 5e-3)
+
+
+def daily_course(minimum, maximum, warmest=15.):
+    """A daily course between *minimum* and *maximum* (a cosine, its maximum at the hour *warmest*), of the hour."""
+    return lambda hour: minimum + 0.5 * (maximum - minimum) * (1. + np.cos(2. * np.pi * (hour - warmest) / 24.))
+
+
+def weather(start) -> dict:
+    """The Scene's forcings from the date *start* on: the incident PAR (µmol m-2 s-1, a clear day of that day of the
+    year, Caribu's clear_day_PAR), the air's temperature (°C), relative humidity (a fraction), CO2 (µmol mol-1) and
+    wind (m s-1), the soil's temperature (°C, ArchiSimple's), the rain (RAIN) and the soil's potential evaporation
+    (m s-1). Every model reads them over its step (their means: an hour's PAR is the hour's mean)."""
+    by_hour = dict(time_unit="h", origin="calendar")
+    day_of_year = start_date(start).timetuple().tm_yday
+    return {"PARi": as_forcing(clear_day_PAR(day_of_year, LATITUDE), **by_hour),
+            "air_temperature": as_forcing(daily_course(10., 20.), **by_hour),
+            "relative_humidity": as_forcing(lambda hour: 0.8 - 0.25 * daily_course(0., 1.)(hour), **by_hour),
+            "ambient_CO2": 410., "wind_speed": 2., "soil_temperature": 12.,
+            "rainfall": pulse(*RAIN), "potential_evaporation": 0.}

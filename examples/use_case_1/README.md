@@ -35,8 +35,11 @@ an `AdaptiveGridDataStructure`.
 - After each run, it refines the grid where the roots take up water or where h changes steeply, and coarsens it
   elsewhere.
 - **Carry-over.** When the grid changes, the water is carried over as a volume (θ V), not as h. h is then recomputed
-  from θ by the inverse retention curve (`RichardsSoil.carry_over`). metafspm has no hook for such a derived
-  carry-over, so the model does it after its refinement.
+  from θ by the inverse retention curve (`RichardsSoil.carry_over`, the grid's carry-over hook: metafspm's
+  `@after_regrid`, called by the grid after each refinement or coarsening).
+- **Geometry.** The cells' volumes, horizontal areas and heights, the surface and bottom layers and the z faces are
+  the grid's own descriptors (metafspm's `cell_volume`, `cell_section_z`, `cell_size_z`, `boundary_low_z`,
+  `boundary_high_z`, `face_normal_z`), which the soil reads as inputs: no geometry of its own to set again.
 - **Links with the plants.** `scene_translator()` gives them:
   - MECHA's `root_uptake` (cm3 d-1) summed into the cells' `plant_uptake` (m3 s-1);
   - the soil's `water_potential` (MPa) sent back to MECHA's `soil_psi` (hPa).
@@ -76,8 +79,11 @@ Two components of this folder join them.
 model's sites.
 
 - **What it reads**, Adel's public state:
-  - each phytomer's rank and axis (`phytomer_rank`, `axis_row`);
-  - each axis' Haun stage (`haun_stage`) and each plant's thermal time (`thermal_time`, °Cd).
+  - each phytomer's rank (`phytomer_rank`), its phytomers chained by rank along each axis (metafspm's
+    `define_chain("phytomers", location="Phytomer", group="Axis", rank="phytomer_rank")`: a leaf's site is
+    `chain_gather` along its axis);
+  - each axis' Haun stage (`haun_stage`) and each plant's thermal time (`thermal_time`, °Cd), and both at its last
+    call (metafspm's `last_call`, `kept_from_last_call`: no state of its own to copy them into).
 - **The rule.** Each leaf appeared asks for `nodal_roots_per_leaf` nodal roots on its axis' phytomer
   `nodal_root_rank_offset` ranks below its own, `nodal_root_delay` °Cd after its appearance.
   - By default: two roots, three ranks, no delay (Klepper et al. 1984: the roots of node n appear with leaf n + 3,
@@ -106,7 +112,7 @@ the rule, ArchiSimple):
 - the requests cumulative, the same at a step of a day and of six hours;
 - the rule's defaults (nothing before the fourth leaf).
 
-## The assembly (`models.py`, `run.py`)
+## The assembly (`models.py`)
 
 `WheatPlant` (a `CompositeModel` declaring its parts, Adel's `ScenarioShoot` nested among them) is the plant: one MPG
 per population, its nodes the Compartments of GRANAP's sections (anatomy mode).
@@ -135,14 +141,18 @@ The links, each in its units:
 
 | link | from | to | factor |
 |---|---|---|---|
-| GRANAP's stems' class input `stem_radius` | the organ's `diameter` (m; Adel's, the crown's) | its elements (m) | 0.5, broadcast |
+| GRANAP's stems' class input `stem_radius` | the organ's `diameter` (m; Adel's, the crown's) | its elements (m) | `RADIUS_OF_DIAMETER` (0.5), broadcast |
 | the gas exchange's element `height` | Adel's triangles above the soil | the elements | CNW-Grass's `emerged_links`: the centre of the part above the soil (`CentreIn("air")`), NaN wholly below |
 | the gas exchange's `green_area` (a private name, `green_area_in_air`) | Adel's `green_area`, its green triangles' share above the soil | the elements | `emerged_links`: their product (`FractionIn("air", weight="green")`), Adel's `green_area` untouched |
-| MECHA's `leaf_transpiration` | `GasExchange.transpiration` (mmol s⁻¹, per element) | per Organ (cm³ d⁻¹) | 18e-3 × 86400, summed |
+| MECHA's `leaf_transpiration` | `GasExchange.transpiration` (mmol s⁻¹, per element) | per Organ (cm³ d⁻¹) | `WATER_MOLAR_VOLUME` (18e-3 cm³ mmol⁻¹, × 86400 from the units), summed |
 | the soil's `plant_uptake` | MECHA's `root_uptake` (cm³ d⁻¹) | the cells (m³ s⁻¹) | 1e-6 / 86400 |
 | MECHA's `soil_psi` | the soil's `water_potential` (MPa) | the roots' soil nodes (hPa) | 1e4 |
 | `GasExchange.PARa`, the optics | Caribu's light, `PlantOptics` | both ways | the Scene's identity links |
 | the gas exchange's `leaf_water_potential` | MECHA's `water_potential` (hPa, at the Compartments) | the elements (MPa) | 1e-4, the mean weighted by `liquid_volume` |
+
+Where the quantity changes (a diameter into a radius, an amount of water into its volume), the factor is a named
+equivalence of metafspm's (`coupling.units`), its number computed from the declared units and checked: no link of
+the assembly turns the unit check off.
 
 The soil links are `component.scene_translator()`, through the roots' soil nodes: the links' mapping
 (`mapping={"mask": "root_surface", "method": "overlap"}`, from which the Scene infers its CrossMapping), the plant
@@ -154,7 +164,7 @@ decision U-6). An element without liquid node (a section without anatomy yet) ke
 -0.1 MPa (metafspm's `missing="default"`).
 
 Adel's shoot stands on the crown, 2 cm below the soil: a blade Adel has brought out of its sheath may still be in
-the soil. The soil's surface is defined once, `Scene(soil_surface=run.SOIL_SURFACE)` (0): the soil grid's top, the
+the soil. The soil's surface is defined once, the Scene's `soil_surface` (0 by default): the soil grid's top, the
 crown's depth below it, Caribu's cut (it lights only the triangles above it) and the gas exchange's, which reads the
 height and the green area of each element's part above it (CNW-Grass's `emerged_links`: from Adel's triangles above
 the soil, weighted by their green share, Adel's senescence going down from the top; NaN height and no area for an
@@ -163,46 +173,52 @@ the soil is a smaller share of the element's than its length (the former chord c
 CNW-Grass's `adel_links` height, the mean of the element's ends, put the seedling's canopy below the soil: the gas
 exchange's canopy height was 0 and no element exchanged (gs, An and the transpiration 0 under a full sun).
 
-`run.py` runs two plants over two weeks of May, hour by hour, from their sowing (`python run.py [folder] [days]
-[plants]`, by default `outputs/from_sowing`, 14 days, 2 plants): a clear day's PAR, the air's temperature and
-humidity in a daily course, a rain on the second day (`forcings.pulse`: its 5 mm reach the soil whatever the
-step), in a loam 50 cm deep (`SOIL_SCENARIO`: ten layers of 5 cm
-cells, refined once where the roots take up water). Every step is an hour from the sowing: an older plant is a
-resumed run (a checkpoint), not a later start of one model. The first blade emerges after about 100 °Cd (a week);
-before, the plant has no light and transpires nothing. After each hour it prints, and writes to the folder's
-`run.log`, the water diagnostics (`models.WATER_TABLES`, decision U-6: the plant and the soil exchange once per
-step), the plant's and the soil's water balances (their solves' declared conservation: MECHA's `PLANT_WATER`, the
-soil's `WATER`), the leaves' gas exchange and the roots' water (`run.LEAVES`, `run.ROOTS`; all declared tables,
-`Summary`):
+## The run (`run.py`)
 
-- the plant's transpiration and uptake (equal for a steady plant: its balance's residual relative to the
-  transpiration), and what the soil gave the roots;
-- the soil's water change and its balance's residual (round-off);
-- the largest changes of the plant's and the soil's water potentials since the previous hour (`Summary(max_change=)`,
-  from the values before the step the Scene keeps: `ds.previous`);
-- the blades' green area, PARa, An, gs and leaf water potential (`LEAVES`: over the blade elements of some green
-  area, An per area times the area summed, the means weighted by the green area), the roots' water potential
-  (`ROOTS`: MECHA's psi averaged over the root sections by its declared weight, the liquid volume: the soil nodes
-  and the air spaces have none) and uptake.
+`run.py` is the script to read first: two plants over two weeks of May, hour by hour, from their sowing (`python
+run.py [days] [plants] [folder]`, by default 14 days, 2 plants, `outputs/from_sowing`). It reads top to bottom: the
+settings (days, plants, the time step, the sowing's date), the stand (one row, 5 cm apart, 3 cm deep), the Scene
+(the plants, the soil and the light, the weather, the run configuration `Compute(threads=1, workers="auto")`), its
+recorder (the tables, frames every 12 hours with their views, the first plant's sections once a day, a checkpoint a
+day), `scene.simulate(...)`, then `scene.recorder.pack()`, the frames in one archive. What it assembles lives in
+`models.py`: the plant model and its scenario, the soil's and the light's scenarios (`SOIL_SCENARIO`: a loam 50 cm
+deep, ten layers of 5 cm cells refined once where the roots take up water; `LIGHT_SCENARIO`), the weather
+(`weather(start)`: a clear day's PAR, the air's temperature and humidity in a daily course, a rain of 5 mm on the
+second day, `forcings.pulse`: its total reaches the soil whatever the step), the tables (`TABLES`) and the frames'
+variables (`FRAME_VARIABLES`).
 
+Every step is an hour from the sowing: an older plant is a resumed run (a checkpoint), not a later start of one
+model. The first blade emerges after about 100 °Cd (a week); before, the plant has no light and transpires nothing.
 Every model reads the weather over its step (the forcings' means over the hour, the rain's total): the results do
-not depend on the time step through the forcings.
+not depend on the time step through the forcings. The run prints nothing: what it gives is in its folder, after
+every hour (the tables can be read while it runs):
 
-The SceneRecorder writes the summaries (`Plant/WheatPlant/summaries.csv`: every component's state variables per
-plant, those of the components on the SubOrgans, Adel's, ArchiSimple's, the gas exchange's, the light's, too: the
-lengths summed, the potentials, conductances and light averaged by their declared weights), `plant_water.csv`,
-`leaf_water.csv`, `soil_water.csv`, `conservation.csv` (each conserved quantity's inflow, outflow, change and
-residual per step), `leaves.csv` and `roots.csv` (appended to after every hour), `run.json` (the run's progress,
-after every hour, with the wall time per model and per component), a
-frame every 12 hours with its views (`frame_views="default"`), the sections of the first plant (`DISPLAY_PLANTS`,
-the recorder's `display_plants`) drawn in the frames of every 24 hours and the last (`display_period`), and a
-checkpoint every day (the last two kept; the anatomy templates and the reduced sections saved once, in
-`checkpoints/shared`): `Scene.load_checkpoint` resumes the run from it, bit for bit.
+- `Plant/WheatPlant/summaries.csv` and `Soil/RichardsSoilModel/summaries.csv`: every component's state variables per
+  plant (those of the components on the SubOrgans, Adel's, ArchiSimple's, the gas exchange's, the light's, too: the
+  lengths summed, the potentials, conductances and light averaged by their declared weights) and for the soil;
+- `leaves.csv` (`models.LEAVES`): the blades' green area, PARa, An, gs and leaf water potential (over the blade
+  elements of some green area, An per area times the area summed, the means weighted by the green area);
+- `roots.csv` (`models.ROOTS`): MECHA's psi averaged over the root sections by its declared weight, the liquid volume
+  (the soil nodes and the air spaces have none), and their uptake;
+- `plant_water.csv`, `leaf_water.csv`, `soil_water.csv` (`models.WATER_TABLES`, decision U-6: the plant and the soil
+  exchange once per step): the plant's uptake and transpiration, what the soil gave the roots, the largest changes
+  of the plant's and the soil's water potentials since the hour before (`Summary(max_change=)`, from the values
+  before the step the Scene keeps: `ds.previous`);
+- `conservation.csv`: the plant's and the soil's water balances, each conserved quantity's inflow, outflow, change and
+  residual per step (their solves' declared conservation: MECHA's `PLANT_WATER`, the soil's `WATER`; the residuals
+  are round-off);
+- `run.json`: the run's progress after every hour, then its end, with the wall time per model and per component
+  (`timing`), the calls per component and the frames' archive;
+- `frames/`: a frame every 12 hours with its views (`frame_views="default"`), the sections of the first plant
+  (`display_plants=["p0"]`) drawn in the frames of every 24 hours and the last (`display_period`), packed at the end
+  into `frames.fspm.zip`;
+- `checkpoints/`: one a day (the last two kept; the anatomy templates and the reduced sections saved once, in
+  `checkpoints/shared`): `Scene.load_checkpoint` resumes the run from it, bit for bit.
 
-The run's configuration is metafspm's default `Compute()` (`scene(compute=...)`): one BLAS and numba thread (the
-work is many small sparse solves: more threads oversubscribe the cores), the memory freed given back after each hour
-(`malloc_trim`), and the environment's `MALLOC_ARENA_MAX=2` (`environment.yaml`'s `variables:`; outside the conda
-environment, `export MALLOC_ARENA_MAX=2` before running). Its `workers="auto"` starts a pool of processes for the
+The run's configuration, `Compute(threads=1, workers="auto")` (metafspm's default, shown in `run.py`): one BLAS and
+numba thread (the work is many small sparse solves: more threads oversubscribe the cores), the memory freed given
+back after each hour (`malloc_trim`), and the environment's `MALLOC_ARENA_MAX=2` (`environment.yaml`'s
+`variables:`; outside the conda environment, `export MALLOC_ARENA_MAX=2` before running). Its `workers="auto"` starts a pool of processes for the
 reduction's kinds when a batch is worth it (the first hours, the days the organs emerge): measured on a 14-thread
 laptop (2026-11-06), the same results bit for bit with 1, "auto" (6) or 4 processes; 2 plants to day 8 in 235 s
 with 1, 212 s with "auto" (last day 1.97 → 1.83 s per hour, first hour 6.3 → 4.1 s), 208 s with 4 (1.68 s), the
@@ -237,7 +253,8 @@ On a machine with an NVIDIA GPU and CuPy, `benchmark.py --device cuda` runs the 
 linear solves on the device (metafspm's docs/gpu.md, "Running on a GPU": what is offloaded, how to compare it with
 the CPU run, the transfers in the entry's `device`); not measured yet (no GPU on the development laptop).
 
-`benchmark.py` times it (`python benchmark.py [--plants 2] [--days 3]`, under a memory bound): each hour's time by
+`benchmark.py` times it (its `build_scene`: `run.py`'s scene, in memory, with the benchmark's options; `python
+benchmark.py [--plants 2] [--days 3]`, under a memory bound): each hour's time by
 model, the kinds of the reduction evaluated, the nodes, the memory (after each hour, after `malloc_trim` and the
 peak), written to `outputs/benchmarks/<commit>.json`, one entry per mode; `--checkpoint-at 168` checkpoints the
 scene after those hours and `--resume <checkpoint>` runs on from one (its kinds loaded, none evaluated again).
@@ -251,10 +268,11 @@ plants, day 8, against the defaults; 2026-11-06): `leaf_ports="bundles"` keeps 1
 nonzeros (1.96M), the plant solve 19 s over the run (30 s; the step 1.66 s on the last day, 1.77 s), the kinds 494 MB
 (613 MB), the transpiration, uptake, An and gs within 0.04 %, the leaves' water potential 0.45 % above (0.8 % of
 their drop below the roots'); with `vapour_path="air_spaces"` too, 10,250 nodes, 0.30M nonzeros, the solve 12 s (the
-step 1.55 s), the kinds 337 MB, the fluxes within 0.2 %, the leaves' water potential 3 % above. Both are kept as
-options: the leaves' water potential (Tuzet's stomata read it) drifts beyond the 0.5 % bound as the plants grow,
-while the step gains less than 15 % at two plants (the kinds' evaluation and the other models dominate it there; the
-plant solve, which the options shrink, dominates a larger scene's). At 16 plants (their own root draws), day 8:
+step 1.55 s), the kinds 337 MB, the fluxes within 0.2 %, the leaves' water potential 3 % above. Both are options
+only, not recommendations, at any scene size. `leaf_ports="bundles"` gives up each vessel's own axial path and its
+own junction to its successor section (a bundle's vessels are held at one potential and joined bundle to bundle),
+and the leaves' water potential, which Tuzet's stomata read, comes out biased (beyond the 0.5 % bound as the plants
+grow). At 16 plants (their own root draws), day 8:
 `leaf_ports="bundles"` keeps 98,526 nodes (113,438), 8.8M dense nonzeros (15.7M), MECHA 1.44 s per step (2.18;
 the step 3.28 s, 4.66 measured before GRANAP's faster junctions, 5f5b34b), the scope's peak 4.7 GB (5.3), the transpiration and uptake unchanged, gs within 0.04 %, the
 leaves' water potential 0.36 % above on average, 0.54 % at most (0.8 % of their drop below the roots').
@@ -281,30 +299,30 @@ unchanged (2.8 s: elements appear every hour while the plants grow, so it is rel
 light, the mean over the rest of the interval rather than over the hour, moves PARa up to 38 % at an hour (An up to
 41 %, transpiration 26 %). A sparser lighting would need the relight rule relaxed.
 
-The frames keep a few variables, the run's explicit choice (`run.FRAME_VARIABLES`, the recorder's
-`frame_options={"variables": ...}`; `scene(frame_variables=None)` keeps them all). Every entity set keeps its
-structure (ids, labels, complex and parent links, the segment ends), and:
+The frames keep a few variables, the run's explicit choice (`models.FRAME_VARIABLES`, the recorder's
+`frame_options={"variables": ...}`; without it, every variable), and what the frames' views show, which the recorder
+adds itself (in italics below). Every entity set keeps its structure (ids, labels, complex and parent links, the
+segment ends), and:
 
 | where | variables |
 |---|---|
-| `WheatPlant` Compartment (and the sections' templates) | `psi` (MECHA's, hPa), `water_potential` (MPa, the solved nodes'), `tissue` |
+| `WheatPlant` Compartment (and the sections' templates) | *`psi`* (MECHA's, hPa: the sections' colour), `water_potential` (MPa, the solved nodes'), `tissue` |
 | Cell, Layer | `tissue` |
-| SubOrgan | `length`, `radius`, `type` (the roots' default colour), `anatomy_class`, `anatomy_template`, `anatomy_kind`, `PARa`, `An`, `gs`, `transpiration` |
-| Organ | `organ_rank` (the shoot's default colour) |
+| SubOrgan | `length`, *`radius`* (the roots' tubes), *`type`* (the roots' colour), `anatomy_class`, `anatomy_template`, `anatomy_kind`, `PARa`, `An`, `gs`, `transpiration` |
+| Organ | *`organ_rank`* (the shoot's colour) |
 | the other entity sets, the Connections | none |
-| `RichardsSoilModel` cell | `pressure_head` (the soil's default colour), `water_potential`, `water_content` (its faces and scalars unfiltered) |
-
-The default views colour by kept variables (the recorder raises at the first frame otherwise).
+| `RichardsSoilModel` cell | *`pressure_head`* (the soil's colour), `water_potential`, `water_content` (its faces and scalars unfiltered) |
 
 **The sections in the frames.** MECHA solves each section reduced (its conduits, soil node and vapour path kept),
 so the frames draw the first plant's sections as *instances* (metafspm's `display="instances"`, the recorder's
-default; `scene(display="full")` for the former drawing): per section its transform and its kept nodes' `psi`; once
+default; `SceneRecorder(display="full")` for the former drawing): per section its transform and its kept nodes' `psi`; once
 per template and per kind, in `frames/parts/` (listed in `scene.fspm.json`), the template's shape and nodes (their
 `tissue`) and the kind's recovery operator; `psi` on every cell is a derived field, rebuilt for the sections you
 select. In ParaView (encoding3d's plugin): show the hidden layer "WheatPlant GranapAnatomy instances", pick a
 section, apply "encoding3d Select at scale" (scale SubOrgan): the section is drawn with `psi` on each cell (or tick
-the reader's "Evaluate Derived Fields" for every section). `scene(pack_at_finish=True)` (or
-`run.main(..., pack_at_finish=True)`) also writes `frames.fspm.zip`, which ParaView opens as the folder.
+the reader's "Evaluate Derived Fields" for every section). `run.py`'s last line, `scene.recorder.pack()`, writes
+`frames.fspm.zip` (deflate, each frame an unchanged member: 16 MB for the 47 MB folder of a 3-day run), which
+ParaView opens as the folder (`encoding3d.read_index` and `read` too; `encoding3d unpack` gives the folder back).
 `pvbatch encoding3d/paraview/check_in_paraview.py --instances shots outputs/<run>/frames/scene.fspm.json` checks it
 by hand (it passed on a 2-day run: three sections selected, their 30,065 and 3,420 cells' `psi` equal to
 `encoding3d.evaluate`'s).
