@@ -242,11 +242,14 @@ def test_nodal_roots_on_the_right_phytomers_at_the_right_times(grown):
     for plant in range(2):
         on_crown = final[(plant, 0, 1)]
         assert len(on_crown["roots"]) == PER_LEAF
-        assert g.parent(on_crown["bearer"]) == _crown(g, int(ds.entity_ids("Plant")[plant]))[1][-1]
+        bearer = on_crown["bearer"]                  # the element at its node: its internode's top, on the crown
+        assert g.label(bearer) == g.labels.SubOrgan.StemElement
+        assert g.label(g.complex_at_scale(bearer, g.scales.Organ)) == g.labels.Organ.StemInternode
+        assert g.parent(g.parent(bearer)) == _crown(g, int(ds.entity_ids("Plant")[plant]))[1][-1]
         axes = {g.complex_at_scale(v, g.scales.Axis) for v in on_crown["roots"]}
         assert len(axes) == PER_LEAF and all(g.label(a) == g.labels.Axis.Root for a in axes)
         np.testing.assert_allclose(np.asarray(ds.get("z1"))[ds.index_of(on_crown["roots"])], -CROWN_DEPTH,
-                                   atol=1e-12)               # at the crown's depth (phytomer 1's bearer: its base)
+                                   atol=1e-12)               # at the crown's depth (phytomer 1's node)
 
 
 def test_the_nodal_roots_start_on_the_crown(grown):
@@ -254,30 +257,29 @@ def test_the_nodal_roots_start_on_the_crown(grown):
     topological ends): on the crown, the internodes below not elongated (the tillering zone), the crown's x and y;
     Adel draws the first element of a phytomer above the first on the coleoptile's top, out of the soil (its display
     ends), where the nodal roots would otherwise start. The plant's ends are topological: each element's base at its
-    parent's end (ds.check_connectivity), but for a nodal root's (its node, above its bearer's end)."""
+    parent's end (ds.check_connectivity), a nodal root's at its bearer's end, its node."""
     scene, history = grown
     ds = scene.populations[0].data_structure
     g = ds.structure
     final = history[-1]["phytomers"]
     plants = ds.entity_ids("Plant").tolist()
     nodes = ds.position("Phytomer", at="end")
-    grown_on, roots = 0, set()
+    grown_on = 0
     for (plant, row, rank), record in final.items():
         if not record["roots"]:
             continue
         grown_on += 1
-        roots.update(record["roots"])
         node = nodes[ds.index_of([record["id"]], location="Phytomer")][0]
         np.testing.assert_allclose(node, [g.property("x")[plants[plant]], g.property("y")[plants[plant]],
                                           -CROWN_DEPTH], atol=1e-12)
         index = ds.index_of(record["roots"])
         start = np.column_stack([np.asarray(ds.get(name))[index] for name in ("x1", "y1", "z1")])
         np.testing.assert_allclose(start, np.tile(node, (len(record["roots"]), 1)), atol=1e-12)
-        if rank >= 2:                                                   # its bearer drawn out of the soil
-            assert np.asarray(ds.get("display_z2"))[ds.index_of(record["bearer"])] > 0.
+        if rank >= 2:                                                   # its first element drawn out of the soil
+            first = min(int(v) for v in g.components_at_scale(record["id"], scale=g.scales.SubOrgan))
+            assert np.asarray(ds.get("display_z2"))[ds.index_of(first)] > 0.
     assert grown_on >= 4                                                # ranks 1 and 2 of each main stem
-    gaps = ds.check_connectivity(tolerance=1e-12)
-    assert set(gaps["element"].tolist()) <= roots                       # the nodal roots' bases, on the node
+    assert ds.check_connectivity(tolerance=1e-12).empty
 
 
 def test_the_plant_is_drawn_connected(grown):

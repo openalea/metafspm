@@ -2,6 +2,22 @@
 
 ## Unreleased (release2026)
 
+### A nodal root's bearer is the element at its phytomer's node
+
+- **`ds.bearer(location)`** gives each entity's element at its end: the last along its axis from its first (its
+  successors `'<'` within the entity), whose end is `ds.position(location, at="end")`. A Phytomer's is its internode's
+  top element, where its leaf's sheath and its nodal roots are; it was the phytomer's first element (its internode's
+  base). A SubOrgan still bears itself.
+- **ArchiSimple's nodal roots** grow `'+'` on that element and start at its end (`x2, y2, z2`), as any root borne by
+  another model's element: its special case for a site's node is gone. `ds.check_connectivity()` finds no gap in use
+  case 1 once the internodes elongate (a nodal root's base was an internode's length above its bearer's end).
+- **MECHA's network:** a nodal root's xylem and phloem now join the shoot at its phytomer's internode top (the
+  StemElement), not at the nearest anatomy below the phytomer's first element (a HiddenElement, without anatomy: the
+  StemElement of the internode below, or the crown's top for the first phytomer). The water of a phytomer's nodal
+  roots no longer crosses that phytomer's internode. This takes effect once the internode elongates (an element
+  without length has no anatomy, its junctions pass through it): use case 1, 2 plants for 3 days, is bit-identical,
+  its internodes unelongated (with nodal roots from the first leaf too, `nodal_root_rank_offset` 0).
+
 ### Memory per node and the scene's serial parts measured (devplan_scene_parallel P0)
 
 - **A kind's group description builds no key dict of the plants' properties:** `Reduction`'s `_describe` reads each

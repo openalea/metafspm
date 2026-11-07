@@ -91,9 +91,10 @@ model's sites.
   - A leaf appears when its axis' Haun stage reaches its rank minus one. Its time is interpolated within the step.
   - A leaf whose site would lie below its axis' first phytomer asks for none.
 - **What it writes:** `nodal_axes_requested` per phytomer, the cumulative count ArchiSimple reads. ArchiSimple
-  grows the difference with the roots it grew, `'+'` on the phytomer's bearer (its first element). Each leaf's
-  request is counted once, when it falls due: none is lost, whatever the steps.
-- **Where the nodal roots start:** each phytomer's node, ArchiSimple's (metafspm's `ds.position("Phytomer",
+  grows the difference with the roots it grew, `'+'` on the phytomer's bearer (metafspm's `ds.bearer`: the element
+  at its node, its internode's top). Each leaf's request is counted once, when it falls due: none is lost, whatever
+  the steps.
+- **Where the nodal roots start:** each phytomer's node, their bearer's end (metafspm's `ds.position("Phytomer",
   at="end")`, from the elements' topological ends: each element's base at its parent's end, whatever the axes'
   inclination): on the crown while the internodes below have not elongated (the tillering zone). Adel's turtle draws
   a phytomer's first element on the top of the visible parts below it (phytomer 2 on the coleoptile's top, out of

@@ -472,8 +472,9 @@ on the visible ones, a seed point is drawn as its grain. The default cylinders a
 anatomy's 3D placement, an element's height for a gas exchange) take the display ends where given
 (`coupling.geometry.drawn_ends`). `ds.position(location, at="base" | "end")` gives each entity's position from its
 elements' ends: its first element's base, or the end of its last element along its axis (a Phytomer's node, where
-its nodal roots start); `ds.check_connectivity(tolerance=)` lists the elements whose base is not at their parent's
-end. An initiator places its elements with the MPG's builders: `g.add_organ(plant, "StemInternode", kind="Shoot")`
+its nodal roots start); `ds.bearer(location)` gives that last element, where a model grows the axes an entity bears
+(a root model its nodal roots, on the node's element: their base at its end); `ds.check_connectivity(tolerance=)`
+lists the elements whose base is not at their parent's end. An initiator places its elements with the MPG's builders: `g.add_organ(plant, "StemInternode", kind="Shoot")`
 (the Axis, GrowthUnit, Phytomer between) and `g.add_element("StemElement", parent=element, direction=(0, 0, 1),
 length=0.01, radius=5e-4)` (its ends from its parent's end; `direction=(0, 0, 0)` a point; `display=(start, end)`),
 reading its parameters with `cls.plant_parameters(scenario)` (the scenario over the declared defaults, checked

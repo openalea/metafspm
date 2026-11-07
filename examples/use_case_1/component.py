@@ -853,9 +853,9 @@ class NodalRootEmergence(FunctionalComponent):
     """
     The nodal roots' emergence on a wheat plant, a rule from the shoot's development to the root model's sites:
     each leaf appeared on an axis asks for nodal_roots_per_leaf nodal roots on the phytomer nodal_root_rank_offset
-    ranks below its own on that axis (its site: the root model grows them on the phytomer's bearer, its first
-    SubOrgan, at the crown for the first phytomers), nodal_root_delay °Cd after the leaf's appearance (Klepper et
-    al. 1984: the roots of node n with leaf n + 3). A leaf whose site would lie below the axis' first phytomer asks
+    ranks below its own on that axis (its site: the root model grows them on the phytomer's bearer, the element at
+    its node, its internode's top, on the crown for the first phytomers), nodal_root_delay °Cd after the leaf's
+    appearance (Klepper et al. 1984: the roots of node n with leaf n + 3). A leaf whose site would lie below the axis' first phytomer asks
     for none (the seminal roots are the seed's).
 
     The rule reads the shoot's public state (Adel's, ShootArchitecture's contract): each phytomer's rank

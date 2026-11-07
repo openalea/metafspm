@@ -1742,9 +1742,10 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
 
     def bearer(self, location: str, ids=None, at: str = "SubOrgan") -> np.ndarray:
         """
-        The bearer of each entity of a coarse *location* (*ids*: some of them, default all): its topologically first
-        vertex at the scale *at* (the first SubOrgan of a Phytomer, say), where a model grows the axes it bears (a
-        site, e.g. a nodal root on its phytomer); -1 for an entity without one.
+        The bearer of each entity of a coarse *location* (*ids*: some of them, default all): its vertex at the scale
+        *at* at its end, the last along its axis from its topologically first one (that one's successors '<' within
+        the entity), whose end is ds.position(location, at="end"): where a model grows the axes the entity bears (a
+        site, e.g. the nodal roots on a Phytomer's node: its internode's top element); -1 for an entity without one.
         """
         g = self._mtg
         ids = np.asarray(self.entity_ids(location) if ids is None else ids, dtype=np.int64)
@@ -1756,7 +1757,13 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
                 continue
             inside = set(vertices)
             first = [v for v in vertices if g.parent(v) not in inside]
-            out[k] = min(first or vertices)
+            last = min(first or vertices)
+            while True:
+                following = [int(v) for v in g.children(last) if int(v) in inside and g.edge_type(v) == "<"]
+                if not following:
+                    break
+                last = following[0]
+            out[k] = last
         return out
 
     # ── positions: the elements' topological ends (x1 ... z2) ──
@@ -1775,9 +1782,9 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
         """
         Where each entity of *location* (a coarse scale, "Phytomer", "Organ", ..., or the elements' own) is, (n, 3),
         from its elements' topological ends (x1 ... z2, each element's base at its parent's end): *at* "base", its
-        first element's base (the element whose parent is outside it, the earliest: ds.bearer's); "end", the end of
-        its last element along its axis (from the first, its successors '<' within it). A Phytomer's node, where its
-        leaf and its nodal roots are, is its end (its internode's top: an axis inclined or not). NaN for an entity
+        first element's base (the element whose parent is outside it, the earliest); "end", the end of its last
+        element along its axis (from the first, its successors '<' within it: ds.bearer's). A Phytomer's node, where
+        its leaf and its nodal roots are, is its end (its internode's top: an axis inclined or not). NaN for an entity
         without elements.
         """
         if at not in ("base", "end"):

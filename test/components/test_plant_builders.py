@@ -116,3 +116,48 @@ def test_the_default_cylinders_draw_the_display_ends_without_a_provider():
     grain = triangles.vertices[triangles.owner == seed].reshape(-1, 3)
     np.testing.assert_allclose([grain[:, 0].min(), grain[:, 0].max()], [0.097, 0.103], atol=1e-12)
     assert Stem(data_structure=ds).triangles().vertices.shape == triangles.vertices.shape
+
+
+@dataclass
+class NodeAndRoot(StructuralComponent):
+    """A seed, then a phytomer: its internode (a HiddenElement, then a StemElement '<', both vertical), its sheath '+'
+    on the internode's top, and a nodal root '+' on the phytomer's bearer (ds.bearer), heading down."""
+
+    @classmethod
+    def initiate_plant(cls, g, plant, scenario):
+        seed = g.add_element("Seed", complex=g.add_organ(plant, "StemInternode"), direction=(0., 0., 0.))
+        internode = g.add_organ(g.complex_at_scale(seed, g.scales.GrowthUnit), "StemInternode")
+        hidden = g.add_element("HiddenElement", complex=internode, parent=seed, edge="<", direction=(0., 0., 1.),
+                               length=0.01)
+        top = g.add_element("StemElement", parent=hidden, direction=(0., 0., 1.), length=0.02)
+        g.add_element("StemElement", complex=g.add_organ(g.complex(internode), "Sheath"), parent=top,
+                      direction=(0., 0., 1.), length=0.03)
+
+
+def test_a_phytomer_bears_on_its_node_s_element():
+    """ds.bearer: a phytomer's element at its node, the last along its axis from its first (its internode's top, not
+    its sheath '+' on it), whose end is ds.position(Phytomer, at="end"); a root grown on it starts at that node, the
+    plant's elements connected (ds.check_connectivity)."""
+    table = planting([Planting(x=0.1, y=0.2, depth=0.03)], NodeAndRoot, {})
+    g, _ = _build_population(table, initiators=(NodeAndRoot,), soil_surface=0.)
+    labels = g.labels.SubOrgan
+    (hidden,) = [v for v in g.vertices(scale=g.scales.SubOrgan) if g.label(v) == labels.HiddenElement]
+    top = next(v for v in g.children(hidden) if g.edge_type(v) == "<")
+    phytomer = g.complex_at_scale(hidden, g.scales.Phytomer)
+    g.add_element("RootSegment", complex=g.add_organ(g.complex_at_scale(hidden, g.scales.Plant), "RootInternode",
+                                                     kind="Root"),
+                  parent=int(top), direction=(0., 0., -1.), length=0.01)
+    g.populate_graph(g.scales.SubOrgan)
+    g.convert_properties_to_arraydict()
+    ds = MPGDataStructure(g, from_scale=g.scales.SubOrgan)
+    Ends(data_structure=ds)
+    assert ds.bearer("Phytomer", [phytomer]).tolist() == [top]
+    node = ds.position("Phytomer", at="end")[ds.index_of([phytomer], location="Phytomer")][0]
+    np.testing.assert_allclose(node, [0.1, 0.2, -0.03 + 0.03], atol=1e-15)    # the internode's top
+    np.testing.assert_allclose(ds.position("Phytomer", at="base")[ds.index_of([phytomer], location="Phytomer")][0],
+                               [0.1, 0.2, -0.03], atol=1e-15)                   # on the seed
+    (root,) = [v for v in g.vertices(scale=g.scales.SubOrgan) if g.label(v) == labels.RootSegment]
+    assert g.parent(root) == top and g.edge_type(root) == "+"
+    start = [float(np.asarray(ds.get(name))[ds.index_of(root)]) for name in ("x1", "y1", "z1")]
+    np.testing.assert_allclose(start, node, atol=1e-15)
+    assert ds.check_connectivity(tolerance=1e-15).empty
