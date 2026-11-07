@@ -9,9 +9,16 @@ factors, `^` or `**` before exponents, `-`, `1` and `dimensionless` for adim, "o
 
     parse_unit("mmol m-2 s-1")            ((−2, 0, −1, 1, 0), 1e-3): dimensions (m, kg, s, mol, K) and SI scale
     conversion_factor("cm", "m")          100.0: a value in m times it is the value in cm
+
+A link between two quantities that are not the same (an amount of water and its volume, a diameter and a radius) is
+unit-checked through a named equivalence, the physical factor between them with its unit (Equivalence: the water's
+molar volume, 18e-3 cm3 mmol-1): the link's factor is the equivalence times the conversion of the provider's unit,
+times the equivalence's, into the receiver's, computed and checked by metafspm (a link {"transpiration":
+WATER_MOLAR_VOLUME} from mmol s-1 to cm3 d-1 gets 18e-3 × 86400).
 """
 import math
 import re
+from dataclasses import dataclass
 from typing import Optional
 
 # dimensions: length, mass, time, amount, temperature
@@ -154,3 +161,53 @@ def check_link_units(received_unit, provided_unit, factor, name: str) -> None:
     if factor in (1., -1.) and not units_agree(received_unit, provided_unit):
         raise ValueError(f"{name}: the units differ ('{received_unit}' <- '{provided_unit}') and the link has no "
                          "conversion factor")
+
+
+@dataclass(frozen=True)
+class Equivalence:
+    """
+    A named physical factor between two quantities (*value* in *unit*: what a link's provider unit times it is the
+    receiver's quantity), a link's factor checked by its units (Equivalence.factor): the water's molar volume
+    turning an amount of water into its volume, a radius from its diameter. *references*: its source.
+    """
+    name: str
+    value: float
+    unit: str = "adim"
+    references: str = ""
+
+    def __str__(self) -> str:
+        return self.name
+
+    def factor(self, received_unit, provided_unit, link: str = "") -> float:
+        """The link's factor from *provided_unit* to *received_unit* through the equivalence: its value times the
+        conversion of the provided unit times its own into the received one. ValueError when a unit is undeclared or
+        unreadable, or when the quantities do not match."""
+        received, provided, own = parse_unit(received_unit), parse_unit(provided_unit), parse_unit(self.unit)
+        if received is None or provided is None or own is None:
+            raise ValueError(f"{link}: the equivalence '{self.name}' converts declared units (got '{provided_unit}' "
+                             f"into '{received_unit}', the equivalence in '{self.unit}')")
+        product = tuple(a + b for a, b in zip(provided[0], own[0]))
+        if product != received[0]:
+            raise ValueError(f"{link}: '{provided_unit}' times the equivalence '{self.name}' ({self.unit}) is not "
+                             f"'{received_unit}'")
+        return float(self.value) * (provided[1] * own[1] / received[1])
+
+
+WATER_MOLAR_VOLUME = Equivalence("water_molar_volume", 18e-3, "cm3 mmol-1",
+                                 references="18 g mol-1, 1 g of liquid water 1 cm3")
+RADIUS_OF_DIAMETER = Equivalence("radius_of_diameter", 0.5, "adim", references="geometry: a radius is half the "
+                                                                               "diameter")
+
+# The named equivalences a link's factor may give by name ({"diameter": "radius_of_diameter"}, a YAML translator's)
+EQUIVALENCES = {equivalence.name: equivalence for equivalence in (WATER_MOLAR_VOLUME, RADIUS_OF_DIAMETER)}
+
+
+def register_equivalence(equivalence: Equivalence) -> Equivalence:
+    """Name *equivalence* for the links (EQUIVALENCES); it is returned."""
+    if not isinstance(equivalence, Equivalence):
+        raise TypeError(f"register_equivalence: an Equivalence, got {equivalence!r}")
+    known = EQUIVALENCES.get(equivalence.name)
+    if known is not None and known != equivalence:
+        raise ValueError(f"an equivalence '{equivalence.name}' is already registered ({known})")
+    EQUIVALENCES[equivalence.name] = equivalence
+    return equivalence

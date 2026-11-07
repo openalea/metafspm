@@ -13,7 +13,10 @@ view's edge_difference (D @ u, consistent, exact for linear u) are accurate ther
     grid.coarsen(lambda g: g.get("root_length_density") < 1e2)
 
 Refining or coarsening is a topology change: registered variables are carried over by volume overlaps, extensive
-values split or summed, the others volume-averaged (copied into children), edge variables reset to their default.
+values split or summed, the others volume-averaged (copied into children), edge variables reset to their default;
+the geometric descriptors (data_api.GRID_DESCRIPTORS: cell_volume, cell_size_z, boundary_low_z, face_normal_z, ...)
+are set for the new cells, then the components' carry-over hooks run (coupling.component.after_regrid: a variable
+the volume averages do not carry, set again from those that are).
 
 Faces are found on the finest lattice (base cells x 2^max_level per axis): memory grows as the base grid times
 2^(d · max_level), which suits moderate refinement depths.
@@ -23,7 +26,8 @@ from typing import Optional
 import numpy as np
 from scipy.sparse import coo_matrix, csc_matrix, csr_matrix, diags
 
-from openalea.metafspm.data_structure.data_api import DataStructure, GraphView, VariableStoreMixin
+from openalea.metafspm.data_structure.data_api import (DataStructure, GraphView, VariableStoreMixin,
+                                                      register_grid_descriptors)
 
 
 class AdaptiveGridDataStructure(VariableStoreMixin, DataStructure):
@@ -45,6 +49,7 @@ class AdaptiveGridDataStructure(VariableStoreMixin, DataStructure):
         self._set_leaves(np.zeros(len(index), dtype=np.int64), index.astype(np.int64))
         self.register("face_area", self._face_area, location="edge")
         self.register("face_distance", self._face_distance, location="edge")
+        register_grid_descriptors(self)
 
     # ── Leaves and their geometry ─────────────────────────────────────────────
 
@@ -264,7 +269,9 @@ class AdaptiveGridDataStructure(VariableStoreMixin, DataStructure):
         self.mark_written("face_distance")
         self.__dict__.pop("_parameter_views", None)
         self.__dict__.pop("_index_cache", None)
+        register_grid_descriptors(self)                 # its geometric descriptors: the new cells'
         self._bump_version()
+        self._regridded()                               # the components' carry-over hooks (after_regrid)
 
     def update_topology(self) -> None:
         """Refinement updates the topology itself (refine / coarsen); nothing to do otherwise."""

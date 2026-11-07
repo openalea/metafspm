@@ -233,3 +233,33 @@ def test_the_openalea_post_order_is_post_order2(plant):
     vids = ds.entity_ids("node").tolist()
     expected = [v for root in ds.roots().tolist() for v in post_order2(g, vids[root])]
     assert [vids[i] for i in ds.order("post", traversal="openalea")] == expected
+
+
+def test_chains_at_a_coarse_location(plant):
+    """define_chain(location=...): the entities of a coarse location chained by group (an owner at a coarser
+    location, the Axis) and rank (a variable at that location); the chain kernels take and give one value per
+    entity there, chain_gather's source by default each entity's own chain (a phytomer offset ranks below its own
+    on its axis: use case 1's nodal root sites)."""
+    _, ds, rng = plant
+    location = "Organ"
+    count = ds.entity_ids(location).size
+    axis = np.asarray(ds.owner("Axis", of=location))
+    rank = np.zeros(count)
+    for group in np.unique(axis):                                 # 1, 2, ... along each axis, shuffled
+        members = np.flatnonzero(axis == group)
+        rank[members] = rng.permutation(members.size) + 1.
+    ds.register("organ_rank", rank, location=location)
+    ds.define_chain("organs", location=location, group="Axis", rank="organ_rank")
+    values = rng.random(count)
+    below = ds.chain_shift(values, chain="organs")
+    total = ds.chain_scan(values, chain="organs")
+    site = ds.chain_gather(np.arange(count, dtype=float), rank - 2, chain="organs", fill=-1.)
+    for i in range(count):
+        same = axis == axis[i]
+        lower = same & (rank == rank[i] - 1)
+        assert (below[i] == values[lower][0]) if lower.any() else np.isnan(below[i])
+        assert total[i] == pytest.approx(values[same & (rank <= rank[i])].sum(), rel=1e-12)
+        wanted = np.flatnonzero(same & (rank == rank[i] - 2))
+        assert site[i] == (wanted[0] if wanted.size else -1.)
+    with pytest.raises(ValueError, match="group and rank"):
+        ds.define_chain("bad", edge_type="<", location=location)

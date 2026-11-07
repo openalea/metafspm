@@ -641,7 +641,7 @@ class Exchanges:
                 continue
             mapping, direction, part = self._mapping_between(link, provider.data_structure, receiver.data_structure)
             name = f"{link.receiver}.{link.variable} <- {link.provider}"
-            check_link(link, receiver, provider)
+            link = check_link(link, receiver, provider)
             received = declared_kind(receiver, link.variable)
             aggregation = link.aggregation
             if direction == "layer":

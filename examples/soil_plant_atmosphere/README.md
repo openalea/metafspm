@@ -64,7 +64,8 @@ between them (an edge of the solver graph joining two entities), on one colour s
 
 `one_plant_adaptative.py` declares its own Scene, the same seedling on `AdaptiveSoil`: an `AdaptiveGridDataStructure`
 of 2.5 cm cells, split down to 0.625 cm (`max_level=2`) where the roots take up water. The components and
-translators are those of `Soil`; `SoilStructure` reads the layers and areas from any grid's geometry. After each
+translators are those of `Soil`; `SoilStructure` reads the layers and areas from the grid's geometric descriptors
+(`boundary_low_z`, `boundary_high_z`, `cell_section_z`, `cell_size_z`: any grid's, set again after a refinement). After each
 solve, the model refines the cells whose **sink density** (uptake per volume) exceeds 5 % of its maximum and coarsens
 below 0.5 %; the lagged coupling then settles Ψ and the grid together (two adaptations, then 930, 678 and 592 cells
 at the three sizes: 2200 in all, against 65 536 for the finest uniform grid).

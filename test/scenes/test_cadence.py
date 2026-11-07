@@ -194,3 +194,45 @@ class CadencedMethod(SlowRoots):
 def test_a_cadence_is_a_components_steps():
     with pytest.raises(ValueError, match="a component's step's"):
         _scene(CadencedMethod)
+
+
+@dataclass
+class Remembering(FunctionalComponent):
+    """Reads the hour the Scene writes and what it was at its last call (kept_from_last_call, last_call)."""
+    kept_from_last_call = ("hour",)
+    hour: float = input_variable(**DOC, by="the Scene's forcing", default=0., scale=scales.SubOrgan,
+                                 kind="intensive")
+    hour_before: float = state_variable(**DOC, default=-1., scale=scales.SubOrgan, kind="intensive")
+
+    @state
+    def _hour_before(self, hour) -> dict:
+        return {"hour_before": self.last_call("hour")}
+
+
+class RememberingRoots(CompositeModel):
+    initiators = (RootGrowthProbe,)
+    parts = {"growth": RootGrowthProbe, "carbon": CarbonProbe, "remembering": Remembering}
+
+
+def test_a_components_values_at_its_last_call(tmp_path):
+    """last_call(name): the values at the component's last call, aligned by id (NaN before its first call and for
+    the entities new since), kept with its state (checkpoints)."""
+    scene = Scene(doubles_planting([RememberingRoots]), time_step=DT, forcings={"hour": lambda t: t / DT})
+    ds = scene.population().data_structure
+    scene.run()
+    assert np.isnan(np.asarray(ds.get("hour_before"))).all()                   # its first call
+    for _ in range(3):
+        before = dict(zip(ds.entity_ids("node").tolist(), np.asarray(ds.get("hour")).tolist()))
+        scene.run()
+        seen = dict(zip(ds.entity_ids("node").tolist(), np.asarray(ds.get("hour_before")).tolist()))
+        for vid, value in seen.items():
+            assert value == before[vid] if vid in before else np.isnan(value)
+    component = scene.population().instance.remembering
+    with pytest.raises(KeyError, match="kept_from_last_call"):
+        component.last_call("struct_mass")
+    path = str(tmp_path / "checkpoint")
+    scene.checkpoint(path)
+    restored = Scene(doubles_planting([RememberingRoots]), time_step=DT, forcings={"hour": lambda t: t / DT})
+    restored.load_checkpoint(path)
+    np.testing.assert_array_equal(restored.population().instance.remembering.last_call("hour"),
+                                  component.last_call("hour"))

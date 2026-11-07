@@ -11,4 +11,4 @@ def test_the_coarse_soil_solves_its_steady_profile():
     soil.run()
     psi = np.asarray(soil.grid.get("water_potential")).reshape(4, 4, 8)
     assert np.all(np.diff(psi, axis=2) > 0)                       # wetter with depth, down to the water table
-    assert np.all(np.asarray(soil.grid.get("evaporation"))[np.asarray(soil.grid.get("is_evaporating")) > 0] > 0)
+    assert np.all(np.asarray(soil.grid.get("evaporation"))[np.asarray(soil.grid.get("boundary_low_z")) > 0] > 0)

@@ -38,7 +38,7 @@ def _check_balances(scene):
     assert float(soil.get("plant_uptake").sum()) == pytest.approx(uptake, rel=1e-8)  # the soil gives what they take
     # the soil: the water table feeds the plants' uptake and the soil evaporation
     outflow = np.asarray(soil._incidence_matrix() @ np.asarray(soil.get("water_flux"))).reshape(-1)
-    from_the_water_table = float(outflow[np.asarray(soil.get("is_water_table")).reshape(-1) > 0].sum())
+    from_the_water_table = float(outflow[np.asarray(soil.get("boundary_high_z")).reshape(-1) > 0].sum())
     evaporation = float(soil.get("evaporation").sum())
     assert from_the_water_table == pytest.approx(uptake + evaporation, rel=1e-6)
 

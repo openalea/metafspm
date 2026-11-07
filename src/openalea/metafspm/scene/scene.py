@@ -138,6 +138,10 @@ class Scene:
         start:                 the date of the scene's time 0, "2026-05-10 00:00" (ISO 8601, UTC; or a datetime):
                                every component's calendar() (e.g. a light model's sun), the forcings of origin
                                "calendar", the dates given as times (events, planting times).
+        coupling:              how the models couple within a scene step: "explicit" (default: each model once,
+                               after the exchanges into it, reading the later models' values of the step before), or
+                               a FixedPoint (coupling.iteration) iterating chosen schedule steps of several models to
+                               a fixed point within the step; Scene.coupling_iterations counts its iterations.
         compute:               the run configuration (openalea.metafspm.compute.Compute; default Compute()): the
                                threads while the scene builds and runs, the process pool, the device, the memory
                                trimmed after each step. A component's setting named workers or device that its
@@ -156,7 +160,7 @@ class Scene:
                  time_step="1 h", mapping_method: str = "barycentre", periodic=(True, True, False),
                  flip_z: bool = True, xrange: float = None, yrange: float = None, forcings=None,
                  events=(), stop_when=None, mappings=(), recorder=None, start=None, compute: Compute = None,
-                 soil_surface: float = 0.):
+                 soil_surface: float = 0., coupling="explicit"):
         self.compute = Compute() if compute is None else compute
         if not isinstance(self.compute, Compute):
             raise TypeError(f"Scene: compute is a Compute (openalea.metafspm.compute), got {self.compute!r}")
@@ -165,6 +169,7 @@ class Scene:
             self._build(planting, environment, environment_scenarios, translator, time_step, mapping_method,
                         periodic, flip_z, xrange, yrange, forcings, events, stop_when, mappings, recorder, start,
                         soil_surface)
+            self._bind_coupling(coupling)
 
     def _build(self, planting, environment, environment_scenarios, translator, time_step, mapping_method, periodic,
                flip_z, xrange, yrange, forcings, events, stop_when, mappings, recorder, start, soil_surface) -> None:
@@ -524,6 +529,21 @@ class Scene:
 
     # ── running ───────────────────────────────────────────────────────────────
 
+    def _bind_coupling(self, coupling) -> None:
+        """The scene step's coupling: "explicit" (each model once), or a FixedPoint (coupling.iteration) bound to the
+        models' steps."""
+        from openalea.metafspm.coupling.iteration import FixedPoint
+        if isinstance(coupling, str) and coupling == "explicit":
+            self.coupling = "explicit"
+        elif isinstance(coupling, FixedPoint):
+            models = {type(model).__name__: model for model in self.environment}
+            models.update({population.name: population.instance for population in self.populations})
+            coupling.bind(models)
+            self.coupling = coupling
+        else:
+            raise ValueError(f"Scene(coupling=...): 'explicit' or a FixedPoint (coupling.iteration), got {coupling!r}")
+        self.coupling_iterations = {"steps": 0, "iterations": 0, "most": 0, "not_converged": 0}
+
     def run(self) -> None:
         """One scene step: the environment, then the populations, each after the exchanges into it; the process's
         threads limited to the Compute's while it runs, and the freed memory given back after (memory "trim")."""
@@ -543,6 +563,13 @@ class Scene:
         self._remember_previous()
         for component in self.components:
             component.__dict__["_clock"] = self.time        # forcings read at the scene time
+        iterated = self.coupling != "explicit"
+        snapshots = {}
+        if iterated:                                       # each iterated step's start kept, at its first run
+            from openalea.metafspm.coupling.iteration import snapshot
+            for model in self.coupling.models():
+                model.__dict__["_before_step"] = lambda step: snapshots.setdefault(
+                    id(step), snapshot(step)) if self.coupling.watches(step) else None
         for model in self.environment:
             if not self._due(model):
                 continue
@@ -564,12 +591,51 @@ class Scene:
             self._time("exchanges", exchanged - started)
             self._time(population.name, perf_counter() - exchanged)
             self._time_components(population.name, population.components)
+        if iterated:
+            self._iterate(snapshots)
         self.time += self.time_step
         self.iteration += 1
         if self.recorder is not None:
             started = perf_counter()
             self.recorder.record(self)
             self._time("recording", perf_counter() - started)
+
+    def _iterate(self, snapshots: dict) -> None:
+        """A fixed-point coupling's iterations (coupling.iteration): the iterated steps run again from their start,
+        after the exchanges into their models, until what they write no longer changes."""
+        from openalea.metafspm.coupling.iteration import converged, restore, values, warn_not_converged
+        coupling = self.coupling
+        for model in coupling.models():
+            model.__dict__.pop("_before_step", None)
+        bound = [entry for entry in coupling._bound if id(entry[2]) in snapshots]
+        names = {id(model): name for name, model in [(type(model).__name__, model) for model in self.environment]
+                 + [(population.name, population.instance) for population in self.populations]}
+        before, done = values(bound), 0
+        started = perf_counter()
+        for _ in range(coupling.max_iterations):
+            for name, model, step in bound:
+                restore(step, snapshots[id(step)], name)
+                for ds in _own_data_structures(model):
+                    self.exchanges.exchange(into=ds)
+                step.run()
+            done += 1
+            after = values(bound)
+            if converged(before, after, coupling.tolerance, coupling.absolute):
+                break
+            before = after
+        else:
+            warn_not_converged(coupling, self.time)
+            self.coupling_iterations["not_converged"] += 1
+        self._time("coupling iterations", perf_counter() - started)
+        for _, model, _ in bound:
+            for component in model.components:
+                component.__dict__.pop("_ran", None)        # its scene step counted once (its model's run)
+                if hasattr(component, "wall_time"):
+                    component.wall_time(reset=True)
+        counts = self.coupling_iterations
+        counts["steps"] += 1
+        counts["iterations"] += done
+        counts["most"] = max(counts["most"], done)
 
     def schedule(self):
         """
@@ -649,8 +715,8 @@ class Scene:
             ds.remember_previous(names)
 
     def _due(self, model) -> bool:
-        """Whether *model* runs at this step: an internal hook, _run_when(scene) -> bool (the cadence is
-        EnvironmentModel.interval)."""
+        """Whether *model* runs at this step: an internal hook, _run_when(scene) -> bool (a step's cadence is its
+        schedule's: coupling.schedule.Step(cadence=))."""
         when = getattr(model, "_run_when", None)
         return when is None or bool(when(self))
 

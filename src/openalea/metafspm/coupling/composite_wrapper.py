@@ -149,9 +149,12 @@ class CompositeModel:
         of its steps (a component scheduled twice, for two stages, reads the step's forcings both times); the
         components that ran counted once (Component.calls: the scene steps they ran in)."""
         clocks = [(component, component.__dict__.get("_clock", 0.)) for component in self.components]
+        before = self.__dict__.get("_before_step")         # a Scene's fixed-point coupling (coupling.iteration)
         for step in self.steps():
             for component, clock in clocks:
                 component.__dict__["_clock"] = clock
+            if before is not None:
+                before(step)
             step.run()
         for component in self.components:
             if component.__dict__.pop("_ran", False):
@@ -243,7 +246,7 @@ class CompositeModel:
             if _base_of(provider.data_structure) is not ds:
                 raise NotImplementedError(f"{link.receiver}.{link.variable} <- {link.provider}: coupling across "
                                           "DataStructures goes through the Scene (coupling.cross.Exchanges)")
-            check_link(link, receiver, provider)
+            link = check_link(link, receiver, provider)
             link = self._geometric_sources(link, receiver, ds)
             self._check_link_scales(link, ds)
             detail = link.mapped_detail

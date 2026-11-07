@@ -128,6 +128,75 @@ def _declarations(components) -> dict:
     return found
 
 
+RECORDED = "recorded"         # a variables filter's value: what the declarations record (record=; Excluding)
+
+
+class Excluding:
+    """A variables filter's value for a table: every variable but *names* (a filter given as "recorded": every
+    variable but those no declaration records)."""
+
+    def __init__(self, names):
+        self.names = frozenset(str(name) for name in names)
+
+    def __contains__(self, name) -> bool:
+        return name not in self.names
+
+    def __or__(self, other) -> "Excluding":
+        return Excluding(self.names - set(other))
+
+    def __eq__(self, other) -> bool:
+        return isinstance(other, Excluding) and other.names == self.names
+
+    def __hash__(self) -> int:
+        return hash(("Excluding", self.names))
+
+    def __repr__(self) -> str:
+        return f"Excluding({sorted(self.names)})"
+
+
+def unrecorded(ds, components) -> set:
+    """The variables of *ds* its frames leave out under a variables filter "recorded": those whose declarations by
+    *components* (record=, coupling.component's declarations) do not record them: a declaration's explicit record=
+    (True wins), else the DataStructure's own (a grid's geometric descriptors: record=False), else a state variable
+    or an input recorded, a parameter or a setting not. A variable nothing declares is recorded."""
+    roles, explicit = {}, {}
+    for component in components or ():
+        if not is_dataclass(component):
+            continue
+        for item in fields(type(component)):
+            role = item.metadata.get("variable_type")
+            if role is None:
+                continue
+            roles.setdefault(item.name, set()).add(role)
+            if item.metadata.get("record") is not None:
+                explicit[item.name] = explicit.get(item.name, False) or bool(item.metadata["record"])
+    meta = ds._variable_meta() if hasattr(ds, "_variable_meta") else {}
+    out = set()
+    for name in set(roles) | {name for name, info in meta.items() if info.get("record") is not None}:
+        if name in explicit:
+            recorded = explicit[name]
+        elif meta.get(name, {}).get("record") is not None:
+            recorded = bool(meta[name]["record"])
+        else:
+            recorded = bool(roles.get(name, set()) & {"state_variable", "input"})
+        if not recorded:
+            out.add(name)
+    return out
+
+
+def resolved_variables(variables, ds, components):
+    """A variables filter's value for *ds* with "recorded" (as a whole, or as a table's value) resolved into
+    Excluding(unrecorded(ds, components))."""
+    if variables is None:
+        return None
+    if isinstance(variables, str) and variables == RECORDED:
+        return Excluding(unrecorded(ds, components))
+    if isinstance(variables, dict):
+        return {table: (Excluding(unrecorded(ds, components)) if isinstance(names, str) and names == RECORDED
+                        else names) for table, names in variables.items()}
+    return variables
+
+
 def _variable(name: str, metadata: dict, standard_names: dict, derived: bool = False):
     encoding3d = _encoding3d()
     from openalea.encoding3d import ucum, vocabulary
@@ -799,7 +868,7 @@ def _instance_sets(ds, components, entity_sets: list, scale_of: dict, names: dic
     owner_scale = names[int(g.topology_arrays()["scale"][next(iter(groups.values()))[0]])]   # the location's set
     node_set = names[scale_of["node"]]                     # the reduced system's nodes: the templates' rows
     kept = _table_variables(variables, node_set) if variables is not None else None
-    kept = None if kept is None else tuple(sorted(kept))
+    kept = None if kept is None or isinstance(kept, Excluding) else frozenset(kept)
     bound = bool(reduction.systems) and reduction.instance is not None and not reduction.library
     terms = [reduction.recovery_terms(ds, groups=list(groups), system=system) for system in reduction.systems] \
         if bound else []
@@ -1162,7 +1231,7 @@ def _grid_data_structure(identifier: str, ds, metadata: dict, standard_names: di
 def to_frame(data_structures: dict, components: dict = None, mappings: dict = None, time: float = 0.,
              step: int = 0, time_unit="s", geometry: bool = True, standard_names: dict = None,
              scales=None, entities=None, variables=None, plant_names: dict = None, display_meshes: bool = True,
-             display_plants=None, display: str = "instances"):
+             display_plants=None, display: str = "instances", fold=None):
     """
     The encoding3d frame of *data_structures* ({id: DataStructure}; ids are identifiers), their variables declared
     by *components* ({id: [components]}), with *mappings* ({name: (CrossMapping, source id, target id)}), at *time*
@@ -1184,7 +1253,9 @@ def to_frame(data_structures: dict, components: dict = None, mappings: dict = No
       None          the reduced groups not drawn (the others are)
 
     *standard_names*: {metafspm name: standard name} on top of the vocabulary's metafspm column (a None value drops
-    one).
+    one). *fold*: ((x0, x1), (y0, y1)), the periodic pattern the plants' drawing is folded into, for display (a
+    stand's leaves and roots beyond its pattern drawn where the periodic scene has them; fold_frame); None: as they
+    are.
 
     For logging, *scales*, *entities* and *variables* filter what is written (see filter_frame), each a value for
     every DataStructure or a {id: value} dict; *plant_names*: {id: {plant name: Plant vid}}, to give *entities* by
@@ -1199,6 +1270,10 @@ def to_frame(data_structures: dict, components: dict = None, mappings: dict = No
     from openalea.metafspm.coupling.durations import duration, label
     frame = encoding3d.Frame(time=float(time), time_unit=label(duration(time_unit, "time_unit")), step=int(step),
                           writer={"platform": PLATFORM}, vocabulary_version=vocabulary.version())
+    if variables is not None:
+        variables = {identifier: resolved_variables(_for(variables, identifier), ds,
+                                                    (components or {}).get(identifier, ()))
+                     for identifier, ds in data_structures.items()}
     for identifier, ds in data_structures.items():
         metadata = _declarations((components or {}).get(identifier, ()))
         if isinstance(ds, MPGDataStructure):
@@ -1222,8 +1297,66 @@ def to_frame(data_structures: dict, components: dict = None, mappings: dict = No
             columns={"source": np.asarray(source_ds.entity_ids("node"), dtype=np.int64)[rows],
                      "target": np.asarray(target_ds.entity_ids("cell"), dtype=np.int64)[cells],
                      "weight": np.asarray(weights, dtype=np.float64)}))
+    if fold is not None:
+        fold_frame(frame, fold, [identifier for identifier, ds in data_structures.items()
+                                 if isinstance(ds, MPGDataStructure)])
     if scales is not None or entities is not None or variables is not None:
         filter_frame(frame, scales=scales, entities=entities, variables=variables, plant_names=plant_names)
+    return frame
+
+
+def _folding(points: np.ndarray, pattern) -> np.ndarray:
+    """The (n, 3) translations bringing *points* ((n, 3)) into the periodic *pattern* ((x0, x1), (y0, y1)): whole
+    periods along x and y, none along z."""
+    offset = np.zeros((len(points), 3))
+    for axis, (low, high) in enumerate(pattern):
+        period = float(high) - float(low)
+        if period > 0:
+            offset[:, axis] = -np.floor((points[:, axis] - float(low)) / period) * period
+    return offset
+
+
+def fold_frame(frame, pattern, identifiers=None):
+    """
+    Fold the plants' drawing of *frame* (changed in place, and returned) into the periodic *pattern* ((x0, x1),
+    (y0, y1): the stand's, Scene.xrange and yrange), for display: the scene is periodic (its light and its soil), so a
+    leaf or a root beyond the pattern is drawn where the pattern has it. Each mesh triangle moves by the whole periods
+    that bring its centre into the pattern (a triangle stays whole; an indexed mesh's vertices move with their
+    triangles), each segment (its ends' columns, the roots' tubes) by those of its middle, each instance by those of
+    its placement. Of the graph data structures *identifiers* (None: every one); the frame marked as folded
+    (from_frame does not rebuild it: the ends are no longer the plants').
+    """
+    from openalea.encoding3d import views
+    pattern = tuple((float(low), float(high)) for low, high in pattern)
+    for data_structure in frame.data_structures:
+        if data_structure.kind != "graph" or (identifiers is not None and data_structure.id not in identifiers):
+            continue
+        for mesh in data_structure.meshes:
+            if mesh.indices is None:
+                triangles = mesh.positions.reshape(-1, 3, 3)
+                offset = _folding(triangles.mean(axis=1), pattern)
+                mesh.positions = (triangles + offset[:, None, :]).reshape(-1, 3)
+            else:
+                corners = mesh.indices.reshape(-1, 3)
+                offset = _folding(mesh.positions[corners].mean(axis=1), pattern)
+                moved = np.zeros_like(mesh.positions)
+                moved[corners.reshape(-1)] = np.repeat(offset, 3, axis=0)
+                mesh.positions = mesh.positions + moved
+        for entity_set in data_structure.entity_sets:
+            columns = views.segment_columns(entity_set)
+            if not columns:
+                continue
+            start = np.stack([np.asarray(entity_set.columns[name], dtype=float) for name in columns[:3]], axis=1)
+            end = np.stack([np.asarray(entity_set.columns[name], dtype=float) for name in columns[3:]], axis=1)
+            offset = np.nan_to_num(_folding(0.5 * (start + end), pattern))
+            for k, name in enumerate(columns):
+                entity_set.columns[name] = np.asarray(entity_set.columns[name], dtype=float) + offset[:, k % 3]
+        for instance_set in data_structure.instance_sets:
+            transforms = np.asarray(instance_set.columns["transform"], dtype=float).reshape(-1, 4, 4)  # column major
+            offset = _folding(transforms[:, 3, :3], pattern)
+            transforms[:, 3, :3] += offset
+            instance_set.columns["transform"] = transforms.reshape(-1, 16)
+        data_structure.extras.setdefault(EXTRAS, {})["folded"] = [list(bounds) for bounds in pattern]
     return frame
 
 
@@ -1247,12 +1380,13 @@ def _display_plants_of(display_plants, identifier: str, names: dict):
 
 def scene_to_frame(scene, geometry: bool = True, standard_names: dict = None, data_structures=None, scales=None,
                    entities=None, variables=None, display_meshes: bool = True, display_plants=None,
-                   display: str = "instances"):
+                   display: str = "instances", fold: bool = False):
     """The frame of a Scene now: each population's DataStructure (id: the population's name), each environment
     model's (id: the model's class name, numbered when it has several), the scene's CrossMappings.
 
     *geometry*, *display_meshes*, *display* and *display_plants* (the planting table's plant names, e.g. ("p0", "p3"),
-    or a {population: names} dict): as in to_frame. For logging: *data_structures*, the ids of those to write (default:
+    or a {population: names} dict): as in to_frame. *fold*: the plants' drawing folded into the scene's pattern
+    ((0, xrange), (0, yrange): the stand's, periodic), for display (to_frame's fold). For logging: *data_structures*, the ids of those to write (default:
     all); *scales*, *entities* and *variables*, as in to_frame (filter_frame), *entities* also given by the planting
     table's plant names (e.g. "p0")."""
     found = scene.data_structures()
@@ -1280,7 +1414,15 @@ def scene_to_frame(scene, geometry: bool = True, standard_names: dict = None, da
     return to_frame(written, components=components, mappings=mappings, time=scene.time,
                     step=scene.iteration, time_unit="s", geometry=geometry, standard_names=standard_names,
                     scales=scales, entities=entities, variables=variables, plant_names=plant_names,
-                    display_meshes=display_meshes, display_plants=display_plants, display=display)
+                    display_meshes=display_meshes, display_plants=display_plants, display=display,
+                    fold=_scene_pattern(scene) if fold else None)
+
+
+def _scene_pattern(scene):
+    """The scene's periodic pattern ((0, xrange), (0, yrange)): the stand's, its soil's and its light's."""
+    if getattr(scene, "xrange", None) is None or getattr(scene, "yrange", None) is None:
+        raise ValueError("scene_to_frame(fold=True): the scene has no pattern (xrange, yrange)")
+    return (0., float(scene.xrange)), (0., float(scene.yrange))
 
 
 def export_frame(path: str, data_structures: dict, **options) -> None:
@@ -1456,7 +1598,9 @@ def filter_frame(frame, scales=None, entities=None, variables=None, plant_names:
       variables:  names of the variables kept in every table, or a {table: names} dict, a table being an entity set,
                   a relation or the scalars (by name) and "*" every table it does not name (a table it does not
                   name, without "*": unfiltered), e.g. {"Compartment": ["psi", "tissue"], "SubOrgan": ["radius"],
-                  "*": []}. A filtered table always keeps its structure (encoding3d's reserved columns: ids, labels,
+                  "*": []}; to to_frame and scene_to_frame, names may be "recorded" (as a whole or a table's): the
+                  variables the declarations record (their record=: state variables and inputs, not parameters,
+                  settings or a grid's geometric descriptors; unrecorded()), an Excluding here. A filtered table always keeps its structure (encoding3d's reserved columns: ids, labels,
                   complex and parent links, edge types, a relation's ends, a grid cell's level and index), its
                   segment ends and the display rows' marker (metafspm_display_only, e.g. a reduced section's
                   interiors); metafspm's own links (metafspm_complex, ...: from_frame's) only when named. The
@@ -1491,17 +1635,72 @@ def filter_frame(frame, scales=None, entities=None, variables=None, plant_names:
 
 
 def _filter_described(value):
-    """A filter's value as the frame's extras note it: a list (names or ids), or {table: names} for variables."""
+    """A filter's value as the frame's extras note it: a list (names or ids), {table: names} for variables, and
+    {"excluding": names} for a value given as "recorded" (every variable but those)."""
+    if isinstance(value, Excluding):
+        return {"excluding": sorted(value.names)}
     if isinstance(value, dict):
-        return {str(table): sorted(_table_variables(names, table)) for table, names in value.items()}
+        return {str(table): _filter_described(names) if isinstance(names, Excluding)
+                else sorted(_table_variables(names, table)) for table, names in value.items()}
     return [item if isinstance(item, str) else int(item) for item in np.atleast_1d(value)]
 
 
 def _table_variables(wanted, table: str):
-    """The variables a variables filter (*wanted*: names, or {table: names, "*": names}) keeps in *table* (a set),
-    or None: *table* unfiltered."""
+    """The variables a variables filter (*wanted*: names, or {table: names, "*": names}) keeps in *table* (a set,
+    or an Excluding: every variable but some), or None: *table* unfiltered."""
     names = wanted.get(table, wanted.get("*")) if isinstance(wanted, dict) else wanted
-    return None if names is None else {str(name) for name in ([names] if isinstance(names, str) else names)}
+    if names is None or isinstance(names, Excluding):
+        return names
+    if isinstance(names, str) and names == RECORDED:
+        raise ValueError("a variables filter 'recorded' is resolved from the declarations: give it to to_frame or "
+                         "scene_to_frame (resolved_variables), not to filter_frame")
+    return {str(name) for name in ([names] if isinstance(names, str) else names)}
+
+
+def view_columns(views: dict) -> dict:
+    """{data structure id: {table: columns}} that *views* (encoding3d's views.json) select, colour or size tubes
+    by: the columns a frame keeps whatever its variables filter (with_view_columns)."""
+    from openalea.encoding3d import model
+    from openalea.encoding3d.views import SEGMENT_ENDS
+    structure = set(model.RESERVED["entity_set"]) | {DISPLAY_ONLY} | {name for pair in SEGMENT_ENDS for name in pair}
+    found = {}
+    for content in (views or {}).get("configurations", {}).values():
+        for layer in content.get("layers", ()):
+            source = layer["source"]
+            select, color_by = layer.get("select") or {}, layer.get("color_by") or {}
+            used = [(select.get("entity_set"), column) for column in select.get("where", {})]
+            used.append((color_by.get("entity_set"), color_by.get("variable")))
+            used.append((source.get("entity_set"), (layer.get("tube") or {}).get("radius")))
+            for table, column in used:
+                if table and column and column not in structure:
+                    found.setdefault(source["data_structure"], {}).setdefault(table, set()).add(column)
+    return found
+
+
+def with_view_columns(variables, views: dict, identifiers):
+    """A variables filter (filter_frame's: a value for every data structure, or {id: value}) that also keeps the
+    columns *views* show (view_columns), for the data structures *identifiers*: a table filtered by names gets
+    them added, one filtered by an Excluding (\"recorded\") has them no longer excluded; a table unfiltered stays so."""
+    if variables is None:
+        return None
+    shown = view_columns(views)
+    out = {}
+    for identifier in identifiers:
+        wanted = _for(variables, identifier)
+        columns = shown.get(identifier)
+        if wanted is None or not columns:
+            out[identifier] = wanted
+            continue
+        if not isinstance(wanted, dict):
+            wanted = {"*": wanted}
+        wanted = dict(wanted)
+        for table, names in columns.items():
+            kept = _table_variables(wanted, table)
+            if kept is None:
+                continue
+            wanted[table] = kept | names if isinstance(kept, Excluding) else sorted(kept | names)
+        out[identifier] = wanted
+    return out
 
 
 def _always_kept(table) -> set:
@@ -1713,6 +1912,9 @@ def from_frame(frame) -> dict:
         if "filtered" in extras:
             raise ValueError(f"'{data_structure.id}' was written filtered, for logging ({extras['filtered']}): "
                              "it cannot be rebuilt (write it unfiltered to exchange it)")
+        if "folded" in extras:
+            raise ValueError(f"'{data_structure.id}' was written folded into its pattern ({extras['folded']}), for "
+                             "display: it cannot be rebuilt (write it unfolded to exchange it)")
         if extras["class"] == "MPGDataStructure":
             out[data_structure.id] = _mpg_from(data_structure, extras)
         else:

@@ -118,7 +118,9 @@ def test_register_with_values():
     np.testing.assert_array_equal(ds.get('moisture'), [0.1, 0.2, 0.3])
 
 
-GRID_GEOMETRY = {"face_area", "face_distance"}           # the grid's own edge variables
+# the grid's own variables: its geometric descriptors (data_api.GRID_DESCRIPTORS), a 1-D grid's along x
+GRID_GEOMETRY = {"face_area", "face_distance", "cell_volume", "cell_size_x", "cell_section_x", "boundary_low_x",
+                 "boundary_high_x", "face_normal_x"}
 
 
 def test_available_vars_empty():

@@ -10,9 +10,11 @@ import types
 import numpy as np
 import pytest
 
+from openalea import encoding3d
 from openalea.encoding3d import views
 
-from openalea.metafspm.io.encoding3d import default_views, scene_to_frame, write_views
+from openalea.metafspm.io.encoding3d import (default_views, filtered_view_columns, scene_to_frame, unrecorded,
+                                             write_views)
 from openalea.metafspm.scene.scene import Scene, SceneRecorder
 
 from scene_doubles import DT, RootPopulation, SceneSoil, Seedlings, doubles_planting, soil_translator
@@ -127,23 +129,54 @@ def test_given_views_are_checked_against_the_first_frame(tmp_path):
     assert views.read_views(_views_file(other)) == given
 
 
+def _columns(folder, table="SubOrgan", data_structure="RootPopulation") -> set:
+    index = encoding3d.read_index(os.path.join(folder, "frames", "scene.fspm.json"))
+    frame = encoding3d.read(os.path.join(folder, "frames", index["frames"][-1]["file"]))
+    return set(frame.data_structure(data_structure).entity_set(table).columns)
+
+
 def test_a_variables_filter_keeps_what_the_views_show(tmp_path):
-    kept = {"RootPopulation": {"SubOrgan": ["struct_mass", "radius"], "*": []}}
-    out = str(tmp_path / "kept")
-    _scene(SceneRecorder(out, summaries=False, frame_period="2 h", frame_views="default",
-                         frame_options={"variables": kept})).run()
+    """The frames keep the columns the views select, colour and size tubes by, whatever the filter names (the
+    default views read from the frame unfiltered by variables): a filter names the data only."""
+    named = {"RootPopulation": {"SubOrgan": ["length"], "*": []}}
+    out = str(tmp_path / "named")
+    recorder = SceneRecorder(out, summaries=False, frame_period="2 h", frame_views="default",
+                             frame_options={"variables": named})
+    scene = _scene(recorder)
+    scene.run()
     roots = _layers(views.read_views(_views_file(out)))["RootPopulation roots"]       # the unfiltered frame's views
     assert roots["color_by"]["variable"] == "struct_mass" and roots["tube"]["radius"] == "radius"
-    dropped = {"RootPopulation": {"SubOrgan": ["radius"], "*": []}}
-    with pytest.raises(ValueError, match="RootPopulation/SubOrgan/struct_mass"):
-        _scene(SceneRecorder(str(tmp_path / "dropped"), summaries=False, frame_period="2 h", frame_views="default",
-                             frame_options={"variables": dropped})).run()
+    assert {"length", "struct_mass", "radius"} <= _columns(out)
+    assert recorder.frame_variables(scene, views.read_views(_views_file(out)))["RootPopulation"]["SubOrgan"] == \
+        ["length", "radius", "struct_mass"]
     given = {"encoding3d_views": 1, "configurations": {"mine": {"layers": [
         {"name": "soil", "source": {"data_structure": "SceneSoil", "kind": "grid"},
          "color_by": {"entity_set": "cell", "variable": "soil_nitrate"}}]}}}
-    with pytest.raises(ValueError, match="SceneSoil/cell/soil_nitrate"):          # at construction
-        SceneRecorder(str(tmp_path / "given"), frame_period="2 h", frame_views=given,
-                      frame_options={"variables": {"SceneSoil": []}})
+    out = str(tmp_path / "given")
+    _scene(SceneRecorder(out, frame_period="2 h", frame_views=given, summaries=False,
+                         frame_options={"variables": {"SceneSoil": []}})).run()
+    assert "soil_nitrate" in _columns(out, "cell", "SceneSoil")
+    assert filtered_view_columns(given, {"SceneSoil": []}) == ["mine/soil: SceneSoil/cell/soil_nitrate"]
+
+
+def test_the_recorded_variables(tmp_path):
+    """frame_options variables="recorded": the variables the declarations record (record=: state variables and
+    inputs, not parameters nor a grid's geometric descriptors), the views' columns kept."""
+    out = str(tmp_path / "recorded")
+    scene = _scene(SceneRecorder(out, summaries=False, frame_period="2 h", frame_views="default",
+                                 frame_options={"variables": "recorded"}))
+    scene.run()
+    soil = _columns(out, "cell", "SceneSoil")
+    assert "cell_volume" not in soil and "boundary_high_z" not in soil              # the grid's descriptors
+    ds, _, components = scene.data_structures()["SceneSoil"]
+    left = unrecorded(ds, components)
+    assert {"cell_volume", "face_normal_z"} <= left
+    assert not left & soil
+    plants, _, components = scene.data_structures()["RootPopulation"]
+    parameters = {name for component in components for name, field in type(component).__dataclass_fields__.items()
+                  if field.metadata.get("variable_type") == "parameter"} & set(plants.available_vars())
+    assert parameters and parameters <= unrecorded(plants, components)             # parameters: not recorded
+    assert not parameters & _columns(out)
 
 
 def test_frame_views_need_frames_and_valid_views(tmp_path):
@@ -253,3 +286,34 @@ def test_display_period_is_a_multiple_of_frame_period(tmp_path):
         SceneRecorder(str(tmp_path), display_period="2 h")
     with pytest.raises(ValueError, match="display_period"):
         SceneRecorder(str(tmp_path), frame_period="2 h", frame_options={"display_meshes": True})
+
+
+def test_frames_folded_into_the_pattern():
+    """scene_to_frame(fold=True) folds the plants' drawing into the scene's periodic pattern, for display: every
+    segment's middle (the roots' tubes) and every triangle's centre within it, whole periods moved along x and y, z
+    unchanged; the grid as it is; such a frame is not rebuilt."""
+    from openalea.encoding3d.views import segment_columns
+    from openalea.metafspm.io.encoding3d import fold_frame, from_frame
+    scene = _scene()
+    scene.run()
+    frame = scene_to_frame(scene)
+    roots = frame.data_structure("RootPopulation").entity_set("SubOrgan")
+    columns = segment_columns(roots)
+    before = {name: np.asarray(roots.columns[name], dtype=float).copy() for name in columns}
+    width = 0.5 * float(np.nanmax(np.abs(before[columns[3]])) + 1e-3)          # a pattern narrower than the roots
+    pattern = ((0., width), (0., width))
+    fold_frame(frame, pattern, ["RootPopulation"])
+    after = {name: np.asarray(roots.columns[name], dtype=float) for name in columns}
+    shown = np.isfinite(after[columns[0]])
+    assert (after[columns[0]][shown] != before[columns[0]][shown]).any() or \
+        (after[columns[1]][shown] != before[columns[1]][shown]).any()                 # some folded
+    for axis in (0, 1):
+        middle = 0.5 * (after[columns[axis]] + after[columns[axis + 3]])[shown]
+        assert ((middle >= -1e-12) & (middle <= width + 1e-12)).all()
+        moved = (after[columns[axis]] - before[columns[axis]])[shown] / width
+        np.testing.assert_allclose(moved, np.round(moved), atol=1e-9)             # whole periods
+    np.testing.assert_array_equal(after[columns[2]], before[columns[2]])
+    with pytest.raises(ValueError, match="folded"):
+        from_frame(frame)
+    assert scene_to_frame(scene, fold=True).data_structure("RootPopulation").extras["metafspm"]["folded"] == [
+        [0., float(scene.xrange)], [0., float(scene.yrange)]]

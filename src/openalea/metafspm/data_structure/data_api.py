@@ -21,6 +21,7 @@ from contextlib  import contextmanager
 from dataclasses import dataclass, field
 from typing      import Optional, Union
 
+from openalea.metafspm.coupling.declaration import UP_MAPPINGS
 from openalea.metafspm.data_structure.arraydict import ArrayDict
 from types import MappingProxyType
 import re
@@ -216,13 +217,7 @@ class DataStructure(ABC):
         """Keep the values of the variables *names* as they are now, with their entities' ids (the Scene, at the
         start of each step, for the variables its Summaries' max_change ask for, or Scene.keep_previous's):
         previous(name) gives them back at the step's end, aligned by id."""
-        root = _root_data_structure(self)
-        kept = {}
-        for name in names:
-            location = self.location(name)
-            ids = None if location == "scalar" else np.array(self.entity_ids(location), copy=True)
-            kept[name] = (ids, np.array(self.get(name), copy=True))
-        root.__dict__["_previous_values"] = kept
+        _root_data_structure(self).__dict__["_previous_values"] = {name: self.kept_values(name) for name in names}
 
     def previous(self, name: str, missing=np.nan) -> np.ndarray:
         """
@@ -235,8 +230,34 @@ class DataStructure(ABC):
             raise KeyError(f"ds.previous('{name}'): its values before the step were not kept (Scene.keep_previous("
                            f"ds, '{name}'), a Summary's max_change=; kept: {sorted(kept)})")
         ids, values = kept[name]
+        return self.aligned(name, ids, values, missing)
+
+    def add_regrid_hook(self, hook) -> None:
+        """Call *hook*() after each refinement or coarsening of this grid (a component's after_regrid method, which
+        its construction registers), held weakly: a component gone is not called."""
+        import weakref
+        reference = weakref.WeakMethod(hook) if hasattr(hook, "__self__") else (lambda: hook)
+        _root_data_structure(self).__dict__.setdefault("_regrid_hooks", []).append(reference)
+
+    def _regridded(self) -> None:
+        """Call the regrid hooks (add_regrid_hook) still alive."""
+        root = _root_data_structure(self)
+        alive = [reference for reference in root.__dict__.get("_regrid_hooks", []) if reference() is not None]
+        root.__dict__["_regrid_hooks"] = alive
+        for reference in alive:
+            reference()()
+
+    def kept_values(self, name: str) -> tuple:
+        """(ids, values) of variable *name* now, copies, to give back later aligned by id (aligned())."""
+        location = self.location(name)
+        ids = None if location == "scalar" else np.array(self.entity_ids(location), copy=True)
+        return ids, np.array(self.get(name), copy=True)
+
+    def aligned(self, name: str, ids, values, missing=np.nan) -> np.ndarray:
+        """*values* of variable *name* kept with their entities' *ids* (kept_values()), one per entity of its location
+        now, aligned by id: an entity new since gets *missing*."""
         if ids is None:
-            return values.copy()
+            return np.array(values, copy=True)
         now = np.asarray(self.entity_ids(self.location(name)))
         per_entity = values.reshape(ids.size, -1) if ids.size else values.reshape(0, 1)
         dtype = np.result_type(values.dtype, np.asarray(missing).dtype)
@@ -717,8 +738,7 @@ class VariableStoreMixin:
             if spec["aggregation"] == "split" and spec.get("target") is not None:     # split over the target only
                 weights = np.where(self.mask(spec["target"]), weights, 0.)
             source_values = values
-            with np.errstate(invalid="ignore", divide="ignore"):
-                values = self._map(values, spec["source_location"], spec["location"], spec["aggregation"], weights)
+            values = self._map(values, spec["source_location"], spec["location"], spec["aggregation"], weights)
             if spec["aggregation"] in ("mean", "weighted_mean") and spec.get("missing", "default") == "default":
                 # the entities no source contributes to (none, or all its weights 0) get the default, not 0 / 0
                 contributing = (np.ones(source_values.shape[:1]) if weights is None
@@ -1868,28 +1888,52 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
 
     # ── Tree kernels ─────
 
-    def define_chain(self, name: str, edge_type: str = None, group: str = None, rank: str = None) -> None:
+    def define_chain(self, name: str, edge_type: str = None, group: str = None, rank: str = None,
+                     location: str = "node") -> None:
         """
         Declare chain *name*: by an edge type (each node follows its parent when the edge to it has that type, e.g.
-        "<" for the successors along an axis), or by a *group* variable and a *rank* variable (e.g. the metamer ranks
-        of each axis). Chains are recomputed when the topology (or the group and rank variables) change.
+        "<" for the successors along an axis), or by a *group* and a *rank* variable (e.g. the metamer ranks of each
+        axis). *location*: the entities chained, the nodes or a coarse location (e.g. "Phytomer": the phytomers of
+        each axis by their rank, define_chain("phytomers", location="Phytomer", group="Axis", rank="phytomer_rank")),
+        chained by group and rank; *group* a variable at *location* or a coarser location, each entity grouped by its
+        owner there. The chain kernels (chain_scan, chain_shift, chain_write, chain_gather, chain_recurrence) then take
+        and give one value per entity of *location*. Chains are recomputed when the topology (or the group and rank
+        variables) change.
         """
         if (edge_type is None) == (group is None or rank is None):
             raise ValueError("define_chain: give edge_type, or group and rank")
-        self.__dict__.setdefault("_chain_specs", {})[name] = {"edge_type": edge_type, "group": group, "rank": rank}
+        if location != "node" and edge_type is not None:
+            raise ValueError(f"define_chain('{name}', location='{location}'): a coarse location's entities are "
+                             "chained by group and rank")
+        self.__dict__.setdefault("_chain_specs", {})[name] = {"edge_type": edge_type, "group": group, "rank": rank,
+                                                              "location": location}
         self.__dict__.setdefault("_chain_cache", {}).pop(name, None)
 
-    def chain(self, name: str = "axis") -> dict:
-        """Chain *name* as {order, offsets, chain, position} (tree_kernels); "axis" is the '<' successors by default."""
-        from openalea.metafspm.data_structure import tree_kernels
+    def _chain_spec(self, name: str) -> dict:
         specs = self.__dict__.setdefault("_chain_specs", {})
         if name not in specs:
             if name != "axis":
                 raise KeyError(f"chain '{name}' is not defined (define_chain)")
             self.define_chain("axis", edge_type="<")
-        spec = specs[name]
-        stamp = (self.topology_version, self.n_nodes(),
-                 None if spec["group"] is None else (self.write_count(spec["group"]), self.write_count(spec["rank"])))
+        return specs[name]
+
+    def _chain_groups(self, spec: dict) -> tuple:
+        """(group, rank) of each entity of a chain by group and rank: its group variable's value, or its owner's
+        index at the group's coarser location."""
+        location = spec.get("location", "node")
+        if spec["group"] in self._coarse_scale_names() and spec["group"] != location:
+            groups = np.asarray(self.owner(spec["group"], of=location), dtype=np.float64)
+        else:
+            groups = np.asarray(self.get(spec["group"]))
+        return groups, np.asarray(self.get(spec["rank"]))
+
+    def chain(self, name: str = "axis") -> dict:
+        """Chain *name* as {order, offsets, chain, position} (tree_kernels); "axis" is the '<' successors by default."""
+        from openalea.metafspm.data_structure import tree_kernels
+        spec = self._chain_spec(name)
+        variables = [] if spec["group"] is None else [spec["rank"]] + (
+            [] if spec["group"] in self._coarse_scale_names() else [spec["group"]])
+        stamp = (self.topology_version, self.n_nodes(), tuple(self.write_count(v) for v in variables))
         cache = self.__dict__.setdefault("_chain_cache", {})
         if name not in cache or cache[name][0] != stamp:
             if spec["edge_type"] is not None:
@@ -1901,8 +1945,7 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
                 pred = np.where(follows, self.parents(), -1)
                 chains = tree_kernels.chains_from_predecessors(pred)
             else:
-                chains = tree_kernels.chains_from_groups(np.asarray(self.get(spec["group"])),
-                                                         np.asarray(self.get(spec["rank"])))
+                chains = tree_kernels.chains_from_groups(*self._chain_groups(spec))
             cache[name] = (stamp, chains)
         return cache[name][1]
 
@@ -1960,22 +2003,26 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
 
     def chain_gather(self, values, rank, chain: str = "axis", source=None, fill=np.nan) -> np.ndarray:
         """
-        Per node, the value of the node at rank *rank* on the chain given by *source* (tree_kernels.chain_gather).
-        Chains by group and rank: *source* is a group value and *rank* a rank value. Edge-type chains: *source* is a
-        vid of the chain and *rank* a 0-based position.
+        Per entity of the chain's location, the value of the entity at rank *rank* on the chain given by *source*
+        (tree_kernels.chain_gather). Chains by group and rank: *source* is a group value (its owner's index for a
+        group at a coarser location; None: each entity's own chain) and *rank* a rank value. Edge-type chains:
+        *source* is a vid of the chain and *rank* a 0-based position. *fill* where there is none.
         """
         from openalea.metafspm.data_structure import tree_kernels
         chains = self.chain(chain)
-        spec = self.__dict__["_chain_specs"][chain]
-        n = self.n_nodes()
-        source = np.broadcast_to(np.asarray(source), (n,))
-        rank = np.broadcast_to(np.asarray(rank, dtype=np.float64), (n,))
+        spec = self._chain_spec(chain)
         order, offsets = chains["order"], chains["offsets"]
         if spec["group"] is None:
+            n = self.n_nodes()
+            source = np.broadcast_to(np.asarray(source), (n,))
+            rank = np.broadcast_to(np.asarray(rank, dtype=np.float64), (n,))
             source_chain = chains["chain"][self.index_of(np.asarray(source, dtype=np.int64))]
             return tree_kernels.chain_gather(values, chains, source_chain, rank.astype(np.int64), fill=fill)
-        groups = np.asarray(self.get(spec["group"]))[order]
-        ranks = np.asarray(self.get(spec["rank"]), dtype=np.float64)[order]
+        all_groups, all_ranks = self._chain_groups(spec)
+        n = all_ranks.size
+        source = all_groups if source is None else np.broadcast_to(np.asarray(source), (n,))
+        rank = np.broadcast_to(np.asarray(rank, dtype=np.float64), (n,))
+        groups, ranks = all_groups[order], np.asarray(all_ranks, dtype=np.float64)[order]
         if not np.array_equal(ranks, np.round(ranks)) or not np.array_equal(rank, np.round(rank)):
             raise ValueError("chain_gather: ranks must be integers")
         chain_groups = groups[offsets[:-1]]
@@ -2349,16 +2396,8 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
                                      "their section, not to a cell): sum to a scale owning them, or zero them")
                 owner, values = owner[kept], np.asarray(values)[kept]
                 weights = None if weights is None else np.asarray(weights)[kept]
-            if aggregation == "weighted_mean":
-                return (np.bincount(owner, weights=values * weights, minlength=entities.size)
-                        / np.bincount(owner, weights=weights, minlength=entities.size))
-            if aggregation in ("max", "min"):
-                return _grouped_extreme(values, owner, entities.size, aggregation)
-            total = np.bincount(owner, weights=values, minlength=entities.size)
-            if aggregation == "sum":
-                return total
-            if aggregation == "mean":
-                return total / np.bincount(owner, minlength=entities.size)
+            if aggregation in UP_MAPPINGS:
+                return _aggregated(values, owner, entities.size, aggregation, weights)
         elif from_location in coarse and to_location == "node" and aggregation == "split":
             owner = self._membership(from_location)[1]
             return _split(values, owner, weights, from_location)
@@ -2390,16 +2429,8 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
                 if aggregation == "split":
                     return _split(values, owner, weights, from_location)
             else:
-                if aggregation == "weighted_mean":
-                    return (np.bincount(owner, weights=values * weights, minlength=coarse_ids.size)
-                            / np.bincount(owner, weights=weights, minlength=coarse_ids.size))
-                if aggregation in ("max", "min"):
-                    return _grouped_extreme(values, owner, coarse_ids.size, aggregation)
-                total = np.bincount(owner, weights=values, minlength=coarse_ids.size)
-                if aggregation == "sum":
-                    return total
-                if aggregation == "mean":
-                    return total / np.bincount(owner, minlength=coarse_ids.size)
+                if aggregation in UP_MAPPINGS:
+                    return _aggregated(values, owner, coarse_ids.size, aggregation, weights)
         elif to_location == "scalar" and from_location != "scalar":
             return np.asarray(self._reduce(values, aggregation, weights))
         elif from_location == "scalar" and aggregation == "broadcast":
@@ -3417,6 +3448,46 @@ class FieldDataStructure(DataStructure):
 
 # ─────────────────────────────────────────────────────────────────────────────
 
+GRID_DESCRIPTORS = """
+The geometric descriptors every grid holds (ArrayDataStructure, AdaptiveGridDataStructure), set at its construction
+and after each refinement or coarsening, for its components to read as inputs (their declarations: by="grid"):
+
+    cell_volume              the cell's volume (m3 in a grid in m)
+    cell_size_<axis>         its size along each axis (cell_size_x, cell_size_y, cell_size_z)
+    cell_section_<axis>      its section across each axis: the product of its other sizes (cell_section_z, its
+                             horizontal area: its faces on the soil surface or the bottom)
+    boundary_low_<axis>      1 in the cells on the grid's first layer along a non-periodic axis (boundary_low_z, a
+                             soil's surface: z points down), 0 elsewhere
+    boundary_high_<axis>     1 in those on its last layer (boundary_high_z, a soil's bottom)
+    face_area, face_distance at the faces (edges): the face's area, the distance between its cells' centres
+    face_normal_<axis>       1 at the faces across each axis (face_normal_z: gravity along the face), 0 elsewhere
+"""
+
+
+def register_grid_descriptors(grid) -> None:
+    """Register (or set again) the grid's geometric descriptors (GRID_DESCRIPTORS) from its cells and faces."""
+    sizes = np.atleast_2d(np.asarray(grid.cell_sizes(), dtype=float))
+    cells = sizes.shape[0]
+    volume = np.broadcast_to(np.asarray(grid.cell_volume(), dtype=float), (cells,))
+    values = {"cell_volume": volume}
+    for d, axis in enumerate(grid.axes):
+        values[f"cell_size_{axis}"] = sizes[:, d]
+        others = [sizes[:, k] for k in range(sizes.shape[1]) if k != d]
+        values[f"cell_section_{axis}"] = np.prod(others, axis=0) if others else np.ones(cells)
+        open_axis = not grid.periodic[d]
+        for side, layer in (("low", 0), ("high", -1)):
+            mask = np.asarray(grid.layer_mask(**{axis: layer}), dtype=float).reshape(-1)
+            values[f"boundary_{side}_{axis}"] = mask if open_axis else np.zeros(cells)
+    meta = grid._variable_meta()
+    for name, value in values.items():
+        grid.register(name, np.array(value), location="cell")
+        meta.setdefault(name, {}).update(kind="descriptor", record=False)
+    axes = np.asarray(grid.face_axis())
+    for d, axis in enumerate(grid.axes):
+        grid.register(f"face_normal_{axis}", (axes == d).astype(float), location="edge")
+        meta.setdefault(f"face_normal_{axis}", {}).update(kind="descriptor", record=False)
+
+
 class ArrayDataStructure(VariableStoreMixin, FieldDataStructure):
     """
     1-D or 3-D numpy array field.
@@ -3454,6 +3525,7 @@ class ArrayDataStructure(VariableStoreMixin, FieldDataStructure):
         axis = self._face_axis
         self.register("face_area", np.prod(self._dx) / self._dx[axis], location="edge")
         self.register("face_distance", self._dx[axis], location="edge")
+        register_grid_descriptors(self)
 
     @property
     def shape(self) -> tuple:
@@ -3927,6 +3999,12 @@ class LocatedView(DataStructure):
     chain_gather = MPGDataStructure.chain_gather
     define_chain = MPGDataStructure.define_chain
     chain = MPGDataStructure.chain
+    _chain_spec = MPGDataStructure._chain_spec
+    _chain_groups = MPGDataStructure._chain_groups
+    chain_scan = MPGDataStructure.chain_scan
+    chain_shift = MPGDataStructure.chain_shift
+    chain_write = MPGDataStructure.chain_write
+    chain_recurrence = MPGDataStructure.chain_recurrence
 
 
 def _view_at(self, location: str) -> "LocatedView":
@@ -4019,18 +4097,22 @@ def _aggregated(values, owner, size: int, aggregation: str, weights=None) -> np.
     if aggregation == "weighted_mean":
         if weights is None:
             raise ValueError("weighted_mean needs a weight variable")
-        with np.errstate(invalid="ignore", divide="ignore"):
-            return (np.bincount(owner, weights=values * weights, minlength=size)
-                    / np.bincount(owner, weights=weights, minlength=size))
+        return _mean_over(np.bincount(owner, weights=values * weights, minlength=size),
+                          np.bincount(owner, weights=weights, minlength=size))
     if aggregation in ("max", "min"):
         return _grouped_extreme(values, owner, size, aggregation)
     total = np.bincount(owner, weights=values, minlength=size)
     if aggregation == "sum":
         return total
     if aggregation == "mean":
-        with np.errstate(invalid="ignore", divide="ignore"):
-            return total / np.bincount(owner, minlength=size)
+        return _mean_over(total, np.bincount(owner, minlength=size))
     raise ValueError(f"unknown aggregation '{aggregation}'")
+
+
+def _mean_over(totals, weights) -> np.ndarray:
+    """*totals* / *weights* per owner, NaN for an owner of no entity or of no weight (not 0 / 0)."""
+    totals = np.asarray(totals, dtype=float)
+    return np.divide(totals, weights, out=np.full(totals.shape, np.nan), where=np.asarray(weights) != 0)
 
 
 class EntityView(DataStructure):
@@ -4594,6 +4676,8 @@ class EntityView(DataStructure):
     path_compose = MPGDataStructure.path_compose
     define_chain = MPGDataStructure.define_chain
     chain = MPGDataStructure.chain
+    _chain_spec = MPGDataStructure._chain_spec
+    _chain_groups = MPGDataStructure._chain_groups
     chain_scan = MPGDataStructure.chain_scan
     chain_shift = MPGDataStructure.chain_shift
     chain_write = MPGDataStructure.chain_write

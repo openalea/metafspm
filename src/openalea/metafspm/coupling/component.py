@@ -74,7 +74,7 @@ def _renamed(function: str, given: dict) -> dict:
 def _declare(role: str, unit: str = "", description: str = "", default=None, default_factory=None, kind=None,
              by: str = None, scale=None, location=None, aggregation=None, weight=None, on_grow="default", dtype=None,
              shape=None, min_value=None, max_value=None, unit_comment: str = "", value_comment: str = "",
-             references: str = "", DOI=None, upscaling=None, **extra):
+             references: str = "", DOI=None, upscaling=None, record=None, **extra):
     """
     The metadata of a declared field, shared by state_variable, input_variable, parameter, setting and
     forcing_variable (see them for the arguments). *role*: "state_variable", "input", "parameter", "setting" or
@@ -87,7 +87,7 @@ def _declare(role: str, unit: str = "", description: str = "", default=None, def
         unit=unit, unit_comment=unit_comment, description=description, min_value=min_value, max_value=max_value,
         value_comment=value_comment, references=references, DOI=list(DOI or []), variable_type=role, by=by,
         kind=kind, scale=scale, on_grow=on_grow, location=location, mapping=aggregation, weight=weight,
-        dtype=dtype, shape=tuple(shape) if shape is not None else None, upscaling=upscaling, **extra)
+        dtype=dtype, shape=tuple(shape) if shape is not None else None, upscaling=upscaling, record=record, **extra)
     if default_factory:
         return field(default_factory=default_factory, metadata=metadata)
     return field(default=default, metadata=metadata)
@@ -112,6 +112,11 @@ _PLACE = """
     indices, "object" for lists and records (not for graph systems); *shape*: the per-entity shape of a vector-valued
     variable. *on_grow*: the value of entities created by growth, "default" or "inherit" (the parent's)."""
 
+_RECORD = """
+    *record*: whether the frames that keep the "recorded" variables (SceneRecorder's frame_options
+    variables="recorded", io.encoding3d.unrecorded) keep it: None (default) as its role (a state variable or an input
+    yes, a parameter no), True or False (e.g. False for an intermediate state of no use to look at)."""
+
 _KINDS = """
     *kind*: how its value depends on the size of what it describes: "extensive" (an amount, summed up),
     "intensive" (a concentration, a potential, averaged up by *weight*), "massic_concentration", "descriptor",
@@ -121,21 +126,21 @@ _KINDS = """
 def state_variable(unit: str = "", description: str = "", default=None, kind=None, scale=None, location=None,
                    aggregation=None, weight=None, on_grow="default", dtype=None, shape=None, by: str = None,
                    min_value=None, max_value=None, unit_comment: str = "", value_comment: str = "",
-                   references: str = "", DOI=None, upscaling=None, **renamed):
+                   references: str = "", DOI=None, upscaling=None, record=None, **renamed):
     return _declare("state_variable", **_merge(locals(), "state_variable"))
 
 
 def input_variable(unit: str = "", description: str = "", default=None, kind=None, by: str = None, scale=None,
                    location=None, aggregation=None, weight=None, on_grow="default", dtype=None, shape=None,
                    min_value=None, max_value=None, unit_comment: str = "", value_comment: str = "",
-                   references: str = "", DOI=None, optional: bool = False, **renamed):
+                   references: str = "", DOI=None, optional: bool = False, record=None, **renamed):
     return _declare("input", **_merge(locals(), "input_variable"))
 
 
 def parameter(unit: str = "", description: str = "", default=None, kind=None, by: str = None, scale=None,
               location=None, aggregation=None, weight=None, on_grow="default", dtype=None, min_value=None,
               max_value=None, unit_comment: str = "", value_comment: str = "", references: str = "", DOI=None,
-              sections=None, **renamed):
+              sections=None, record=None, **renamed):
     return _declare("parameter", **_merge(locals(), "parameter"))
 
 
@@ -187,13 +192,13 @@ def _merge(arguments: dict, function: str) -> dict:
 state_variable.__doc__ = """Declare a state variable, computed by this component's steps or solves. *default*: its
     initial value (a number, the same everywhere). *upscaling*: for a variable at a coarse scale that is the
     equivalent of finer ones (a root system's conductance), what it summarises and how (upscaling()).""" + _KINDS \
-    + _PLACE + _DOCUMENTATION
+    + _PLACE + _RECORD + _DOCUMENTATION
 input_variable.__doc__ = """Declare an input: a variable another component provides (an input named as another
     component's variable of the same DataStructure reads it; a translator link states a rename, a factor or a change
     of scale). *default*: its value when nothing provides it. *by*: the provider, for the documentation. *kind*:
     optional, checked against the provider's. *optional*: when nothing provides it (no other component, no MTG
     property), it is not registered on the DataStructure (e.g. coordinates read for a display, which a geometry
-    provider would otherwise take for its own); a step naming it gets its default.""" + _PLACE + _DOCUMENTATION
+    provider would otherwise take for its own); a step naming it gets its default.""" + _PLACE + _RECORD + _DOCUMENTATION
 parameter.__doc__ = """Declare a parameter: a constant of the equations, set by constructor keywords and
     scenarios. A numeric parameter without a place is stored per plant (each plant's scenario may change it); with
     *scale* or *location*, one value per entity. *by*: its owner, for the documentation. *sections*: for a parameter
@@ -201,7 +206,7 @@ parameter.__doc__ = """Declare a parameter: a constant of the equations, set by 
     its fields, {"section.field": {"default", "unit", "description", "min_value", "max_value"}}: each is listed by
     declarations() (and parameter_table, variants) as "name.section.field", and a scenario may give it dotted
     ({"root_anatomy.cortex.n_layers": 4}) or nested ({"root_anatomy": {"cortex": {"n_layers": 4}}}).""" + _KINDS \
-    + _PLACE + _DOCUMENTATION
+    + _PLACE + _RECORD + _DOCUMENTATION
 
 
 def setting(unit: str = "", description: str = "", default=None, choices=None, unit_comment: str = "",
@@ -283,6 +288,10 @@ class Component:
     # where=, ports= and keep=, evaluated on a DataStructure or on a section template), never by the codes inside
     entity_sets = {}
 
+    # The variables whose values at its last call it reads (last_call(name)), e.g. a rule interpolating between its
+    # calls: kept after each call, aligned by id at the next (no state variable of its own to copy them into)
+    kept_from_last_call = ()
+
     def __call__(self):
         started = perf_counter()
         self._call()
@@ -349,6 +358,11 @@ class Component:
 
     def _after_call(self, context) -> None:
         """A call's work after its steps (also run once by CompositeModel.run_together)."""
+        # The values its next call reads as last_call(name): the variables it names in kept_from_last_call, kept with
+        # their entities' ids (saved by checkpoints)
+        ds = getattr(self, "data_structure", None)
+        for name in type(self).kept_from_last_call:
+            self.keep(f"last_call:{name}", ds.kept_values(name))
         # State variables reach the MTG after every call with mtg_sync = "after_call"; by default ("lazy") the
         # DataStructure writes them when the MTG is read
         if hasattr(self, "mtg_sync"):
@@ -649,6 +663,9 @@ class DataStructureComponent(Component):
             sub_steps(simulation_step, self.time_step, type(self).__name__)
         # Live reading: steps and solves read and write the DataStructure arrays
         self.choregrapher.bind(self, self.time_step, ds)
+        # Its after_regrid methods, called by its grid after each refinement or coarsening
+        for name in _after_regrid_methods(type(self)):
+            ds.add_regrid_hook(getattr(self, name))
 
     def pull_available_inputs(self):
         """
@@ -829,6 +846,22 @@ class DataStructureComponent(Component):
         if name in kept:
             return kept[name]
         return self.__dict__.get("_caches", {}).get(("kept", name), default)
+
+    def last_call(self, name: str, missing=np.nan) -> np.ndarray:
+        """
+        The values variable *name* (one of the class' kept_from_last_call) had at the end of the component's last
+        call, one per entity of its location now, aligned by id: an entity new since, and every entity before the
+        first call, gets *missing*. Its schedule step's cadence makes it the last call's, not the last scene step's
+        (ds.previous: the step's start).
+        """
+        if name not in type(self).kept_from_last_call:
+            raise KeyError(f"{type(self).__name__}.last_call('{name}'): name it in the class' kept_from_last_call "
+                           f"({list(type(self).kept_from_last_call)})")
+        kept = self.kept(f"last_call:{name}")
+        ds = self.data_structure
+        if kept is None:
+            return np.full(np.shape(ds.get(name)), missing, dtype=np.result_type(float, np.asarray(missing).dtype))
+        return ds.aligned(name, *kept, missing=missing)
 
     def checkpoint_state(self) -> dict:
         """The state checkpoints save: what keep() kept."""
@@ -1042,6 +1075,22 @@ class FunctionalComponent(DataStructureComponent):
                     for fn in names}
         self.__dict__["_step_start_state"] = {fn: (location, np.array(ds.get(fn), dtype=np.float64).reshape(-1))
                                               for fn, location in unknowns.items() if ds.has(fn)}
+
+
+def after_regrid(method):
+    """
+    Mark a component's method as its grid's carry-over hook: an adaptive grid (AdaptiveGridDataStructure) calls it
+    after each refinement or coarsening, once the grid has carried the variables over (extensive ones by volume,
+    the others volume-averaged) and its geometric descriptors are those of its new cells, so that a variable the
+    volume averages do not carry (a soil's pressure head, from the water carried) is set again from those.
+    """
+    method._after_regrid = True
+    return method
+
+
+def _after_regrid_methods(cls) -> list:
+    """The names of *cls*' after_regrid methods."""
+    return [name for name in dir(cls) if getattr(getattr(cls, name, None), "_after_regrid", False)]
 
 
 def display_end(name: str):

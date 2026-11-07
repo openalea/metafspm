@@ -44,6 +44,8 @@ def initiation_links(translator, initiators) -> dict:
 
 def apply_link(g, plant: int, link, receiver, provider) -> None:
     """Write *link*'s values (receiver.variable <- provider's sources) on *plant*'s vertices of the receiver's scale."""
+    from openalea.metafspm.coupling.declaration import resolve_equivalences
+    link = resolve_equivalences(link, receiver, provider)
     scale = _scale(receiver, link.variable, link)
     sources = list(link.sources)
     source_scales = {_scale(provider, source, link) for source in sources}

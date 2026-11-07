@@ -16,6 +16,8 @@ from typing import Callable, Mapping, Optional, Union
 
 import yaml
 
+from openalea.metafspm.coupling.units import Equivalence
+
 from openalea.metafspm.data_structure.configs import ScalesConfig
 
 Factor = Union[float, int, str]
@@ -27,12 +29,19 @@ _BINARY = {ast.Add: operator.add, ast.Sub: operator.sub, ast.Mult: operator.mul,
 _UNARY = {ast.UAdd: operator.pos, ast.USub: operator.neg}
 
 
-def parse_factor(factor: Factor) -> float:
-    """Numeric value of a link factor: a number, or an arithmetic expression such as "-12 * 1e6 * 3600"."""
+def parse_factor(factor: Factor):
+    """Numeric value of a link factor: a number, or an arithmetic expression such as "-12 * 1e6 * 3600"; a named
+    physical equivalence (coupling.units.Equivalence, or its name in units.EQUIVALENCES: "water_molar_volume") is
+    returned as it is, its number computed from the units when the link is checked (declaration.check_link)."""
+    from openalea.metafspm.coupling.units import EQUIVALENCES, Equivalence
+    if isinstance(factor, Equivalence):
+        return factor
     if isinstance(factor, (int, float)) and not isinstance(factor, bool):
         return float(factor)
     if not isinstance(factor, str):
         raise ValueError(f"Invalid link factor {factor!r}")
+    if factor.strip() in EQUIVALENCES:
+        return EQUIVALENCES[factor.strip()]
 
     def evaluate(node):
         if isinstance(node, ast.Expression):
@@ -87,7 +96,9 @@ class Link:
         target:      a mask of the DataStructure: the mapped values go to its entities only, the others getting the
                      receiver's default (e.g. a segment concentration broadcast to its symplastic Compartments).
         unit_check:  the declared units checked against the factors (coupling.units.check_link: the same quantity,
-                     each factor the units' conversion); False for a deliberate factor (a share, a calibration).
+                     each factor the units' conversion); False for a deliberate factor (a share, a calibration). A
+                     factor between two quantities is a named physical equivalence (coupling.units.Equivalence,
+                     e.g. WATER_MOLAR_VOLUME, or its name): its number computed from the units and checked.
         missing:     the value of a receiving entity no source contributes to, in a mean ("mean", "weighted_mean"):
                      "default", the receiver's default (its standalone value; e.g. an element without a liquid node
                      in a mean weighted by the liquid volume), or "nan" (NaN, to see where).
@@ -169,7 +180,7 @@ class Link:
         if len(self.sources) > 1:
             return "multi_source"
         (source, factor), = self.sources.items()
-        if isinstance(self.raw_factors.get(source), str):
+        if isinstance(self.raw_factors.get(source), str) and not isinstance(factor, Equivalence):
             return "expression"
         if factor == 1.:
             return "identity" if source == self.variable else "alias"
@@ -263,7 +274,8 @@ class Translator:
                     not all(isinstance(source, str) for source in link.sources):
                 raise ValueError(f"Link {link.receiver}.{link.variable} uses a formula, a callable aggregation or a "
                                  "geometric source, which the nested format cannot express")
-            spec = dict(link.sources)
+            spec = {source: factor.name if isinstance(factor, Equivalence) else factor     # by its name
+                    for source, factor in link.sources.items()}
             options = {key: getattr(link, key) for key in ("scale", "source_scale", "aggregation", "weight", "target")
                        if getattr(link, key) is not None}
             if not link.unit_check:

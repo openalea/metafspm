@@ -383,7 +383,8 @@ class SceneRecorder:
     The outputs of a Scene (see the module; every period a duration, "12 h", or "step"): *folder* (None: in memory,
     no files); *summaries* and their *summary_period*; *segment_plants* (planting names) and *segment_period*;
     *frame_period* and *frame_options*
-    (io.encoding3d.scene_to_frame's: geometry, standard_names, data_structures, scales, entities, variables);
+    (io.encoding3d.scene_to_frame's: geometry, standard_names, data_structures, scales, entities, variables, fold:
+    the plants drawn folded into the scene's periodic pattern, for display);
     *display_period*: the frames that also carry the components' display shapes (display_triangles(), e.g. GRANAP's
     sections: drawings only, their data rows are in every frame), every display_period (a multiple of
     frame_period) and in the last frame; None (the default): none, the frames hold the data and the geometry
@@ -392,9 +393,11 @@ class SceneRecorder:
     not recovered). A light log leaves out data explicitly, by frame_options (e.g. scales={"Wheat": ["Plant",
     "Axis", "Organ", "SubOrgan"]}: no anatomy rows in population Wheat's; variables={"Wheat": {"Compartment": ["psi",
     "tissue"], "SubOrgan": ["length", "radius"], "*": []}}: a few variables, the structure kept, see
-    io.encoding3d.filter_frame); a variables filter must keep what the frames' views select, colour and size tubes
-    by (a ValueError: given views at construction, the default ones, those of the frame unfiltered by variables, at
-    the first frame).
+    io.encoding3d.filter_frame; "recorded": the variables the declarations record, their record=: state variables
+    and inputs, not parameters, settings or a grid's geometric descriptors); a variables filter keeps, besides what
+    it names, what the frames' views select, colour and size tubes by (frame_variables(): the views given, or the
+    default ones, those of the frame unfiltered by variables, read at the first frame), so that it names the data
+    only.
     *display*: how those frames draw the groups of a population's Reduction (io.encoding3d.to_frame's display):
     "instances" (default; a population without a reduction is drawn as with "full") each group an instance of its
     template, its unknown on the template's nodes a derived field the reader rebuilds for the instances it selects
@@ -471,6 +474,8 @@ class SceneRecorder:
             _encoding3d()                 # fails now, not after the first steps, without openalea.encoding3d
         self.frame_views = self._views_given(frame_views)
         self._views_written = False
+        self._views = None
+        self._frame_variables = None   # (the frames' variables filter,), set at the first frame (frame_variables)
 
     # ── the run ───────────────────────────────────────────────────────────────
 
@@ -811,34 +816,45 @@ class SceneRecorder:
         report = views.check_views(frame_views)
         if not report.ok:
             raise ValueError(f"SceneRecorder(frame_views=...): {report}")
-        self._check_views_kept(frame_views)
         return frame_views
 
-    def _check_views_kept(self, content: dict) -> None:
-        """A ValueError when frame_options' variables filter drops a column the views select, colour or size by."""
-        from openalea.metafspm.io.encoding3d import filtered_view_columns
-        if self.frame_options.get("variables") is None:
-            return
-        dropped = filtered_view_columns(content, self.frame_options["variables"])
-        if dropped:
-            raise ValueError("SceneRecorder: frame_options' variables filter drops what the frames' views show (keep "
-                             "these variables): " + "; ".join(dropped))
+    def _views_content(self, scene, folder: str, display: bool = False, unfiltered=None):
+        """The frames' views (None without): a restored run's views.json, the views given, or the default ones,
+        those of the frame unfiltered by variables (*unfiltered*, built when not given; io.encoding3d.default_views)."""
+        from openalea.metafspm.io.encoding3d import default_views, scene_to_frame
+        from openalea.encoding3d import views
+        path = os.path.join(folder, views.VIEWS_FILE)
+        if self.frame_views is None:
+            return None
+        if self.resume and os.path.exists(path):
+            return views.read_views(path)
+        if self.frame_views != "default":
+            return self.frame_views
+        if unfiltered is None:
+            options = {key: value for key, value in self.frame_options.items() if key != "variables"}
+            unfiltered = scene_to_frame(scene, display_meshes=display, display_plants=self.display_plants,
+                                        display=self.display, **options)
+        return default_views(scene, unfiltered)
 
-    def _write_views(self, scene, frame, folder: str, display: bool = False) -> None:
+    def frame_variables(self, scene, views: dict = None):
+        """The frames' variables filter: frame_options' (None: every variable; "recorded": those the declarations
+        record, io.encoding3d.unrecorded), with the columns *views* select, colour or size tubes by kept
+        (io.encoding3d.with_view_columns): what a view shows is in every frame, whatever the filter names."""
+        from openalea.metafspm.io.encoding3d import _for, resolved_variables, with_view_columns
+        variables = self.frame_options.get("variables")
+        if variables is None:
+            return None
+        found = scene.data_structures()
+        variables = {identifier: resolved_variables(_for(variables, identifier), ds, components)
+                     for identifier, (ds, _, components) in found.items()}
+        return with_view_columns(variables, views, list(found)) if views else variables
+
+    def _write_views(self, frame, folder: str, content: dict) -> None:
         """views.json next to the first frame, its names checked against *frame* (a warning for each it lacks)."""
-        from openalea.metafspm.io.encoding3d import default_views, scene_to_frame, write_views
+        from openalea.metafspm.io.encoding3d import write_views
         from openalea.encoding3d import views
         path = os.path.join(folder, views.VIEWS_FILE)
         if not (self.resume and os.path.exists(path)):
-            content = self.frame_views
-            if self.frame_views == "default":       # those of the frame unfiltered by variables, which must keep theirs
-                unfiltered = frame
-                if self.frame_options.get("variables") is not None:
-                    options = {key: value for key, value in self.frame_options.items() if key != "variables"}
-                    unfiltered = scene_to_frame(scene, display_meshes=display, display_plants=self.display_plants,
-                                                display=self.display, **options)
-                content = default_views(scene, unfiltered)
-                self._check_views_kept(content)
             for issue in views.check_views(content, frame).issues:
                 warnings.warn(f"SceneRecorder(frame_views=...): {issue.where}: {issue.message} (in the first frame)")
             write_views(path, content)
@@ -862,11 +878,18 @@ class SceneRecorder:
                     entry.pop("path", None)
                 self._parts = set(index.get("parts", {}))
         name = f"frame_{scene.iteration:06d}.glb"
+        if self._frame_variables is None:              # a filter keeps what the views show: the views first
+            filtered = self.frame_options.get("variables") is not None
+            self._views = self._views_content(scene, folder, display) if filtered else None
+            self._frame_variables = (self.frame_variables(scene, self._views),)
+        options = {**self.frame_options, "variables": self._frame_variables[0]}
         frame = scene_to_frame(scene, display_meshes=display, display_plants=self.display_plants,
-                               display=self.display, **self.frame_options)
+                               display=self.display, **options)
         self._parts.update(encoding3d.write(os.path.join(folder, name), frame))    # its parts: each written once
         if self.frame_views is not None and not self._views_written:
-            self._write_views(scene, frame, folder, display)
+            if self._views is None:
+                self._views = self._views_content(scene, folder, display, unfiltered=frame)
+            self._write_views(frame, folder, self._views)
         self._frames = [entry for entry in self._frames if entry["step"] != scene.iteration]
         self._frames.append({"time": float(scene.time), "step": int(scene.iteration), "file": name})
         encoding3d.write_index(index_path, self._frames, time_unit="s", parts=sorted(self._parts))
@@ -885,6 +908,8 @@ class SceneRecorder:
                                compression=self.pack_compression)
         if self._run is not None:
             self._run["frames_archive"] = os.path.relpath(path, self.folder)
+            if self._run.get("ended"):                 # packed after the run finished: run.json says so too
+                _write_json(os.path.join(self.folder, "run.json"), self._run)
         return path
 
     def _checkpoint(self, scene) -> str:
@@ -949,6 +974,8 @@ class SceneRecorder:
                          wall_time=(now - self._started).total_seconds() + self._run.get("wall_time_before", 0.),
                          timing={key: round(value, 6) for key, value in scene.timing.items()},
                          calls=dict(getattr(scene, "calls", {})))
+        if getattr(scene, "coupling", "explicit") != "explicit":         # a fixed point's iterations (Scene)
+            self._run["coupling_iterations"] = dict(scene.coupling_iterations)
         pool = scene.compute.pool_info()        # the pool used (the largest since the run began), None: none
         if pool is not None or "compute" not in self._run:
             self._run.setdefault("compute", {})["pool"] = pool

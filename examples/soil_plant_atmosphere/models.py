@@ -94,14 +94,14 @@ class AdaptiveSoil(EnvironmentModel):
         return np.asarray(self.grid.get("plant_uptake")).reshape(-1) / self.grid.cell_volume()
 
     def adapt(self):
-        """Refine and coarsen on the sink density, then reset what the geometry gives (layers, K_sat)."""
+        """Refine and coarsen on the sink density (the layers the grid's own descriptors), then set K_sat by depth
+        again."""
         density = self.sink_density()
         top = density.max()
         if top > 0.:
             self.grid.refine(density > self.refine_fraction * top)
             density = self.sink_density()                     # carried over by volume: unchanged per volume
             self.grid.coarsen(density < self.coarsen_fraction * top)
-            self.structure.set_layers()
             set_conductivity(self.grid, **self.layers)
         self.history.append(np.bincount(self.grid.refinement_level(), minlength=self.grid.max_level + 1))
 

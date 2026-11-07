@@ -116,8 +116,8 @@ def kinds_agree(a: Optional[str], b: Optional[str]) -> bool:
 
 
 def declared_unit(component, name: str) -> Optional[str]:
-    """The unit *component*'s class declares for *name* (None when undeclared)."""
-    f = getattr(type(component), "__dataclass_fields__", {}).get(name)
+    """The unit *component*'s class (or *component*, a class) declares for *name* (None when undeclared)."""
+    f = getattr(component if isinstance(component, type) else type(component), "__dataclass_fields__", {}).get(name)
     return None if f is None else f.metadata.get("unit")
 
 
@@ -132,9 +132,10 @@ def declared_kind(component, name: str) -> Optional[str]:
     return None
 
 
-def check_link(link, receiver, provider) -> None:
+def check_link(link, receiver, provider):
     """A link's kinds agree (extensive with extensive, intensive or massic with intensive or massic) and its factors
-    convert the provider's declared units into the receiver's (unless unit_check is off or it is a formula)."""
+    convert the provider's declared units into the receiver's (unless unit_check is off or it is a formula); the link
+    returned, its named equivalences (coupling.units.Equivalence) turned into their numbers from the units."""
     from openalea.metafspm.coupling.units import check_link_units
     name = f"{link.receiver}.{link.variable} <- {link.provider}"
     received = declared_kind(receiver, link.variable)
@@ -144,12 +145,33 @@ def check_link(link, receiver, provider) -> None:
             raise ValueError(f"{link.receiver}.{link.variable} ({received}) <- {link.provider}.{source} ({provided}): "
                              "the kinds do not agree (extensive with extensive, intensive or massic with intensive or "
                              "massic)")
-    if link.formula is not None or not link.unit_check:
-        return
+    if link.formula is not None:
+        return link
+    received_unit = declared_unit(receiver, link.variable)
     for source, factor in link.sources.items():
-        if isinstance(factor, (int, float)):            # an expression: its conversion is its own
+        unit = source.unit if not isinstance(source, str) else declared_unit(provider, source)
+        if isinstance(factor, (int, float)) and link.unit_check:     # an expression: its conversion is its own
+            check_link_units(received_unit, unit, factor, f"{name}.{source}")
+    return resolve_equivalences(link, receiver, provider)
+
+
+def resolve_equivalences(link, receiver, provider):
+    """*link* with its named equivalences (coupling.units.Equivalence) turned into their factors from the units its
+    *receiver* and *provider* (components or their classes) declare; *link* itself without any."""
+    from dataclasses import replace
+    from openalea.metafspm.coupling.units import Equivalence
+    if link.formula is not None or not any(isinstance(factor, Equivalence) for factor in link.sources.values()):
+        return link
+    name = f"{link.receiver}.{link.variable} <- {link.provider}"
+    received_unit = declared_unit(receiver, link.variable)
+    sources = {}
+    for source, factor in link.sources.items():
+        if isinstance(factor, Equivalence):             # its number from the units: checked by construction
             unit = source.unit if not isinstance(source, str) else declared_unit(provider, source)
-            check_link_units(declared_unit(receiver, link.variable), unit, factor, f"{name}.{source}")
+            sources[source] = factor.factor(received_unit, unit, f"{name}.{source}")
+        else:
+            sources[source] = link.raw_factors.get(source, factor)
+    return replace(link, sources=sources)
 
 
 def link_direction(ds, from_location: str, to_location: str) -> Optional[str]:
