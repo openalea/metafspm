@@ -93,18 +93,12 @@ A plant model is built once for all the plants of that model in a scene:
 class GrassBRIDGES(CompositeModel):
     initiators = (RootGrowth, ShootGrowth)       # StructuralComponents: initiate_plant(g, plant, scenario) per plant
     from_scale = "SubOrgan"                      # the graph nodes; nodes = "Compartment" for anatomies
-
-    def __init__(self, data_structure, time_step):
-        self.components = (RootGrowth(data_structure=data_structure, time_step=time_step),
-                           RootCNUnified(data_structure=data_structure, time_step=time_step), ...)
-        self.couple(*self.components, translator=TRANSLATOR)   # None: every input shared by its name
-
-    def run(self):
-        for component in self.components:
-            component()
+    parts = {"growth": RootGrowth, "carbon": RootCNUnified, ...}   # built on the MPG's DataStructure, coupled
+    translator = TRANSLATOR                      # None: every input shared by its name
+    # schedule = ("growth", "carbon", ...)       # the parts in order by default (coupling.schedule)
 ```
 
-- **Plants:** each structural component builds a plant's initial structure in `initiate_plant(g, plant, scenario)`, from the Plant variables `x, y, z, rotation`. Several initiators run in order.
+- **Plants:** each structural component builds a plant's initial structure in `initiate_plant(g, plant, scenario)`, from the Plant variables `x, y, z, rotation` (z the soil surface minus the planting's depth), its elements placed with `g.add_organ` and `g.add_element`, its parameters `cls.plant_parameters(scenario)`. Several initiators run in order.
 - **Parameters:**
   - numeric parameters are stored per plant and come from each plant's scenario;
   - steps take them as arguments;
@@ -116,7 +110,7 @@ class GrassBRIDGES(CompositeModel):
 - **Translator:** YAML files load unchanged. A Python translator (`translator = Translator().link(...)` in a `.py` module) adds live `scales.*` references, `aggregation=` / `weight=` for scale changes, and `formula=`. Keep identity links written explicitly for readability. String factors are parsed arithmetic; `eval` is gone.
 - **Removed:** the queues, `name`, `coordinates`, `rotation`, `Transport` and `handshake_shape`. The scene does the exchanges.
 - **Initial values:** the soil inputs are no longer reset to 0 at coupling; they keep their declared `initialize` until the first exchange.
-- **MPG-style steps** loop over `self.active_ids()`, so that plants before emergence are skipped.
+- **MPG-style steps** loop over `self.active_ids()`, so that plants before their planting time are skipped.
 - **MTG reads:** state variables reach the MTG lazily (`mtg_sync = "lazy"`). Code that reads the MTG object directly, such as a Logger or plotting, calls `ds.flush_mtg()` first, or reads `ds.mtg`.
 - **Check:** in the package's own tests, add `openalea.metafspm.testing.assert_component_couplable(Component, translator)` for every component.
 

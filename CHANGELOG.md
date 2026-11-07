@@ -2,6 +2,41 @@
 
 ## Unreleased (release2026)
 
+### Composition and schedule, positions, plant parameters, one stand (O-12 part b)
+
+- **A model declares its parts and its schedule** (`coupling.composite_wrapper`, `coupling.schedule`):
+  `parts = {name: class | Part(class, **keywords)}` (components, or nested models: `ScenarioShoot` within a larger
+  plant, its components, initiators and translator's links the model's; built on the model's DataStructure and
+  coupled once), `schedule = (part names, method names, Step(name, stages=, cadence=, name=), Together(...))`
+  (default: the parts with steps, in order); `__init__` overrides hold only what a model adds (a mask). A plant
+  model's `__init__`/`couple()`/`run()` listing is gone (`couple()` stays an environment model's for its own
+  components). `model.steps()` gives the schedule bound, each step's `reads` and `writes`; `conflicts(a, b)`;
+  `Scene.schedule()` the scene's table.
+- **The cadence is a schedule step's:** `Step("anatomy", cadence="1 d")`, `Cadence("4 h", at="start")`, the model's
+  scenario `{"cadence": {step: duration}}` (and `set_cadences`). `Component.cadence` and `EnvironmentModel.interval`
+  with `due()`, `full_run()`, `between()`, `after_run()`, `last_run` and the scenario key `"interval"` are removed. A
+  `Step(stages=)` runs a component's stages only: a split schedule (Caribu's lighting every 4 h covering the
+  interval, its PARa every step). A geometry input relights a start cadence early. `Scene.calls` counts the steps a
+  component ran in.
+- **Positions:** `x1 ... z2` are topological (each element's base at its parent's end); `display_end("x1")` ...
+  declare where an element is drawn (`display_x1 ... display_z2`, NaN at its topological place); the default
+  cylinders draw the display ends (`coupling.geometry.segment_cylinders`, `drawn_ends`), also the DataStructure's
+  without a geometry provider. `ds.position(location, at="base" | "end")` (a Phytomer's node: its end) and
+  `ds.check_connectivity(tolerance=)`.
+- **Plant parameters and builders:** `StructuralComponent.plant_parameters(scenario)` (the scenario over the
+  declared defaults, checked against their bounds and dtype); `MPG.add_organ(within, label, kind=)` and
+  `MPG.add_element(label, complex=, parent=, edge=, direction=, display=, **values)` (topological ends).
+- **One stand:** `stand(plants, rows=1, row_spacing=0.15, plant_spacing= | sowing_density=, depth=0.025,
+  jitter=0., rotation="random" | degrees, models=, frequencies=, seed=)`, the rows along x (replaces the former
+  `stand(xrange, yrange, ...)`, Adel's `sown_stand` and the use case's). `Planting(x, y, depth, rotation)` replaces
+  z (the planting table's `depth` column; the plant's z is the soil surface minus it). `planting(planting_times=)`,
+  the column `planting_time` and the mask `"planted"` replace `emergence_times`, `emergence_time` and `"emerged"`.
+- **A component on an entity view exchanges with a grid** (`Exchanges`, through a CrossMapping: its entities'
+  values among the mapped ones): the intercrop example's `SoilContact` is gone.
+- Use case 1: `WheatPlant` nests `ScenarioShoot` (one listing of its components), `WheatCrown` places its elements
+  with the builders (its `triangles()` gone), `NodalRootEmergence`'s site positions are gone (ArchiSimple reads the
+  phytomer's node), the soil's adaptation is a method step, `run.stand` is metafspm's `stand`.
+
 ### Times with their units, intercropping, per-component cadence (O-12 part a)
 
 - **Times and durations carry their units** (`openalea.metafspm.coupling.durations`: `duration("12 h")`,

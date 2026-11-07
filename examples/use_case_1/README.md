@@ -87,11 +87,11 @@ model's sites.
 - **What it writes:** `nodal_axes_requested` per phytomer, the cumulative count ArchiSimple reads. ArchiSimple
   grows the difference with the roots it grew, `'+'` on the phytomer's bearer (its first element). Each leaf's
   request is counted once, when it falls due: none is lost, whatever the steps.
-- **Where the nodal roots start:** each phytomer's node (`site_x`, `site_y`, `site_z`, ArchiSimple's site position):
-  the seed's position raised by the internodes on its path (the subcrown internode's, the shoot's, its own
-  included), on the crown while they have not elongated (the tillering zone). Adel's turtle draws a phytomer's first
-  element on the top of the visible parts below it (phytomer 2 on the coleoptile's top, out of the soil): ArchiSimple
-  starting the roots at their bearer's end would put the nodal roots of phytomer 2 and above in the air.
+- **Where the nodal roots start:** each phytomer's node, ArchiSimple's (metafspm's `ds.position("Phytomer",
+  at="end")`, from the elements' topological ends: each element's base at its parent's end, whatever the axes'
+  inclination): on the crown while the internodes below have not elongated (the tillering zone). Adel's turtle draws
+  a phytomer's first element on the top of the visible parts below it (phytomer 2 on the coleoptile's top, out of
+  the soil: its display ends), where the nodal roots would otherwise start in the air.
 - **Its entities:** Adel's elements (`entities = {"axis_row": ">=0"}`), its phytomers those they belong to.
 
 Their tests are in `test/test_plant.py` (the example's own: `python -m pytest examples/use_case_1/test`, outside metafspm's suite, which needs no port), on a test plant model (WheatCrown, Adel,
@@ -108,12 +108,14 @@ the rule, ArchiSimple):
 
 ## The assembly (`models.py`, `run.py`)
 
-`WheatPlant` (a `CompositeModel`, Adel's `ScenarioShoot` extended) is the plant: one MPG per population, its nodes the
-Compartments of GRANAP's sections (anatomy mode).
+`WheatPlant` (a `CompositeModel` declaring its parts, Adel's `ScenarioShoot` nested among them) is the plant: one MPG
+per population, its nodes the Compartments of GRANAP's sections (anatomy mode).
 
-- **Initiators**, in order: `WheatCrown`, Adel's `ShootArchitecture` (on the crown's top), ArchiSimple's
-  `RootArchitecture` (on the seed) and `GranapAnatomy` (every section's anatomy, joined by its junction rules).
-- **A step:** Adel's shoot (`run_shoot`), the nodal root rule, ArchiSimple's roots, GRANAP's anatomies of the new
+- **Initiators**, in order: `WheatCrown`, Adel's `ShootArchitecture` (`ScenarioShoot`'s, on the crown's top),
+  ArchiSimple's `RootArchitecture` (on the seed) and `GranapAnatomy` (every section's anatomy, joined by its junction
+  rules).
+- **A step**, its parts in order (`WheatPlant.steps()`, each step's reads and writes): Adel's shoot (`ScenarioShoot`'s
+  `grow`), the nodal root rule, ArchiSimple's roots, GRANAP's anatomies of the new
   sections, the roots' barriers (MECHA's `Development`, by their distance from the tip: no root maturation model is
   ported), Caribu's `PlantOptics`, CNW-Grass's `GasExchange`, MECHA's `MechaHydraulics`.
 - **Its scenario,** `WHEAT_SCENARIO`: the crown, Adel's leaf shapes CN-Wheat's (`LeafShapes.cnwheat()`: echap's
@@ -257,21 +259,27 @@ plant solve, which the options shrink, dominates a larger scene's). At 16 plants
 the step 3.28 s, 4.66 measured before GRANAP's faster junctions, 5f5b34b), the scope's peak 4.7 GB (5.3), the transpiration and uptake unchanged, gs within 0.04 %, the
 leaves' water potential 0.36 % above on average, 0.54 % at most (0.8 % of their drop below the roots').
 
-**Running a model less often** (metafspm's per-component cadence, `Component(cadence=)`; measured 2026-11-07, 2
-plants, 3 days from the sowing, `benchmark.py --cadence ...`, against the hourly run; the steps' time without the
-build). The use case keeps every model hourly:
+**Running a model less often** (a schedule step's cadence, metafspm's `Step(cadence=)` or the model's scenario
+`{"cadence": {step: duration}}`; measured 2026-11-07, 2 plants, 3 days from the sowing, `benchmark.py --cadence
+WheatPlant.anatomy="3 h" ...`, against the hourly run; the steps' time without the build). The use case keeps every
+model hourly:
 
 | | calls | steps (hourly 56 s) | the model's own time | what changes |
 |---|---|---|---|---|
-| GRANAP's anatomies every 3 h (`GranapAnatomy="3 h"`) | 24 | 52 s | 10.0 → 8.8 s; MECHA 34 → 31 s | fluxes within 1e-7; the roots' mean ψ up to 74 hPa off (its range −131 to −50 hPa): the sections wait for their anatomy |
+| GRANAP's anatomies every 3 h (`WheatPlant.anatomy="3 h"`) | 24 | 52 s | 10.0 → 8.8 s; MECHA 34 → 31 s | fluxes within 1e-7; the roots' mean ψ up to 74 hPa off (its range −131 to −50 hPa): the sections wait for their anatomy |
 | GRANAP's anatomies every day | 3 | 36 s | 10.0 → 7.6 s; MECHA 34 → 17 s (fewer sections), the kinds 27 → 11 s | fluxes within 1e-6; the roots' ψ up to 98 hPa off (−4 instead of −102 hPa at the first day's end) |
-| Caribu's light every 3 h, from the interval's start (`CaribuLight="3 h@start"`) | 24 | 50 s | 2.8 → 1.0 s | PARa held at its 3-hour mean: up to 36 % off at an hour; over the run PARa +1.5 %, An +6 %, transpiration +0.5 % |
+| Caribu's whole light (lighting and PARa) every 3 h, from the interval's start | 24 | 50 s | 2.8 → 1.0 s | PARa held at its 3-hour mean: up to 36 % off at an hour; over the run PARa +1.5 %, An +6 %, transpiration +0.5 % |
 | Caribu's light every day, from its start | 3 | 52 s | 2.8 → 0.2 s | PARa held at the day's mean, night included: transpiration ×1.9, An −14 % |
-| the light model's `interval` of 3 h or 1 d (`CaribuLightModel="1 d"`) | 72 | 52 s | unchanged | identical: the light is relit whenever elements appear (its geometry_input), every hour here |
+| the former light model's `interval` of 3 h or 1 d | 72 | 52 s | unchanged | identical: the light is relit whenever elements appear (its geometry_input), every hour here |
 
 A call of a cadenced component costs what it builds (the sections new since the last call), so GRANAP gains little
-until the day; the light's cadence holds PARa (its output) between calls, where the light model's interval keeps
-PARa hourly from the held relative light (between()) but relights at every new element.
+until the day; the whole light's cadence holds PARa (its output) between calls. Caribu's light model now schedules
+its lighting (`CaribuLightModel.light`, its rate stage, `CaribuLightModel.light="3 h"`) apart from its PARa (its
+state stage, every step), the lighting relit early when elements appear (its geometry_input), its call then
+covering to the interval's end. Measured the same way (`CaribuLightModel.light="3 h"`): the light's time is
+unchanged (2.8 s: elements appear every hour while the plants grow, so it is relit every hour), and its relative
+light, the mean over the rest of the interval rather than over the hour, moves PARa up to 38 % at an hour (An up to
+41 %, transpiration 26 %). A sparser lighting would need the relight rule relaxed.
 
 The frames keep a few variables, the run's explicit choice (`run.FRAME_VARIABLES`, the recorder's
 `frame_options={"variables": ...}`; `scene(frame_variables=None)` keeps them all). Every entity set keeps its

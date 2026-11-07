@@ -52,8 +52,8 @@ raises an error, so a typo doesn't go unnoticed.
 
 ## 2. Planting
 
-`planting` builds the planting table, one row per plant. *plants* are `Planting(x, y, z, rotation)`, given (here
-one, at the centre of a 0.2 m × 0.2 m column) or sown (`stand(xrange, yrange, sowing_density, row_spacing)`). They
+`planting` builds the planting table, one row per plant. *plants* are `Planting(x, y, depth, rotation)`, given (here
+one, at the centre of a 0.2 m × 0.2 m column) or sown (`stand(plants, rows=, row_spacing=, plant_spacing=)`). They
 are named `p0`, `p1`, …
 
 ```python

@@ -152,7 +152,7 @@ carbon()                                  # one time step: every step, in the sc
   one of several values, a comparison string (`">0"`, `"<=0.03"`) is tested, and label names are resolved. A key
   may name a variable at a coarser scale (e.g. a segment's label for its anatomy Compartments). A mask name
   (`ds.define_mask`) or a callable `ds -> boolean array` select as well, for geometry or masks shared with mappings.
-  When the DataStructure defines an `"active"` mask (emergence, dead tissues), steps also compute on its entities
+  When the DataStructure defines an `"active"` mask (planting times, dead tissues), steps also compute on its entities
   only; `include_inactive=True` lifts it.
 - **Where a step works.** A step's arguments come at their locations, its parameters at the step's: the location of
   its per-node arguments, or, without any, that of its declared outputs (a plant's step taking a per-plant parameter
@@ -196,7 +196,7 @@ carbon()                                  # one time step: every step, in the sc
 - **Reading a component:** `Component.declarations()` lists its variables as a table (kind, scale, unit, description,
   default, provider); `Component.schedule()` its steps in the order they run, grouped by stage;
   `component.variable_specs` their resolved places on its DataStructure; `component.active_ids(location)` the active
-  entities (at a coarse location: those of the plants emerged), for MPG-style steps.
+  entities (at a coarse location: those of the plants planted), for MPG-style steps.
 - **Couplings.** `model.couplings()` lists how each input of the model's components is coupled; in a Scene, the scene
   translator's links too (`"scene"`: with the environment models, the default identity links included).
 - **One variable, two places.** A component reading at the nodes a variable another holds at its scale (a segment's length
@@ -450,9 +450,24 @@ def _new_segments(self, length, segment_length) -> dict:
 ```
 
 **Geometry for light models and display.** `component.triangles(where=None)` gives the elements' triangles
-(`coupling.geometry.Triangles`: vertices in the scene's frame, each triangle's node index). Segment models
-declaring `x1`, `y1`, `z1`, `x2`, `y2`, `z2` and `radius` get slim cylinders by default; a component with its own
-shapes (Adel's blades) overrides it. A light model computes on the triangles and gives its results back per element
+(`coupling.geometry.Triangles`: vertices in the scene's frame, each triangle's node index). Elements with ends
+(`x1`, `y1`, `z1`, `x2`, `y2`, `z2` and `radius`) get slim cylinders by default (`coupling.geometry.segment_cylinders`:
+a structural component's, and the DataStructure's when no component draws them); a component with its own shapes
+(Adel's blades) overrides it.
+
+**Positions.** `x1 ... z2` are topological: each element's base at its parent's end (a plant's first element at its
+planting position or its anchor's end). An element drawn elsewhere gives where in its display ends, `display_x1 ...
+display_z2` (declared with `display_end("x1")` ...; NaN: at its topological place): Adel's turtle draws a hidden part
+on the visible ones, a seed point is drawn as its grain. The default cylinders and the readers of the drawing (an
+anatomy's 3D placement, an element's height for a gas exchange) take the display ends where given
+(`coupling.geometry.drawn_ends`). `ds.position(location, at="base" | "end")` gives each entity's position from its
+elements' ends: its first element's base, or the end of its last element along its axis (a Phytomer's node, where
+its nodal roots start); `ds.check_connectivity(tolerance=)` lists the elements whose base is not at their parent's
+end. An initiator places its elements with the MPG's builders: `g.add_organ(plant, "StemInternode", kind="Shoot")`
+(the Axis, GrowthUnit, Phytomer between) and `g.add_element("StemElement", parent=element, direction=(0, 0, 1),
+length=0.01, radius=5e-4)` (its ends from its parent's end; `direction=(0, 0, 0)` a point; `display=(start, end)`),
+reading its parameters with `cls.plant_parameters(scenario)` (the scenario over the declared defaults, checked
+against their bounds and dtype). A light model computes on the triangles and gives its results back per element
 (`Triangles.per_owner`). An environment model receives DataStructures, not components: `ds.triangles()` gives the
 triangles of the structural component built on it (the one with its own `triangles()` first; set
 `ds.geometry_provider` when several draw), and a `UnionDataStructure`'s concatenates its parts', in its node indices.
@@ -460,7 +475,7 @@ On an anatomy-mode DataStructure, the frames and the light models take the trian
 (`ds.at("SubOrgan").triangles()`, the elements): a structural component working at a coarser scale (its finest
 declaration at Organ) registers its geometry on `ds.at("Organ")`, never drawn nor lit, and warns at its construction;
 declare one of its variables at the SubOrgan scale (or its `entities`) for its elements to be drawn.
-`ds.triangles(where)` takes a node mask or a mask's name (`"emerged"`: plants not yet emerged left out; every node
+`ds.triangles(where)` takes a node mask or a mask's name (`"planted"`: plants not yet planted left out; every node
 when the DataStructure has no such mask). `Triangles.mean_per_owner(values, n)` averages per element by area.
 A triangle may carry attributes (`Triangles(..., attributes={"green": shares})`: Adel's green share of each
 triangle's area, 1 by default where a part does not carry it), kept through `select`, `clip` and `concatenate`.
@@ -473,7 +488,7 @@ lies in a domain, vectorised: `"air"` and `"soil"` (the half spaces of the soil 
 axis="z", above=True)`:
 
 ```python
-ds.geometry.clipped("air", where="emerged")                 # the triangles above the soil (Caribu lights them)
+ds.geometry.clipped("air", where="planted")                 # the triangles above the soil (Caribu lights them)
 ds.geometry.fraction_in("air", location="SubOrgan", by="area", weight="green")   # each element's green share there
 ds.geometry.fraction_in("soil", by="length")                # each segment's length fraction in the soil
 ds.geometry.centre_in("air")                                # (n, 3): the centre of each element's part above it
@@ -566,17 +581,46 @@ Chains are declared with `ds.define_chain(name, edge_type="<")` or by a group an
 
 ### Within one DataStructure: `CompositeModel` and translators
 
-A plant model is a `CompositeModel` whose components share one DataStructure. A translator states which component
+A plant model is a `CompositeModel` whose components share one DataStructure, declared as its parts and run by its
+schedule (`coupling.schedule`):
+
+```python
+class WheatPlant(CompositeModel):
+    initiators = (WheatCrown, ScenarioShoot, RootArchitecture, GranapAnatomy)    # a nested model: its initiators
+    parts = {"crown": WheatCrown, "shoot": ScenarioShoot, "rule": NodalRootEmergence, "roots": RootArchitecture,
+             "anatomy": GranapAnatomy, "hydraulics": Part(MechaHydraulics, soil_boundary="node_dirichlet")}
+    schedule = ("shoot", "rule", "roots", Step("anatomy", cadence="1 d"), "hydraulics")
+    translator = PLANT_TRANSLATOR
+
+    def __init__(self, data_structure, time_step):        # only what the model adds to its parts
+        super().__init__(data_structure, time_step)
+        data_structure.define_mask("root_surface", entities="GranapAnatomy.soil_nodes")
+```
+
+The parts (`{name: class}`, `Part(class, **keywords)` for constructor keywords) are built in order on the model's
+DataStructure, each its attribute; a part may be a model (Adel's `ScenarioShoot` within the use case's plant): its
+components become the model's, its schedule one step, its translator's links merged. The schedule's entries are
+part names, a model's method names (a step over all its parts: `ScenarioShoot`'s `grow` loop, a soil's `adapt`),
+`Together("development", "architecture")` (run_together: their step groups interleaved by schedule position) and
+`Step(name, stages=("rate",), cadence=Cadence("4 h", at="start"), name=...)`: a component's stages only (a light's
+lighting at its cadence, its absorbed PAR every step, two Steps of one part), its cadence (`coupling.cadence`).
+Without a schedule, the parts run in their order (those without steps, an initiator alone, left out).
+`model.steps()` gives the schedule bound, each step's `reads` and `writes` ((DataStructure, variable): the inputs as
+stored, through aliases, derivations and private names; "topology" written by a structural component, "geometry"
+read by a geometry input); `conflicts(a, b)` what keeps two steps apart; `Scene.schedule()` the scene's table, the
+exchanges included. A translator states which component
 provides each input: `Translator().link(receiver, variable, provider, {source: factor}, aggregation=, weight=,
 formula=)`, or a nested YAML/Python dictionary. An input named as another component's variable needs no link: the
 DataStructure is the coupling, both read the same array. Links state the rest, and become aliases (a rename) or
 derived variables (factors, sums, formulas, aggregations between scales), computed when read.
 
 ```python
-self.couple(self.growth, self.carbon, translator="translator.py")     # Translator.load: a Translator, a dict, .py, YAML
-self.couple(self.anatomy, self.hydraulics)                            # every input shared by its name: no translator
-self.couplings()                                                      # how each input is coupled, one row each
+translator = "translator.py"          # the model's class attribute (Translator.load: a Translator, a dict, .py, YAML)
+model.couplings()                     # how each input is coupled, one row each
 ```
+
+An environment model builds its components on its own DataStructures in its `__init__` (`self.components = [...]`,
+or `self.couple(a, b, translator=...)` to link them), its schedule naming them by attribute.
 
 `couplings()` lists each input's provider and coupling: "shared" (by its name), "alias", "derived", "scene" (a
 link with another DataStructure, exchanged by the Scene) or "not provided" (its default, or a forcing).
@@ -610,8 +654,8 @@ through a mapping:
 - `CrossMapping(plants, grid, method="barycentre" | "overlap", mask=, soil_surface=)`: segments to cells (by middle
   point, or by the length fraction in each cell), rebuilt after growth or coordinate changes. The Scene infers one
   from the scene translator's links: a link's `mapping=` (`Link(..., mapping={"mask": "root_surface", "method":
-  "overlap"})`) gives its own, shared by the links of the same options (a population with emergence times: its mask
-  and `"emerged"`); a CrossMapping given by `mappings=` replaces the inferred ones of its pair. The entities with a
+  "overlap"})`) gives its own, shared by the links of the same options (a population with planting times: its mask
+  and `"planted"`); a CrossMapping given by `mappings=` replaces the inferred ones of its pair. The entities with a
   part outside the grid along its non-periodic axes (above the soil, below its bottom) are clipped into its border
   cells, counted (`mapping.outside()`, their indices) and warned of once. On an anatomy-mode plant (its nodes the
   Compartments) it maps its SubOrgans, where the segments' ends are (`mapping.location`): a SubOrgan variable
@@ -643,7 +687,7 @@ A `Scene` runs plant populations and environment models together, in one process
 ```python
 from openalea.metafspm import Scene, SceneRecorder, planting, stand
 
-table = planting(stand(xrange=0.3, yrange=0.3, sowing_density=250, row_spacing=0.15, seed=1), Wheat, scenario)
+table = planting(stand(20, rows=2, row_spacing=0.15, sowing_density=250, seed=1), Wheat, scenario)
 scene = Scene(table, environment=[RhizoSoil, LightModel], environment_scenarios=[soil_scenario, light_scenario],
               translator="scene_translator.py", time_step="1 h", start="2026-05-10 00:00", forcings=meteo,
               recorder=SceneRecorder("outputs", segment_plants=["p0"], frame_period="1 d", checkpoint_period="10 d"))
@@ -656,14 +700,19 @@ scene = Scene.from_scenario(scenario, stand(...), Wheat, environment=[RhizoSoil,
 
 **Times and durations carry their units** (`openalea.metafspm.coupling.durations`): a duration is `"12 h"`,
 `"1 d 12 h"`, `"30 min"` (units `s`, `min`, `h`, `d`) or a number of seconds, the scene's one internal unit; a scene
-time (an event's, an emergence time) is a duration since time 0 or a date (`"2026-05-12 06:00"`, with the Scene's
+time (an event's, a planting time) is a duration since time 0 or a date (`"2026-05-12 06:00"`, with the Scene's
 `start=`); a date is ISO 8601, UTC. `duration()`, `instant()`, `start_date()` and `day_and_hour()` read them.
 
 - **Planting tables** come from one function, `planting(plants, model, scenario, plant_scenarios,
-  emergence_times)`. *plants* are given (`[Planting(x, y, z, rotation), ...]`, positions in m, z minus the sowing
-  depth) or sown: `stand(xrange, yrange, sowing_density, row_spacing, sowing_depth, models=, frequencies=, seed=)`
-  lays out rows at a density, the stand's size adjusted to the rows, and with several models draws one per position
-  (`planting(sown, sown.models, {Wheat: ..., Pea: ...})`). The plants are named `p0`, `p1`, ... in the table's
+  planting_times)`. *plants* are given (`[Planting(x, y, depth, rotation), ...]`, positions in m, the depth below
+  the Scene's soil surface: the plant's z, its planting variable, is the surface minus it) or sown by the one stand
+  builder, `stand(plants, rows=1, row_spacing=0.15, plant_spacing= | sowing_density=, depth=0.025, jitter=0.,
+  rotation="random" | degrees, models=, frequencies=, seed=)`: the rows along x, `row_spacing` apart in y, the plants
+  `plant_spacing` apart along their row (or 1 / (density × row spacing)), plant k of row r at ((k + 1/2) spacing,
+  (r + 1/2) row spacing), the stand's pattern their extent, `jitter` a normal offset (m), a numeric `rotation` each
+  plant turned by it from the one before, with several models one drawn per position (`planting(sown, sown.models,
+  {Wheat: ..., Pea: ...})`). `planting_times` (one scene time per plant) keep each plant out of the scene until then
+  (the mask `"planted"`). The plants are named `p0`, `p1`, ... in the table's
   order: those names are the `segment_plants=`, the frames' `entities=` and the summaries' `plant` column. A
   component placing its plants' elements declares the planting's variables it reads, `x: float =
   planting_variable("x")` (x, y, z, rotation: Plant-scale inputs the planting provides, `couplings()` listing them)
@@ -671,14 +720,15 @@ time (an event's, an emergence time) is a duration since time 0 or a date (`"202
 - **Plant models** are built once per population of the planting table (its `population` column, by default the
   model's class name), on an MPG holding all its plants:
   `Model(data_structure, time_step, <its own arguments>)`, with a class attribute `initiators` (the structural components
-  building each plant) and a class attribute `translator` (its coupling contract: `couple()` uses it, and its links
-  between initiators apply while they build each plant, a later initiator's linked inputs written before it builds;
-  a link from a later initiator raises). Its `run()` calls its components in turn, or as one with
-  `self.run_together(a, b)`: their steps in one schedule, each at its schedule position and the components in the
-  given order within one (e.g. a development's potential lengths, the architecture's segmentation, the development's
-  postsegmentation giving the new organs their lengths, then the architecture's postsegmentation). In anatomy mode (`nodes = "Compartment"`) the initiators build the anatomies, and a `wiring`
-  attribute gives the junction rules between them. Numeric parameters may differ per plant (one scenario per plant); an `emergence_time` column
-  keeps a plant frozen until then. Without a Scene, `population_data_structure(table, Model, time_step=)` builds
+  building each plant, a nested model's in its place), its `parts` and `schedule` (section 5) and a class attribute
+  `translator` (its coupling contract: its parts are coupled with it, and its links between initiators apply while
+  they build each plant, a later initiator's linked inputs written before it builds; a link from a later initiator
+  raises). `Together(a, b)` in its schedule runs two components' steps in one schedule, each at its schedule
+  position and the components in the given order within one (e.g. a development's potential lengths, the
+  architecture's segmentation, the development's postsegmentation giving the new organs their lengths, then the
+  architecture's postsegmentation). In anatomy mode (`nodes = "Compartment"`) the initiators build the anatomies,
+  and a `wiring` attribute gives the junction rules between them. Numeric parameters may differ per plant (one
+  scenario per plant); a `planting_time` column keeps a plant out until then. Without a Scene, `population_data_structure(table, Model, time_step=)` builds
   the same: the plants' MPG and MPGDataStructure, the model on it, every plant's scenario applied
   (`population.data_structure`, `population.instance`).
 - **Several populations of one model (intercropping).** `planting(plants, [Roots] * 4, {"deep": {...}, "shallow":
@@ -698,10 +748,11 @@ time (an event's, an emergence time) is a duration since time 0 or a date (`"202
   population's elements its sections' owners; its variables reach the plant models through the scene translator,
   whose identity links are added by default for the outputs a plant model reads as inputs of the same name, and
   for the inputs a plant model holds as states of the same name, one per population), `self.build_grid(voxel,
-  depth, adaptive=False)` (a grid over the scene's pattern, z down, periodic in x and y), a cadence (`interval` in s,
-  or an overridden `due(time)`; at the other steps `between()`, e.g. `self.light.run_stage("state")`),
-  `after_run()` (an adaptive grid refined), the time of the last full run kept by checkpoints. A light model and a
-  soil model are short subclasses of it (Caribu's CaribuLightModel; the soil–plant–atmosphere example's Soil).
+  depth, adaptive=False)` (a grid over the scene's pattern, z down, periodic in x and y), its schedule (its
+  components by attribute and its methods: a soil's `("soil", "adapt")`, an adaptive grid refined after each solve;
+  a light's `(Step("light", stages="rate", cadence=Cadence("4 h", at="start")), Step("light", stages="state",
+  name="absorbed_light"))`, lit every 4 h, its PARa every step). A light model and a soil model are short
+  subclasses of it (Caribu's CaribuLightModel; the soil–plant–atmosphere example's Soil).
   Its `compartment` class attribute, `"Soil"` or `"Atmosphere"`, is required: the folder of its outputs.
 - **The scene's DataStructures.** `scene.data_structures()` gives `{id: (DataStructure, model, components)}`:
   each population's (id: its name), then each environment model's own; the recorder's tables, the frames
@@ -728,10 +779,10 @@ time (an event's, an emergence time) is a duration since time 0 or a date (`"202
   `as_forcing(value, time_unit="d")` (a duration: `"h"`, `"15 min"`) turns an input given by day (a number, a
   function of the day, a Series indexed by day, one value per day) into one. `events=[("36 h", action)]` (a scene
   time) stay for one-off actions.
-- **Services.** An environment model's `interval` (a duration, `"4 h"`) is its cadence (`due()`, and `between()` at the other
-  steps), also its scenario's `"interval"`; a component reading the plants' geometry declares it,
-  `geometry: object = geometry_input(relight="topology" | "geometry")`, listed by `couplings()`, and its model runs
-  fully when the elements (or their triangles) changed too; `spin_up(scene)`, `stop_when=condition`.
+- **Services.** A component reading the plants' geometry declares it, `geometry: object =
+  geometry_input(relight="topology" | "geometry")`, listed by `couplings()`: a step of it at a cadence at its start
+  also runs when the elements (or their triangles) changed since its last call, covering the time to its interval's
+  end; `spin_up(scene)`, `stop_when=condition`.
 - **A soil for tests and examples.** `openalea.metafspm.testing.soil.Soil` (not one of metafspm's models, a
   fixture): the steady water flow in a coarse fixed grid (5 cm cells), its conductivity by layer, the water table at
   the bottom, the surface evaporating; a plant model takes up water from it through scene links.
@@ -740,17 +791,18 @@ time (an event's, an emergence time) is a duration since time 0 or a date (`"202
   `simulation_time_step / time_step` sub-steps per call (`component.simulation_step()`); a component built without a
   time step runs one of the scene's steps. Nothing is process-wide: Scenes of other time steps run in one process,
   and the Choregrapher (the steps' schedule) holds no run state.
-- **A component's cadence.** `GranapAnatomy(data_structure=ds, time_step=time_step, cadence="1 d")` (or
-  `component.cadence = Cadence("3 h", at="start")`, `openalea.metafspm.coupling.cadence`): the component runs once
+- **A step's cadence.** `Step("anatomy", cadence="1 d")` in a model's schedule, or `Cadence("3 h", at="start")`
+  (`openalea.metafspm.coupling.cadence`); a model's scenario sets its steps' (`{"cadence": {"anatomy": "1 d"}}`, a
+  duration keeping the declared `at`; a cadence of the scene's step or shorter is every step): the step runs once
   per interval (a whole number of the scene's steps), its call covering it: its clock at the interval's start, its
   step the interval (one step of it when it ran in the scene's step; its own finer sub-step sub-steps it), its
   forcings read over it. `at="end"` (the default): it runs at the interval's last step, the inputs it reads through
   its DataStructure their means over the interval's steps (each entity's over the steps it existed, aligned by id;
   descriptors and non-float inputs their values at the call); `at="start"`: at the first step, its inputs as they
   are then. Between its calls nothing runs and its outputs are held; MPG-style steps read the MTG as it is. The
-  means accumulated are checkpointed; components run together share their cadence. `scene.calls` counts each
-  component's calls that ran (`"<Model>.<Component>"`, in run.json next to the timing). No model sets one by
-  default.
+  means accumulated are checkpointed; a `Together` step has one cadence. `scene.calls` counts the scene steps each
+  component ran in (`"<Model>.<Component>"`, in run.json next to the timing). Caribu's light sets one (its lighting
+  every 4 h); the use case lights every hour.
 - **Calendar.** `Scene(start="2026-05-10 00:00")`: the date of the scene's time 0 (ISO 8601, UTC); every
   component's `self.calendar()` gives the (day of year, hour) of its forcing time (a light model's sun), and a forcing given by
   the hour of the day (or by the day of the year) takes it with `as_forcing(value, time_unit="h", origin="calendar")`.
