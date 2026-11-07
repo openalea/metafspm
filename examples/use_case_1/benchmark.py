@@ -12,6 +12,7 @@ end).
                         [--workers auto|n] [--linear-solver superlu|superlu_reuse|cholmod|cupy]
                         [--device cpu|cuda] [--variability SEED] [--frames] [--profile-hours FIRST LAST]
                         [--cadence WheatPlant.anatomy="1 d" CaribuLightModel.light="3 h" ...]
+                        [--memory] [--tracemalloc FRAMES] [--thread-scaling]
 
 By default 2 plants to day 3 (the use case's fast regime); --days 8 for the day-8 numbers, --plants 8 --days 4 for the
 scaling; --outputs measures the outputs at the end (outputs()): a frame without the sections drawn, two display
@@ -33,6 +34,13 @@ its size at the end; --profile-hours cProfiles the main process over those steps
 lighting, its PARa every step) a cadence (coupling.cadence.Cadence: the duration, "@start" or "@end", the step's declared
 one by default: CaribuLightModel.light's at its start, the others' at the interval's end; set_cadences, the scenario's
 "cadence"), to measure what running them less often saves and changes.
+--memory measures at the end what the scene holds by owner (memory_probe.report: the DataStructure's columns, the
+MPG's properties and topology, the Instances, the registries, the kinds, the components, the solver's caches, the
+pool's processes; before and after malloc_trim), "memory"; --tracemalloc traces the allocations from before the
+scene's build (FRAMES frames each: slower, more memory) and records those alive at the end by file and line,
+"allocations"; --thread-scaling captures the last step's large linear solves and parallel kernels' inputs and times
+them at 1, 2, 4, 8 and 12 threads (memory_probe.thread_scaling), "thread_scaling". The process's memory after its
+imports and after the scene's build is recorded either way ("baseline").
 Each step also records its kinds' batches (kinds, interior cells, seconds, processes: "auto"'s estimate checked
 against them). Each step records the
 plants' nodes and the reduced groups' dense blocks (their nonzeros: kept nodes squared, summed), the end the kinds
@@ -240,8 +248,14 @@ def plant_variability(plants: int, seed: int) -> list:
 
 def benchmark(plants: int, days: float, measure_outputs: bool = False, checkpoint_at=(), resume: str = None,
               label: str = "run", scenario: dict = None, compute=None, variability: int = None,
-              frames: bool = False, profile_hours=(), cadences: dict = None) -> dict:
+              frames: bool = False, profile_hours=(), cadences: dict = None, memory: bool = False,
+              trace_frames: int = 0, scaling: bool = False) -> dict:
+    import memory_probe
     counter = KindCounter()
+    baseline = {"imported": memory_probe.process_memory()}
+    if trace_frames:
+        import tracemalloc
+        tracemalloc.start(trace_frames)
     started = time.perf_counter()
     plant_scenarios = plant_variability(plants, variability) if variability is not None else None
     folder = os.path.join(BENCHMARKS, "frames", label) if frames else None
@@ -258,6 +272,7 @@ def benchmark(plants: int, days: float, measure_outputs: bool = False, checkpoin
         at = at or (declared.at if isinstance(declared, Cadence) else "end")
         scene.model(model).set_cadences({step: Cadence(interval, at=at)})
     built = time.perf_counter() - started
+    baseline["built"] = memory_probe.process_memory()
     counter.take()
     loaded, first_hour = None, 0
     if resume is not None:
@@ -274,7 +289,10 @@ def benchmark(plants: int, days: float, measure_outputs: bool = False, checkpoin
     steps = []
     previous = dict(scene.timing)
     profiler, profiled = None, os.path.join(BENCHMARKS, "profiles", f"{label}.prof")
-    for hour in range(first_hour, int(round(days * 24))):
+    last_hour, captured = int(round(days * 24)), None
+    for hour in range(first_hour, last_hour):
+        if scaling and hour + 1 == last_hour:
+            captured = memory_probe.Captured().install()
         if profile_hours and hour + 1 == profile_hours[0]:
             import cProfile
             profiler = cProfile.Profile()
@@ -282,6 +300,8 @@ def benchmark(plants: int, days: float, measure_outputs: bool = False, checkpoin
         step_started = time.perf_counter()
         scene.run()
         seconds = time.perf_counter() - step_started
+        if captured is not None:
+            captured.remove()
         if profiler is not None and hour + 1 == profile_hours[-1]:
             profiler.disable()
             os.makedirs(os.path.dirname(profiled), exist_ok=True)
@@ -315,6 +335,15 @@ def benchmark(plants: int, days: float, measure_outputs: bool = False, checkpoin
                   f"{steps[-1]['checkpoint']['shared_MB']:.1f} MB) in {steps[-1]['checkpoint']['seconds']:.1f} s",
                   flush=True)
     pool = scene.compute.pool_info()
+    allocations = None
+    if trace_frames:
+        import tracemalloc
+        allocations = memory_probe.allocations(tracemalloc.take_snapshot())
+        tracemalloc.stop()
+    held = memory_probe.report(scene) if memory else None
+    if held is not None:
+        print(memory_probe.summary(held), flush=True)
+    scaled = memory_probe.thread_scaling(captured) if captured is not None else None
     scene.finish()
     timing, total = dict(scene.timing), time.perf_counter() - started    # the steps' (outputs() runs one more)
     rss = resident_memory()
@@ -337,7 +366,8 @@ def benchmark(plants: int, days: float, measure_outputs: bool = False, checkpoin
               "cadences": dict(cadences or {}), "calls": dict(scene.calls),
               "plant_scenarios": plant_scenarios,
               "frames": {"folder": folder, "MB": folder_size(folder) / 1e6} if folder else None,
-              "timing": timing, "steps": steps, "outputs": measured}
+              "timing": timing, "steps": steps, "outputs": measured, "baseline": baseline, "memory": held,
+              "allocations": allocations, "thread_scaling": scaled}
     return result
 
 
@@ -479,6 +509,12 @@ def main(argv=None):
                         help="cProfile the main process over these steps (outputs/benchmarks/profiles/<label>.prof)")
     parser.add_argument("--cadence", nargs="*", default=(), metavar="MODEL.STEP=DURATION[@start|@end]",
                         help='schedule steps\' cadences, e.g. WheatPlant.anatomy="1 d" CaribuLightModel.light="3 h"')
+    parser.add_argument("--memory", action="store_true",
+                        help="measure what the scene holds by owner at the end (memory_probe.report)")
+    parser.add_argument("--tracemalloc", type=int, default=0, metavar="FRAMES",
+                        help="trace the allocations (FRAMES frames each) and record those alive at the end")
+    parser.add_argument("--thread-scaling", action="store_true",
+                        help="time the last step's large solves and parallel kernels at 1-12 threads")
     arguments = parser.parse_args(argv)
     from openalea.metafspm.compute import Compute
     compute = Compute(workers=arguments.workers if arguments.workers == "auto" else int(arguments.workers),
@@ -487,7 +523,8 @@ def main(argv=None):
     result = benchmark(arguments.plants, arguments.days, arguments.outputs, tuple(arguments.checkpoint_at),
                        arguments.resume, label, scenario_entries(arguments.scenario), compute, arguments.variability,
                        arguments.frames, tuple(arguments.profile_hours),
-                       dict(given.split("=", 1) for given in arguments.cadence))
+                       dict(given.split("=", 1) for given in arguments.cadence), arguments.memory,
+                       arguments.tracemalloc, arguments.thread_scaling)
     os.makedirs(BENCHMARKS, exist_ok=True)
     path = os.path.join(BENCHMARKS, f"{result['commit']}.json")
     entries = {}

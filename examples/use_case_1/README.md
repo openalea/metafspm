@@ -261,7 +261,13 @@ scene after those hours and `--resume <checkpoint>` runs on from one (its kinds 
 `--scenario KEY=VALUE ...` updates the plants' scenario, e.g. MECHA's lumped shoot nodes, `--scenario
 leaf_ports=bundles vapour_path=air_spaces` (`plant_reduction`'s options: the shoot's conduits per vascular bundle,
 a leaf's evaporating walls per air space); each step records the reduced groups' dense blocks (their nonzeros), the
-end the kinds held and their pickled size.
+end the kinds held and their pickled size. `--memory` adds what the scene holds at the end by owner
+(`memory_probe.report`: the DataStructure's columns, the MPG's properties and topology, the Instances, the GRANAP
+templates, the kinds' parts, the group tables, the libraries, the solver's caches, the pool's processes, and the
+process before and after `malloc_trim`), `--tracemalloc 8` the allocations alive at the end by line and by stack
+(about 8 times slower), `--thread-scaling` the last step's large linear solves and the memory bandwidth timed at 1
+to 12 threads; `memory_probe.profile_split` splits a `--profile-hours` profile into Python overhead and numeric
+work by call site (devplan_scene_parallel.md, P0).
 
 The use case keeps MECHA's defaults (each conduit and evaporating wall its own node). Measured with the options (2
 plants, day 8, against the defaults; 2026-11-06): `leaf_ports="bundles"` keeps 12,060 nodes (13,924), 1.09M dense
