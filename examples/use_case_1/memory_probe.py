@@ -577,8 +577,8 @@ class Captured:
         scatter = self._scatter
 
         def scattered(data, slots, kinds, weights, blocks, chunks):
-            if slots.size >= 100_000 and len(captured.scatters) < 20:      # a reduction's terms, the large blocks
-                captured.scatters.append((np.empty_like(data), slots, kinds.copy(), weights.copy(), blocks, chunks))
+            if slots.size >= 100_000 and len(captured.scatters) < 2:       # a reduction's terms, the large blocks
+                captured.scatters.append((data.size, slots, kinds.copy(), weights.copy(), blocks, chunks))
             return scatter(data, slots, kinds, weights, blocks, chunks)
         self._kernels.scatter_weighted_blocks = scattered
         return self
@@ -669,7 +669,10 @@ def thread_scaling(captured: Captured, threads=(1, 2, 4, 8, 12), nodes: int = 20
         if captured.windows:
             found["path_window"] = _best(lambda: [_path_window(*a) for a in captured.windows], 3)
         if captured.scatters:
-            found["terms_scatter"] = _best(lambda: [scatter_weighted_blocks(*a) for a in captured.scatters], 5)
+            buffers = [np.empty(a[0]) for a in captured.scatters]           # the data arrays, made at the replay
+            found["terms_scatter"] = _best(lambda: [scatter_weighted_blocks(data, *a[1:])
+                                                    for data, a in zip(buffers, captured.scatters)], 5)
+            del buffers
         kernels[n] = found
     numba.set_num_threads(previous)
     out["kernels"] = kernels
