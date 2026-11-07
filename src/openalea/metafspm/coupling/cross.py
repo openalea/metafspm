@@ -596,20 +596,20 @@ class Exchanges:
 
     Several providers of one receiving variable (populations into one soil) are pooled in one exchange and written
     by one set(): sums add up, means pool their weights, splits share each cell between every receiving population.
-    A mean over a cell with no plant entity gives the receiving variable's default.
+    A mean over a cell with no plant entity gives the receiving variable's default. A link names its receiver and
+    provider by class (every component of that class: each population of a model) or by scene name
+    ("<population>.<Component>": that one), translator.link_pairs.
     """
 
     def __init__(self, translator, components, mappings=()):
-        from openalea.metafspm.coupling.translator import Translator
+        from openalea.metafspm.coupling.translator import Translator, link_pairs
         if isinstance(translator, Mapping):
             translator = Translator.from_dict(translator)
-        by_name = {type(component).__name__: component for component in components}
+        components = list(components)
         self.mappings = list(mappings)
         self.links = []
-        for link in translator.links:
-            if link.receiver not in by_name or link.provider not in by_name or link.receiver == link.provider:
-                continue
-            receiver, provider = by_name[link.receiver], by_name[link.provider]
+        for link, receiver, provider in ((link, receiver, provider) for link in translator.links
+                                         for receiver, provider in link_pairs(link, components)):
             if receiver.data_structure is provider.data_structure:
                 continue
             mapping, direction, part = self._mapping_between(link, provider.data_structure, receiver.data_structure)

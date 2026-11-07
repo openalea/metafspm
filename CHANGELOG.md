@@ -15,6 +15,15 @@
   default), no longer a number of steps: an output is due when the scene time is a multiple of its period, each
   period checked at the first step to be a whole number of steps. `forcings.seconds`, `forcings.TIME_UNITS` and
   `forcings.time_unit_label` are removed.
+- **Several populations of one model (intercropping):** the planting table's `population` column
+  (`planting(..., population="deep")`, one name or one per plant; by default the model's class name; a scenario may
+  be given per population name) makes one population per name, several possibly of one model. Components are named
+  `"<population>.<Component>"` in a scene (`"<EnvironmentModel>.<Component>"`): a link by class reaches every
+  population's component of that class, a qualified one that component only (two populations' components only by
+  qualified names); the identity links the Scene adds name them so. Two models sharing a component class no longer
+  raise. `scene.model(key)` and `scene.population(key)` (by name or class) replace the `isinstance` loops;
+  `Population.name` is the population's name; `population_data_structure(name=)`. Checkpoint states are keyed by
+  the scene names (a checkpoint written before restores no component state).
 
 ### Scaling fixes (the final benchmark)
 

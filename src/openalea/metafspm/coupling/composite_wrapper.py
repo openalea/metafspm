@@ -1,7 +1,7 @@
 from typing import Optional
 
 from openalea.metafspm.coupling.declaration import check_link
-from openalea.metafspm.coupling.translator import Translator
+from openalea.metafspm.coupling.translator import Translator, matches
 
 
 def _live_data_structure(component):
@@ -76,7 +76,6 @@ class CompositeModel:
             merged.links.extend(translator.links)
             merged.links.extend(link for link in scene.links if link not in translator.links)
             translator = merged
-        names = {type(component).__name__ for component in components}
         provided = {}
         for component in components:
             table = type(component).declarations()
@@ -94,11 +93,12 @@ class CompositeModel:
                 rows.append(dict(receiver=receiver, variable=name, provider="the plants' structural components",
                                  coupling="geometry", sources="triangles()"))
             for name in table.loc[table["role"] == "input", "name"]:
-                links = [link for link in translator.links_of(receiver) if link.variable == name
-                         and link.provider != receiver]
+                links = [link for link in translator.links if link.variable == name and matches(link.receiver, component)
+                         and not matches(link.provider, component)]
                 if links:
                     link = links[0]
-                    coupling = "scene" if link.provider not in names else link.coupling
+                    coupling = "scene" if not any(matches(link.provider, other) for other in components) \
+                        else link.coupling
                     sources = ", ".join(f"{source}" if factor in (1, 1.) else f"{source} * {factor}"
                                         for source, factor in link.sources.items()) if link.formula is None \
                         else "formula"

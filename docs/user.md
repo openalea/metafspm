@@ -668,7 +668,8 @@ time (an event's, an emergence time) is a duration since time 0 or a date (`"202
   component placing its plants' elements declares the planting's variables it reads, `x: float =
   planting_variable("x")` (x, y, z, rotation: Plant-scale inputs the planting provides, `couplings()` listing them)
   and takes them as step arguments.
-- **Plant models** are built once per model of the planting table, on an MPG holding all its plants:
+- **Plant models** are built once per population of the planting table (its `population` column, by default the
+  model's class name), on an MPG holding all its plants:
   `Model(data_structure, time_step, <its own arguments>)`, with a class attribute `initiators` (the structural components
   building each plant) and a class attribute `translator` (its coupling contract: `couple()` uses it, and its links
   between initiators apply while they build each plant, a later initiator's linked inputs written before it builds;
@@ -680,6 +681,17 @@ time (an event's, an emergence time) is a duration since time 0 or a date (`"202
   keeps a plant frozen until then. Without a Scene, `population_data_structure(table, Model, time_step=)` builds
   the same: the plants' MPG and MPGDataStructure, the model on it, every plant's scenario applied
   (`population.data_structure`, `population.instance`).
+- **Several populations of one model (intercropping).** `planting(plants, [Roots] * 4, {"deep": {...}, "shallow":
+  {...}}, population=["deep", "shallow", "deep", "shallow"])`: two populations of one model, each its own MPG,
+  model instance and outputs (`Plant/deep/summaries.csv`); a scenario may be given per population name. In the
+  scene a component is named `"<population>.<Component>"` (an environment model's `"<EnvironmentModel>.<Component>"`):
+  a translator link naming a class reaches every population's component of that class (each exchanging with the
+  soil or the light), one naming `"deep.RootGrowth"` that one only; two populations' components are linked only by
+  their scene names. `scene.model(key)` gives a model instance (a population's or an environment model, by name or
+  class: `scene.model(Soil).grid`), `scene.population(key)` a Population (`scene.population("deep").data_structure`;
+  none: the only one), raising when none or several match. Checkpoints, timing (`"deep.RootGrowth"`), conservation
+  rows and the recorder's folders use the population names. `examples/intercrop/`: wheat and pea roots
+  (ArchiSimple's, two parameter sets) in one soil.
 - **Environment models** are built as `Model(plant_data_structures, xrange, yrange, time_step, <its own arguments>)` and
   create their own DataStructures (a grid, a union of the populations). `scene.environment.EnvironmentModel` is
   their base: `self.plant_data_structure()` (the populations' union, of one population too; an anatomy-mode
@@ -692,7 +704,7 @@ time (an event's, an emergence time) is a duration since time 0 or a date (`"202
   soil model are short subclasses of it (Caribu's CaribuLightModel; the soil–plant–atmosphere example's Soil).
   Its `compartment` class attribute, `"Soil"` or `"Atmosphere"`, is required: the folder of its outputs.
 - **The scene's DataStructures.** `scene.data_structures()` gives `{id: (DataStructure, model, components)}`:
-  each population's (id: its model's name), then each environment model's own; the recorder's tables, the frames
+  each population's (id: its name), then each environment model's own; the recorder's tables, the frames
   and the checkpoints walk the scene with it.
 - **Scenarios** are flat dicts, `{name: value}`, applied by the Scene, so models do not forward them. A scenario's
   entries are parameters and settings of the model's components. They are set after the model is built, with

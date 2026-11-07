@@ -1,5 +1,6 @@
 """
-The population scene: one population per model, environment models building their
+The population scene: one population per model (or per population name: several of one model, intercropped),
+environment models building their
 DataStructures, mappings inferred from the scene translator, the fixed-point step order, staggered emergence and the
 scene recorder.
 """
@@ -13,7 +14,7 @@ from openalea.metafspm.coupling.component import FunctionalComponent, input_vari
 from openalea.metafspm.coupling.cross import CrossMapping, UnionDataStructure, UnionMapping
 from openalea.metafspm.coupling.translator import Translator
 from openalea.metafspm.data_structure.configs import ScalesConfig as scales
-from openalea.metafspm.scene.population import planting, stand
+from openalea.metafspm.scene.population import Planting, planting, stand
 from openalea.metafspm.scene.scene import Scene, SceneRecorder
 from openalea.metafspm.solve.decorator import rate
 
@@ -22,7 +23,8 @@ from scene_doubles import DT, RootPopulation, SceneSoil, Seedlings, coordinate, 
 
 def _scene(models=(RootPopulation, Seedlings, RootPopulation, Seedlings), **options):
     return Scene(doubles_planting(list(models), **options.pop("planting", {})), environment=[SceneSoil],
-                 translator=soil_translator("SceneExudation", "SeedlingExudation"), time_step=DT, **options)
+                 translator=options.pop("translator", soil_translator("SceneExudation", "SeedlingExudation")),
+                 time_step=DT, **options)
 
 
 def test_one_population_per_model_and_inferred_mappings():
@@ -64,9 +66,76 @@ class SamePopulationComponents(RootPopulation):
     pass
 
 
-def test_component_classes_must_differ_between_models():
-    with pytest.raises(ValueError, match="appear in several models"):
-        _scene(models=(RootPopulation, SamePopulationComponents))
+def test_two_models_may_share_a_component_class():
+    """Components are named "<population>.<Component>" in a scene: two models with one component class are two
+    populations, a link by the class reaching both."""
+    scene = _scene(models=(RootPopulation, SamePopulationComponents))
+    names = {component.__dict__["_scene_name"] for component in scene.components}
+    assert {"RootPopulation.SceneExudation", "SamePopulationComponents.SceneExudation"} <= names
+    scene.run()
+    scene.run()
+    exuded = sum(p.data_structure.get("exudation").sum() for p in scene.populations)
+    assert scene.environment[0].grid.get("exudation").sum() > 0.
+    assert scene.environment[0].grid.get("exudation").sum() <= exuded + 1e-12
+
+
+def _intercrop(**options):
+    """Two populations of one model (thin and thick, their exudation rates 0.1 and 0.3), their plants alternating."""
+    return _scene(models=(RootPopulation,) * 4, planting=dict(
+        population=["thin", "thick", "thin", "thick"],
+        scenarios=[{}, {"exudation_rate": 0.3}, {}, {"exudation_rate": 0.3}]), **options)
+
+
+def test_two_populations_of_one_model_are_intercropped():
+    """Several populations of one class: named by the planting's population column, each its own MPG and model
+    instance, found by scene.population and scene.model (by name or class), each exchanging with the soil through a
+    link by class."""
+    scene = _intercrop()
+    assert [p.name for p in scene.populations] == ["thin", "thick"] and all(
+        p.model is RootPopulation and len(p.plants) == 2 for p in scene.populations)
+    thin, thick = scene.population("thin"), scene.population("thick")
+    assert thin.data_structure is not thick.data_structure and thin.instance is not thick.instance
+    np.testing.assert_allclose(thick.data_structure.get("exudation_rate"), [0.3, 0.3])
+    np.testing.assert_allclose(thin.data_structure.get("exudation_rate"), [0.1, 0.1])
+    assert scene.model("thick") is thick.instance and scene.model(SceneSoil) is scene.environment[0]
+    assert scene.model("SceneSoil") is scene.environment[0]
+    with pytest.raises(KeyError, match="2 models match"):
+        scene.model(RootPopulation)
+    with pytest.raises(KeyError, match="no populations match"):
+        scene.population("wide")
+    with pytest.raises(ValueError, match="name one"):
+        scene.population()
+    assert len([m for m in scene.mappings if isinstance(m, CrossMapping)]) == 2
+    scene.run()
+    exuded = thin.data_structure.get("exudation").sum() + thick.data_structure.get("exudation").sum()
+    assert thick.data_structure.get("exudation").sum() > thin.data_structure.get("exudation").sum()
+    scene.run()
+    assert scene.environment[0].grid.get("exudation").sum() == pytest.approx(exuded)     # both populations'
+    assert {"thin.SceneExudation", "thick.SceneExudation"} <= set(scene.timing)
+
+
+def test_a_qualified_link_reaches_its_population_only():
+    """A link naming "<population>.<Component>" joins that population's component only."""
+    translator = Translator().link("SceneSoilNitrate", "exudation", "thick.SceneExudation", {"exudation": 1.})
+    scene = _intercrop(translator=translator)
+    scene.run()
+    thick = scene.population("thick").data_structure.get("exudation").sum()
+    scene.run()
+    assert scene.environment[0].grid.get("exudation").sum() == pytest.approx(thick)
+
+
+def test_population_names_are_unique_and_without_a_dot():
+    with pytest.raises(ValueError, match="without a dot"):
+        _scene(models=(RootPopulation,), planting=dict(population=["a.b"]))
+    with pytest.raises(ValueError, match="more than once"):
+        _scene(models=(RootPopulation,), planting=dict(population=["SceneSoil"]))
+    with pytest.raises(ValueError, match="several models"):
+        _scene(models=(RootPopulation, Seedlings), planting=dict(population=["one", "one"]))
+    table = planting([Planting(), Planting(x=1.)], [RootPopulation] * 2, {"a": {"exudation_rate": 0.2}, "b": {}},
+                     population=["a", "b"])
+    assert list(table["population"]) == ["a", "b"] and table["scenario"][0] == {"exudation_rate": 0.2}
+    with pytest.raises(ValueError, match="without a dot"):
+        planting([Planting()], RootPopulation, population="a.b")
 
 
 def test_plants_are_frozen_until_their_emergence():
@@ -206,3 +275,20 @@ def test_emergence_combines_with_a_model_active_mask():
     scene.run()                                   # the step starting at t = 0
     scene.run()                                   # the step starting at t = DT: the late plant emerged
     np.testing.assert_array_equal(ds.mask("active"), ds.get("is_apex") > 0)
+
+
+def test_an_intercropped_scene_resumes_from_its_checkpoint(tmp_path):
+    """Its populations' DataStructures and components' states are saved under their names and loaded back."""
+    scene = _intercrop(recorder=str(tmp_path / "out"))
+    scene.run()
+    scene.checkpoint(str(tmp_path / "checkpoint"))
+    scene.run()
+    resumed = _intercrop()
+    resumed.load_checkpoint(str(tmp_path / "checkpoint"))
+    resumed.run()
+    for name in ("thin", "thick"):
+        np.testing.assert_allclose(resumed.population(name).data_structure.get("exudation"),
+                                   scene.population(name).data_structure.get("exudation"))
+    scene.finish()
+    assert (tmp_path / "out" / "Plant" / "thin" / "summaries.csv").exists()
+    assert (tmp_path / "out" / "Plant" / "thick" / "summaries.csv").exists()

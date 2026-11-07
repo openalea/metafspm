@@ -193,6 +193,38 @@ class Link:
         return Link(self.receiver, self.variable, self.provider, self.raw_factors).detail
 
 
+def scene_name(component) -> str:
+    """A component's name in a Scene, "<population>.<Component>" (an environment model's components:
+    "<EnvironmentModel>.<Component>"), the Scene's; outside a Scene, its class name."""
+    return component.__dict__.get("_scene_name") or type(component).__name__
+
+
+def matches(name: str, component) -> bool:
+    """Whether a link's receiver or provider *name* designates *component*: its class name (every component of that
+    class) or its qualified scene name ("<population>.<Component>": that one)."""
+    return name == type(component).__name__ or name == component.__dict__.get("_scene_name")
+
+
+def link_pairs(link, components) -> list:
+    """[(receiver, provider)] the *link* joins among *components*: each receiver its receiver name designates with
+    each provider its provider name does (matches), the component itself left out. Two plant populations'
+    components are joined only when the link names both by their qualified names (a link by class names joins each
+    population with the environment, not two populations with each other)."""
+    receivers = [c for c in components if matches(link.receiver, c)]
+    providers = [c for c in components if matches(link.provider, c)]
+    pairs = []
+    for receiver in receivers:
+        for provider in providers:
+            if receiver is provider:
+                continue
+            a, b = receiver.__dict__.get("_scene_population"), provider.__dict__.get("_scene_population")
+            if a is not None and b is not None and a != b and not (
+                    link.receiver == scene_name(receiver) and link.provider == scene_name(provider)):
+                continue
+            pairs.append((receiver, provider))
+    return pairs
+
+
 @dataclass
 class Translator:
     links: list = field(default_factory=list)

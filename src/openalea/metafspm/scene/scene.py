@@ -14,8 +14,9 @@ a number is seconds), and kept in seconds, the scene's time.
 
 Contracts::
 
-  plant model        Model(data_structure, time_step, <its own arguments>), built once per population (the plants of one model
-                     in the planting table) on an MPG holding all of them. Class attributes: initiators (the
+  plant model        Model(data_structure, time_step, <its own arguments>), built once per population (the plants of one
+                     population name in the planting table, by default its model's class name: several populations
+                     may be of one model, intercropped) on an MPG holding all of them. Class attributes: initiators (the
                      StructuralComponent classes building each plant, StructuralComponent.initiate_plant), from_scale
                      (graph nodes, default "SubOrgan"), nodes ("Compartment" for anatomies, which the initiators
                      build) and wiring (the junction rules between anatomies, or a callable g -> rules). It exposes
@@ -50,7 +51,7 @@ from openalea.metafspm.compute import Compute
 from openalea.metafspm.coupling.choregrapher import sub_steps
 from openalea.metafspm.coupling.forcings import forcing_mean, forcing_table, is_spatial, spatial_mean
 from openalea.metafspm.coupling.cross import CrossMapping, Exchanges, UnionDataStructure, UnionMapping
-from openalea.metafspm.coupling.translator import Translator
+from openalea.metafspm.coupling.translator import Translator, link_pairs, matches, scene_name
 from openalea.metafspm.data_structure.data_api import MPGDataStructure, _root_data_structure
 from openalea.metafspm.scene.recorder import SceneRecorder
 from openalea.metafspm.scene.population import (Population, _apply_model_scenario, _flat_scenario, _model_arguments,
@@ -100,6 +101,11 @@ class Scene:
         environment:           environment model classes, run in this order; environment_scenarios: one dict each.
         translator:            the links between the populations' and the environment's components (a Translator, a
                                nested dict, a .py or YAML path). Links within one DataStructure are the models' own.
+                               A link names a component by its class (every component of that class: each
+                               population's) or by its scene name, "<population>.<Component>" (an environment
+                               model's: "<EnvironmentModel>.<Component>"), that one; two populations' components are
+                               linked only by their scene names. scene.model(key) and scene.population(key) find a
+                               model and a population by name or class.
         mapping_method:        "barycentre" or "overlap", for every population <-> grid mapping; periodic, flip_z as
                                in CrossMapping.
         xrange, yrange:        the stand's size (default: the planting table's, from planting).
@@ -169,8 +175,10 @@ class Scene:
         self.yrange = yrange if yrange is not None else planting.attrs.get("yrange")
 
         self.planting = planting
-        models = list(dict.fromkeys(planting["model"]))
-        self.populations = [self._build_population(model, planting[planting["model"] == model]) for model in models]
+        names = planting["population"] if "population" in planting.columns else \
+            planting["model"].map(lambda model: model.__name__)
+        self.populations = [self._build_population(name, planting[(names == name).to_numpy()])
+                            for name in dict.fromkeys(names)]
         population_ds = [population.data_structure for population in self.populations]
 
         environment_scenarios = [_flat_scenario(scenario) for scenario in
@@ -197,11 +205,7 @@ class Scene:
                 _root_data_structure(data_structure).simulation_time_step = time_step
             _run_in_step(component, time_step)
         self._apply_compute(environment_scenarios)
-        names = [type(c).__name__ for c in self.components]
-        duplicated = sorted({name for name in names if names.count(name) > 1})
-        if duplicated:
-            raise ValueError(f"component classes {duplicated} appear in several models of the scene: "
-                             "the scene translator identifies components by class name (one population per model)")
+        self._name_components()
 
         self.translator = _with_identity_links(Translator.load(translator), self.populations, self.environment)
         for model in [population.instance for population in self.populations] + list(self.environment):
@@ -297,11 +301,16 @@ class Scene:
 
     # ── construction ──────────────────────────────────────────────────────────
 
-    def _build_population(self, model, rows: pd.DataFrame) -> Population:
+    def _build_population(self, name: str, rows: pd.DataFrame) -> Population:
         rows = rows.reset_index(drop=True)
+        models = list(dict.fromkeys(rows["model"]))
+        if len(models) > 1:
+            raise ValueError(f"population '{name}' has plants of several models "
+                             f"({', '.join(model.__name__ for model in models)}): one model per population")
+        model = models[0]
         population = population_data_structure(rows, model, time_step=self.time_step,
                                                scenario=self._shared_scenario(model, rows),
-                                               soil_surface=self.soil_surface)
+                                               soil_surface=self.soil_surface, name=name)
         if population.emergence:
             self._setup_emergence(population)
         return population
@@ -335,6 +344,51 @@ class Scene:
                     raise ValueError(f"{model.__name__}: parameter '{key}' differs between plants and is not numeric, "
                                      "only numeric parameters are stored per plant")
         return first
+
+    def _name_components(self) -> None:
+        """Every component's scene name, "<population>.<Component>" or "<EnvironmentModel>.<Component>" (the
+        translator links' qualified names, translator.matches), and its population's (None: an environment
+        model's). The populations' and the environment models' names are unique, without a dot."""
+        owners = [(population.name, population.components, population.name) for population in self.populations]
+        owners += [(type(model).__name__, model.components, None) for model in self.environment]
+        names = [owner for owner, _, _ in owners]
+        twice = sorted({name for name in names if names.count(name) > 1})
+        if twice:
+            raise ValueError(f"the scene's populations and environment models have the names {twice} more than once: "
+                             "give each population its own name (planting(population=...)), each environment model "
+                             "its own class")
+        for owner, components, population in owners:
+            if "." in owner:
+                raise ValueError(f"population name '{owner}': without a dot (components are named "
+                                 "'<population>.<Component>')")
+            classes = [type(component).__name__ for component in components]
+            repeated = sorted({name for name in classes if classes.count(name) > 1})
+            if repeated:
+                raise ValueError(f"{owner}: component classes {repeated} appear twice in one model (the scene names "
+                                 "a component '<population>.<Component>')")
+            for component in components:
+                component.__dict__["_scene_name"] = f"{owner}.{type(component).__name__}"
+                component.__dict__["_scene_population"] = population
+
+    def model(self, key):
+        """The model instance (a population's model, or an environment model) *key* designates: a class (its model's
+        class, or a base of it) or a name (a population's, an environment model's class name). Raises when none or
+        several match: name them (planting(population=...))."""
+        entries = [(population.name, population.instance) for population in self.populations]
+        entries += [(type(model).__name__, model) for model in self.environment]
+        return _one(key, entries, "model")
+
+    def population(self, key=None):
+        """The Population (its plants, MPG, DataStructure and model instance) *key* designates: its name, or its
+        model's class (or a base of it); None: the scene's only one. Raises when none or several match."""
+        entries = [(population.name, population) for population in self.populations]
+        if key is None:
+            if len(entries) != 1:
+                raise ValueError(f"scene.population(): the scene has {len(entries)} populations "
+                                 f"({', '.join(name for name, _ in entries)}): name one")
+            return entries[0][1]
+        return _one(key, [(name, population) for name, population in entries], "population",
+                    classes=lambda population: population.model)
 
     def _setup_emergence(self, population: Population) -> None:
         from openalea.metafspm.coupling.durations import instant
@@ -370,14 +424,12 @@ class Scene:
         the Scene's mapping_method over every node. A population with emergence times maps its emerged plants only
         (the mask "emerged", with the link's).
         """
-        by_name = {type(c).__name__: c for c in self.components}
         populations = {id(p.data_structure): p for p in self.populations}
         mappings, done = [], set()
-        for link in self.translator.links:
-            if link.receiver not in by_name or link.provider not in by_name:
-                continue
-            for a, b in ((link.receiver, link.provider), (link.provider, link.receiver)):
-                plant_ds, other = by_name[a].data_structure, by_name[b].data_structure
+        for link, receiver, provider in ((link, receiver, provider) for link in self.translator.links
+                                         for receiver, provider in link_pairs(link, self.components)):
+            for a, b in ((receiver, provider), (provider, receiver)):
+                plant_ds, other = a.data_structure, b.data_structure
                 plant_ds = plant_ds.__dict__.get("_base", plant_ds)         # a view of the population's
                 if id(plant_ds) not in populations or other is plant_ds:
                     continue
@@ -430,7 +482,6 @@ class Scene:
         such (forcing_variable), each an input or parameter of the components declaring it, not provided by a
         coupling. A forcing nothing declares, or only coupled inputs, raises.
         """
-        linked = {(link.receiver, link.variable) for link in self.translator.links}
         targets, unused = [], []
         for name in self.forcings:
             if any(name in getattr(c, "declared_forcings", lambda: {})() for c in self.components):
@@ -438,7 +489,8 @@ class Scene:
             declaring = [c for c in self.components
                          if getattr(getattr(c, "_variable_specs", {}).get(name), "variable_type", None)
                          in ("input", "parameter")]
-            free = [c for c in declaring if (type(c).__name__, name) not in linked
+            free = [c for c in declaring if not any(link.variable == name and matches(link.receiver, c)
+                                                    for link in self.translator.links)
                     and name not in getattr(c, "_derived_inputs", ())]
             if not free:
                 unused.append(f"'{name}'" + (" (coupled)" if declaring else ""))
@@ -598,7 +650,7 @@ class Scene:
         """{key: object} of the models and components whose non-variable state checkpoints keep (hooks)."""
         objects = {f"environment_{i}": model for i, model in enumerate(self.environment)}
         objects.update({f"population_{p.name}": p.instance for p in self.populations})
-        objects.update({f"component_{type(c).__name__}": c for c in self.components})
+        objects.update({f"component_{scene_name(c)}": c for c in self.components})
         return objects
 
     def checkpoint(self, path: str, shared: str = None) -> None:
@@ -723,6 +775,22 @@ class Scene:
                           "were not written (end a loop of run() with finish())", ResourceWarning, stacklevel=2)
 
 
+def _one(key, entries, what: str, classes=type):
+    """The one entry of [(name, object)] *key* designates: a name, or a class (the objects' classes, *classes* of an
+    object, are it or derive from it)."""
+    if isinstance(key, type):
+        found = [entry for entry in entries if issubclass(classes(entry[1]), key)]
+        label = key.__name__
+    else:
+        found = [entry for entry in entries if entry[0] == key]
+        label = str(key)
+    if len(found) != 1:
+        known = ", ".join(name for name, _ in entries)
+        raise KeyError(f"scene.{what}({label!r}): {'no' if not found else len(found)} {what}s match (the scene's: "
+                       f"{known}){'; name one' if found else ''}")
+    return found[0][1]
+
+
 def _run_in_step(component, time_step: float) -> None:
     """*component* run in the scene's step *time_step* (s): one of the scene's steps when it has no time step of its
     own (an environment model's component built without one), else checked to divide it a whole number of times."""
@@ -752,7 +820,8 @@ def _with_identity_links(translator, populations, environment):
     an identity link for each of its state variables a plant model's component reads as an input of the same name
     (e.g. a photosynthesis' PARa from the light), and for each of its inputs a plant model's component holds as a
     state of the same name (e.g. the elements' PAR_reflectance, one link per population: each gives its part of the
-    union), unless *translator* links that input already (from that provider, for the union's inputs).
+    union), unless *translator* links that input already (from that provider, for the union's inputs). The links
+    added name the plant components by their scene names (one per population).
     """
     from openalea.metafspm.coupling.cross import UnionDataStructure
     from openalea.metafspm.coupling.translator import Translator
@@ -764,8 +833,6 @@ def _with_identity_links(translator, populations, environment):
         return (set(table.loc[table["role"] == "input", "name"]),
                 set(table.loc[table["role"] == "state_variable", "name"]))
 
-    linked = {(link.receiver, link.variable) for link in translator.links}
-    linked_from = {(link.receiver, link.variable, link.provider) for link in translator.links}
     added = []
     plants = [component for population in populations for component in population.components]
     for model in environment:
@@ -776,15 +843,14 @@ def _with_identity_links(translator, populations, environment):
             for plant in plants:
                 plant_inputs, plant_states = roles(plant)
                 for name in sorted(plant_inputs & light_states):            # into a plant model: one provider
-                    key = (type(plant).__name__, name)
-                    if key not in linked:
-                        added.append((key[0], name, type(light).__name__))
-                        linked.add(key)
+                    if (scene_name(plant), name) not in {(receiver, variable) for receiver, variable, _ in added} \
+                            and not any(link.variable == name and matches(link.receiver, plant)
+                                        for link in translator.links):
+                        added.append((scene_name(plant), name, scene_name(light)))
                 for name in sorted(light_inputs & plant_states):            # into the union: one per population
-                    key = (type(light).__name__, name, type(plant).__name__)
-                    if key not in linked_from:
-                        added.append(key)
-                        linked_from.add(key)
+                    if not any(link.variable == name and matches(link.receiver, light) and matches(link.provider, plant)
+                               for link in translator.links):
+                        added.append((scene_name(light), name, scene_name(plant)))
     if not added:
         return translator
     out = Translator()

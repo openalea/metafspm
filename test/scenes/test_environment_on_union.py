@@ -74,7 +74,8 @@ def _scene(**options):
 def test_one_population_exchanges_with_the_environment_through_identity_links():
     scene = _scene()
     links = {(link.receiver, link.variable, link.provider) for link in scene.translator.links}
-    assert {("Absorbing", "PARa", "Sky"), ("Sky", "reflectance", "Absorbing")} <= links
+    # named by the components' scene names: "<population>.<Component>", "<EnvironmentModel>.<Component>"
+    assert {("Plants.Absorbing", "PARa", "Light.Sky"), ("Light.Sky", "reflectance", "Plants.Absorbing")} <= links
     for _ in range(2):
         scene.run()
     plants = scene.populations[0].data_structure
@@ -112,7 +113,7 @@ def test_geometry_input_relights_when_elements_appear():
 def test_a_plant_models_couplings_list_the_scenes_links():
     scene = _scene()
     rows = scene.populations[0].instance.couplings().set_index("variable")
-    assert rows.loc["PARa", "coupling"] == "scene" and rows.loc["PARa", "provider"] == "Sky"
+    assert rows.loc["PARa", "coupling"] == "scene" and rows.loc["PARa", "provider"] == "Light.Sky"
 
 
 def test_a_structural_component_reads_the_calendar_and_forcings_and_an_unplaced_input_is_forced():

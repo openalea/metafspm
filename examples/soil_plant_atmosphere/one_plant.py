@@ -27,7 +27,7 @@ def plots(built, folder, row=None):
     """The figures; *row*: the side views show only that planting row (for a stand)."""
     os.makedirs(folder, exist_ok=True)
     plants = [population.data_structure for population in built.populations]
-    soil = next(model for model in built.environment if isinstance(model, Soil)).grid
+    soil = built.model(Soil).grid
     plotting.plant_segments(plants, os.path.join(folder, "plant_segments.png"), row=row)
     plotting.plant_segments(plants, os.path.join(folder, "plant_segments_soil.png"), row=row, soil=soil)   # ΔΨ
     plotting.plant_anatomy(plants[0], os.path.join(folder, "plant_anatomy.png"), row=row)
@@ -41,7 +41,7 @@ def plots(built, folder, row=None):
 
 def summary(built, stop):
     plant = built.populations[0].data_structure
-    soil = next(model for model in built.environment if isinstance(model, Soil)).grid
+    soil = built.model(Soil).grid
     print(f"converged in {built.iteration} steps; largest change of Ψ per step (MPa): "
           + ", ".join(f"{change:.1e}" for change in stop.history))
     print(f"transpiration {plant.get('evaporation').sum():.4f} mm3 s-1, root uptake "

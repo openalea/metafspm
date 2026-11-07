@@ -24,13 +24,14 @@ FIGURES = ("plant_segments.png", "plant_segments_soil.png", "plant_anatomy.png",
            "top_view.png", "upscaling.png")
 
 
-def _environment(scene, kind):
-    return next(model for model in scene.environment if isinstance(model, kind))
+def _soil(scene):
+    """The scene's soil, a Soil or an AdaptiveSoil (by its model's name, its class's)."""
+    return scene.model("Soil" if any(type(model) is Soil for model in scene.environment) else "AdaptiveSoil")
 
 
 def _check_balances(scene):
     plants = [p.data_structure for p in scene.populations]
-    soil = _environment(scene, (Soil, AdaptiveSoil)).grid
+    soil = _soil(scene).grid
     uptake = sum(float(ds.get("root_uptake").sum()) for ds in plants)
     transpiration = sum(float(ds.get("evaporation").sum()) for ds in plants)
     assert uptake > 0 and uptake == pytest.approx(transpiration, rel=1e-8)          # the plants: in = out

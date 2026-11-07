@@ -55,11 +55,11 @@ def _scene(time_step=HOUR):
 
 
 def _soil(scene):
-    return next(model for model in scene.environment if isinstance(model, RichardsSoilModel))
+    return scene.model(RichardsSoilModel)
 
 
 def _light(scene):
-    return next(model for model in scene.environment if isinstance(model, CaribuLightModel))
+    return scene.model(CaribuLightModel)
 
 
 @pytest.fixture(scope="module")

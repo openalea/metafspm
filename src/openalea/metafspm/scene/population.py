@@ -2,12 +2,15 @@
 A plant population in one MPG.
 
   table = planting([Planting(x, y, z, rotation), ...], Model, scenario, plant_scenarios)     given plants
+  table = planting(plants, [Roots] * 4, {"deep": {...}, "shallow": {...}},                    two populations of
+                   population=["deep", "deep", "shallow", "shallow"])                         one model (intercrop)
   table = planting(stand(xrange, yrange, sowing_density, row_spacing, seed=1), Model, scenario)   a sown stand
   population = population_data_structure(table, Model, time_step=3600.)    without a Scene: the plants' MPG, its
   population.data_structure, population.instance                           DataStructure and the model built on it
 
-The planting table has one row per plant (columns plant, model, x, y, z, rotation, scenario, optionally
-emergence_time), its plants named p0, p1, ... in its order. Each StructuralComponent of `initiators` builds every
+The planting table has one row per plant (columns plant, model, population, x, y, z, rotation, scenario, optionally
+emergence_time), its plants named p0, p1, ... in its order; the plants of one population name (by default their
+model's class name) are one population, of one model: several populations may be of one model. Each StructuralComponent of `initiators` builds every
 plant's initial structure (StructuralComponent.initiate_plant), in order, before any component is constructed;
 components are then built once for the whole population, and their per-plant parameters filled from each plant's
 scenario.
@@ -47,28 +50,41 @@ class Stand(list):
 
 
 def planting(plants, model, scenario: dict = None, plant_scenarios: list = None, emergence_times: list = None,
-             xrange: float = None, yrange: float = None) -> pd.DataFrame:
+             xrange: float = None, yrange: float = None, population=None) -> pd.DataFrame:
     """
     The planting table of *plants* ([Planting], or a Stand), named p0, p1, ... in their order. *model*: the plant
-    model of every plant, or one per plant (a list, e.g. a Stand's models). *scenario*: shared by every plant, or
-    {model class: scenario} with several models; *plant_scenarios*: one dict per plant, added to the shared one.
+    model of every plant, or one per plant (a list, e.g. a Stand's models). *population*: the name of every plant's
+    population, or one per plant (by default its model's class name; without a dot): plants of one model in two
+    populations are built as two (intercropping: two varieties, two parameter sets of one model). *scenario*:
+    shared by every plant, or {model class or population name: scenario} with several; *plant_scenarios*: one dict
+    per plant, added to the shared one.
     *emergence_times*: one scene time per plant ("2 d", a date with the Scene's start, or s), the emergence_time
     column read by the Scene. The stand's size
     (table.attrs xrange, yrange) is the Stand's, else the plants' extent (at least 0.1 m), unless given.
     """
     plants = list(plants) if not isinstance(plants, Stand) else plants
     models = list(model) if isinstance(model, (list, tuple)) else [model] * len(plants)
+    names = list(population) if isinstance(population, (list, tuple)) else \
+        [population if population is not None else getattr(m, "__name__", str(m)) for m in models]
     own = plant_scenarios if plant_scenarios is not None else [{}] * len(plants)
-    for name, values in (("model", models), ("plant_scenarios", own), ("emergence_times", emergence_times)):
+    for name, values in (("model", models), ("population", names), ("plant_scenarios", own),
+                         ("emergence_times", emergence_times)):
         if values is not None and len(values) != len(plants):
             raise ValueError(f"planting: {len(values)} {name} for {len(plants)} plants")
-    by_model = (scenario is not None and len(scenario) > 0 and all(isinstance(key, type) for key in scenario))
+    for name in set(names):
+        if not isinstance(name, str) or not name or "." in name:
+            raise ValueError(f"planting: population name {name!r}: a text without a dot")
+    by_owner = (scenario is not None and len(scenario) > 0 and all(isinstance(key, type) or key in names
+                                                                   for key in scenario)
+                and all(isinstance(value, dict) for value in scenario.values()))
     rows = []
-    for k, (plant, plant_model) in enumerate(zip(plants, models)):
-        shared = (scenario or {}).get(plant_model, {}) if by_model else (scenario or {})
-        rows.append(dict(plant=f"p{k}", model=plant_model, x=float(plant.x), y=float(plant.y), z=float(plant.z),
-                         rotation=float(plant.rotation), scenario=_flat_scenario(dict(shared, **(own[k] or {})))))
-    table = pd.DataFrame(rows, columns=["plant", "model", "x", "y", "z", "rotation", "scenario"])
+    for k, (plant, plant_model, name) in enumerate(zip(plants, models, names)):
+        shared = {**(scenario or {}).get(plant_model, {}), **(scenario or {}).get(name, {})} if by_owner \
+            else (scenario or {})
+        rows.append(dict(plant=f"p{k}", model=plant_model, population=name, x=float(plant.x), y=float(plant.y),
+                         z=float(plant.z), rotation=float(plant.rotation),
+                         scenario=_flat_scenario(dict(shared, **(own[k] or {})))))
+    table = pd.DataFrame(rows, columns=["plant", "model", "population", "x", "y", "z", "rotation", "scenario"])
     if emergence_times is not None:
         from openalea.metafspm.coupling.durations import is_date, duration
         times = [time if is_date(time) else duration(time, "emergence_times") for time in emergence_times]
@@ -124,18 +140,16 @@ def stand(xrange: float, yrange: float, sowing_density: float, row_spacing: floa
 
 
 class Population:
-    """The plants of one model: their planting rows, Plant vertices, MPGDataStructure and model instance."""
+    """The plants of one population, of one model: their name (the planting's population, by default the model's
+    class name), planting rows, Plant vertices, MPGDataStructure and model instance."""
 
     def __init__(self, model, table: pd.DataFrame, plants: list, data_structure, instance,
-                 read_by_initiators=frozenset()):
+                 read_by_initiators=frozenset(), name: str = None):
         self.model, self.table, self.plants = model, table, list(plants)
+        self.name = name if name is not None else model.__name__
         self.data_structure, self.instance = data_structure, instance
         self.emergence = "emergence_time" in table.columns
         self.read_by_initiators = frozenset(read_by_initiators)   # the scenario keys its initiators read
-
-    @property
-    def name(self) -> str:
-        return self.model.__name__
 
     @property
     def components(self) -> list:
@@ -147,16 +161,19 @@ class Population:
 
 
 def population_data_structure(table: pd.DataFrame, model, time_step: float = 3600., scenario: dict = None,
-                              soil_surface: float = 0.) -> Population:
+                              soil_surface: float = 0., name: str = None) -> Population:
     """
     The plants of *table* (a planting table's rows of *model*) in one MPG and its MPGDataStructure, *model* built on
     it, every plant's scenario applied: what the Scene builds for each of its models, for a model run without one.
     The model's initiators build each plant's structure (on the nodes of its from_scale, or its own nodes for
     anatomies), its wiring joins them; *scenario*: the one the model is built with (default: the first plant's);
     *soil_surface*: the soil surface's height (m, the Scene's), the MPG's g.soil_surface while the initiators build
-    (a crown placed below it) and the DataStructure's after (ds.soil_surface).
+    (a crown placed below it) and the DataStructure's after (ds.soil_surface); *name*: the population's (default:
+    the table's population column, else the model's class name).
     """
     table = table.reset_index(drop=True)
+    if name is None:
+        name = str(table["population"].iloc[0]) if "population" in table.columns and len(table) else model.__name__
     scenario = _flat_scenario(table["scenario"].iloc[0] if scenario is None and len(table) else scenario)
     read_by_initiators = set()
     reduction = _model_reduction(model, table, scenario, read_by_initiators)
@@ -177,7 +194,7 @@ def population_data_structure(table: pd.DataFrame, model, time_step: float = 360
     instance = model(data_structure=ds, time_step=time_step, **_model_keywords(model, scenario))
     if getattr(g, "reduction", None) is not None:
         g.reduction.bind(model, instance)
-    population = Population(model, table, plants, ds, instance, read_by_initiators)
+    population = Population(model, table, plants, ds, instance, read_by_initiators, name=name)
     _apply_model_scenario(model, instance, scenario, read_by_initiators)
     _apply_plant_scenarios(ds, population.components, table, plants)
     return population
