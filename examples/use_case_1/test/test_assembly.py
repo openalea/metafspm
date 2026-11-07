@@ -142,7 +142,7 @@ def test_the_assembly_builds_with_every_link(stepped):
                 ("GasExchange", "height"): ("ShootArchitecture", "derived"),
                 ("GasExchange", "green_area"): ("ShootArchitecture", "derived"),
                 ("GasExchange", "leaf_water_potential"): ("MechaHydraulics", "derived"),
-                ("GasExchange", "PARa"): ("CaribuLight", "scene"),
+                ("GasExchange", "PARa"): ("CaribuLightModel.CaribuLight", "scene"),     # the Scene's identity link
                 ("MechaHydraulics", "soil_psi"): ("RichardsSoil", "scene"),
                 ("RootArchitecture", "nodal_axes_requested"): ("NodalRootEmergence", "shared"),
                 ("MechaHydraulics", "barrier"): ("Development", "shared"),
