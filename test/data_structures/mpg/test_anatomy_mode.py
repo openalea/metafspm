@@ -267,7 +267,7 @@ def test_connection_scale_variables_are_the_connections_own_properties():
     np.testing.assert_array_equal(ds.get("conductance"), edges.astype(float))
     np.testing.assert_array_equal(ds.get("tissue"), 2. * ds.entity_ids("node"))
     ds.set("conductance", np.full(ds.n_edges(), 7.))
-    assert all(ds.mtg.property("conductance")[int(v)] == 7. for v in edges)       # written back at the Connections
+    assert all(ds.mtg.view("conductance")[int(v)] == 7. for v in edges)       # written back at the Connections
 
 
 def test_edge_values_map_to_the_segment_of_their_child_side():

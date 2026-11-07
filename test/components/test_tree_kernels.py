@@ -25,7 +25,7 @@ def _by_vid(ds, values):
 
 
 def _successor(g, vid):
-    return next((c for c in g.children(vid) if g.property("edge_type").get(c) == '<'), None)
+    return next((c for c in g.children(vid) if g.view("edge_type").get(c) == '<'), None)
 
 
 def test_distance_from_tip_is_identical_to_rhizodeps_loop(plant):

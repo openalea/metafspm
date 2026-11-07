@@ -79,7 +79,7 @@ class BenchGrowth(StructuralComponent):
         for k in range(LATERALS):
             base = main[(k + 1) * MAIN // (LATERALS + 1)]
             lateral = chain(base, LATERAL)
-            g.property("edge_type")[lateral[0]] = '+'
+            g.set_values("edge_type", [lateral[0]], ['+'])
             vids += lateral
             depth += [depth[main.index(base)]] * LATERAL
         tips = {main[-1]} | {vids[MAIN + (k + 1) * LATERAL - 1] for k in range(LATERALS)}

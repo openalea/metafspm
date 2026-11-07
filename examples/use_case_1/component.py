@@ -821,7 +821,7 @@ class WheatCrown(StructuralComponent):
         position and its *scenario*'s parameters (plant_parameters): its elements placed topologically by the MPG's
         builder (g.add_element: each one's base at its parent's end), the seed a point drawn as the grain."""
         parameters = cls.plant_parameters(scenario)
-        x, y, seed_height = (float(g.property(name)[plant]) for name in ("x", "y", "z"))
+        x, y, seed_height = (float(g.view(name)[plant]) for name in ("x", "y", "z"))
         crown_height = float(getattr(g, "soil_surface", 0.)) - float(parameters["crown_depth"])   # below the soil
         if crown_height <= seed_height + 1e-12:
             raise ValueError(f"WheatCrown: the crown ({-crown_height} m deep) must lie above the seed "

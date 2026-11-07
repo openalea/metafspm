@@ -44,8 +44,8 @@ def build_seedling(g, plant, parameters):
              pivot_lateral_ranks=(2, 5))
     p.update({key: value for key, value in parameters.items() if key in p})
     s, labels = g.scales, g.labels
-    x0, y0, z0 = (float(g.property(name)[plant]) for name in ("x", "y", "z"))
-    rotation = float(g.property("rotation").get(plant, 0.))
+    x0, y0, z0 = (float(g.view(name)[plant]) for name in ("x", "y", "z"))
+    rotation = float(g.view("rotation").get(plant, 0.))
     segments = {}                                                # vid -> (organ, length, start, end)
 
     def segment(vid, organ, length, start, direction):

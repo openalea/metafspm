@@ -252,7 +252,7 @@ def test_a_value_registered_before_the_component_is_kept(scale):
 
 def test_mtg_properties_at_the_declared_scale_are_read(scale):
     g, _ = generate_simple_mpg_seedling()
-    vids = [v for v in g.vertices(scale=getattr(g.scales, scale)) if not g.property("isanchor").get(v, False)]
+    vids = [v for v in g.vertices(scale=getattr(g.scales, scale)) if not g.view("isanchor").get(v, False)]
     g.properties()["concentration"] = {v: 0.42 for v in vids}
     g.properties()["K_axial"] = {v: 0.08 for v in vids}
     g.populate_graph(getattr(g.scales, scale))

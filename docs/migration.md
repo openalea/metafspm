@@ -111,7 +111,8 @@ class GrassBRIDGES(CompositeModel):
 - **Removed:** the queues, `name`, `coordinates`, `rotation`, `Transport` and `handshake_shape`. The scene does the exchanges.
 - **Initial values:** the soil inputs are no longer reset to 0 at coupling; they keep their declared `initialize` until the first exchange.
 - **MPG-style steps** loop over `self.active_ids()`, so that plants before their planting time are skipped.
-- **MTG reads:** state variables reach the MTG lazily (`mtg_sync = "lazy"`). Code that reads the MTG object directly, such as a Logger or plotting, calls `ds.flush_mtg()` first, or reads `ds.mtg`.
+- **MTG reads:** a state variable held at its own scale is read from its DataStructure column by the MTG; mapped ones reach the MTG lazily (`mtg_sync = "lazy"`). Code that reads the MTG object directly, such as a Logger or plotting, calls `ds.flush_mtg()` first, or reads `ds.mtg`.
+- **MTG properties:** `g.property(name)` is read-only (a mapping built on demand). Write `g.set_values(name, vids, values)` instead of `g.property(name)[v] = x`; read in bulk with `g.values_at(name, vids)` or `g.column(name)`, vertex by vertex with `g.view(name)`.
 - **Check:** in the package's own tests, add `openalea.metafspm.testing.assert_component_couplable(Component, translator)` for every component.
 
 ## 4. Environment models and the scene (RhizoSoil, the light model)

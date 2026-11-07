@@ -37,7 +37,7 @@ def test_integer_labels_are_read_and_kept_as_integers(seedling):
     Labelled(data_structure=ds)
     labels = ds.get("label")
     assert np.issubdtype(labels.dtype, np.integer)
-    assert labels.tolist() == [g.property("label")[int(v)] for v in ds.entity_ids("node")]
+    assert labels.tolist() == [g.view("label")[int(v)] for v in ds.entity_ids("node")]
     ds.set("label", labels)                                  # integral values are fine
     with pytest.raises(ValueError, match="holds integers"):
         ds.set("label", 1.5)

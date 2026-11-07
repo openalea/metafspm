@@ -224,10 +224,15 @@ carbon()                                  # one time step: every step, in the sc
   `self.cached(name, build, key=None)` keeps a value until *key* changes (by default the topology version), e.g. a
   per-node array read from the MTG's labels; `component.run_stage("postsegmentation")` runs the steps of one
   schedule row only (e.g. after another model wrote the inputs they read).
-- **The MTG view.** By default (`mtg_sync = "lazy"`) the DataStructure is the reference and state variables reach the
-  MTG when it is read (`ds.mtg`, `ds.flush_mtg()`), before an MPG-style step. `mtg_sync = "after_call"` writes them
-  after every call, `"never"` never. `ds.structure` is the MTG to read the structure only (labels, parents,
-  complexes), without that synchronisation.
+- **The MTG view.** By default (`mtg_sync = "lazy"`) the DataStructure is the reference. A state variable held at
+  its own scale is not copied: the MTG reads its column. Mapped ones reach the MTG when it is read (`ds.mtg`,
+  `ds.flush_mtg()`), before an MPG-style step. `mtg_sync = "after_call"` writes them after every call, `"never"`
+  never. `ds.structure` is the MTG to read the structure only (labels, parents, complexes), without that
+  synchronisation.
+- **MTG properties** are read and written in bulk: `g.values_at(name, vids)`, `g.set_values(name, vids, values)`,
+  `g.column(name)` (values and presence over the vid index), `g.view(name)` vertex by vertex. `g.property(name)` is a
+  read-only mapping built on demand (openalea.mtg's API, for tests and legacy code): `g.property(name)[v] = x` raises,
+  write `g.set_values(name, [v], [x])`.
 
 ## 3. Graph systems
 

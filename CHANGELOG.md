@@ -2,6 +2,28 @@
 
 ## Unreleased (release2026)
 
+### The MPG's properties are columns, one storage (devplan_scene_parallel P1)
+
+- **A tracked variable is not copied to the MPG:** when a DataStructure tracks a variable held at its own scale
+  (its location's entities are the vertices of its `scale`, no mapping), the MPG's property is a view of the
+  DataStructure's column (`data_structure.columns.DataStructureColumn`). It reads the current values at any time, no
+  flush needed. The values written through the MPG (an MPG-style step's, the vertices the DataStructure does not hold
+  yet) stay in the view's overlay until the DataStructure reads them back. New entities have no MPG entry until the
+  next synchronisation, as with the copies. A variable mapped from another scale is still written back through the
+  inverse mapping. Checkpoints keep the columns once (`arrays.npz`): the pickled MPG holds its views without their
+  DataStructure, bound again on load.
+- **Every other property is a typed column:** `ArrayDict` (float64, or an object column for any value). The MPG's
+  property store (`ColumnStore`) keeps a dict assigned to it (`g.properties()[name] = {...}`, `setdefault(name, {})`)
+  as an object column. A write of one key builds no key dict.
+- **Bulk access:** `g.values_at(name, vids)`, `g.set_values(name, vids, values)` (existing and new vertices),
+  `g.column(name)` (new: the values and their presence over the vid index), `g.view(name)` (vertex by vertex).
+  **`g.property(name)` is openalea.mtg's read API only: a read-only mapping built on demand.** A write
+  `g.property(name)[v] = x` raises: write `g.set_values(name, [v], [x])`. openalea.mtg's per-vertex readers (`label`,
+  `edge_type`, `class_name`, `index`, `order`, `EdgeType`, `get_vertex_property`) read the columns.
+- The platform reads the columns in bulk (`at()`, `items_arrays()`); the ports' sites moved (GRANAP, Adel, Caribu,
+  ArchiSimple; their tests, examples and tutorials), CNW-Grass's coupled CN-Wheat keeps openalea.mtg's API on its own
+  MTG.
+
 ### A nodal root's bearer is the element at its phytomer's node
 
 - **`ds.bearer(location)`** gives each entity's element at its end: the last along its axis from its first (its

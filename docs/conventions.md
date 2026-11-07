@@ -88,7 +88,9 @@ means; a sum that would drop their non-zero amounts raises.
 Node → edge mappings have no default. Edges map up like their child-side nodes: an edge is counted at the owner of
 its child node (an axial junction at its child segment), with the defaults above.
 
-**Write-back.** State variables with a `scale` are written to the MTG at the vertices of their scale, through the inverse mapping, when the MTG is read (lazily: `ds.mtg`, an MPG-style step, `ds.flush_mtg()`; `mtg_sync = "after_call"` writes them after every component call, `"never"` not at all):
+**One storage.** A variable held at its own scale (its location's entities are the MTG vertices of its `scale`, with no mapping) is not copied to the MTG: the MTG's property is a view of the DataStructure's column (`DataStructureColumn`), read with its current values at any time. Values written through the MTG (an MPG-style step's, a vertex the DataStructure does not hold yet) are kept apart until the DataStructure reads them back. New entities have no MTG entry until the next synchronisation, as when the MTG held copies.
+
+**Write-back.** The other state variables with a `scale` are written to the MTG at the vertices of their scale, through the inverse mapping, when the MTG is read (lazily: `ds.mtg`, an MPG-style step, `ds.flush_mtg()`; `mtg_sync = "after_call"` writes them after every component call, `"never"` not at all):
 - a broadcast variable is written as the (weighted) mean of its nodes;
 - an averaged variable is broadcast back to its nodes;
 - an edge variable is written at its child or parent end.
@@ -117,12 +119,18 @@ Declarations that cannot be written back raise when the component is created: a 
 - Shape inference remains only when exactly one location matches, with a `DeprecationWarning`.
 
 **MTG synchronisation.**
-- **`mtg_sync = "lazy"`** (the default): the DataStructure is the reference, and the MTG a view kept up to date when read. A state variable changed since its last synchronisation is written to the MTG:
+- **`mtg_sync = "lazy"`** (the default): the DataStructure is the reference, and the MTG a view of it. A state variable held at its own scale is read from its column (one storage). A mapped one changed since its last synchronisation is written to the MTG:
   - before an MPG-style step;
   - when the MTG is read through `ds.mtg` (or `component.mtg`);
   - by `ds.flush_mtg()`.
 
-  An MPG-style step sees the variables its component declares (states, inputs, parameters); it must declare the properties it reads. Code holding the MTG object itself (e.g. a Logger given `g`) calls `ds.flush_mtg()` first.
+  An MPG-style step sees the variables its component declares (states, inputs, parameters); it must declare the properties it reads. Code holding the MTG object itself (e.g. a Logger given `g`) calls `ds.flush_mtg()` first for the mapped ones.
+- **MTG properties are columns** (`g.properties()`: typed columns, an object column for any value), read and written in bulk:
+  - `g.values_at(name, vids)`: (the sorted *vids* having a value, their values);
+  - `g.set_values(name, vids, values)`: existing and new vertices, a value each or one for all;
+  - `g.column(name)`: (values, present), two arrays over the vid index, to index with numpy;
+  - `g.view(name)`: a property read vertex by vertex (its column, with the instanced vertices' template values);
+  - `g.property(name)` is openalea.mtg's read API: a read-only mapping built on demand (slow; a write raises).
 - **Checkpoints:** `ds.checkpoint(path)` and `Class.restore(path)`. Derivation formulas and mask rules are module-level functions or picklable objects, not lambdas.
 - **No process-wide state:** what a run builds belongs to its DataStructures or its components, never to a module or a class: objects shared by content in `ds.objects(name, saved=)` (saved with the DataStructure, freed with it), caches in `component.caches()` (`cached()`, `keep(saved=False)`: dropped when a checkpoint is loaded), the simulation step in `ds.simulation_time_step`. A module-level memo is only for constants (a preset's defaults).
 - **`mtg_sync = "after_call"`** writes the state variables after every call (the former default); **`"never"`** leaves the MTG untouched.

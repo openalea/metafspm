@@ -214,7 +214,7 @@ def test_child_and_parent_are_the_edge_aggregations(seedling):
 def test_mtg_mapping_from_a_coarser_scale():
     """An Organ property maps to the SubOrgan-anchored nodes through their Organ complex."""
     g, _, ds = seedling_ds()
-    organs = [v for v in g.vertices(scale=g.scales.Organ) if not g.property("isanchor").get(v, False)]
+    organs = [v for v in g.vertices(scale=g.scales.Organ) if not g.view("isanchor").get(v, False)]
     g.properties()["organ_value"] = {v: 10. * v for v in organs}
 
     values = ds._mtg_to_node_array("organ_value", scale=g.scales.Organ)

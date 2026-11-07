@@ -63,7 +63,7 @@ def _row(ds, row):
     plant_of_node, segment_of_node = np.asarray(ds.owner("Plant")), np.asarray(ds.owner("SubOrgan"))
     plant_of_segment = np.empty(n_segments, dtype=int)
     plant_of_segment[segment_of_node] = plant_of_node
-    collar_x = np.round([ds.mtg.property("x")[int(p)] for p in ds.entity_ids("Plant")], 6)
+    collar_x = np.round([ds.mtg.view("x")[int(p)] for p in ds.entity_ids("Plant")], 6)
     rows = np.unique(collar_x)
     return collar_x[plant_of_segment] == rows[row], 1
 
@@ -191,7 +191,7 @@ def _soil_plane(grid, plant_ds, psi, y=None, row=None):
     """
     dx = grid.dx
     if row is not None:
-        rows = np.unique(np.round([plant_ds.mtg.property("x")[int(p)] for p in plant_ds.entity_ids("Plant")], 6))
+        rows = np.unique(np.round([plant_ds.mtg.view("x")[int(p)] for p in plant_ds.entity_ids("Plant")], 6))
         i = int(min(max(rows[row] // dx[0], 0), psi.shape[0] - 1))
         return psi[i, :, :], 1, 0, i, f"planting row {row}, x cell {i}"
     j = psi.shape[1] // 2 if y is None else int(min(max(y // dx[1], 0), psi.shape[1] - 1))
@@ -212,7 +212,7 @@ def _soil_background(ax, grid, plant_ds, row=None, quantity="anomaly"):
     The soil behind a side view, in the plane of the plants, on a scale of its own: its ΔΨ (Ψ minus its layer mean,
     diverging RdBu centred on 0) or its Ψ (copper). On an adaptive grid each cell is drawn at its own size.
     """
-    collar_y = float(plant_ds.mtg.property("y")[int(plant_ds.entity_ids("Plant")[0])])
+    collar_y = float(plant_ds.mtg.view("y")[int(plant_ds.entity_ids("Plant")[0])])
     adaptive = hasattr(grid, "refinement_level")
     if adaptive:
         values = cell_anomaly(grid) if quantity == "anomaly" else np.asarray(grid.get("water_potential")).reshape(-1)
@@ -448,7 +448,7 @@ def adaptive_slice(grid, plant_data_structures, path, quantity="size", y=None):
     """
     ds = plant_data_structures[0]
     if y is None:
-        y = float(ds.mtg.property("y")[int(ds.entity_ids("Plant")[0])])
+        y = float(ds.mtg.view("y")[int(ds.entity_ids("Plant")[0])])
     fig, ax = plt.subplots(figsize=(7, 6.4))
     if quantity == "size":
         size = grid.cell_sizes()[:, 0] * 100.

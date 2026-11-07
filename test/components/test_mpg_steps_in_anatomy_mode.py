@@ -47,7 +47,7 @@ class Cells(StructuralComponent):
     def _cells(self):
         g = self.mtg
         segments = self.data_structure.entity_ids("SubOrgan").tolist()
-        self.keep("lengths", [g.property("length").get(v) for v in segments], saved=False)
+        self.keep("lengths", [g.view("length").get(v) for v in segments], saved=False)
         if self.kept("grow", False):
             anchor = g.scales.anchors[g.scales.Compartment]
             g.add_component_with_topo(anchor, segments[0], **PropsConfig(
