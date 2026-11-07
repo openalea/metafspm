@@ -51,13 +51,13 @@ def _plant(translator):
     ds = MPGDataStructure(g, from_scale=g.scales.SubOrgan, nodes="Compartment", wiring=wiring(g))
     ds.simulation_time_step = 1
 
-    class Plant(CompositeModel):
-        def __init__(self, data_structure):
-            self.hydraulics = Hydraulics(data_structure=data_structure)
-            self.stomata = Stomata(data_structure=data_structure)
-            self.couple(self.hydraulics, self.stomata, translator=translator)
+    links = translator
 
-    plant = Plant(ds)
+    class Plant(CompositeModel):
+        parts = {"hydraulics": Hydraulics, "stomata": Stomata}
+        translator = links
+
+    plant = Plant(ds, None)
     owner = np.asarray(ds.owner("SubOrgan"))
     ds.set("water_potential", -1000. * (owner + 1.) - np.arange(ds.n_nodes()))
     ds.set("liquid_volume", np.where(owner == 0, 0., 1. + np.arange(ds.n_nodes())))

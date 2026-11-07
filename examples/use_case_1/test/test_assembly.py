@@ -49,7 +49,7 @@ def _scene(time_step=HOUR):
     return Scene(table, environment=[RichardsSoilModel, CaribuLightModel],
                  environment_scenarios=[dict(depth=0.2, voxel=0.05, adaptive=False, initial_pressure_head=-1.,
                                              bottom_boundary="no_flux"),
-                                        dict(sun=True, interval=HOUR)],
+                                        dict(sun=True, cadence={"light": HOUR})],
                  translator=SCENE_TRANSLATOR, time_step=time_step, forcings=forcings,
                  recorder=SceneRecorder(tables=WATER_TABLES), start="2026-05-10 11:00")
 
@@ -157,7 +157,7 @@ def test_each_model_works_on_its_own_entities(stepped):
     scene, _ = stepped
     instance = scene.populations[0].instance
     ds = scene.populations[0].data_structure
-    shoot, rule, roots = (component.data_structure for component in (instance.architecture, instance.rule,
+    shoot, rule, roots = (component.data_structure for component in (instance.shoot.architecture, instance.rule,
                                                                       instance.roots))
     assert all(isinstance(view, EntityView) for view in (shoot, rule, roots))
     assert set(np.asarray(shoot.labels()).tolist()) <= {"HiddenElement", "StemElement", "LeafElement"}

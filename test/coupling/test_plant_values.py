@@ -26,12 +26,8 @@ class Settings(Organs):
 class Model(CompositeModel):
     initiators = (Settings,)
 
-    def __init__(self, data_structure, time_step):
-        self.settings = Settings(data_structure=data_structure, time_step=time_step)
-        self.couple(self.settings)
-
-    def run(self):
-        pass
+    parts = {"settings": Settings}
+    schedule = ()
 
 
 def test_plant_scenarios_set_object_and_boolean_parameters_per_plant():
@@ -77,12 +73,7 @@ def test_a_per_plant_record_survives_an_mpg_style_step():
     class GrowerModel(CompositeModel):
         initiators = (Grower,)
 
-        def __init__(self, data_structure, time_step):
-            self.grower = Grower(data_structure=data_structure, time_step=time_step)
-            self.couple(self.grower)
-
-        def run(self):
-            self.grower()
+        parts = {"grower": Grower}
 
     table = pd.DataFrame([dict(plant="p0", model=GrowerModel, x=0., y=0., depth=0., rotation=0.,
                                scenario={"plan": [[0, 1.]]})])

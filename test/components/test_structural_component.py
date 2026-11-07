@@ -8,6 +8,7 @@ import numpy as np
 import pytest
 
 
+from openalea.metafspm.coupling.composite_wrapper import CompositeModel
 from openalea.metafspm.coupling.component import state_variable
 from openalea.metafspm.data_structure.configs import ScalesConfig as scales
 
@@ -195,15 +196,11 @@ def test_labels_of_a_coarse_scale():
     from scene_doubles import doubles_planting
     from openalea.metafspm.scene.scene import Scene
 
-    class Roots:
+    class Roots(CompositeModel):
         initiators = (RootGrowthProbe,)
 
-        def __init__(self, data_structure, time_step):
-            self.growth = RootGrowthProbe(data_structure=data_structure)
-            self.components = [self.growth]
-
-        def run(self):
-            pass
+        parts = {"growth": RootGrowthProbe}
+        schedule = ()
     ds = Scene(doubles_planting([Roots]), time_step=3600.).populations[0].data_structure
     assert ds.labels(location="Organ").tolist() == ["RootInternode"] * ds.n_nodes()
     assert ds.labels(location="Organ", per_node=False).tolist() == ["RootInternode"]

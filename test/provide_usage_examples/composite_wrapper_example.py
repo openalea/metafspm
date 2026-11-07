@@ -2,7 +2,7 @@
 A plant model on the current API: GrassBRIDGES as a population model of the Scene (see scene_example.py).
 
 The Scene builds one MPG for all the plants of this model, from the planting table, through the initiators; the
-model receives its MPGDataStructure and builds its components on it. Links between these components are the
+model receives its MPGDataStructure and builds its parts on it. Links between these components are the
 CompositeModel's translator (aliases and derived variables on the shared DataStructure); exchanges with the soil
 and the light model are the Scene's, through the scene translator. No queues, shared memory or MTG conversions.
 
@@ -24,22 +24,12 @@ class GrassBRIDGES(CompositeModel):
     initiators = (RootGrowthModelCoupled, CNW_Grass)        # each builds its part of every plant (initiate_plant)
     from_scale = "SubOrgan"                                  # graph nodes: the segments
 
-    def __init__(self, data_structure, time_step: int = 3600):
-        # Numeric parameters come per plant from the planting table's scenarios (stored at the Plant scale)
-        self.root_growth = RootGrowthModelCoupled(data_structure=data_structure, time_step=time_step)
-        self.root_anatomy = RootAnatomy(data_structure=data_structure, time_step=time_step)
-        self.root_water = RootWaterModel(data_structure=data_structure, time_step=time_step)
-        self.root_cn = RootCNUnified(data_structure=data_structure, time_step=time_step)
-        self.shoot = CNW_Grass(data_structure=data_structure, time_step=time_step)
-        self.components = [self.root_growth, self.root_anatomy, self.root_water, self.root_cn, self.shoot]
-
-        # Links between these components (one DataStructure): aliases and derived variables
-        self.couple(*self.components,
-                    translator=os.path.join(openalea.grassbridges.__path__[0], "plant_translator.py"))
-
-    def run(self):
-        self.root_growth()          # potential, actual growth and segmentation; update_topology() carries the state
-        self.root_anatomy()         # surfaces and volumes from the new structure
-        self.root_water()
-        self.root_cn()
-        self.shoot()          # time-varying inputs (meteo, soil temperature): the Scene's forcings
+    # its components, built in order on the population's MPGDataStructure (numeric parameters come per plant from
+    # the planting table's scenarios, stored at the Plant scale), and run in this order (no schedule: the parts')
+    parts = {"root_growth": RootGrowthModelCoupled,  # potential, actual growth and segmentation (update_topology)
+             "root_anatomy": RootAnatomy,            # surfaces and volumes from the new structure
+             "root_water": RootWaterModel,
+             "root_cn": RootCNUnified,
+             "shoot": CNW_Grass}                     # time-varying inputs (meteo, soil temperature): the forcings
+    # links between these components (one DataStructure): aliases and derived variables
+    translator = os.path.join(openalea.grassbridges.__path__[0], "plant_translator.py")

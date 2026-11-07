@@ -44,16 +44,13 @@ class SeedlingWater(CompositeModel):
     from_scale = "SubOrgan"
     nodes = "Compartment"
 
+    parts = {"structure": SeedlingStructure, "transport": PlantWaterTransport}
+    translator = PLANT_TRANSLATOR
+
     def __init__(self, data_structure, time_step):
-        self.structure = SeedlingStructure(data_structure=data_structure, time_step=time_step)
-        self.transport = PlantWaterTransport(data_structure=data_structure, time_step=time_step)
-        self.couple(self.structure, self.transport, translator=PLANT_TRANSLATOR)
+        super().__init__(data_structure, time_step)
         # the root surface (the structure's entity set): the soil links' mapping maps it only
         data_structure.define_mask("root_surface", entities="SeedlingStructure.root_surface")
-
-    def run(self):
-        self.structure()
-        self.transport()
 
 
 class Soil(test_soil.Soil):
@@ -78,6 +75,7 @@ class AdaptiveSoil(EnvironmentModel):
     settles with Ψ: the scene's stop_when sees the change of grid as a change of Ψ.
     """
     compartment = "Soil"
+    schedule = ("structure", "transport", "adapt")         # the grid adapted after each solve
 
     def __init__(self, plant_data_structures, xrange, yrange, time_step, depth=0.4, voxel=0.025, max_level=2,
                  refine_fraction=0.05, coarsen_fraction=0.005, topsoil_K=1.5, subsoil_K=0.6, topsoil_depth=0.2):
@@ -90,9 +88,6 @@ class AdaptiveSoil(EnvironmentModel):
         set_conductivity(self.grid, **self.layers)
         self.refine_fraction, self.coarsen_fraction = refine_fraction, coarsen_fraction
         self.history = []                                     # cells per level after each adaptation
-
-    def after_run(self):
-        self.adapt()
 
     def sink_density(self):
         """Plant uptake per cell volume (mm3 s-1 m-3)."""

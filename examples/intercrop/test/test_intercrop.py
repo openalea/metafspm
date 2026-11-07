@@ -27,7 +27,8 @@ def test_two_populations_of_one_model(scene):
 
 
 def test_the_soil_reaches_both_and_gathers_both(scene):
-    """Links by class reach both populations; the link naming pea.SoilContact the pea's only."""
+    """Links by class reach both populations; the link naming pea.RootArchitecture the pea's only (the roots' view
+    of each plant: the soil exchanges with it)."""
     grid = scene.model(intercrop.Soil).grid
     for name in ("wheat", "pea"):
         temperature = np.asarray(scene.population(name).data_structure.get("soil_temperature"))

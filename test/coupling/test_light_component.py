@@ -9,7 +9,10 @@ from dataclasses import dataclass
 
 import numpy as np
 
+from openalea.metafspm.coupling.composite_wrapper import CompositeModel
+from openalea.metafspm.coupling.cadence import Cadence
 from openalea.metafspm.coupling.component import FunctionalComponent, input_variable, state_variable
+from openalea.metafspm.coupling.schedule import Step
 from openalea.metafspm.coupling.translator import Translator
 from openalea.metafspm.data_structure.configs import ScalesConfig as scales
 from openalea.metafspm.scene.environment import EnvironmentModel
@@ -43,16 +46,16 @@ class PeaOrgans(WheatOrgans):
 
 
 def _plant_model(name, organs):
-    class Model:
+    class Model(CompositeModel):
         initiators = (RootGrowthProbe,)
 
-        def __init__(self, data_structure, time_step):
-            data_structure.register("radius", 0.05 if organs is WheatOrgans else 0.1, location="node")
-            self.organs = organs(data_structure=data_structure)
-            self.components = [self.organs]
+        parts = {"organs": organs}
+        schedule = ()
 
-        def run(self):
-            pass
+        def __init__(self, data_structure, time_step):
+            super().__init__(data_structure, time_step)
+            data_structure.register("radius", 0.05 if organs is WheatOrgans else 0.1, location="node")
+
     Model.__name__ = name
     return Model
 
@@ -98,19 +101,14 @@ class ToyCaribu(FunctionalComponent):
 
 
 class ToyCaribuModel(EnvironmentModel):
-    """Runs every 4 steps (e.g. every 4 h); its outputs are kept in between."""
-    interval = 4 * DT
+    """Runs every 4 steps (e.g. every 4 h, its schedule's cadence); its outputs are kept in between."""
+    schedule = (Step("light", cadence=Cadence(4 * DT, at="start")),)
 
     def __init__(self, plant_data_structures, xrange, yrange, time_step):
         super().__init__(plant_data_structures, xrange, yrange, time_step)
         self.scene = self.plant_data_structure()                          # the union of the two populations
         self.light = ToyCaribu(data_structure=self.scene)
         self.components = [self.light]
-        self.runs = 0
-
-    def full_run(self):
-        self.runs += 1
-        self.light()
 
 
 def _translator():
@@ -140,4 +138,4 @@ def test_a_light_model_triangulates_the_populations_itself():
         scene.run()
     np.testing.assert_array_equal(wheat.get("absorbed"), kept)          # held between runs
     scene.run()
-    assert scene.environment[0].runs == 2 and not np.array_equal(wheat.get("absorbed"), kept)
+    assert scene.calls["ToyCaribuModel.ToyCaribu"] == 2 and not np.array_equal(wheat.get("absorbed"), kept)

@@ -16,16 +16,18 @@ def test_component_reference():
 
 
 def test_a_model_reference():
+    from openalea.metafspm.coupling.cadence import Cadence
+    from openalea.metafspm.coupling.schedule import Step
     from openalea.metafspm.scene.environment import EnvironmentModel
 
     class Light(EnvironmentModel):
         """A light model."""
-        interval = 3600.
+        schedule = (Step("light", stages="rate", cadence=Cadence("1 h", at="start")), "relax")
 
-        def between(self):
+        def relax(self):
             """Only PARa."""
     text = component_rst(Light)
-    assert "A light model." in text and "every 3600 s" in text and "``between``: Only PARa." in text
+    assert "A light model." in text and "Step('light'" in text and "``relax``: Only PARa." in text
 
 
 def test_a_component_without_declarations():

@@ -153,16 +153,7 @@ class Carbon(FunctionalComponent):
 class Plant(CompositeModel):
     initiators = (Shoot, Roots)
 
-    def __init__(self, data_structure, time_step):
-        self.shoot = Shoot(data_structure=data_structure, time_step=time_step)
-        self.roots = Roots(data_structure=data_structure, time_step=time_step)
-        self.carbon = Carbon(data_structure=data_structure, time_step=time_step)
-        self.couple(self.shoot, self.roots, self.carbon)
-
-    def run(self):
-        self.shoot()
-        self.roots()
-        self.carbon()
+    parts = {"shoot": Shoot, "roots": Roots, "carbon": Carbon}
 
 
 def _population(n_plants=2):
@@ -384,13 +375,8 @@ class Tillers(StructuralComponent):
 class TilleredPlant(CompositeModel):
     initiators = (Shoot,)
 
-    def __init__(self, data_structure, time_step):
-        self.shoot = Shoot(data_structure=data_structure, time_step=time_step)
-        self.tillers = Tillers(data_structure=data_structure, time_step=time_step)
-        self.couple(self.shoot, self.tillers)
-
-    def run(self):
-        self.tillers()
+    parts = {"shoot": Shoot, "tillers": Tillers}
+    schedule = ("tillers",)
 
 
 def test_a_declaration_on_a_coarse_variable_sees_a_new_complex_s_value():

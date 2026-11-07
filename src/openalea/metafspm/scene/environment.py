@@ -3,27 +3,28 @@ The base of a scene's environment models (light, soil, atmosphere)::
 
     class Soil(EnvironmentModel):
         compartment = "Soil"                                        # the folder of its outputs
+        schedule = ("transport", "adapt")                           # its steps: a component, then a method
         def __init__(self, plant_data_structures, xrange, yrange, time_step, depth=0.4, voxel=0.025):
             super().__init__(plant_data_structures, xrange, yrange, time_step)
-            self.grid = self.build_grid(voxel, depth)               # a grid over the scene's pattern, z down
+            self.grid = self.build_grid(voxel, depth, adaptive=True)  # a grid over the scene's pattern, z down
             self.transport = SoilWaterTransport(data_structure=self.grid, time_step=time_step)
             self.components = [self.transport]
+        def adapt(self):
+            ...                                                     # the grid refined where the fluxes are
 
     class Light(EnvironmentModel):
         compartment = "Atmosphere"
-        interval = "4 h"                                            # a full run every 4 hours
+        schedule = (Step("light", stages="rate", cadence=Cadence("4 h", at="start")),    # lit every 4 hours
+                    Step("light", stages="state", name="absorbed_light"))               # its PARa every step
         def __init__(self, plant_data_structures, xrange, yrange, time_step):
             super().__init__(plant_data_structures, xrange, yrange, time_step)
             self.light = CaribuLight(data_structure=self.plant_data_structure(), time_step=time_step)
             self.components = [self.light]
-        def between(self):
-            self.light.run_stage("state")                           # the other steps: only the row "state"
 
 The Scene builds it with its populations' DataStructures, the scene's ranges and time step (and the scenario's keys
-its __init__ names), then calls run() at every step. run() runs the components in order when the model is due
-(every step, or every *interval*, a duration: "4 h", or s; or an overridden due()), then after_run() (e.g.
-regridding); otherwise between().
-The time of the last full run is kept by checkpoints. A plain class with the same contract (plant_data_structures,
+its __init__ names), then calls run() at every step: its schedule (coupling.schedule: its components, by their
+attribute names, and its methods; default: its components in order), each step at its cadence (a Step's cadence=,
+the scenario's "cadence" {step name: duration}). A plain class with the same contract (plant_data_structures,
 xrange, yrange, time_step; components; run) is still accepted by the Scene.
 """
 from openalea.metafspm.coupling.composite_wrapper import CompositeModel
@@ -36,10 +37,8 @@ def _scale_name(ds, scale) -> str:
 
 
 class EnvironmentModel(CompositeModel):
-    """An environment model of a Scene: its DataStructures over the scene's pattern, its components, its cadence."""
+    """An environment model of a Scene: its DataStructures over the scene's pattern, its components, its schedule."""
 
-    # The time between two full runs, a duration ("4 h", or s; None: every step); between them, between() runs instead
-    interval = None
     # The folder of its outputs (SceneRecorder): "Soil" or "Atmosphere", required
     compartment = None
 
@@ -49,7 +48,6 @@ class EnvironmentModel(CompositeModel):
         # the scene's pattern (x1, y1, x2, y2), repeated in x and y by periodic models
         self.pattern = (0., 0., float(xrange), float(yrange)) if xrange is not None else None
         self.components = []
-        self.last_run = None
         self._plants = None
 
     # ── its DataStructures ───────────────────────────────────────────────────
@@ -78,60 +76,17 @@ class EnvironmentModel(CompositeModel):
             return AdaptiveGridDataStructure(shape=shape, dx=dx, periodic=periodic, max_level=max_level)
         return ArrayDataStructure(shape=shape, dx=dx, periodic=periodic)
 
-    # ── its cadence ──────────────────────────────────────────────────────────
+    # ── its time ─────────────────────────────────────────────────────────────
 
     def time(self) -> float:
         """The scene's time at this step's start (the Scene sets it on the components before running the model)."""
         return float(self.components[0].__dict__.get("_clock", 0.)) if self.components else 0.
 
-    def due(self, time) -> bool:
-        """Whether the model runs fully at *time*: every step, or every *interval* (a scenario key of the model too),
-        and whenever the plants' geometry its components read (geometry_input) changed as they ask."""
-        from openalea.metafspm.coupling.durations import positive_duration
-        interval = None if self.interval is None else positive_duration(self.interval, f"{type(self).__name__}.interval")
-        if interval is None or self.last_run is None or time - self.last_run >= interval - 1e-9:
-            return True
-        return self._geometry_stamp() != self.__dict__.get("_lit_geometry")
-
-    def _geometry_stamp(self):
-        """What the components' geometry_input(relight=...) follow: the elements (topology), or the triangles."""
-        from dataclasses import fields
-        relights = {f.metadata.get("relight") for component in self.components if hasattr(component, "__dataclass_fields__")
-                    for f in fields(component) if f.metadata.get("variable_type") == "geometry"}
-        if not relights - {None} or self._plants is None:
-            return None
-        parts = self._plants.parts
-        stamp = tuple((part.topology_version, part.n_nodes()) for part in parts)
-        if "geometry" in relights:
-            from openalea.metafspm.solve.memo import content_key
-            stamp += (content_key(*(part.triangles().vertices for part in parts)),)
-        return stamp
-
-    def run(self) -> None:
-        time = self.time()                  # before the components' calls, which advance their clocks
-        if self.due(time):
-            self.full_run()
-            self.last_run = time
-            self.__dict__["_lit_geometry"] = self._geometry_stamp()
-            self.after_run()
-        else:
-            self.between()
-
-    def full_run(self) -> None:
-        """The components, in order."""
-        for component in self.components:
-            component()
-
-    def between(self) -> None:
-        """What runs at the steps when the model is not due (nothing by default)."""
-
-    def after_run(self) -> None:
-        """What follows a full run (e.g. an adaptive grid refined where the fluxes are)."""
-
     # ── checkpoints ──────────────────────────────────────────────────────────
 
     def checkpoint_state(self) -> dict:
-        return {"last_run": self.last_run}
+        """The model's own state for the Scene's checkpoints (its components' are theirs): none by default."""
+        return {}
 
     def restore_state(self, state: dict) -> None:
-        self.last_run = state.get("last_run")
+        """The model's own state back from a checkpoint (checkpoint_state's)."""

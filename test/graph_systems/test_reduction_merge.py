@@ -106,12 +106,7 @@ def _model(reduction):
         def wiring(g):
             return wiring(g)
 
-        def __init__(self, data_structure, time_step):
-            self.hydraulics = NodeHydraulics(data_structure=data_structure, time_step=time_step)
-            self.couple(self.hydraulics)
-
-        def run(self):
-            self.hydraulics()
+        parts = {"hydraulics": NodeHydraulics}
     MergePlant.reduction = reduction
     return MergePlant
 

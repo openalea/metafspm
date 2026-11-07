@@ -55,8 +55,8 @@ DISPLAY_PLANTS = ("p0",)                       # the plants whose sections the f
 # The soil: a loam 50 cm deep (ten layers of 5 cm cells, below the roots of two weeks), refined once where the roots
 # take up water, its water at -1 m of head
 SOIL_SCENARIO = {"depth": 0.5, "voxel": 0.05, "max_level": 1, "initial_pressure_head": -1.}
-# The light: Caribu with the sun, every hour
-LIGHT_SCENARIO = {"sun": True, "latitude": LATITUDE, "interval": "1 h"}
+# The light: Caribu with the sun, lit every hour (its lighting step's cadence)
+LIGHT_SCENARIO = {"sun": True, "latitude": LATITUDE, "cadence": {"light": "1 h"}}
 # The variables the frames keep (SceneRecorder's frame_options variables=, io.encoding3d.filter_frame): every entity
 # set keeps its structure (ids, labels, complex and parent links, the segment ends), and these variables only. The
 # Compartments (a reduced section's interiors too, in the frames drawing the sections) hold most of a frame's rows:

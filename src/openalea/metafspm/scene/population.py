@@ -182,9 +182,10 @@ def population_data_structure(table: pd.DataFrame, model, time_step: float = 360
     scenario = _flat_scenario(table["scenario"].iloc[0] if scenario is None and len(table) else scenario)
     read_by_initiators = set()
     reduction = _model_reduction(model, table, scenario, read_by_initiators)
-    g, plants = _build_population(table, initiators=getattr(model, "initiators", ()),
+    from openalea.metafspm.coupling.composite_wrapper import model_initiators, model_translator
+    g, plants = _build_population(table, initiators=model_initiators(model),
                                   read_by_initiators=read_by_initiators, reduction=reduction,
-                                  translator=getattr(model, "translator", None), soil_surface=soil_surface)
+                                  translator=model_translator(model), soil_surface=soil_surface)
     scale = getattr(model, "from_scale", None) or "SubOrgan"
     scale = getattr(g.scales, scale) if isinstance(scale, str) else scale
     nodes = getattr(model, "nodes", None)
@@ -366,11 +367,16 @@ def _apply_model_scenario(model, instance, scenario: dict, read_by_initiators=()
     the scenario's keys, except those *model*'s __init__ names (its own arguments). Parameters
     stored per plant are left to _apply_plant_scenarios (a plant without the entry keeps the default), or, with
     *per_plant* False (an environment model's scenario: a light model's optics on the plants' DataStructure), set for
-    every plant. An entry that is no component parameter, no argument of the model and not read by its initiators
-    raises.
+    every plant. The entry "cadence" ({step name: duration, Cadence or None}) sets the model's steps' cadences
+    (CompositeModel.set_cadences). An entry that is no component parameter, no argument of the model and not read by
+    its initiators raises.
     """
     named = _model_arguments(model)
     entries = {key: value for key, value in _flat_scenario(scenario).items() if key not in named}
+    if "cadence" in entries:                        # the model's steps' cadences (coupling.schedule), by step name
+        if not hasattr(instance, "set_cadences"):
+            raise ValueError(f"{model.__name__}: its scenario's cadence needs a model with a schedule (CompositeModel)")
+        instance.set_cadences(entries.pop("cadence"))
     components = list(getattr(instance, "components", ()))
     unknown = []
     for name, value in entries.items():

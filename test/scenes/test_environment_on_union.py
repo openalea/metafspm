@@ -1,7 +1,7 @@
 """
 The environment on the plants' union, of one population too: its outputs a plant model reads by name, and its inputs
 a plant model holds by name, linked by default; the Scene's calendar (start="2026-06-21 06:00", a date) for every component
-and the forcings of origin "calendar"; an environment model's interval set by its scenario; geometry_input's relight.
+and the forcings of origin "calendar"; an environment model's cadence set by its scenario; geometry_input's relight.
 """
 from dataclasses import dataclass
 
@@ -9,10 +9,12 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from openalea.metafspm.coupling.cadence import Cadence
 from openalea.metafspm.coupling.component import (FunctionalComponent, forcing_variable, geometry_input,
                                                   input_variable, state_variable)
 from openalea.metafspm.coupling.composite_wrapper import CompositeModel
 from openalea.metafspm.coupling.forcings import as_forcing
+from openalea.metafspm.coupling.schedule import Step
 from openalea.metafspm.scene.environment import EnvironmentModel
 from openalea.metafspm.scene.scene import Scene
 from openalea.metafspm.solve.decorator import state
@@ -36,12 +38,7 @@ class Absorbing(FunctionalComponent):
 class Plants(CompositeModel):
     initiators = (RootGrowthProbe,)
 
-    def __init__(self, data_structure, time_step):
-        self.absorbing = Absorbing(data_structure=data_structure)
-        self.couple(self.absorbing)
-
-    def run(self):
-        self.absorbing()
+    parts = {"absorbing": Absorbing}
 
 
 @dataclass
@@ -60,6 +57,7 @@ class Sky(FunctionalComponent):
 
 class Light(EnvironmentModel):
     compartment = "Atmosphere"
+    schedule = (Step("sky", cadence=Cadence(DT, at="start")),)       # every step unless a scenario says otherwise
 
     def __init__(self, plant_data_structures, xrange, yrange, time_step):
         super().__init__(plant_data_structures, xrange, yrange, time_step)
@@ -93,19 +91,25 @@ def test_the_calendar_and_its_forcings():
               forcings={"PARi": as_forcing(lambda hour: hour, time_unit="h", origin="calendar")})
 
 
-def test_an_environment_models_interval_is_a_scenario_key():
-    scene = _scene(environment_scenarios=[{"interval": 3 * DT}])
-    assert scene.environment[0].interval == 3 * DT
+def test_an_environment_models_cadence_is_a_scenario_key():
+    scene = _scene(environment_scenarios=[{"cadence": {"sky": 3 * DT}}])
+    (step,) = scene.environment[0].steps()
+    assert step.cadence == Cadence(3 * DT, at="start")                  # the declared "at" kept
+    with pytest.raises(KeyError, match="no such step"):
+        _scene(environment_scenarios=[{"cadence": {"moon": 3 * DT}}])
 
 
 def test_geometry_input_relights_when_elements_appear():
-    scene = _scene(environment_scenarios=[{"interval": 100 * DT}])
+    scene = _scene(environment_scenarios=[{"cadence": {"sky": 100 * DT}}])
     light = scene.environment[0]
     scene.run()
-    assert not light.due(DT)                                    # the same elements: not due before its interval
+    scene.run()
+    assert scene.calls["Light.Sky"] == 1                       # the same elements: not due before its interval
     part = light.plant_data_structure().parts[0]
     part.__dict__["_topology_version"] = part.topology_version + 1                 # as growth would
-    assert light.due(DT)
+    scene.run()
+    assert scene.calls["Light.Sky"] == 2                       # relit: covering up to its interval's end
+    assert light.sky.__dict__.get("_clock") == 3 * DT
     rows = light.couplings().set_index("variable")
     assert rows.loc["canopy", "coupling"] == "geometry"
 
@@ -137,12 +141,7 @@ def test_a_structural_component_reads_the_calendar_and_forcings_and_an_unplaced_
     class ClockedPlants(CompositeModel):
         initiators = (Clocked,)
 
-        def __init__(self, data_structure, time_step):
-            self.clocked = Clocked(data_structure=data_structure)
-            self.couple(self.clocked)
-
-        def run(self):
-            self.clocked()
+        parts = {"clocked": Clocked}
 
     assert issubclass(Clocked, StructuralComponent)
     scene = Scene(doubles_planting([ClockedPlants]), time_step=DT, start="2026-04-10 08:00",

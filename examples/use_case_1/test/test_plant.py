@@ -14,8 +14,7 @@ import pytest
 pytest.importorskip("openalea.adel")
 pytest.importorskip("openalea.archisimple")
 
-from openalea.adel.architecture import ShootArchitecture                              # noqa: E402
-from openalea.adel.development import DAY, ScenarioDevelopment                        # noqa: E402
+from openalea.adel.development import DAY, ScenarioShoot                              # noqa: E402
 from openalea.archisimple.architecture import RootArchitecture                        # noqa: E402
 from openalea.archisimple.parameter_sets import WHEAT_ON_A_SHOOT                      # noqa: E402
 from openalea.metafspm.coupling.composite_wrapper import CompositeModel                # noqa: E402
@@ -37,37 +36,16 @@ ROOT_LABELS = ("RootSegment", "RootApex")
 
 
 class WheatPlant(CompositeModel):
-    """The crown, Adel's shoot (its development and architecture, run together), the nodal root rule, then
-    ArchiSimple's roots."""
-    initiators = (WheatCrown, ShootArchitecture, RootArchitecture)
-
-    def __init__(self, data_structure, time_step):
-        self.crown = WheatCrown(data_structure=data_structure, time_step=time_step)
-        self.development = ScenarioDevelopment(data_structure=data_structure, time_step=time_step)
-        self.architecture = ShootArchitecture(data_structure=data_structure, time_step=time_step)
-        self.rule = NodalRootEmergence(data_structure=data_structure, time_step=time_step)
-        self.roots = RootArchitecture(data_structure=data_structure, time_step=time_step)
-        self.couple(self.crown, self.development, self.architecture, self.rule, self.roots)
-
-    def run(self):
-        self.run_together(self.development, self.architecture)
-        self.rule()
-        self.roots()
+    """The crown, Adel's shoot (ScenarioShoot, nested: its development and architecture grown together), the nodal
+    root rule, then ArchiSimple's roots: models.WheatPlant's first parts, as it steps them."""
+    initiators = (WheatCrown, ScenarioShoot, RootArchitecture)
+    parts = {"crown": WheatCrown, "shoot": ScenarioShoot, "rule": NodalRootEmergence, "roots": RootArchitecture}
 
 
 class WheatShoot(CompositeModel):
     """The crown, Adel's shoot and the rule, without roots (the rule's requests alone)."""
-    initiators = (WheatCrown, ShootArchitecture)
-
-    def __init__(self, data_structure, time_step):
-        self.development = ScenarioDevelopment(data_structure=data_structure, time_step=time_step)
-        self.architecture = ShootArchitecture(data_structure=data_structure, time_step=time_step)
-        self.rule = NodalRootEmergence(data_structure=data_structure, time_step=time_step)
-        self.couple(self.development, self.architecture, self.rule)
-
-    def run(self):
-        self.run_together(self.development, self.architecture)
-        self.rule()
+    initiators = (WheatCrown, ScenarioShoot)
+    parts = {"crown": WheatCrown, "shoot": ScenarioShoot, "rule": NodalRootEmergence}
 
 
 def _scenario(roots=True, rule=True, **values):
@@ -200,7 +178,7 @@ def test_each_model_sees_its_own_entities(grown):
     scene, _ = grown
     instance = scene.populations[0].instance
     ds = scene.populations[0].data_structure
-    shoot, rule, roots = (component.data_structure for component in (instance.architecture, instance.rule,
+    shoot, rule, roots = (component.data_structure for component in (instance.shoot.architecture, instance.rule,
                                                                       instance.roots))
     assert all(isinstance(view, EntityView) for view in (shoot, rule, roots))
     assert set(np.asarray(roots.labels()).tolist()) == set(ROOT_LABELS)
@@ -272,31 +250,34 @@ def test_nodal_roots_on_the_right_phytomers_at_the_right_times(grown):
 
 
 def test_the_nodal_roots_start_on_the_crown(grown):
-    """Every nodal root starts at its phytomer's node (the rule's site_x, site_y, site_z): on the crown, the
-    internodes below not elongated (the tillering zone), the crown's x and y; Adel draws the first element of a
-    phytomer above the first on the coleoptile's top, out of the soil, where the nodal roots would otherwise start."""
+    """Every nodal root starts at its phytomer's node (ds.position("Phytomer", at="end"), from the elements'
+    topological ends): on the crown, the internodes below not elongated (the tillering zone), the crown's x and y;
+    Adel draws the first element of a phytomer above the first on the coleoptile's top, out of the soil (its display
+    ends), where the nodal roots would otherwise start. The plant's ends are topological: each element's base at its
+    parent's end (ds.check_connectivity), but for a nodal root's (its node, above its bearer's end)."""
     scene, history = grown
     ds = scene.populations[0].data_structure
     g = ds.structure
     final = history[-1]["phytomers"]
     plants = ds.entity_ids("Plant").tolist()
-    grown_on = 0
+    nodes = ds.position("Phytomer", at="end")
+    grown_on, roots = 0, set()
     for (plant, row, rank), record in final.items():
         if not record["roots"]:
             continue
         grown_on += 1
-        site = ds.index_of([record["id"]], location="Phytomer")
-        node = [float(np.asarray(ds.get(name))[site][0]) for name in ("site_x", "site_y", "site_z")]
+        roots.update(record["roots"])
+        node = nodes[ds.index_of([record["id"]], location="Phytomer")][0]
         np.testing.assert_allclose(node, [g.property("x")[plants[plant]], g.property("y")[plants[plant]],
                                           -CROWN_DEPTH], atol=1e-12)
         index = ds.index_of(record["roots"])
         start = np.column_stack([np.asarray(ds.get(name))[index] for name in ("x1", "y1", "z1")])
         np.testing.assert_allclose(start, np.tile(node, (len(record["roots"]), 1)), atol=1e-12)
         if rank >= 2:                                                   # its bearer drawn out of the soil
-            assert np.asarray(ds.get("z2"))[ds.index_of(record["bearer"])] > 0.
+            assert np.asarray(ds.get("display_z2"))[ds.index_of(record["bearer"])] > 0.
     assert grown_on >= 4                                                # ranks 1 and 2 of each main stem
-    crown_axes = np.asarray(ds.get("axis_row"))[ds.owner("Axis", of="Phytomer")] < 0
-    assert np.isnan(np.asarray(ds.get("site_z"))[crown_axes]).all()     # the crown's and the roots' phytomers
+    gaps = ds.check_connectivity(tolerance=1e-12)
+    assert set(gaps["element"].tolist()) <= roots                       # the nodal roots' bases, on the node
 
 
 def test_the_plant_is_drawn_connected(grown):

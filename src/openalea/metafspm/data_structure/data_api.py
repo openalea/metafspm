@@ -1739,6 +1739,78 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
             out[k] = min(first or vertices)
         return out
 
+    # ── positions: the elements' topological ends (x1 ... z2) ──
+
+    def _element_ends(self) -> tuple:
+        """(the elements' location, their bases (n, 3), their ends (n, 3), their ids): x1 ... z2, where stored (the
+        nodes in segment mode, the from_scale's entities in anatomy mode)."""
+        names = ("x1", "y1", "z1", "x2", "y2", "z2")
+        if not all(self.has(name) for name in names):
+            raise KeyError("the elements have no ends (x1 ... z2): no architecture gives them")
+        location = self.location("x1")
+        ends = np.stack([np.asarray(self.get(name), dtype=float).reshape(-1) for name in names], axis=1)
+        return location, ends[:, :3], ends[:, 3:], np.asarray(self.entity_ids(location), dtype=np.int64)
+
+    def position(self, location: str, at: str = "base") -> np.ndarray:
+        """
+        Where each entity of *location* (a coarse scale, "Phytomer", "Organ", ..., or the elements' own) is, (n, 3),
+        from its elements' topological ends (x1 ... z2, each element's base at its parent's end): *at* "base", its
+        first element's base (the element whose parent is outside it, the earliest: ds.bearer's); "end", the end of
+        its last element along its axis (from the first, its successors '<' within it). A Phytomer's node, where its
+        leaf and its nodal roots are, is its end (its internode's top: an axis inclined or not). NaN for an entity
+        without elements.
+        """
+        if at not in ("base", "end"):
+            raise ValueError(f"position(at=...): 'base' or 'end', got {at!r}")
+        elements, bases, ends, ids = self._element_ends()
+        if location == elements:
+            return (bases if at == "base" else ends).copy()
+        owner = np.asarray(self.owner(location) if elements == "node" else self.owner(location, of=elements),
+                           dtype=np.int64)
+        parent = np.asarray(self.parents(None if elements == "node" else elements), dtype=np.int64)
+        count = len(self.entity_ids(location))
+        inside = (parent >= 0) & (owner >= 0)
+        inside[inside] = owner[parent[inside]] == owner[inside]
+        first = np.full(count, -1, dtype=np.int64)
+        candidates = np.flatnonzero(~inside & (owner >= 0))
+        if candidates.size:                              # the earliest (smallest id) of each entity's first elements
+            order = candidates[np.lexsort((ids[candidates], owner[candidates]))]
+            keep = np.r_[True, owner[order][1:] != owner[order][:-1]]
+            first[owner[order][keep]] = order[keep]
+        out = np.full((count, 3), np.nan)
+        known = first >= 0
+        if at == "base":
+            out[known] = bases[first[known]]
+            return out
+        having, edge = self._mtg.values_at("edge_type", np.sort(ids))
+        edge_of = dict(zip(np.asarray(having).tolist(), list(edge)))
+        successor = np.full(ids.size, -1, dtype=np.int64)
+        follows = inside & np.array([edge_of.get(int(vid)) == "<" for vid in ids.tolist()], dtype=bool)
+        successor[parent[follows]] = np.flatnonzero(follows)
+        last = first.copy()
+        while True:
+            step = np.where(last >= 0, successor[np.maximum(last, 0)], -1)
+            moving = step >= 0
+            if not moving.any():
+                break
+            last[moving] = step[moving]
+        out[known] = ends[last[known]]
+        return out
+
+    def check_connectivity(self, tolerance: float = 1e-9):
+        """
+        The elements whose base (x1, y1, z1) is not at their parent element's end (x2, y2, z2) within *tolerance*
+        (m): a pandas DataFrame (element, parent: their ids; gap: the distance, m), empty when the elements' ends are
+        topological (metafspm's convention; their display ends, display_x1 ... display_z2, may differ).
+        """
+        import pandas as pd
+        elements, bases, ends, ids = self._element_ends()
+        parent = np.asarray(self.parents(None if elements == "node" else elements), dtype=np.int64)
+        child = np.flatnonzero(parent >= 0)
+        gap = np.linalg.norm(bases[child] - ends[parent[child]], axis=1)
+        bad = gap > tolerance
+        return pd.DataFrame({"element": ids[child[bad]], "parent": ids[parent[child[bad]]], "gap": gap[bad]})
+
     def order(self, kind: str = "pre", traversal: str = None, location: str = None) -> np.ndarray:
         """
         Node permutation: "pre" lists every parent before its children, "post" every child before its parent.

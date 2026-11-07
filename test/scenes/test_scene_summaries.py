@@ -102,16 +102,7 @@ class Water(FunctionalComponent):
 class Plant(CompositeModel):
     initiators = (Shoot, Roots)
 
-    def __init__(self, data_structure, time_step):
-        self.shoot = Shoot(data_structure=data_structure, time_step=time_step)
-        self.roots = Roots(data_structure=data_structure, time_step=time_step)
-        self.water = Water(data_structure=data_structure, time_step=time_step)
-        self.couple(self.shoot, self.roots, self.water)
-
-    def run(self):
-        self.shoot()
-        self.roots()
-        self.water()
+    parts = {"shoot": Shoot, "roots": Roots, "water": Water}
 
 
 def _scene(tables=None):

@@ -1,3 +1,4 @@
+from contextvars import ContextVar
 from typing import Optional
 
 from openalea.metafspm.coupling.declaration import check_link
@@ -10,24 +11,105 @@ def _live_data_structure(component):
     return ds if (ds is not None and hasattr(ds, "register") and hasattr(ds, "get")) else None
 
 
+_NESTED = ContextVar("metafspm_nested_model", default=False)     # a model built as another's part
+
+
+class Part:
+    """A part built with constructor keywords (its settings at construction):
+    ``parts = {"hydraulics": Part(MechaHydraulics, soil_boundary="node_dirichlet")}``."""
+
+    def __init__(self, cls, **keywords):
+        self.cls, self.keywords = cls, keywords
+
+    def __repr__(self) -> str:
+        return f"Part({self.cls.__name__}, {', '.join(f'{k}={v!r}' for k, v in self.keywords.items())})"
+
+
 class CompositeModel:
     """
-    Components sharing one DataStructure, coupled by couple(): an input with the name of another component's
-    variable reads it (the DataStructure is the coupling); the translator's links state the rest, a rename, a
-    conversion factor, a change of scale or a formula. couplings() lists how each input is coupled.
+    A model: components sharing one DataStructure, declared as its parts and run by its schedule
+    (coupling.schedule)::
 
-    translator: the model's coupling contract (a class attribute, anything Translator.load reads): couple() uses it
-    when given none, and its links between initiators apply while they build each plant (coupling.initiation).
+        class WheatPlant(CompositeModel):
+            initiators = (WheatCrown, ScenarioShoot, RootArchitecture, GranapAnatomy)
+            parts = {"crown": WheatCrown, "shoot": ScenarioShoot, "rule": NodalRootEmergence, ...}
+            schedule = ("shoot", "rule", "roots", Step("anatomy", cadence="1 d"), ...)
+            translator = PLANT_TRANSLATOR
+
+    *parts* ({name: class, or Part(class, **keywords): a component built with constructor keywords}): the
+    components, or nested models (a CompositeModel: its parts become this model's
+    components, its schedule one step of this one's, its translator's links merged), built in order on the model's
+    DataStructure in its time step (a component class declaring its own time_step: in it, its sub-step), each the
+    model's attribute of its name; then coupled once: an input with the name of another
+    component's variable reads it (the DataStructure is the coupling); the translator's links state the rest, a
+    rename, a conversion factor, a change of scale or a formula. couplings() lists how each input is coupled.
+    *schedule* (coupling.schedule: part names, methods, Step, Together; default: the parts in order) is what run()
+    runs; steps() gives its steps bound, with their reads and writes. A model's own work besides its parts' (a mask
+    defined on its DataStructure) goes in its __init__, after super().__init__.
+
+    translator: the model's coupling contract (a class attribute, anything Translator.load reads): its links between
+    initiators apply while they build each plant (coupling.initiation). initiators: the StructuralComponents building
+    each plant, in order (a nested model's initiators where the model is named).
+
+    An environment model (scene.environment.EnvironmentModel) builds its components on its own DataStructures in its
+    __init__ (couple(), or its components list), its schedule naming them.
     """
     translator = None
+    parts = {}
+    schedule = None
+
+    def __init__(self, data_structure=None, time_step=None):
+        cls = type(self)
+        self.data_structure, self.time_step = data_structure, time_step
+        if data_structure is None:                  # a model given its components (couple: an environment model's)
+            if cls.parts:
+                raise TypeError(f"{cls.__name__}(): its parts are built on its DataStructure, give it")
+            self.components = []
+            return
+        components = []
+        for name, part in cls.parts.items():
+            keywords = {}
+            if isinstance(part, Part):
+                part, keywords = part.cls, part.keywords
+            if isinstance(part, type) and issubclass(part, CompositeModel):
+                token = _NESTED.set(True)
+                try:
+                    built = part(data_structure, time_step)
+                finally:
+                    _NESTED.reset(token)
+                components.extend(built.components)
+            elif getattr(part, "time_step", None) is not None:      # a component of its own (sub-)step
+                built = part(data_structure=data_structure, **keywords)
+                components.append(built)
+            else:
+                built = part(data_structure=data_structure, **{"time_step": time_step, **keywords})
+                components.append(built)
+            setattr(self, name, built)
+        if _NESTED.get():
+            self.components = components            # coupled by the model it is a part of
+        else:
+            self.couple(*components, translator=_merged_translator(cls))
+        self.steps()                                # its schedule checked now
+
+    @classmethod
+    def initiator_classes(cls) -> tuple:
+        """The model's initiators, a nested model's expanded into its own (in place)."""
+        found = []
+        for initiator in getattr(cls, "initiators", ()):
+            if isinstance(initiator, type) and issubclass(initiator, CompositeModel):
+                found.extend(initiator.initiator_classes())
+            else:
+                found.append(initiator)
+        return tuple(found)
 
     def couple(self, *components, translator=None) -> None:
         """
-        Couple the DataStructure-backed *components*: the links of *translator* (Translator.load: a Translator, a
-        nested dict, a .py module or a YAML file; None: no link, every input shared by its name) between them become
-        aliases and derived variables on their DataStructure; links with components on other DataStructures (the
-        environment) are exchanged by the Scene (coupling.cross.Exchanges). Their DataStructures are then checked
-        (shapes, aliases, derivations).
+        The model's *components* coupled (a model's parts are, at its construction; an environment model couples
+        those it builds on its DataStructures): the links of *translator* (Translator.load: a Translator, a nested
+        dict, a .py module or a YAML file; None: the model's, else no link, every input shared by its name) between
+        them become aliases and derived variables on their DataStructure; links with components on other
+        DataStructures (the environment) are exchanged by the Scene (coupling.cross.Exchanges). Their DataStructures
+        are then checked (shapes, aliases, derivations).
         """
         self.components = list(components)
         for component in self.components:
@@ -43,25 +125,47 @@ class CompositeModel:
                 ds.validate_variables()
                 checked.append(ds)
 
+    def steps(self) -> list:
+        """The model's schedule bound (coupling.schedule.ScheduledStep: name, kind, components, stages, cadence,
+        reads, writes), the cadences its scenario's "cadence" sets included."""
+        steps = self.__dict__.get("_steps")
+        if steps is None:
+            from openalea.metafspm.coupling.schedule import bind
+            steps = self.__dict__["_steps"] = bind(self)
+        return steps
+
+    def set_cadences(self, cadences) -> None:
+        """The cadences of the model's steps, {step name: duration, Cadence or None (every step)}: its scenario's
+        "cadence" key (a duration keeping the declared Cadence's "at")."""
+        if not isinstance(cadences, dict):
+            raise TypeError(f"{type(self).__name__}: its scenario's cadence is {{step name: duration}}, got "
+                            f"{cadences!r}")
+        self.__dict__["_cadences"] = {**self.__dict__.get("_cadences", {}), **cadences}
+        self.__dict__.pop("_steps", None)
+        self.steps()                                    # checked now: an unknown step raises
+
+    def run(self) -> None:
+        """One run of the model: its schedule's steps, in order, each component's clock at the run's start for each
+        of its steps (a component scheduled twice, for two stages, reads the step's forcings both times); the
+        components that ran counted once (Component.calls: the scene steps they ran in)."""
+        clocks = [(component, component.__dict__.get("_clock", 0.)) for component in self.components]
+        for step in self.steps():
+            for component, clock in clocks:
+                component.__dict__["_clock"] = clock
+            step.run()
+        for component in self.components:
+            if component.__dict__.pop("_ran", False):
+                component.__dict__["_calls"] = component.__dict__.get("_calls", 0) + 1
+
     def run_together(self, *components) -> None:
         """
         Call *components* as one: their steps in one schedule (each step group at its schedule position, the
         components in the given order within a position), e.g. a development's potential lengths, the architecture's
         segmentation, then the development's postsegmentation (the new organs' lengths) before the architecture's.
         Each component's inputs are pulled first and its after-call work (write-back, clock, repartition) done last.
-        Components with a cadence (cadence=) run together when they share it (coupling.cadence).
+        A schedule's Together(...) runs it; a model's method step (ScenarioShoot's grow) calls it.
         """
-        from openalea.metafspm.coupling.cadence import cadence_of, run_cadenced
-        components = components or tuple(self.components)
-        cadences = {cadence_of(component) for component in components}
-        if len(cadences) > 1:
-            raise ValueError(f"{'+'.join(type(c).__name__ for c in components)}: components run together share their "
-                             f"cadence (cadence=), got {sorted(map(repr, cadences))}")
-        (cadence,) = cadences
-        if cadence is None:
-            _run_together(components, [None] * len(components))
-        else:
-            run_cadenced(list(components), cadence, lambda overrides: _run_together(components, overrides))
+        _run_together(components or tuple(self.components), [None] * len(components or self.components))
 
     def couplings(self):
         """
@@ -321,7 +425,36 @@ def _run_together(components, overrides) -> None:
         components[0].choregrapher.run_together(components)
     for component, context in zip(components, contexts):
         component._after_call(context)
-        component.__dict__["_calls"] = component.__dict__.get("_calls", 0) + 1
+        component.__dict__["_ran"] = True
+
+
+def _merged_translator(cls):
+    """The links of a model class's translator and of its nested models' (its parts' model classes, theirs too),
+    each once: the model's coupling contract (coupling, initiation)."""
+    merged = Translator()
+    translators = [Translator.load(cls.translator)] if getattr(cls, "translator", None) is not None else []
+    translators += [_merged_translator(part) for part in getattr(cls, "parts", {}).values()
+                    if isinstance(part, type) and issubclass(part, CompositeModel)]
+    for translator in translators:
+        for link in translator.links:
+            if link not in merged.links:
+                merged.links.append(link)
+    return merged
+
+
+def model_translator(model):
+    """A plant model class's coupling contract: its translator's links and its nested models' (a model without
+    parts, its translator)."""
+    if isinstance(model, type) and issubclass(model, CompositeModel):
+        return _merged_translator(model)
+    return getattr(model, "translator", None)
+
+
+def model_initiators(model) -> tuple:
+    """A plant model class's initiators, a nested model's expanded into its own."""
+    if isinstance(model, type) and issubclass(model, CompositeModel):
+        return model.initiator_classes()
+    return tuple(getattr(model, "initiators", ()))
 
 
 def _base_of(data_structure):

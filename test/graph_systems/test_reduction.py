@@ -102,12 +102,7 @@ def _model(reduced):
         def wiring(g):
             return wiring(g)
 
-        def __init__(self, data_structure, time_step):
-            self.hydraulics = NodeHydraulics(data_structure=data_structure, time_step=time_step)
-            self.couple(self.hydraulics)
-
-        def run(self):
-            self.hydraulics()
+        parts = {"hydraulics": NodeHydraulics}
     return ToyPlant
 
 
@@ -246,9 +241,7 @@ def test_the_library_gets_every_per_plant_parameter_and_keys_its_kinds_by_them()
         options: object = parameter(**DOC, default=None, dtype="object", scale=scales.Plant)
 
     class OptionedPlant(_model(True)):
-        def __init__(self, data_structure, time_step):
-            self.hydraulics = OptionedHydraulics(data_structure=data_structure, time_step=time_step)
-            self.couple(self.hydraulics)
+        parts = {"hydraulics": OptionedHydraulics}
 
     population = population_data_structure(planting([Planting(), Planting(x=1.)], OptionedPlant, plant_scenarios=[
         {"options": {"suberin": 1}}, {"options": {"suberin": 2}}]), OptionedPlant)
@@ -277,14 +270,7 @@ def test_plants_differing_only_in_a_parameter_the_library_does_not_read_share_th
 
     def drawing(reduced):
         class DrawingPlant(_model(reduced)):
-            def __init__(self, data_structure, time_step):
-                self.drawing = Drawing(data_structure=data_structure, time_step=time_step)
-                self.hydraulics = NodeHydraulics(data_structure=data_structure, time_step=time_step)
-                self.couple(self.drawing, self.hydraulics)
-
-            def run(self):
-                self.drawing()
-                self.hydraulics()
+            parts = {"drawing": Drawing, "hydraulics": NodeHydraulics}
         return DrawingPlant
 
     solved = {}
@@ -317,9 +303,7 @@ def test_a_subclass_of_the_reduced_component_with_a_per_plant_parameter_gives_th
 
     def factored(reduced):
         class FactoredPlant(_model(reduced)):
-            def __init__(self, data_structure, time_step):
-                self.hydraulics = FactoredHydraulics(data_structure=data_structure, time_step=time_step)
-                self.couple(self.hydraulics)
+            parts = {"hydraulics": FactoredHydraulics}
         return FactoredPlant
 
     solved = {}
@@ -365,16 +349,7 @@ def test_the_library_runs_the_reduced_systems_components_and_their_cells_inputs_
 
     def with_reader(reduced):
         class ReadingPlant(_model(reduced)):
-            def __init__(self, data_structure, time_step):
-                self.reader = TableReader(data_structure=data_structure, time_step=time_step)
-                self.conductance = EdgeConductance(data_structure=data_structure, time_step=time_step)
-                self.hydraulics = GivenHydraulics(data_structure=data_structure, time_step=time_step)
-                self.couple(self.reader, self.conductance, self.hydraulics)
-
-            def run(self):
-                self.reader()
-                self.conductance()
-                self.hydraulics()
+            parts = {"reader": TableReader, "conductance": EdgeConductance, "hydraulics": GivenHydraulics}
         return ReadingPlant
 
     solved = {}
@@ -493,9 +468,7 @@ def test_a_kind_derived_value_is_computed_once_per_kind_while_its_factorisation_
         reduction = Reduction(location="SubOrgan", where={"label": "RootSegment"}, ports=_xylem, keep=_soil_walls,
                               systems=("NodeHydraulics._hydraulics",))
 
-        def __init__(self, data_structure, time_step):
-            self.hydraulics = DerivingHydraulics(data_structure=data_structure, time_step=time_step)
-            self.couple(self.hydraulics)
+        parts = {"hydraulics": DerivingHydraulics}
 
     population = population_data_structure(planting([Planting()], DerivingPlant, {}), DerivingPlant)
     population.instance.run()

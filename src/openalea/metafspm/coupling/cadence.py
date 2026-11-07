@@ -1,25 +1,31 @@
 """
-A component's cadence: its calls in a scene's steps cover a longer interval::
+A schedule step's cadence (coupling.schedule.Step(cadence=)): its calls in a scene's steps cover a longer
+interval::
 
-    GranapAnatomy(data_structure=ds, time_step=time_step, cadence="1 d")    its anatomies once a day
-    component.cadence = Cadence("3 h", at="start")                          set after construction too
+    schedule = (..., Step("anatomy", cadence="1 d"), ...)                                  its anatomies once a day
+    schedule = (Step("light", stages="rate", cadence=Cadence("4 h", at="start")), ...)     its lighting every 4 h
+    scenario = {"cadence": {"anatomy": "3 h"}}                                              a model's, by step name
 
-Cadence(interval, at="end") (or a duration alone, at="end"): the component runs once per *interval* (a whole number of
-the scene's steps), its call covering the interval: its clock at the interval's start, its simulation step the
-interval (a component running in the scene's step runs one step of the interval; one with its own finer sub-step
-sub-steps it), its forcings read over the interval (forcing(over="step")'s, "substep"'s for one step).
+Cadence(interval, at="end") (or a duration alone, at="end"): the step runs once per *interval* (a whole number of
+the scene's steps), its call covering the interval: its components' clocks at the interval's start, their
+simulation step the interval (a component running in the scene's step runs one step of the interval; one with its
+own finer sub-step sub-steps it), their forcings read over the interval (forcing(over="step")'s, "substep"'s for
+one step).
 
   at="end"    it runs at the interval's last step; the inputs it reads through its DataStructure are their means
               over the interval's steps (each entity's over the steps it existed, aligned by id: new and removed
               entities), given under private names during its call (as Link(names=)); its descriptors (kind
               "descriptor") and non-float inputs are their values at the call
-  at="start"  it runs at the interval's first step; its inputs are their values then
+  at="start"  it runs at the interval's first step; its inputs are their values then. A component reading the
+              plants' geometry (geometry_input(relight=...)) runs early when it changed since its last call
+              ("topology": elements appeared or went; "geometry": the triangles changed), its call then covering
+              the time to the interval's end
 
 Between its calls nothing runs: its outputs are held. MPG-style steps read the MTG as it is (their inputs at the
-call). The means accumulated so far are kept on the component (Component.keep: saved by checkpoints); the clock is
-the Scene's (the component's at each step's start). Component.calls() counts the calls that ran (the Scene's
-"calls", next to its timing).
+call). The means accumulated so far are kept on the components (Component.keep: saved by checkpoints), under the
+step's name; the clock is the Scene's (the component's at each step's start).
 """
+import math
 from contextlib import ExitStack, contextmanager
 
 import numpy as np
@@ -49,12 +55,18 @@ class Cadence:
         return f"Cadence({self.interval:g} s, at={self.at!r})"
 
 
-def cadence_of(component):
-    """The component's cadence (its cadence: None, a duration or a Cadence) as a Cadence, or None."""
-    cadence = getattr(component, "cadence", None)
+def as_cadence(cadence):
+    """*cadence* (None, a duration or a Cadence) as a Cadence, or None."""
     if cadence is None or isinstance(cadence, Cadence):
         return cadence
     return Cadence(cadence)
+
+
+def with_interval(given, at=None):
+    """A scenario's cadence for a step: *given* (None, a Cadence, or a duration, which keeps the declared *at*)."""
+    if given is None or isinstance(given, Cadence):
+        return given
+    return Cadence(given, at=at or "end")
 
 
 def _on(time: float, interval: float) -> bool:
@@ -70,34 +82,60 @@ def _scene_step(component) -> float:
     return float(step)
 
 
-def run_cadenced(components, cadence: Cadence, run) -> bool:
-    """Call *components* (sharing *cadence*) at this scene step: their inputs accumulated (at "end"), then, when the
-    interval is due, run(overrides) with their clocks, steps and inputs' means set for the interval
-    (overrides: [{input: private name}] per component, the means'); their clocks advanced by the scene's step either
-    way. Whether they ran."""
+def run_cadenced(components, cadence: Cadence, run, key: str = "step") -> bool:
+    """Call *components* (a schedule step's, sharing *cadence*) at this scene step: their inputs accumulated (at
+    "end"), then, when the interval is due (at "start": or their geometry changed since their last call), run(overrides)
+    with their clocks, steps and inputs' means set for the interval (overrides: [{input: private name}] per component,
+    the means'); their clocks advanced by the scene's step either way. *key*: the step's name, under which the
+    components keep their means. Whether they ran."""
     step = _scene_step(components[0])
     interval = cadence.interval
     from openalea.metafspm.coupling.choregrapher import sub_steps
     sub_steps(interval, step, f"{type(components[0]).__name__}(cadence=)")       # a whole number of the scene's steps
+    kept = f"{_KEPT}.{key}"
     clocks = [float(component.__dict__.get("_clock", 0.)) for component in components]
     if cadence.at == "end":
         for component in components:
-            _accumulate(component, step)
-        due, start = _on(clocks[0] + step, interval), clocks[0] + step - interval
+            _accumulate(component, step, kept)
+        due, start, length = _on(clocks[0] + step, interval), clocks[0] + step - interval, interval
     else:
-        due, start = _on(clocks[0], interval), clocks[0]
+        stamp = _geometry_stamp(components)
+        early = stamp is not None and components[0].caches().get((kept, "geometry")) != stamp
+        due, start = _on(clocks[0], interval) or early, clocks[0]
+        length = (math.floor(clocks[0] / interval + 1e-9) + 1) * interval - clocks[0]     # to the interval's end
+        if due and stamp is not None:
+            components[0].caches()[(kept, "geometry")] = stamp
     if due:
         with ExitStack() as stack:
-            overrides = [stack.enter_context(_means(component)) if cadence.at == "end" else {}
+            overrides = [stack.enter_context(_means(component, kept)) if cadence.at == "end" else {}
                          for component in components]
             for component in components:
-                stack.enter_context(_covering(component, start, interval, step))
+                stack.enter_context(_covering(component, start, length, step))
             run(overrides)
         for component in components:
-            component.keep(_KEPT, {})
+            component.keep(kept, {})
     for component, clock in zip(components, clocks):
         component.__dict__["_clock"] = clock + step
     return due
+
+
+def _geometry_stamp(components):
+    """What the components' geometry inputs (geometry_input(relight=...)) follow, now: their DataStructures' topology
+    (a union's parts': their versions and sizes), and their triangles for "geometry"; None without any."""
+    from dataclasses import fields
+    relights = {f.metadata.get("relight") for component in components if hasattr(component, "__dataclass_fields__")
+                for f in fields(component) if f.metadata.get("variable_type") == "geometry"} - {None}
+    if not relights:
+        return None
+    stamp = ()
+    for component in components:
+        ds = component.data_structure
+        parts = getattr(ds, "parts", None) or [ds]
+        stamp += tuple((getattr(part, "topology_version", None), part.n_nodes()) for part in parts)
+        if "geometry" in relights:
+            from openalea.metafspm.solve.memo import content_key
+            stamp += (content_key(*(part.triangles().vertices for part in parts)),)
+    return stamp
 
 
 def _inputs(component) -> list:
@@ -130,11 +168,12 @@ def _aligned(old_ids, old, new_ids, n: int) -> np.ndarray:
     return out
 
 
-def _accumulate(component, step: float) -> None:
-    """Each input's values times *step* added to its total since the interval began, by entity id."""
+def _accumulate(component, step: float, key: str) -> None:
+    """Each input's values times *step* added to its total since the interval began, by entity id (kept under
+    *key*)."""
     from openalea.metafspm.data_structure.data_api import _root_data_structure
     root = _root_data_structure(component.data_structure)
-    kept = dict(component.kept(_KEPT) or {})
+    kept = dict(component.kept(key) or {})
     for name, stored in _inputs(component):
         location = root.location(stored)
         values = np.asarray(root.get(stored), dtype=float)
@@ -147,16 +186,16 @@ def _accumulate(component, step: float) -> None:
             total = total + _aligned(old_ids, old_total, ids, n)
             elapsed = elapsed + _aligned(old_ids, old_elapsed, ids, n)
         kept[name] = (ids, total, elapsed)
-    component.keep(_KEPT, kept)
+    component.keep(key, kept)
 
 
 @contextmanager
-def _means(component):
-    """The inputs' means over the interval registered under private names during the block (their values now where
-    no step was accumulated); yields {input: private name}."""
+def _means(component, key: str):
+    """The inputs' means over the interval (kept under *key*) registered under private names during the block (their
+    values now where no step was accumulated); yields {input: private name}."""
     from openalea.metafspm.data_structure.data_api import _root_data_structure
     root = _root_data_structure(component.data_structure)
-    kept = component.kept(_KEPT) or {}
+    kept = component.kept(key) or {}
     names = {}
     try:
         for name, stored in _inputs(component):

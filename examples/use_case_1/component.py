@@ -19,12 +19,12 @@ and the plant's own parts, between its shoot model (Adel's) and its root model (
 
     WheatCrown          an initiator, first in the plant: the seed at the sowing depth and the subcrown internode up
                         to the crown, below the soil surface; the shoot's main stem grows on the crown's top
-                        (Adel's shoot_anchor), the seminal roots on the seed (ArchiSimple's root_anchor); it draws
-                        its elements (the grain, the subcrown internode), joining the roots and the shoot drawn
+                        (Adel's shoot_anchor), the seminal roots on the seed (ArchiSimple's root_anchor); its
+                        elements placed topologically, the grain drawn along x (its display ends)
     NodalRootEmergence  the rule of the nodal roots (a rule component, "sites"): N nodal roots per leaf appeared, on
                         its axis' phytomer offset ranks below, D °Cd after the leaf's appearance, asked of the root
-                        model as a cumulative count per phytomer (nodal_axes_requested), from the phytomer's node
-                        (site_x, site_y, site_z: on the crown in the tillering zone)
+                        model as a cumulative count per phytomer (nodal_axes_requested); the root model grows them
+                        from the phytomer's node (ds.position: on the crown in the tillering zone)
 
 Coordinates: z points down from the surface (the depth), as on every metafspm soil grid. The total head is h - z,
 and gravity pulls the water towards increasing z.
@@ -659,6 +659,7 @@ class RichardsSoilModel(EnvironmentModel):
     the soil's water potential (water_potential, MPa) broadcast back to their roots.
     """
     compartment = "Soil"
+    schedule = ("soil", "adapt")                             # an adaptive grid adapted after each solve
 
     def __init__(self, plant_data_structures, xrange, yrange, time_step, depth=1., voxel=0.05, adaptive=True,
                  max_level=2, layers=((np.inf, LOAM),), initial_pressure_head=-1., refine_uptake_fraction=0.05,
@@ -677,15 +678,11 @@ class RichardsSoilModel(EnvironmentModel):
         self.history = []                                    # cells per level after each adaptation
         self._water_set = False
 
-    def full_run(self):
-        if not self._water_set:                              # the scenario's parameters are set: θ from h, once
+    def spin_up(self, scene):
+        """θ from h, once the scenario's parameters are set (the Scene calls it after it is built)."""
+        if not self._water_set:
             self.soil.update_water_content()
             self._water_set = True
-        super().full_run()
-
-    def after_run(self):
-        if self.adaptive:
-            self.adapt()
 
     def uptake_density(self):
         """The roots' uptake per cell volume (m3 s-1 m-3)."""
@@ -705,7 +702,10 @@ class RichardsSoilModel(EnvironmentModel):
         return largest
 
     def adapt(self):
-        """Refine and coarsen on the uptake density and the head gradient, then carry the water over."""
+        """Refine and coarsen on the uptake density and the head gradient, then carry the water over (an adaptive
+        grid's)."""
+        if not self.adaptive:
+            return
         density, gradient = self.uptake_density(), self.head_gradient()
         top = density.max()
         refine = gradient > self.refine_gradient
@@ -885,10 +885,10 @@ class NodalRootEmergence(FunctionalComponent):
 
     It writes, per Phytomer, the cumulative number of nodal roots asked for on it (nodal_axes_requested, the root
     model's input: it grows the difference with those it grew), each leaf's request counted once when it falls due
-    (leaf_nodal_roots): no request lost or replaced, whatever the steps; and each phytomer's node, where its nodal
-    roots start (site_x, site_y, site_z, the root model's site position: _site_position), on the crown while the
-    internodes below it have not elongated. Its entities are the shoot's elements (its axes with a row,
-    axis_row >= 0), the phytomers they belong to its phytomers.
+    (leaf_nodal_roots): no request lost or replaced, whatever the steps. Where they start is the root model's: the
+    phytomer's node (metafspm's ds.position("Phytomer", at="end"), from the elements' topological ends: on the crown
+    while the internodes below it have not elongated, whatever the axes' inclination). Its entities are the shoot's
+    elements (its axes with a row, axis_row >= 0), the phytomers they belong to its phytomers.
     """
     entities = {"axis_row": ">=0"}
 
@@ -904,13 +904,6 @@ class NodalRootEmergence(FunctionalComponent):
     phytomer_rank: int = input_variable(unit="adim", description="The phytomer's rank on its axis, from 1.",
                                         by="model_shoot_architecture", default=0, scale=ScalesConfig.Phytomer,
                                         dtype="int")
-    # the plant's position (its seed's) and the elements' lengths (the internodes', the shoot's and the crown's)
-    x: float = planting_variable("x")
-    y: float = planting_variable("y")
-    z: float = planting_variable("z")
-    length: float = input_variable(unit="m", description="The element's length (read on every element of the plant: "
-                                                         "the internodes').", by="model_shoot_architecture",
-                                   default=0., scale=ScalesConfig.SubOrgan)
     # the rule's state
     leaf_appearance_time: float = state_variable(unit="°Cd", description="The thermal time at which the phytomer's "
                                                                          "leaf appeared.",
@@ -920,18 +913,6 @@ class NodalRootEmergence(FunctionalComponent):
                                                                       "on its site.",
                                              value_comment="NaN: not asked yet", kind="descriptor", default=np.nan,
                                              scale=ScalesConfig.Phytomer)
-    site_x: float = state_variable(unit="m", description="Where the nodal roots of the phytomer start, x: its node "
-                                                         "(the root model's site position).",
-                                   value_comment="NaN: not a shoot's phytomer", kind="descriptor", default=np.nan,
-                                   scale=ScalesConfig.Phytomer)
-    site_y: float = state_variable(unit="m", description="Where the nodal roots of the phytomer start, y.",
-                                   value_comment="NaN: not a shoot's phytomer", kind="descriptor", default=np.nan,
-                                   scale=ScalesConfig.Phytomer)
-    site_z: float = state_variable(unit="m", description="Where the nodal roots of the phytomer start, z: its node's "
-                                                         "height, on the crown while the internodes below it have "
-                                                         "not elongated.",
-                                   value_comment="NaN: not a shoot's phytomer", kind="descriptor", default=np.nan,
-                                   scale=ScalesConfig.Phytomer)
     nodal_axes_requested: float = state_variable(unit="adim", description="The cumulative number of nodal roots "
                                                                           "asked for on the phytomer (the root "
                                                                           "model's sites).", kind="descriptor",
@@ -997,36 +978,6 @@ class NodalRootEmergence(FunctionalComponent):
         given = due & (site >= 0)
         np.add.at(requested, site[given], count[given])
         return {"leaf_appearance_time": appearance, "leaf_nodal_roots": asked, "nodal_axes_requested": requested}
-
-    @state
-    def _site_position(self, x, y, z, phytomer_rank) -> dict:
-        """
-        Per Phytomer of the shoot: its node, where its nodal roots start (the root model's site_x, site_y, site_z):
-        above the seed (the planting's position) by the internodes' lengths on its path from the seed, its own
-        internode's included (the subcrown internode, then the shoot's: the elements of StemInternode organs but the
-        seed, the grain, in the subcrown internode's organ), the axes vertical (Adel's tiller_inclination 0). The shoot model draws a hidden element on the top of the visible
-        parts below it (Adel's turtle: a phytomer on its previous one's sheath), not at its node: a phytomer of the
-        tillering zone, its internodes not elongated, has its node on the crown while its first element is drawn
-        above the coleoptile, out of the soil.
-        """
-        ds = self.data_structure
-        elements = ds.base                                   # every SubOrgan of the plant: the crown's, the roots'
-        internode = ((np.asarray(elements.labels("Organ")) == "StemInternode")
-                     & (np.asarray(elements.labels()) != "Seed"))
-        own_length = np.where(internode, np.asarray(elements.get("length"), dtype=float), 0.)
-        rise = elements.accumulate(own_length, direction="down")          # the path's internodes, its own included
-        phytomer = np.asarray(elements.owner("Phytomer"), dtype=np.int64)
-        count = len(elements.entity_ids("Phytomer"))
-        kept = (phytomer >= 0) & internode
-        height = np.full(count, -np.inf)
-        np.maximum.at(height, phytomer[kept], rise[kept])               # the top of its own internode
-        plant = np.asarray(elements.owner("Plant", of="Phytomer"), dtype=np.int64)
-        shoot = (np.asarray(phytomer_rank) >= 1) & np.isfinite(height)
-        site_x, site_y, site_z = np.full(count, np.nan), np.full(count, np.nan), np.full(count, np.nan)
-        site_x[shoot] = np.asarray(x, dtype=float)[plant[shoot]]
-        site_y[shoot] = np.asarray(y, dtype=float)[plant[shoot]]
-        site_z[shoot] = np.asarray(z, dtype=float)[plant[shoot]] + height[shoot]
-        return {"site_x": site_x, "site_y": site_y, "site_z": site_z}
 
     @state
     def _previous_axis_state(self, thermal_time, haun_stage) -> dict:

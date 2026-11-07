@@ -10,6 +10,7 @@ import pandas as pd
 
 from openalea.metafspm.coupling.component import StructuralComponent, state_variable
 from openalea.metafspm.coupling.composite_wrapper import CompositeModel
+from openalea.metafspm.coupling.schedule import Together
 from openalea.metafspm.data_structure.configs import ScalesConfig as scales
 from openalea.metafspm.scene.population import population_data_structure
 from openalea.metafspm.solve.decorator import postsegmentation, potential, segmentation
@@ -52,13 +53,8 @@ class Architecture(Organs):
 class Model(CompositeModel):
     initiators = (Architecture,)
 
-    def __init__(self, data_structure, time_step):
-        self.development = Development(data_structure=data_structure, time_step=time_step)
-        self.architecture = Architecture(data_structure=data_structure, time_step=time_step)
-        self.couple(self.development, self.architecture)
-
-    def run(self):
-        self.run_together(self.development, self.architecture)
+    parts = {"development": Development, "architecture": Architecture}
+    schedule = (Together("development", "architecture"),)
 
 
 def test_the_steps_of_components_run_together_interleave_by_schedule_position():

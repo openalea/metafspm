@@ -11,23 +11,23 @@ Not runnable here: the soil component lives in its package, which must first be 
 """
 from openalea.rhizosoil.soil_component_coupled import SoilModel
 
-from openalea.metafspm.coupling.composite_wrapper import CompositeModel
 from openalea.metafspm.data_structure.data_api import ArrayDataStructure
+from openalea.metafspm.scene.environment import EnvironmentModel
 
 
-class RhizoSoil(CompositeModel):
+class RhizoSoil(EnvironmentModel):
     """The soil of the stand on a regular grid, periodic in x and y."""
+    compartment = "Soil"
 
-    def __init__(self, populations, xrange: float, yrange: float, time_step: int = 3600,
+    def __init__(self, plant_data_structures, xrange: float, yrange: float, time_step: int = 3600,
                  voxel_width: float = 0.01, voxel_height: float = 0.01, max_depth: float = 0.5, **parameters):
+        super().__init__(plant_data_structures, xrange, yrange, time_step)
         voxel_width, voxel_height, depth = voxel_width, voxel_height, max_depth
         shape = (max(1, round(xrange / voxel_width)), max(1, round(yrange / voxel_width)),
                  max(1, round(depth / voxel_height)))
         self.grid = ArrayDataStructure(shape=shape, dx=(xrange / shape[0], yrange / shape[1], voxel_height),
                                        periodic=(True, True, False))
+        # transport (a graph system on the grid), then the cells' states; the time-varying inputs (rain,
+        # temperature) are the Scene's forcings
         self.soil = SoilModel(data_structure=self.grid, time_step=time_step, **parameters)
         self.components = [self.soil]
-
-    def run(self):
-        self.soil()                 # transport (a graph system on the grid), then the cells' states; the time-varying
-                                    # inputs (rain, temperature) are the Scene's forcings

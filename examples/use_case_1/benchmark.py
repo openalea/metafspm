@@ -11,7 +11,7 @@ end).
                         [--scenario leaf_ports=bundles vapour_path=air_spaces ...]
                         [--workers auto|n] [--linear-solver superlu|superlu_reuse|cholmod|cupy]
                         [--device cpu|cuda] [--variability SEED] [--frames] [--profile-hours FIRST LAST]
-                        [--cadence GranapAnatomy="1 d" CaribuLight="3 h@start" ...]
+                        [--cadence WheatPlant.anatomy="1 d" CaribuLightModel.light="3 h" ...]
 
 By default 2 plants to day 3 (the use case's fast regime); --days 8 for the day-8 numbers, --plants 8 --days 4 for the
 scaling; --outputs measures the outputs at the end (outputs()): a frame without the sections drawn, two display
@@ -29,9 +29,10 @@ and at its peak. --variability gives each plant its own seeded root draws (plant
 random_choice; identical plants share every kind, which flatters a scaling); --frames records the run (a frame every
 24 h, the sections of run.DISPLAY_PLANTS drawn as instances, no checkpoint) under outputs/benchmarks/frames/<label>,
 its size at the end; --profile-hours cProfiles the main process over those steps (outputs/benchmarks/profiles/);
---cadence gives components (by class name) a cadence (coupling.cadence.Cadence: the duration, "@start" for at="start",
-the interval's end by default), or an environment model (by class name) its interval (a full run every interval,
-between() at the other steps), to measure what running them less often saves and changes.
+--cadence gives a model's schedule steps ("<model>.<step>": WheatPlant.anatomy, GRANAP's; CaribuLightModel.light, the
+lighting, its PARa every step) a cadence (coupling.cadence.Cadence: the duration, "@start" or "@end", the step's declared
+one by default: CaribuLightModel.light's at its start, the others' at the interval's end; set_cadences, the scenario's
+"cadence"), to measure what running them less often saves and changes.
 Each step also records its kinds' batches (kinds, interior cells, seconds, processes: "auto"'s estimate checked
 against them). Each step records the
 plants' nodes and the reduced groups' dense blocks (their nonzeros: kept nodes squared, summed), the end the kinds
@@ -220,16 +221,14 @@ def benchmark(plants: int, days: float, measure_outputs: bool = False, checkpoin
     scene = run.scene(plants, folder=folder, scenario=scenario, compute=compute, plant_scenarios=plant_scenarios,
                       **options)
     from openalea.metafspm.coupling.cadence import Cadence
-    for name, given in (cadences or {}).items():           # by class name: every population's
+    for name, given in (cadences or {}).items():           # "<model>.<step>": a model's schedule step
+        model, _, step = name.rpartition(".")
+        if not model:
+            raise KeyError(f"--cadence {name}: give the model and its step, e.g. WheatPlant.anatomy")
         interval, _, at = given.partition("@")
-        models = [model for model in scene.environment if type(model).__name__ == name]
-        for model in models:                               # an environment model: its interval (between() else)
-            model.interval = interval
-        found = [component for component in scene.components if type(component).__name__ == name]
-        if not found and not models:
-            raise KeyError(f"--cadence: no component or environment model {name} in the scene")
-        for component in found:
-            component.cadence = Cadence(interval, at=at or "end")
+        declared = next((s.cadence for s in scene.model(model).steps() if s.name == step), None)
+        at = at or (declared.at if isinstance(declared, Cadence) else "end")
+        scene.model(model).set_cadences({step: Cadence(interval, at=at)})
     built = time.perf_counter() - started
     counter.take()
     loaded, first_hour = None, 0
@@ -449,8 +448,8 @@ def main(argv=None):
                              "run.DISPLAY_PLANTS drawn as instances (no checkpoint)")
     parser.add_argument("--profile-hours", type=int, nargs=2, default=(), metavar=("FIRST", "LAST"),
                         help="cProfile the main process over these steps (outputs/benchmarks/profiles/<label>.prof)")
-    parser.add_argument("--cadence", nargs="*", default=(), metavar="COMPONENT=DURATION[@start]",
-                        help='components\' cadences, e.g. GranapAnatomy="1 d" CaribuLight="3 h@start"')
+    parser.add_argument("--cadence", nargs="*", default=(), metavar="MODEL.STEP=DURATION[@start|@end]",
+                        help='schedule steps\' cadences, e.g. WheatPlant.anatomy="1 d" CaribuLightModel.light="3 h"')
     arguments = parser.parse_args(argv)
     from openalea.metafspm.compute import Compute
     compute = Compute(workers=arguments.workers if arguments.workers == "auto" else int(arguments.workers),

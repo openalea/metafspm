@@ -71,14 +71,7 @@ def _model(translator):
     class Model(CompositeModel):
         initiators = (Elements,)
 
-        def __init__(self, data_structure, time_step):
-            self.elements = Elements(data_structure=data_structure, time_step=time_step)
-            self.exchange = Exchange(data_structure=data_structure, time_step=time_step)
-            self.couple(self.elements, self.exchange)
-
-        def run(self):
-            self.elements()
-            self.exchange()
+        parts = {"elements": Elements, "exchange": Exchange}
 
     Model.translator = translator
     return Model

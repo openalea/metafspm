@@ -13,6 +13,7 @@ from openalea.metafspm.coupling.composite_wrapper import CompositeModel
 from openalea.metafspm.coupling.translator import Translator
 from openalea.metafspm.data_structure.configs import PropsConfig
 from openalea.metafspm.data_structure.data_api import ArrayDataStructure
+from openalea.metafspm.scene.environment import EnvironmentModel
 from openalea.metafspm.scene.scene import Scene
 
 SIDE = doubles.SOIL_VOXEL_SIDE
@@ -43,32 +44,24 @@ class ContractSeedling:
 
 class ContractPlant(CompositeModel):
     initiators = (ContractSeedling,)
-    translator_path = None
+    parts = {"carbon": doubles_ds.PlantCarbon, "nitrogen": doubles_ds.PlantNitrogen}
 
     def __init__(self, data_structure, time_step):
         ds, g = data_structure, data_structure.mtg
         for name in ("x1", "x2", "y1", "y2", "z1", "z2"):
             ds.register(name, [g.property(name)[v] for v in ds.entity_ids("node")], location="node")
-        self.carbon = doubles_ds.PlantCarbon(data_structure=ds)
-        self.nitrogen = doubles_ds.PlantNitrogen(data_structure=ds)
-        self.couple(self.carbon, self.nitrogen, translator=self.translator_path)
-
-    def run(self):
-        self.carbon()
-        self.nitrogen()
+        super().__init__(data_structure, time_step)
 
 
-class ContractSoil:
+class ContractSoil(EnvironmentModel):
     compartment = "Soil"
 
     def __init__(self, plant_data_structures, xrange, yrange, time_step):
+        super().__init__(plant_data_structures, xrange, yrange, time_step)
         self.grid = ArrayDataStructure(shape=(int(round(xrange / SIDE)), int(round(yrange / SIDE)), 2),
                                        dx=SIDE)
         self.soil = doubles_ds.GridSoil(data_structure=self.grid)
         self.components = [self.soil]
-
-    def run(self):
-        self.soil()
 
 
 def _soil_links(nested):
@@ -86,7 +79,7 @@ def _soil_links(nested):
 @pytest.fixture
 def scene(tmp_path):
     nested = doubles_ds.translator(soil=doubles_ds.SOIL)
-    ContractPlant.translator_path = doubles.write_translator(tmp_path / "plant_translator.yaml", nested)
+    ContractPlant.translator = doubles.write_translator(tmp_path / "plant_translator.yaml", nested)
     table = pd.DataFrame([dict(plant=f"p{i}", model=ContractPlant, x=0.025 + 0.05 * i, y=0.025, depth=0.01, rotation=0.,
                                scenario={}) for i in range(3)])
     return Scene(table, environment=[ContractSoil], translator=_soil_links(nested), time_step=doubles.TIME_STEP,

@@ -285,27 +285,24 @@ class Component:
 
     def __call__(self):
         started = perf_counter()
-        from openalea.metafspm.coupling.cadence import cadence_of, run_cadenced
-        cadence = cadence_of(self)
-        if cadence is None:
-            self._call()
-        else:                                            # its calls cover its interval (coupling.cadence)
-            run_cadenced([self], cadence, lambda overrides: self._call(overrides[0]))
+        self._call()
         self.__dict__["_wall_time"] = self.__dict__.get("_wall_time", 0.) + perf_counter() - started
 
-    def _call(self, overrides=None) -> None:
-        """One call: the inputs pulled, the steps of its schedule, the after-call work (*overrides*: {input: private
-        name} during the call, a cadence's means)."""
+    def _call(self, overrides=None, stages=None) -> None:
+        """One call: the inputs pulled, the steps of its schedule (*stages*: only those of these stages, a model's
+        Step(stages=)), the after-call work (*overrides*: {input: private name} during the call, a cadence's
+        means)."""
         context = self._before_call()
         with self.private_names(overrides=overrides):
             self.pull_available_inputs()
-            self.choregrapher(instance=self)
+            self.choregrapher(instance=self, stages=stages)
         self._after_call(context)
-        self.__dict__["_calls"] = self.__dict__.get("_calls", 0) + 1
+        self.__dict__["_ran"] = True                     # its model's run counts it (calls)
 
     def calls(self, reset: bool = False) -> int:
-        """The calls that ran (a cadence's skipped steps not counted) since the last reset: the Scene's calls per
-        component ("<Model>.<Component>") read and reset it."""
+        """The scene steps in which it ran since the last reset, counted by its model's run (a cadence's skipped steps
+        not counted, a component scheduled for two stages or called by a model's method counted once): the Scene's
+        calls per component ("<Model>.<Component>") read and reset it."""
         count = self.__dict__.get("_calls", 0)
         if reset:
             self.__dict__.pop("_calls", None)
@@ -322,7 +319,7 @@ class Component:
     def simulation_step(self):
         """The simulation step (s) the component runs in: its DataStructure's (DataStructure.simulation_time_step, the
         Scene's time step), None outside a Scene (a component alone runs one of its own steps per call); during a call
-        of a cadence (cadence=), its interval."""
+        of a schedule step's cadence (coupling.cadence), its interval."""
         if "_cadence_step" in self.__dict__:
             return self.__dict__["_cadence_step"]
         ds = getattr(self, "data_structure", None)
@@ -452,6 +449,7 @@ class Component:
         "rate", ...), after pulling the inputs."""
         self.pull_available_inputs()
         self.choregrapher.run_stage(self, stage)
+        self.__dict__["_ran"] = True
 
 
 @dataclass
@@ -610,9 +608,6 @@ class DataStructureComponent(Component):
     # time_step times per scene step, once when run alone. Default: its class's time_step when it sets one, else the
     # scene's
     time_step: Optional[float] = None
-    # Its cadence (coupling.cadence): None, every scene step; a duration ("1 d") or Cadence("3 h", at="start"), its
-    # calls covering that interval, its inputs averaged over it, its outputs held between them
-    cadence: object = None
 
     # MTG synchronisation policy: "lazy" (default) writes the state variables
     # changed since the last synchronisation when the MTG is read (ds.mtg, MPG-style steps, ds.flush_mtg());

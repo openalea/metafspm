@@ -143,9 +143,10 @@ class Scene:
                                trimmed after each step. A component's setting named workers or device that its
                                model's scenario does not give takes the Compute's (Caribu's).
 
-    A model's cadence is an environment model's interval (a duration, EnvironmentModel: due() and between(); its
-    scenario's "interval" too); a component's, its cadence= (Component, coupling.cadence: its calls covering the
-    interval). An environment model's spin_up(scene) runs once, after the scene is built. An environment model's
+    A model runs its schedule (coupling.schedule: its parts' steps, each at its cadence, Step(cadence=), a model's
+    scenario "cadence" {step name: duration} too: coupling.cadence, the calls covering the interval); schedule()
+    lists every model's steps with their reads and writes. An environment model's spin_up(scene) runs once, after
+    the scene is built. An environment model's
     components work on the plants' union (EnvironmentModel.plant_data_structure), its variables exchanged with the
     plant models through the translator: its outputs a plant model reads as inputs of the same name, and its inputs a
     plant model holds as states of the same name, are linked by default (identity links).
@@ -191,11 +192,9 @@ class Scene:
                                   time_step=time_step, **_model_keywords(model, scenario))
                             for model, scenario in zip(environment, environment_scenarios)]
         for model, instance, scenario in zip(environment, self.environment, environment_scenarios):
-            if "interval" in scenario and hasattr(instance, "interval"):      # the model's cadence (EnvironmentModel)
-                scenario = dict(scenario)
-                interval = scenario.pop("interval")
-                instance.interval = None if interval is None else positive_duration(interval, "interval")
             _apply_model_scenario(model, instance, scenario, per_plant=False)
+            if hasattr(instance, "steps"):
+                instance.steps()                     # its schedule checked now
 
         self.components = [c for p in self.populations for c in p.components]
         self.components += [c for model in self.environment for c in model.components]
@@ -330,7 +329,8 @@ class Scene:
         """
         from dataclasses import fields, is_dataclass
         from openalea.metafspm.data_structure.configs import ScalesConfig
-        initiators = getattr(model, "initiators", ())
+        from openalea.metafspm.coupling.composite_wrapper import model_initiators
+        initiators = model_initiators(model)
         per_plant = {key for initiator in initiators for key in getattr(initiator, "scenario_keys", ())}
         per_plant |= {f.name for initiator in initiators if is_dataclass(initiator) for f in fields(initiator)
                       if f.metadata.get("variable_type") == "parameter" and f.metadata.get("scale") == ScalesConfig.Plant}
@@ -571,6 +571,54 @@ class Scene:
             self.recorder.record(self)
             self._time("recording", perf_counter() - started)
 
+    def schedule(self):
+        """
+        A table (pandas DataFrame) of what a scene step runs, in order: before each model, the exchanges into its
+        DataStructures, then its schedule's steps (CompositeModel.steps); per row the model, the step's name and kind
+        ("exchanges", "component", "together", "model", "method"), its components, stages and cadence, and its
+        reads and writes ("<owner>:<variable>", the owner a population's or an environment model's name; coupling.
+        schedule: the variables stored, "topology", "geometry"). The rows without a conflict between them may run
+        concurrently (devplan_scene_parallel P4).
+        """
+        import pandas as pd
+        from openalea.metafspm.coupling.schedule import _roots
+        owners = {}
+        for population in self.populations:
+            owners[id(_root_data_structure(population.data_structure))] = population.name
+        for model in self.environment:
+            for ds in _own_data_structures(model):
+                for root in _roots(ds):
+                    owners.setdefault(id(root), type(model).__name__)
+
+        def named(accesses) -> list:
+            return sorted(f"{owners.get(id(root), type(root).__name__)}:{name}" for root, name in accesses)
+
+        rows = []
+        models = [(type(model).__name__, model) for model in self.environment]
+        models += [(population.name, population.instance) for population in self.populations]
+        for owner, model in models:
+            receivers = {id(root) for ds in _own_data_structures(model) for root in _roots(ds)}
+            reads, writes = set(), set()
+            for link in self.translator.links:
+                for receiver, provider in link_pairs(link, self.components):
+                    into = _roots(receiver.data_structure)
+                    if not any(id(root) in receivers for root in into) or \
+                            any(root is other for root in into for other in _roots(provider.data_structure)):
+                        continue
+                    writes.update((root, link.private_name if link.names else link.variable) for root in into)
+                    reads.update((root, str(source)) for root in _roots(provider.data_structure)
+                                 for source in link.sources)
+            if writes:
+                rows.append(dict(model=owner, step="exchanges", kind="exchanges", components=[], stages=None,
+                                 cadence=None, reads=named(reads), writes=named(writes)))
+            for step in model.steps() if hasattr(model, "steps") else ():
+                rows.append(dict(model=owner, step=step.name, kind=step.kind,
+                                 components=[type(component).__name__ for component in step.components],
+                                 stages=step.stages, cadence=step.cadence, reads=named(step.reads),
+                                 writes=named(step.writes)))
+        return pd.DataFrame(rows, columns=["model", "step", "kind", "components", "stages", "cadence", "reads",
+                                           "writes"])
+
     def _time(self, key: str, seconds: float) -> None:
         self.timing[key] = self.timing.get(key, 0.) + seconds
 
@@ -752,11 +800,7 @@ class Scene:
             _apply_plant_scenarios(population.data_structure, population.components, rows, population.plants)
         for model, instance, scenario in zip([type(model) for model in self.environment], self.environment,
                                              self.environment_scenarios):
-            scenario = dict(scenario)
-            if "interval" in scenario and hasattr(instance, "interval"):
-                interval = scenario.pop("interval")
-                instance.interval = None if interval is None else positive_duration(interval, "interval")
-            _apply_model_scenario(model, instance, scenario, per_plant=False)
+            _apply_model_scenario(model, instance, dict(scenario), per_plant=False)
 
     def finish(self, status: str = "finished", error: BaseException = None) -> None:
         """

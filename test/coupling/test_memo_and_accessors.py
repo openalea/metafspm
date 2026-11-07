@@ -35,12 +35,7 @@ class Costly(Organs):
 class Model(CompositeModel):
     initiators = (Costly,)
 
-    def __init__(self, data_structure, time_step):
-        self.costly = Costly(data_structure=data_structure, time_step=time_step)
-        self.couple(self.costly)
-
-    def run(self):
-        self.costly()
+    parts = {"costly": Costly}
 
 
 def _population(n_plants=2):

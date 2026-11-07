@@ -11,7 +11,10 @@ import pandas as pd
 
 import pytest
 
+from openalea.metafspm.coupling.cadence import Cadence
 from openalea.metafspm.coupling.component import forcing_variable, state_variable
+from openalea.metafspm.coupling.composite_wrapper import CompositeModel
+from openalea.metafspm.coupling.schedule import Step
 from openalea.metafspm.data_structure.configs import ScalesConfig as scales
 from openalea.metafspm.scene.scene import Scene
 from openalea.metafspm.solve.decorator import rate
@@ -34,33 +37,22 @@ class Lit(SceneGeometry):
         return np.full_like(light, self.forcing("PARi"))
 
 
-class LitPlants:
+class LitPlants(CompositeModel):
     initiators = (RootGrowthProbe,)
-
-    def __init__(self, data_structure, time_step):
-        self.lit = Lit(data_structure=data_structure)
-        self.components = [self.lit]
-
-    def run(self):
-        self.lit()
+    parts = {"lit": Lit}
 
 
 class CountingSoil(SceneSoil):
-    """Records its full runs (every 2 steps), the exudation it received each time, and its spin-up."""
-    interval = 2 * DT
+    """Its nitrate every 2 steps (its schedule's cadence), the exudation it received each time; its spin-up."""
+    schedule = (Step("nitrate", cadence=Cadence(2 * DT, at="start")),)
 
     def __init__(self, plant_data_structures, xrange, yrange, time_step):
         super().__init__(plant_data_structures, xrange, yrange, time_step)
-        self.runs, self.received, self.spun_up = [], [], 0
+        self.spun_up = 0
 
     def spin_up(self, scene):
         self.spun_up += 1
         assert scene.iteration == 0
-
-    def full_run(self):
-        self.runs.append(None)
-        self.received.append(self.grid.get("exudation").sum())
-        super().full_run()
 
 
 def _scene(**options):
@@ -98,7 +90,7 @@ def test_models_run_every_interval_and_spin_up_once():
     assert soil.spun_up == 1
     for _ in range(5):
         scene.run()
-    assert len(soil.runs) == 3                                       # iterations 0, 2, 4
+    assert scene.calls["CountingSoil.SceneSoilNitrate"] == 3          # iterations 0, 2, 4
     assert soil.spun_up == 1
 
 
@@ -146,36 +138,29 @@ def test_a_forcing_read_over_the_step():
 
 
 class CadencedSoil(SceneSoil):
-    """A full run every 3 steps, a light update in between, a hook after each full run."""
-    interval = 3 * DT
+    """Its nitrate every 3 steps (its schedule's cadence), a method of its after it at every step."""
+    schedule = (Step("nitrate", cadence=Cadence(3 * DT, at="start")), "after")
 
     def __init__(self, plant_data_structures, xrange, yrange, time_step):
         super().__init__(plant_data_structures, xrange, yrange, time_step)
         self.calls = []
 
-    def full_run(self):
-        self.calls.append("full")
-        super().full_run()
-
-    def between(self):
-        self.calls.append("between")
-
-    def after_run(self):
-        self.calls.append("after")
+    def after(self):
+        self.calls.append(float(self.nitrate.__dict__["_clock"]))
 
 
-def test_environment_model_cadence_and_helpers():
-    """EnvironmentModel: full runs every interval (the time taken before the components' calls), between() at the
-    other steps, after_run() after each full run; the plants' union, a grid over the pattern; the last run kept by
-    checkpoints."""
+def test_environment_model_schedule_and_helpers():
+    """EnvironmentModel: its schedule's steps at their cadences, a method at every step (its components' clocks at
+    the step's start for each step); the plants' union, a grid over the pattern; no state of its own in checkpoints."""
     table = doubles_planting([LitPlants, LitPlants])
     forcings = pd.DataFrame({"PARi": [0., 10. * DT]}, index=[0., 10. * DT])
     scene = Scene(table, environment=[CadencedSoil], translator=soil_translator("Lit"), time_step=DT, forcings=forcings)
     soil = scene.environment[0]
     for _ in range(7):
         scene.run()
-    assert soil.calls == ["full", "after", "between", "between", "full", "after", "between", "between", "full", "after"]
-    assert soil.last_run == 6 * DT and soil.checkpoint_state() == {"last_run": 6 * DT}
+    assert scene.calls["CadencedSoil.SceneSoilNitrate"] == 3 and soil.calls == [DT * k for k in range(7)]
+    assert [(step.name, step.kind) for step in soil.steps()] == [("nitrate", "component"), ("after", "method")]
+    assert soil.checkpoint_state() == {}
     union = soil.plant_data_structure()                                       # one population: a union of one
     assert type(union).__name__ == "UnionDataStructure" and union.parts == [scene.populations[0].data_structure]
     grid = soil.build_grid(voxel=0.1, depth=0.3)

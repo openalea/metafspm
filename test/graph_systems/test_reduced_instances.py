@@ -173,12 +173,7 @@ def _model(reduced=True, merge=True):
         def wiring(g):
             return wiring(g)
 
-        def __init__(self, data_structure, time_step):
-            self.hydraulics = NetworkHydraulics(data_structure=data_structure, time_step=time_step)
-            self.couple(self.hydraulics)
-
-        def run(self):
-            self.hydraulics()
+        parts = {"hydraulics": NetworkHydraulics}
     return NetworkPlant
 
 

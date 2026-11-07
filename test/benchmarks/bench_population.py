@@ -21,6 +21,8 @@ import pandas as pd
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(HERE, "..", "helpers"))
 
+from openalea.metafspm.scene.environment import EnvironmentModel
+from openalea.metafspm.coupling.composite_wrapper import CompositeModel
 from openalea.metafspm.coupling.component import (FunctionalComponent, StructuralComponent, input_variable,
                                                    parameter, state_variable)
 from openalea.metafspm.coupling.translator import Translator
@@ -162,22 +164,13 @@ class BenchPhloem(FunctionalComponent):
             return sucrose_flux - conductance * np.asarray(self.graph_view.incidence.T @ sucrose).reshape(-1)
 
 
-class BenchPlant:
+class BenchPlant(CompositeModel):
+    """The rates and states, the graph system, then the growth (each one's time: the Scene's timing)."""
     initiators = (BenchGrowth,)
-    timings = {}
-
-    def __init__(self, data_structure, time_step):
-        self.growth = BenchGrowth(data_structure=data_structure)
-        self.carbon = BenchCarbon(data_structure=data_structure)
-        self.phloem = BenchPhloem(data_structure=data_structure)
-        self.components = [self.growth, self.carbon, self.phloem]
-
-    def run(self):
-        for name, component in (("rates and states", self.carbon), ("graph system", self.phloem),
-                                ("growth", self.growth)):
-            start = time.perf_counter()
-            component()
-            BenchPlant.timings[name] = BenchPlant.timings.get(name, 0.) + time.perf_counter() - start
+    parts = {"growth": BenchGrowth, "carbon": BenchCarbon, "phloem": BenchPhloem}
+    schedule = ("carbon", "phloem", "growth")
+    phases = {"rates and states": "BenchPlant.BenchCarbon", "graph system": "BenchPlant.BenchPhloem",
+              "growth": "BenchPlant.BenchGrowth"}
 
 
 # ---------------------------------------------------------------- environment
@@ -193,16 +186,14 @@ class BenchSoilNitrate(FunctionalComponent):
         return 0.99 * soil_nitrate + exudation
 
 
-class BenchSoil:
+class BenchSoil(EnvironmentModel):
     compartment = "Soil"
 
     def __init__(self, plant_data_structures, xrange, yrange, time_step):
+        super().__init__(plant_data_structures, xrange, yrange, time_step)
         self.grid = ArrayDataStructure(shape=(20, 20, 50), dx=(xrange / 20, yrange / 20, 0.02))
         self.nitrate = BenchSoilNitrate(data_structure=self.grid)
         self.components = [self.nitrate]
-
-    def run(self):
-        self.nitrate()
 
 
 TRANSLATOR = (Translator().link("BenchSoilNitrate", "exudation", "BenchCarbon", {"exudation": 1.})
@@ -219,7 +210,6 @@ def _planting(n_plants, side):
 
 
 def bench_segments(n_plants, steps, method):
-    BenchPlant.timings = {}
     start = time.perf_counter()
     with tempfile.TemporaryDirectory() as folder:
         scene = Scene(_planting(n_plants, side=1.), environment=[BenchSoil], translator=TRANSLATOR, time_step=DT,
@@ -243,12 +233,12 @@ def bench_segments(n_plants, steps, method):
         scene.environment[0].run = timed("soil", scene.environment[0].run)
         scene.run()                                    # warm-up (numba, caches)
         phases = dict.fromkeys(phases, 0.)
-        BenchPlant.timings = {}
+        scene.timing.clear()
         start = time.perf_counter()
         for _ in range(steps):
             scene.run()
         total = (time.perf_counter() - start) / steps
-    phases.update(BenchPlant.timings)
+    phases.update({name: scene.timing.get(key, 0.) for name, key in BenchPlant.phases.items()})
     return dict(plants=n_plants, method=method, segments=n0, grown=ds.n_nodes() - n0, build_s=built,
                 step_s=total, **{f"{k}_s": v / steps for k, v in phases.items()})
 

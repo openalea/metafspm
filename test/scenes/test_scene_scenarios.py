@@ -8,6 +8,8 @@ from dataclasses import dataclass
 import numpy as np
 import pytest
 
+from openalea.metafspm.coupling.composite_wrapper import CompositeModel
+from openalea.metafspm.scene.environment import EnvironmentModel
 from openalea.metafspm.coupling.component import FunctionalComponent, parameter, state_variable
 from openalea.metafspm.data_structure.configs import ScalesConfig as scales
 from openalea.metafspm.data_structure.data_api import ArrayDataStructure, MPGDataStructure
@@ -26,16 +28,13 @@ class Settings(FunctionalComponent):
     u: float = state_variable(**DOC, default=0., scale=scales.SubOrgan)
 
 
-class Plants:
+class Plants(CompositeModel):
     initiators = (RootGrowthProbe,)                            # reads n_segments and apex_length
+    parts = {"settings": Settings}
 
     def __init__(self, data_structure, time_step, label="plants"):
+        super().__init__(data_structure, time_step)
         self.label = label
-        self.settings = Settings(data_structure=data_structure, time_step=time_step)
-        self.components = [self.settings]
-
-    def run(self):
-        self.settings()
 
 
 @dataclass
@@ -45,15 +44,13 @@ class SoilSettings(FunctionalComponent):
     theta: float = state_variable(**DOC, default=0., location="cell")
 
 
-class Ground:
+class Ground(EnvironmentModel):
     def __init__(self, plant_data_structures, xrange, yrange, time_step, depth=0.4):
+        super().__init__(plant_data_structures, xrange, yrange, time_step)
         self.depth = depth
         self.grid = ArrayDataStructure(shape=(2, 1, 2), dx=0.2)
         self.settings = SoilSettings(data_structure=self.grid, time_step=time_step)
         self.components = [self.settings]
-
-    def run(self):
-        self.settings()
 
 
 def _scene(plant_scenarios, soil_scenario=None):
@@ -98,13 +95,11 @@ class Optics(FunctionalComponent):
     absorbed: float = state_variable(**DOC, default=0., scale=scales.SubOrgan)
 
 
-class Light:
+class Light(EnvironmentModel):
     def __init__(self, plant_data_structures, xrange, yrange, time_step):
+        super().__init__(plant_data_structures, xrange, yrange, time_step)
         self.optics = Optics(data_structure=plant_data_structures[0], time_step=time_step)
         self.components = [self.optics]
-
-    def run(self):
-        self.optics()
 
 
 def test_an_environment_scenario_sets_its_per_plant_parameters_for_every_plant():

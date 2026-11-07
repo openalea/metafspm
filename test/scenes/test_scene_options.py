@@ -9,6 +9,8 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from openalea.metafspm.scene.environment import EnvironmentModel
+from openalea.metafspm.coupling.composite_wrapper import CompositeModel, Part
 from openalea.metafspm.coupling.component import (FunctionalComponent, StructuralComponent, input_variable,
                                                    state_variable)
 from openalea.metafspm.coupling.cross import CrossMapping, LayerMapping
@@ -42,30 +44,27 @@ class GridHeat(FunctionalComponent):
                                         kind="intensive")
 
 
-class ColumnModel:
-    """A 1-D column model; its DataStructure is given by its scenario, or built."""
+class ColumnModel(EnvironmentModel):
+    """A 1-D column model; its DataStructure is given by its scenario, or built. It runs nothing (its schedule)."""
+    schedule = ()
 
     def __init__(self, plant_data_structures, xrange, yrange, time_step, column=None):
+        super().__init__(plant_data_structures, xrange, yrange, time_step)
         self.column = column if column is not None else ArrayDataStructure(shape=(4,), dx=0.4)
         self.heat = ColumnHeat(data_structure=self.column)
         self.column.set("temperature", [10., 12., 14., 16.])
         self.components = [self.heat]
 
-    def run(self):
-        pass
 
-
-class GridModel:
-    """A grid model, with the four 0.4 m layers of the column along z."""
+class GridModel(EnvironmentModel):
+    """A grid model, with the four 0.4 m layers of the column along z. It runs nothing (its schedule)."""
+    schedule = ()
 
     def __init__(self, plant_data_structures, xrange, yrange, time_step, grid=None):
-        self.xrange, self.yrange = xrange, yrange
+        super().__init__(plant_data_structures, xrange, yrange, time_step)
         self.grid = grid if grid is not None else ArrayDataStructure(shape=(2, 1, 4), dx=0.4)
         self.heat = GridHeat(data_structure=self.grid)
         self.components = [self.heat]
-
-    def run(self):
-        pass
 
 
 LAYERS = Translator().link("GridHeat", "temperature", "ColumnHeat", {"temperature": 1.})
@@ -176,16 +175,11 @@ class CompartmentWater(FunctionalComponent):
     water: float = state_variable(**DOC, default=2., location="node", kind="intensive")
 
 
-class AnatomyPopulation:
+class AnatomyPopulation(CompositeModel):
     initiators = (RootGrowthProbe, AnatomyInitiator)
     nodes = "Compartment"
 
-    def __init__(self, data_structure, time_step):
-        self.water = CompartmentWater(data_structure=data_structure)
-        self.components = [self.water]
-
-    def run(self):
-        self.water()
+    parts = {"water": CompartmentWater}
 
 
 def test_a_population_model_in_anatomy_mode_has_compartments_as_nodes():
@@ -328,15 +322,9 @@ class Counted(FunctionalComponent):
         return count + 1.
 
 
-class CountedPlants:
+class CountedPlants(CompositeModel):
     initiators = (RootGrowthProbe,)
-
-    def __init__(self, data_structure, time_step):
-        self.counted = Counted(data_structure=data_structure, time_step=DT)
-        self.components = [self.counted]
-
-    def run(self):
-        self.counted()
+    parts = {"counted": Part(Counted, time_step=DT)}                 # hourly sub-steps in any scene step
 
 
 def test_two_scenes_of_different_time_steps_run_in_one_process():

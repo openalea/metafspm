@@ -31,9 +31,10 @@ def component_rst(cls, heading: str = "-") -> str:
     if doc:
         lines += [doc, ""]
     if not hasattr(cls, "declarations"):              # a model (an EnvironmentModel, a CompositeModel)
-        interval = getattr(cls, "interval", None)
-        if interval is not None:
-            lines += [f"Runs fully every {interval:g} s.", ""]
+        schedule = getattr(cls, "schedule", None)
+        if schedule:                                    # its declared schedule (coupling.schedule)
+            lines += ["Schedule: " + ", ".join(f"``{entry!r}``" if not isinstance(entry, str) else f"``{entry}``"
+                                               for entry in schedule) + ".", ""]
         methods = [(name, inspect.getdoc(member)) for name, member in vars(cls).items()
                    if inspect.isfunction(member) and not name.startswith("_")]
         lines += [f"- ``{name}``: {' '.join(method_doc.split())}" for name, method_doc in methods if method_doc]

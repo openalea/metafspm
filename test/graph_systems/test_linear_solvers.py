@@ -238,12 +238,7 @@ def _run(component_class):
         def wiring(g):
             return wiring(g)
 
-        def __init__(self, data_structure, time_step):
-            self.hydraulics = component_class(data_structure=data_structure, time_step=time_step)
-            self.couple(self.hydraulics)
-
-        def run(self):
-            self.hydraulics()
+        parts = {"hydraulics": component_class}
     population = population_data_structure(planting([Planting()], ChainPlant, {}), ChainPlant)
     with Compute(linear_solver="superlu_reuse").limits() as compute:
         population.instance.run()

@@ -161,12 +161,7 @@ class BenchPlant(CompositeModel):
                           kind={"soil_water_potential": None}, systems=("BenchHydraulics._hydraulics",))
     wiring = staticmethod(_wiring)
 
-    def __init__(self, data_structure, time_step):
-        self.hydraulics = BenchHydraulics(data_structure=data_structure, time_step=time_step)
-        self.couple(self.hydraulics)
-
-    def run(self):
-        self.hydraulics()
+    parts = {"hydraulics": BenchHydraulics}
 
 
 def plant(groups: int, cells: int):

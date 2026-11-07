@@ -1,8 +1,8 @@
 """
-A component's cadence (coupling.cadence): its calls cover a longer interval than the scene's step, its inputs
-averaged over the interval (each entity's over the steps it existed, the roots growing), its forcings read over it,
-its outputs held between its calls; at the interval's start instead; its own sub-step; checkpoints; the calls
-counted per component.
+A schedule step's cadence (coupling.schedule.Step(cadence=), coupling.cadence): its calls cover a longer interval
+than the scene's step, its inputs averaged over the interval (each entity's over the steps it existed, the roots
+growing), its forcings read over it, its outputs held between its calls; at the interval's start instead; its own
+sub-step; checkpoints; the calls counted per component; a model's scenario's cadence; components run together.
 """
 import json
 import os
@@ -13,6 +13,8 @@ import pytest
 
 from openalea.metafspm.coupling.cadence import Cadence
 from openalea.metafspm.coupling.component import FunctionalComponent, forcing_variable, input_variable, state_variable
+from openalea.metafspm.coupling.composite_wrapper import CompositeModel
+from openalea.metafspm.coupling.schedule import Step, Together
 from openalea.metafspm.data_structure.configs import ScalesConfig as scales
 from openalea.metafspm.scene.scene import Scene
 from openalea.metafspm.solve.decorator import state
@@ -44,27 +46,16 @@ class Slow(FunctionalComponent):
                 "integrated": integrated + hour * self.dt}
 
 
-class SlowRoots:
-    """Growing roots (one more segment every few steps) and the slow component after them, of a given cadence."""
+class SlowRoots(CompositeModel):
+    """Growing roots (one more segment every few steps) and the slow component after them, at a cadence."""
     initiators = (RootGrowthProbe,)
-    cadence, slow_time_step = Cadence(INTERVAL), None
-
-    def __init__(self, data_structure, time_step):
-        self.growth = RootGrowthProbe(data_structure=data_structure)
-        self.carbon = CarbonProbe(data_structure=data_structure)
-        self.slow = Slow(data_structure=data_structure, time_step=type(self).slow_time_step,
-                         cadence=type(self).cadence)
-        self.components = [self.growth, self.carbon, self.slow]
-
-    def run(self):
-        self.growth()
-        self.carbon()
-        self.slow()
+    parts = {"growth": RootGrowthProbe, "carbon": CarbonProbe, "slow": Slow}
+    schedule = ("growth", "carbon", Step("slow", cadence=Cadence(INTERVAL)))
 
 
-def _scene(model=SlowRoots, **options):
-    return Scene(doubles_planting([model]), time_step=DT, forcings={"hour": lambda t: t / DT, "light": lambda t: t / DT},
-                 **options)
+def _scene(model=SlowRoots, planting_scenario=None, **options):
+    return Scene(doubles_planting([model], [planting_scenario or {}]), time_step=DT,
+                 forcings={"hour": lambda t: t / DT, "light": lambda t: t / DT}, **options)
 
 
 def _values(scene, name) -> dict:
@@ -97,7 +88,7 @@ def test_a_component_every_four_hours_reads_the_means_over_its_interval():
 
 
 class EarlyRoots(SlowRoots):
-    cadence = Cadence("4 h", at="start")
+    schedule = ("growth", "carbon", Step("slow", cadence=Cadence("4 h", at="start")))
 
 
 def test_at_the_start_of_its_interval_it_reads_its_inputs_then():
@@ -112,8 +103,14 @@ def test_at_the_start_of_its_interval_it_reads_its_inputs_then():
     assert scene.calls["EarlyRoots.Slow"] == 2
 
 
+@dataclass
+class HalfHourSlow(Slow):
+    """Slow in half-hour sub-steps (its class's own time step)."""
+    time_step = DT / 2
+
+
 class SubSteppedRoots(SlowRoots):
-    slow_time_step = DT / 2
+    parts = {"growth": RootGrowthProbe, "carbon": CarbonProbe, "slow": HalfHourSlow}
 
 
 def test_its_own_sub_step_sub_steps_its_interval():
@@ -122,7 +119,7 @@ def test_its_own_sub_step_sub_steps_its_interval():
         scene.run()
     ds = scene.populations[0].data_structure
     np.testing.assert_allclose(ds.get("integrated"), 2. * INTERVAL)       # 8 half-hours at the mean
-    assert scene.calls["SubSteppedRoots.Slow"] == 1
+    assert scene.calls["SubSteppedRoots.HalfHourSlow"] == 1
 
 
 def test_the_means_resume_from_a_checkpoint(tmp_path):
@@ -142,7 +139,7 @@ def test_the_means_resume_from_a_checkpoint(tmp_path):
 
 
 class HalfHourRoots(SlowRoots):
-    cadence = "90 min"
+    schedule = ("growth", "carbon", Step("slow", cadence="90 min"))
 
 
 def test_its_interval_is_a_whole_number_of_steps_and_its_calls_are_recorded(tmp_path):
@@ -160,24 +157,11 @@ def test_its_interval_is_a_whole_number_of_steps_and_its_calls_are_recorded(tmp_
 
 
 class TogetherRoots(SlowRoots):
-    """The carbon and the slow component run together (CompositeModel.run_together): they share their cadence."""
-    carbon_cadence = Cadence(INTERVAL)
-
-    def __init__(self, data_structure, time_step):
-        super().__init__(data_structure, time_step)
-        self.carbon.cadence = type(self).carbon_cadence
-
-    def run(self):
-        from openalea.metafspm.coupling.composite_wrapper import CompositeModel
-        self.growth()
-        CompositeModel.run_together(self, self.carbon, self.slow)
+    """The carbon and the slow component run together (CompositeModel.run_together), at one cadence."""
+    schedule = ("growth", Together("carbon", "slow", cadence=Cadence(INTERVAL)))
 
 
-class MismatchedRoots(TogetherRoots):
-    carbon_cadence = None
-
-
-def test_components_run_together_share_their_cadence():
+def test_components_run_together_at_their_cadence():
     scene = _scene(TogetherRoots)
     scene.run()
     first = list(_values(scene, "seen_hour"))           # the nodes of the whole interval (a later one's hour: 0
@@ -186,5 +170,27 @@ def test_components_run_together_share_their_cadence():
     seen = _values(scene, "seen_hour")
     np.testing.assert_allclose([seen[vid] for vid in first], 2.)
     assert scene.calls["TogetherRoots.Slow"] == scene.calls["TogetherRoots.CarbonProbe"] == 1
-    with pytest.raises(ValueError, match="share their cadence"):
-        _scene(MismatchedRoots).run()
+
+
+def test_a_models_scenario_sets_its_steps_cadences():
+    scene = _scene(planting_scenario={"cadence": {"slow": "2 h"}})
+    for _ in range(4):
+        scene.run()
+    assert scene.calls["SlowRoots.Slow"] == 2
+    every_step = _scene(planting_scenario={"cadence": {"slow": None}})
+    every_step.run()
+    assert every_step.calls["SlowRoots.Slow"] == 1
+    with pytest.raises(KeyError, match="no such step"):
+        _scene(planting_scenario={"cadence": {"fast": "2 h"}})
+
+
+class CadencedMethod(SlowRoots):
+    schedule = ("growth", "carbon", Step("helper", cadence=INTERVAL))
+
+    def helper(self):
+        """Not a component."""
+
+
+def test_a_cadence_is_a_components_steps():
+    with pytest.raises(ValueError, match="a component's step's"):
+        _scene(CadencedMethod)

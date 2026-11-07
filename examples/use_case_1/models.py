@@ -3,12 +3,12 @@ The models of use case 1 (a wheat plant in its soil and its light): the plant po
 environment models (the soil, component.RichardsSoilModel, and the light, Caribu's CaribuLightModel) and the
 translators linking their components.
 
-    WheatPlant          the plant: the seed and the subcrown internode (WheatCrown), Adel's shoot on the crown's
-                        top, ArchiSimple's roots on the seed and on the phytomers the nodal root rule asks
-                        (NodalRootEmergence), GRANAP's anatomy on every section, the roots' barriers (MECHA's
-                        Development), the elements' optics (Caribu's PlantOptics), their gas exchange (CNW-Grass's
-                        GasExchange) and the water flow through the whole plant (MECHA's MechaHydraulics), on one MPG
-                        whose nodes are the Compartments
+    WheatPlant          the plant, its parts: the seed and the subcrown internode (WheatCrown), Adel's shoot
+                        (ScenarioShoot, nested) on the crown's top, ArchiSimple's roots on the seed and on the
+                        phytomers the nodal root rule asks (NodalRootEmergence), GRANAP's anatomy on every section,
+                        the roots' barriers (MECHA's Development), the elements' optics (Caribu's PlantOptics), their
+                        gas exchange (CNW-Grass's GasExchange) and the water flow through the whole plant (MECHA's
+                        MechaHydraulics), on one MPG whose nodes are the Compartments
     WHEAT_SCENARIO      the plant's scenario: the crown, Adel's blades (CN-Wheat's leaf shapes, LeafShapes.cnwheat:
                         CNW-Grass's stand's), ArchiSimple's wheat on a shoot and its anchor,
                         GRANAP's anatomies (a wheat root, the monocot stem, sheath and leaf), the barriers' zones,
@@ -41,8 +41,7 @@ water potential over the element's liquid (weighted by liquid_volume: CNW-Grass'
 liquid node (a section without anatomy) keeps the gas exchange's default (metafspm's missing="default").
 """
 
-from openalea.adel.architecture import ShootArchitecture
-from openalea.adel.development import ScenarioDevelopment, ScenarioShoot
+from openalea.adel.development import ScenarioShoot
 from openalea.adel.leaf_shapes import LeafShapes
 from openalea.archisimple.architecture import RootArchitecture
 from openalea.archisimple.parameter_sets import WHEAT_ON_A_SHOOT
@@ -52,6 +51,7 @@ from openalea.granap.metafspm.component import GranapAnatomy, junction_rules
 from openalea.mecha.component import MechaHydraulics, scenario_reduction
 from openalea.mecha.stand_ins import Development
 
+from openalea.metafspm.coupling.composite_wrapper import CompositeModel
 from openalea.metafspm.coupling.translator import Translator
 from openalea.metafspm.scene.recorder import Summary
 
@@ -114,56 +114,38 @@ PLANT_TRANSLATOR = (
 SCENE_TRANSLATOR = scene_translator()
 
 
-class WheatPlant(ScenarioShoot):
+class WheatPlant(CompositeModel):
     """
     The plant population model: one MPG per population, its nodes the Compartments of GRANAP's sections (anatomy mode),
     each component on its own entities (Adel's elements, the rule's, ArchiSimple's roots) and at its own scale.
 
-    Initiators, in order: WheatCrown (the seed and the subcrown internode), Adel's ShootArchitecture (its main stem
-    '<' on the crown's top: the scenario's shoot_anchor), ArchiSimple's RootArchitecture (its seminal roots '+' on
-    the seed: root_anchor) and GranapAnatomy (every section's anatomy, joined by its junction rules, across the
-    sections without one).
+    Initiators, in order: WheatCrown (the seed and the subcrown internode), Adel's shoot (ScenarioShoot's
+    ShootArchitecture: its main stem '<' on the crown's top, the scenario's shoot_anchor), ArchiSimple's
+    RootArchitecture (its seminal roots '+' on the seed: root_anchor) and GranapAnatomy (every section's anatomy,
+    joined by its junction rules, across the sections without one).
 
-    A step: Adel's shoot (its development and architecture together, ScenarioShoot.run_shoot), the nodal root rule,
-    ArchiSimple's roots (the nodal roots on the phytomers the rule asks), GRANAP's anatomies of the new sections, the
-    roots' barriers (MECHA's Development, by their distance from the tip), the new elements' optics, the gas exchange
-    (its PARa the light's, its leaf water potential MECHA's of the step before) and MECHA's water flow (each organ's transpiration leaving at its leaf surface, the soil's
-    potential on the roots' soil nodes).
+    Its parts, run in this order (the schedule): Adel's shoot (ScenarioShoot, nested: its development and
+    architecture grown together), the nodal root rule, ArchiSimple's roots (the nodal roots on the phytomers the rule
+    asks), GRANAP's anatomies of the new sections, the roots' barriers (MECHA's Development, by their distance from
+    the tip), the new elements' optics, the gas exchange (its PARa the light's, its leaf water potential MECHA's of
+    the step before) and MECHA's water flow (each organ's transpiration leaving at its leaf surface, the soil's
+    potential on the roots' soil nodes); the crown has no step.
 
     reduction: MECHA's sections reduced onto their conduits and kept nodes when the scenario says so
     (scenario_reduction: "reduced", "reduced_where", "length_classes"), the whole network otherwise.
     """
-    initiators = (WheatCrown, ShootArchitecture, RootArchitecture, GranapAnatomy)
+    initiators = (WheatCrown, ScenarioShoot, RootArchitecture, GranapAnatomy)
+    parts = {"crown": WheatCrown, "shoot": ScenarioShoot, "rule": NodalRootEmergence, "roots": RootArchitecture,
+             "anatomy": GranapAnatomy, "barriers": Development, "optics": PlantOptics, "gas_exchange": GasExchange,
+             "hydraulics": MechaHydraulics}
     from_scale, nodes, wiring = "SubOrgan", "Compartment", junction_rules
     translator = PLANT_TRANSLATOR
     reduction = staticmethod(scenario_reduction)
 
     def __init__(self, data_structure, time_step):
-        ds = data_structure
-        self.crown = WheatCrown(data_structure=ds, time_step=time_step)
-        self.development = ScenarioDevelopment(data_structure=ds, time_step=time_step)
-        self.architecture = ShootArchitecture(data_structure=ds, time_step=time_step)
-        self.rule = NodalRootEmergence(data_structure=ds, time_step=time_step)
-        self.roots = RootArchitecture(data_structure=ds, time_step=time_step)
-        self.anatomy = GranapAnatomy(data_structure=ds, time_step=time_step)
-        self.barriers = Development(data_structure=ds, time_step=time_step)
-        self.optics = PlantOptics(data_structure=ds, time_step=time_step)
-        self.gas_exchange = GasExchange(data_structure=ds, time_step=time_step)
-        self.hydraulics = MechaHydraulics(data_structure=ds, time_step=time_step)
-        self.couple(self.crown, self.development, self.architecture, self.rule, self.roots, self.anatomy,
-                    self.barriers, self.optics, self.gas_exchange, self.hydraulics)
+        super().__init__(data_structure, time_step)
         # the roots' soil nodes (GRANAP's entity set): the soil links' mapping (component.scene_translator)
-        ds.define_mask("root_surface", entities="GranapAnatomy.soil_nodes")
-
-    def run(self):
-        self.run_shoot()
-        self.rule()
-        self.roots()
-        self.anatomy()
-        self.barriers()
-        self.optics()
-        self.gas_exchange()
-        self.hydraulics()
+        data_structure.define_mask("root_surface", entities="GranapAnatomy.soil_nodes")
 
 
 # The water diagnostics after each step (decision U-6: the plant and the soil exchange once per step, the lag

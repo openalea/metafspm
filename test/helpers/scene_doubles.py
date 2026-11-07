@@ -7,6 +7,7 @@ from dataclasses import dataclass
 import numpy as np
 import pandas as pd
 
+from openalea.metafspm.coupling.composite_wrapper import CompositeModel
 from openalea.metafspm.coupling.component import FunctionalComponent, input_variable, parameter, state_variable
 from openalea.metafspm.coupling.translator import Translator
 from openalea.metafspm.data_structure.configs import ScalesConfig as scales
@@ -59,31 +60,17 @@ class SeedlingExudation(SceneGeometry):
         return np.ones_like(soil_nitrate)
 
 
-class RootPopulation:
+class RootPopulation(CompositeModel):
     """A plant model as a population model."""
     initiators = (RootGrowthProbe,)
 
-    def __init__(self, data_structure, time_step):
-        self.growth = RootGrowthProbe(data_structure=data_structure)
-        self.carbon = CarbonProbe(data_structure=data_structure)
-        self.exudation = SceneExudation(data_structure=data_structure)
-        self.components = [self.growth, self.carbon, self.exudation]
-
-    def run(self):
-        self.growth()
-        self.carbon()
-        self.exudation()
+    parts = {"growth": RootGrowthProbe, "carbon": CarbonProbe, "exudation": SceneExudation}
 
 
-class Seedlings:
+class Seedlings(CompositeModel):
     initiators = (RootGrowthProbe,)          # its initial structure only: RootGrowthProbe is not instantiated
 
-    def __init__(self, data_structure, time_step):
-        self.exudation = SeedlingExudation(data_structure=data_structure)
-        self.components = [self.exudation]
-
-    def run(self):
-        self.exudation()
+    parts = {"exudation": SeedlingExudation}
 
 
 @dataclass

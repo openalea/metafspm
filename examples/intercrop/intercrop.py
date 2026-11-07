@@ -9,8 +9,9 @@ What it shows:
 - the planting's population column: one model (Roots), two populations, "wheat" and "pea", each its own MPG, model
   instance, scenario (by population name) and outputs (Plant/wheat/, Plant/pea/);
 - the scene translator naming components by class, which reaches both populations (the soil's temperature to every
-  population's SoilContact, every population's root length into the soil's root_length), or by scene name,
-  "pea.SoilContact", which reaches the pea's only (its share of the soil's roots, pea_root_length);
+  population's RootArchitecture, every population's root length into the soil's root_length), or by scene name,
+  "pea.RootArchitecture", which reaches the pea's only (its share of the soil's roots, pea_root_length); the
+  roots' component works on its roots (an entity view of the plant), which the soil exchanges with;
 - scene.population(name) and scene.model(class) to read them back;
 - times with their units: the scene's step "1 h", its start a date, the summaries every "6 h".
 """
@@ -38,28 +39,11 @@ SPACING, ROW = 0.1, 0.2                     # m: the plants along the row, the s
 SURFACE_TEMPERATURE, GRADIENT = 16., 20.    # °C at the surface, its decrease per m of depth (the deep soil colder)
 
 
-@dataclass
-class SoilContact(FunctionalComponent):
-    """The roots' contact with the soil, on the plant's whole DataStructure (RootArchitecture works on a view of its
-    roots): the soil's temperature it receives, which RootArchitecture reads by its name, and the elements' length,
-    which the soil gathers."""
-    soil_temperature: float = input_variable(unit="°C", description="the soil's temperature at the element",
-                                             default=15., scale=scales.SubOrgan, kind="intensive")
-    length: float = input_variable(unit="m", description="the element's length (RootArchitecture's)", default=0.,
-                                   scale=scales.SubOrgan, kind="extensive")
-
-
 class Roots(CompositeModel):
-    """The plant model of both populations: ArchiSimple's root architecture and its contact with the soil."""
+    """The plant model of both populations: ArchiSimple's root architecture (working on its roots, an entity view of
+    the plant: the soil exchanges with them)."""
     initiators = (RootArchitecture,)
-
-    def __init__(self, data_structure, time_step):
-        self.growth = RootArchitecture(data_structure=data_structure, time_step=time_step)
-        self.contact = SoilContact(data_structure=data_structure, time_step=time_step)
-        self.couple(self.growth, self.contact)
-
-    def run(self):
-        self.growth()
+    parts = {"growth": RootArchitecture}
 
 
 @dataclass
@@ -97,9 +81,9 @@ class Soil(EnvironmentModel):
 # The scene's links: by class, the soil's temperature to every population's roots and every population's roots
 # into the soil; by scene name, the pea's roots alone into pea_root_length
 TRANSLATOR = (Translator()
-              .link("SoilContact", "soil_temperature", "SoilTemperature", {"soil_temperature": 1.})
-              .link("SoilTemperature", "root_length", "SoilContact", {"length": 1.})
-              .link("SoilTemperature", "pea_root_length", "pea.SoilContact", {"length": 1.}))
+              .link("RootArchitecture", "soil_temperature", "SoilTemperature", {"soil_temperature": 1.})
+              .link("SoilTemperature", "root_length", "RootArchitecture", {"length": 1.})
+              .link("SoilTemperature", "pea_root_length", "pea.RootArchitecture", {"length": 1.}))
 # Each species' roots every 6 hours: their length and their deepest point, summed (or the lowest) per population
 SPECIES_ROOTS = {"wheat_roots": Summary("SubOrgan", sum=["length"], min=["z2"], population="wheat"),
                  "pea_roots": Summary("SubOrgan", sum=["length"], min=["z2"], population="pea")}

@@ -12,6 +12,8 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from openalea.metafspm.scene.environment import EnvironmentModel
+from openalea.metafspm.coupling.composite_wrapper import CompositeModel
 from openalea.metafspm.coupling.component import FunctionalComponent, input_variable, state_variable
 from openalea.metafspm.coupling.translator import Translator
 from openalea.metafspm.data_structure.configs import ScalesConfig as scales
@@ -27,13 +29,13 @@ from scene_doubles import DT, RootPopulation, SceneGeometry, SceneSoil, Seedling
 
 class ExternalSolverSoil(SceneSoil):
     """A soil model wrapping an opaque solver whose state is not a DataStructure variable (e.g. a cmf project)."""
+    schedule = ("nitrate", "solve")
 
     def __init__(self, plant_data_structures, xrange, yrange, time_step):
         super().__init__(plant_data_structures, xrange, yrange, time_step)
         self.solver = {"steps": 0, "storage": 1.}
 
-    def run(self):
-        super().run()
+    def solve(self):
         self.solver["steps"] += 1
         self.solver["storage"] = 0.5 * self.solver["storage"] + float(self.grid.get("exudation").sum())
 
@@ -189,17 +191,11 @@ class VectorExudation(SceneGeometry):
         return compounds * np.array([1., 2., 3.])
 
 
-class VectorPlants:
+class VectorPlants(CompositeModel):
     initiators = (RootGrowthProbe,)
 
-    def __init__(self, data_structure, time_step):
-        self.growth = RootGrowthProbe(data_structure=data_structure)
-        self.exudation = VectorExudation(data_structure=data_structure)
-        self.components = [self.growth, self.exudation]
-
-    def run(self):
-        self.exudation()
-        self.growth()
+    parts = {"growth": RootGrowthProbe, "exudation": VectorExudation}
+    schedule = ("exudation", "growth")
 
 
 @dataclass
@@ -215,16 +211,14 @@ class Mimics(FunctionalComponent):
         return 0.5 * pools + compounds
 
 
-class MimicsSoil:
+class MimicsSoil(EnvironmentModel):
     compartment = "Soil"
 
     def __init__(self, plant_data_structures, xrange, yrange, time_step):
+        super().__init__(plant_data_structures, xrange, yrange, time_step)
         self.grid = ArrayDataStructure(shape=(2, 1, 4), dx=0.4)
         self.mimics = Mimics(data_structure=self.grid)
         self.components = [self.mimics]
-
-    def run(self):
-        self.mimics()
 
 
 def test_vector_variables_through_steps_growth_exchanges_and_outputs(tmp_path):

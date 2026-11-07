@@ -43,12 +43,7 @@ class Supply(Organs):
 class Model(CompositeModel):
     initiators = (Supply,)
 
-    def __init__(self, data_structure, time_step):
-        self.supply = Supply(data_structure=data_structure, time_step=time_step)
-        self.couple(self.supply)
-
-    def run(self):
-        self.supply()
+    parts = {"supply": Supply}
 
 
 def _population(scenarios=({"supply_rate": 1.}, {"supply_rate": 3.})):

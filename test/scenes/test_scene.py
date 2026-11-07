@@ -10,6 +10,8 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from openalea.metafspm.scene.environment import EnvironmentModel
+from openalea.metafspm.coupling.composite_wrapper import CompositeModel
 from openalea.metafspm.coupling.component import FunctionalComponent, input_variable, state_variable
 from openalea.metafspm.coupling.cross import CrossMapping, UnionDataStructure, UnionMapping
 from openalea.metafspm.coupling.translator import Translator
@@ -203,33 +205,25 @@ class SceneLight(FunctionalComponent):
         return np.exp(z1)                    # deeper elements get less light, from every population
 
 
-class LeafPopulation:
+class LeafPopulation(CompositeModel):
     initiators = (RootGrowthProbe,)
 
-    def __init__(self, data_structure, time_step):
-        self.leaves = SceneLeaves(data_structure=data_structure)
-        self.components = [self.leaves]
-
-    def run(self):
-        pass
+    parts = {"leaves": SceneLeaves}
+    schedule = ()
 
 
 class SeedlingLeafPopulation(LeafPopulation):
-    def __init__(self, data_structure, time_step):
-        self.leaves = SeedlingLeaves(data_structure=data_structure)
-        self.components = [self.leaves]
+    parts = {"leaves": SeedlingLeaves}
 
 
-class SceneLightModel:
+class SceneLightModel(EnvironmentModel):
     """A CARIBU-like environment model on the union of the populations."""
 
     def __init__(self, plant_data_structures, xrange, yrange, time_step):
+        super().__init__(plant_data_structures, xrange, yrange, time_step)
         self.scene = UnionDataStructure(plant_data_structures)
         self.light = SceneLight(data_structure=self.scene)
         self.components = [self.light]
-
-    def run(self):
-        self.light()
 
 
 def test_a_light_model_on_the_union_of_the_populations():
@@ -252,18 +246,19 @@ def test_planting_keeps_the_stand_and_the_planting_times():
     assert table.attrs["xrange"] == pytest.approx(0.6) and (table["planting_time"] == 0.).all()
 
 
-class ApexOnlyLeaves(LeafPopulation):
-    """A model defining its own "active" mask (its apices)."""
-
-    def __init__(self, data_structure, time_step):
-        self.leaves = ApexLeaves(data_structure=data_structure)
-        data_structure.define_mask("active", {"is_apex": ">0"})
-        self.components = [self.leaves]
-
-
 @dataclass
 class ApexLeaves(FunctionalComponent):
     is_apex: float = state_variable(**DOC, default=0., scale=scales.SubOrgan, kind="descriptor")
+
+
+class ApexOnlyLeaves(LeafPopulation):
+    """A model defining its own "active" mask (its apices)."""
+
+    parts = {"leaves": ApexLeaves}
+
+    def __init__(self, data_structure, time_step):
+        super().__init__(data_structure, time_step)
+        data_structure.define_mask("active", {"is_apex": ">0"})
 
 
 def test_emergence_combines_with_a_model_active_mask():

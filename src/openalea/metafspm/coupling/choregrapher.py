@@ -80,12 +80,19 @@ class Choregrapher:
             groups.setdefault(str(priority), []).append(functor)
         return {k: groups[k] for k in sorted(groups)}
 
-    def __call__(self, instance):
+    def __call__(self, instance, stages=None):
         """
         Run the bound schedule of component *instance* once per sub time step of the simulation step (its own
-        time_step by default), its clock at the start of each sub-step.
+        time_step by default), its clock at the start of each sub-step; *stages*: only its step groups of these
+        stages (e.g. ("rate",): a model's Step(stages=)).
         """
         sub_time_step, groups = instance.__dict__["_choregraphy"]
+        if stages is not None:
+            groups = {priority: functors for priority, functors in groups.items()
+                      if set(self.stages_of(priority)) & set(stages)}
+            if not groups:
+                raise ValueError(f"{type(instance).__name__}: no step of the stages {list(stages)} (its schedule: "
+                                 f"{self.describe(type(instance))})")
         start = instance.__dict__.get("_clock", 0.)
         simulation_step = instance.simulation_step() or sub_time_step
         increments = 1 if sub_time_step is None else sub_steps(simulation_step, sub_time_step, type(instance).__name__)
@@ -132,15 +139,18 @@ class Choregrapher:
         for instance, start in zip(instances, starts):
             instance.__dict__["_clock"] = start
 
+    def stages_of(self, priority: str) -> tuple:
+        """The stages of a schedule position (a priority: one per row of the consensus scheduling)."""
+        positions = ast.literal_eval(priority)
+        return tuple(self.consensus_scheduling[row][position - 1] for row, position in enumerate(positions)
+                     if position > 0)
+
     def describe(self, cls) -> list:
         """[(stages, [step names])] of class *cls*, in the order its steps run: each group of steps with the stage it
         has in each row of the schedule (e.g. ("rate",) or ("postsegmentation",))."""
         described = []
         for priority, functors in self.schedule_of(cls).items():
-            positions = ast.literal_eval(priority)
-            stages = tuple(self.consensus_scheduling[row][position - 1] for row, position in enumerate(positions)
-                           if position > 0)
-            described.append((stages, [functor.fun.__name__ for functor in functors]))
+            described.append((self.stages_of(priority), [functor.fun.__name__ for functor in functors]))
         return described
 
     def run_stage(self, instance, stage: str):

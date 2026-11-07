@@ -11,6 +11,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from openalea.metafspm.coupling.composite_wrapper import CompositeModel
 from openalea.metafspm.coupling.component import FunctionalComponent, input_variable, parameter, state_variable
 from openalea.metafspm.coupling.translator import Translator
 from openalea.metafspm.data_structure.configs import ScalesConfig as scales
@@ -34,15 +35,10 @@ class Uptake(FunctionalComponent):
         self.data_structure.set("uptake", self.uptake_rate * np.asarray(self.data_structure.get("temperature")))
 
 
-class Roots:
+class Roots(CompositeModel):
     initiators = (RootGrowthProbe,)
 
-    def __init__(self, data_structure, time_step):
-        self.uptake = Uptake(data_structure=data_structure, time_step=time_step)
-        self.components = [self.uptake]
-
-    def run(self):
-        self.uptake()
+    parts = {"uptake": Uptake}
 
 
 @dataclass

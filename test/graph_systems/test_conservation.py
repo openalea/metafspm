@@ -10,6 +10,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from openalea.metafspm.coupling.composite_wrapper import CompositeModel
 from openalea.metafspm.coupling.component import FunctionalComponent, parameter, state_variable
 from openalea.metafspm.data_structure.data_api import ArrayDataStructure
 from openalea.metafspm.scene.recorder import SceneRecorder, Summary
@@ -128,10 +129,6 @@ def test_conservation_csv_max_change_and_component_timing(tmp_path):
             super().__init__(plant_data_structures, xrange, yrange, time_step)
             self.water_grid, self.water = _soil()
             self.components = [self.nitrate, self.water]
-
-        def run(self):
-            super().run()
-            self.water()
 
     tables = {"changes": Summary("node", max_change=["struct_mass"], population="RootPopulation"),
               "soil": Summary("cell", sum=["outflow"], max_change=["solute"], population="SoilModel_1")}

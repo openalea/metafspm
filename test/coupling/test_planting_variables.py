@@ -34,12 +34,7 @@ class Placer(Organs):
 class Model(CompositeModel):
     initiators = (Placer,)
 
-    def __init__(self, data_structure, time_step):
-        self.placer = Placer(data_structure=data_structure, time_step=time_step)
-        self.couple(self.placer)
-
-    def run(self):
-        self.placer()
+    parts = {"placer": Placer}
 
 
 def test_a_component_reads_its_plants_planting_as_step_arguments():

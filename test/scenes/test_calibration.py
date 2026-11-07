@@ -9,6 +9,7 @@ import pandas as pd
 import pytest
 from scipy.optimize import least_squares
 
+from openalea.metafspm.coupling.composite_wrapper import CompositeModel
 from openalea.metafspm.coupling.component import FunctionalComponent, parameter, state_variable
 from openalea.metafspm.data_structure.configs import ScalesConfig as scales
 from openalea.metafspm.scene.calibration import compare, objective, read_observations, residuals
@@ -36,15 +37,10 @@ class Uptake(FunctionalComponent):
             ds.parameter_view("inhibition", "node"))))
 
 
-class Roots:
+class Roots(CompositeModel):
     initiators = (RootGrowthProbe,)
 
-    def __init__(self, data_structure, time_step):
-        self.uptake = Uptake(data_structure=data_structure, time_step=time_step)
-        self.components = [self.uptake]
-
-    def run(self):
-        self.uptake()
+    parts = {"uptake": Uptake}
 
 
 def _run(values, experiment=None, folder=None):

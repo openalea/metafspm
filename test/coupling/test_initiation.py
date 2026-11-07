@@ -106,12 +106,6 @@ def test_the_model_translator_is_the_couplings_default_and_the_initiations():
         initiators = (Organs, Reader)
         translator = TRANSLATOR
 
-        def __init__(self, data_structure, time_step):
-            self.couple()
-
-        def run(self):
-            pass
-
     Reader.seen.clear()
     population = population_data_structure(_table(1), Model)
     assert len(population.instance.translator.links) == 3

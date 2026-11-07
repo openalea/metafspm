@@ -19,7 +19,7 @@ import numpy as np
 
 from openalea.metafspm.coupling.declaration import (DOWN_MAPPINGS, INTENSIVE_KINDS, MASSIC_KINDS, POOLED_UP_MAPPINGS,
                                                     check_link, declared_kind, default_mapping)
-from openalea.metafspm.data_structure.data_api import DataStructure, LocatedView, VariableStoreMixin
+from openalea.metafspm.data_structure.data_api import DataStructure, EntityView, LocatedView, VariableStoreMixin
 from openalea.metafspm.kernels import _count_pieces, _pieces
 
 SEGMENT_COORDINATES = ("x1", "x2", "y1", "y2", "z1", "z2")
@@ -544,8 +544,19 @@ class _CrossLink:
     def source_values(self) -> np.ndarray:
         ds, link = self.provider_ds, self.link
         if link.formula is not None:
-            return np.asarray(link.formula(*(ds.get(source) for source in link.sources)), dtype=float)
-        return sum(float(factor) * np.asarray(ds.get(source), dtype=float) for source, factor in link.sources.items())
+            values = np.asarray(link.formula(*(ds.get(source) for source in link.sources)), dtype=float)
+        else:
+            values = sum(float(factor) * np.asarray(ds.get(source), dtype=float)
+                         for source, factor in link.sources.items())
+        return self.expanded(values, ds)
+
+    def expanded(self, values, ds):
+        """*values* of *ds*, among the mapped entities when *ds* is an entity view up a CrossMapping (theirs, 0 for
+        the others), else as they are."""
+        selection = _selection(ds) if isinstance(self.mapping, CrossMapping) and self.direction == "up" else None
+        if selection is None:
+            return values
+        return _expanded(values, selection, ds.__dict__["_inner"].n_nodes())
 
 
 def _per_column(apply, values, components: int = 0, pair: bool = False):
@@ -565,9 +576,25 @@ def _per_column(apply, values, components: int = 0, pair: bool = False):
 
 def _plant_side(mapping, ds) -> bool:
     """Whether *ds* is the source of CrossMapping *mapping*, or the view of it at the mapping's location (an
-    anatomy-mode plant's SubOrgans, ds.at("SubOrgan"))."""
+    anatomy-mode plant's SubOrgans, ds.at("SubOrgan")), or an entity view of either (a component working on its own
+    entities, its values those of some of the mapped entities: _selection)."""
+    if isinstance(ds, EntityView):
+        ds = ds.__dict__["_inner"]
     return ds is mapping.source or (mapping._by_owner and isinstance(ds, LocatedView)
                                     and ds.__dict__["_base"] is mapping.source and ds._at == mapping.location)
+
+
+def _selection(ds):
+    """The indices, among the mapped entities, of an entity view's (EntityView: its values are theirs), else None."""
+    return ds._selection()[0] if isinstance(ds, EntityView) else None
+
+
+def _expanded(values, selection, size: int) -> np.ndarray:
+    """An entity view's *values* placed among *size* mapped entities (0 elsewhere: none to give)."""
+    values = np.asarray(values, dtype=float)
+    full = np.zeros((size,) + values.shape[1:])
+    full[selection] = values
+    return full
 
 
 def _plant_location(mapping, ds, names) -> str:
@@ -690,7 +717,11 @@ class Exchanges:
         for other in self.links:
             if (other.direction == "down" and other.aggregation == "split" and other.provider_ds is cross.provider_ds
                     and other.link.sources == cross.link.sources and other.link.weight == cross.link.weight):
-                part = other.mapping.weight_totals(other.receiver_ds.get(other.link.weight), **other.options)
+                weights = other.receiver_ds.get(other.link.weight)
+                selection = _selection(other.receiver_ds)
+                if selection is not None:               # an entity view's weights, among the mapped entities
+                    weights = _expanded(weights, selection, other.receiver_ds.__dict__["_inner"].n_nodes())
+                part = other.mapping.weight_totals(weights, **other.options)
                 totals = part if totals is None else totals + part
         return totals
 
@@ -710,18 +741,25 @@ class Exchanges:
             weight = cross.link.weight
             components = cross.components()
             if cross.direction == "up":
-                weights = cross.provider_ds.get(weight) if weight is not None else None
+                weights = cross.expanded(cross.provider_ds.get(weight), cross.provider_ds) if weight is not None \
+                    else None
                 numerator, denominator = _per_column(
                     lambda v: cross.mapping.up(v, cross.aggregation, weights=weights, **cross.options), values,
                     components, pair=True)
             elif cross.direction == "down":
+                selection = _selection(receiver) if isinstance(cross.mapping, CrossMapping) else None
                 weights = cross.receiver_ds.get(weight) if weight is not None else None
+                if selection is not None and weights is not None:
+                    weights = _expanded(weights, selection, receiver.__dict__["_inner"].n_nodes())
                 totals = self._split_totals(cross) if cross.aggregation == "split" else None
                 numerator = _per_column(lambda v: cross.mapping.down(v, cross.aggregation, weights=weights,
                                                                      totals=totals, **cross.options), values,
                                         components)
                 denominator = None
                 covered = cross.mapping.covered(**cross.options)
+                if selection is not None:               # an entity view's: its entities' values
+                    numerator = numerator[selection]
+                    covered = None if covered is None else np.asarray(covered)[selection]
                 if covered is not None:                 # entities left out keep their values
                     keep.setdefault(variable, covered)
             elif cross.direction == "layer":
