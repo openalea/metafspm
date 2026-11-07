@@ -3169,10 +3169,11 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
             keys = np.asarray(self.entity_ids(location), dtype=np.int64)
             order = np.argsort(old_keys, kind="stable")
             matched = _KeyedValues(old_keys[order], None).match(keys)       # once per location, for every variable
+            together = self._carried_together(variables, meta, keys, old_keys[order], order, matched)
             for name, array in variables.items():
                 policy = meta.get(name, {"default": 0., "on_grow": "default"})
-                values = self._carry_over(_KeyedValues(old_keys[order], array[order], matched=(keys, *matched)),
-                                          keys, policy)
+                values = together[name] if name in together else self._carry_over(
+                    _KeyedValues(old_keys[order], array[order], matched=(keys, *matched)), keys, policy)
                 dtype = _canonical_dtype(policy.get("dtype", float))
                 if dtype is object or name not in meta:
                     self.register(name, values, location=location, default=policy["default"],
@@ -3184,6 +3185,37 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
                     self.mark_written(name)
             stored_ids[location] = keys
         self._bump_version()
+
+    def _carried_together(self, variables: dict, meta: dict, keys, sorted_keys, order, matched) -> dict:
+        """
+        _carry_over of a location's float64 scalar variables (default on growth, or inherited in anatomy mode), as
+        one gather: their old arrays stacked (variables × old entities), the known entities' columns gathered at
+        once, the new ones' filled per variable (its default, or its inherited source's value). {name: its row of the
+        new block}, each contiguous; the other variables are carried one by one.
+        """
+        names = [name for name, array in variables.items()
+                 if name in meta and array.ndim == 1 and array.dtype == np.float64
+                 and _canonical_dtype(meta[name].get("dtype", float)) == np.float64 and not meta[name].get("shape")
+                 and (meta[name]["on_grow"] != "inherit" or self._anatomy)]
+        if not names:
+            return {}
+        known, position = matched
+        stacked = np.stack([variables[name] for name in names])
+        block = np.empty((len(names), keys.size))
+        block[:, known] = stacked[:, order[position[known]]]
+        unknown = np.flatnonzero(~known)
+        if unknown.size:
+            inherited = [j for j, name in enumerate(names) if meta[name]["on_grow"] == "inherit"]
+            for j, name in enumerate(names):
+                block[j, unknown] = meta[name]["default"]
+            if inherited:               # the sources of the new Compartments, found once per update (inheritance)
+                by_key = _KeyedValues(sorted_keys, None)
+                sources = self._inheritance_sources(keys[unknown], by_key)
+                found, at = by_key.match(np.maximum(sources, 0))
+                found &= sources >= 0
+                rows = np.asarray(inherited, dtype=np.int64)[:, None]
+                block[rows, unknown[found][None, :]] = stacked[rows, order[at[found]][None, :]]
+        return {name: block[j] for j, name in enumerate(names)}
 
     # ── Anatomy mode: incremental junction rewiring ──
 
@@ -3228,13 +3260,11 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
         ("parents"), and the table of the Compartments owned (ascending vids, their owner and rule properties).
         """
         g, from_scale = self._mtg, self._from_scale
-        owners = g.compartments_by_owner(from_scale)
         names = ["label"] + sorted({rule["ordering"] for rule in self._wiring
                                     if isinstance(rule, dict) and rule.get("ordering")})
-        vids = g.owned_compartments(from_scale)
-        owner_of = np.empty(vids.size, dtype=np.int64)
-        for owner, comps in owners.items():
-            owner_of[np.searchsorted(vids, comps)] = owner
+        compartments, owners = g.compartment_owners()               # owned_compartments' arrays, with their owners
+        owners = g.owners_at_scale(owners, from_scale)
+        vids, owner_of = compartments[owners >= 0], owners[owners >= 0]
         columns = []
         for name in names:
             prop = g.properties().get(name, {})

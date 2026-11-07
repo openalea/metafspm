@@ -9,6 +9,11 @@
   `MPG.linked_parents(scale)` gives every vertex's linked parent at once, cached until the next structural edit;
   the anatomy signatures read it. GRANAP's anatomies read their classes, records and 3D quantities in bulk, and
   sum the pass-through junctions' lengths in a kernel.
+- **`update_topology` in bulk:** a location's float variables are carried over as one gather (their old arrays
+  stacked, the known entities' columns gathered at once, the new ones filled per variable: default or inherited
+  source), each variable a contiguous row of the new block; the anatomy signatures take each Compartment's owner from
+  one gather; `wire_junctions` reads the involved Compartments' labels in one read and every target's linked parent
+  from `linked_parents`.
 
 ### The MPG's properties are columns, one storage (devplan_scene_parallel P1)
 

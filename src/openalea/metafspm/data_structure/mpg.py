@@ -1016,17 +1016,27 @@ class MPG(MTG):
         """
         edge_anchor = self.scales.anchors[self.scales.Connection]
         valid_vids = self._valid_vids_at(from_scale, filter_in, filter_out)
-        label_prop = self._column('label')
         targets = sorted(valid_vids if children is None else set(children) & valid_vids)
-        parents = {vid: self.linked_parent(vid, from_scale, valid_vids) for vid in targets}
+        linked = self.linked_parents(from_scale) if not (filter_in or filter_out) else None
+        parents = {vid: linked[vid] if linked is not None else self.linked_parent(vid, from_scale, valid_vids)
+                   for vid in targets}
         owners = self.compartments_by_owner(from_scale)
-        involved = set(targets) | {p for p in parents.values() if p is not None}
-        labels_of = self.values_of('label', [nv for owner in involved for nv in owners.get(owner, [])]) \
-            if self._instanced() else label_prop
+        involved = sorted((set(targets) | {p for p in parents.values() if p is not None}) & set(owners))
         anatomy = {}                                        # only the vertices wired and their parents
-        for owner in involved:
-            for nv in owners.get(owner, []):
-                anatomy.setdefault(owner, {}).setdefault(labels_of.get(nv), []).append(nv)
+        if involved:
+            comps = [np.asarray(owners[owner], dtype=np.int64) for owner in involved]
+            every = np.concatenate(comps)
+            order = np.argsort(every, kind="stable")
+            found, values = self._property_at('label', every[order])
+            label_of = np.full(every.size, None, dtype=object)
+            label_of[order[np.searchsorted(every[order], found)]] = values.tolist()
+            at = 0
+            for owner, these in zip(involved, comps):       # by label, in order of first appearance, vids ascending
+                own = label_of[at:at + these.size]
+                at += these.size
+                groups = anatomy[owner] = {}
+                for label in dict.fromkeys(own.tolist()):
+                    groups[label] = these[own == label].tolist()
         tails, heads, labels, extra = [], [], [], {}
         for vid in targets:
             parent = parents[vid]
