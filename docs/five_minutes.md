@@ -67,8 +67,8 @@ installed from source** (`pip install -e`), in an environment created from the p
 
 ```bash
 mkdir fspm && cd fspm
-git clone -b data_structure_api https://github.com/openalea/metafspm.git metafspm
-git clone https://github.com/openalea/encoding3d.git encoding3d        # openalea.encoding3d, a dependency of metafspm
+git clone -b release2026 https://github.com/openalea/metafspm.git metafspm
+git clone -b other_platforms_bindings https://github.com/openalea/encoding3d.git encoding3d   # openalea.encoding3d (spec 0.4), a dependency of metafspm
 ```
 
 | package | clone | environment, then install |
@@ -78,6 +78,7 @@ git clone https://github.com/openalea/encoding3d.git encoding3d        # openale
 | Caribu | `git clone -b to_metafspm https://github.com/openalea/caribu.git caribu` (and Adel's, as above, for the wheat examples) | `mamba env create -n caribu -f caribu/conda/environment.yml`, `mamba activate caribu`, `pip install -e encoding3d`, `pip install -e metafspm` (and `pip install -e adel --no-deps`) |
 | GRANAP | `git clone -b to_metafspm https://github.com/openalea-incubator/GRANAP-dev.git GRANAP` | `mamba env create -f GRANAP/conda/environment.yaml`, `mamba activate granap`, `pip install -e encoding3d`, `pip install -e metafspm`, `pip install -e GRANAP` |
 | MECHA | GRANAP's, as above, and `git clone -b to_metafspm https://github.com/openalea-incubator/MECHA-dev.git MECHA-dev` | `mamba env create -f MECHA-dev/conda/environment.yaml`, `mamba activate mecha`, `pip install -e encoding3d`, `pip install -e metafspm`, `pip install -e GRANAP`, `pip install -e MECHA-dev` |
+| CNW-Grass | Caribu's and Adel's, as above, and `git clone -b to_metafspm https://github.com/openalea/cnwgrass.git cnwgrass` | Caribu's environment, as above, then `pip install -e cnwgrass --no-deps` |
 
 Keep the folder names above: the environment files find metafspm, encoding3d (and GRANAP) next to the package. Each package's
 README gives the same steps. To update, `git pull` in each repository; the editable installs follow.
