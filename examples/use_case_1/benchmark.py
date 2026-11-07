@@ -9,7 +9,7 @@ end).
     python benchmark.py [--plants 2] [--days 3] [--label text] [--outputs] [--checkpoint-at 168 ...]
                         [--resume outputs/benchmarks/checkpoints/<label>/step_000168]
                         [--scenario leaf_ports=bundles vapour_path=air_spaces ...]
-                        [--workers auto|n] [--linear-solver superlu|superlu_reuse|cholmod|cupy]
+                        [--threads n] [--workers auto|n] [--linear-solver superlu|superlu_reuse|cholmod|cupy]
                         [--device cpu|cuda] [--variability SEED] [--frames] [--profile-hours FIRST LAST]
                         [--cadence WheatPlant.anatomy="1 d" CaribuLightModel.light="3 h" ...]
                         [--memory] [--tracemalloc FRAMES] [--thread-scaling]
@@ -21,8 +21,9 @@ recorder's default: their frames, the parts they share, the folder packed with d
 case's frame variables, and two checkpoints sharing their unchanging parts: their size and time. --checkpoint-at writes the scene's checkpoint after those hours (outputs/benchmarks/checkpoints/<label>/, the
 shared parts once); --resume loads one into the freshly built scene and runs on from its hour to --days (the load's
 time and memory, then each step's: a resumed run evaluates no kind again); --scenario updates the plants' scenario
-(models.WHEAT_SCENARIO; a value read as JSON when it is, e.g. length_classes=0.2, else a string); --workers and
---linear-solver the Compute's (the pool of the kinds, the sparse solver), --device its device (cuda: the kinds' Kron
+(models.WHEAT_SCENARIO; a value read as JSON when it is, e.g. length_classes=0.2, else a string); --threads, --workers
+and --linear-solver the Compute's (the BLAS and numba threads, the pool of the kinds, the sparse solver), --device its
+device (cuda: the kinds' Kron
 reductions and the linear solves on the GPU, CuPy needed, docs/gpu.md; the device's transfers recorded at the end,
 "device"), the pool recorded per step and the peak
 memory of the process's control group (the pool's processes included: run it in its own systemd-run --scope), now
@@ -496,6 +497,7 @@ def main(argv=None):
     parser.add_argument("--resume", default=None, help="a checkpoint folder to resume from")
     parser.add_argument("--scenario", nargs="*", default=(), metavar="KEY=VALUE",
                         help="the plants' scenario entries (e.g. leaf_ports=bundles vapour_path=air_spaces)")
+    parser.add_argument("--threads", type=int, default=1, help="Compute(threads=): the BLAS and numba threads")
     parser.add_argument("--workers", default="auto", help="Compute(workers=): auto (default) or a number")
     parser.add_argument("--linear-solver", default=None,
                         help="Compute(linear_solver=): the device's default (superlu on cpu, cupy on cuda)")
@@ -517,7 +519,8 @@ def main(argv=None):
                         help="time the last step's large solves and parallel kernels at 1-12 threads")
     arguments = parser.parse_args(argv)
     from openalea.metafspm.compute import Compute
-    compute = Compute(workers=arguments.workers if arguments.workers == "auto" else int(arguments.workers),
+    compute = Compute(threads=arguments.threads,
+                      workers=arguments.workers if arguments.workers == "auto" else int(arguments.workers),
                       linear_solver=arguments.linear_solver, device=arguments.device)
     label = arguments.label or f"{arguments.plants}p_{arguments.days:g}d"
     result = benchmark(arguments.plants, arguments.days, arguments.outputs, tuple(arguments.checkpoint_at),
