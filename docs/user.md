@@ -57,8 +57,16 @@ adaptive.coarsen(lambda grid: grid.get("root_length_density") < 1e2)
 
 Both expose the same contract: cells are the graph's nodes and the faces between them its edges, with the edge
 variables `face_area` and `face_distance`, `cell_volume()`, `cell_centers()`, `locate(points)` and
-`layer_mask(z=-1)` for boundary layers. An adaptive grid keeps neighbours within one level of each other and carries
-its variables over refinement conservatively (extensive values split or summed, the others copied or averaged).
+`layer_mask(z=-1)` for boundary layers. Every grid holds its geometric descriptors as variables, for its components
+to read as inputs (`by="grid"`; `data_api.GRID_DESCRIPTORS`): `cell_volume`, `cell_size_<axis>`,
+`cell_section_<axis>` (the product of the other sizes: `cell_section_z` a cell's horizontal area),
+`boundary_low_<axis>` and `boundary_high_<axis>` (1 in the first and last layer along a non-periodic axis: a soil's
+surface and bottom, z pointing down) and, on the faces, `face_normal_<axis>` (1 across that axis). An adaptive grid
+keeps neighbours within one level of each other and carries its variables over refinement conservatively
+(extensive values split or summed, the others copied or averaged), sets its descriptors for the new cells, then
+calls its components' carry-over hooks: a method decorated `@after_regrid` (`coupling.component`) sets again what
+the volume averages do not carry, e.g. a soil's pressure head from the water carried (use case 1's
+`RichardsSoil.carry_over`), once per refinement or coarsening.
 
 ### Working with variables
 
@@ -380,11 +388,13 @@ class SoilDiffusion(FunctionalComponent):
   sees the contracted nodes (`nodes`, the kron's order): `kind.contract(values)` sums per-Compartment values of the
   full template into them; `recover_interiors` gives a member its node's value. MECHA's
   `plant_reduction(leaf_ports="bundles", vapour_path="air_spaces")` lumps the shoot's conduits per vascular bundle
-  and a leaf's evaporating walls per air space this way. Measured on use case 1 (16 plants, day 8):
-  `leaf_ports="bundles"` takes MECHA's time per step down by 34 %, the transpiration and uptake unchanged, the
-  leaves' water potential 0.36 % above on average (0.54 % at most); both options together cut more (2 plants: the
-  plant solve 60 % less) but put the leaves' water potential 3 % above. The defaults (`"conduits"`, `"cells"`) are
-  kept; bundles suit scenes of 8 plants or more when that leaf ψ bias is acceptable (the use case's README).
+  and a leaf's evaporating walls per air space this way. These are options only; the defaults (`"conduits"`,
+  `"cells"`: every conduit and evaporating wall its own node) hold at any scene size. `leaf_ports="bundles"` gives
+  up each vessel's own axial path and its own junction to its successor section: a bundle's vessels are held at
+  one potential and joined bundle to bundle. Measured on use case 1 (16 plants, day 8): MECHA's time per step 34 %
+  less, the transpiration and uptake unchanged, and the leaves' water potential (which the stomata read) 0.36 %
+  above on average, 0.54 % at most; both options together cut more (2 plants: the plant solve 60 % less) but put
+  the leaves' water potential 3 % above (the use case's README).
 - **Drawing a reduction's groups (any reduction, at any location).** Nothing here is specific to anatomies: a
   section's cells, a coarse soil cell's sub-cells, a leaf's reduced vein network or any group a `Reduction`
   eliminates are drawn the same way. A group's interior is a linear function of its kept values, so a frame stores
@@ -575,7 +585,18 @@ Whole-population computations along the topology are DataStructure methods, vect
 | `path_compose(transforms)` | composed 4 × 4 transforms from the root |
 | `parents()`, `children()`, `order("pre" \| "post", traversal=None \| "openalea")`, `depth()`, `levels()` | traversal arrays |
 
-Chains are declared with `ds.define_chain(name, edge_type="<")` or by a group and a rank variable.
+Chains are declared with `ds.define_chain(name, edge_type="<")` or by a group and a rank variable, of the nodes
+or of the entities of a coarse location: `ds.define_chain("phytomers", location="Phytomer", group="Axis",
+rank="phytomer_rank")` chains each axis' phytomers by their rank (the group an owner at a coarser location, or a
+variable), and the kernels then take and give one value per phytomer; `chain_gather(values, rank, chain=)` without
+a `source` reads along each entity's own chain (use case 1's nodal root rule: the phytomer three ranks below a
+leaf's, on its axis).
+
+A component that reads values of its own last call (a rule interpolating between its calls) names them,
+`kept_from_last_call = ("thermal_time", "haun_stage")`, and reads `self.last_call(name)`: the values at the end of its
+last call, aligned by id (NaN before its first call and for entities new since), kept with its state (checkpoints).
+With a schedule step's cadence, the last call is the cadence's, not the last scene step's (`ds.previous`: the step's
+start).
 
 ## 5. Coupling components
 
@@ -644,7 +665,11 @@ for dimensionless, what an amount is of in `unit_comment` (`unit="mol s-1", unit
 read as quantities (`coupling.units.parse_unit`: SI dimensions and a scale; prefixes, `min`, `h`, `d`, `L`, `Pa`,
 `°C`, `°`, `%`, ...). Each link is checked: the receiver's and the source's units must be the same quantity, and the
 link's factor their conversion (`{"p_mpa": 1e4}` from MPa to hPa); `unit_check=False` on a link for a deliberate
-factor (a share, a calibration). Undeclared units agree with anything; unreadable ones must be spelled alike.
+factor (a share, a calibration). Undeclared units agree with anything; unreadable ones must be spelled alike. Where
+the quantity changes, the factor is a named physical equivalence (`coupling.units.Equivalence(name, value, unit)`,
+e.g. `WATER_MOLAR_VOLUME`, 18e-3 cm3 mmol-1, and `RADIUS_OF_DIAMETER`, 0.5): `{"transpiration": WATER_MOLAR_VOLUME}`
+from mmol s-1 to cm3 d-1 is checked and its number computed from the units (18e-3 × 86400); a YAML translator gives
+it by name (`"water_molar_volume"`; `units.register_equivalence` names a new one).
 
 ### Across DataStructures: mappings and exchanges
 
@@ -766,7 +791,15 @@ time (an event's, a planting time) is a duration since time 0 or a date (`"2026-
   no component declares. A parameter not stored per plant must be the same for every plant.
 - **A step** runs each environment model after the exchanges into it, then each population after the exchanges into
   it. Mappings between populations and grids or unions are inferred from the scene translator's links (their
-  `mapping=` options); others are given by `mappings=`.
+  `mapping=` options); others are given by `mappings=`. The coupling is explicit by default (`coupling="explicit"`:
+  a model reads what the models after it wrote at the step before, e.g. a soil the plants' uptake). A fixed point
+  iterates chosen schedule steps of several models within the step instead: `Scene(...,
+  coupling=FixedPoint(("Soil.water", "Wheat.hydraulics"), tolerance=1e-8, max_iterations=20))`
+  (`coupling.iteration`): after the explicit pass each iterated step runs again from its start (its components'
+  kept state and balances, the variables it writes), after the exchanges into its model, until what the steps write
+  moves by less than the tolerance; `Scene.coupling_iterations` (and run.json) counts the iterations. An iterated
+  step runs every step (no cadence) and its DataStructures keep their topology from its first run to the iteration
+  (a step that grows or regrids after it, as use case 1's adaptive soil, is refused).
 - **Forcings, the time-varying inputs.** `forcings={name: forcing}`, or a DataFrame indexed by time (s) with one
   column each. A forcing is a number, a callable of the scene time (s), a Series indexed by time, or a `(times,
   values)` pair; tables are interpolated linearly; a callable of the time and the entity ids, `(time, ids) -> one
@@ -940,11 +973,20 @@ time (an event's, a planting time) is a duration since time 0 or a date (`"2026-
   "*": []}}}`: the Compartments' potential and tissue (a reduced section's interior rows too), the elements' length
   and radius, nothing else. A filtered table always keeps its structure (ids, labels, complex and parent links, edge
   types, a relation's ends, a grid cell's level and index), its segment ends and the display rows' marker; metafspm's
-  own links (`metafspm_complex` ..., for `import_frame`) only when named. The frames' views must keep what they
-  show: the recorder raises when the filter drops a variable a view selects, colours or sizes its tubes by (your
-  views at construction, the default views, those of the unfiltered frame, at the first frame;
-  `io.encoding3d.filtered_view_columns(views, variables)` lists them). A filtered frame is a
-  smaller, valid encoding3d file, for outputs only: `import_frame` refuses to rebuild it. It uses `openalea.encoding3d`, a
+  own links (`metafspm_complex` ..., for `import_frame`) only when named. The filter names the data only: the
+  recorder keeps besides what the frames' views select, colour and size their tubes by (your views, or the default
+  views, those of the unfiltered frame, read at the first frame: `SceneRecorder.frame_variables(scene, views)`,
+  `io.encoding3d.with_view_columns`; `filtered_view_columns(views, variables)` lists what a filter alone would drop).
+  `variables="recorded"` (as a whole, or as a table's value) keeps the variables the declarations record: each
+  declaration's `record=` (`state_variable(..., record=False)` for an intermediate of no use to look at), by default
+  the state variables and inputs, not the parameters, settings or a grid's geometric descriptors
+  (`io.encoding3d.unrecorded`). A filtered frame is a smaller, valid encoding3d file, for outputs only:
+  `import_frame` refuses to rebuild it.
+  **Folded for display:** `frame_options={"fold": True}` (`scene_to_frame(fold=True)`, `io.encoding3d.fold_frame`)
+  draws the plants folded into the scene's periodic pattern (`(0, xrange) × (0, yrange)`, where its light and its
+  soil repeat): each mesh triangle, segment (the roots' tubes) and instance moved by the whole periods that bring its
+  centre into the pattern, so that a leaf or a root beyond the stand is drawn where the periodic scene has it. A
+  folded frame is for display only (its ends are no longer the plants'): `import_frame` refuses it. It uses `openalea.encoding3d`, a
   dependency of metafspm (in development, installed from the encoding3d clone).
 - **Frames ready to look at.** `SceneRecorder(folder, frame_period="1 d", frame_views="default")` also writes
   `frames/views.json` at the first frame: encoding3d's views, the layers ParaView's encoding3d reader shows, one block each,

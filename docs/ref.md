@@ -14,7 +14,8 @@
 ```{eval-rst}
 .. automodule:: openalea.metafspm.coupling.component
    :members: state_variable, input_variable, parameter, setting, forcing_variable, upscaling, Upscaling,
-             DataStructureComponent, FunctionalComponent, StructuralComponent, NewNodes, NewComplexes
+             DataStructureComponent, FunctionalComponent, StructuralComponent, NewNodes, NewComplexes, after_regrid,
+             display_end
 
 .. automodule:: openalea.metafspm.coupling.declaration
    :members: VariableSpec, DeclarationError, resolve_declaration, default_mapping, kinds_agree, scale_names,
@@ -53,7 +54,8 @@ The solvers are chosen by key in `graph_system(solver=...)`: `"newton"`, `"newto
 
 ```{eval-rst}
 .. automodule:: openalea.metafspm.data_structure.data_api
-   :members: DataStructure, VariableStoreMixin, MTGDataStructure, MPGDataStructure, ArrayDataStructure, GraphView
+   :members: DataStructure, VariableStoreMixin, MTGDataStructure, MPGDataStructure, ArrayDataStructure, GraphView,
+             register_grid_descriptors
 
 .. automodule:: openalea.metafspm.data_structure.adaptive_grid
    :members: AdaptiveGridDataStructure
@@ -99,7 +101,20 @@ The solvers are chosen by key in `graph_system(solver=...)`: `"newton"`, `"newto
    :members: CrossMapping, LayerMapping, UnionDataStructure, UnionMapping, Exchanges
 
 .. automodule:: openalea.metafspm.coupling.units
-   :members: parse_unit, conversion_factor, canonical, units_agree, check_link_units
+   :members: parse_unit, conversion_factor, canonical, units_agree, check_link_units, Equivalence,
+             register_equivalence
+
+.. automodule:: openalea.metafspm.coupling.schedule
+   :members: Step, Together, ScheduledStep, conflicts
+
+.. automodule:: openalea.metafspm.coupling.cadence
+   :members: Cadence
+
+.. automodule:: openalea.metafspm.coupling.durations
+   :members: duration, start_date, instant, day_and_hour
+
+.. automodule:: openalea.metafspm.coupling.iteration
+   :members: FixedPoint
 
 .. automodule:: openalea.metafspm.coupling.geometry
    :members:
@@ -119,7 +134,7 @@ The solvers are chosen by key in `graph_system(solver=...)`: `"newton"`, `"newto
 
 .. automodule:: openalea.metafspm.coupling.forcings
    :members: as_forcing, pulse, forcing_value, forcing_mean, forcing_total, forcing_over, spatial_mean, quadrature,
-             forcing_table, is_spatial, seconds, time_unit_label
+             forcing_table, is_spatial
 
 .. automodule:: openalea.metafspm.scene.scene
    :members: Scene, AllMasks
@@ -142,7 +157,8 @@ The solvers are chosen by key in `graph_system(solver=...)`: `"newton"`, `"newto
 ```{eval-rst}
 .. automodule:: openalea.metafspm.io.encoding3d
    :members: to_frame, scene_to_frame, export_frame, export_scene, from_frame, import_frame, filter_frame, ucum_unit,
-             default_views, write_views
+             default_views, write_views, fold_frame, unrecorded, resolved_variables, Excluding, view_columns,
+             with_view_columns, filtered_view_columns
 
 .. automodule:: openalea.metafspm.io.coupling
    :members: RemoteComponent

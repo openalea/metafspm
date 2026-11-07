@@ -2,6 +2,46 @@
 
 ## Unreleased (release2026)
 
+### Frames, small items and use case 1's run (O-12 part c)
+
+- **Frames keep what their views show:** a `frame_options` variables filter names the data only; the recorder adds
+  the columns the frames' views select, colour and size tubes by (`SceneRecorder.frame_variables`,
+  `io.encoding3d.with_view_columns`, `view_columns`), instead of raising when the filter drops one. A filter's value
+  (a whole one or a table's) may be `"recorded"`: the variables the declarations record, a declaration's new
+  `record=` (`state_variable(..., record=False)`; by default state variables and inputs, not parameters, settings or
+  a grid's geometric descriptors: `io.encoding3d.unrecorded`, `Excluding`).
+- **Frames folded into the periodic pattern, for display:** `scene_to_frame(fold=True)` (and `frame_options={"fold":
+  True}`), `io.encoding3d.fold_frame`: each triangle, segment and instance moved by the whole periods bringing its
+  centre into `(0, xrange) × (0, yrange)`; a folded frame is not rebuilt (`from_frame` refuses it).
+- **Grids hold their geometric descriptors** (`data_api.GRID_DESCRIPTORS`, `register_grid_descriptors`):
+  `cell_volume`, `cell_size_<axis>`, `cell_section_<axis>`, `boundary_low_<axis>`, `boundary_high_<axis>`,
+  `face_normal_<axis>`, set again by an adaptive grid after each refinement; its components' carry-over hooks follow
+  (`@after_regrid`, `ds.add_regrid_hook`). The testing soil and use case 1's soil read them (their `set_layers` and
+  `set_geometry`, `is_evaporating`, `is_water_table`, `evaporating_area`, `water_table_area`, `water_table_distance`,
+  `volume`, `is_surface`, `is_bottom`, `boundary_area`, `half_height`, `gravity` are gone; use case 1's soil summary
+  loses its `volume` and `boundary_area` columns).
+- **Named physical equivalences in links** (`coupling.units.Equivalence`, `WATER_MOLAR_VOLUME`, `RADIUS_OF_DIAMETER`,
+  `EQUIVALENCES`, `register_equivalence`): a factor between two quantities, its number computed from the declared
+  units and checked (`declaration.check_link` returns the resolved link, `resolve_equivalences`; at initiation too);
+  given by name in a YAML translator. Use case 1's two `unit_check=False` links are gone.
+- **Chains at coarse locations:** `define_chain(name, location="Phytomer", group="Axis", rank="phytomer_rank")`, the
+  group an owner at a coarser location or a variable; `chain_gather(..., source=None)` reads along each entity's own
+  chain; a LocatedView has every chain kernel.
+- **A component's values at its last call:** `kept_from_last_call = (names)` and `self.last_call(name)` (aligned by
+  id, checkpointed), replacing hand-kept `previous_*` states (use case 1's nodal root rule).
+- **Fixed-point coupling, as an option** (`coupling.iteration.FixedPoint`, `Scene(coupling=...)`; explicit stays the
+  default): chosen schedule steps of several models iterated within a scene step from their start, after the
+  exchanges into their models, until what they write stops changing; `Scene.coupling_iterations` and run.json.
+- **Means over owners of no entity are NaN** explicitly (`np.divide(where=)`), the MPG's duplicated aggregations one.
+- `SceneRecorder.pack()` after the run's end records the archive in run.json.
+- **Use case 1's `run.py` rewritten** as a short script (settings, stand, `Scene(..., compute=Compute(...))`, recorder,
+  `scene.simulate`, `scene.recorder.pack()`), its `report()` lines and `run.log` gone: the recorder's outputs hold what
+  they printed. `models.py` holds the environment's scenarios, `weather(start)`, `TABLES` and `FRAME_VARIABLES` (now
+  without the views' columns); `benchmark.py` builds its scene itself (`build_scene`).
+- **Docs:** MECHA's `leaf_ports="bundles"` is an option only, not a recommendation for large scenes (it gives up each
+  vessel's own axial path and junction to its successor, a bundle's vessels held at one potential; it biases the
+  leaves' water potential): `docs/user.md`, use case 1's README, MECHA's `doc/equations.rst`.
+
 ### Composition and schedule, positions, plant parameters, one stand (O-12 part b)
 
 - **A model declares its parts and its schedule** (`coupling.composite_wrapper`, `coupling.schedule`):
