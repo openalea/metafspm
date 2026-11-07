@@ -207,26 +207,27 @@ with 1, 212 s with "auto" (last day 1.97 → 1.83 s per hour, first hour 6.3 →
 memory's peak, the processes included, 3.4, 4.3 and 5.0 GB; 8 plants to day 4, last day 1.08 → 0.97 s; 16 plants,
 1.78 → 1.52 s. `benchmark.py --workers 1|auto|n --linear-solver superlu|superlu_reuse|cholmod` compares them.
 
-**Scaling** (measured 2026-11-06 on the same laptop, metafspm 97a7ff3, GRANAP 9464738–5f5b34b; `benchmark.py
---variability 1`: each plant its own root draws, the plants sharing their kinds; under an 8 GB bound, the memory the
-scope's peak, the pool's processes included; each row the day's mean step):
+**Scaling** (measured 2026-11-07 on the same laptop, metafspm f3a2148, GRANAP c626201, after the incremental
+topology updates; `benchmark.py --variability 1`: each plant its own root draws, the plants sharing their kinds;
+under an 8 GB bound, the memory the scope's peak, the pool's processes included; each row the day's mean step, and
+before them, at metafspm d2e708e, every step's results identical):
 
-| plants, day | workers | s per step | kinds evaluated that day (s per step) | nodes | memory peak |
+| plants, day | workers | s per step (before) | kinds evaluated that day (s per step) | nodes | memory peak |
 |---|---|---|---|---|---|
-| 2, day 8 (identical plants, metafspm c2de038) | auto (7) | 1.52 | 139 | 13,924 | 3.5 GB |
-| 8, day 8 | 4 | 2.49 | 115 (0.34) | 56,598 | 4.4 GB |
-| 16, day 8 | 4 | 4.70 | 122 (0.33) | 113,438 | 5.3 GB |
-| 16, day 9 | 4 | 5.86 | 61 (0.21) | 154,204 | 5.7 GB |
-| 8, day 12 | 1 | 6.31 | 91 (0.53) | 193,672 | 5.6 GB |
-| 8, day 14 | 1 | about 10 | 60 (0.35) | 333,712 | 6.7 GB |
+| 2, day 8 (identical plants) | auto (7) | 1.44 (1.49) | 139 | 13,924 | 3.6 GB |
+| 8, day 8 (the day-13 run) | 1 | 2.65 (2.85) | 115 (0.60) | 56,598 | |
+| 16, day 8 | 2 | 4.06 (4.59) | 122 (0.46) | 113,438 | 5.2 GB |
+| 8, day 12 (the day-13 run) | 1 | 4.86 (5.68) | 91 (0.50) | 193,672 | |
+| 8, day 13 | 1 | 6.05 (7.21) | 83 (0.44) | 252,478 | 6.2 GB |
+| 8, day 14 (metafspm db12072; stopped at h334 by the run's 6.5 GB guard) | 1 | 7.8 at h313–329, 8.5 at h333 (9.8, 10.2: final pass, GRANAP 9464738) | 60 | 326,034 | 7.0 GB |
 
 The kinds saturate (a few hundred a day in the first week, 50 to 90 a day from day 9: the organs' new classes, a
 few tenths of a second per step); the step grows with the plants' nodes (the roots' sections and their kept nodes:
-about 30 µs per node per step from day 10 on, MECHA's plant solve and the topology updates first), and so does the
-memory (about 10 kB per node beyond 1.5 GB). Extrapolated, 40 plants at day 14 would hold about 1.7 million nodes,
-take about 50 s per step and need about 19 GB: beyond this laptop (the run is a workstation's, or fewer plants, or a
-coarser root anatomy). On a large scene the pool's forked processes add 1 to 2.5 GB (the pages of the main process
-they touch are copied): beyond about 150,000 nodes, `--workers 1` or `2` keeps the memory down at little cost (the
+about 25 µs per node per step from day 10 on, MECHA's plant solve first, then GRANAP's anatomies and the topology
+updates), and so does the memory (about 10 kB per node beyond 1.5 GB). Extrapolated, 40 plants at day 14 would hold
+about 1.7 million nodes, take about 40 to 45 s per step and need 13 to 18 GB: beyond this laptop (the run is a
+workstation's, or fewer plants, or a coarser root anatomy). On a large scene the pool's forked processes add 1 to
+2.5 GB (the pages of the main process they touch are copied): beyond about 150,000 nodes, `--workers 1` or `2` keeps the memory down at little cost (the
 kinds take a few tenths of a second per step there). Recorded (`benchmark.py --frames`: a frame a day, p0's sections
 drawn as instances), 8 plants to day 8 take 357 s (334 s unrecorded), the frames 1.1 MB at the sowing to 25 MB at day
 8 (about 0.45 kB per node), the parts 81 MB (77 files), the folder 176 MB.
