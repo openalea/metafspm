@@ -519,10 +519,14 @@ class MPG(MTG):
             last = max(last, int((instances.first + instances.size).max()) - 1)
         if last >= self._id:
             return int(self._id)
+        from openalea.metafspm.data_structure.columns import DataStructureColumn
         for prop in self.properties().values():
-            span = prop.key_range()
+            # a DataStructure's column's view: its overlay only (the entities above the last removed with their
+            # vertices, hidden then)
+            stored = prop.overlay if isinstance(prop, DataStructureColumn) else prop
+            span = stored.key_range()
             if span is not None and span[1] > last:
-                prop.delete_range(last + 1, self._id + 1)
+                stored.delete_range(last + 1, self._id + 1)
         self._id = last
         self.__dict__["_id_reuses"] = self.__dict__.get("_id_reuses", 0) + 1     # every id cache renewed
         self.__dict__.pop("_topology_arrays", None)
@@ -536,10 +540,13 @@ class MPG(MTG):
         if block is None:
             return False
         first, size = block
+        from openalea.metafspm.data_structure.columns import DataStructureColumn
         for prop in self.properties().values():
-            span = prop.key_range()
+            # a DataStructure's column's view holds no instanced vertex's value: its overlay only
+            stored = prop.overlay if isinstance(prop, DataStructureColumn) else prop
+            span = stored.key_range()
             if span is not None and span[0] < first + size and span[1] >= first:
-                prop.delete_range(first, first + size)               # the block's ids: a range of sorted keys
+                stored.delete_range(first, first + size)             # the block's ids: a range of sorted keys
         return True
 
     def _instanced_mask(self, vids) -> np.ndarray:

@@ -116,8 +116,9 @@ class ArrayDict(MutableMapping):
     # --- basic mapping protocol ---------------------------------------------
 
     def __getitem__(self, k: int):
-        value = self.arr[self._position(k)]
-        return value if self.arr.dtype == object else value.item()
+        index = self._index
+        value = self.arr[index[k] if index is not None else self._position(k)]
+        return value if self.arr.dtype.hasobject else value.item()
 
     def __getstate__(self) -> dict:
         """Pickled at its size (not its capacity), without its key dict."""
@@ -130,6 +131,13 @@ class ArrayDict(MutableMapping):
         self._index, self._searches = None, 0
 
     def get(self, k, default=None):
+        index = self._index
+        if index is not None:                     # one key at a time: through the key dict, once built
+            position = index.get(k)
+            if position is None:
+                return default
+            value = self.arr[position]
+            return value if self.arr.dtype.hasobject else value.item()
         try:
             return self[k]
         except KeyError:
@@ -163,7 +171,14 @@ class ArrayDict(MutableMapping):
     # --- sorted insert / delete ---------------------------------------------
 
     def __setitem__(self, k: int, v):
-        self.changed()
+        self.version += 1
+        size = self.size
+        if size and k > self.order[size - 1] if self._index is None else False:   # a new last key: appended
+            if size == self.arr.size:
+                self._ensure(size + 1)
+            self.order[size], self.arr[size] = k, v
+            self.size = size + 1
+            return
         if self._index is not None:
             idx = self._index.get(k)
             pos = None
