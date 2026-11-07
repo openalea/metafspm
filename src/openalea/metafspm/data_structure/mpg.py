@@ -824,6 +824,30 @@ class MPG(MTG):
             p = self.parent(p)
         return None
 
+    def linked_parents(self, from_scale) -> dict:
+        """
+        {vertex: linked_parent(vertex, from_scale)} of every vertex at *from_scale* (_valid_vids_at's): their parent
+        at once when it is one of them (most), linked_parent's walk for the others (an axis' first vertex). Cached
+        until the next structural edit: the dict is shared, read it without modifying it.
+        """
+        signature = self._structure_signature()
+        cache = self.__dict__.setdefault("_linked_parents", {})
+        hit = cache.get(from_scale)
+        if hit is not None and hit[0] == signature:
+            return hit[1]
+        valid = self._valid_vids_at(from_scale)
+        vids = np.fromiter(valid, dtype=np.int64, count=len(valid))
+        parent = self.topology_arrays()["parent"]
+        inside = vids < parent.size
+        parents = np.full(vids.size, -1, dtype=np.int64)
+        parents[inside] = parent[vids[inside]]
+        direct = np.isin(parents, vids) & inside
+        out = dict(zip(vids[direct].tolist(), parents[direct].tolist()))
+        for vid in vids[~direct].tolist():
+            out[vid] = self.linked_parent(vid, from_scale, valid)
+        cache[from_scale] = (signature, out)
+        return out
+
     def compartment_owners(self) -> tuple:
         """
         (Compartment vids, their owner vids), ascending vids, anchors excluded. A Compartment's owner is its complex
@@ -1350,19 +1374,40 @@ class MPG(MTG):
         chains (RecursionError on a 20 000-segment axis). A child belongs to *vid* when it has no complex of its own
         (it inherits its parent's) or when its own complex is *vid*.
         """
-        if vid not in self._components:
-            return
+        yield from self._components_of((vid,))
+
+    def components_at_scale(self, vid, scale):
+        """MTG.components_at_scale: the components of *vid* at *scale*, in its order (each scale's components_iter
+        in turn), each scale listed in one loop (_components_of) instead of openalea's generator per vertex."""
+        level = [vid]
+        for _ in range(self.scale(vid), scale):
+            level = self._components_of(level)
+        return level
+
+    def components_at_scale_iter(self, vid, scale):
+        return iter(self.components_at_scale(vid, scale))
+
+    def _components_of(self, vids) -> list:
+        """The components of each of *vids* in turn, as components_iter gives them, in one list."""
+        components, own_complex, children, parent = self._components, self._complex, self._children, self._parent
         edge_type = self._column('edge_type')
-        own_complex = self._complex
-        children = self._children
-        for root in self.component_roots_iter(vid):
-            stack = [root]
-            while stack:
-                v = stack.pop()
-                yield v
-                inside = [c for c in children.get(v, ()) if own_complex.get(c, vid) == vid]
-                stack.extend(reversed([c for c in inside if edge_type.get(c) == '<']))
-                stack.extend(reversed([c for c in inside if edge_type.get(c) != '<']))
+        out = []
+        for vid in vids:
+            for root in components.get(vid, ()):                     # component_roots_iter's roots
+                above = parent.get(root)
+                if above is not None and self.complex(above) == vid:
+                    continue
+                stack = [root]
+                while stack:
+                    v = stack.pop()
+                    out.append(v)
+                    below = children.get(v)
+                    if not below:
+                        continue
+                    inside = [c for c in below if own_complex.get(c, vid) == vid]
+                    stack.extend(reversed([c for c in inside if edge_type.get(c) == '<']))
+                    stack.extend(reversed([c for c in inside if edge_type.get(c) != '<']))
+        return out
 
     _EDGE_TYPE_CODES = {'/': 1, '<': 2, '+': 3}
 

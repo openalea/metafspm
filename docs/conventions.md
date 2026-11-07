@@ -171,6 +171,10 @@ For metafspm and every port: no Python loop over groups, nodes or entities in a 
    of its own derived from the structure can use `MPG._derived(name, build, patch)`. A change no delta describes (a
    kept vertex moved, ids given again) rebuilds. `METAFSPM_CHECK_TOPOLOGY=1` checks every patch against a build.
    Read edges as arrays: `ds.edge_endpoints()` ((edges, 2), read-only), not `ds.edges()` (Python tuples).
+   Read every vertex's linked parent at a scale at once, `g.linked_parents(scale)` (a dict, cached per structure),
+   not `g.linked_parent(v, scale)` vertex by vertex; `g.components_at_scale` lists each scale in one loop, in
+   openalea.mtg's order (an order a port's creation of vertices may depend on). A traversal whose order does not
+   matter reads the topology arrays or the scale column instead (`g._vertices_at_scale(scale)`).
 3. **numba only where a loop stays sequential** (tree scans, z-buffers, form factors, a turtle): numba is a hard
    dependency, no fallback. Every kernel is `@njit(cache=True)` in its package's `kernels.py` (one module to warm up,
    review and port), `parallel=True` only for independent iterations (numba's threads are `Compute.threads`).

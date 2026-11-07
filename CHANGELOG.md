@@ -2,6 +2,14 @@
 
 ## Unreleased (release2026)
 
+### Kernels for the scene's serial parts (devplan_scene_parallel P2)
+
+- **Traversals of the whole scene:** `MPG.components_at_scale` lists each scale's components in one loop, in
+  openalea.mtg's order (its nested generator per vertex cost 0.25 s a step at 8 plants, day 12).
+  `MPG.linked_parents(scale)` gives every vertex's linked parent at once, cached until the next structural edit;
+  the anatomy signatures read it. GRANAP's anatomies read their classes, records and 3D quantities in bulk, and
+  sum the pass-through junctions' lengths in a kernel.
+
 ### The MPG's properties are columns, one storage (devplan_scene_parallel P1)
 
 - **A tracked variable is not copied to the MPG:** when a DataStructure tracks a variable held at its own scale

@@ -3228,7 +3228,6 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
         ("parents"), and the table of the Compartments owned (ascending vids, their owner and rule properties).
         """
         g, from_scale = self._mtg, self._from_scale
-        valid = g._valid_vids_at(from_scale)
         owners = g.compartments_by_owner(from_scale)
         names = ["label"] + sorted({rule["ordering"] for rule in self._wiring
                                     if isinstance(rule, dict) and rule.get("ordering")})
@@ -3249,7 +3248,7 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
             else:
                 column[:] = [prop.get(nv) for nv in vids.tolist()]
             columns.append(column)
-        return {"parents": _linked_parents(g, from_scale, valid), "vids": vids, "owners": owner_of,
+        return {"parents": g.linked_parents(from_scale), "vids": vids, "owners": owner_of,
                 "columns": columns}
 
     @staticmethod
@@ -3526,21 +3525,6 @@ def _values_at(prop, vids: np.ndarray) -> np.ndarray:
             raise KeyError(int(vids[~found][0]))
         return values.astype(np.int64)
     return np.array([int(prop[v]) for v in vids.tolist()], dtype=np.int64)
-
-
-def _linked_parents(g, from_scale: int, valid) -> dict:
-    """{vertex: its linked parent (MPG.linked_parent)} of the *valid* vertices at *from_scale*: their parent at once
-    when it is valid (most), linked_parent's walk for the others (an axis' first vertex)."""
-    vids = np.fromiter(valid, dtype=np.int64, count=len(valid))
-    parent = g.topology_arrays()["parent"]
-    inside = vids < parent.size
-    parents = np.full(vids.size, -1, dtype=np.int64)
-    parents[inside] = parent[vids[inside]]
-    direct = np.isin(parents, vids) & inside
-    out = dict(zip(vids[direct].tolist(), parents[direct].tolist()))
-    for vid in vids[~direct].tolist():
-        out[vid] = g.linked_parent(vid, from_scale, valid)
-    return out
 
 
 def _fill(out: np.ndarray, at: np.ndarray, value) -> None:

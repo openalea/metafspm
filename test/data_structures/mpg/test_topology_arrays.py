@@ -21,6 +21,25 @@ def test_components_iter_keeps_openalea_order(make):
         assert list(g.components_iter(vid)) == list(MTG.components_iter(g, vid)), vid
 
 
+@pytest.mark.parametrize("make", [lambda: generate_simple_mpg_seedling()[0], branched_root_system])
+def test_components_at_scale_keeps_openalea_order(make):
+    g = make()
+    for scale in range(1, g.max_scale() + 1):
+        for vid in [g.root] + list(g._components):
+            assert g.components_at_scale(vid, scale) == MTG.components_at_scale(g, vid, scale), (vid, scale)
+            assert list(g.components_at_scale_iter(vid, scale)) == g.components_at_scale(vid, scale)
+
+
+@pytest.mark.parametrize("make", [lambda: generate_simple_mpg_seedling()[0], branched_root_system])
+def test_linked_parents_are_linked_parent_of_every_vertex(make):
+    g = make()
+    scale = g.scales.SubOrgan
+    parents = g.linked_parents(scale)
+    assert set(parents) == g._valid_vids_at(scale)
+    assert all(parents[vid] == g.linked_parent(vid, scale) for vid in parents)
+    assert g.linked_parents(scale) is parents                       # kept until a structural edit
+
+
 def test_long_axes_no_longer_hit_the_recursion_limit():
     g = MPG()
     scale = g.scales.SubOrgan
