@@ -740,12 +740,24 @@ time (an event's, an emergence time) is a duration since time 0 or a date (`"202
   `simulation_time_step / time_step` sub-steps per call (`component.simulation_step()`); a component built without a
   time step runs one of the scene's steps. Nothing is process-wide: Scenes of other time steps run in one process,
   and the Choregrapher (the steps' schedule) holds no run state.
+- **A component's cadence.** `GranapAnatomy(data_structure=ds, time_step=time_step, cadence="1 d")` (or
+  `component.cadence = Cadence("3 h", at="start")`, `openalea.metafspm.coupling.cadence`): the component runs once
+  per interval (a whole number of the scene's steps), its call covering it: its clock at the interval's start, its
+  step the interval (one step of it when it ran in the scene's step; its own finer sub-step sub-steps it), its
+  forcings read over it. `at="end"` (the default): it runs at the interval's last step, the inputs it reads through
+  its DataStructure their means over the interval's steps (each entity's over the steps it existed, aligned by id;
+  descriptors and non-float inputs their values at the call); `at="start"`: at the first step, its inputs as they
+  are then. Between its calls nothing runs and its outputs are held; MPG-style steps read the MTG as it is. The
+  means accumulated are checkpointed; components run together share their cadence. `scene.calls` counts each
+  component's calls that ran (`"<Model>.<Component>"`, in run.json next to the timing). No model sets one by
+  default.
 - **Calendar.** `Scene(start="2026-05-10 00:00")`: the date of the scene's time 0 (ISO 8601, UTC); every
   component's `self.calendar()` gives the (day of year, hour) of its forcing time (a light model's sun), and a forcing given by
   the hour of the day (or by the day of the year) takes it with `as_forcing(value, time_unit="h", origin="calendar")`.
 - **Outputs: the SceneRecorder.** `recorder=SceneRecorder(folder, ...)` (or `recorder=folder`) writes:
   - `run.json`: status (running, finished, stopped, failed with its error), times, wall time per model and per
-    component (`scene.timing`: `"<Model>"` and `"<Model>.<Component>"`, a component's calls and its steps run
+    component (`scene.timing`: `"<Model>"` and `"<Model>.<Component>"`; `scene.calls`, the calls each component ran;
+    a component's calls and its steps run
     together with others, `Component.wall_time()`), versions;
   - `scenario.json`: the planting, the scenarios, the environment models, the forcings (tables in `forcings/`);
   - `Plant/<Model>/summaries.csv`: one row per plant and step, the float state variables of every component on the

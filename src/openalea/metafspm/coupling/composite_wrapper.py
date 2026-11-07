@@ -49,15 +49,19 @@ class CompositeModel:
         components in the given order within a position), e.g. a development's potential lengths, the architecture's
         segmentation, then the development's postsegmentation (the new organs' lengths) before the architecture's.
         Each component's inputs are pulled first and its after-call work (write-back, clock, repartition) done last.
+        Components with a cadence (cadence=) run together when they share it (coupling.cadence).
         """
+        from openalea.metafspm.coupling.cadence import cadence_of, run_cadenced
         components = components or tuple(self.components)
-        contexts = [component._before_call() for component in components]
-        with components[0].private_names(components[1:]):
-            for component in components:
-                component.pull_available_inputs()
-            components[0].choregrapher.run_together(components)
-        for component, context in zip(components, contexts):
-            component._after_call(context)
+        cadences = {cadence_of(component) for component in components}
+        if len(cadences) > 1:
+            raise ValueError(f"{'+'.join(type(c).__name__ for c in components)}: components run together share their "
+                             f"cadence (cadence=), got {sorted(map(repr, cadences))}")
+        (cadence,) = cadences
+        if cadence is None:
+            _run_together(components, [None] * len(components))
+        else:
+            run_cadenced(list(components), cadence, lambda overrides: _run_together(components, overrides))
 
     def couplings(self):
         """
@@ -306,6 +310,18 @@ class CompositeModel:
             return default_mapping(kind, direction, name, weight=weight), weight
         except DeclarationError as error:
             raise DeclarationError(f"{error} (link from {source_location} to {location})") from None
+
+
+def _run_together(components, overrides) -> None:
+    """The components' steps in one schedule (CompositeModel.run_together), *overrides* their private names'."""
+    contexts = [component._before_call() for component in components]
+    with components[0].private_names(components[1:], overrides=overrides[0], component_overrides=overrides[1:]):
+        for component in components:
+            component.pull_available_inputs()
+        components[0].choregrapher.run_together(components)
+    for component, context in zip(components, contexts):
+        component._after_call(context)
+        component.__dict__["_calls"] = component.__dict__.get("_calls", 0) + 1
 
 
 def _base_of(data_structure):

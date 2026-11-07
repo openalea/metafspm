@@ -24,6 +24,13 @@
   raise. `scene.model(key)` and `scene.population(key)` (by name or class) replace the `isinstance` loops;
   `Population.name` is the population's name; `population_data_structure(name=)`. Checkpoint states are keyed by
   the scene names (a checkpoint written before restores no component state).
+- **A component's cadence:** `Component(cadence="1 d")` (a constructor keyword like `time_step`, or set after) or
+  `Cadence("3 h", at="start")` (`openalea.metafspm.coupling.cadence`): its calls cover the interval (its clock at the
+  interval's start, its step the interval, its forcings over it); `at="end"` (default) at the interval's last step
+  with the inputs it reads through its DataStructure averaged over the interval's steps (each entity's over the
+  steps it existed, by id; given under private names), `at="start"` at the first step with its inputs then; its
+  outputs held between its calls; the means checkpointed; `run_together` requires one cadence. `Component.calls()`
+  and `Scene.calls` (in run.json) count the calls that ran per component. No default changes.
 
 ### Scaling fixes (the final benchmark)
 

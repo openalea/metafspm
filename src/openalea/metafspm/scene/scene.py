@@ -144,7 +144,8 @@ class Scene:
                                model's scenario does not give takes the Compute's (Caribu's).
 
     A model's cadence is an environment model's interval (a duration, EnvironmentModel: due() and between(); its
-    scenario's "interval" too); a component's, its every= (Component: its calls covering the interval). An environment model's spin_up(scene) runs once, after the scene is built. An environment model's
+    scenario's "interval" too); a component's, its cadence= (Component, coupling.cadence: its calls covering the
+    interval). An environment model's spin_up(scene) runs once, after the scene is built. An environment model's
     components work on the plants' union (EnvironmentModel.plant_data_structure), its variables exchanged with the
     plant models through the translator: its outputs a plant model reads as inputs of the same name, and its inputs a
     plant model holds as states of the same name, are linked by default (identity links).
@@ -241,11 +242,15 @@ class Scene:
 
         self.timing = {}                # wall time (s) per model, per component ("Model.Component"), the exchanges
                                         # and the recording
+        self.calls = {}                 # the calls that ran per component ("Model.Component"; a cadence's,
+                                        # fewer than the steps)
         self._previous = {}             # {id(ds): (ds, names)} whose values before each step are kept (ds.previous)
         self._previous_asked = False    # the recorder's tables asked theirs (at the first step)
         for component in self.components:                       # the construction's calls: not the run's
             if hasattr(component, "wall_time"):
                 component.wall_time(reset=True)
+            if hasattr(component, "calls"):
+                component.calls(reset=True)
         self.recorder = SceneRecorder(recorder) if isinstance(recorder, (str, os.PathLike)) else recorder
         self._recording = False         # the recorder began (at this object's first step)
         self._finished = False
@@ -570,10 +575,14 @@ class Scene:
         self.timing[key] = self.timing.get(key, 0.) + seconds
 
     def _time_components(self, model: str, components) -> None:
-        """Each component's wall time in its model's run (its calls, Component.wall_time): "<model>.<component>"."""
+        """Each component's wall time in its model's run (its calls, Component.wall_time) and its calls that ran
+        (Component.calls): "<model>.<component>"."""
         for component in components:
+            key = f"{model}.{type(component).__name__}"
             if hasattr(component, "wall_time"):
-                self._time(f"{model}.{type(component).__name__}", component.wall_time(reset=True))
+                self._time(key, component.wall_time(reset=True))
+            if hasattr(component, "calls"):
+                self.calls[key] = self.calls.get(key, 0) + component.calls(reset=True)
 
     def keep_previous(self, data_structure, *names) -> None:
         """Keep the values of *names* of *data_structure* (a population's, a grid) before each step: ds.previous(name)

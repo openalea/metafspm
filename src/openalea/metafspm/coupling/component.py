@@ -284,12 +284,31 @@ class Component:
 
     def __call__(self):
         started = perf_counter()
+        from openalea.metafspm.coupling.cadence import cadence_of, run_cadenced
+        cadence = cadence_of(self)
+        if cadence is None:
+            self._call()
+        else:                                            # its calls cover its interval (coupling.cadence)
+            run_cadenced([self], cadence, lambda overrides: self._call(overrides[0]))
+        self.__dict__["_wall_time"] = self.__dict__.get("_wall_time", 0.) + perf_counter() - started
+
+    def _call(self, overrides=None) -> None:
+        """One call: the inputs pulled, the steps of its schedule, the after-call work (*overrides*: {input: private
+        name} during the call, a cadence's means)."""
         context = self._before_call()
-        with self.private_names():
+        with self.private_names(overrides=overrides):
             self.pull_available_inputs()
             self.choregrapher(instance=self)
         self._after_call(context)
-        self.__dict__["_wall_time"] = self.__dict__.get("_wall_time", 0.) + perf_counter() - started
+        self.__dict__["_calls"] = self.__dict__.get("_calls", 0) + 1
+
+    def calls(self, reset: bool = False) -> int:
+        """The calls that ran (a cadence's skipped steps not counted) since the last reset: the Scene's calls per
+        component ("<Model>.<Component>") read and reset it."""
+        count = self.__dict__.get("_calls", 0)
+        if reset:
+            self.__dict__.pop("_calls", None)
+        return count
 
     def wall_time(self, reset: bool = False) -> float:
         """The wall time (s) of its calls (and of its steps run together with others, CompositeModel.run_together)
@@ -301,17 +320,25 @@ class Component:
 
     def simulation_step(self):
         """The simulation step (s) the component runs in: its DataStructure's (DataStructure.simulation_time_step, the
-        Scene's time step), None outside a Scene (a component alone runs one of its own steps per call)."""
+        Scene's time step), None outside a Scene (a component alone runs one of its own steps per call); during a call
+        of a cadence (cadence=), its interval."""
+        if "_cadence_step" in self.__dict__:
+            return self.__dict__["_cadence_step"]
         ds = getattr(self, "data_structure", None)
         return None if ds is None else getattr(ds, "simulation_time_step", None)
 
-    def private_names(self, components=()):
+    def private_names(self, components=(), overrides=None, component_overrides=None):
         """The block in which the component's (and *components*') variables a link keeps under a private name
-        (Link.names) resolve to it on their DataStructure (DataStructure.private_names): its calls, read()."""
+        (Link.names) resolve to it on their DataStructure (DataStructure.private_names): its calls, read().
+        *overrides*: {variable: private name} of the component's own during the block (a cadence's means), over its
+        links'; *component_overrides*: one such dict per component of *components*."""
         from contextlib import ExitStack
         stack = ExitStack()
-        for component in (self, *components):
+        given = [overrides] + list(component_overrides or [None] * len(components))
+        for component, extra in zip((self, *components), given):
             names = component.__dict__.get("_private_names")
+            if extra:
+                names = {**(names or {}), **extra}
             ds = getattr(component, "data_structure", None)
             if names and ds is not None:
                 from openalea.metafspm.data_structure.data_api import _root_data_structure
@@ -582,6 +609,9 @@ class DataStructureComponent(Component):
     # time_step times per scene step, once when run alone. Default: its class's time_step when it sets one, else the
     # scene's
     time_step: Optional[float] = None
+    # Its cadence (coupling.cadence): None, every scene step; a duration ("1 d") or Cadence("3 h", at="start"), its
+    # calls covering that interval, its inputs averaged over it, its outputs held between them
+    cadence: object = None
 
     # MTG synchronisation policy: "lazy" (default) writes the state variables
     # changed since the last synchronisation when the MTG is read (ds.mtg, MPG-style steps, ds.flush_mtg());

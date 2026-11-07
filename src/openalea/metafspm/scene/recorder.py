@@ -10,7 +10,8 @@ scene's steps, or "step" (every step); an output is written when the scene's tim
   outputs/
     run.json                          the run: status (running, finished, stopped, failed, interrupted; a failure's
                                       error), started, ended, wall time, iterations, simulated time, time step, wall
-                                      time per model and per component ("<Model>.<Component>": Scene.timing),
+                                      time per model and per component ("<Model>.<Component>": Scene.timing), the
+                                      calls that ran per component (Scene.calls: a cadence's fewer than the steps),
                                       versions, the threads in use (BLAS libraries, numba) and the
                                       process pool (None: in the process); rewritten after every step (a running
                                       run's progress)
@@ -946,7 +947,8 @@ class SceneRecorder:
         now = datetime.now()
         self._run.update(iterations=int(scene.iteration), time=float(scene.time),
                          wall_time=(now - self._started).total_seconds() + self._run.get("wall_time_before", 0.),
-                         timing={key: round(value, 6) for key, value in scene.timing.items()})
+                         timing={key: round(value, 6) for key, value in scene.timing.items()},
+                         calls=dict(getattr(scene, "calls", {})))
         pool = scene.compute.pool_info()        # the pool used (the largest since the run began), None: none
         if pool is not None or "compute" not in self._run:
             self._run.setdefault("compute", {})["pool"] = pool
