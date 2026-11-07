@@ -154,7 +154,7 @@ class BareStructure(StructuralComponent):
 
 
 def _rows(n, **parameters):
-    return pd.DataFrame([dict(plant=f"p{i}", model=None, x=0., y=0., z=0., rotation=0.,
+    return pd.DataFrame([dict(plant=f"p{i}", model=None, x=0., y=0., depth=0., rotation=0.,
                               scenario=dict(parameters)) for i in range(n)])
 
 

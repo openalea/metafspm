@@ -27,8 +27,8 @@ if __name__ == "__main__":
 
     for scenario_name, scenario in scenarios.items():
         forcings = scenario.pop("forcings", {})
-        table = planting(stand(xrange=0.15, yrange=0.15, sowing_density=250, row_spacing=0.15, sowing_depth=0.025,
-                               seed=1), GrassBRIDGES, scenario.get("GrassBRIDGES", {}))
+        table = planting(stand(5, row_spacing=0.15, sowing_density=250, depth=0.025, seed=1), GrassBRIDGES,
+                         scenario.get("GrassBRIDGES", {}))
         scene = Scene(table, environment=[RhizoSoil, LightModel],
                       environment_scenarios=[scenario.get("RhizoSoil", {}), scenario.get("LightModel", {})],
                       translator=os.path.join(openalea.grassbridges.__path__[0], "scene_translator.py"),

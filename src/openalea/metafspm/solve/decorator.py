@@ -80,7 +80,7 @@ def _step(name: str, *, total: bool = False, iterating: bool = False):
         filters:   the entities the step computes on ({variable: condition}, a mask name or a callable, see
                    Filters); the others keep their values.
         include_inactive:
-                   the step also computes on the entities outside the DataStructure's "active" mask (emergence,
+                   the step also computes on the entities outside the DataStructure's "active" mask (planting times,
                    dead tissues), which it skips by default.
         memo:      the step's outputs are computed again only when its arguments' values, its component's
                    parameters or settings, the active mask or the structure changed (an expensive step whose inputs

@@ -294,7 +294,7 @@ class Geometry:
     or their segments (x1 … z2), and what of them lies in a domain ("air", "soil": the scene's soil surface; a
     HalfSpace)::
 
-        ds.geometry.clipped("air", where="emerged")                       the triangles above the soil (a light model's)
+        ds.geometry.clipped("air", where="planted")                       the triangles above the soil (a light model's)
         ds.geometry.fraction_in("air", location="SubOrgan", by="area", weight="green")
                                                                           each element's green area fraction above it
         ds.geometry.centre_in("air", by="length")                         the middle of each segment's part above it
@@ -517,3 +517,38 @@ def segment_triangles(start, end, radius) -> tuple:
     up /= np.linalg.norm(up, axis=1, keepdims=True)
     local = slim_cylinders(length, radius, radius)
     return place(local, start, heading, up), drawn
+
+
+SEGMENT_ENDS = ("x1", "y1", "z1", "x2", "y2", "z2")
+
+
+def drawn_ends(data_structure, nodes=None) -> tuple:
+    """(start, end), each (n, 3): where the elements of *data_structure* (its nodes; *nodes*: some of their indices)
+    are drawn: their display ends (display_x1 ... display_z2, data_structure.mpg.DISPLAY_ENDS) where given (finite),
+    else their topological ends (x1 ... z2)."""
+    from openalea.metafspm.data_structure.mpg import DISPLAY_ENDS
+    ds = data_structure
+    ends = np.stack([np.asarray(ds.get(name), dtype=float).reshape(-1) for name in SEGMENT_ENDS], axis=1)
+    if nodes is not None:
+        ends = ends[nodes]
+    if all(ds.has(name) for name in DISPLAY_ENDS):
+        display = np.stack([np.asarray(ds.get(name), dtype=float).reshape(-1) for name in DISPLAY_ENDS], axis=1)
+        if nodes is not None:
+            display = display[nodes]
+        given = np.isfinite(display).all(axis=1)
+        ends[given] = display[given]
+    return ends[:, :3], ends[:, 3:]
+
+
+def segment_cylinders(data_structure, where=None):
+    """The elements' default triangles (Triangles: each one's node index): a slim cylinder per element of nonzero
+    drawn length, from its drawn ends (drawn_ends: its display ends, else x1 ... z2) with its radius; *where*: a node
+    mask restricting them. None when the DataStructure has no segment ends (x1 ... z2 and radius)."""
+    ds = data_structure
+    if not all(ds.has(name) for name in SEGMENT_ENDS + ("radius",)):
+        return None
+    radius = np.asarray(ds.get("radius"), dtype=float).reshape(-1)
+    nodes = np.arange(radius.size) if where is None else np.flatnonzero(where)
+    start, end = drawn_ends(ds, nodes)
+    vertices, drawn = segment_triangles(start, end, radius[nodes])
+    return Triangles(vertices[drawn].reshape(-1, 3, 3), np.repeat(nodes[drawn], vertices.shape[1]))

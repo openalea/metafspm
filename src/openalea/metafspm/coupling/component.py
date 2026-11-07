@@ -154,7 +154,8 @@ def geometry_input(description: str = "the plants' elements' geometry (DataStruc
 
 _PLANTING = {"x": ("m", "the plant's x in the scene (its planting)"),
              "y": ("m", "the plant's y in the scene (its planting)"),
-             "z": ("m", "the plant's z in the scene (its planting: minus its sowing depth for a sown plant)"),
+             "z": ("m", "the plant's z in the scene: the soil surface's height minus its planting depth "
+                        "(Planting.depth)"),
              "rotation": ("°", "the plant's rotation about the vertical (its planting)")}
 
 
@@ -775,6 +776,33 @@ class DataStructureComponent(Component):
             if name in self.__dict__:
                 pending[name] = self.__dict__.pop(name)
 
+    @classmethod
+    def plant_parameters(cls, scenario) -> dict:
+        """
+        {name: value} of the class's parameters and settings for one plant: its *scenario*'s ({name: value}, a
+        plant's, e.g. initiate_plant's), else the declared default; each checked against its declaration: within its
+        bounds (min_value, max_value) when declared and numeric, a whole number when declared dtype "int". An
+        initiator reads its parameters with it (StructuralComponent.initiate_plant).
+        """
+        scenario = scenario or {}
+        values = {}
+        for f in fields(cls):
+            meta = f.metadata
+            if meta.get("variable_type") not in ("parameter", "setting"):
+                continue
+            value = scenario.get(f.name, f.default if f.default is not MISSING else None)
+            values[f.name] = value
+            if isinstance(value, (bool, np.bool_)) or not isinstance(value, (int, float, np.integer, np.floating)):
+                continue
+            if meta.get("dtype") in (int, "int") and float(value) != round(float(value)):
+                raise ValueError(f"{cls.__name__}.{f.name}: a whole number, got {value}")
+            low, high = _bound(meta.get("min_value")), _bound(meta.get("max_value"))
+            if np.isfinite(value) and ((isinstance(low, (int, float)) and value < low)
+                                       or (isinstance(high, (int, float)) and value > high)):
+                raise ValueError(f"{cls.__name__}.{f.name}: {value} is outside its declared bounds "
+                                 f"[{low if low is not None else '-inf'}, {high if high is not None else 'inf'}]")
+        return values
+
     def parameter_value(self, name: str):
         """The single value of parameter *name* for the population, outside steps (structural code, helpers); raises
         when the plants' values differ (use parameter_values then)."""
@@ -872,20 +900,20 @@ class DataStructureComponent(Component):
     def active_ids(self, location: str = "node") -> np.ndarray:
         """
         Ids selected by the DataStructure's "active" mask (every one without it), for MPG-style steps, which loop
-        over vertices themselves: e.g. plants before emergence are skipped. At a coarse *location* (e.g. "SubOrgan",
-        whose new entities may have no node yet), the entities of the plants emerged.
+        over vertices themselves: e.g. plants before their planting time are skipped. At a coarse *location* (e.g.
+        "SubOrgan", whose new entities may have no node yet), the entities of the plants planted.
         """
         ds = self.data_structure
         ids = np.asarray(ds.entity_ids(location))
         if location == "node":
             return ids[np.asarray(ds.mask("active"), dtype=bool)] if ds.has_mask("active") else ids
-        if not ds.has("emerged"):
+        if not ds.has("planted"):
             return ids
-        plants = ds.map_to(np.asarray(ds.get("emerged"), dtype=float), "node", "Plant", "max")
+        plants = ds.map_to(np.asarray(ds.get("planted"), dtype=float), "node", "Plant", "max")
         if location == "Plant":
             return ids[np.nan_to_num(plants) > 0]
-        emerged = ds.map_to(np.nan_to_num(plants), "Plant", location, "broadcast")
-        return ids[np.asarray(emerged) > 0]
+        planted = ds.map_to(np.nan_to_num(plants), "Plant", location, "broadcast")
+        return ids[np.asarray(planted) > 0]
 
     def write_back_to_mtg(self) -> None:
         """
@@ -1021,6 +1049,25 @@ class FunctionalComponent(DataStructureComponent):
                                               for fn, location in unknowns.items() if ds.has(fn)}
 
 
+def display_end(name: str):
+    """
+    Declare one of an element's display ends, *name* one of x1, y1, z1, x2, y2, z2 (the field display_<name>, m, at
+    the SubOrgans): metafspm's convention is that x1 ... z2 are topological (each element's base at its parent's
+    end, data_structure.mpg.MPG.add_element), and an element drawn elsewhere (a turtle's hidden parts on top of the
+    visible ones, a seed drawn as its grain) gives where in display_x1 ... display_z2, NaN at its topological place.
+    The default cylinders (coupling.geometry.segment_cylinders) and the readers of the drawing (an anatomy's 3D
+    placement) take them where given (coupling.geometry.drawn_ends)::
+
+        display_x1: float = display_end("x1")         # ... the six of them, in a component drawing its elements
+    """
+    if name not in ("x1", "y1", "z1", "x2", "y2", "z2"):
+        raise ValueError(f"display_end: one of x1, y1, z1, x2, y2, z2, got {name!r}")
+    end, axis = ("base", "end")[int(name[-1]) - 1], name[0]
+    return state_variable(unit="m", description=f"Where the element's {end} is drawn, {axis} (its display end)",
+                          value_comment="NaN: at its topological place (x1 ... z2)", kind="descriptor",
+                          default=np.nan, scale=_ScalesConfig.SubOrgan)
+
+
 class NewComplexes:
     """
     New coarse vertices (Phytomers, Organs, ...) a NewNodes batch creates for its nodes, in order::
@@ -1149,30 +1196,26 @@ class StructuralComponent(DataStructureComponent):
     def triangles(self, where=None):
         """
         The triangles of the elements (coupling.geometry.Triangles: vertices in the scene's frame, each one's node
-        index), for light models and display; *where*: a node mask restricting them. By default, for segment models
-        (variables x1, y1, z1, x2, y2, z2 and radius on the elements): a slim cylinder per segment of nonzero length.
+        index), for light models and display; *where*: a node mask restricting them. By default, for elements with
+        ends (x1 ... z2, topological, and radius): a slim cylinder per element of nonzero length, drawn at its display
+        ends where given (display_x1 ... display_z2: coupling.geometry.segment_cylinders, the DataStructure's default).
         A component with its own shapes (blades, ...) overrides it.
         """
-        from openalea.metafspm.coupling.geometry import Triangles, segment_triangles
-        ds = self.data_structure
-        names = ("x1", "y1", "z1", "x2", "y2", "z2", "radius")
-        if not all(ds.has(name) for name in names):
+        from openalea.metafspm.coupling.geometry import segment_cylinders
+        drawn = segment_cylinders(self.data_structure, where)
+        if drawn is None:
             raise NotImplementedError(f"{type(self).__name__} has no segments (x1 … z2, radius) to triangulate: "
                                       f"its triangles() is to be defined")
-        x1, y1, z1, x2, y2, z2, radius = (np.asarray(ds.get(name), dtype=float) for name in names)
-        nodes = np.arange(x1.size) if where is None else np.flatnonzero(where)
-        start = np.stack([x1[nodes], y1[nodes], z1[nodes]], axis=1)
-        end = np.stack([x2[nodes], y2[nodes], z2[nodes]], axis=1)
-        vertices, drawn = segment_triangles(start, end, radius[nodes])
-        return Triangles(vertices[drawn].reshape(-1, 3, 3), np.repeat(nodes[drawn], vertices.shape[1]))
+        return drawn
 
     def geometry_stamp(self) -> tuple:
         """What the component's triangles are made from, compared by the geometric variables
         (DataStructure.derive_geometry) to know when to recompute: its calls (its clock: a call may move or reshape
-        its elements) and the writes of its segment ends (x1 … z2, radius) when it has them. A component whose
-        triangles depend on more than these between its calls overrides it."""
+        its elements) and the writes of its segment ends (x1 … z2, radius, the display ends) when it has them. A
+        component whose triangles depend on more than these between its calls overrides it."""
+        from openalea.metafspm.data_structure.mpg import DISPLAY_ENDS
         ds = self.data_structure
-        names = ("x1", "y1", "z1", "x2", "y2", "z2", "radius")
+        names = ("x1", "y1", "z1", "x2", "y2", "z2", "radius") + DISPLAY_ENDS
         return (self.__dict__.get("_clock", 0.), tuple(ds.write_count(name) for name in names if ds.has(name)))
 
     def _mpg_signature(self) -> tuple:

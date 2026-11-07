@@ -10,7 +10,7 @@ Times and durations, given with their units and kept in seconds, the scene's one
     day_and_hour(start, 48600.)         (130.0, 13.5)   (the calendar a light model's sun reads)
 
 Every argument of a time or a duration (the Scene's time_step, start and events, the recorder's periods, a
-component's every, a forcing's time unit, a pulse's times, the plants' emergence times) is read by these.
+a schedule step's cadence, a forcing's time unit, a pulse's times, the plants' planting times) is read by these.
 """
 import math
 import re

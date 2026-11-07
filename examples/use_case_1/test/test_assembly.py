@@ -43,7 +43,7 @@ STEPS = 3
 def _scene(time_step=HOUR):
     """One plant sown 3 cm deep in a 20 cm column of loam closed at its bottom (no flux: the soil's water changes by
     the roots' uptake only), at midday, under a constant weather, by steps of *time_step* (s)."""
-    table = planting([Planting(x=0.05, y=0.05, z=-0.03)], WheatPlant, dict(WHEAT_SCENARIO), xrange=0.1, yrange=0.1)
+    table = planting([Planting(x=0.05, y=0.05, depth=0.03)], WheatPlant, dict(WHEAT_SCENARIO), xrange=0.1, yrange=0.1)
     forcings = dict(PARi=1500., air_temperature=20., relative_humidity=0.6, ambient_CO2=410., wind_speed=2.,
                     soil_temperature=15., rainfall=0., potential_evaporation=0.)
     return Scene(table, environment=[RichardsSoilModel, CaribuLightModel],

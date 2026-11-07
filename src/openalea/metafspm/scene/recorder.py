@@ -967,9 +967,9 @@ class SceneRecorder:
         for population in scene.populations:
             plants = []
             for row in population.table.itertuples(index=False):
-                plant = {key: _described(getattr(row, key)) for key in ("plant", "x", "y", "z", "rotation")}
-                if population.emergence:
-                    plant["emergence_time"] = float(row.emergence_time)
+                plant = {key: _described(getattr(row, key)) for key in ("plant", "x", "y", "depth", "rotation")}
+                if population.planted_later:
+                    plant["planting_time"] = float(row.planting_time)
                 plant["scenario"] = _described(row.scenario)
                 plants.append(plant)
             populations.append({"model": _described(population.model), "plants": plants})

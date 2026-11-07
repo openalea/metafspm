@@ -294,7 +294,7 @@ class DataStructure(ABC):
 
     def triangles(self, where=None):
         """The elements' triangles (coupling.geometry.Triangles: each one's node index here), from the geometry
-        provider; *where*: a node mask restricting them, or a mask's name ("emerged", "active": every node when this
+        provider; *where*: a node mask restricting them, or a mask's name ("planted", "active": every node when this
         DataStructure does not define it)."""
         if isinstance(where, str):
             where = self.mask(where) if self.has_mask(where) else None
@@ -306,8 +306,13 @@ class DataStructure(ABC):
             return Triangles.concatenate([provider.triangles(where) for provider in providers])
         provider = self.geometry_provider
         if provider is None:
-            raise ValueError(f"{type(self).__name__} has no geometry provider: no StructuralComponent drawing its "
-                             "elements was built on it (or set ds.geometry_provider)")
+            from openalea.metafspm.coupling.geometry import segment_cylinders
+            drawn = segment_cylinders(self, where)          # the elements' default cylinders from their ends
+            if drawn is None:
+                raise ValueError(f"{type(self).__name__} has no geometry provider (no StructuralComponent drawing its "
+                                 "elements was built on it, or set ds.geometry_provider) nor segment ends (x1 ... "
+                                 "z2, radius)")
+            return drawn
         return provider.triangles(where)
 
 

@@ -43,7 +43,7 @@ class Model(CompositeModel):
 
 
 def test_a_component_reads_its_plants_planting_as_step_arguments():
-    table = pd.DataFrame([dict(plant=f"p{i}", model=Model, x=0.1 * i, y=0., z=-0.02, rotation=30. * i, scenario={})
+    table = pd.DataFrame([dict(plant=f"p{i}", model=Model, x=0.1 * i, y=0., depth=0.02, rotation=30. * i, scenario={})
                           for i in range(3)])
     population = population_data_structure(table, Model)
     population.instance.run()

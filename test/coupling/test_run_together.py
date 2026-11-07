@@ -62,7 +62,7 @@ class Model(CompositeModel):
 
 
 def test_the_steps_of_components_run_together_interleave_by_schedule_position():
-    table = pd.DataFrame([dict(plant="p0", model=Model, x=0., y=0., z=0., rotation=0., scenario={})])
+    table = pd.DataFrame([dict(plant="p0", model=Model, x=0., y=0., depth=0., rotation=0., scenario={})])
     population = population_data_structure(table, Model)
     ORDER.clear()
     population.instance.run()

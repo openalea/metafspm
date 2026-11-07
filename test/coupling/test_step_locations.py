@@ -52,7 +52,7 @@ class Model(CompositeModel):
 
 
 def _population(scenarios=({"supply_rate": 1.}, {"supply_rate": 3.})):
-    table = pd.DataFrame([dict(plant=f"p{i}", model=Model, x=float(i), y=0., z=0., rotation=0., scenario=s)
+    table = pd.DataFrame([dict(plant=f"p{i}", model=Model, x=float(i), y=0., depth=0., rotation=0., scenario=s)
                           for i, s in enumerate(scenarios)])
     return population_data_structure(table, Model, time_step=10.)
 

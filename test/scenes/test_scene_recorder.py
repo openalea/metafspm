@@ -38,7 +38,7 @@ def test_the_run_and_its_scenario_are_written(tmp_path):
     scenario = _json(tmp_path / "scenario.json")
     assert scenario["time_step"] == DT and [p["model"].split(".")[-1] for p in scenario["populations"]] == [
         "RootPopulation", "Seedlings"]
-    assert scenario["populations"][0]["plants"][0] == dict(plant="p0", x=0.1, y=0.05, z=0., rotation=0.,
+    assert scenario["populations"][0]["plants"][0] == dict(plant="p0", x=0.1, y=0.05, depth=0., rotation=0.,
                                                            scenario={"exudation_rate": 0.2})
     assert scenario["environment"][0]["compartment"] == "Soil"
     assert scenario["forcings"] == {"exudation_rate": {"table": "forcings/exudation_rate.csv"}}

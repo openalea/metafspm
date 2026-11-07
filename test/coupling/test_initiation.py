@@ -67,7 +67,7 @@ TRANSLATOR = (Translator()
 
 
 def _table(n_plants=2):
-    return pd.DataFrame([dict(plant=f"p{i}", model=None, x=float(i), y=0., z=0., rotation=0., scenario={})
+    return pd.DataFrame([dict(plant=f"p{i}", model=None, x=float(i), y=0., depth=0., rotation=0., scenario={})
                          for i in range(n_plants)])
 
 

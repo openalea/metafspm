@@ -65,7 +65,7 @@ class ActiveSplitDiffusion(FunctionalComponent):
 
 
 def _population(n_segments, conductances):
-    table = pd.DataFrame([dict(plant=f"p{i}", model=None, x=0.1 * i, y=0., z=0., rotation=0.,
+    table = pd.DataFrame([dict(plant=f"p{i}", model=None, x=0.1 * i, y=0., depth=0., rotation=0.,
                                scenario={"n_segments": n}) for i, n in enumerate(n_segments)])
     g, plants = _build_population(table, initiators=(RootGrowthProbe,))
     g.populate_graph(g.scales.SubOrgan)

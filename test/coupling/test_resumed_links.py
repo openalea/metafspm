@@ -86,7 +86,7 @@ def _model(translator):
 
 def _population(translator):
     model = _model(translator)
-    table = pd.DataFrame([dict(plant="p0", model=model, x=0., y=0., z=0., rotation=0., scenario={})])
+    table = pd.DataFrame([dict(plant="p0", model=model, x=0., y=0., depth=0., rotation=0., scenario={})])
     return population_data_structure(table, model)
 
 

@@ -132,7 +132,7 @@ def test_plants_map_onto_refined_cells():
     from growth import RootGrowthProbe
     from openalea.metafspm.data_structure.data_api import MPGDataStructure
     from openalea.metafspm.scene.population import _build_population
-    table = pd.DataFrame([dict(plant="p0", model=None, x=0.05, y=0.05, z=0., rotation=0.,
+    table = pd.DataFrame([dict(plant="p0", model=None, x=0.05, y=0.05, depth=0., rotation=0.,
                                scenario={"n_segments": 3})])
     g, _ = _build_population(table, initiators=(RootGrowthProbe,))
     g.populate_graph(g.scales.SubOrgan)
@@ -165,7 +165,7 @@ def test_a_mapping_follows_the_refinement_of_its_grid():
     from growth import RootGrowthProbe
     from openalea.metafspm.data_structure.data_api import MPGDataStructure
     from openalea.metafspm.scene.population import _build_population
-    table = pd.DataFrame([dict(plant="p0", model=None, x=0.05, y=0.05, z=0., rotation=0.,
+    table = pd.DataFrame([dict(plant="p0", model=None, x=0.05, y=0.05, depth=0., rotation=0.,
                                scenario={"n_segments": 3})])
     g, _ = _build_population(table, initiators=(RootGrowthProbe,))
     g.populate_graph(g.scales.SubOrgan)

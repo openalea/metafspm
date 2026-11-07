@@ -46,7 +46,7 @@ class ExternalSolverSoil(SceneSoil):
 
 def _scene_arguments(folder=None, **recorder):
     """The arguments of the checkpointed scene, given again to Scene.restore."""
-    table = doubles_planting([RootPopulation, Seedlings, RootPopulation, Seedlings], emergence_time=[0., 0., 2 * DT, 0.])
+    table = doubles_planting([RootPopulation, Seedlings, RootPopulation, Seedlings], planting_time=[0., 0., 2 * DT, 0.])
     return dict(planting=table, environment=[ExternalSolverSoil],
                 translator=soil_translator("SceneExudation", "SeedlingExudation"), time_step=DT,
                 recorder=SceneRecorder(folder, segment_plants=["p0"], segment_period="1 h", **recorder)

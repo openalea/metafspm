@@ -34,15 +34,16 @@ in m3 s-1 on faces and cells; the rainfall and evaporation as m s-1 per area of 
 m3 m-3, conductivities in m s-1. On the plant, z points up (the planting's: minus the sowing depth for a seed),
 thermal times are in °Cd.
 """
-from dataclasses import dataclass, fields
+from dataclasses import dataclass
 
 import numpy as np
 from scipy.sparse import csr_matrix, diags
 
-from openalea.metafspm.coupling.component import (FunctionalComponent, StructuralComponent, input_variable,
-                                                  parameter, planting_variable, setting, state_variable)
+from openalea.metafspm.coupling.component import (FunctionalComponent, StructuralComponent, display_end,
+                                                  input_variable, parameter, planting_variable, setting,
+                                                  state_variable)
 from openalea.metafspm.coupling.translator import Translator
-from openalea.metafspm.data_structure.configs import PropsConfig, ScalesConfig
+from openalea.metafspm.data_structure.configs import ScalesConfig
 from openalea.metafspm.scene.environment import EnvironmentModel
 from openalea.metafspm.solve.conservation import Conservation
 from openalea.metafspm.solve.decorator import (boundary_condition, graph_jacobian, graph_output, graph_system,
@@ -772,19 +773,21 @@ class WheatCrown(StructuralComponent):
              the last one the crown's top, the main stem's bearer (Adel's shoot_anchor {"label": "StemElement",
              "last": True})
 
-    Each element gets its start (x1, y1, z1), its end (x2, y2, z2), its length and its radius as MPG properties: the
-    models anchored on it start at its end (the seed's: its position) and the other models read them (an anatomy, a
-    hydraulic model). The seed is a point (its start and end at the seed), its length and radius the grain's. Its
-    axis has no row in the shoot's axes table (axis_row -1): it is not the shoot's, nor its organ.
+    Each element gets its length and its radius, and its topological ends (x1 ... z2: its base at its parent's end,
+    metafspm's MPG.add_element), as MPG properties: the models anchored on it start at its end (the seed's: its
+    position) and the other models read them (an anatomy, a hydraulic model). The seed is a point on the axis (its
+    start and end at the seed), its length and radius the grain's, drawn as the grain (display_x1 ... display_z2: a
+    cylinder of seed_length centred on the seed, lying along x). Its axis has no row in the shoot's axes table
+    (axis_row -1): it is not the shoot's, nor its organ.
 
-    The seed's depth is the planting's (z: minus the sowing depth, a planting_variable). The crown's depth does not follow the sowing depth (Kirby 1993): the subcrown
-    internode's length is the sowing depth minus crown_depth, positive (a seed sown above the crown's depth raises).
-    The initiator reads its parameters from the plant's scenario (the class defaults otherwise); it has no step.
+    The seed's depth is the planting's (Planting(depth=): z, a planting_variable, the soil surface minus it). The
+    crown's depth does not follow the sowing depth (Kirby 1993): the subcrown internode's length is the sowing depth
+    minus crown_depth, positive (a seed sown above the crown's depth raises). The initiator reads its parameters from
+    the plant's scenario (plant_parameters: the class defaults otherwise, within their bounds); it has no step.
 
     Its entities are its elements (the seed and the subcrown internode's StemElements: on its axis without a row,
-    axis_row -1), at the plant's SubOrgans, so that it draws them as the shoot and the root models draw theirs
-    (triangles(): the frames, the light): the subcrown internode's StemElements as cylinders, the seed as the grain,
-    a cylinder of seed_length and seed_radius centred on the seed's position, lying along x. Without it the
+    axis_row -1), at the plant's SubOrgans, so that they are drawn as the shoot and the root models' are (the frames,
+    the light): metafspm's default cylinders from their ends, the seed's from its display ends. Without them the
     subcrown internode would not be drawn: the seminal roots, on the seed, would start a subcrown internode's length
     below the shoot, on the crown.
     """
@@ -808,9 +811,9 @@ class WheatCrown(StructuralComponent):
     subcrown_radius: float = parameter(unit="m", description="The subcrown internode's radius.", by="WheatCrown",
                                        default=0.0005, min_value=0.0002, max_value=0.0015,
                                        value_comment="without a source: a thin stem of about 1 mm across")
-    subcrown_elements: float = parameter(unit="adim", description="The number of StemElements of the subcrown "
-                                                                  "internode.", by="WheatCrown", default=2,
-                                         min_value=1, max_value=20,
+    subcrown_elements: int = parameter(unit="adim", description="The number of StemElements of the subcrown "
+                                                                "internode.", by="WheatCrown", default=2, dtype="int",
+                                       min_value=1, max_value=20,
                                          value_comment="numerical: the internode's discretisation (e.g. for its "
                                                        "hydraulics)")
     # its entities: the elements of its axis, which has no row in the shoot's axes table
@@ -822,66 +825,36 @@ class WheatCrown(StructuralComponent):
                                                            "subcrown_radius; the shoot's organs' diameter for the "
                                                            "others).", default=0., scale=ScalesConfig.Organ,
                                      kind="descriptor")
-
-    @classmethod
-    def plant_parameters(cls, scenario) -> dict:
-        """The class's defaults overridden by *scenario*, the plant's."""
-        return {f.name: scenario.get(f.name, f.default) for f in fields(cls)
-                if f.metadata.get("variable_type") == "parameter"}
+    # where its elements are drawn: the seed as its grain (its topological ends a point)
+    display_x1: float = display_end("x1")
+    display_y1: float = display_end("y1")
+    display_z1: float = display_end("z1")
+    display_x2: float = display_end("x2")
+    display_y2: float = display_end("y2")
+    display_z2: float = display_end("z2")
 
     @classmethod
     def initiate_plant(cls, g, plant, scenario):
         """The seed and the subcrown internode of *plant* (the class docstring's structure), from its planting's
-        position and its *scenario*'s parameters."""
+        position and its *scenario*'s parameters (plant_parameters): its elements placed topologically by the MPG's
+        builder (g.add_element: each one's base at its parent's end), the seed a point drawn as the grain."""
         parameters = cls.plant_parameters(scenario)
         x, y, seed_height = (float(g.property(name)[plant]) for name in ("x", "y", "z"))
         crown_height = float(getattr(g, "soil_surface", 0.)) - float(parameters["crown_depth"])   # below the soil
         if crown_height <= seed_height + 1e-12:
             raise ValueError(f"WheatCrown: the crown ({-crown_height} m deep) must lie above the seed "
                              f"({-seed_height} m deep): crown_depth below the sowing depth")
+        organ = g.add_organ(plant, "StemInternode", kind="Shoot")
+        g.property("diameter")[organ] = 2. * float(parameters["subcrown_radius"])
+        half_grain = 0.5 * float(parameters["seed_length"])
+        element = g.add_element("Seed", complex=organ, direction=(0., 0., 0.), length=float(parameters["seed_length"]),
+                                radius=float(parameters["seed_radius"]),
+                                display=((x - half_grain, y, seed_height), (x + half_grain, y, seed_height)))
         count = int(parameters["subcrown_elements"])
-        if count < 1 or count != parameters["subcrown_elements"]:
-            raise ValueError(f"WheatCrown: subcrown_elements is a whole number >= 1, got "
-                             f"{parameters['subcrown_elements']}")
-        scales, labels = g.scales, g.labels
-        complex_ = plant
-        for scale, label in ((scales.Axis, labels.Axis.Shoot), (scales.GrowthUnit, labels.GrowthUnit.Shoot),
-                             (scales.Phytomer, labels.Phytomer.Shoot), (scales.Organ, labels.Organ.StemInternode)):
-            complex_ = g.add_component(complex_, **PropsConfig(scale=scale, edge_type='/', label=label))
-        g.property("diameter")[complex_] = 2. * float(parameters["subcrown_radius"])
-        element = g.add_component(complex_, **PropsConfig(scale=scales.SubOrgan, edge_type='/',
-                                                         label=labels.SubOrgan.Seed))
-        cls._place(g, element, x, y, seed_height, seed_height, float(parameters["seed_length"]),
-                   float(parameters["seed_radius"]))
         rise = (crown_height - seed_height) / count
-        for k in range(count):
-            element = g.add_child(element, **PropsConfig(scale=scales.SubOrgan, edge_type='<',
-                                                         label=labels.SubOrgan.StemElement))
-            cls._place(g, element, x, y, seed_height + k * rise, seed_height + (k + 1) * rise, rise,
-                       float(parameters["subcrown_radius"]))
-
-    def triangles(self, where=None):
-        """The elements' triangles (coupling.geometry.Triangles, each one's node index here): the subcrown internode's
-        StemElements as cylinders from their start to their end, the seed as the grain (a cylinder of its length and
-        its radius, centred on its position, along x); *where*: a node mask restricting them."""
-        from openalea.metafspm.coupling.geometry import Triangles, segment_triangles
-        ds = self.data_structure
-        names = ("x1", "y1", "z1", "x2", "y2", "z2", "length", "radius")
-        x1, y1, z1, x2, y2, z2, length, radius = (np.asarray(ds.get(name), dtype=float) for name in names)
-        nodes = np.arange(x1.size) if where is None else np.flatnonzero(where)
-        start = np.stack([x1[nodes], y1[nodes], z1[nodes]], axis=1)
-        end = np.stack([x2[nodes], y2[nodes], z2[nodes]], axis=1)
-        seed = np.asarray(ds.labels())[nodes] == "Seed"
-        half_length = np.stack([0.5 * length[nodes][seed], np.zeros(seed.sum()), np.zeros(seed.sum())], axis=1)
-        start[seed], end[seed] = start[seed] - half_length, start[seed] + half_length
-        vertices, drawn = segment_triangles(start, end, radius[nodes])
-        return Triangles(vertices[drawn].reshape(-1, 3, 3), np.repeat(nodes[drawn], vertices.shape[1]))
-
-    @staticmethod
-    def _place(g, element, x, y, bottom, top, length, radius):
-        """An element's start and end (vertical, at x, y), its length and its radius, on the MPG."""
-        for name, value in dict(x1=x, y1=y, z1=bottom, x2=x, y2=y, z2=top, length=length, radius=radius).items():
-            g.property(name)[element] = value
+        for _ in range(count):
+            element = g.add_element("StemElement", parent=element, direction=(0., 0., 1.), length=rise,
+                                    radius=float(parameters["subcrown_radius"]))
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

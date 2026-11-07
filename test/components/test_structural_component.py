@@ -180,7 +180,7 @@ def test_labels_and_triangles_of_a_mask():
     from openalea.metafspm.coupling.cross import UnionDataStructure
     ds, _ = _segments()
     assert ds.labels().tolist() == ["RootSegment"] * 3
-    assert len(ds.triangles("emerged")) == 16                          # no such mask: all
+    assert len(ds.triangles("planted")) == 16                          # no such mask: all
     ds.define_mask("deep", {"z1": "<0"})
     assert ds.triangles("deep").owner.tolist() == [1] * 8
     other, _ = _segments()

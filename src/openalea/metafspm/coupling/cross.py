@@ -39,7 +39,7 @@ class CrossMapping:
                      grid's z is the depth below the soil surface, *soil_surface* - z.
         soil_surface: the soil surface's height in the plants' frame (m; the Scene's soil_surface): the grid's top.
         mask:        a node mask of the source: its other entities are left out (they neither push nor receive, e.g.
-                     plants before emergence).
+                     plants before their planting time).
 
     On an anatomy-mode plant (its nodes the Compartments, its segments' ends at its SubOrgans) the mapping maps the
     coordinates' location (`location`: "SubOrgan"), each SubOrgan's incidence its segment's; a variable at the

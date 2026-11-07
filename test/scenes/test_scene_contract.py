@@ -87,7 +87,7 @@ def _soil_links(nested):
 def scene(tmp_path):
     nested = doubles_ds.translator(soil=doubles_ds.SOIL)
     ContractPlant.translator_path = doubles.write_translator(tmp_path / "plant_translator.yaml", nested)
-    table = pd.DataFrame([dict(plant=f"p{i}", model=ContractPlant, x=0.025 + 0.05 * i, y=0.025, z=-0.01, rotation=0.,
+    table = pd.DataFrame([dict(plant=f"p{i}", model=ContractPlant, x=0.025 + 0.05 * i, y=0.025, depth=0.01, rotation=0.,
                                scenario={}) for i in range(3)])
     return Scene(table, environment=[ContractSoil], translator=_soil_links(nested), time_step=doubles.TIME_STEP,
                  xrange=0.15, yrange=0.05)

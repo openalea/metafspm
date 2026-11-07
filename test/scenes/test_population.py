@@ -21,7 +21,7 @@ from growth import DOC, CarbonProbe, RootGrowthProbe
 
 
 def _table(scenarios):
-    return pd.DataFrame([dict(plant=f"p{i}", model=RootGrowthProbe, x=0.1 * i, y=0., z=0., rotation=0.,
+    return pd.DataFrame([dict(plant=f"p{i}", model=RootGrowthProbe, x=0.1 * i, y=0., depth=0., rotation=0.,
                               scenario=scenario) for i, scenario in enumerate(scenarios)])
 
 
@@ -69,12 +69,17 @@ def test_initial_structures_follow_the_plant_scenarios():
 
 
 def test_a_sown_stand():
-    sown = stand(0.6, 0.3, sowing_density=100, row_spacing=0.15, exact=True, seed=1)
+    sown = stand(16, rows=4, row_spacing=0.15, sowing_density=100, seed=1)
     table = planting(sown, RootGrowthProbe)
-    assert len(table) == 4 * 4 and set(table.columns) >= {"plant", "model", "x", "y", "z", "rotation", "scenario"}
-    assert table["plant"].tolist() == [f"p{k}" for k in range(16)] and table.attrs["xrange"] == pytest.approx(0.6)
-    assert (table["z"] == -0.025).all()
-    again = planting(stand(0.6, 0.3, sowing_density=100, row_spacing=0.15, exact=True, seed=1), RootGrowthProbe)
+    assert len(table) == 4 * 4 and set(table.columns) >= {"plant", "model", "x", "y", "depth", "rotation", "scenario"}
+    # the rows along x, row_spacing apart in y; the plants 1 / (density x row spacing) apart along their row
+    spacing = 1. / (100 * 0.15)
+    assert table["plant"].tolist() == [f"p{k}" for k in range(16)]
+    assert table.attrs["xrange"] == pytest.approx(4 * spacing) and table.attrs["yrange"] == pytest.approx(0.6)
+    np.testing.assert_allclose(table["x"], np.tile((np.arange(4) + 0.5) * spacing, 4))
+    np.testing.assert_allclose(table["y"], np.repeat((np.arange(4) + 0.5) * 0.15, 4))
+    assert (table["depth"] == 0.025).all()
+    again = planting(stand(16, rows=4, row_spacing=0.15, sowing_density=100, seed=1), RootGrowthProbe)
     pd.testing.assert_frame_equal(table.drop(columns=["model", "scenario"]), again.drop(columns=["model", "scenario"]))
     scenarios = [{"elongation_rate": r} for r in np.linspace(0.1, 1., len(table))]
     per_plant = planting(sown, RootGrowthProbe, {"n_segments": 3}, plant_scenarios=scenarios)
@@ -83,13 +88,23 @@ def test_a_sown_stand():
         planting(sown, RootGrowthProbe, plant_scenarios=scenarios[:1])
 
 
+def test_a_stand_jittered_and_turned():
+    turned = stand(3, plant_spacing=0.05, rotation=120.)
+    assert [p.rotation for p in turned] == [0., 120., 240.] and [p.y for p in turned] == [0.075] * 3
+    jittered = stand(50, rows=5, plant_spacing=0.04, jitter=0.005, seed=0)
+    offsets = np.array([p.x for p in jittered]) - np.tile((np.arange(10) + 0.5) * 0.04, 5)
+    assert 0. < np.std(offsets) < 0.01
+    with pytest.raises(ValueError, match="plant_spacing .* or sowing_density"):
+        stand(4)
+
+
 def test_a_stand_of_several_models():
-    sown = stand(0.6, 0.3, sowing_density=100, row_spacing=0.15, models=[RootGrowthProbe, Exudation],
-                 frequencies=[0.25, 0.75], sowing_depth=[0.01, 0.03], seed=2)
+    sown = stand(16, rows=4, row_spacing=0.15, sowing_density=100, models=[RootGrowthProbe, Exudation],
+                 frequencies=[0.25, 0.75], depth=[0.01, 0.03], seed=2)
     assert len(sown.models) == len(sown) and set(sown.models) == {RootGrowthProbe, Exudation}
     table = planting(sown, sown.models, {RootGrowthProbe: {"n_segments": 2}, Exudation: {}})
     probes = table["model"] == RootGrowthProbe
-    assert (table.loc[probes, "z"] == -0.01).all() and (table.loc[~probes, "z"] == -0.03).all()
+    assert (table.loc[probes, "depth"] == 0.01).all() and (table.loc[~probes, "depth"] == 0.03).all()
     assert all(s == {"n_segments": 2} for s in table.loc[probes, "scenario"])
 
 

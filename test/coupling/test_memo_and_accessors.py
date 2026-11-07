@@ -44,7 +44,7 @@ class Model(CompositeModel):
 
 
 def _population(n_plants=2):
-    table = pd.DataFrame([dict(plant=f"p{i}", model=Model, x=float(i), y=0., z=0., rotation=0., scenario={})
+    table = pd.DataFrame([dict(plant=f"p{i}", model=Model, x=float(i), y=0., depth=0., rotation=0., scenario={})
                           for i in range(n_plants)])
     return population_data_structure(table, Model)
 
@@ -77,13 +77,13 @@ def test_max_and_min_aggregations():
     np.testing.assert_allclose(ds.map_to(area, "node", "Plant", "min"), [1., 1.])
 
 
-def test_active_ids_at_a_coarse_location_are_the_emerged_plants():
+def test_active_ids_at_a_coarse_location_are_the_planted_plants():
     population = _population()
     ds, component = population.data_structure, population.instance.costly
     assert component.active_ids("Organ").tolist() == ds.entity_ids("Organ").tolist()   # no emergence: all
     plant = np.asarray(ds.owner("Plant"))
-    ds.register("emerged", (plant == 1).astype(float), location="node")
-    ds.define_mask("active", {"emerged": ">0"})
+    ds.register("planted", (plant == 1).astype(float), location="node")
+    ds.define_mask("active", {"planted": ">0"})
     organs = ds.entity_ids("Organ")[ds.map_to(np.arange(2.), "Plant", "Organ", "broadcast") == 1]
     assert component.active_ids("Organ").tolist() == organs.tolist()
     assert component.active_ids("Plant").tolist() == [ds.entity_ids("Plant")[1]]

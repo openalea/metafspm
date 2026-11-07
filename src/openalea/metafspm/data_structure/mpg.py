@@ -10,6 +10,11 @@ from typing import Literal
 
 
 
+# Where an element is drawn when not at its topological place (x1 ... z2, each element's base at its parent's end):
+# its drawn ends, NaN at its topological place (MPG.add_element's display, a shoot model's turtle)
+DISPLAY_ENDS = ("display_x1", "display_y1", "display_z1", "display_x2", "display_y2", "display_z2")
+
+
 class AnchorError(LookupError):
     """An initiator's anchor (MPG.find_anchor) missing or ambiguous."""
 
@@ -94,6 +99,69 @@ class MPG(MTG):
         self._children.setdefault(topo_parent, []).append(v)
         return v
 
+
+    def add_organ(self, within, label, kind: str = "Shoot") -> int:
+        """
+        A new Organ *label* (a LabelsConfig.Organ name, e.g. "StemInternode", "RootInternode", or its code) in the
+        complex *within* (a Plant, an Axis, ... vertex), the scales between them added too, each labelled *kind*
+        ("Shoot" or "Root": an Axis, its GrowthUnit and its Phytomer of that kind); its vid. An initiator builds an
+        element's complexes with it (then add_element).
+        """
+        scales, labels = self.scales, self.labels
+        names = ("Axis", "GrowthUnit", "Phytomer")
+        complex_ = within
+        for name in names:
+            scale = getattr(scales, name)
+            if scale <= self.scale(complex_):
+                continue
+            complex_ = self.add_component(complex_, **PropsConfig(scale=scale, edge_type='/',
+                                                                  label=getattr(getattr(labels, name), kind)))
+        code = getattr(labels.Organ, label) if isinstance(label, str) else label
+        return self.add_component(complex_, **PropsConfig(scale=scales.Organ, edge_type='/', label=code))
+
+    def add_element(self, label, complex=None, parent=None, edge=None, direction=None, display=None,
+                    **values) -> int:
+        """
+        A new element (a SubOrgan *label*: a LabelsConfig.SubOrgan name, "Seed", "StemElement", "RootSegment", or its
+        code), its vid: the first element of *complex* (an Organ: add_organ), or after *parent* (an element: in its
+        complex, edge '<'; with *complex* too, a first element of *complex* borne by *parent*, edge '+' by default,
+        or '<' to continue the axis on another organ); *edge* overrides. *values*: its properties ({name: value},
+        e.g. length=, radius=).
+
+        *direction* (a 3-vector), when given, places it topologically (metafspm's convention for x1 ... z2): its base
+        at its parent's end (x2, y2, z2), or, without a parent, at its plant's position (the planting's x, y, z), and
+        its end at its base plus direction × its length ((0, 0, 0): a point, its ends at its base). *display*: where it
+        is drawn when not there, (start, end) as two 3-vectors (display_x1 ... display_z2: e.g. a seed, a point on its
+        axis, drawn as a grain lying along x).
+        """
+        scales = self.scales
+        code = getattr(self.labels.SubOrgan, label) if isinstance(label, str) else label
+        props = dict(scale=scales.SubOrgan, label=code)
+        if parent is None:
+            if complex is None:
+                raise ValueError("add_element: give its complex (an Organ) or its parent element")
+            vid = self.add_component(complex, **PropsConfig(edge_type=edge or '/', **props))
+        elif complex is None:
+            vid = self.add_child(parent, **PropsConfig(edge_type=edge or '<', **props))
+        else:
+            vid = self.add_component_with_topo(complex, parent, **PropsConfig(edge_type=edge or '+', **props))
+        for name, value in values.items():
+            self.property(name)[vid] = value
+        if direction is not None:
+            if parent is not None:
+                base = [float(self.property(name)[parent]) for name in ("x2", "y2", "z2")]
+            else:
+                plant = self.complex_at_scale(vid, scales.Plant)
+                base = [float(self.property(name).get(plant, 0.)) for name in ("x", "y", "z")]
+            length = float(values.get("length", self.property("length").get(vid, 0.)) or 0.)
+            end = [b + float(d) * length for b, d in zip(base, direction)]
+            for name, value in zip(("x1", "y1", "z1", "x2", "y2", "z2"), base + end):
+                self.property(name)[vid] = value
+        if display is not None:
+            start, finish = display
+            for name, value in zip(DISPLAY_ENDS, list(start) + list(finish)):
+                self.property(name)[vid] = float(value)
+        return vid
 
     def populate_graph(self, from_scale, filter_in=None, filter_out=None):
         """Populate Compartment nodes and Connection edges from all vertices at *from_scale*.

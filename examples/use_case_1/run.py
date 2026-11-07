@@ -33,7 +33,7 @@ from openalea.caribu.component import CaribuLightModel
 from openalea.caribu.simulation import clear_day_PAR
 from openalea.metafspm.coupling.durations import start_date
 from openalea.metafspm.coupling.forcings import as_forcing, pulse
-from openalea.metafspm.scene.population import Planting, planting
+from openalea.metafspm.scene.population import planting, stand
 from openalea.metafspm.scene.recorder import SceneRecorder, Summary
 from openalea.metafspm.scene.scene import Scene
 
@@ -44,10 +44,11 @@ OUTPUTS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "outputs")
 HOUR = 3600.
 START, LATITUDE = "2026-05-10 00:00", 48.85    # the sowing, a May day (UTC) at Paris' latitude, Caribu's default
 DAY_OF_YEAR = start_date(START).timetuple().tm_yday       # 130: the clear day's PAR
-SOWING_DEPTH = 0.03                            # m
+SOWING_DEPTH = 0.03                            # m below the soil surface
 SOIL_SURFACE = 0.                              # m: the soil's surface (the soil grid's top, the light's and the gas
-                                               # exchange's cut, the crown's depth below it): the Scene's, once
-ROW_SPACING, PLANT_SPACING = 0.15, 0.05        # m
+                                               # exchange's cut, the sowing and the crown's depths below it): the
+                                               # Scene's, once
+ROW_SPACING, PLANT_SPACING = 0.15, 0.05        # m: one row of plants, their rotations a third of a turn apart
 RAIN = ("38 h", "39 h", 5e-3)                  # the rain: from and to (scene time), its depth (m)
 DISPLAY_PLANTS = ("p0",)                       # the plants whose sections the frames draw
 
@@ -101,13 +102,6 @@ def weather() -> dict:
             "rainfall": pulse(*RAIN), "potential_evaporation": 0.}
 
 
-def stand(plants=2):
-    """*plants* wheat plants in a row, sown SOWING_DEPTH deep, their rotations a third of a turn apart."""
-    return [Planting(x=(k + 0.5) * PLANT_SPACING, y=0.5 * ROW_SPACING, z=SOIL_SURFACE - SOWING_DEPTH,
-                     rotation=120. * k)
-            for k in range(plants)]
-
-
 def scene(plants=2, folder=None, frame_period="12 h", display_period="1 d", checkpoint_period="1 d", scenario=None,
           forcings=None, start=START, frame_variables=FRAME_VARIABLES, compute=None, display="instances",
           pack_at_finish=False, plant_scenarios=None):
@@ -123,8 +117,8 @@ def scene(plants=2, folder=None, frame_period="12 h", display_period="1 d", chec
     "full": every cell's psi in every frame); *pack_at_finish*: the frames packed into frames.fspm.zip at the end;
     *plant_scenarios*: one dict per plant added to its scenario (planting's: e.g. ArchiSimple's random_choice, each
     plant its own root system)."""
-    table = planting(stand(plants), WheatPlant, {**WHEAT_SCENARIO, **(scenario or {})}, plant_scenarios=plant_scenarios,
-                     xrange=plants * PLANT_SPACING, yrange=ROW_SPACING)
+    sown = stand(plants, row_spacing=ROW_SPACING, plant_spacing=PLANT_SPACING, depth=SOWING_DEPTH, rotation=120.)
+    table = planting(sown, WheatPlant, {**WHEAT_SCENARIO, **(scenario or {})}, plant_scenarios=plant_scenarios)
     recorder = SceneRecorder(folder, tables={**WATER_TABLES, "leaves": LEAVES, "roots": ROOTS},
                              frame_period=frame_period if folder else None,
                              frame_views="default" if folder else None,

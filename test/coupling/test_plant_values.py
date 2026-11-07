@@ -36,7 +36,7 @@ class Model(CompositeModel):
 
 def test_plant_scenarios_set_object_and_boolean_parameters_per_plant():
     scenarios = [{"anatomy": {"cortex": {"n_layers": 3}}, "with_soil": True}, {}, {"anatomy": {"seed": 4}}]
-    table = pd.DataFrame([dict(plant=f"p{i}", model=Model, x=float(i), y=0., z=0., rotation=0., scenario=s)
+    table = pd.DataFrame([dict(plant=f"p{i}", model=Model, x=float(i), y=0., depth=0., rotation=0., scenario=s)
                           for i, s in enumerate(scenarios)])
     population = population_data_structure(table, Model)
     ds = population.data_structure
@@ -53,7 +53,7 @@ def test_a_scene_takes_them_per_plant_too():
     """The Scene's check of the plants' scenarios lets an initiator's Plant-scale parameters differ, objects too."""
     from openalea.metafspm.scene.scene import Scene
     scenarios = [{"anatomy": {"cortex": {"n_layers": 3}}}, {"anatomy": {"seed": 4}}]
-    table = pd.DataFrame([dict(plant=f"p{i}", model=Model, x=float(i), y=0., z=0., rotation=0., scenario=s)
+    table = pd.DataFrame([dict(plant=f"p{i}", model=Model, x=float(i), y=0., depth=0., rotation=0., scenario=s)
                           for i, s in enumerate(scenarios)])
     table.attrs.update(xrange=2., yrange=1.)
     scene = Scene(table)
@@ -84,7 +84,7 @@ def test_a_per_plant_record_survives_an_mpg_style_step():
         def run(self):
             self.grower()
 
-    table = pd.DataFrame([dict(plant="p0", model=GrowerModel, x=0., y=0., z=0., rotation=0.,
+    table = pd.DataFrame([dict(plant="p0", model=GrowerModel, x=0., y=0., depth=0., rotation=0.,
                                scenario={"plan": [[0, 1.]]})])
     population = population_data_structure(table, GrowerModel)
     for _ in range(3):

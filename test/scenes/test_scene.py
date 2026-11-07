@@ -139,7 +139,7 @@ def test_population_names_are_unique_and_without_a_dot():
 
 
 def test_plants_are_frozen_until_their_emergence():
-    scene = _scene(models=(RootPopulation, RootPopulation), planting=dict(emergence_time=[0., 2 * DT]))
+    scene = _scene(models=(RootPopulation, RootPopulation), planting=dict(planting_time=[0., 2 * DT]))
     ds = scene.populations[0].data_structure
     early, late = scene.populations[0].plants
 
@@ -246,10 +246,10 @@ def test_a_light_model_on_the_union_of_the_populations():
         np.testing.assert_allclose(ds.get("intercepted"), np.exp(ds.get("z1")))
 
 
-def test_planting_keeps_the_stand_and_emergence():
-    table = planting(stand(0.6, 0.3, sowing_density=100, row_spacing=0.15, exact=True, seed=1), RootPopulation,
-                     emergence_times=[0.] * 16)
-    assert table.attrs["xrange"] == pytest.approx(0.6) and (table["emergence_time"] == 0.).all()
+def test_planting_keeps_the_stand_and_the_planting_times():
+    table = planting(stand(16, rows=4, row_spacing=0.15, plant_spacing=0.15, seed=1), RootPopulation,
+                     planting_times=[0.] * 16)
+    assert table.attrs["xrange"] == pytest.approx(0.6) and (table["planting_time"] == 0.).all()
 
 
 class ApexOnlyLeaves(LeafPopulation):
@@ -267,7 +267,7 @@ class ApexLeaves(FunctionalComponent):
 
 
 def test_emergence_combines_with_a_model_active_mask():
-    scene = Scene(doubles_planting([ApexOnlyLeaves, ApexOnlyLeaves], emergence_time=[0., DT]), time_step=DT)
+    scene = Scene(doubles_planting([ApexOnlyLeaves, ApexOnlyLeaves], planting_time=[0., DT]), time_step=DT)
     ds = scene.populations[0].data_structure
     early, late = scene.populations[0].plants
     owner = ds.entity_ids("Plant")[ds.owner("Plant")]

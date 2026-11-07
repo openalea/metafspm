@@ -18,12 +18,12 @@ from one_plant import plots, summary
 
 def scene(folder=None, tolerance=1e-6, root_radial_k=(0.4, 0.5, 0.6), soil_scenario=None):
     """
-    A stand laid out by stand() (rows every 0.1 m at 100 plants m-2, the stand's size adjusted to the rows and
-    kept in the planting table, which sizes the soil grid); the root radial conductance of each
+    A stand laid out by stand() (three rows 0.1 m apart of three plants at 100 plants m-2, at the soil surface; the
+    stand's pattern kept in the planting table, which sizes the soil grid); the root radial conductance of each
     plant (a SeedlingStructure parameter stored per plant) cycles through *root_radial_k*, given in its per-plant
     scenario.
     """
-    sown = stand(xrange=0.3, yrange=0.3, sowing_density=100., row_spacing=0.1, sowing_depth=0., exact=True, seed=1)
+    sown = stand(9, rows=3, row_spacing=0.1, sowing_density=100., depth=0.)
     per_plant = [{"root_radial_k": root_radial_k[i % len(root_radial_k)]} for i in range(len(sown))]
     table = planting(sown, SeedlingWater, plant_scenarios=per_plant)
     stop = largest_change(tolerance)

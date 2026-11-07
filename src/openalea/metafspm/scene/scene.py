@@ -35,8 +35,8 @@ each population, after the exchanges into it (the environment's new values). Exc
 through coupling.cross (mappings inferred from the scene translator's links: a CrossMapping between a population and
 a grid, a UnionMapping for a union).
 
-Emergence: an "emergence_time" column of the planting table (a scene time: "2 d", a date, or s) freezes each plant
-until then:
+Planting times: a "planting_time" column of the planting table (planting(planting_times=): a scene time, "2 d", a
+date, or s) keeps each plant out of the scene until then (the mask "planted"):
 its nodes leave the "active" mask (steps skip them; MPG-style steps use active_ids()) and the mappings (no exchange).
 """
 import os
@@ -96,8 +96,8 @@ class Scene:
 
     Arguments::
 
-        planting:              one row per plant (columns plant, model, x, y, z, rotation, scenario, optionally
-                               emergence_time), scene.population.planting(...).
+        planting:              one row per plant (columns plant, model, population, x, y, depth, rotation,
+                               scenario, optionally planting_time), scene.population.planting(...).
         environment:           environment model classes, run in this order; environment_scenarios: one dict each.
         translator:            the links between the populations' and the environment's components (a Translator, a
                                nested dict, a .py or YAML path). Links within one DataStructure are the models' own.
@@ -137,7 +137,7 @@ class Scene:
                                initiators' g.soil_surface.
         start:                 the date of the scene's time 0, "2026-05-10 00:00" (ISO 8601, UTC; or a datetime):
                                every component's calendar() (e.g. a light model's sun), the forcings of origin
-                               "calendar", the dates given as times (events, emergence times).
+                               "calendar", the dates given as times (events, planting times).
         compute:               the run configuration (openalea.metafspm.compute.Compute; default Compute()): the
                                threads while the scene builds and runs, the process pool, the device, the memory
                                trimmed after each step. A component's setting named workers or device that its
@@ -219,7 +219,7 @@ class Scene:
         self.mappings = explicit + [m for m in self._infer_mappings() if not isinstance(m, CrossMapping)
                                     or frozenset((id(m.source), id(m.target))) not in linked]
         self.exchanges = Exchanges(self.translator, self.components, self.mappings)
-        self._update_emergence()
+        self._update_planted()
         self.forcings = forcing_table(forcings)
         for forcing in self.forcings.values():
             if getattr(forcing, "origin", None) == "calendar":
@@ -273,12 +273,12 @@ class Scene:
 
     @classmethod
     def from_scenario(cls, scenario: dict, plants, plant_model, environment=(), plant_scenarios: list = None,
-                      emergence_times: list = None, xrange: float = None, yrange: float = None, **options) -> "Scene":
+                      planting_times: list = None, xrange: float = None, yrange: float = None, **options) -> "Scene":
         """
         A scene from one scenario of a scenario table (read_scenarios with a model column): {model name or class:
         {name: value}, "forcings": {name: forcing}}. *plants*: [Planting] or a Stand, of *plant_model*;
         *environment*: the environment model classes; each model's entries go to it (none: its defaults), the
-        forcings to the Scene's. *plant_scenarios*, *emergence_times*, *xrange*, *yrange*: as planting's; *options*:
+        forcings to the Scene's. *plant_scenarios*, *planting_times*, *xrange*, *yrange*: as planting's; *options*:
         the Scene's (translator, time_step, recorder, mappings, ...; forcings= are added to the scenario's).
         """
         scenario = dict(scenario or {})
@@ -299,7 +299,7 @@ class Scene:
         if twice:
             raise ValueError(f"Scene.from_scenario: forcings {twice} are in the scenario and in forcings=")
         table = _planting(plants, plant_model, by_model.get(plant_model, {}), plant_scenarios=plant_scenarios,
-                          emergence_times=emergence_times, xrange=xrange, yrange=yrange)
+                          planting_times=planting_times, xrange=xrange, yrange=yrange)
         return cls(table, environment=list(environment),
                    environment_scenarios=[by_model.get(model, {}) for model in environment],
                    forcings=dict(forcings, **given), **options)
@@ -316,8 +316,8 @@ class Scene:
         population = population_data_structure(rows, model, time_step=self.time_step,
                                                scenario=self._shared_scenario(model, rows),
                                                soil_surface=self.soil_surface, name=name)
-        if population.emergence:
-            self._setup_emergence(population)
+        if population.planted_later:
+            self._setup_planting_times(population)
         return population
 
     @staticmethod
@@ -395,39 +395,39 @@ class Scene:
         return _one(key, [(name, population) for name, population in entries], "population",
                     classes=lambda population: population.model)
 
-    def _setup_emergence(self, population: Population) -> None:
+    def _setup_planting_times(self, population: Population) -> None:
         from openalea.metafspm.coupling.durations import instant
         ds = population.data_structure
-        population.table["emergence_time"] = [instant(time, self.start, "emergence_time")
-                                              for time in population.table["emergence_time"]]
-        by_vid = dict(zip(map(int, population.plants), population.table["emergence_time"].astype(float)))
-        ds.register("emergence_time", [by_vid[int(v)] for v in ds.entity_ids("Plant")], location="Plant")
-        ds.register("emerged", 0., location="node", on_grow="inherit")
-        ds.define_mask("emerged", {"emerged": ">0"})
-        if ds.has_mask("active"):        # a component's own rule (e.g. living segments), and emergence
+        population.table["planting_time"] = [instant(time, self.start, "planting_time")
+                                             for time in population.table["planting_time"]]
+        by_vid = dict(zip(map(int, population.plants), population.table["planting_time"].astype(float)))
+        ds.register("planting_time", [by_vid[int(v)] for v in ds.entity_ids("Plant")], location="Plant")
+        ds.register("planted", 0., location="node", on_grow="inherit")
+        ds.define_mask("planted", {"planted": ">0"})
+        if ds.has_mask("active"):        # a component's own rule (e.g. living segments), and the planting time
             masks = ds.__dict__["_masks"]
             masks["_model_active"] = masks.pop("active")
-            ds.define_mask("active", AllMasks("_model_active", "emerged"))
+            ds.define_mask("active", AllMasks("_model_active", "planted"))
         else:
-            ds.define_mask("active", {"emerged": ">0"})
+            ds.define_mask("active", {"planted": ">0"})
 
-    def _update_emergence(self) -> None:
+    def _update_planted(self) -> None:
         for population in self.populations:
-            if not population.emergence:
+            if not population.planted_later:
                 continue
             ds = population.data_structure
-            emerged = (np.asarray(ds.get("emergence_time")) <= self.time).astype(float)
-            values = ds._broadcast_to_entities(emerged, "Plant", "node")
-            if not np.array_equal(values, ds.get("emerged")):
-                ds.set("emerged", values)
+            planted = (np.asarray(ds.get("planting_time")) <= self.time).astype(float)
+            values = ds._broadcast_to_entities(planted, "Plant", "node")
+            if not np.array_equal(values, ds.get("planted")):
+                ds.set("planted", values)
 
     def _infer_mappings(self) -> list:
         """
         A CrossMapping per (population, grid, link options) and a UnionMapping per union joined by a translator link.
         A link's mapping= options (Link.mapping: "mask", a node mask of the population, e.g. the roots' soil nodes,
         "method", "barycentre" or "overlap") give its own mapping, the links of the same options sharing it; without,
-        the Scene's mapping_method over every node. A population with emergence times maps its emerged plants only
-        (the mask "emerged", with the link's).
+        the Scene's mapping_method over every node. A population with planting times maps its planted plants only
+        (the mask "planted", with the link's).
         """
         populations = {id(p.data_structure): p for p in self.populations}
         mappings, done = [], set()
@@ -446,24 +446,24 @@ class Scene:
                     key = (id(plant_ds), id(other), link.mapping_options)
                     if key not in done:
                         mappings.append(self._cross_mapping(link, plant_ds, other,
-                                                            populations[id(plant_ds)].emergence))
+                                                            populations[id(plant_ds)].planted_later))
                         done.add(key)
         return mappings
 
-    def _cross_mapping(self, link, plant_ds, grid, emergence: bool) -> CrossMapping:
+    def _cross_mapping(self, link, plant_ds, grid, planted_later: bool) -> CrossMapping:
         """The CrossMapping of *link*'s options between a population's DataStructure and a grid."""
         options = dict(link.mapping or {})
         mask = options.get("mask")
         if mask is not None and not plant_ds.has_mask(mask):
             raise KeyError(f"{link.receiver}.{link.variable} <- {link.provider}: its mapping's mask '{mask}' is not "
                            f"defined on the population (masks: {plant_ds.masks()}; define_mask(name, entities=...))")
-        if emergence:
+        if planted_later:
             if mask is None:
-                mask = "emerged"
+                mask = "planted"
             else:
-                combined = f"{mask}&emerged"
+                combined = f"{mask}&planted"
                 if not plant_ds.has_mask(combined):
-                    plant_ds.define_mask(combined, AllMasks(mask, "emerged"))
+                    plant_ds.define_mask(combined, AllMasks(mask, "planted"))
                 mask = combined
         mapping = CrossMapping(plant_ds, grid, method=options.get("method", self.mapping_method),
                                periodic=self.periodic, flip_z=self.flip_z, mask=mask, soil_surface=self.soil_surface)
@@ -538,7 +538,7 @@ class Scene:
         while self.events and self.events[0][0] <= self.time:
             _, action = self.events.pop(0)
             action(self)
-        self._update_emergence()
+        self._update_planted()
         self._write_forcings()
         self._remember_previous()
         for component in self.components:
