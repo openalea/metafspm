@@ -2749,7 +2749,7 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
         if not spec.mtg_backed or self._mtg is None:
             return None
         own = self._own_view(spec)
-        if own is not None and own.pure() and "_carrying" not in self.__dict__:
+        if own is not None and own.pure() and "_carrying" not in self.__dict__ and not self._mtg._instanced():
             values = self._var_stores()[spec.location][spec.name]      # the MPG reads them: the same values
             return values.tolist() if values.dtype == object else np.array(values, dtype=np.float64)
         dtype = getattr(spec, "dtype", float)
@@ -2894,17 +2894,21 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
         view = DataStructureColumn(self, spec.name, spec.location, dtype=object if array.dtype == object else
                                    np.float64 if array.dtype.kind == "f" else array.dtype)
         held = view._source_index()[0]
+        ahead = bool(self.__dict__.get("_mtg_ahead", 0))
+        keys = np.empty(0, dtype=np.int64)
         if prop is not None and len(prop):
-            keys, values = prop.items_arrays() if isinstance(prop, ArrayDict) else \
-                (np.fromiter(prop.keys(), dtype=np.int64, count=len(prop)), list(prop.values()))
-            if isinstance(prop, ArrayDict) and prop.dtype != view.overlay.arr.dtype:
-                view.overlay = ArrayDict(dtype=prop.dtype)
-            view.overlay.insert_many(np.array(keys, dtype=np.int64), values if isinstance(values, list)
-                                     else np.array(values))
-            view._absent = np.setdiff1d(held, keys)
+            keys, values = prop.items_arrays()
+            keys = np.array(keys, dtype=np.int64)
+            if not ahead:                     # synchronised now: the DataStructure's values at its entities
+                outside = ~np.isin(keys, held)
+                keys, values = keys[outside], values[outside]
+            if keys.size:
+                if prop.dtype != view.overlay.arr.dtype:
+                    view.overlay = ArrayDict(dtype=prop.dtype)
+                view.overlay.insert_many(keys, np.array(values))
             view.version = getattr(prop, "version", 0) + 1
-        else:
-            view._absent = np.array(held, dtype=np.int64)
+        if ahead:                             # the MPG ahead (a step's writes not read back): exactly its entries
+            view._synced = np.intersect1d(held, keys)
         properties[spec.name] = view
         return view
 
@@ -2920,7 +2924,8 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
             keys, variables = carrying[location]
             sorted_keys, positions = self._sorted_ids(("carrying", location), keys)
             return sorted_keys, positions, variables[name]
-        store = self._var_stores().get(location)
+        store = self._node_data if location == "node" else self._edge_data if location == "edge" else \
+            self._scale_data.get(location)
         array = None if store is None else store.get(name)
         if array is None:
             empty = np.empty(0, dtype=np.int64)
@@ -3123,23 +3128,17 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
 
     def _views_follow(self, old: dict) -> None:
         """After the variables were carried over: the new entities of each location absent from the MPG's views
-        until their next synchronisation (the MPG had no entry for them), the removed ones forgotten."""
-        views = self._views()
-        if not views:
-            return
-        added = {}
-        for location, (old_keys, _) in old.items():
-            keys = np.asarray(self.entity_ids(location), dtype=np.int64)
-            added[location] = np.setdiff1d(keys, old_keys)
-        for view in views:
-            new = added.get(view.location)
-            if new is None:
+        until their next synchronisation (the MPG had no entry for them)."""
+        before = {location: self._sorted_ids(("carrying", location), keys)[0] for location, (keys, _) in old.items()}
+        current, added = {}, {}
+        for view in self._views():
+            location = view.location
+            if location not in before:
                 continue
-            if view._absent.size:
-                held = self._column_index(view.name, view.location)[0]
-                view._absent = np.union1d(view._absent[np.isin(view._absent, held)], new)
-            else:
-                view._absent = new
+            if location not in current:
+                current[location] = self._column_index(view.name, location)[0]
+                added[location] = np.setdiff1d(current[location], before[location], assume_unique=True)
+            view.follow(before[location], added[location], current[location])
 
     def _carry_variables(self, old: dict, stored_ids: dict) -> None:
         """_update_topology's rebuild: the topology extended or rewired, every variable carried over to it."""

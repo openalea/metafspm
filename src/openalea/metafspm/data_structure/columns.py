@@ -68,8 +68,11 @@ class DataStructureColumn(ArrayDict):
     def __init__(self, ds, name: str, location: str, dtype=np.float64):
         self._ds, self.name, self.location = ds, name, location
         self.overlay = ArrayDict(dtype=dtype)
-        self._tombstones = set()
-        self._absent = np.empty(0, dtype=np.int64)      # the DataStructure's entities the MPG has no entry for (yet)
+        # Until the next synchronisation, the MPG has entries at the DataStructure's entities of its last one only:
+        # its sorted ids then (an array the location's views share; None: every current entity), without those
+        # removed through the MPG since (sorted; the last removals pending until a read needs them)
+        self._synced = None
+        self._hidden, self._pending = np.empty(0, dtype=np.int64), []
         self.version = 0
         self._index, self._searches = None, 0
 
@@ -108,29 +111,49 @@ class DataStructureColumn(ArrayDict):
             return empty, empty, self.overlay.arr[:0]
         return ds._column_index(self.name, self.location)
 
-    def drop_at(self, keys) -> None:
-        """Forget the overlay's entries and the tombstones at *keys* (the DataStructure's entities: it holds their
-        values)."""
-        keys = np.asarray(keys, dtype=np.int64)
-        if self.overlay.size:
-            self.overlay.delete_many(keys)
-        if self._tombstones:
-            self._tombstones.difference_update(keys.tolist())
-        if self._absent.size:
-            self._absent = self._absent[~np.isin(self._absent, keys)]
-
     def drop_at_entities(self) -> None:
-        """drop_at the DataStructure's current entities, and the tombstones of ids it does not hold (vertices its
-        topology no longer has)."""
-        if not self.overlay.size and not self._tombstones and not self._absent.size:
-            return
-        keys = self._source_index()[0]
-        self.drop_at(keys)
-        if self._tombstones:
-            tombstones = np.fromiter(self._tombstones, dtype=np.int64, count=len(self._tombstones))
-            position = np.searchsorted(keys, tombstones).clip(0, max(keys.size - 1, 0))
-            held = (keys.size > 0) & (keys[position] == tombstones) if keys.size else np.zeros(tombstones.size, bool)
-            self._tombstones = set(tombstones[held].tolist())
+        """The DataStructure holds the values of its entities (it wrote them over the MPG's before): the overlay's
+        entries at them dropped, every entity present."""
+        if self.overlay.size:
+            self.overlay.delete_many(self._source_index()[0])
+        self._synced, self._hidden, self._pending = None, np.empty(0, dtype=np.int64), []
+
+    def hide(self, keys) -> None:
+        """The entities *keys* absent from the MPG until the next synchronisation (removed through it): those it has
+        an entry for only."""
+        keys = np.asarray(keys, dtype=np.int64)
+        base = self._synced if self._synced is not None else self._source_index()[0]
+        keys = keys[_member(base, keys)]
+        if keys.size:
+            self._pending.append(keys)
+
+    def follow(self, before, added, current) -> None:
+        """After update_topology (the location's sorted ids *before* it, those *added*, the *current* ones): the
+        entities new since the last synchronisation are absent (the MPG had no entry for them), those of a reused id
+        too; the removals of entities no longer held forgotten."""
+        if self._synced is None:
+            self._synced = before
+        elif added.size:
+            reused = added[_member(self._synced, added)]
+            if reused.size:
+                self._pending.append(reused)
+        hidden = self._hidden_keys()
+        if hidden.size:
+            self._hidden = hidden[_member(current, hidden)]
+
+    def _hidden_keys(self) -> np.ndarray:
+        if self._pending:
+            self._hidden = np.unique(np.concatenate([self._hidden] + self._pending))
+            self._pending = []
+        return self._hidden
+
+    def _present(self, keys) -> np.ndarray:
+        """Which of the DataStructure's entities *keys* the MPG has an entry for."""
+        present = np.ones(len(keys), dtype=bool) if self._synced is None else _member(self._synced, keys)
+        hidden = self._hidden_keys()
+        if hidden.size:
+            present &= ~_member(hidden, keys)
+        return present
 
     def changed(self) -> None:
         self.version = getattr(self, "version", 0) + 1
@@ -138,19 +161,8 @@ class DataStructureColumn(ArrayDict):
     # ── reads ──
 
     def pure(self) -> bool:
-        """Whether the view reads the DataStructure's values only (no overlay, tombstone or absent entity)."""
-        return not self.overlay.size and not self._tombstones and not self._absent.size
-
-    def _tombstone_mask(self, keys) -> np.ndarray:
-        """Which of *keys* the MPG has no DataStructure entry for: removed through it, or absent (new entities
-        since the last synchronisation)."""
-        hidden = np.zeros(len(keys), dtype=bool)
-        if self._tombstones:
-            tombstones = np.fromiter(self._tombstones, dtype=np.int64, count=len(self._tombstones))
-            hidden |= np.isin(keys, tombstones)
-        if self._absent.size:
-            hidden |= np.isin(keys, self._absent)
-        return hidden
+        """Whether the view reads the DataStructure's values only (no overlay, every entity present)."""
+        return not self.overlay.size and self._synced is None and not self._hidden.size and not self._pending
 
     def _dtype(self, array) -> np.dtype:
         if not self.overlay.size:
@@ -167,8 +179,8 @@ class DataStructureColumn(ArrayDict):
         if keys.size and vids.size:
             at = np.searchsorted(keys, vids).clip(0, keys.size - 1)
             found = keys[at] == vids
-            if self._tombstones or self._absent.size:
-                found &= ~self._tombstone_mask(vids)
+            if not self.pure():
+                found[found] = self._present(vids[found])
             out[found] = array[positions[at[found]]]
         if self.overlay.size and vids.size:
             in_overlay, overlay_values = self.overlay.at(vids)
@@ -179,15 +191,14 @@ class DataStructureColumn(ArrayDict):
     def __getitem__(self, k):
         if self.overlay.size and k in self.overlay:
             return self.overlay[k]
-        if self._tombstones and k in self._tombstones:
-            raise KeyError(k)
-        if self._absent.size and k in self._absent:
-            raise KeyError(k)
-        keys, positions, array = self._source_index()
         try:
             key = int(k)
         except (TypeError, ValueError):
             raise KeyError(k) from None
+        if (self._synced is not None or self._hidden.size or self._pending) and \
+                not self._present(np.array([key], dtype=np.int64))[0]:
+            raise KeyError(k)
+        keys, positions, array = self._source_index()
         position = int(np.searchsorted(keys, key))
         if position < keys.size and int(keys[position]) == key and key == k:
             value = array[positions[position]]
@@ -204,8 +215,8 @@ class DataStructureColumn(ArrayDict):
     def _merged(self) -> tuple:
         """(sorted keys, values): the DataStructure's, without the tombstoned, with the overlay's."""
         keys, values = self._source()
-        if self._tombstones or self._absent.size:
-            kept = ~self._tombstone_mask(keys)
+        if self._synced is not None or self._hidden.size or self._pending:
+            kept = self._present(keys)
             keys, values = keys[kept], values[kept]
         if not self.overlay.size:
             return keys, values
@@ -236,8 +247,11 @@ class DataStructureColumn(ArrayDict):
             yield key
 
     def key_range(self):
-        keys = self._source_index()[0] if self.pure() else self._merged()[0]
-        return (int(keys[0]), int(keys[-1])) if keys.size else None
+        """(the first key, the last key) or bounds around them (the hidden entities counted): None when empty."""
+        keys = self._source_index()[0]
+        ranges = ([(int(keys[0]), int(keys[-1]))] if keys.size else []) + \
+            ([self.overlay.key_range()] if self.overlay.size else [])
+        return (min(r[0] for r in ranges), max(r[1] for r in ranges)) if ranges else None
 
     def keys_array(self) -> np.ndarray:
         return np.array(self._merged()[0], dtype=np.int64)
@@ -258,8 +272,7 @@ class DataStructureColumn(ArrayDict):
 
     def __setitem__(self, k, v) -> None:
         self.changed()
-        self._tombstones.discard(k)
-        self.overlay[k] = v
+        self.overlay[k] = v                 # read first: the hidden entities need no update
 
     def __delitem__(self, k) -> None:
         if k not in self:
@@ -267,15 +280,14 @@ class DataStructureColumn(ArrayDict):
         self.changed()
         if k in self.overlay:
             del self.overlay[k]
-        self._tombstones.add(int(k))
+        self.hide(np.array([int(k)], dtype=np.int64))
 
-    def update(self, d) -> None:
+    def update(self, d=(), **more) -> None:
+        d = dict(d, **more)
         if not d:
             return
         self.changed()
-        if self._tombstones:
-            self._tombstones.difference_update(int(k) for k in d)
-        self.overlay.update(dict(d))
+        self.overlay.update(d)
 
     def scatter(self, keys, values) -> None:
         self.extend(keys, values)
@@ -284,7 +296,7 @@ class DataStructureColumn(ArrayDict):
         keys = np.asarray(keys, dtype=np.int64)
         if keys.size == 0:
             return
-        scalar = np.ndim(values) == 0 and not isinstance(values, (list, tuple))
+        scalar = not isinstance(values, (list, tuple)) and np.ndim(values) == 0
         self.update(dict.fromkeys(keys.tolist(), values) if scalar else dict(zip(keys.tolist(), values)))
 
     def insert_many(self, keys, values) -> None:
@@ -294,19 +306,23 @@ class DataStructureColumn(ArrayDict):
 
     def delete_many(self, keys) -> int:
         keys = np.asarray(keys if isinstance(keys, np.ndarray) else list(keys), dtype=np.int64)
-        found, _ = self.at(keys)
-        doomed = np.unique(keys[found])
-        if doomed.size == 0:
+        if keys.size == 0:
             return 0
-        self.changed()
-        if self.overlay.size:
-            self.overlay.delete_many(doomed)
-        self._tombstones.update(doomed.tolist())
-        return int(doomed.size)
+        removed = self.overlay.delete_many(keys) if self.overlay.size else 0
+        held = keys[_member(self._source_index()[0], keys)]
+        if held.size or removed:
+            self.changed()
+            self.hide(held)
+        return int(removed + held.size)
 
     def delete_range(self, start: int, stop: int) -> int:
-        keys = self._merged()[0]
-        return self.delete_many(keys[(keys >= start) & (keys < stop)])
+        removed = self.overlay.delete_range(start, stop) if self.overlay.size else 0
+        keys = self._source_index()[0]
+        held = keys[int(np.searchsorted(keys, start)):int(np.searchsorted(keys, stop))]
+        if held.size or removed:
+            self.changed()
+            self.hide(held)
+        return int(removed + held.size)
 
     def stored(self) -> ArrayDict:
         """The column's current values as a stored column (the DataStructure lets the variable go)."""
@@ -321,16 +337,24 @@ class DataStructureColumn(ArrayDict):
         ds = self._ds
         detached = ds is None or ds.__dict__.get("_columns_detached", False)
         return {"ds": None if detached else ds, "name": self.name, "location": self.location,
-                "overlay": self.overlay, "tombstones": sorted(self._tombstones), "absent": self._absent,
+                "overlay": self.overlay, "synced": self._synced, "hidden": self._hidden_keys(),
                 "version": self.version}
 
     def __setstate__(self, state: dict) -> None:
         self._ds, self.name, self.location = state["ds"], state["name"], state["location"]
-        self.overlay, self._tombstones = state["overlay"], set(state["tombstones"])
-        self._absent = state["absent"]
+        self.overlay, self._synced, self._hidden, self._pending = state["overlay"], state["synced"], state["hidden"], []
         self.version = state["version"]
         self._index, self._searches = None, 0
 
     def _check_invariant(self) -> bool:
         keys = self._merged()[0]
         return bool(np.all(keys[:-1] < keys[1:])) if keys.size > 1 else True
+
+
+def _member(sorted_keys, values) -> np.ndarray:
+    """Which of *values* are among *sorted_keys* (ascending), by binary search."""
+    values = np.asarray(values, dtype=np.int64)
+    if sorted_keys.size == 0 or values.size == 0:
+        return np.zeros(values.size, dtype=bool)
+    at = np.searchsorted(sorted_keys, values).clip(0, sorted_keys.size - 1)
+    return sorted_keys[at] == values

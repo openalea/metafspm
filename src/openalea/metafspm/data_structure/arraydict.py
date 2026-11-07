@@ -307,7 +307,7 @@ class ArrayDict(MutableMapping):
         keys = np.asarray(keys, dtype=np.int64)
         if keys.size == 0:
             return
-        scalar = np.ndim(values) == 0 and not isinstance(values, (list, tuple))
+        scalar = not isinstance(values, (list, tuple)) and np.ndim(values) == 0
         if (self.size and keys[0] <= self.order[self.size - 1]) or (keys.size > 1 and not (keys[1:] > keys[:-1]).all()):
             self.update(dict.fromkeys(keys.tolist(), values) if scalar else
                         dict(zip(keys.tolist(), values.tolist() if isinstance(values, np.ndarray) else values)))
@@ -348,7 +348,10 @@ class ArrayDict(MutableMapping):
         self.size = total
         self._index, self._searches = None, 0
 
-    def update(self, d: dict):
+    def update(self, d=(), **more):
+        """dict.update: from a mapping or (key, value) pairs."""
+        if not isinstance(d, dict) or more:
+            d = dict(d, **more)
         if not d:
             return
         self.changed()

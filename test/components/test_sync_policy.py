@@ -8,6 +8,7 @@ import numpy as np
 import pytest
 
 from openalea.metafspm.coupling.component import FunctionalComponent, parameter, state_variable
+from openalea.metafspm.data_structure.columns import DataStructureColumn
 from openalea.metafspm.data_structure.configs import ScalesConfig as scales
 from openalea.metafspm.data_structure.data_api import MPGDataStructure
 from openalea.metafspm.solve.decorator import graph_system, node_balance, rate
@@ -114,16 +115,15 @@ def _mtg_values(g, ds, name):
     return np.array([prop.get(int(v), np.nan) for v in ds.entity_ids("node")])
 
 
-def test_lazy_states_reach_the_mtg_when_it_is_read(seedling):
+def test_lazy_states_are_read_by_the_mtg_from_their_column(seedling):
     g, ds = seedling
     model = Counter(data_structure=ds)
     model()
     model()
-    assert np.isnan(_mtg_values(g, ds, "count")).all()                                              # not yet
-    np.testing.assert_array_equal(_mtg_values(ds.mtg, ds, "count"), 2.)                               # on read
+    assert isinstance(g.properties()["count"], DataStructureColumn)          # one storage: no copy to write
+    np.testing.assert_array_equal(_mtg_values(g, ds, "count"), 2.)          # the current values, without a flush
     model()
-    ds.flush_mtg()
-    np.testing.assert_array_equal(_mtg_values(g, ds, "count"), 3.)
+    np.testing.assert_array_equal(_mtg_values(ds.mtg, ds, "count"), 3.)
 
 
 def test_only_changed_variables_are_written(seedling, monkeypatch):
