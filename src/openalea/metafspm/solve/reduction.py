@@ -1470,10 +1470,8 @@ def _describe(plant_g, vertex: int) -> tuple:
     for name, prop in plant_g.properties().items():
         if name in _STRUCTURAL or not hasattr(prop, "at"):
             continue
-        found, values = prop.at(at)             # by binary search: a read at one vertex builds no key dict (vid2idx,
-        value = values[0] if found[0] else None  # ~100 B per entry of every property, kept while its keys last)
-        if value is not None and values.dtype != object:
-            value = value.item()                 # a Python number (float, int) as the column's
+        value = prop.value_at(vertex)           # by binary search: a read at one vertex builds no key dict (vid2idx,
+                                                # ~100 B per entry of every property, kept while its keys last)
         if value is not None:
             properties[name] = value
     return tuple(reversed(chain)), (plant_g.scale(vertex), plant_g.label(vertex)), properties

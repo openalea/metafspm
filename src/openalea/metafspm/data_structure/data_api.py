@@ -2530,7 +2530,7 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
         if getattr(self._mtg, "_instanced", lambda: False)():
             return self._instanced_mtg_values(name, vids, scale, fill)
         prop = self._mtg.properties().get(name)
-        if prop is None or len(prop) == 0:
+        if prop is None:
             return None
         if ((scale is None or scale == self._node_scale()) and fast_idx is not None and isinstance(prop, ArrayDict)
                 and not isinstance(prop, DataStructureColumn) and prop.size == len(self._bio_vids_sorted)
@@ -2540,6 +2540,8 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
             keys = (np.asarray(vids, dtype=np.int64) if scale is None or scale == self._node_scale()
                     else self._owners_at(vids, scale))
             found, values = prop.at(keys)
+            if not found.any() and len(prop) == 0:           # the property absent (no vertex has it)
+                return None
             if not found.all():
                 missing = keys[~found]
                 if fill is None:
@@ -2549,6 +2551,8 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
                 out[found] = values
                 return out
             return values.astype(np.float64, copy=True)
+        if len(prop) == 0:
+            return None
         keys = self._keys_at_scale(vids, scale)
         missing = [k for k in keys if k not in prop]
         if missing and fill is None:
@@ -2563,13 +2567,13 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
         """_mtg_values on an MPG with instances: each vertex's own entry, else its template's value."""
         g = self._mtg
         prop = g.properties().get(name)
-        if (prop is None or not len(prop)) and not g.instances.vids_having(name).size:
+        if not prop and not g.instances.vids_having(name).size:
             return None
         unique, inverse, plan = self._read_plan(vids, scale)
         known = np.zeros(unique.size, dtype=bool)
         out = np.full(unique.size, np.nan if fill is None else float(fill))
         try:
-            if prop is not None and len(prop):                        # the vertices' own entries
+            if prop:                                                  # the vertices' own entries
                 if isinstance(prop, ArrayDict):
                     known, values = prop.at(unique)
                     out[known] = values
@@ -2891,8 +2895,10 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
             if prop._ds is not None and not prop.bound_to(self):
                 return None
         array = self._var_stores()[spec.location][spec.name]
+        scale = spec.scale if spec.scale is not None else self._node_scale() if spec.location == "node" else \
+            self._mtg.scales.Connection if spec.location == "edge" and self._anatomy else None
         view = DataStructureColumn(self, spec.name, spec.location, dtype=object if array.dtype == object else
-                                   np.float64 if array.dtype.kind == "f" else array.dtype)
+                                   np.float64 if array.dtype.kind == "f" else array.dtype, scale=scale)
         held = view._source_index()[0]
         ahead = bool(self.__dict__.get("_mtg_ahead", 0))
         keys = np.empty(0, dtype=np.int64)
@@ -2995,6 +3001,10 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
           on edges                        -> at the child (or parent) endpoint.
         """
         if not spec.mtg_backed or self._mtg is None:
+            return
+        own = self._own_view(spec)
+        if own is not None:                 # the MPG reads the column: its overlay's entries at the entities dropped
+            own.drop_at_entities()
             return
         if self._viewable(spec):
             view = self._view(spec)

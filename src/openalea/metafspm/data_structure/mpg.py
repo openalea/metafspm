@@ -404,7 +404,11 @@ class MPG(MTG):
         return _order
 
     def _remove_vertex_properties(self, vid):
+        from openalea.metafspm.data_structure.columns import DataStructureColumn
+        scale = self._scale.get(vid)
         for prop in self._properties.values():
+            if type(prop) is DataStructureColumn and prop.scale is not None and prop.scale != scale:
+                prop = prop.overlay              # a view holds its scale's vertices only, beyond its overlay
             if vid in prop:
                 del prop[vid]
 

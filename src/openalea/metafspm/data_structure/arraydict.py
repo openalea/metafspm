@@ -130,6 +130,15 @@ class ArrayDict(MutableMapping):
         self.version = state.get("version", 0)
         self._index, self._searches = None, 0
 
+    def value_at(self, k, default=None):
+        """The value of key *k* (*default* when absent), by binary search: no key dict built (a read at one key of
+        many columns, e.g. a group's description)."""
+        position = int(np.searchsorted(self.order[:self.size], k))
+        if position < self.size and int(self.order[position]) == k:
+            value = self.arr[position]
+            return value if self.arr.dtype.hasobject else value.item()
+        return default
+
     def get(self, k, default=None):
         index = self._index
         if index is not None:                     # one key at a time: through the key dict, once built

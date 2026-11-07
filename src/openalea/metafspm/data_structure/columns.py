@@ -18,6 +18,8 @@ import numpy as np
 
 from openalea.metafspm.data_structure.arraydict import ArrayDict, typed_array
 
+_ABSENT = object()
+
 
 class ColumnStore(dict):
     """
@@ -65,8 +67,9 @@ class DataStructureColumn(ArrayDict):
     meaning on a view and raise.
     """
 
-    def __init__(self, ds, name: str, location: str, dtype=np.float64):
+    def __init__(self, ds, name: str, location: str, dtype=np.float64, scale=None):
         self._ds, self.name, self.location = ds, name, location
+        self.scale = scale                  # the MTG scale of its entities (None: unknown)
         self.overlay = ArrayDict(dtype=dtype)
         # Until the next synchronisation, the MPG has entries at the DataStructure's entities of its last one only:
         # its sorted ids then (an array the location's views share; None: every current entity), without those
@@ -188,6 +191,27 @@ class DataStructureColumn(ArrayDict):
             found |= in_overlay
         return found, out[found]
 
+    def value_at(self, k, default=None):
+        """The value of vertex *k*, *default* when the MPG has none."""
+        if self.overlay.size and k in self.overlay:
+            return self.overlay[k]
+        try:
+            key = int(k)
+        except (TypeError, ValueError):
+            return default
+        if (self._synced is not None or self._hidden.size or self._pending) and \
+                not self._present(np.array([key], dtype=np.int64))[0]:
+            return default
+        keys, positions, array = self._source_index()
+        position = int(np.searchsorted(keys, key))
+        if position < keys.size and int(keys[position]) == key and key == k:
+            value = array[positions[position]]
+            return value if array.dtype.hasobject else value.item()
+        return default
+
+    def get(self, k, default=None):
+        return self.value_at(k, default)
+
     def __getitem__(self, k):
         if self.overlay.size and k in self.overlay:
             return self.overlay[k]
@@ -206,11 +230,7 @@ class DataStructureColumn(ArrayDict):
         raise KeyError(k)
 
     def __contains__(self, k) -> bool:
-        try:
-            self[k]
-        except KeyError:
-            return False
-        return True
+        return self.value_at(k, _ABSENT) is not _ABSENT
 
     def _merged(self) -> tuple:
         """(sorted keys, values): the DataStructure's, without the tombstoned, with the overlay's."""
@@ -241,6 +261,13 @@ class DataStructureColumn(ArrayDict):
 
     def __len__(self) -> int:
         return self.size
+
+    def __bool__(self) -> bool:
+        """Whether the MPG has an entry of the property (no merge: the presence of the DataStructure's entities)."""
+        if self.overlay.size:
+            return True
+        keys = self._source_index()[0]
+        return bool(keys.size) and (self.pure() or bool(self._present(keys).any()))
 
     def __iter__(self):
         for key in self._merged()[0].tolist():
@@ -336,12 +363,13 @@ class DataStructureColumn(ArrayDict):
     def __getstate__(self) -> dict:
         ds = self._ds
         detached = ds is None or ds.__dict__.get("_columns_detached", False)
-        return {"ds": None if detached else ds, "name": self.name, "location": self.location,
+        return {"ds": None if detached else ds, "name": self.name, "location": self.location, "scale": self.scale,
                 "overlay": self.overlay, "synced": self._synced, "hidden": self._hidden_keys(),
                 "version": self.version}
 
     def __setstate__(self, state: dict) -> None:
         self._ds, self.name, self.location = state["ds"], state["name"], state["location"]
+        self.scale = state.get("scale")
         self.overlay, self._synced, self._hidden, self._pending = state["overlay"], state["synced"], state["hidden"], []
         self.version = state["version"]
         self._index, self._searches = None, 0
