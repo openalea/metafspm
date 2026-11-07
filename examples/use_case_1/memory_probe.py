@@ -538,13 +538,15 @@ class Captured:
     (install(), then remove()): replayed by thread_scaling()."""
 
     def __init__(self, min_nonzeros: int = 200_000):
+        from openalea.metafspm import kernels
         from openalea.metafspm.data_structure import tree_kernels
         from openalea.metafspm.solve import linear
         self.min_nonzeros = min_nonzeros
-        self.solves, self.scans, self.windows = [], [], []
-        self._linear, self._tree = linear, tree_kernels
+        self.solves, self.scans, self.windows, self.scatters = [], [], [], []
+        self._linear, self._tree, self._kernels = linear, tree_kernels, kernels
         self._solve = linear.LinearSolver.solve
         self._scan, self._window = tree_kernels._segmented_scan, tree_kernels._path_window
+        self._scatter = kernels.scatter_weighted_blocks
 
     def install(self):
         captured = self
@@ -572,11 +574,19 @@ class Captured:
                                               for a in arguments))
             return window(*arguments)
         self._tree._segmented_scan, self._tree._path_window = scanned, windowed
+        scatter = self._scatter
+
+        def scattered(data, slots, kinds, weights, blocks, chunks):
+            if slots.size >= 100_000 and len(captured.scatters) < 20:      # a reduction's terms, the large blocks
+                captured.scatters.append((np.empty_like(data), slots, kinds.copy(), weights.copy(), blocks, chunks))
+            return scatter(data, slots, kinds, weights, blocks, chunks)
+        self._kernels.scatter_weighted_blocks = scattered
         return self
 
     def remove(self):
         self._linear.LinearSolver.solve = self._solve
         self._tree._segmented_scan, self._tree._path_window = self._scan, self._window
+        self._kernels.scatter_weighted_blocks = self._scatter
 
 
 def _best(function, repeats: int = 3) -> float:
@@ -590,14 +600,15 @@ def _best(function, repeats: int = 3) -> float:
 
 def thread_scaling(captured: Captured, threads=(1, 2, 4, 8, 12), nodes: int = 200_000, columns: int = 64) -> dict:
     """Seconds at each thread count of: the captured block-diagonal solves (their blocks in threads, SuperLU as
-    the default solver), the captured _segmented_scan and _path_window calls, and two bandwidth probes over
+    the default solver), the captured _segmented_scan, _path_window and scatter_weighted_blocks (a reduction's
+    terms) calls, and two bandwidth probes over
     *nodes* × *columns* float64 columns (a gather by a random permutation and a triad), numba prange."""
     import numba
     from numba import njit, prange
     from scipy.sparse import csc_matrix
     from scipy.sparse.linalg import spsolve
     from openalea.metafspm.solve.linear import _blocks
-    from openalea.metafspm.kernels import _path_window, _segmented_scan
+    from openalea.metafspm.kernels import _path_window, _segmented_scan, scatter_weighted_blocks
     out = {"threads": list(threads), "numba_max": numba.config.NUMBA_NUM_THREADS}
 
     solves = []
@@ -657,6 +668,8 @@ def thread_scaling(captured: Captured, threads=(1, 2, 4, 8, 12), nodes: int = 20
             found["segmented_scan"] = _best(lambda: [_segmented_scan(*a) for a in captured.scans], 3)
         if captured.windows:
             found["path_window"] = _best(lambda: [_path_window(*a) for a in captured.windows], 3)
+        if captured.scatters:
+            found["terms_scatter"] = _best(lambda: [scatter_weighted_blocks(*a) for a in captured.scatters], 5)
         kernels[n] = found
     numba.set_num_threads(previous)
     out["kernels"] = kernels
@@ -665,6 +678,7 @@ def thread_scaling(captured: Captured, threads=(1, 2, 4, 8, 12), nodes: int = 20
     out["triad_GB_per_s"] = {n: 3 * flat[0].nbytes / 1e9 / kernels[n]["triad"] for n in threads}
     out["scans"] = [{"values": list(a[0].shape), "chains": int(a[2].size - 1)} for a in captured.scans]
     out["windows"] = [{"targets": int(a[0].size)} for a in captured.windows]
+    out["scatters"] = [{"nonzeros": int(a[1].size), "chunks": int(a[5].size - 1)} for a in captured.scatters]
     return out
 
 

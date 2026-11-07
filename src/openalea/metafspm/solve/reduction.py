@@ -86,6 +86,7 @@ from dataclasses import dataclass
 import numpy as np
 from scipy.sparse import coo_matrix, csr_matrix
 
+from openalea.metafspm import kernels
 from openalea.metafspm.data_structure.objects import ObjectRegistry
 from openalea.metafspm.solve.network import kron_reduction
 
@@ -628,14 +629,14 @@ class Reduction:
         if pattern is None:
             return None
         n = pattern.size
-        values, e = [], np.zeros(n)
-        for rows, local in pattern.blocks:
-            D = assignment.combine(rows, lambda kind: kind[system].D)
+        data, e = np.empty(pattern.indices.size), np.zeros(n)
+        blocks = assignment.blocks(system, "D")
+        for (rows, local), slots, chunks in zip(pattern.blocks, pattern.slots, pattern.chunks):
+            kernels.scatter_weighted_blocks(data, slots, assignment.kind[rows], assignment.weights[rows], blocks,
+                                            chunks)
             vector = assignment.combine(rows, lambda kind: kind[system].e)
             vector = vector + self._input_terms(ds, assignment, system, rows)
             e[local.reshape(-1)] += vector.reshape(-1)
-            values.append(D.reshape(-1))
-        data = np.concatenate(values)[pattern.permutation]
         return csr_matrix((data, pattern.indices, pattern.indptr), shape=(n, n)), e
 
     def term_values(self, component, system: str, ds, values) -> np.ndarray:
@@ -1139,13 +1140,14 @@ class _GroupTable:
 
 
 class _Pattern:
-    """The COO pattern of the reduced groups' terms on a node set, as CSR: blocks [(table rows, their kept nodes'
-    positions: rows × kept)], one per template; permutation: the CSR order of the blocks' entries (each group's
-    kept × kept, row by row), indices and indptr."""
+    """The CSR pattern of the reduced groups' terms on a node set (indptr, indices: scipy's canonical one): blocks
+    [(table rows, their kept nodes' positions: rows × kept)], one per template; slots: each block's groups' entries'
+    positions in the CSR data (rows × kept × kept, int32), chunks: its groups in chunks of about the same nonzeros
+    (kernels.work_chunks)."""
 
-    def __init__(self, size, blocks, permutation, indices, indptr):
-        self.size, self.blocks = size, blocks
-        self.permutation, self.indices, self.indptr = permutation, indices, indptr
+    def __init__(self, size, blocks, slots, chunks, indices, indptr):
+        self.size, self.blocks, self.slots, self.chunks = size, blocks, slots, chunks
+        self.indices, self.indptr = indices, indptr
 
     @classmethod
     def build(cls, table, node_ids):
@@ -1164,16 +1166,20 @@ class _Pattern:
             local = order[position[solved]]
             local.setflags(write=False)
             blocks.append((rows[solved], local))
-            k = local.shape[1]
-            rows_all.append(np.repeat(local, k, axis=1).reshape(-1))
-            columns_all.append(np.tile(local, (1, k)).reshape(-1))
         if not blocks:
             return None
-        rows_all, columns_all = np.concatenate(rows_all), np.concatenate(columns_all)
-        entries = np.arange(1, rows_all.size + 1, dtype=np.float64)       # 1-based: no explicit zero dropped
-        csr = coo_matrix((entries, (rows_all, columns_all)), shape=(n, n)).tocsr()
-        permutation = csr.data.astype(np.int64) - 1
-        return cls(n, blocks, permutation, csr.indices.copy(), csr.indptr.copy())
+        local = np.concatenate([nodes.reshape(-1) for _, nodes in blocks]).astype(np.int64)
+        sizes = np.concatenate([np.full(nodes.shape[0], nodes.shape[1], dtype=np.int64) for _, nodes in blocks])
+        indptr, indices, slots = kernels.group_pattern(local, np.concatenate(([0], np.cumsum(sizes))), n)
+        per_block, chunks, at = [], [], 0
+        for _, nodes in blocks:
+            groups, k = nodes.shape
+            per_block.append(slots[at:at + groups * k * k].reshape(groups, k, k))
+            chunks.append(kernels.work_chunks(groups, k * k))
+            at += groups * k * k
+        for array in (indptr, indices, slots, *chunks):
+            array.setflags(write=False)
+        return cls(n, blocks, per_block, chunks, indices, indptr)
 
 
 @dataclass
@@ -1186,6 +1192,16 @@ class _Assignment:
     kind: np.ndarray
     keys: list
     kinds: list
+
+    def blocks(self, system: str, name: str):
+        """Each kind's dense value *name* of *system* (e.g. its D: kept × kept), in kinds' order, as a numba typed
+        List (kernels.scatter_weighted_blocks' blocks), made once per assignment."""
+        cache = self.__dict__.setdefault("_blocks", {})
+        if (system, name) not in cache:
+            from numba.typed import List
+            cache[system, name] = List([np.ascontiguousarray(np.asarray(getattr(kind[system], name), dtype=float))
+                                        for kind in self.kinds])
+        return cache[system, name]
 
     def combine(self, rows, value_of) -> np.ndarray:
         """Each of the table *rows*' value: its corners' kinds' value_of(kind) weighted ((rows,) + the values'

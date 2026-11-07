@@ -1,9 +1,11 @@
 """
 metafspm's numba kernels, in one place (conventions.md, "Performance rules"): the loops that stay sequential (tree
-scans, chains, path windows, segment pieces, the turtle), each @njit(cache=True), parallel=True only where the
-iterations are independent (numba's threads are Compute.threads). Called through their modules' functions
-(data_structure.tree_kernels, coupling.geometry, coupling.cross). warm_up() runs every one on tiny inputs, which fills
-numba's on-disk cache (NUMBA_CACHE_DIR for a read-only install): compute.warm_up runs it with every port's.
+scans, chains, path windows, segment pieces, the turtle, a reduction's groups' terms), each @njit(cache=True),
+nogil=True for those a step runs on the whole scene, parallel=True only where the iterations are independent and the
+work is large (numba's threads are Compute.threads), over chunks made from the work only (work_chunks). Called
+through their modules' functions (data_structure.tree_kernels, coupling.geometry, coupling.cross, solve.reduction).
+warm_up() runs every one on tiny inputs, which fills numba's on-disk cache (NUMBA_CACHE_DIR for a read-only install):
+compute.warm_up runs it with every port's.
 """
 from math import cos, radians, sin, sqrt
 
@@ -274,6 +276,81 @@ def _pieces(p1, p2, origin, dx, counts, offsets, middles, fractions):
             fractions[offsets[i] + q] = ts[q + 1] - ts[q]
 
 
+# ── A reduction's groups' terms (solve.reduction: each group's dense kept × kept block in the scene's CSR) ──
+
+
+@njit(cache=True, nogil=True)
+def group_pattern(local, offsets, n):
+    """
+    The CSR pattern (indptr, indices, sorted per row: scipy's canonical one) of dense blocks local[offsets[g]:
+    offsets[g + 1]] × the same, one per group, on *n* rows; slots: each group's (row, column) entry's position in
+    the CSR data, row by row (concatenated, k² per group of k nodes). A node is in one group at most (ValueError).
+    """
+    groups = offsets.size - 1
+    counts = np.zeros(n, dtype=np.int64)
+    size = 0
+    for g in range(groups):
+        k = offsets[g + 1] - offsets[g]
+        size += k * k
+        for i in range(offsets[g], offsets[g + 1]):
+            if counts[local[i]] != 0:
+                raise ValueError("a node in two reduced groups")
+            counts[local[i]] = k
+    indptr = np.zeros(n + 1, dtype=np.int64)
+    for r in range(n):
+        indptr[r + 1] = indptr[r] + counts[r]
+    indices = np.empty(indptr[n], dtype=np.int32)
+    slots = np.empty(size, dtype=np.int32)
+    at = 0
+    for g in range(groups):
+        nodes = local[offsets[g]:offsets[g + 1]]
+        k = nodes.size
+        order = np.argsort(nodes)
+        rank = np.empty(k, dtype=np.int64)
+        for q in range(k):
+            rank[order[q]] = q
+        for i in range(k):
+            start = indptr[nodes[i]]
+            for q in range(k):
+                indices[start + q] = nodes[order[q]]
+            for j in range(k):
+                slots[at] = start + rank[j]
+                at += 1
+    return indptr, indices, slots
+
+
+@njit(cache=True, nogil=True, parallel=True)
+def scatter_weighted_blocks(data, slots, kinds, weights, blocks, chunks):
+    """
+    data[slots[g, i, j]] = the weighted sum of the groups' kinds' blocks: for each group g of one template (k × k
+    blocks), from 0, corner by corner (kinds[g, c] >= 0: blocks[kinds[g, c]], weighted by weights[g, c]), as
+    numpy's corner by corner accumulation gives it. Parallel over *chunks* (group boundaries, made from the work
+    only): each entry written once, the same bits for any thread count.
+    """
+    k = slots.shape[1]
+    for chunk in prange(chunks.size - 1):
+        for g in range(chunks[chunk], chunks[chunk + 1]):
+            total = np.zeros((k, k))
+            for c in range(kinds.shape[1]):
+                kind = kinds[g, c]
+                if kind < 0:
+                    continue
+                block, weight = blocks[kind], weights[g, c]
+                for i in range(k):
+                    for j in range(k):
+                        total[i, j] += weight * block[i, j]
+            for i in range(k):
+                for j in range(k):
+                    data[slots[g, i, j]] = total[i, j]
+
+
+def work_chunks(count: int, work_each: int, target: int = 1 << 16) -> np.ndarray:
+    """Boundaries of chunks of *count* items of *work_each* work (e.g. nonzeros) each, about *target* work a chunk:
+    from the work only, never the thread count (determinism, conventions.md)."""
+    step = max(1, target // max(work_each, 1))
+    return np.append(np.arange(0, count, step, dtype=np.int64), np.int64(count))
+
+
 # ── Warm-up ──
 
 def warm_up() -> None:
@@ -304,3 +381,9 @@ def warm_up() -> None:
     offsets = np.zeros(2, dtype=np.int64)
     np.cumsum(counts[:-1], out=offsets[1:])
     _pieces(p1, p2, origin, dx, counts, offsets, np.empty((int(counts.sum()), 3)), np.empty(int(counts.sum())))
+    from numba.typed import List
+    indptr, indices, slots = group_pattern(np.array([2, 0, 3], dtype=np.int64), np.array([0, 2, 3], dtype=np.int64),
+                                           4)
+    blocks = List([np.ones((2, 2)), np.full((2, 2), 2.)])
+    scatter_weighted_blocks(np.empty(indices.size), slots[:4].reshape(1, 2, 2), np.array([[0, 1]], dtype=np.int64),
+                            np.array([[0.5, 0.5]]), blocks, work_chunks(1, 4))

@@ -14,6 +14,13 @@
   source), each variable a contiguous row of the new block; the anatomy signatures take each Compartment's owner from
   one gather; `wire_junctions` reads the involved Compartments' labels in one read and every target's linked parent
   from `linked_parents`.
+- **A reduction's terms by kernels** (`kernels.group_pattern`, `kernels.scatter_weighted_blocks`): the sparse pattern
+  of the reduced groups' dense blocks built directly as scipy's canonical CSR, each entry's slot in its data int32
+  (half the permutation it replaces); the values, each group's kinds' D weighted corner by corner, scattered by a
+  parallel kernel over chunks of groups made from their nonzeros (`kernels.work_chunks`): bit-identical to the numpy
+  path, and at any thread count.
+- **Benchmark:** `benchmark.py --threads` (`Compute(threads=)`); `--thread-scaling` also times the reduction's terms
+  kernel.
 
 ### The MPG's properties are columns, one storage (devplan_scene_parallel P1)
 

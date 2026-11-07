@@ -266,8 +266,9 @@ end the kinds held and their pickled size. `--memory` adds what the scene holds 
 (`memory_probe.report`: the DataStructure's columns, the MPG's properties and topology, the Instances, the GRANAP
 templates, the kinds' parts, the group tables, the libraries, the solver's caches, the pool's processes, and the
 process before and after `malloc_trim`), `--tracemalloc 8` the allocations alive at the end by line and by stack
-(about 8 times slower), `--thread-scaling` the last step's large linear solves and the memory bandwidth timed at 1
-to 12 threads; `memory_probe.profile_split` splits a `--profile-hours` profile into Python overhead and numeric
+(about 8 times slower), `--thread-scaling` the last step's large linear solves, its parallel kernels (a
+reduction's terms among them) and the memory bandwidth timed at 1 to 12 threads, `--threads` the run's
+(`Compute(threads=)`); `memory_probe.profile_split` splits a `--profile-hours` profile into Python overhead and numeric
 work by call site (devplan_scene_parallel.md, P0).
 
 The use case keeps MECHA's defaults (each conduit and evaporating wall its own node). Measured with the options (2

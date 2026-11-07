@@ -175,9 +175,14 @@ For metafspm and every port: no Python loop over groups, nodes or entities in a 
    not `g.linked_parent(v, scale)` vertex by vertex; `g.components_at_scale` lists each scale in one loop, in
    openalea.mtg's order (an order a port's creation of vertices may depend on). A traversal whose order does not
    matter reads the topology arrays or the scale column instead (`g._vertices_at_scale(scale)`).
-3. **numba only where a loop stays sequential** (tree scans, z-buffers, form factors, a turtle): numba is a hard
-   dependency, no fallback. Every kernel is `@njit(cache=True)` in its package's `kernels.py` (one module to warm up,
-   review and port), `parallel=True` only for independent iterations (numba's threads are `Compute.threads`).
+3. **numba where a loop stays sequential or a scatter is irregular** (tree scans, z-buffers, form factors, a turtle,
+   a reduction's dense blocks into the scene's sparse matrix): numba is a hard dependency, no fallback. Every kernel
+   is `@njit(cache=True)` in its package's `kernels.py` (one module to warm up, review and port), `nogil=True` when a
+   step runs it on the whole scene, `parallel=True` only for independent iterations and large work (numba's threads
+   are `Compute.threads`). **Determinism:** a parallel kernel loops over chunks made from the work only, never the
+   thread count (`kernels.work_chunks`), sums in a fixed order within a chunk and combines chunks in chunk order, so
+   that its result is the same for any thread count. A kernel replacing Python is checked bit for bit against it at
+   one chunk before the Python goes (no dual path).
 4. **Cold start.** `python -m openalea.metafspm warm_up` (`compute.warm_up`) runs every kernel on tiny inputs:
    metafspm's (`kernels.warm_up`) and each port's `kernels.warm_up`, registered as an entry point of group
    `openalea.metafspm.warm_up` in its `pyproject.toml`; at install and in CI before the suites. `NUMBA_CACHE_DIR`
