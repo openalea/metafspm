@@ -329,8 +329,9 @@ def scatter_weighted_blocks(data, slots, kinds, weights, blocks, chunks):
     """
     k = slots.shape[1]
     for chunk in prange(chunks.size - 1):
+        total = np.empty((k, k))                 # one buffer a chunk: no allocation per group (threads contend)
         for g in range(chunks[chunk], chunks[chunk + 1]):
-            total = np.zeros((k, k))
+            total[:] = 0.
             for c in range(kinds.shape[1]):
                 kind = kinds[g, c]
                 if kind < 0:
