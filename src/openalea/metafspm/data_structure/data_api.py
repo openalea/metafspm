@@ -3195,7 +3195,7 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
         """
         names = [name for name, array in variables.items()
                  if name in meta and array.ndim == 1 and array.dtype == np.float64
-                 and _canonical_dtype(meta[name].get("dtype", float)) == np.float64 and not meta[name].get("shape")
+                 and _canonical_dtype(meta[name].get("dtype", float)) is float and not meta[name].get("shape")
                  and (meta[name]["on_grow"] != "inherit" or self._anatomy)]
         if not names:
             return {}

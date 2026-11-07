@@ -251,6 +251,19 @@ def test_update_topology_preserves_variables_on_growth():
     assert ds.get("c") is not view                                           # re-registered: version bumped
 
 
+def test_a_locations_float_variables_are_carried_over_as_one_gather():
+    g, seedling, ds = seedling_ds()
+    for name, default in (("c", -1.), ("d", -3.)):
+        ds.register(name, np.array([float(v) for v in ds.entity_ids("node")]), location="node", default=default)
+    new_vid = grow_root(g, seedling)
+    ds.update_topology()
+    c, d = ds.get("c"), ds.get("d")
+    assert c.base is not None and c.base is d.base                          # rows of one gathered block
+    assert c.flags.c_contiguous and d.flags.c_contiguous
+    d_of = dict(zip(ds.entity_ids("node"), d))
+    assert d_of[new_vid] == -3. and all(d_of[v] == float(v) for v in d_of if v != new_vid)
+
+
 def test_update_topology_keeps_aliases():
     g, seedling, ds = seedling_ds()
     ds.register("hexose", location="node", default=1.)
