@@ -443,7 +443,7 @@ def _recorded_scene(out, **options):
     from openalea.metafspm.scene.scene import Scene, SceneRecorder
     model = _model()
     scene = Scene(planting=planting([Planting()], model, {}), time_step=3600.,
-                  recorder=SceneRecorder(out, summaries=False, frame_period=1, display_period=1, **options))
+                  recorder=SceneRecorder(out, summaries=False, frame_period="1 h", display_period="1 h", **options))
     population = scene.populations[0]
     population.instance.components.append(NetworkDrawer(data_structure=population.data_structure))
     return scene
@@ -489,13 +489,13 @@ def test_the_recorder_lists_the_parts_prunes_them_on_resume_and_packs_the_frames
 def test_the_recorder_s_display_options_are_checked(tmp_path):
     from openalea.metafspm.scene.scene import SceneRecorder
     with pytest.raises(ValueError, match="display"):
-        SceneRecorder(str(tmp_path), frame_period=1, display="whole")
+        SceneRecorder(str(tmp_path), frame_period="1 h", display="whole")
     with pytest.raises(ValueError, match="frame_period"):
         SceneRecorder(str(tmp_path), pack_at_finish=True)
     with pytest.raises(ValueError, match="pack_compression"):
-        SceneRecorder(str(tmp_path), frame_period=1, pack_at_finish=True, pack_compression="zstd")
+        SceneRecorder(str(tmp_path), frame_period="1 h", pack_at_finish=True, pack_compression="zstd")
     with pytest.raises(ValueError, match="display="):
-        SceneRecorder(str(tmp_path), frame_period=1, frame_options={"display": "full"})
+        SceneRecorder(str(tmp_path), frame_period="1 h", frame_options={"display": "full"})
 
 
 def test_a_variables_filter_keeps_the_templates_columns_it_names(solved):

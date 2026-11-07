@@ -1196,8 +1196,8 @@ def to_frame(data_structures: dict, components: dict = None, mappings: dict = No
     from openalea.encoding3d import vocabulary
     names = dict(vocabulary.platform_names("metafspm"), **(standard_names or {}))
     names = {key: value for key, value in names.items() if value}
-    from openalea.metafspm.coupling.forcings import time_unit_label
-    frame = encoding3d.Frame(time=float(time), time_unit=time_unit_label(time_unit), step=int(step),
+    from openalea.metafspm.coupling.durations import duration, label
+    frame = encoding3d.Frame(time=float(time), time_unit=label(duration(time_unit, "time_unit")), step=int(step),
                           writer={"platform": PLATFORM}, vocabulary_version=vocabulary.version())
     for identifier, ds in data_structures.items():
         metadata = _declarations((components or {}).get(identifier, ()))

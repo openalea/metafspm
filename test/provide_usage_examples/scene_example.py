@@ -34,5 +34,5 @@ if __name__ == "__main__":
                       translator=os.path.join(openalea.grassbridges.__path__[0], "scene_translator.py"),
                       time_step=3600, mapping_method="barycentre", forcings=forcings,
                       recorder=SceneRecorder(os.path.join(output_folder, scenario_name), segment_plants=["p0"],
-                                             segment_period=48, frame_period=24, checkpoint_period=240))
+                                             segment_period="48 h", frame_period="24 h", checkpoint_period="240 h"))
         scene.simulate(n_iterations)            # run.json, scenario.json, Plant/, Soil/, frames/, checkpoints/

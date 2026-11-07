@@ -102,13 +102,13 @@ GroIMP, VirtualPlantLab). Each file holds the whole scene at one time step: ever
 variables, the soil, and the 3D shapes.
 
 - `export_scene("scene.glb", scene)` (from `openalea.metafspm.io.encoding3d`) saves the scene as it is now.
-- A scene built with `recorder=SceneRecorder("outputs", frame_period=24)` saves one file every 24 steps in `outputs/frames`,
+- A scene built with `recorder=SceneRecorder("outputs", frame_period="1 d")` saves one file every day in `outputs/frames`,
   with an index file, `scene.fspm.json`.
 - In ParaView, encoding3d's reader plugin opens a file, or the index to play the time steps. Every variable can then
   colour the plants, the root sections or the soil. Sections a model computes in a reduced form are stored once per
   shape (`frames/parts/`) and coloured on demand: select one at a scale ("encoding3d Select at scale") to see its
   cells' values.
-- `SceneRecorder("outputs", frame_period=24, pack_at_finish=True)` also packs the frames into one file,
+- `SceneRecorder("outputs", frame_period="1 d", pack_at_finish=True)` also packs the frames into one file,
   `outputs/frames.fspm.zip`, to share or archive; ParaView opens it like the folder.
 
 encoding3d is installed with metafspm (the steps above). ParaView's plugin is the file

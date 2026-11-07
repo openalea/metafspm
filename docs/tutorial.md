@@ -72,22 +72,24 @@ from openalea.metafspm.scene.recorder import SceneRecorder
 from openalea.metafspm.scene.scene import Scene
 
 forcings = scenario.pop("forcings")
-recorder = SceneRecorder("outputs/dry", frame_period=6, checkpoint_period=12, keep_checkpoints=1)
+recorder = SceneRecorder("outputs/dry", frame_period="6 h", checkpoint_period="12 h", keep_checkpoints=1)
 scene = Scene(table, environment=[Soil], environment_scenarios=[scenario["Soil"]], translator=SCENE_TRANSLATOR,
-              time_step=3600, forcings=forcings, recorder=recorder)
+              time_step="1 h", forcings=forcings, recorder=recorder)
 scene.simulate(48)
 ```
 
 - **Forcings** are the one way in for time-varying inputs. A forcing is a number, a function of the time (s), a
   pandas Series indexed by time, or a `(times, values)` pair, read by linear interpolation. Here
   `air_water_potential` is a parameter of both the plant's and the soil's water transport: at the start of each
-  step, the Scene writes its value into both. `as_forcing(value, time_unit=86400.)` converts an input given by day.
-  `events=[(time, action)]` stay for one-off actions, such as a cut or an irrigation.
+  step, the Scene writes its value into both. `as_forcing(value, time_unit="d")` converts an input given by day.
+  `events=[("36 h", action)]` stay for one-off actions, such as a cut or an irrigation.
+- **Times carry their units**: `"1 h"`, `"12 h"`, `"1 d 6 h"` (or a number of seconds); a date, `"2026-05-10
+  00:00"`, for the Scene's `start=` (the sun's calendar).
 - **The recorder** decides what is written, every output switched on or off on its own:
-  - summaries every `summary_period` steps (on by default);
-  - the `segment_plants`' segments every `segment_period` steps;
-  - frames every `frame_period` steps;
-  - checkpoints every `checkpoint_period` steps;
+  - summaries every `summary_period` (every step by default, `"step"`);
+  - the `segment_plants`' segments every `segment_period` (`"1 d"` by default);
+  - frames every `frame_period` (`"6 h"` here);
+  - checkpoints every `checkpoint_period`;
   - tables of your own, `tables={name: function(scene)}`, each function returning a row.
 
   Without a folder, it keeps its tables in memory.
@@ -141,7 +143,7 @@ The dry air pulls more water through the seedling than the humid one, despite it
 
 - **ParaView.** encoding3d's reader plugin opens `frames/scene.fspm.json` and plays the frames as time steps.
 - **Shapes drawn for display** (e.g. GRANAP's root and leaf cross-sections). They are a recording choice:
-  `SceneRecorder(..., display_period=24)` adds them to a frame every 24 steps, `display_plants=("p0",)` for some
+  `SceneRecorder(..., display_period="1 d")` adds them to a frame every day, `display_plants=("p0",)` for some
   plants only. When the plant model *reduces* its sections (MECHA's water flow keeps a few nodes per section and
   computes the others from them), the frames store each section as one copy of its shape plus a few numbers, not
   every cell's value: a frame stays small (under 1 MB where a fully drawn one takes 30 MB or more), and the shapes

@@ -1,6 +1,6 @@
 """
 The environment on the plants' union, of one population too: its outputs a plant model reads by name, and its inputs
-a plant model holds by name, linked by default; the Scene's calendar (start=(day of year, hour)) for every component
+a plant model holds by name, linked by default; the Scene's calendar (start="2026-06-21 06:00", a date) for every component
 and the forcings of origin "calendar"; an environment model's interval set by its scenario; geometry_input's relight.
 """
 from dataclasses import dataclass
@@ -68,7 +68,7 @@ class Light(EnvironmentModel):
 
 
 def _scene(**options):
-    return Scene(doubles_planting([Plants]), environment=[Light], time_step=DT, start=(172., 6.), **options)
+    return Scene(doubles_planting([Plants]), environment=[Light], time_step=DT, start="2026-06-21 06:00", **options)
 
 
 def test_one_population_exchanges_with_the_environment_through_identity_links():
@@ -144,7 +144,7 @@ def test_a_structural_component_reads_the_calendar_and_forcings_and_an_unplaced_
             self.clocked()
 
     assert issubclass(Clocked, StructuralComponent)
-    scene = Scene(doubles_planting([ClockedPlants]), time_step=DT, start=(100., 8.),
+    scene = Scene(doubles_planting([ClockedPlants]), time_step=DT, start="2026-04-10 08:00",
                   forcings={"air_temperature": lambda time: 15. + time / DT, "PARi": lambda time: 7.})
     scene.run()
     ds = scene.populations[0].data_structure

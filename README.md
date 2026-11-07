@@ -141,7 +141,7 @@ from openalea.metafspm.io.encoding3d import export_scene, import_frame
 
 export_scene("scene.glb", scene)                         # one frame now
 data_structures = import_frame("scene.glb")              # {id: DataStructure}
-scene = Scene(..., recorder=SceneRecorder("outputs", frame_period=24))   # a frame every 24 steps, in outputs/frames
+scene = Scene(..., recorder=SceneRecorder("outputs", frame_period="1 d"))   # a frame every day, in outputs/frames
 ```
 
 A reduction's groups (e.g. the cells of reduced cross sections) are written as instances of their templates

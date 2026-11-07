@@ -11,7 +11,7 @@ The base of a scene's environment models (light, soil, atmosphere)::
 
     class Light(EnvironmentModel):
         compartment = "Atmosphere"
-        interval = 4 * 3600.                                        # a full run every 4 hours
+        interval = "4 h"                                            # a full run every 4 hours
         def __init__(self, plant_data_structures, xrange, yrange, time_step):
             super().__init__(plant_data_structures, xrange, yrange, time_step)
             self.light = CaribuLight(data_structure=self.plant_data_structure(), time_step=time_step)
@@ -21,7 +21,8 @@ The base of a scene's environment models (light, soil, atmosphere)::
 
 The Scene builds it with its populations' DataStructures, the scene's ranges and time step (and the scenario's keys
 its __init__ names), then calls run() at every step. run() runs the components in order when the model is due
-(every step, or every *interval*, or an overridden due()), then after_run() (e.g. regridding); otherwise between().
+(every step, or every *interval*, a duration: "4 h", or s; or an overridden due()), then after_run() (e.g.
+regridding); otherwise between().
 The time of the last full run is kept by checkpoints. A plain class with the same contract (plant_data_structures,
 xrange, yrange, time_step; components; run) is still accepted by the Scene.
 """
@@ -37,7 +38,7 @@ def _scale_name(ds, scale) -> str:
 class EnvironmentModel(CompositeModel):
     """An environment model of a Scene: its DataStructures over the scene's pattern, its components, its cadence."""
 
-    # Seconds between two full runs (None: every step); between them, between() runs instead
+    # The time between two full runs, a duration ("4 h", or s; None: every step); between them, between() runs instead
     interval = None
     # The folder of its outputs (SceneRecorder): "Soil" or "Atmosphere", required
     compartment = None
@@ -86,7 +87,9 @@ class EnvironmentModel(CompositeModel):
     def due(self, time) -> bool:
         """Whether the model runs fully at *time*: every step, or every *interval* (a scenario key of the model too),
         and whenever the plants' geometry its components read (geometry_input) changed as they ask."""
-        if self.interval is None or self.last_run is None or time - self.last_run >= self.interval - 1e-9:
+        from openalea.metafspm.coupling.durations import positive_duration
+        interval = None if self.interval is None else positive_duration(self.interval, f"{type(self).__name__}.interval")
+        if interval is None or self.last_run is None or time - self.last_run >= interval - 1e-9:
             return True
         return self._geometry_stamp() != self.__dict__.get("_lit_geometry")
 

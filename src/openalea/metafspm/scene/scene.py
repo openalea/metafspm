@@ -2,11 +2,15 @@
 A scene of plant populations and environment models in one process::
 
   scene = Scene(planting=planting(stand(...), Model, scenario), environment=[SoilModel, LightModel],
-                environment_scenarios=[{}, {}], translator="scene_translator.py", time_step=3600,
-                forcings={"air_temperature": series}, recorder=SceneRecorder("outputs", segment_plants=["p0"]))
+                environment_scenarios=[{}, {}], translator="scene_translator.py", time_step="1 h",
+                start="2026-05-10 00:00", forcings={"air_temperature": series},
+                recorder=SceneRecorder("outputs", segment_plants=["p0"]))
   scene.simulate(n_iterations=2500)
   scene = Scene.from_scenario(read_scenarios("scenarios.csv")["dry"], [Planting()], Model, environment=[SoilModel],
-                              translator=..., time_step=3600, recorder="outputs")    one column of a scenario table
+                              translator=..., time_step="1 h", recorder="outputs")    one column of a scenario table
+
+Times and durations are given with their units (coupling.durations: "1 h", "1 d 12 h", a date "2026-05-10 06:00";
+a number is seconds), and kept in seconds, the scene's time.
 
 Contracts::
 
@@ -30,7 +34,8 @@ each population, after the exchanges into it (the environment's new values). Exc
 through coupling.cross (mappings inferred from the scene translator's links: a CrossMapping between a population and
 a grid, a UnionMapping for a union).
 
-Emergence: an "emergence_time" column of the planting table (s, scene time) freezes each plant until then:
+Emergence: an "emergence_time" column of the planting table (a scene time: "2 d", a date, or s) freezes each plant
+until then:
 its nodes leave the "active" mask (steps skip them; MPG-style steps use active_ids()) and the mappings (no exchange).
 """
 import os
@@ -111,7 +116,9 @@ class Scene:
                                its value at the step's end), when it has no forcing of its own; otherwise the Scene
                                writes its mean over the step at the start of each step into the input or parameter
                                of that name of the components declaring it (not coupled).
-        events:                (time, action) pairs: action(scene) runs at the start of the first step at or after time.
+        time_step:             the scene's step, a duration ("1 h", or s).
+        events:                (time, action) pairs: action(scene) runs at the start of the first step at or after
+                               time (a scene time: "36 h", a date, or s).
         stop_when:             a condition(scene), checked after each step: simulate() stops when it holds.
         mappings:              further mappings between DataStructures (e.g. a LayerMapping between a column model and
                                the soil grid), or a callable scene -> mappings, called once the models are built. A
@@ -122,22 +129,23 @@ class Scene:
                                every DataStructure's ds.soil_surface (the geometry's "air" and "soil", a light
                                model's cut), the cross mappings' grid top (CrossMapping(soil_surface=)), the
                                initiators' g.soil_surface.
-        start:                 the calendar of the scene's time 0, (day of year, hour, UTC): every component's
-                               calendar() (e.g. a light model's sun), and the forcings of origin "calendar".
+        start:                 the date of the scene's time 0, "2026-05-10 00:00" (ISO 8601, UTC; or a datetime):
+                               every component's calendar() (e.g. a light model's sun), the forcings of origin
+                               "calendar", the dates given as times (events, emergence times).
         compute:               the run configuration (openalea.metafspm.compute.Compute; default Compute()): the
                                threads while the scene builds and runs, the process pool, the device, the memory
                                trimmed after each step. A component's setting named workers or device that its
                                model's scenario does not give takes the Compute's (Caribu's).
 
-    A model's cadence is an environment model's interval (s, EnvironmentModel: due() and between(); its scenario's
-    "interval" too). An environment model's spin_up(scene) runs once, after the scene is built. An environment model's
+    A model's cadence is an environment model's interval (a duration, EnvironmentModel: due() and between(); its
+    scenario's "interval" too); a component's, its every= (Component: its calls covering the interval). An environment model's spin_up(scene) runs once, after the scene is built. An environment model's
     components work on the plants' union (EnvironmentModel.plant_data_structure), its variables exchanged with the
     plant models through the translator: its outputs a plant model reads as inputs of the same name, and its inputs a
     plant model holds as states of the same name, are linked by default (identity links).
     """
 
     def __init__(self, planting: pd.DataFrame, environment=(), environment_scenarios=None, translator=None,
-                 time_step: float = 3600., mapping_method: str = "barycentre", periodic=(True, True, False),
+                 time_step="1 h", mapping_method: str = "barycentre", periodic=(True, True, False),
                  flip_z: bool = True, xrange: float = None, yrange: float = None, forcings=None,
                  events=(), stop_when=None, mappings=(), recorder=None, start=None, compute: Compute = None,
                  soil_surface: float = 0.):
@@ -152,7 +160,10 @@ class Scene:
 
     def _build(self, planting, environment, environment_scenarios, translator, time_step, mapping_method, periodic,
                flip_z, xrange, yrange, forcings, events, stop_when, mappings, recorder, start, soil_surface) -> None:
+        from openalea.metafspm.coupling.durations import instant, positive_duration, start_date
         self.soil_surface = float(soil_surface)
+        time_step = positive_duration(time_step, "Scene(time_step=)")
+        self.start = None if start is None else start_date(start, "Scene(start=)")
         self.time_step, self.time, self.iteration = time_step, 0., 0
         self.xrange = xrange if xrange is not None else planting.attrs.get("xrange")
         self.yrange = yrange if yrange is not None else planting.attrs.get("yrange")
@@ -174,7 +185,7 @@ class Scene:
             if "interval" in scenario and hasattr(instance, "interval"):      # the model's cadence (EnvironmentModel)
                 scenario = dict(scenario)
                 interval = scenario.pop("interval")
-                instance.interval = None if interval is None else float(interval)
+                instance.interval = None if interval is None else positive_duration(interval, "interval")
             _apply_model_scenario(model, instance, scenario, per_plant=False)
 
         self.components = [c for p in self.populations for c in p.components]
@@ -205,18 +216,19 @@ class Scene:
         self.exchanges = Exchanges(self.translator, self.components, self.mappings)
         self._update_emergence()
         self.forcings = forcing_table(forcings)
-        self.start = None if start is None else (float(start[0]), float(start[1]))
         for forcing in self.forcings.values():
             if getattr(forcing, "origin", None) == "calendar":
                 if self.start is None:
-                    raise ValueError("a forcing of origin 'calendar' needs the Scene's start=(day_of_year, hour)")
+                    raise ValueError("a forcing of origin 'calendar' needs the Scene's start= (a date, "
+                                     "'2026-05-10 00:00')")
                 forcing.at_calendar(self.start)
         for component in self.components:
             component.__dict__["_scene_forcings"] = self.forcings
             component.__dict__["_scene_calendar"] = self.start
         self._check_forcings()
         self._forced = self._forced_variables()
-        self.events = sorted(list(events), key=lambda event: event[0])
+        self.events = sorted([(instant(time, self.start, "Scene(events=) time"), action) for time, action in events],
+                             key=lambda event: event[0])
         self._n_events = len(self.events)
         self.stop_when, self.stopped = stop_when, False
         for model in self.environment + [population.instance for population in self.populations]:
@@ -325,7 +337,10 @@ class Scene:
         return first
 
     def _setup_emergence(self, population: Population) -> None:
+        from openalea.metafspm.coupling.durations import instant
         ds = population.data_structure
+        population.table["emergence_time"] = [instant(time, self.start, "emergence_time")
+                                              for time in population.table["emergence_time"]]
         by_vid = dict(zip(map(int, population.plants), population.table["emergence_time"].astype(float)))
         ds.register("emergence_time", [by_vid[int(v)] for v in ds.entity_ids("Plant")], location="Plant")
         ds.register("emerged", 0., location="node", on_grow="inherit")
@@ -679,7 +694,7 @@ class Scene:
             scenario = dict(scenario)
             if "interval" in scenario and hasattr(instance, "interval"):
                 interval = scenario.pop("interval")
-                instance.interval = None if interval is None else float(interval)
+                instance.interval = None if interval is None else positive_duration(interval, "interval")
             _apply_model_scenario(model, instance, scenario, per_plant=False)
 
     def finish(self, status: str = "finished", error: BaseException = None) -> None:

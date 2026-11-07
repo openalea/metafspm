@@ -39,7 +39,7 @@ def run(scenario: dict, folder: str, hours: int = HOURS) -> Scene:
     forcings = scenario.pop("forcings", {})
     table = planting([Planting(x=0.1, y=0.1)], SeedlingWater, scenario.get("SeedlingWater", {}), xrange=0.2,
                      yrange=0.2)
-    recorder = SceneRecorder(folder, frame_period=6, checkpoint_period=12, keep_checkpoints=1)
+    recorder = SceneRecorder(folder, frame_period="6 h", checkpoint_period="12 h", keep_checkpoints=1)
     scene = Scene(table, environment=[Soil], environment_scenarios=[scenario.get("Soil", {})],
                   translator=SCENE_TRANSLATOR, time_step=3600, forcings=forcings,
                   recorder=recorder)

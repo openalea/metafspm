@@ -557,7 +557,8 @@ def test_forcings_set_outside_a_scene_are_those_a_scene_gives():
     hourly = as_forcing(np.arange(24.), time_unit="h", origin="calendar")      # the hour of the day
     model.set_forcings(pd.DataFrame({"supply": [0., 30.]}, index=[0., 10.]))         # a table, as a Scene's
     assert model.has_forcing("supply") and model.forcing("supply") == pytest.approx(1.5 * DT)
-    model.set_forcings({"hourly": hourly, "by_entity": lambda time, ids: np.ones(len(ids))}, start=(100, 6.))
+    model.set_forcings({"hourly": hourly, "by_entity": lambda time, ids: np.ones(len(ids))},
+                       start="2026-04-10 06:00")
     assert not model.has_forcing("supply") and not model.has_forcing("by_entity")     # replaced; varies in space
     assert model.forcing("hourly") == pytest.approx(6. + DT / 7200.)                  # its mean over [0, DT]
     assert model.calendar(0.) == (100., 6.)

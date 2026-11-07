@@ -173,7 +173,7 @@ def test_a_scene_logs_filtered_frames(tmp_path):
     arguments = dict(planting=table, environment=[SceneSoil], translator=soil_translator("SceneExudation",
                                                                                           "SeedlingExudation"),
                      time_step=DT)
-    scene = Scene(**arguments, recorder=SceneRecorder(str(tmp_path / "log"), summaries=False, frame_period=1,
+    scene = Scene(**arguments, recorder=SceneRecorder(str(tmp_path / "log"), summaries=False, frame_period="1 h",
                   frame_options=dict(data_structures=["RootPopulation"], entities=["p0"], variables=["length"])))
     scene.run()
     scene.run()

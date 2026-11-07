@@ -52,7 +52,8 @@ def planting(plants, model, scenario: dict = None, plant_scenarios: list = None,
     The planting table of *plants* ([Planting], or a Stand), named p0, p1, ... in their order. *model*: the plant
     model of every plant, or one per plant (a list, e.g. a Stand's models). *scenario*: shared by every plant, or
     {model class: scenario} with several models; *plant_scenarios*: one dict per plant, added to the shared one.
-    *emergence_times* (s, scene time): one per plant, the emergence_time column read by the Scene. The stand's size
+    *emergence_times*: one scene time per plant ("2 d", a date with the Scene's start, or s), the emergence_time
+    column read by the Scene. The stand's size
     (table.attrs xrange, yrange) is the Stand's, else the plants' extent (at least 0.1 m), unless given.
     """
     plants = list(plants) if not isinstance(plants, Stand) else plants
@@ -69,7 +70,9 @@ def planting(plants, model, scenario: dict = None, plant_scenarios: list = None,
                          rotation=float(plant.rotation), scenario=_flat_scenario(dict(shared, **(own[k] or {})))))
     table = pd.DataFrame(rows, columns=["plant", "model", "x", "y", "z", "rotation", "scenario"])
     if emergence_times is not None:
-        table["emergence_time"] = np.asarray(emergence_times, dtype=float)
+        from openalea.metafspm.coupling.durations import is_date, duration
+        times = [time if is_date(time) else duration(time, "emergence_times") for time in emergence_times]
+        table["emergence_time"] = pd.Series(times, dtype=object if any(map(is_date, times)) else float)
     xs, ys = table["x"].to_numpy(), table["y"].to_numpy()
     if xrange is None:
         xrange = plants.xrange if isinstance(plants, Stand) else max(float(np.ptp(xs)) if len(xs) else 0., 0.1)

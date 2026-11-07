@@ -1,8 +1,11 @@
 """
 A scene's outputs, written as it runs::
 
-  Scene(..., recorder=SceneRecorder("outputs", segment_plants=["p0"], frame_period=24, checkpoint_period=240))
+  Scene(..., recorder=SceneRecorder("outputs", segment_plants=["p0"], frame_period="1 d", checkpoint_period="10 d"))
   Scene(..., recorder="outputs")              the defaults: the summaries of every DataStructure, every step
+
+Its periods are durations ("12 h", "1 d": coupling.durations; a number is seconds), each a whole number of the
+scene's steps, or "step" (every step); an output is written when the scene's time is a multiple of its period.
 
   outputs/
     run.json                          the run: status (running, finished, stopped, failed, interrupted; a failure's
@@ -15,11 +18,11 @@ A scene's outputs, written as it runs::
                                       environment models and their scenarios, forcings, the run configuration
                                       (Compute), the recorder's settings
     forcings/<name>.csv               the forcings given as tables
-    Plant/<Model>/summaries.csv       one row per plant and recorded step: time, plant, the float state variables of
+    Plant/<Population>/summaries.csv  one row per plant and recorded step: time, plant, the float state variables of
                                       every component on its DataStructure or a view of it (each over the entities of
                                       the components declaring it; extensive ones summed, intensive ones averaged by
                                       their declared weight, Plant ones as is; descriptors and edges left out)
-    Plant/<Model>/segments.csv        the node state variables of the segment_plants, every segment_period steps
+    Plant/<Population>/segments.csv   the node state variables of the segment_plants, every segment_period
     Soil/<Model>/summaries.csv        one row per recorded step: time, the grid's float state variables (extensive
     Atmosphere/<Model>/summaries.csv  ones summed, the others averaged by their weight or the cells' volumes), by the
                                       environment model's compartment
@@ -31,9 +34,9 @@ A scene's outputs, written as it runs::
                                       component, system, quantity, inflow, outflow, change, residual (change - inflow
                                       + outflow, since the last row), unit
     frames/frame_<step>.glb, frames/scene.fspm.json
-                                      the whole scene (encoding3d), every frame_period steps: every scale, every
+                                      the whole scene (encoding3d), every frame_period: every scale, every
                                       row; the components' display shapes (e.g. GRANAP's sections) every
-                                      display_period steps, a reduction's groups as instances of their templates
+                                      display_period, a reduction's groups as instances of their templates
                                       (display="instances", the default)
     frames/parts/<key>.glb            the parts the frames share (encoding3d 0.4): each template drawn and each
                                       kind's recovery operator, written once (its key: its content's hash), listed
@@ -43,7 +46,7 @@ A scene's outputs, written as it runs::
                                       folder
     frames/views.json                 with frame_views: the layers ParaView shows (encoding3d's views), written at the
                                       first frame
-    checkpoints/step_<iteration>/     Scene.checkpoint every checkpoint_period steps, the last keep_checkpoints kept
+    checkpoints/step_<iteration>/     Scene.checkpoint every checkpoint_period, the last keep_checkpoints kept
     checkpoints/shared/               the checkpoints' parts saved once (scene.shared: anatomy templates, sections),
                                       those no kept checkpoint refers to removed
 
@@ -146,6 +149,28 @@ def _described(value):
     if isinstance(value, type) or callable(value):
         return f"{getattr(value, '__module__', '')}.{getattr(value, '__qualname__', repr(value))}"
     return repr(value)
+
+
+def _period(value, name: str):
+    """A recorder period: None (never), "step" (every step) or a duration in seconds (coupling.durations: "12 h")."""
+    if value is None or value == "step":
+        return value
+    from openalea.metafspm.coupling.durations import positive_duration
+    return positive_duration(value, f"SceneRecorder({name}=)")
+
+
+def _whole(length: float, unit: float) -> bool:
+    """Whether *length* is a whole number (at least 1) of *unit*."""
+    ratio = float(length) / float(unit)
+    return round(ratio) >= 1 and abs(ratio - round(ratio)) <= 1e-9 * max(1., ratio)
+
+
+def _on(period, time: float) -> bool:
+    """Whether scene time *time* (s) is on *period* ("step": every step; seconds: a multiple of it)."""
+    if period == "step":
+        return True
+    ratio = float(time) / float(period)
+    return abs(ratio - round(ratio)) <= 1e-9 * max(1., abs(ratio))
 
 
 def _write_json(path: str, content: dict) -> None:
@@ -354,11 +379,12 @@ def _previous(ds, name: str, location: str) -> np.ndarray:
 
 class SceneRecorder:
     """
-    The outputs of a Scene (see the module): *folder* (None: in memory, no files); *summaries* and their
-    *summary_period* (steps); *segment_plants* (planting names) and *segment_period*; *frame_period* and *frame_options*
+    The outputs of a Scene (see the module; every period a duration, "12 h", or "step"): *folder* (None: in memory,
+    no files); *summaries* and their *summary_period*; *segment_plants* (planting names) and *segment_period*;
+    *frame_period* and *frame_options*
     (io.encoding3d.scene_to_frame's: geometry, standard_names, data_structures, scales, entities, variables);
     *display_period*: the frames that also carry the components' display shapes (display_triangles(), e.g. GRANAP's
-    sections: drawings only, their data rows are in every frame), every display_period steps (a multiple of
+    sections: drawings only, their data rows are in every frame), every display_period (a multiple of
     frame_period) and in the last frame; None (the default): none, the frames hold the data and the geometry
     light models get. *display_plants*: the plants (planting names, e.g. ("p0", "p3")) whose shapes those frames
     draw, None for all: a stand's frames bounded by the few plants drawn (the others' reduced sections' interiors
@@ -382,30 +408,31 @@ class SceneRecorder:
     run keeps the views.json it finds.
     """
 
-    def __init__(self, folder: str = None, summaries: bool = True, summary_period: int = 1, segment_plants=(),
-                 segment_period: int = 24, frame_period: int = None, frame_options: dict = None,
-                 checkpoint_period: int = None, keep_checkpoints: int = 2, tables: dict = None,
-                 table_period: int = 1, frame_views=None, display_period: int = None, display_plants=None,
+    def __init__(self, folder: str = None, summaries: bool = True, summary_period="step", segment_plants=(),
+                 segment_period="1 d", frame_period=None, frame_options: dict = None,
+                 checkpoint_period=None, keep_checkpoints: int = 2, tables: dict = None,
+                 table_period="step", frame_views=None, display_period=None, display_plants=None,
                  display: str = "instances", pack_at_finish: bool = False, pack_compression: str = "deflate",
                  conservation: bool = True):
         self.folder = os.fspath(folder) if folder is not None else None
-        self.summaries, self.summary_period = bool(summaries), int(summary_period)
+        self.summaries, self.summary_period = bool(summaries), _period(summary_period, "summary_period")
         self.conservation = bool(conservation)
-        self.segment_plants, self.segment_period = {str(name) for name in segment_plants}, int(segment_period)
-        self.frame_period = int(frame_period) if frame_period else None
+        self.segment_plants = {str(name) for name in segment_plants}
+        self.segment_period = _period(segment_period, "segment_period")
+        self.frame_period = _period(frame_period, "frame_period")
         self.frame_options = dict(frame_options or {})
         if "display_meshes" in self.frame_options:
-            raise ValueError("SceneRecorder: the frames' display shapes are given by display_period (steps; None: "
-                             "none), not frame_options['display_meshes']")
-        self.display_period = int(display_period) if display_period else None
+            raise ValueError("SceneRecorder: the frames' display shapes are given by display_period (a duration; "
+                             "None: none), not frame_options['display_meshes']")
+        self.display_period = _period(display_period, "display_period")
         self.display_plants = None if display_plants is None else (
             [str(display_plants)] if isinstance(display_plants, str) else [str(name) for name in display_plants])
         if self.display_plants is not None and not self.display_period:
             raise ValueError("SceneRecorder(display_plants=...) are the plants whose display shapes the frames draw: "
                              "give it a display_period")
-        if self.display_period and (not self.frame_period or self.display_period % self.frame_period):
-            raise ValueError(f"SceneRecorder(display_period={display_period}): the frames carrying display shapes, a "
-                             f"multiple of frame_period ({self.frame_period})")
+        if self.display_period and not self.frame_period:
+            raise ValueError(f"SceneRecorder(display_period={display_period!r}): the frames carrying display shapes, "
+                             "a multiple of frame_period: give a frame_period")
         from openalea.metafspm.io.encoding3d import DISPLAYS
         if display not in DISPLAYS:
             raise ValueError(f"SceneRecorder(display=...): one of {DISPLAYS}, got {display!r}")
@@ -419,9 +446,9 @@ class SceneRecorder:
         if self.pack_compression not in ("deflate", "lzma", "stored"):
             raise ValueError(f"SceneRecorder(pack_compression=...): 'deflate', 'lzma' or 'stored', got "
                              f"{pack_compression!r}")
-        self.checkpoint_period = int(checkpoint_period) if checkpoint_period else None
+        self.checkpoint_period = _period(checkpoint_period, "checkpoint_period")
         self.keep_checkpoints = keep_checkpoints
-        self.tables, self.table_period = dict(tables or {}), int(table_period)
+        self.tables, self.table_period = dict(tables or {}), _period(table_period, "table_period")
         if self.folder is None:
             for name, value in (("segment_plants", self.segment_plants), ("frame_period", self.frame_period),
                                 ("checkpoint_period", self.checkpoint_period)):
@@ -449,6 +476,7 @@ class SceneRecorder:
     def begin(self, scene) -> None:
         """At the scene's first step (a restored one's too): run.json and scenario.json, and the initial state."""
         self._started = datetime.now()
+        self._check_periods(scene.time_step)
         if self.folder is not None:
             previous = self._read_run() if self.resume else {}
             self._run = {"status": "running", "started": previous.get("started", self._started.isoformat()),
@@ -468,7 +496,7 @@ class SceneRecorder:
         """After a step: what is due at this iteration, then run.json's progress (its iterations, time, wall time and
         timing: a running run's state, read while it runs)."""
         self._record(scene)
-        if self.checkpoint_period and scene.iteration % self.checkpoint_period == 0:
+        if self.checkpoint_period and _on(self.checkpoint_period, scene.time):
             self._checkpoint(scene)
         elif self.folder is not None and self._run is not None:
             self._write_run(scene)
@@ -484,21 +512,36 @@ class SceneRecorder:
                 self._run["error"] = f"{type(error).__name__}: {error}"
             self._write_run(scene, ended=True)
 
+    def _check_periods(self, time_step: float) -> None:
+        """Every period a whole number of the scene's steps (*time_step*, s), the display's of frame_period."""
+        for name in ("summary_period", "segment_period", "frame_period", "display_period", "checkpoint_period",
+                     "table_period"):
+            period = getattr(self, name)
+            if period not in (None, "step") and not _whole(period, time_step):
+                raise ValueError(f"SceneRecorder({name}={period:g} s): a whole number of the scene's steps "
+                                 f"({time_step:g} s)")
+        if self.display_period:
+            display = time_step if self.display_period == "step" else self.display_period
+            frames = time_step if self.frame_period == "step" else self.frame_period
+            if not _whole(display, frames):
+                raise ValueError(f"SceneRecorder(display_period={display:g} s): the frames carrying display shapes, a "
+                                 f"multiple of frame_period ({frames:g} s)")
+
     def _record(self, scene, initial: bool = False, final: bool = False) -> None:
-        iteration = scene.iteration
-        if self.frame_period and (iteration % self.frame_period == 0 or final) and self._due("frames", iteration):
+        iteration, time = scene.iteration, scene.time
+        if self.frame_period and (_on(self.frame_period, time) or final) and self._due("frames", iteration):
             self._write_frame(scene, display=bool(self.display_period)
-                              and (iteration % self.display_period == 0 or final))
-        if self.summaries and (iteration % self.summary_period == 0 or final) and self._due("summaries", iteration):
+                              and (_on(self.display_period, time) or final))
+        if self.summaries and (_on(self.summary_period, time) or final) and self._due("summaries", iteration):
             self.write_summaries(scene)
-        if (self.segment_plants and (iteration % self.segment_period == 0 or final)
+        if (self.segment_plants and (_on(self.segment_period, time) or final)
                 and self._due("segments", iteration)):
             self.write_segments(scene)
-        if (self.conservation and not initial and (iteration % self.summary_period == 0 or final)
+        if (self.conservation and not initial and (_on(self.summary_period, time) or final)
                 and self._due("conservation", iteration)):
             self.write_conservation(scene)
         for name, function in self.tables.items():
-            if (iteration % self.table_period == 0 or final) and self._due(f"table {name}", iteration):
+            if (_on(self.table_period, time) or final) and self._due(f"table {name}", iteration):
                 row = function(scene)
                 if row is not None:
                     frame = pd.DataFrame([row]) if isinstance(row, dict) else pd.DataFrame(row)

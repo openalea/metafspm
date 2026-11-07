@@ -61,7 +61,7 @@ def test_a_stopped_run_and_a_loop_of_steps(tmp_path):
     scene = _scene(str(tmp_path / "a"), stop_when=lambda s: s.iteration == 2)
     scene.simulate(5)
     assert _json(tmp_path / "a" / "run.json")["status"] == "stopped"
-    scene = _scene(SceneRecorder(str(tmp_path / "b"), summary_period=2))
+    scene = _scene(SceneRecorder(str(tmp_path / "b"), summary_period="2 h"))
     for _ in range(3):
         scene.run()
     run = _json(tmp_path / "b" / "run.json")                  # the progress, after every step
@@ -85,7 +85,7 @@ def test_tables_of_ones_own_in_memory():
                                            "Soil/SceneSoil/summaries"}
     assert len(recorder.table("Plant/RootPopulation/summaries")) == 4                 # one plant, 4 states
     with pytest.raises(ValueError, match="folder"):
-        SceneRecorder(frame_period=2)
+        SceneRecorder(frame_period="2 h")
 
 
 def test_every_output_can_be_switched_off(tmp_path):
@@ -114,7 +114,7 @@ def test_compartments():
 
 
 def test_a_scene_recorded_without_a_step(tmp_path):
-    scene = _scene(SceneRecorder(str(tmp_path), frame_period=1))
+    scene = _scene(SceneRecorder(str(tmp_path), frame_period="1 h"))
     scene.simulate(0)                                       # a static model: its built state, once
     assert _json(tmp_path / "run.json")["status"] == "finished" and _json(tmp_path / "run.json")["iterations"] == 0
     assert pd.read_csv(tmp_path / "Plant" / "Seedlings" / "summaries.csv")["time"].tolist() == [0.]

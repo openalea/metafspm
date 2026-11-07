@@ -51,7 +51,7 @@ def _scene(time_step=HOUR):
                                              bottom_boundary="no_flux"),
                                         dict(sun=True, interval=HOUR)],
                  translator=SCENE_TRANSLATOR, time_step=time_step, forcings=forcings,
-                 recorder=SceneRecorder(tables=WATER_TABLES), start=(130, 11.))
+                 recorder=SceneRecorder(tables=WATER_TABLES), start="2026-05-10 11:00")
 
 
 def _soil(scene):

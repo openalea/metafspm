@@ -301,12 +301,12 @@ class SoilDiffusion(FunctionalComponent):
   `forcing_variable(aggregate=...)`: `"mean"` (the default: its mean over the step, a rate or a state of the air),
   `"total"` (its integral, a rain's depth from its rate; not readable inside an IVP solve) or `"instant"` (its value
   at the step's end). The mean is exact for numbers, tables (piecewise linear) and pulses
-  (`forcings.pulse(start, end, total)`: a rate given by its total over `(start, end]`, a rain shower, whose mean is
+  (`forcings.pulse("38 h", "39 h", total)`: a rate given by its total over `(start, end]`, a rain shower, whose mean is
   exact at any step), and the 4-point Gauss-Legendre rule on panels of at most an hour for other callables (a daily
   course read by the hour or by the day); `forcing_mean`, `forcing_total` and `forcing_over` compute them outside a
   component, `self.forcing_interval(over)` gives the interval read.
   Outside a Scene, `component.set_forcings(forcings, start=None)` gives a component the forcings a Scene would
-  (`{name: forcing}` or a DataFrame indexed by time, the Scene's `start=` calendar), read at the component's clock
+  (`{name: forcing}` or a DataFrame indexed by time, the Scene's `start=` date), read at the component's clock
   (0 at its first call); `self.has_forcing(name)` tells whether one is given as a time series, e.g. for an input
   read from the forcing of its name at each sub-step when one is given.
 - **Solvers.** `@graph_system(solver=...)` takes one of the keys `solve.solver.solver_names()` lists; a solver class
@@ -645,14 +645,19 @@ from openalea.metafspm import Scene, SceneRecorder, planting, stand
 
 table = planting(stand(xrange=0.3, yrange=0.3, sowing_density=250, row_spacing=0.15, seed=1), Wheat, scenario)
 scene = Scene(table, environment=[RhizoSoil, LightModel], environment_scenarios=[soil_scenario, light_scenario],
-              translator="scene_translator.py", time_step=3600, forcings=meteo,
-              recorder=SceneRecorder("outputs", segment_plants=["p0"], frame_period=24, checkpoint_period=240))
+              translator="scene_translator.py", time_step="1 h", start="2026-05-10 00:00", forcings=meteo,
+              recorder=SceneRecorder("outputs", segment_plants=["p0"], frame_period="1 d", checkpoint_period="10 d"))
 scene.simulate(n_iterations=2500)
 
 scenario = read_scenarios("scenarios.csv")["dry"]          # a scenario table's column, by model, with its forcings
 scene = Scene.from_scenario(scenario, stand(...), Wheat, environment=[RhizoSoil, LightModel],
-                            translator="scene_translator.py", time_step=3600, recorder="outputs")
+                            translator="scene_translator.py", time_step="1 h", recorder="outputs")
 ```
+
+**Times and durations carry their units** (`openalea.metafspm.coupling.durations`): a duration is `"12 h"`,
+`"1 d 12 h"`, `"30 min"` (units `s`, `min`, `h`, `d`) or a number of seconds, the scene's one internal unit; a scene
+time (an event's, an emergence time) is a duration since time 0 or a date (`"2026-05-12 06:00"`, with the Scene's
+`start=`); a date is ISO 8601, UTC. `duration()`, `instant()`, `start_date()` and `day_and_hour()` read them.
 
 - **Planting tables** come from one function, `planting(plants, model, scenario, plant_scenarios,
   emergence_times)`. *plants* are given (`[Planting(x, y, z, rotation), ...]`, positions in m, z minus the sowing
@@ -707,23 +712,24 @@ scene = Scene.from_scenario(scenario, stand(...), Wheat, environment=[RhizoSoil,
   its mean over the step (each entity's for a forcing varying in space) at the start of each step into the input or
   parameter of that
   name, on every component declaring it and not coupled to another (a measured soil temperature, a shoot's
-  supply; an input declared without a place is a plant's value, per plant). A forcing nothing takes raises. `as_forcing(value, time_unit=86400.)` (or `time_unit="d"`) turns an input given by day (a
-  number, a function of the day, a Series indexed by day, one value per day) into one. `events=[(time, action)]`
-  stay for one-off actions.
-- **Services.** An environment model's `interval` (s) is its cadence (`due()`, and `between()` at the other
+  supply; an input declared without a place is a plant's value, per plant). A forcing nothing takes raises.
+  `as_forcing(value, time_unit="d")` (a duration: `"h"`, `"15 min"`) turns an input given by day (a number, a
+  function of the day, a Series indexed by day, one value per day) into one. `events=[("36 h", action)]` (a scene
+  time) stay for one-off actions.
+- **Services.** An environment model's `interval` (a duration, `"4 h"`) is its cadence (`due()`, and `between()` at the other
   steps), also its scenario's `"interval"`; a component reading the plants' geometry declares it,
   `geometry: object = geometry_input(relight="topology" | "geometry")`, listed by `couplings()`, and its model runs
   fully when the elements (or their triangles) changed too; `spin_up(scene)`, `stop_when=condition`.
 - **A soil for tests and examples.** `openalea.metafspm.testing.soil.Soil` (not one of metafspm's models, a
   fixture): the steady water flow in a coarse fixed grid (5 cm cells), its conductivity by layer, the water table at
   the bottom, the surface evaporating; a plant model takes up water from it through scene links.
-- **The time step is the Scene's.** `Scene(time_step=)` sets it on every DataStructure of the scene
+- **The time step is the Scene's.** `Scene(time_step="1 h")` sets it on every DataStructure of the scene
   (`ds.simulation_time_step`, also `population_data_structure(time_step=)`'s), from which each component runs
   `simulation_time_step / time_step` sub-steps per call (`component.simulation_step()`); a component built without a
   time step runs one of the scene's steps. Nothing is process-wide: Scenes of other time steps run in one process,
   and the Choregrapher (the steps' schedule) holds no run state.
-- **Calendar.** `Scene(start=(day_of_year, hour))`: the calendar of the scene's time 0 (UTC); every component's
-  `self.calendar()` gives the (day of year, hour) of its forcing time (a light model's sun), and a forcing given by
+- **Calendar.** `Scene(start="2026-05-10 00:00")`: the date of the scene's time 0 (ISO 8601, UTC); every
+  component's `self.calendar()` gives the (day of year, hour) of its forcing time (a light model's sun), and a forcing given by
   the hour of the day (or by the day of the year) takes it with `as_forcing(value, time_unit="h", origin="calendar")`.
 - **Outputs: the SceneRecorder.** `recorder=SceneRecorder(folder, ...)` (or `recorder=folder`) writes:
   - `run.json`: status (running, finished, stopped, failed with its error), times, wall time per model and per
@@ -757,7 +763,7 @@ scene = Scene.from_scenario(scenario, stand(...), Wheat, environment=[RhizoSoil,
     the end of each accepted sub-step times its length, over the solved entities), the change of what is held and
     their residual, change − (inflow − outflow), the solver's tolerance for a conservative system
     (`component.conservation(reset=False)` reads it);
-  - `frames/` (encoding3d, every `frame_period` steps) and `checkpoints/step_<n>` (every `checkpoint_period`, the last
+  - `frames/` (encoding3d, every `frame_period`) and `checkpoints/step_<n>` (every `checkpoint_period`, the last
     `keep_checkpoints` kept; their unchanging parts saved once in `checkpoints/shared`, below).
 
   Each output is switched on its own (`summaries=False`, `frame_period=None`, ...); the initial state is recorded
@@ -800,11 +806,11 @@ scene = Scene.from_scenario(scenario, stand(...), Wheat, environment=[RhizoSoil,
   `export_scene(path, scene)` or `export_frame(path, {id: ds},
   components={id: [...]})` writes a frame. `import_frame(path)` rebuilds the DataStructures: the same MPG, the
   same variables, bit for bit, from which a simulation continues as from the original. `SceneRecorder(folder,
-  frame_period=24)` records a frame at the start and every 24 steps, in `folder/frames` with its index
+  frame_period="1 d")` records a frame at the start and every day, in `folder/frames` with its index
   `scene.fspm.json`, which ParaView's encoding3d reader plays as time steps. A frame is full by default: every scale,
   every row, every variable (what another platform reads, and a complete log), with the triangles light models get;
   the components' display shapes (e.g. GRANAP's sections), drawings only, are a recording choice:
-  `display_period=96` writes them every 96 steps (a multiple of `frame_period`) and in the last frame, `None` (the
+  `display_period="4 d"` writes them every 4 days (a multiple of `frame_period`) and in the last frame, `None` (the
   default) never, and `display_plants=("p0", "p3")` draws them for those plants only (a stand's frames bounded by
   the plants drawn; the others' reduced sections' interiors not recovered; `scene_to_frame(display_plants=)` too);
   their meshes share their vertices (indices); their data rows (the Compartments) are in every frame either way, with the DataStructure's values
@@ -864,7 +870,7 @@ scene = Scene.from_scenario(scenario, stand(...), Wheat, environment=[RhizoSoil,
   `io.encoding3d.filtered_view_columns(views, variables)` lists them). A filtered frame is a
   smaller, valid encoding3d file, for outputs only: `import_frame` refuses to rebuild it. It uses `openalea.encoding3d`, a
   dependency of metafspm (in development, installed from the encoding3d clone).
-- **Frames ready to look at.** `SceneRecorder(folder, frame_period=24, frame_views="default")` also writes
+- **Frames ready to look at.** `SceneRecorder(folder, frame_period="1 d", frame_views="default")` also writes
   `frames/views.json` at the first frame: encoding3d's views, the layers ParaView's encoding3d reader shows, one block each,
   instead of one block per DataStructure. The default layers (`io.encoding3d.default_views(scene)`) are, per population,
   its shoot mesh (where its SubOrgans are shoot elements) coloured by the first Organ variable its components declare

@@ -96,7 +96,7 @@ def _views_file(folder) -> str:
 
 def test_the_recorder_writes_the_default_views_at_the_first_frame(tmp_path):
     out = str(tmp_path / "out")
-    scene = _scene(SceneRecorder(out, summaries=False, frame_period=2, frame_views="default"))
+    scene = _scene(SceneRecorder(out, summaries=False, frame_period="2 h", frame_views="default"))
     scene.run()
     first = views.read_views(_views_file(out))
     assert list(_layers(first)) == ["RootPopulation roots", "Seedlings roots", "SceneSoil"]
@@ -117,32 +117,32 @@ def test_given_views_are_checked_against_the_first_frame(tmp_path):
         {"name": "leaves", "source": {"data_structure": "RootPopulation", "kind": "mesh", "mesh": "leaves"}}]}}}
     out = str(tmp_path / "out")
     with pytest.warns(UserWarning, match="no mesh 'leaves'"):
-        _scene(SceneRecorder(out, summaries=False, frame_period=2, frame_views=given)).run()
+        _scene(SceneRecorder(out, summaries=False, frame_period="2 h", frame_views=given)).run()
     assert views.read_views(_views_file(out)) == given                              # written as given
     path = str(tmp_path / "given.json")
     views.write_views(path, given)
     other = str(tmp_path / "other")
     with pytest.warns(UserWarning, match="leaves"):
-        _scene(SceneRecorder(other, summaries=False, frame_period=2, frame_views=path)).run()
+        _scene(SceneRecorder(other, summaries=False, frame_period="2 h", frame_views=path)).run()
     assert views.read_views(_views_file(other)) == given
 
 
 def test_a_variables_filter_keeps_what_the_views_show(tmp_path):
     kept = {"RootPopulation": {"SubOrgan": ["struct_mass", "radius"], "*": []}}
     out = str(tmp_path / "kept")
-    _scene(SceneRecorder(out, summaries=False, frame_period=2, frame_views="default",
+    _scene(SceneRecorder(out, summaries=False, frame_period="2 h", frame_views="default",
                          frame_options={"variables": kept})).run()
     roots = _layers(views.read_views(_views_file(out)))["RootPopulation roots"]       # the unfiltered frame's views
     assert roots["color_by"]["variable"] == "struct_mass" and roots["tube"]["radius"] == "radius"
     dropped = {"RootPopulation": {"SubOrgan": ["radius"], "*": []}}
     with pytest.raises(ValueError, match="RootPopulation/SubOrgan/struct_mass"):
-        _scene(SceneRecorder(str(tmp_path / "dropped"), summaries=False, frame_period=2, frame_views="default",
+        _scene(SceneRecorder(str(tmp_path / "dropped"), summaries=False, frame_period="2 h", frame_views="default",
                              frame_options={"variables": dropped})).run()
     given = {"encoding3d_views": 1, "configurations": {"mine": {"layers": [
         {"name": "soil", "source": {"data_structure": "SceneSoil", "kind": "grid"},
          "color_by": {"entity_set": "cell", "variable": "soil_nitrate"}}]}}}
     with pytest.raises(ValueError, match="SceneSoil/cell/soil_nitrate"):          # at construction
-        SceneRecorder(str(tmp_path / "given"), frame_period=2, frame_views=given,
+        SceneRecorder(str(tmp_path / "given"), frame_period="2 h", frame_views=given,
                       frame_options={"variables": {"SceneSoil": []}})
 
 
@@ -150,16 +150,16 @@ def test_frame_views_need_frames_and_valid_views(tmp_path):
     with pytest.raises(ValueError, match="frame_period"):
         SceneRecorder(str(tmp_path), frame_views="default")
     with pytest.raises(ValueError, match="encoding3d_views"):
-        SceneRecorder(str(tmp_path), frame_period=1, frame_views={"configurations": {}})
+        SceneRecorder(str(tmp_path), frame_period="1 h", frame_views={"configurations": {}})
     with pytest.raises(TypeError, match="views dict"):
-        SceneRecorder(str(tmp_path), frame_period=1, frame_views=3)
+        SceneRecorder(str(tmp_path), frame_period="1 h", frame_views=3)
 
 
 def test_a_restored_run_keeps_its_views(tmp_path):
     out = str(tmp_path / "out")
 
     def recorder():
-        return SceneRecorder(out, summaries=False, frame_period=2, frame_views="default")
+        return SceneRecorder(out, summaries=False, frame_period="2 h", frame_views="default")
 
     scene = _scene(recorder())
     scene.run()
@@ -204,9 +204,9 @@ def _meshes_per_frame(out) -> dict:
 def test_display_shapes_are_recorded_at_their_own_period(tmp_path):
     """The components' display shapes (e.g. sections) are a recording choice: none by default, every display_period
     steps (and in the last frame) with it; every frame holds the data rows and the triangles."""
-    for name, period in (("none", None), ("every_four", 4)):
+    for name, period in (("none", None), ("every_four", "4 h")):
         out = str(tmp_path / name)
-        scene = _scene(SceneRecorder(out, summaries=False, frame_period=2, display_period=period))
+        scene = _scene(SceneRecorder(out, summaries=False, frame_period="2 h", display_period=period))
         population = scene.populations[0]
         population.instance.components.append(_Drawing(population.data_structure))
         for _ in range(5):
@@ -225,7 +225,7 @@ def test_display_shapes_of_some_plants(tmp_path):
     from openalea import encoding3d
     out = str(tmp_path / "some")
     scene = Scene(planting=doubles_planting([RootPopulation, RootPopulation]), time_step=DT,
-                  recorder=SceneRecorder(out, summaries=False, frame_period=1, display_period=1,
+                  recorder=SceneRecorder(out, summaries=False, frame_period="1 h", display_period="1 h",
                                          display_plants=["p1"]))
     population = scene.populations[0]
     population.instance.components.append(_Drawing(population.data_structure))
@@ -241,13 +241,15 @@ def test_display_shapes_of_some_plants(tmp_path):
     with open(os.path.join(out, "scenario.json")) as file:
         assert json.load(file)["recorder"]["display_plants"] == ["p1"]
     with pytest.raises(ValueError, match="display_period"):
-        SceneRecorder(out, frame_period=1, display_plants=["p0"])
+        SceneRecorder(out, frame_period="1 h", display_plants=["p0"])
 
 
 def test_display_period_is_a_multiple_of_frame_period(tmp_path):
+    with pytest.raises(ValueError, match="multiple of frame_period"):           # checked at the first step
+        _scene(SceneRecorder(str(tmp_path / "three"), frame_period="2 h", display_period="3 h")).run()
+    with pytest.raises(ValueError, match="whole number of the scene's steps"):
+        _scene(SceneRecorder(str(tmp_path / "half"), frame_period="30 min")).run()
     with pytest.raises(ValueError, match="multiple of frame_period"):
-        SceneRecorder(str(tmp_path), frame_period=2, display_period=3)
-    with pytest.raises(ValueError, match="multiple of frame_period"):
-        SceneRecorder(str(tmp_path), display_period=2)
+        SceneRecorder(str(tmp_path), display_period="2 h")
     with pytest.raises(ValueError, match="display_period"):
-        SceneRecorder(str(tmp_path), frame_period=2, frame_options={"display_meshes": True})
+        SceneRecorder(str(tmp_path), frame_period="2 h", frame_options={"display_meshes": True})

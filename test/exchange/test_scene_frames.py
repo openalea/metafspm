@@ -15,7 +15,7 @@ from openalea.metafspm.scene.scene import Scene, SceneRecorder
 from scene_doubles import DT, RootPopulation, SceneSoil, Seedlings, doubles_planting, soil_translator
 
 
-def _arguments(folder, frame_period=2):
+def _arguments(folder, frame_period="2 h"):
     return dict(planting=doubles_planting([RootPopulation, Seedlings]), environment=[SceneSoil],
                 translator=soil_translator("SceneExudation", "SeedlingExudation"), time_step=DT,
                 recorder=SceneRecorder(folder, summaries=False, frame_period=frame_period))

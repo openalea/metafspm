@@ -31,6 +31,7 @@ import numpy as np
 
 from openalea.caribu.component import CaribuLightModel
 from openalea.caribu.simulation import clear_day_PAR
+from openalea.metafspm.coupling.durations import start_date
 from openalea.metafspm.coupling.forcings import as_forcing, pulse
 from openalea.metafspm.scene.population import Planting, planting
 from openalea.metafspm.scene.recorder import SceneRecorder, Summary
@@ -41,19 +42,20 @@ from models import HPA_PER_MPA, SCENE_TRANSLATOR, WATER_TABLES, WHEAT_SCENARIO, 
 
 OUTPUTS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "outputs")
 HOUR = 3600.
-DAY_OF_YEAR, LATITUDE = 130, 48.85             # a May day at Paris' latitude, Caribu's default
+START, LATITUDE = "2026-05-10 00:00", 48.85    # the sowing, a May day (UTC) at Paris' latitude, Caribu's default
+DAY_OF_YEAR = start_date(START).timetuple().tm_yday       # 130: the clear day's PAR
 SOWING_DEPTH = 0.03                            # m
 SOIL_SURFACE = 0.                              # m: the soil's surface (the soil grid's top, the light's and the gas
                                                # exchange's cut, the crown's depth below it): the Scene's, once
 ROW_SPACING, PLANT_SPACING = 0.15, 0.05        # m
-RAIN = (24. + 14., 24. + 15., 5e-3)            # the rain: from and to (h of scene time), its depth (m)
+RAIN = ("38 h", "39 h", 5e-3)                  # the rain: from and to (scene time), its depth (m)
 DISPLAY_PLANTS = ("p0",)                       # the plants whose sections the frames draw
 
 # The soil: a loam 50 cm deep (ten layers of 5 cm cells, below the roots of two weeks), refined once where the roots
 # take up water, its water at -1 m of head
 SOIL_SCENARIO = {"depth": 0.5, "voxel": 0.05, "max_level": 1, "initial_pressure_head": -1.}
 # The light: Caribu with the sun, every hour
-LIGHT_SCENARIO = {"sun": True, "latitude": LATITUDE, "interval": HOUR}
+LIGHT_SCENARIO = {"sun": True, "latitude": LATITUDE, "interval": "1 h"}
 # The variables the frames keep (SceneRecorder's frame_options variables=, io.encoding3d.filter_frame): every entity
 # set keeps its structure (ids, labels, complex and parent links, the segment ends), and these variables only. The
 # Compartments (a reduced section's interiors too, in the frames drawing the sections) hold most of a frame's rows:
@@ -96,7 +98,7 @@ def weather() -> dict:
             "air_temperature": as_forcing(daily_course(10., 20.), **by_hour),
             "relative_humidity": as_forcing(lambda hour: 0.8 - 0.25 * daily_course(0., 1.)(hour), **by_hour),
             "ambient_CO2": 410., "wind_speed": 2., "soil_temperature": 12.,
-            "rainfall": pulse(RAIN[0] * HOUR, RAIN[1] * HOUR, RAIN[2]), "potential_evaporation": 0.}
+            "rainfall": pulse(*RAIN), "potential_evaporation": 0.}
 
 
 def stand(plants=2):
@@ -106,16 +108,16 @@ def stand(plants=2):
             for k in range(plants)]
 
 
-def scene(plants=2, folder=None, frame_period=12, display_period=24, checkpoint_period=24, scenario=None,
-          forcings=None, start_hour=0., frame_variables=FRAME_VARIABLES, compute=None, display="instances",
+def scene(plants=2, folder=None, frame_period="12 h", display_period="1 d", checkpoint_period="1 d", scenario=None,
+          forcings=None, start=START, frame_variables=FRAME_VARIABLES, compute=None, display="instances",
           pack_at_finish=False, plant_scenarios=None):
     """The use case's Scene: *plants* wheat plants (WHEAT_SCENARIO, updated by *scenario*), the soil and the light,
     the forcings of weather() (updated by *forcings*), recorded in *folder* (None: in memory) with the water
     diagnostics (WATER_TABLES) and balances (conservation), the leaves' gas exchange and the roots' water (LEAVES,
-    ROOTS) and, every *frame_period* hours, a frame
-    with the default views (with the sections of DISPLAY_PLANTS drawn every *display_period* hours and in the last
+    ROOTS) and, every *frame_period*, a frame
+    with the default views (with the sections of DISPLAY_PLANTS drawn every *display_period* and in the last
     frame) holding the *frame_variables* (None: all), a
-    checkpoint every *checkpoint_period* hours; *compute*: the run configuration (None: Compute(), one BLAS thread,
+    checkpoint every *checkpoint_period* (durations: "12 h", "1 d"); *start*: the date of the sowing; *compute*: the run configuration (None: Compute(), one BLAS thread,
     the memory trimmed after each step); *display*: how the frames draw the reduced sections (the recorder's:
     "instances", each section an instance of its template, psi rebuilt by the reader for the sections selected;
     "full": every cell's psi in every frame); *pack_at_finish*: the frames packed into frames.fspm.zip at the end;
@@ -133,8 +135,8 @@ def scene(plants=2, folder=None, frame_period=12, display_period=24, checkpoint_
                              checkpoint_period=checkpoint_period if folder else None)
     return Scene(table, environment=[RichardsSoilModel, CaribuLightModel],
                  environment_scenarios=[SOIL_SCENARIO, LIGHT_SCENARIO], translator=SCENE_TRANSLATOR,
-                 time_step=HOUR, forcings={**weather(), **(forcings or {})}, soil_surface=SOIL_SURFACE,
-                 recorder=recorder, start=(DAY_OF_YEAR, start_hour), compute=compute)
+                 time_step="1 h", forcings={**weather(), **(forcings or {})}, soil_surface=SOIL_SURFACE,
+                 recorder=recorder, start=start, compute=compute)
 
 
 def main(folder=os.path.join(OUTPUTS, "from_sowing"), days=14, plants=2, **options):

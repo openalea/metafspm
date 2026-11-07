@@ -2,6 +2,20 @@
 
 ## Unreleased (release2026)
 
+### Times with their units, intercropping, per-component cadence (O-12 part a)
+
+- **Times and durations carry their units** (`openalea.metafspm.coupling.durations`: `duration("12 h")`,
+  `"1 d 12 h"`, `"30 min"`; a number is seconds, the one internal unit; `instant()`, `start_date()`,
+  `day_and_hour()`): `Scene(time_step="1 h")`; `Scene(start="2026-05-10 00:00")` (ISO 8601, UTC) replaces
+  `start=(day_of_year, hour)` (`Scene.start` is a datetime; `Component.calendar()` still gives (day of year, hour),
+  `calendar(default=)` and `set_forcings(start=)` take a date); `events=[("36 h", action)]`;
+  `planting(emergence_times=["2 d", ...])` (or dates); `pulse("38 h", "39 h", total)`; `as_forcing(time_unit="h")`;
+  `EnvironmentModel.interval = "4 h"`. Every `SceneRecorder` period is a duration (`frame_period="12 h"`,
+  `checkpoint_period="1 d"`, `segment_period="1 d"` by default) or `"step"` (every step: the summaries' and tables'
+  default), no longer a number of steps: an output is due when the scene time is a multiple of its period, each
+  period checked at the first step to be a whole number of steps. `forcings.seconds`, `forcings.TIME_UNITS` and
+  `forcings.time_unit_label` are removed.
+
 ### Scaling fixes (the final benchmark)
 
 - **Incremental topology updates** (devplan_release_optimisation.md O-14): each structural change of an MPG is

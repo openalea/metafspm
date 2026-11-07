@@ -212,7 +212,7 @@ def benchmark(plants: int, days: float, measure_outputs: bool = False, checkpoin
     started = time.perf_counter()
     plant_scenarios = plant_variability(plants, variability) if variability is not None else None
     folder = os.path.join(BENCHMARKS, "frames", label) if frames else None
-    options = dict(frame_period=24, display_period=24, checkpoint_period=None) if frames else {}
+    options = dict(frame_period="1 d", display_period="1 d", checkpoint_period=None) if frames else {}
     scene = run.scene(plants, folder=folder, scenario=scenario, compute=compute, plant_scenarios=plant_scenarios,
                       **options)
     built = time.perf_counter() - started

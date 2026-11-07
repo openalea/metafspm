@@ -19,7 +19,7 @@ def scene(folder=None, tolerance=1e-6, soil_scenario=None):
     stop = largest_change(tolerance)
     built = Scene(table, environment=[Soil], environment_scenarios=[soil_scenario or {}],
                   translator=SCENE_TRANSLATOR, time_step=3600, stop_when=stop,
-                  recorder=SceneRecorder(folder, segment_plants=["p0"], segment_period=1) if folder else None)
+                  recorder=SceneRecorder(folder, segment_plants=["p0"], segment_period="1 h") if folder else None)
     return built, stop
 
 

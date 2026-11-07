@@ -19,10 +19,12 @@ mean is exact for numbers, tables (piecewise linear) and pulses; for other calla
 panels of at most an hour (exact for polynomials of degree 7 on each: a daily course read hour by hour or day by day;
 a forcing with steps, a rain shower within a day, is a pulse, whose mean is exact at any step)::
 
-  as_forcing(value, time_unit=86400.)         a user's input in days (a number, a function of the day, a Series
+  as_forcing(value, time_unit="d")            a user's input in days (a number, a function of the day, a Series
                                               indexed by day, one value per day from day 0) as a forcing
-  pulse(start, end, total)                    a rate forcing from a total (a rain of 5 mm from 14 to 15 h): total /
+  pulse("14 h", "15 h", total)                a rate forcing from a total (a rain of 5 mm from 14 to 15 h): total /
                                               (end - start) on (start, end], 0 elsewhere
+
+Times and durations are given with their units (coupling.durations: "14 h", "1 d"; a number is seconds).
   forcing_value(forcing, time)                its value at *time* (s)
   forcing_mean(forcing, start, end)           its mean over [start, end] (s); forcing_total its integral
 """
@@ -172,14 +174,16 @@ def forcing_over(forcing, start: float, end: float, aggregate: str = "mean") -> 
 
 class pulse:
     """
-    A rate forcing given by its *total* over (*start*, *end*] (s of scene time): total / (end - start) there, 0
-    elsewhere (a rain of 5 mm from 14 to 15 h: pulse(14 * 3600, 15 * 3600, 5e-3), in m s-1). Its mean over any
-    interval is exact (the share of the pulse inside it), so a step longer than the pulse gets its whole total.
-    Picklable (checkpoints).
+    A rate forcing given by its *total* over (*start*, *end*] (scene times: durations since time 0, "14 h", or
+    seconds): total / (end - start) there, 0 elsewhere (a rain of 5 mm from 14 to 15 h: pulse("14 h", "15 h", 5e-3), in
+    m s-1). Its mean over any interval is exact (the share of the pulse inside it), so a step longer than the pulse
+    gets its whole total. Picklable (checkpoints).
     """
 
-    def __init__(self, start: float, end: float, total: float):
-        self.start, self.end, self.total = float(start), float(end), float(total)
+    def __init__(self, start, end, total: float):
+        from openalea.metafspm.coupling.durations import instant
+        self.start, self.end = instant(start, name="pulse start"), instant(end, name="pulse end")
+        self.total = float(total)
         if not self.end > self.start:
             raise ValueError(f"pulse({start}, {end}, {total}): its end after its start")
 
@@ -209,16 +213,17 @@ class _InUnit:
         self.origin = origin if origin == "calendar" else float(origin)
 
     def at_calendar(self, start) -> None:
-        """Resolve origin "calendar" from the Scene's start (day of year, hour): the day of year for an input in days,
-        the time of day otherwise."""
+        """Resolve origin "calendar" from the Scene's start (a date, durations.start_date): the day of year for an
+        input in days, the time of day otherwise."""
         if self.origin == "calendar":
-            day, hour = start
+            from openalea.metafspm.coupling.durations import day_and_hour, start_date
+            day, hour = day_and_hour(start_date(start), 0.)
             self.origin = (float(day) + float(hour) / 24.) if self.time_unit >= 86400. else \
                 float(hour) * 3600. / self.time_unit
 
     def _when(self, time: float) -> float:
         if self.origin == "calendar":
-            raise ValueError("a forcing of origin 'calendar' needs the Scene's start=(day_of_year, hour)")
+            raise ValueError("a forcing of origin 'calendar' needs the Scene's start= (a date, '2026-05-10 00:00')")
         return self.origin + float(time) / self.time_unit
 
     def mean(self, start: float, end: float) -> float:
@@ -250,41 +255,18 @@ class _InUnit:
         return float(value)
 
 
-TIME_UNITS = {"s": 1., "min": 60., "h": 3600., "d": 86400.}
-
-
-def seconds(time_unit) -> float:
-    """A time unit in seconds: a number of seconds, or its label ("s", "min", "h", "d")."""
-    if isinstance(time_unit, str):
-        if time_unit not in TIME_UNITS:
-            raise ValueError(f"time unit '{time_unit}': one of {sorted(TIME_UNITS)}, or a number of seconds")
-        return TIME_UNITS[time_unit]
-    return float(time_unit)
-
-
-def time_unit_label(time_unit) -> str:
-    """A time unit's label ("s", "min", "h", "d"), from its label or its number of seconds."""
-    if isinstance(time_unit, str):
-        seconds(time_unit)
-        return time_unit
-    for label, value in TIME_UNITS.items():
-        if float(time_unit) == value:
-            return label
-    raise ValueError(f"time unit {time_unit} s has no label: one of {TIME_UNITS}")
-
-
-def as_forcing(value, time_unit=1., origin: float = 0.):
+def as_forcing(value, time_unit="s", origin: float = 0.):
     """
-    A forcing of the scene time from a user's input given in *time_unit* (s, or "s", "min", "h", "d"; 86400 or "d"
-    for days): a number, a function
-    of that unit, a pandas Series indexed by it, or a sequence (one value per unit from 0), linearly interpolated.
-    *origin*: the input's time at the scene's time 0 (e.g. the hour of the day the scene starts), or "calendar": the
-    Scene's start (Scene(start=(day_of_year, hour))), its time of day for an input by the hour (a daily course),
-    its day of year for an input by the day.
+    A forcing of the scene time from a user's input given in *time_unit* (a duration: "h", "d", "15 min", or seconds):
+    a number, a function of that unit, a pandas Series indexed by it, or a sequence (one value per unit from 0),
+    linearly interpolated. *origin*: the input's time at the scene's time 0 (e.g. the hour of the day the scene
+    starts), or "calendar": the Scene's start (Scene(start="2026-05-10 06:00")), its time of day for an input by the
+    hour (a daily course), its day of year for an input by the day.
     """
+    from openalea.metafspm.coupling.durations import positive_duration
     if np.ndim(value) == 0 and not callable(value) and not _series(value):
         return float(value)
-    return _InUnit(value, seconds(time_unit), origin)
+    return _InUnit(value, positive_duration(time_unit, "as_forcing(time_unit=)"), origin)
 
 
 def forcing_table(forcings) -> dict:

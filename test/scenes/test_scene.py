@@ -94,7 +94,7 @@ def test_plants_are_frozen_until_their_emergence():
 
 
 def test_the_recorder_writes_plant_summaries_and_selected_plants(tmp_path):
-    scene = _scene(recorder=SceneRecorder(str(tmp_path), segment_plants=["p0"], segment_period=2))
+    scene = _scene(recorder=SceneRecorder(str(tmp_path), segment_plants=["p0"], segment_period="2 h"))
     scene.simulate(3)
     summaries = pd.read_csv(tmp_path / "Plant" / "RootPopulation" / "summaries.csv")
     assert len(summaries) == 4 * 2 and set(summaries["plant"]) == {"p0", "p2"}          # the initial state too

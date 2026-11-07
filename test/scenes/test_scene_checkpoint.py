@@ -49,7 +49,7 @@ def _scene_arguments(folder=None, **recorder):
     table = doubles_planting([RootPopulation, Seedlings, RootPopulation, Seedlings], emergence_time=[0., 0., 2 * DT, 0.])
     return dict(planting=table, environment=[ExternalSolverSoil],
                 translator=soil_translator("SceneExudation", "SeedlingExudation"), time_step=DT,
-                recorder=SceneRecorder(folder, segment_plants=["p0"], segment_period=1, **recorder)
+                recorder=SceneRecorder(folder, segment_plants=["p0"], segment_period="1 h", **recorder)
                 if folder is not None else None)
 
 
@@ -156,7 +156,7 @@ def test_a_restore_cuts_the_outputs_of_the_interrupted_run_back(tmp_path):
 
 def test_checkpoints_every_period_the_last_ones_kept(tmp_path):
     out = tmp_path / "out"
-    scene = _scene(str(out), checkpoint_period=2, keep_checkpoints=2)
+    scene = _scene(str(out), checkpoint_period="2 h", keep_checkpoints=2)
     scene.simulate(6)
     assert sorted(os.listdir(out / "checkpoints")) == ["step_000004", "step_000006"]
     with open(out / "run.json") as file:
@@ -291,7 +291,7 @@ def test_shared_checkpoint_parts_are_written_once_and_pruned_with_their_checkpoi
     part was removed cannot be restored (a clear error)."""
     from openalea.metafspm.scene.shared import references
     out = tmp_path / "out"
-    arguments = dict(_scene_arguments(str(out), checkpoint_period=1, keep_checkpoints=2),
+    arguments = dict(_scene_arguments(str(out), checkpoint_period="1 h", keep_checkpoints=2),
                      environment=[SharedSolverSoil])
     scene = Scene(**arguments)
     scene.simulate(3)

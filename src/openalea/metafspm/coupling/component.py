@@ -443,31 +443,35 @@ class DataStructureComponent(Component):
         return self.data_structure.soil_surface
 
     def calendar(self, time: float = None, default=None) -> tuple:
-        """(day of year, hour) at *time* (default: forcing_time(), the scene time the step's forcings are read at),
-        from the Scene's start (Scene(start=(day_of_year, hour)): the calendar of its time 0), else from *default*
-        (the calendar of time 0 without a Scene start; None: raise)."""
-        start = self.__dict__.get("_scene_calendar") or default
+        """(day of year, hour of the day) at *time* (default: forcing_time(), the scene time the step's forcings are
+        read at), from the Scene's start (Scene(start="2026-05-10 00:00"): the date of its time 0), else from
+        *default* (the date of time 0 without a Scene start, in the same form; None: raise)."""
+        from openalea.metafspm.coupling.durations import day_and_hour, start_date
+        start = self.__dict__.get("_scene_calendar")
         if start is None:
-            raise ValueError(f"{type(self).__name__}.calendar(): the Scene has no start=(day_of_year, hour)")
+            if default is None:
+                raise ValueError(f"{type(self).__name__}.calendar(): the Scene has no start= (a date, "
+                                 "'2026-05-10 00:00')")
+            start = start_date(default, f"{type(self).__name__}.calendar(default=)")
         time = self.forcing_time() if time is None else float(time)
-        day, hour = float(start[0]), float(start[1])
-        return day + (hour * 3600. + time) // 86400., (hour + time / 3600.) % 24.
+        return day_and_hour(start, time)
 
     def set_forcings(self, forcings, start=None) -> None:
         """
         The forcings of a component run outside a Scene, as a Scene gives them (Scene(forcings=..., start=...)):
         {name: forcing} or a DataFrame indexed by time (s), one column each (coupling.forcings), read with
-        forcing(name) at the component's clock (its time from 0, advanced by each call); *start*, (day of year,
-        hour), the calendar of time 0 (calendar(), the forcings of origin "calendar"). Replaces the forcings given
-        before; a Scene gives its own.
+        forcing(name) at the component's clock (its time from 0, advanced by each call); *start*, the date of time 0
+        ("2026-05-10 00:00", coupling.durations.start_date: calendar(), the forcings of origin "calendar"). Replaces
+        the forcings given before; a Scene gives its own.
         """
+        from openalea.metafspm.coupling.durations import start_date
         from openalea.metafspm.coupling.forcings import forcing_table
         table = forcing_table(forcings)
-        start = None if start is None else (float(start[0]), float(start[1]))
+        start = None if start is None else start_date(start)
         for forcing in table.values():
             if getattr(forcing, "origin", None) == "calendar":
                 if start is None:
-                    raise ValueError("a forcing of origin 'calendar' needs start=(day_of_year, hour)")
+                    raise ValueError("a forcing of origin 'calendar' needs start= (a date, '2026-05-10 00:00')")
                 forcing.at_calendar(start)
         self.__dict__["_scene_forcings"] = table
         self.__dict__["_scene_calendar"] = start

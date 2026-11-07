@@ -26,7 +26,7 @@ def scene(soil=AdaptiveSoil, soil_scenario=None, folder=None, tolerance=1e-6):
     stop = largest_change(tolerance)
     built = Scene(table, environment=[soil], environment_scenarios=[soil_scenario or {}],
                   translator=SCENE_TRANSLATOR, time_step=3600, stop_when=stop,
-                  recorder=SceneRecorder(folder, segment_plants=["p0"], segment_period=1) if folder else None)
+                  recorder=SceneRecorder(folder, segment_plants=["p0"], segment_period="1 h") if folder else None)
     return built, stop
 
 
