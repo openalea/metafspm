@@ -1465,9 +1465,17 @@ def _describe(plant_g, vertex: int) -> tuple:
     while v is not None and plant_g.scale(v) > plant_g.scales.Plant:
         chain.append((plant_g.scale(v), plant_g.label(v)))
         v = plant_g.complex(v)
+    from openalea.metafspm.data_structure.arraydict import ArrayDict
     properties = {}
+    at = np.array([vertex], dtype=np.int64)
     for name, prop in plant_g.properties().items():
-        value = prop.get(vertex) if hasattr(prop, "get") and name not in _STRUCTURAL else None
+        if name in _STRUCTURAL or not hasattr(prop, "get"):
+            continue
+        if isinstance(prop, ArrayDict):         # by binary search: a read at one vertex builds no key dict (vid2idx,
+            positions, found = prop._positions(at)    # ~100 B per entry of every property, kept while its keys last)
+            value = float(prop.arr[positions[0]]) if found[0] else None
+        else:
+            value = prop.get(vertex)
         if value is not None:
             properties[name] = value
     return tuple(reversed(chain)), (plant_g.scale(vertex), plant_g.label(vertex)), properties

@@ -2,6 +2,18 @@
 
 ## Unreleased (release2026)
 
+### Memory per node and the scene's serial parts measured (devplan_scene_parallel P0)
+
+- **A kind's group description builds no key dict of the plants' properties:** `Reduction`'s `_describe` reads each
+  array-backed MPG property (`ArrayDict`) at its group by binary search. Its one-key reads for every new kind had
+  built each property's key dict (`vid2idx`, about 100 B per entry), kept while the keys lasted: 8 plants at day 8,
+  the MPG's properties 277 → 74 MB (111 → 30 B per entry), the process 2.62 → 2.41 GB, results bit-identical.
+- **Use case 1's benchmark measures memory by owner and thread scaling:** `--memory` (`memory_probe.report`: the
+  DataStructure's columns, the MPG's properties and topology, the Instances, the registries, the kinds' parts, the
+  group tables, the libraries, the solver's caches, the pool's processes), `--tracemalloc FRAMES` (the allocations
+  alive at the end by line and by stack), `--thread-scaling` (the last step's large solves and the bandwidth at 1–12
+  threads); `memory_probe.profile_split` splits a cProfile's call sites into Python overhead and numeric work.
+
 ### Frames, small items and use case 1's run (O-12 part c)
 
 - **Frames keep what their views show:** a `frame_options` variables filter names the data only; the recorder adds

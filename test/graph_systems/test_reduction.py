@@ -513,3 +513,24 @@ def test_entity_sets_select_by_name_on_templates_groups_and_data_structures():
     assert Reduction().reduces(g, segment)
     with pytest.raises(KeyError, match="labels"):
         Reduction(where={"label": "Rootsegment"}).reduces(g, segment)
+
+
+def test_a_group_description_builds_no_key_dict_of_the_plants_properties():
+    """_describe reads each array-backed property at its group by binary search: describing many groups (the new
+    kinds of a step) leaves the plants' properties without their key dicts (vid2idx, ~100 B per entry each)."""
+    from openalea.metafspm.data_structure.arraydict import SEARCHES_BEFORE_INDEX, ArrayDict
+    from openalea.metafspm.data_structure.mpg import MPG
+    from openalea.metafspm.solve.reduction import _describe
+    g = MPG()
+    plant = g.add_component(g.root, **PropsConfig(scale=g.scales.Plant, edge_type='/'))
+    segment = g.labels.SubOrgan.RootSegment
+    vids = [g.add_component(plant, **PropsConfig(scale=g.scales.SubOrgan, edge_type='/', label=segment))
+            for _ in range(3 * SEARCHES_BEFORE_INDEX)]
+    g._properties["length"] = ArrayDict.from_items(vids, np.arange(len(vids)) * 0.5)
+    g._properties["kind_class"] = {v: "lateral" for v in vids[::2]}
+    for k, v in enumerate(vids):
+        chain, (scale, label), properties = _describe(g, v)
+        assert label == segment
+        assert properties["length"] == k * 0.5 and type(properties["length"]) is float
+        assert properties.get("kind_class") == ("lateral" if k % 2 == 0 else None)
+    assert g._properties["length"]._index is None
