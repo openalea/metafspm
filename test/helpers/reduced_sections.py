@@ -1,8 +1,7 @@
 """
-Toy reduced sections whose membranes' conductance grows with the section's length (test_reduction_classes,
-test_kind_pool): a chain of N_SEGMENTS root segments per plant, each an instance of the layered toy section
-(layered_anatomy), reduced when the plant model declares a reduction; the plant models at module level (importable by
-name: a spawned pool process imports them).
+Toy reduced sections whose membranes' conductance grows with the section's length (test_reduction_classes): a chain
+of N_SEGMENTS root segments per plant, each an instance of the layered toy section (layered_anatomy), reduced when
+the plant model declares a reduction; the plant models at module level (importable by name).
 """
 from dataclasses import dataclass
 
@@ -14,7 +13,7 @@ from openalea.metafspm.coupling.composite_wrapper import CompositeModel
 from openalea.metafspm.data_structure.configs import PropsConfig, ScalesConfig as scales
 from openalea.metafspm.scene.population import Planting, planting, population_data_structure
 from openalea.metafspm.solve.decorator import boundary_set, graph_jacobian, graph_system, node_balance
-from openalea.metafspm.solve.reduction import Reduction, Relative
+from openalea.metafspm.solve.reduction import Reduction
 
 from growth import DOC
 from layered_anatomy import WALL, section_template, wiring
@@ -123,8 +122,6 @@ def _length_plant(classes):
 
 ExactLengthPlant = _length_plant(None)
 ExactLengthPlant.__name__ = ExactLengthPlant.__qualname__ = "ExactLengthPlant"
-ClassLengthPlant = _length_plant(Relative(0.1))
-ClassLengthPlant.__name__ = ClassLengthPlant.__qualname__ = "ClassLengthPlant"
 
 
 def length_population(model, lengths):

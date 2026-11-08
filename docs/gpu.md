@@ -51,22 +51,23 @@ included), and `run.json` records them:
 ```
 
 Nothing imports CuPy unless the device is `"cuda"`. A scene asking for `"cuda"` raises when it is built if CuPy is
-missing (an `ImportError` with the install line) or if no CUDA device answers (a `RuntimeError`). A pool's processes
-are then spawned rather than forked (CUDA does not survive a fork), and each one holds its own device context.
+missing (an `ImportError` with the install line) or if no CUDA device answers (a `RuntimeError`). `run_variants`'
+processes are then spawned rather than forked (CUDA does not survive a fork), and each one holds its own device
+context.
 
 ## When it pays
 
 - **A single run on a laptop: the CPU.** Use case 1's work is many small sparse solves (a kind takes about 0.16 s on
   one core). Copies and kernel launches cost about as much as they save, and the reduction's kinds saturate after a
   few days (see the framework guide, "Performance notes").
-- **Repeated runs (sensitivity analyses, calibrations): a CPU pool first.** `scenarios.run_variants` runs one scene
-  per variant in parallel processes. Its gain is the number of cores, with no new dependency:
+- **Repeated runs (sensitivity analyses, calibrations): several CPU processes first.** `scenarios.run_variants` runs
+  one scene per variant in parallel processes. Its gain is the number of cores, with no new dependency:
 
   ```python
   from openalea.metafspm import Compute, run_variants, variants
 
   scenarios = variants(base, {"EL": None, "IPD": None}, design="sampling", samples=40, seed=1, declared=[RootGrowth])
-  results = run_variants(run_one, scenarios, workers="auto", compute=Compute(workers=1))
+  results = run_variants(run_one, scenarios, processes="auto", compute=Compute())
   ```
 
   `run_one(name, scenario, compute)` is a module-level function. It builds its scene with `compute=compute`, runs
@@ -80,15 +81,14 @@ are then spawned rather than forked (CUDA does not survive a fork), and each one
 
 | machine | setup | why |
 |---|---|---|
-| laptop (4–16 cores) | `run_variants(run_one, scenarios, workers="auto", compute=Compute(workers=1))` | one variant per core, processors − 1 at most; each scene sequential: no pool in a pool |
-| workstation, many cores | `workers=k`, `compute=Compute(workers=w)` with k × w ≤ processors | a few large scenes, each with its own kind pool |
-| GPU workstation | `run_variants(..., workers=1 or 2, compute=Compute(device="cuda", workers=1))` | the device shared by few processes (each has its own context and memory); the other cores free for Caribu's threads |
+| laptop (4–16 cores) | `run_variants(run_one, scenarios, processes="auto", compute=Compute())` | one variant per core, processors − 1 at most; each scene's threads `processors // processes` |
+| workstation, many cores | `processes=k`, `compute=Compute(threads=w)` with k × w ≤ processors | a few large scenes, each with w threads |
+| GPU workstation | `run_variants(..., processes=1 or 2, compute=Compute(device="cuda"))` | the device shared by few processes (each has its own context and memory); the other cores free for Caribu's threads |
 
 `variant_processes` checks the bound before anything starts:
-- several variant processes turn a scene's `workers="auto"` into 1 and its `threads="auto"` into
-  `processors // workers` (the processors shared);
-- an integer is kept if `workers × Compute.workers ≤ processors`, and so are the threads
-  (`workers × Compute.threads ≤ processors`: numba's kernels and the solves' blocks);
+- several variant processes turn a scene's `threads="auto"` into `processors // processes` (the processors shared);
+- an integer is kept if `processes × Compute.threads ≤ processors` (numba's kernels, the solves' blocks and the
+  kinds);
 - anything else raises "oversubscribe".
 
 ## Installing CuPy

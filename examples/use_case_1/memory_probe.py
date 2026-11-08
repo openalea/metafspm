@@ -11,9 +11,9 @@ its metadata; the MPG's properties (dicts per vertex: entries counted, their byt
 topology dicts (openalea.mtg's parent, children, complex, components, scale) and arrays (topology_arrays, the
 O-14 derived arrays and log), its Instances tables, its object registries (GRANAP's templates); the reduction's
 kinds (D and e, their Kron reductions' kept S and interior matrices, rows, inputs, recovery), templates, group tables and library populations; each
-component's own attributes (MECHA's, Caribu's buffers); the Compute's linear solver caches (patterns, factors) and
-pool; the environment's DataStructures; the recorder; the rest of the scene. The process's resident memory (anon,
-file), after glibc's malloc_trim, and the pool's processes (their private and proportional memory) complete it:
+component's own attributes (MECHA's, Caribu's buffers); the Compute's linear solver caches (patterns, factors); the
+environment's DataStructures; the recorder; the rest of the scene. The process's resident memory (anon, file), after
+glibc's malloc_trim, completes it:
 what no owner holds is the allocator's retention, the libraries' and numba's code and C-level buffers.
 
 Sizes are bytes as Python reports them (sys.getsizeof: containers without their contents, numpy arrays with the
@@ -370,21 +370,8 @@ def reduction_report(sizer: Sizer, reduction) -> dict:
     return out
 
 
-def pool_report(compute) -> dict:
-    pool = getattr(compute, "_pool", None)
-    workers = []
-    for worker in (pool.workers if pool is not None else []):
-        process = getattr(worker, "process", None)
-        pid = getattr(process, "pid", None)
-        if pid:
-            workers.append(process_memory(pid))
-    return {"workers": workers, "private_gb": sum(w.get("private_dirty", 0) + w.get("private_clean", 0)
-                                                  for w in workers),
-            "pss_gb": sum(w.get("pss", 0) for w in workers)}
-
-
 def report(scene) -> dict:
-    """The scene's memory by owner (bytes), the process's (GB) before and after malloc_trim, the pool's."""
+    """The scene's memory by owner (bytes), the process's (GB) before and after malloc_trim."""
     started = time.perf_counter()
     gc.collect()
     before_trim = process_memory()
@@ -424,7 +411,6 @@ def report(scene) -> dict:
     out["recorder"] = {"bytes": sizer.size(scene.recorder)}
     sizer.stopped.discard(id(scene))
     out["scene_rest"] = {"bytes": sizer.size(scene)}
-    out["pool"] = pool_report(compute)
     out["seconds"] = time.perf_counter() - started
     out["counted_gb"] = counted(out) / 2 ** 30
     return out
@@ -483,10 +469,6 @@ def summary(found: dict) -> str:
         line(f"environment {name}", item["data_structure"] + item["model"])
     line("recorder", found["recorder"]["bytes"])
     line("scene rest", found["scene_rest"]["bytes"])
-    pool = found["pool"]
-    if pool["workers"]:
-        lines.append(f"  pool: {len(pool['workers'])} processes, private {pool['private_gb']:.2f} GB, "
-                     f"pss {pool['pss_gb']:.2f} GB")
     return "\n".join(lines)
 
 

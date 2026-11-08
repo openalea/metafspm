@@ -143,9 +143,9 @@ class Scene:
                                a FixedPoint (coupling.iteration) iterating chosen schedule steps of several models to
                                a fixed point within the step; Scene.coupling_iterations counts its iterations.
         compute:               the run configuration (openalea.metafspm.compute.Compute; default Compute()): the
-                               threads while the scene builds and runs, the process pool, the device, the memory
-                               trimmed after each step. A component's setting named workers or device that its
-                               model's scenario does not give takes the Compute's (Caribu's).
+                               threads while the scene builds and runs, the device, the memory trimmed after each
+                               step. A component's setting named threads or device that its model's scenario does
+                               not give takes the Compute's (Caribu's).
 
     A model runs its schedule (coupling.schedule: its parts' steps, each at its cadence, Step(cadence=), a model's
     scenario "cadence" {step name: duration} too: coupling.cadence, the calls covering the interval); schedule()
@@ -260,7 +260,7 @@ class Scene:
         self._finished = False
 
     def _apply_compute(self, environment_scenarios) -> None:
-        """The Compute's workers and device given to the components' settings of those names that their model's
+        """The Compute's threads and device given to the components' settings of those names that their model's
         scenario does not set (Caribu's projection threads and near field device)."""
         from dataclasses import fields
         given = [set().union(*(_flat_scenario(row) for row in population.table["scenario"]))
@@ -271,7 +271,7 @@ class Scene:
         for components, named in zip(owners, given):
             for component in components:
                 settings = {f.name for f in fields(component) if f.metadata.get("variable_type") == "setting"}
-                for name in ("workers", "device"):
+                for name in ("threads", "device"):
                     if name in settings and name not in named:
                         setattr(component, name, getattr(self.compute, name))
 
@@ -872,23 +872,17 @@ class Scene:
         """
         The end of the run: the recorder writes the last state and the run's status. simulate() calls it; a loop of
         run() ends with it. A scene finished before any step (simulate(0): a static model, a section built once)
-        records its state then. The Compute's pool is closed.
+        records its state then.
         """
         self._finished = True
-        try:
-            if self.recorder is None:
-                return
-            if not self._recording:
-                self._recording = True
-                self.recorder.begin(self)
-            self.recorder.finish(self, status, error)
-        finally:
-            self.compute.close()                    # the pool's processes stopped (a next run starts them again)
+        if self.recorder is None:
+            return
+        if not self._recording:
+            self._recording = True
+            self.recorder.begin(self)
+        self.recorder.finish(self, status, error)
 
     def __del__(self):
-        compute = self.__dict__.get("compute")
-        if isinstance(compute, Compute):
-            compute.close()
         if getattr(self, "_recording", False) and not getattr(self, "_finished", True):
             warnings.warn("a recording Scene was dropped before scene.finish(): its last state and its run status "
                           "were not written (end a loop of run() with finish())", ResourceWarning, stacklevel=2)

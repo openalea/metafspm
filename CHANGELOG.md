@@ -2,6 +2,25 @@
 
 ## Unreleased (release2026)
 
+### Breaking: the process pool removed (devplan_generic_kernels QG-3)
+
+- **`Compute.workers` is gone, with no alias** (`Compute(workers=...)` raises a TypeError): a reduction's kinds are
+  worked out in the main process, each in a thread of `Compute.threads` (GK-5). Removed with it: `WorkerPool`,
+  `WorkerError`, `worker_state`, `in_worker`, `FORK_HOOKS`, `START_METHOD`, `POOL_WORK`, `SECONDS_PER_CELL`,
+  `Compute.pool_size`, `pool`, `pool_info` and `close` (compute.py); the pool's section of solve/reduction.py
+  (`_evaluate_in_pool`, `_worker_evaluate`, the processes' copies and syncs, the fork records and the re-fork when
+  new templates appear); `solve.linear.block_threads`' one thread in a pool's process; `Scene.finish`'s closing of
+  the pool; run.json's `"compute": {"pool"}`; `benchmark.py --workers` and its per-step pool record;
+  `memory_probe`'s pool report; `bench_reduction.py --workers`.
+- A component's setting named **`threads`** (no longer `workers`) that its scenario does not give takes the
+  Compute's (Caribu's projection threads, renamed in Caribu).
+- **`run_variants(run, scenarios, processes="auto", compute=Compute())`** and `variant_processes(processes, ...)`:
+  the variants' processes are named `processes` (was `workers`); a scene's `threads="auto"` is shared among them
+  (`processors // processes`), an integer kept when `processes × threads` fits the processors.
+- Measured (use case 1, 8 plants, the user's choice after the GK-5 gate): to day 8, 298.0 s at a scope peak of
+  3.21 GB with the kinds' threads, against 286.5 s and 4.06 GB for a 4-process pool (4 % slower, 0.85 GB less); at
+  day 13, 4.15 against 4.13–4.14 s per step, 3.65 against 4.73–5.09 GB. Every result the same, bit for bit.
+
 ### The kinds in threads (devplan_generic_kernels GK-5)
 
 - **Each kind of a batch is worked out in its own thread** after the library's run (`_kinds_of_batch`:
@@ -10,10 +29,9 @@
   The kinds are added in the requests' order and are the same bit for bit at any thread count; numba's kernels
   within a kind run on one thread. run.json times them under `kinds.tails` (with their threads).
 - `Compute.count` is thread-safe (the kinds' threads count their solves).
-- **The process pool stays** (`Compute.workers`): the QG-3 gate was not met. At 8 plants to day 8 the threads
-  ("auto", no pool) take 298.0 s, against the 4-worker pool's 286.5 s, at a peak 0.85 GB lower; level at day 13
-  (4.15 against 4.13–4.14 s per step). A pool's processes keep one thread each; the threads work the kinds in the
-  main process.
+- The QG-3 gate (the threads at least as fast as the pool) was not met: at 8 plants to day 8 the threads take
+  298.0 s against the 4-worker pool's 286.5 s, at a peak 0.85 GB lower; level at day 13. The user chose the
+  threads and the memory: the pool is removed (above).
 
 ### The kinds' batches (devplan_generic_kernels GK-4)
 

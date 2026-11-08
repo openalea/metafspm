@@ -9,7 +9,7 @@ end).
     python benchmark.py [--plants 2] [--days 3] [--label text] [--outputs] [--checkpoint-at 168 ...]
                         [--resume outputs/benchmarks/checkpoints/<label>/step_000168]
                         [--scenario leaf_ports=bundles vapour_path=air_spaces ...]
-                        [--threads auto|n] [--workers auto|n] [--linear-solver superlu|superlu_reuse|cholmod|cupy]
+                        [--threads auto|n] [--linear-solver superlu|superlu_reuse|cholmod|cupy]
                         [--device cpu|cuda] [--variability SEED] [--frames] [--profile-hours FIRST LAST]
                         [--cadence WheatPlant.anatomy="1 d" CaribuLightModel.light="3 h" ...]
                         [--memory] [--tracemalloc FRAMES] [--thread-scaling]
@@ -21,15 +21,14 @@ recorder's default: their frames, the parts they share, the folder packed with d
 case's frame variables, and two checkpoints sharing their unchanging parts: their size and time. --checkpoint-at writes the scene's checkpoint after those hours (outputs/benchmarks/checkpoints/<label>/, the
 shared parts once); --resume loads one into the freshly built scene and runs on from its hour to --days (the load's
 time and memory, then each step's: a resumed run evaluates no kind again); --scenario updates the plants' scenario
-(models.WHEAT_SCENARIO; a value read as JSON when it is, e.g. length_classes=0.2, else a string); --threads, --workers
-and --linear-solver the Compute's (the threads' budget of the kernels and solves, "auto" by default, the pool of the
-kinds, the sparse solver; the threads chosen recorded, "threads", and each kernel's, solver's and step's
+(models.WHEAT_SCENARIO; a value read as JSON when it is, e.g. length_classes=0.2, else a string); --threads and
+--linear-solver the Compute's (the threads' budget of the kernels, solves and kinds, "auto" by default, the sparse
+solver; the threads chosen recorded, "threads", and each kernel's, solver's and step's
 (functor.<Class>.<step>) time, per step and in all, "kernels"),
 --device its device (cuda: the kinds' Kron
 reductions and the linear solves on the GPU, CuPy needed, docs/gpu.md; the device's transfers recorded at the end,
-"device"), the pool recorded per step and the peak
-memory of the process's control group (the pool's processes included: run it in its own systemd-run --scope), now
-and at its peak. --variability gives each plant its own seeded root draws (plant_variability: ArchiSimple's
+"device"), and the memory of the process's control group (run it in its own systemd-run --scope), now and at its
+peak. --variability gives each plant its own seeded root draws (plant_variability: ArchiSimple's
 random_choice; identical plants share every kind, which flatters a scaling); --frames records the run (a frame every
 24 h, the sections of DISPLAY_PLANTS drawn as instances, no checkpoint) under outputs/benchmarks/frames/<label>,
 its size at the end; --profile-hours cProfiles the main process over those steps (outputs/benchmarks/profiles/);
@@ -38,8 +37,8 @@ lighting, its PARa every step) a cadence (coupling.cadence.Cadence: the duration
 one by default: CaribuLightModel.light's at its start, the others' at the interval's end; set_cadences, the scenario's
 "cadence"), to measure what running them less often saves and changes.
 --memory measures at the end what the scene holds by owner (memory_probe.report: the DataStructure's columns, the
-MPG's properties and topology, the Instances, the registries, the kinds, the components, the solver's caches, the
-pool's processes; before and after malloc_trim), "memory"; --tracemalloc traces the allocations from before the
+MPG's properties and topology, the Instances, the registries, the kinds, the components, the solver's caches, before
+and after malloc_trim), "memory"; --tracemalloc traces the allocations from before the
 scene's build (FRAMES frames each: slower, more memory) and records those alive at the end by file and line,
 "allocations"; --thread-scaling captures the last step's large linear solves and parallel kernels' inputs and times
 them at 1, 2, 4, 8 and 12 threads (memory_probe.thread_scaling), "thread_scaling". The process's memory after its
@@ -124,8 +123,8 @@ def resident_memory() -> float:
 
 
 def scope_peak_memory() -> float:
-    """The peak memory of the process's control group (GB: its memory.peak, cgroup v2), the pool's processes
-    included (a systemd-run --scope's), NaN where there is none."""
+    """The peak memory of the process's control group (GB: its memory.peak, cgroup v2: a systemd-run --scope's), NaN
+    where there is none."""
     try:
         with open("/proc/self/cgroup") as cgroup:
             relative = cgroup.read().strip().split("\n")[0].split("::", 1)[1]
@@ -136,8 +135,8 @@ def scope_peak_memory() -> float:
 
 
 def scope_memory() -> float:
-    """The memory of the process's control group now (GB: its memory.current, cgroup v2), the pool's processes
-    included, NaN where there is none."""
+    """The memory of the process's control group now (GB: its memory.current, cgroup v2), NaN where there is
+    none."""
     try:
         with open("/proc/self/cgroup") as cgroup:
             relative = cgroup.read().strip().split("\n")[0].split("::", 1)[1]
@@ -162,18 +161,17 @@ def trim_memory() -> None:
 
 
 class KindCounter:
-    """Counts the kinds the reductions evaluate (Reduction._evaluate_requests' requests: in the process or in the
-    Compute's pool) and the time they take (the main process's wait)."""
+    """Counts the kinds the reductions evaluate (Reduction._evaluate_requests' requests) and the time they take."""
 
     def __init__(self):
         self.kinds, self.seconds, self.templates = 0, 0., 0
-        self.batches = []                 # each evaluation's (kinds, interior cells, seconds, processes)
+        self.batches = []                 # each evaluation's (kinds, interior cells, seconds, the kinds' threads)
         self.seen = set()                 # the (reduced template, signature) of the kinds evaluated so far
         self._evaluate = evaluate = reduction_module.Reduction._evaluate_requests
         counter = self
 
         def counted(reduction, missing):
-            from openalea.metafspm.compute import Compute, in_worker
+            from openalea.metafspm.compute import Compute
             started = time.perf_counter()
             try:
                 return evaluate(reduction, missing)
@@ -183,8 +181,8 @@ class KindCounter:
                 kinds = sum(len(requests) for _, requests in missing.values())
                 cells = sum(reduction._interior_cells(request[1]) for _, requests in missing.values()
                             for request in requests.values())
-                processes = 1 if (reduction.library or in_worker()) else Compute.current().pool_size(kinds, cells)
-                counter.batches.append((kinds, cells, seconds, processes))
+                threads = Compute.current().section_threads(kinds, "compute") if kinds > 1 else 1
+                counter.batches.append((kinds, cells, seconds, threads))
                 for _, requests in missing.values():
                     counter.kinds += len(requests)
                     for key, _, signature in requests:    # the kinds of a template not seen before (a new anatomy)
@@ -322,7 +320,6 @@ def benchmark(plants: int, days: float, measure_outputs: bool = False, checkpoin
         nodes = sum(population.data_structure.n_nodes() for population in scene.populations)
         dense = dense_blocks(scene)
         steps.append({"hour": hour + 1, "seconds": seconds, "dense_nnz": dense,
-                      "pool": scene.compute.pool_info(),
                       "models": {name: value for name, value in timing.items() if "." not in name},
                       "components": {name: value for name, value in timing.items() if "." in name}, "kinds": kinds,
                       "kernels": kernel_seconds,
@@ -343,7 +340,6 @@ def benchmark(plants: int, days: float, measure_outputs: bool = False, checkpoin
             print(f"checkpoint {path}: {steps[-1]['checkpoint']['MB']:.1f} MB (shared "
                   f"{steps[-1]['checkpoint']['shared_MB']:.1f} MB) in {steps[-1]['checkpoint']['seconds']:.1f} s",
                   flush=True)
-    pool = scene.compute.pool_info()
     allocations = None
     if trace_frames:
         import tracemalloc
@@ -371,7 +367,7 @@ def benchmark(plants: int, days: float, measure_outputs: bool = False, checkpoin
                               ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS", "MALLOC_ARENA_MAX")},
               "build_seconds": built, "total_seconds": total, "resumed": loaded,
               "rss_end_gb": rss, "rss_after_trim_gb": after_trim, "peak_rss_gb": peak,
-              "scope_peak_gb": scope_peak_memory(), "pool": pool, "scenario": scenario or {},
+              "scope_peak_gb": scope_peak_memory(), "scenario": scenario or {},
               "device": compute.device_info() if compute is not None else None,
               "kinds_held": kinds_held, "kinds_MB": kinds_mb, "variability": variability,
               "cadences": dict(cadences or {}), "calls": dict(scene.calls),
@@ -459,8 +455,8 @@ def summary(result: dict) -> str:
     lines.append(f"kinds evaluated {kinds.sum()} ({kinds[-24:].sum()} on the last day), "
                  f"{sum(step['kind_seconds'] for step in steps):.1f} s")
     lines.append(f"memory: RSS at the end {result['rss_end_gb']:.2f} GB, after trim {result['rss_after_trim_gb']:.2f} GB, "
-                 f"peak {result['peak_rss_gb']:.2f} GB, the scope's peak (pool included) "
-                 f"{result.get('scope_peak_gb', float('nan')):.2f} GB; pool {result.get('pool')}")
+                 f"peak {result['peak_rss_gb']:.2f} GB, the scope's peak "
+                 f"{result.get('scope_peak_gb', float('nan')):.2f} GB")
     lines.append(f"nodes at the end {steps[-1]['nodes']}, dense blocks {steps[-1]['dense_nnz']} nonzeros; kinds held "
                  f"{result['kinds_held']} ({result['kinds_MB']:.1f} MB pickled)"
                  + (f"; scenario {result['scenario']}" if result.get("scenario") else ""))
@@ -508,9 +504,8 @@ def main(argv=None):
     parser.add_argument("--scenario", nargs="*", default=(), metavar="KEY=VALUE",
                         help="the plants' scenario entries (e.g. leaf_ports=bundles vapour_path=air_spaces)")
     parser.add_argument("--threads", default="auto",
-                        help="Compute(threads=): auto (default) or a number, the budget of numba's kernels and the "
-                             "solves' blocks (BLAS stays at 1)")
-    parser.add_argument("--workers", default="auto", help="Compute(workers=): auto (default) or a number")
+                        help="Compute(threads=): auto (default) or a number, the budget of numba's kernels, the "
+                             "solves' blocks and the kinds (BLAS stays at 1)")
     parser.add_argument("--linear-solver", default=None,
                         help="Compute(linear_solver=): the device's default (superlu on cpu, cupy on cuda), "
                              "superlu_reuse, cholmod, pardiso, mumps")
@@ -533,7 +528,6 @@ def main(argv=None):
     arguments = parser.parse_args(argv)
     from openalea.metafspm.compute import Compute
     compute = Compute(threads=arguments.threads if arguments.threads == "auto" else int(arguments.threads),
-                      workers=arguments.workers if arguments.workers == "auto" else int(arguments.workers),
                       linear_solver=arguments.linear_solver, device=arguments.device)
     label = arguments.label or f"{arguments.plants}p_{arguments.days:g}d"
     result = benchmark(arguments.plants, arguments.days, arguments.outputs, tuple(arguments.checkpoint_at),

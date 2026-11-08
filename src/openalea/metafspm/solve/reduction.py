@@ -77,10 +77,7 @@ what the model computes on the reduced structure itself, so that every term is c
 computes it live or the kind holds it.
 """
 import copy
-import itertools
 import os
-import pickle
-import weakref
 from contextlib import contextmanager
 from dataclasses import dataclass
 
@@ -88,7 +85,6 @@ import numpy as np
 from scipy.sparse import coo_matrix, csr_matrix
 
 from openalea.metafspm import kernels
-from openalea.metafspm.data_structure.objects import ObjectRegistry
 from openalea.metafspm.solve.network import kron_reduction
 
 # The ids of a reduced group's interior vertices in an output (an encoding3d frame's display rows: they are not the
@@ -400,8 +396,6 @@ class Reduction:
         state.pop("_table", None)          # the groups' arrays: per DataStructure and topology
         state.pop("_assigned", None)
         state.pop("_parameters_kept", None)  # the plants' parameters read: per DataStructure
-        state.pop("_token", None)          # its number in a pool's processes: this process's
-        state.pop("_worker_time_step", None)
         return state
 
     def __setstate__(self, state):
@@ -421,7 +415,6 @@ class Reduction:
         out.__dict__.pop("_assigned", None)
         out.__dict__.pop("_parameters_kept", None)
         out.__dict__.pop("_display_parts", None)
-        out.__dict__.pop("_token", None)
         return out
 
     def bind(self, model, instance) -> None:
@@ -932,28 +925,15 @@ class Reduction:
     def _evaluate_requests(self, missing: dict) -> None:
         """
         Evaluate the kinds *missing* ({signature: (a plant's parameters, {kind key: (a representative group vertex,
-        its reduced template key, its kind values)})}): in the process (_evaluate_missing: every signature's in the
-        same batches, in one library), or over the Compute's pool when Compute.pool_size gives more than one process
-        for them (_evaluate_in_pool: each process its share, in its own library); the kinds added in the requests'
-        order either way (deterministic, the same kinds). With METAFSPM_CHECK_KINDS=1, every kind evaluated is
+        its reduced template key, its kind values)})}): every signature's in the same batches, in one library
+        (_evaluate_missing), each batch's kinds in threads (_kinds_of_batch), added in the requests' order
+        (deterministic, the same kinds at any thread count). With METAFSPM_CHECK_KINDS=1, every kind evaluated is
         evaluated again alone, in a freshly built library, and compared bit for bit (check_kinds).
         """
-        from openalea.metafspm.compute import Compute, in_worker
-        compute = Compute.current()
         described = {signature: (parameters, {kind_key: (_describe(self.g, vertex), key, values)
                                               for kind_key, (vertex, key, values) in requests.items()})
                      for signature, (parameters, requests) in missing.items()}
-        kinds = sum(len(requests) for _, requests in described.values())
-        cells = sum(self._interior_cells(request[1]) for _, requests in described.values()
-                    for request in requests.values())
-        workers = 1 if (self.library or in_worker()) else compute.pool_size(kinds, cells)
-        if workers <= 1:
-            self._evaluate_missing(described)
-        else:
-            evaluated = _evaluate_in_pool(self, compute, workers, described)
-            for _, requests in described.values():
-                for kind_key in requests:
-                    self._kinds[kind_key] = evaluated[kind_key]
+        self._evaluate_missing(described)
         if os.environ.get("METAFSPM_CHECK_KINDS") == "1" and not self.library:
             check_kinds(self, described)
 
@@ -1444,8 +1424,7 @@ class _Library:
             @classmethod
             def initiate_plant(cls, g, plant, scenario):
                 library, batch, placed, left = cls.building
-                g.share_objects(library.reduction.g)  # the plants' registries (their templates: ds.objects; in
-                                                      # a pool's process, those it was sent: _RegistryHolder)
+                g.share_objects(library.reduction.g)  # the plants' registries (their templates: ds.objects)
                 library.plants[left.pop(0)] = plant
                 if not left:                          # every plant built: the batch's groups placed under them
                     placed.update(library.place(g, batch))
@@ -1539,10 +1518,7 @@ def _add_plant(g) -> int:
 
 
 def _time_step(reduction: Reduction) -> float:
-    """The plants' time step (their DataStructure's simulation step), the library's; a pool process's copy: the one
-    it was sent."""
-    if "_worker_time_step" in reduction.__dict__:
-        return reduction.__dict__["_worker_time_step"]
+    """The plants' time step (their DataStructure's simulation step), the library's."""
     steps = [component.simulation_step() for component in getattr(reduction.instance, "components", ())
              if hasattr(component, "simulation_step")]
     return next((float(step) for step in steps if step is not None), 3600.)
@@ -1656,7 +1632,7 @@ def _difference(first, second, path: str = "kind"):
 def _describe(plant_g, vertex: int) -> tuple:
     """A group's description for a library (_Library.place): ((its complexes' (scale, label), Plant excluded, the
     coarsest first), (its scale, its label), {its properties but the structural ones: value}), read from the plants'
-    MPG *plant_g*, so that a library (a pool's process too) places a group like it without the plants' MPG."""
+    MPG *plant_g*, so that a library places a group like it without the plants' MPG."""
     chain = []
     v = plant_g.complex(vertex)
     while v is not None and plant_g.scale(v) > plant_g.scales.Plant:
@@ -1690,201 +1666,6 @@ def _batches(reduction: Reduction, requests: dict):
         batch[kind_key], cells = request, cells + size
     if batch:
         yield batch
-
-
-# ── Kinds in a pool's processes (Compute.workers) ──
-#
-# Each process holds a copy of the reduction (_worker_copy: its declaration, its plant model, the templates and the
-# plants' registries it was sent, no kind) and its own libraries (one per plant parameters, as the main process's),
-# kept for the run. A forked process inherits the reduction as it was at its start (_record_fork: what it holds is
-# then not sent again); a spawned one receives it whole at its first task. Each task sends what the process lacks
-# (templates added since, registry entries), the plants' time step, and its kinds grouped by plant parameters; the
-# process returns their Kinds (arrays: pickled), which the main process adds in the requests' order.
-
-_POOL_REDUCTIONS = weakref.WeakValueDictionary()      # {token: Reduction} of the populations', for forked processes
-_TOKENS = itertools.count(1)
-_TEMPLATE_TABLES = ("_reduced", "_full", "_kept", "_rows", "_merged")
-
-
-class _RegistryHolder:
-    """The plants' registries (their MPG's objects, data_structure.objects) in a pool's process: what a library's
-    MPG shares (MPG.share_objects reads its _objects)."""
-
-    def __init__(self, objects=None):
-        self._objects = dict(objects or {})
-
-
-def _pool_token(reduction: Reduction) -> int:
-    """The reduction's number in the pool's processes (given at its first use, kept while it lives)."""
-    token = reduction.__dict__.get("_token")
-    if token is None:
-        token = reduction.__dict__["_token"] = next(_TOKENS)
-        _POOL_REDUCTIONS[token] = reduction
-    return token
-
-
-def _saved_registries(reduction: Reduction) -> dict:
-    """{name: registry} of the plants' registries a checkpoint saves (not the caches, saved=False: a process makes
-    its own)."""
-    store = getattr(reduction.g, "__dict__", {}).get("_objects", {})
-    return {name: registry for name, registry in store.items() if registry.saved is not False}
-
-
-def _holdings(reduction: Reduction) -> dict:
-    """What a process holds of *reduction* once sent all of it: its tables' keys, its registries' lengths."""
-    out = {table: set(reduction.__dict__.get(table, {})) for table in _TEMPLATE_TABLES}
-    out["objects"] = {name: len(registry) for name, registry in _saved_registries(reduction).items()}
-    return out
-
-
-def _record_fork(worker) -> None:
-    """compute.FORK_HOOKS': what a process forked now inherits of every population's reduction (all of it)."""
-    for token, reduction in list(_POOL_REDUCTIONS.items()):
-        worker.known[("reduction", token)] = _holdings(reduction)
-
-
-def _worker_copy(reduction: Reduction, registries: dict) -> Reduction:
-    """The reduction as a pool's process holds it: its declaration and plant model, its template tables and
-    *registries* ({name: ObjectRegistry}), no kind, no library, no plants (the rules of its templates' making not
-    needed: ports, keep, explicit_edges)."""
-    out = copy.copy(reduction)
-    out.__dict__ = {name: value for name, value in reduction.__dict__.items()
-                    if name not in ("_table", "_assigned", "_display_parts", "_token", "_pickles",
-                                    "_parameters_kept")}
-    out._kinds, out._blends, out._libraries = {}, {}, {}
-    out.instance, out.g = None, _RegistryHolder(registries)
-    out.ports = out.keep = out.explicit_edges = None
-    for table in _TEMPLATE_TABLES:
-        out.__dict__[table] = dict(reduction.__dict__.get(table, {}))
-    return out
-
-
-def _sync_for(reduction: Reduction, worker) -> dict:
-    """What *worker* lacks of *reduction* (its declaration when it holds none, the templates and registry entries
-    added since it was last sent: the entries in their checkpoint's form, ObjectRegistry's saved), its record
-    updated."""
-    known = worker.known.get(("reduction", reduction.__dict__["_token"]))
-    registries = _saved_registries(reduction)
-    sync = {"declaration": None, "tables": {}, "objects": {}}
-    if known is None:
-        declaration = _worker_copy(reduction, {})
-        for table in _TEMPLATE_TABLES:
-            declaration.__dict__[table] = {}
-        state = dict(declaration.__dict__)            # as is (Reduction.__getstate__ drops the model: a checkpoint's)
-        sync["declaration"] = ({name: value for name, value in state.items() if name not in ("g", "instance")},)
-        known = {table: set() for table in _TEMPLATE_TABLES}
-        known["objects"] = {}
-    for table in _TEMPLATE_TABLES:
-        values = reduction.__dict__.get(table, {})
-        sync["tables"][table] = {key: value for key, value in values.items() if key not in known[table]}
-        known[table].update(sync["tables"][table])
-    for name, registry in registries.items():
-        start = known["objects"].get(name, 0)
-        if len(registry) > start:           # in the form a checkpoint saves (a copy without what is rebuilt)
-            saved = registry.saved if registry.saved is not None else (lambda value: value)
-            sync["objects"][name] = (registry.saved, [(key, saved(value)) for key, value in registry.items()[start:]])
-            known["objects"][name] = len(registry)
-    worker.known[("reduction", reduction.__dict__["_token"])] = known
-    return sync
-
-
-def _lacks_templates(reduction: Reduction, worker) -> bool:
-    """Whether *worker* lacks some of *reduction*'s templates or registry entries (a forked process started before
-    they were added)."""
-    known = worker.known.get(("reduction", reduction.__dict__["_token"]))
-    if known is None:
-        return True
-    if any(not set(reduction.__dict__.get(table, {})) <= known[table] for table in _TEMPLATE_TABLES):
-        return True
-    return any(len(registry) > known["objects"].get(name, 0)
-               for name, registry in _saved_registries(reduction).items())
-
-
-def _known_copy(known):
-    """A copy of a process's record of what it was sent of a reduction (_sync_for's), its sets copied."""
-    if known is None:
-        return None
-    return {name: dict(value) if name == "objects" else set(value) for name, value in known.items()}
-
-
-def _sync_blob(reduction: Reduction, worker, sent: list) -> bytes:
-    """_sync_for(reduction, worker), pickled: once for all the processes that lack the same (*sent*, this call's
-    [(what they knew, what they know after, the pickled sync)]), so that new templates and registry entries are
-    pickled once, not once per process."""
-    key = ("reduction", reduction.__dict__["_token"])
-    before = worker.known.get(key)
-    for known, after, blob in sent:
-        if known == before:
-            worker.known[key] = _known_copy(after)
-            return blob
-    known = _known_copy(before)
-    blob = pickle.dumps(_sync_for(reduction, worker), protocol=pickle.HIGHEST_PROTOCOL)
-    sent.append((known, _known_copy(worker.known[key]), blob))
-    return blob
-
-
-def _evaluate_in_pool(reduction: Reduction, compute, workers: int, described: dict) -> dict:
-    """{kind key: {system: Kind}} of the requests *described* ({signature: (parameters, {kind key: request})}) over
-    *workers* processes of *compute*'s pool: the kinds dealt by their interior cells (the largest first, each to the
-    least loaded process: deterministic), each process its share in its library."""
-    from openalea.metafspm.compute import FORK_HOOKS
-    if _record_fork not in FORK_HOOKS:
-        FORK_HOOKS.append(_record_fork)
-    token = _pool_token(reduction)
-    entries = [(signature, kind_key, request) for signature, (_, requests) in described.items()
-               for kind_key, request in requests.items()]
-    workers = min(workers, len(entries))
-    pool = compute.pool(workers)
-    if pool.start_method == "fork" and any(_lacks_templates(reduction, worker) for worker in pool.workers[:workers]):
-        compute.close()              # forked again rather than sent the new templates: each process would hold its
-        pool = compute.pool(workers)  # own copy of them (unpickled), a fork shares the main process' one
-    cells = [reduction._interior_cells(request[1]) for _, _, request in entries]
-    loads, shares = [0] * workers, [[] for _ in range(workers)]
-    for position in sorted(range(len(entries)), key=lambda i: -cells[i]):
-        target = loads.index(min(loads))
-        shares[target].append(position)
-        loads[target] += cells[position]
-    time_step = _time_step(reduction)
-    calls, sent = [], []
-    for worker, share in zip(pool.workers, shares):
-        items = [entries[position][1:] for position in sorted(share)]
-        parameters = {entries[position][0]: described[entries[position][0]][0] for position in sorted(share)}
-        calls.append((_worker_evaluate, (token, _sync_blob(reduction, worker, sent), time_step, parameters, items)))
-    evaluated = {}
-    for result in pool.run(calls):
-        evaluated.update(result)
-    return evaluated
-
-
-def _worker_evaluate(token: int, sync: bytes, time_step: float, parameters: dict, items: list) -> dict:
-    """In a pool's process: the kinds *items* ([(kind key, request)]; *parameters* {signature: its plants'
-    parameters}) of the reduction *token*, its copy updated with *sync* (_sync_for's, pickled: _sync_blob),
-    evaluated in batches in its library; none kept."""
-    sync = pickle.loads(sync)
-    from openalea.metafspm.compute import worker_state
-    held = worker_state().setdefault("reductions", {})
-    reduction = held.get(token)
-    if reduction is None:
-        if sync["declaration"] is not None:
-            reduction = Reduction.__new__(Reduction)
-            reduction.__dict__.update(sync["declaration"][0])
-            reduction.instance, reduction.g = None, _RegistryHolder()
-        else:                                 # forked: the main process's, as inherited at this process's start
-            inherited = _POOL_REDUCTIONS[token]
-            reduction = _worker_copy(inherited, {name: registry for name, registry
-                                                 in _saved_registries(inherited).items()})
-        held[token] = reduction
-    for table, values in sync["tables"].items():
-        reduction.__dict__.setdefault(table, {}).update(values)
-    for name, (saved, entries) in sync["objects"].items():
-        registry = reduction.g._objects.setdefault(name, ObjectRegistry(name, saved))
-        for key, value in entries:
-            registry.add(key, value)
-    reduction.__dict__["_worker_time_step"] = float(time_step)
-    out = {}
-    for batch in _batches(reduction, dict(items)):
-        out.update(_evaluate(reduction, parameters, batch))
-    return out
 
 
 def _contraction(reduction: Reduction, full_template, compartments) -> tuple:

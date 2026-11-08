@@ -102,9 +102,8 @@ def test_independent_blocks_are_solved_apart_the_same_whatever_the_threads(monke
     np.testing.assert_allclose(A @ solutions[0], b, atol=1e-10)
 
 
-def test_the_blocks_threads_are_within_the_computes_budget(monkeypatch):
-    """At most the budget and one a block; MUMPS's in sequence (not thread-safe); one in a pool's process."""
-    from openalea.metafspm import compute as compute_module
+def test_the_blocks_threads_are_within_the_computes_budget():
+    """At most the budget and one a block; MUMPS's in sequence (not thread-safe)."""
     for threads, blocks, section, expected in ((1, 8, "bandwidth", 1), (4, 8, "bandwidth", 4), (12, 8, "compute", 8),
                                                (2, 8, "compute", 2), (12, 8, "sequence", 1)):
         assert linear.block_threads(Compute(threads=threads), blocks, section) == expected
@@ -112,8 +111,6 @@ def test_the_blocks_threads_are_within_the_computes_budget(monkeypatch):
     assert linear.Mumps.block_section == "sequence"                 # MUMPS is not thread-safe
     with pytest.raises(ValueError):
         linear.block_threads(Compute(), 8, "memory")
-    monkeypatch.setitem(compute_module._WORKER, "index", 0)
-    assert linear.block_threads(Compute(threads=12), 8, "compute") == 1
 
 
 def test_superlus_block_threads_are_found_on_the_solves():

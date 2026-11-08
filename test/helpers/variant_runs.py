@@ -28,11 +28,3 @@ def failing_run(name, scenario, compute):
         raise ValueError(f"{name} asked to fail")
     return name
 
-
-def pool_run(name, scenario, compute):
-    """A variant whose scene starts its own pool (compute.workers processes): the pool's record."""
-    try:
-        compute.pool(compute.workers)
-        return compute.pool_info()
-    finally:
-        compute.close()

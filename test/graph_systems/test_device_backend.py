@@ -113,7 +113,7 @@ def test_a_kron_reduction_on_the_device_equals_the_cpus_its_transfers_explicit(f
     with Compute().limits():
         reference = _kron_values(matrix, kept)
     assert not fake.log                                  # the cpu: nothing on the device
-    compute = Compute(device="cuda", workers=1)
+    compute = Compute(device="cuda")
     with compute.limits():
         values = _kron_values(matrix, kept)
     for name in reference:                               # the same SuperLU: the same numbers
@@ -149,8 +149,8 @@ def test_a_reductions_kinds_on_the_device_equal_the_cpus(fake):
             return {i: by_system[SYSTEM] for i, by_system in
                     reduction.group_kinds(ds, reduction.reduced_groups(ds), release=True).items()}
 
-    reference = kinds(Compute(workers=1))
-    compute = Compute(device="cuda", workers=1)
+    reference = kinds(Compute())
+    compute = Compute(device="cuda")
     found = kinds(compute)
     assert found.keys() == reference.keys()
     for i in reference:
@@ -172,7 +172,7 @@ def test_the_cupy_solver_solves_the_whole_system_in_one_call_its_pattern_copied_
     monkeypatch.setattr(linear, "BLOCKS_MIN_NONZEROS", 0)       # the cpu would split its blocks
     matrix = _blocks()
     rhs = np.linspace(1., 2., matrix.shape[0])
-    compute = Compute(device="cuda", workers=1)
+    compute = Compute(device="cuda")
     with compute.limits():
         first = compute.linear().solve(matrix, rhs, key="system")
         crossings = len(fake.log)
@@ -212,17 +212,12 @@ def test_cudss_is_used_when_installed(monkeypatch):
 
 # ── the scene ──
 
-def test_a_scene_on_the_device_records_it_and_spawns_its_pool(fake, tmp_path):
+def test_a_scene_on_the_device_records_it(fake, tmp_path):
     import json
     from openalea.metafspm.scene.recorder import SceneRecorder
-    scene = _scene(compute=Compute(device="cuda", workers=1), recorder=SceneRecorder(str(tmp_path)))
+    scene = _scene(compute=Compute(device="cuda"), recorder=SceneRecorder(str(tmp_path)))
     scene.run()
     scene.finish()
     with open(tmp_path / "run.json") as file:
         device = json.load(file)["compute"]["device"]
     assert device["name"] == "cuda" and device["solver"] == "cupyx"
-    compute = Compute(device="cuda", workers=1)
-    try:
-        assert compute.pool(1).start_method == "spawn"   # CUDA does not survive a fork
-    finally:
-        compute.close()

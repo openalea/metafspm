@@ -115,12 +115,12 @@ a `SceneRecorder`, `simulate`, then the outputs read back (`run.json`, the `Plan
 frames), and `variants` of a scenario within the declared bounds. [From a scenario to its outputs](docs/tutorial.md)
 goes through it on a seedling in a soil column (`examples/soil_plant_atmosphere/scenario_to_outputs.py`).
 
-How a run uses the machine is its `Compute` (`Scene(..., compute=Compute(threads="auto", workers="auto",
-device="cpu", memory="trim", linear_solver=None))`, the default): the threads (`"auto"`: the processors, each
-parallel part taking those that pay, the results the same at any number), the process pool of a reduction's kinds, an
-optional GPU, the memory given back after each step and the Newton steps' sparse solver. `scene.timing` gives the
-time per model and per component. See the user guide's *Performance notes* and [Running on a GPU](docs/gpu.md),
-which also covers repeated runs (`run_variants`).
+How a run uses the machine is its `Compute` (`Scene(..., compute=Compute(threads="auto", device="cpu",
+memory="trim", linear_solver=None))`, the default): the threads (`"auto"`: the processors, each parallel part taking
+those that pay, a reduction's kinds included, the results the same at any number), an optional GPU, the memory given
+back after each step and the Newton steps' sparse solver. `scene.timing` gives the time per model and per component.
+See the user guide's *Performance notes* and [Running on a GPU](docs/gpu.md), which also covers repeated runs
+(`run_variants`).
 
 For a model built on MetaFSPM, see [Root_CyNAPS](https://github.com/GeraultTr/Root_CyNAPS).
 

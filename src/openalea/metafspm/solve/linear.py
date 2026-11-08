@@ -505,12 +505,11 @@ def _blocks(matrix) -> list:
 
 def block_threads(compute, blocks: int, section: str) -> int:
     """The most threads a matrix's *blocks* are solved in: *compute*'s budget, at most one a block (section_threads);
-    one for a solver's block_section "sequence" and in a pool's process. A "bandwidth" solver's own count within it
-    is BlockThreads' (LinearSolver.solve)."""
-    from openalea.metafspm.compute import in_worker
+    one for a solver's block_section "sequence". A "bandwidth" solver's own count within it is BlockThreads'
+    (LinearSolver.solve)."""
     if section not in BLOCK_SECTIONS:
         raise ValueError(f"block_threads: section is one of {BLOCK_SECTIONS}, got {section!r}")
-    if in_worker() or section == "sequence":
+    if section == "sequence":
         return 1
     return compute.section_threads(blocks)
 

@@ -16,7 +16,7 @@ scene's steps, or "step" (every step); an output is written when the scene's tim
                                       Compute's threads, its budget, the bandwidth-bound sections' ceiling and its
                                       source, the processors and core types, BLAS libraries, numba:
                                       Compute.thread_info), the time, calls and threads of each kernel, solver and
-                                      step ("timing": Compute.timing_info; functor.<Class>.<step>) and the process pool (None: in the process);
+                                      step ("timing": Compute.timing_info; functor.<Class>.<step>);
                                       rewritten after every step (a running run's progress)
     scenario.json                     the scene: time step, size, populations (model, plants and their scenarios),
                                       environment models and their scenarios, forcings, the run configuration
@@ -491,7 +491,7 @@ class SceneRecorder:
             self._run = {"status": "running", "started": previous.get("started", self._started.isoformat()),
                          "time_step": float(scene.time_step), "versions": _versions(), "host": platform.node(),
                          "command": " ".join(sys.argv),
-                         "compute": {"threads": scene.compute.thread_info(), "pool": None}}
+                         "compute": {"threads": scene.compute.thread_info()}}
             if self.resume:
                 self._run["wall_time_before"] = previous.get("wall_time", 0.)
                 self._run["resumed"] = previous.get("resumed", []) + [
@@ -979,9 +979,6 @@ class SceneRecorder:
                          calls=dict(getattr(scene, "calls", {})))
         if getattr(scene, "coupling", "explicit") != "explicit":         # a fixed point's iterations (Scene)
             self._run["coupling_iterations"] = dict(scene.coupling_iterations)
-        pool = scene.compute.pool_info()        # the pool used (the largest since the run began), None: none
-        if pool is not None or "compute" not in self._run:
-            self._run.setdefault("compute", {})["pool"] = pool
         self._run.setdefault("compute", {})["timing"] = scene.compute.timing_info()     # the kernels' and solvers'
         device = scene.compute.device_info()     # the GPU used and its transfers, None on the cpu (not recorded)
         if device is not None:

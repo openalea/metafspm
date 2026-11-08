@@ -369,8 +369,9 @@ class SoilDiffusion(FunctionalComponent):
   parameters' kinds in the same batches, in one library population kept on the reduction (one plant per plant
   parameters of the batch; each batch's groups replacing the former's, its components reset to their built state
   but for the caches they keep themselves, `keep(name, saved=False)`); `METAFSPM_CHECK_KINDS=1` evaluates every kind
-  again alone in a library built for it and checks the two are the same, bit for bit; with `Compute.workers` allowing a pool, the batch's kinds are dealt over
-  its processes, each its share in its own library (the same kinds, bit for bit). The kinds are checkpointed with the population (`Kind`, a shared part
+  again alone in a library built for it and checks the two are the same, bit for bit; after the library's run,
+  the batch's kinds are worked out in threads (`Compute.threads`: their Kron reductions outside the GIL; the same
+  kinds, bit for bit, at any number). The kinds are checkpointed with the population (`Kind`, a shared part
   of `scene.shared`, saved once; never a factorisation): a resumed run evaluates none again. A value derived from a kind (a section's condensed volumes)
   is a method of the reduced system's component tagged `@kind_derived(name)`: `method(self, kind, full_template,
   kron, nodes)`, run once per kind on its library while the kind's factorisation is live (`kron.shares(targets,
@@ -1109,7 +1110,7 @@ Its README describes each file and shows the figures.
 
 ### The run configuration: `Compute`
 
-`Scene(..., compute=Compute(threads="auto", workers="auto", device="cpu", memory="trim"))` (`Compute()` when
+`Scene(..., compute=Compute(threads="auto", device="cpu", memory="trim"))` (`Compute()` when
 omitted) says how the scene uses the machine:
 
 - `threads`: the threads' budget of the scene's parallel work while it builds and runs: numba's kernels
@@ -1117,10 +1118,9 @@ omitted) says how the scene uses the machine:
   and the kinds of a reduction's batch (each kind's blocks, Kron reduction and derived values in a thread, its
   SuperLU factorisation outside the GIL, the largest first).
   `"auto"` (default): the processors the process may run on (its CPU affinity: `compute.machine()`, which also
-  records the core types of a hybrid CPU), one in a pool's process (the pool is the parallel work there); an
-  integer: that many. Each parallel section takes at most the budget, one thread per independent work unit (a
-  kernel's chunks, a solve's blocks) and its ceiling: the reduction's scatter, bound by the memory bandwidth, at most
-  `compute.BANDWIDTH_THREADS_RULE` (4); SuperLU's block factorisations, bound by the bandwidth too, the count found
+  records the core types of a hybrid CPU); an integer: that many. Each parallel section takes at most the budget,
+  one thread per independent work unit (a kernel's chunks, a solve's blocks) and its ceiling: the reduction's
+  scatter, bound by the memory bandwidth, at most `compute.BANDWIDTH_THREADS_RULE` (4); SuperLU's block factorisations, bound by the bandwidth too, the count found
   fastest on the system's own solves (`solve.linear.BlockThreads`: 1, 2, 4, … and the most allowed tried twice each,
   the fewest within 10 % of the fastest kept, tried again when the system has grown fourfold; on a laptop, 8 plants,
   day 13: 0.74 s at 1 thread, 0.35 at 4, 0.38–0.60 at 8 and 12). So a small scene (one block, a few chunks) runs in
@@ -1135,20 +1135,10 @@ omitted) says how the scene uses the machine:
   ...}}`), and each step's (`"functor.<Class>.<step>": {"seconds", "calls"}`, its wall time inclusive of the steps
   it runs inside, e.g. a reduction's library components while it evaluates kinds): where a step's time goes, without
   a profiler.
-- `workers`: the process pool of the scene's parallel work: a reduction's missing kinds. `"auto"` (default) starts none until a batch of kinds is worth it (more than
-  about a second of work, estimated from their interior cells, and at least two kinds), then
-  `min(processors // 2, kinds)` processes, one processor left free, kept for the run and grown to the largest
-  batch's need; an integer forces it from the first batch, `1` sequential and in the process. The results are the
-  same, bit for bit, whatever the number (the kinds dealt by their interior cells, each process evaluating its
-  share in its own library population, the results added in the requests' order). The processes are forked on
-  Linux (they inherit the scene's state at their start, its templates shared with the main process: when new
-  templates appear, the pool is forked again rather than sent them, each process would hold its own copy) and spawned on
-  macOS and Windows (each receives the reduction at its first task: the plant model class must be importable by
-  name, a module-level class, and the reduction's `merge=` rules picklable). Each holds its own libraries: a pool
-  of n adds about n library populations to the memory (use case 1, 2 plants, day 1: 1.4 → 2.1 GB for 4 processes);
-  `scene.finish()` (and a scene collected) stops them, `run.json` records the pool used (`"compute": {"pool":
-  {"workers": n, "start_method": "fork"}}`). A component's setting named `workers` that its scenario does not give
-  takes the Compute's (Caribu's projection threads).
+  A component's setting named `threads` that its scenario does not give takes the Compute's (Caribu's projection
+  threads). The kinds' threads took the place of a pool of processes (measured on use case 1, 8 plants: to day 8,
+  298.0 s at a scope peak of 3.21 GB, against 286.5 s and 4.06 GB for 4 processes; at day 13, 4.15 s per step
+  against 4.13–4.14; devplan_generic_kernels GK-5): 4 % slower to day 8, level at day 13, 0.85–1.4 GB less.
 - `linear_solver`: the sparse solver of the graph systems' Newton steps (`solve.linear`): `"superlu"` (default,
   scipy's SuperLU with the MMD ordering); `"superlu_reuse"`, the same solution bit for bit with its column ordering
   kept per system while the matrix's pattern does not change, and its factorisation while the matrix itself does
@@ -1189,22 +1179,22 @@ omitted) says how the scene uses the machine:
   memory freed between them: a blade's kind is about 10k cells, a stem's 45k).
 
 Within the scene's build and steps, `Compute.current()` is the scene's Compute (what runs there reads it without
-being given it: a reduction's batches); outside, a default `Compute()`. `scenario.json` records the Compute, `run.json` the threads chosen, the kernels' and solvers' timing and the pool.
+being given it: a reduction's batches); outside, a default `Compute()`. `scenario.json` records the Compute,
+`run.json` the threads chosen and the kernels' and solvers' timing.
 
 ### Repeated runs: `run_variants`
 
 A sensitivity analysis or a calibration runs many scenes that do not depend on each other. `run_variants(run,
-scenarios, workers="auto", compute=Compute(workers=1))` (`openalea.metafspm.scene.scenarios`) runs one per scenario
-in a process pool: *run* is a module-level function `run(name, scenario, compute)` that builds its scene with
+scenarios, processes="auto", compute=Compute())` (`openalea.metafspm.scene.scenarios`) runs one per scenario in
+processes of their own: *run* is a module-level function `run(name, scenario, compute)` that builds its scene with
 `compute=compute`, runs and finishes it, and returns what is kept (picklable: a table, a path); the results come back
 in the scenarios' order. Each variant has a fresh process (its memory given back when it ends), forked on Linux and
-spawned on macOS, Windows or with `device="cuda"`; `workers=1` runs them one after the other in the process. The
+spawned on macOS, Windows or with `device="cuda"`; `processes=1` runs them one after the other in the process. The
 processes stay within the processors (`variant_processes`): `"auto"` is processors − 1, at most one per variant; with
-several variant processes, a scene's `workers="auto"` becomes 1 (the variants are the parallel work) and its
-`threads="auto"` `processors // processes`; an integer is
-kept when `workers × Compute.workers` and `workers × Compute.threads` fit the processors, else it raises. On a laptop:
-`workers="auto"` and scenes of `Compute(workers=1)`; on a many-core workstation, k variants of a pool of w each
-(k × w ≤ processors); on a GPU workstation, one or two variants on the device ([Running on a GPU](gpu.md)).
+several variant processes, a scene's `threads="auto"` becomes `processors // processes` (the variants are the
+parallel work); an integer is kept when `processes × Compute.threads` fits the processors, else it raises. On a
+laptop: `processes="auto"`; on a many-core workstation, k variants of w threads each (k × w ≤ processors); on a GPU
+workstation, one or two variants on the device ([Running on a GPU](gpu.md)).
 
 ### Compiled kernels (numba)
 

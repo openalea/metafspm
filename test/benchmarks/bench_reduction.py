@@ -3,16 +3,14 @@ The reduction's benchmark (devplan_release_optimisation.md §5): solve.reduction
 of a few hundred cells (a chain of cortical cells and their walls, two xylem vessels: the ports, three soil walls:
 kept), standalone (no port). Not part of the test suite: it asserts nothing and prints a table.
 
-    python test/benchmarks/bench_reduction.py [--cells 200] [--kinds 8] [--groups 1000,10000,80000] [--workers 1,4]
-                                              [--check]
+    python test/benchmarks/bench_reduction.py [--cells 200] [--kinds 8] [--groups 1000,10000,80000] [--check]
 
 - the time per kind evaluation (Reduction.group_kinds on --kinds groups of distinct kinds: their soil potentials
   differ, so each is its own kind);
 - Reduction.terms() on a plant of 1k, 10k, 80k groups of one kind (the kind evaluated before the timed call; the
   first call builds the groups' table and the terms' sparse pattern, the next ones fill its values), and
   Reduction.assignment (the groups' kinds, group_kinds' arrays): linear in the groups (O-5), --check asserts it
-  (10× the groups within 15× the time);
-- the kinds' pool at 1 and 4 workers (Compute.workers: O-6; reported as not available before it).
+  (10× the groups within 15× the time).
 """
 import argparse
 import os
@@ -208,7 +206,6 @@ def main(argv=None):
     parser.add_argument("--cells", type=int, default=200)
     parser.add_argument("--kinds", type=int, default=8)
     parser.add_argument("--groups", default="1000,10000,80000")
-    parser.add_argument("--workers", default="1,4")
     parser.add_argument("--check", action="store_true", help="assert terms() and assignment linear in the groups")
     arguments = parser.parse_args(argv)
     per_kind, interior = kind_evaluation(arguments.kinds, arguments.cells)
@@ -220,8 +217,6 @@ def main(argv=None):
         measured[groups] = (seconds, assigned)
         print(f"{f'terms() at {groups} groups':<40} {seconds:>10.3f} s   (first call {first:.3f} s, "
               f"assignment {assigned:.3f} s)")
-    for workers in [int(value) for value in arguments.workers.split(",") if value]:
-        print(f"{f'kinds pool at {workers} workers':<40} {'n/a (O-6)':>12}")
     if arguments.check:
         sizes = sorted(measured)
         for small, large in zip(sizes, sizes[1:]):

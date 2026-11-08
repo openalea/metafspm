@@ -1,8 +1,8 @@
 """
 The run configuration (openalea.metafspm.compute.Compute): the threads limited while a scene runs and restored after,
-the memory trimmed after each step, threads="auto" (the processors, 1 in a pool's process) and each parallel
-section's threads, the kernels' and solvers' timing, the pool's size, the components' workers and device settings,
-and what scenario.json and run.json record.
+the memory trimmed after each step, threads="auto" (the processors) and each parallel section's threads, the
+kernels' and solvers' timing, the components' threads and device settings, and what scenario.json and run.json
+record.
 """
 import json
 from dataclasses import dataclass
@@ -34,18 +34,23 @@ def _blas_threads() -> set:
     return {info["num_threads"] for info in threadpool_info() if info["user_api"] == "blas"}
 
 
-@pytest.mark.parametrize("given", [dict(threads=0), dict(threads=1.5), dict(threads="all"), dict(workers=0),
-                                   dict(workers="all"),
-                                   dict(device="gpu"), dict(memory="free"), dict(linear_solver="umfpack"),
-                                   dict(kind_batch=0)])
+@pytest.mark.parametrize("given", [dict(threads=0), dict(threads=1.5), dict(threads="all"), dict(device="gpu"),
+                                   dict(memory="free"), dict(linear_solver="umfpack"), dict(kind_batch=0)])
 def test_a_compute_checks_its_values(given):
     with pytest.raises(ValueError):
         Compute(**given)
 
 
+def test_a_compute_has_no_process_pool():
+    """The kinds run in threads (Compute.threads): there is no workers setting, nor a pool, any more."""
+    with pytest.raises(TypeError, match="workers"):
+        Compute(workers=2)
+    assert not hasattr(compute_module, "WorkerPool") and not hasattr(Compute(), "pool")
+
+
 def test_a_scene_without_compute_has_the_default_one():
     scene = _scene()
-    assert scene.compute == Compute() and scene.compute.threads == "auto" and scene.compute.workers == "auto"
+    assert scene.compute == Compute() and scene.compute.threads == "auto"
     with pytest.raises(TypeError):
         _scene(compute={"threads": 1})
 
@@ -94,14 +99,12 @@ def test_blas_stays_at_one_thread_whatever_the_threads(monkeypatch):
     assert seen == [({1}, threads)]
 
 
-def test_auto_threads_are_the_processors_one_in_a_pools_process(monkeypatch):
-    """threads="auto": the processors this process may run on (its CPU affinity), 1 in a pool's process (the pool is
-    the parallel work there); an integer is the budget itself."""
+def test_auto_threads_are_the_processors():
+    """threads="auto": the processors this process may run on (its CPU affinity); an integer is the budget
+    itself."""
     assert Compute().threads == "auto"
     assert Compute().thread_count() == len(compute_module.processors()) == compute_module.machine()["processors"]
     assert Compute(threads=3).thread_count() == 3
-    monkeypatch.setitem(compute_module._WORKER, "index", 0)
-    assert compute_module.in_worker() and Compute().thread_count() == 1 and Compute(threads=3).thread_count() == 3
 
 
 def test_a_sections_threads_are_its_work_and_its_ceiling_within_the_budget():
@@ -188,22 +191,10 @@ def test_the_memory_is_trimmed_after_each_step_unless_kept(monkeypatch):
     assert Compute().trim() is False
 
 
-def test_the_pool_size():
-    """workers="auto": no pool for a small batch or a single kind, else half the processors at most, one per kind;
-    an integer forces it."""
-    auto = Compute()
-    assert auto.pool_size(1, 10 ** 9) == 1
-    assert auto.pool_size(10, 10) == 1
-    processors = compute_module.os.cpu_count() or 1
-    assert auto.pool_size(3, 10 ** 7) == max(1, min(processors // 2, 3, processors - 1))
-    assert Compute(workers=1).pool_size(10, 10 ** 9) == 1
-    assert Compute(workers=3).pool_size(1, 1) == 3
-
-
-def test_the_same_results_whatever_the_workers():
+def test_the_same_results_whatever_the_threads():
     states = []
-    for workers in (1, 3):
-        scene = _scene(compute=Compute(workers=workers))
+    for threads in (1, 3):
+        scene = _scene(compute=Compute(threads=threads))
         for _ in range(3):
             scene.run()
         states.append([np.asarray(p.data_structure.get("exudation")).copy() for p in scene.populations])
@@ -213,9 +204,9 @@ def test_the_same_results_whatever_the_workers():
 
 @dataclass
 class Projector(FunctionalComponent):
-    """A component with the settings a Compute gives: workers and device."""
+    """A component with the settings a Compute gives: threads and device."""
     lit: float = state_variable(**DOC, default=0., location="cell", kind="intensive")
-    workers: object = setting(description="threads", default=None)
+    threads: object = setting(description="threads", default=None)
     device: str = setting(description="device", default="cpu", choices=("cpu", "cuda"))
 
     @rate
@@ -233,7 +224,7 @@ class Light(EnvironmentModel):
         self.components = [self.projector]
 
 
-def test_a_components_workers_and_device_settings_default_to_the_computes(monkeypatch):
+def test_a_components_threads_and_device_settings_default_to_the_computes(monkeypatch):
     import fake_cupy
     from openalea.metafspm import backend
     modules = fake_cupy.modules()                         # device="cuda" without a GPU: the fake CuPy
@@ -243,24 +234,24 @@ def test_a_components_workers_and_device_settings_default_to_the_computes(monkey
         return Scene(doubles_planting([Seedlings]), environment=[Light], environment_scenarios=[scenario],
                      time_step=DT, compute=compute).environment[0].projector
 
-    projector = scene({}, Compute(workers=4, device="cuda"))
-    assert (projector.workers, projector.device) == (4, "cuda")
-    projector = scene({"workers": 2, "device": "cpu"}, Compute(workers=4, device="cuda"))
-    assert (projector.workers, projector.device) == (2, "cpu")
-    assert scene({}, Compute()).workers == "auto"
+    projector = scene({}, Compute(threads=4, device="cuda"))
+    assert (projector.threads, projector.device) == (4, "cuda")
+    projector = scene({"threads": 2, "device": "cpu"}, Compute(threads=4, device="cuda"))
+    assert (projector.threads, projector.device) == (2, "cpu")
+    assert scene({}, Compute()).threads == "auto"
 
 
 def test_scenario_and_run_record_the_compute(tmp_path):
-    scene = _scene(compute=Compute(workers=2), recorder=SceneRecorder(str(tmp_path)))
+    scene = _scene(compute=Compute(kind_batch=1000), recorder=SceneRecorder(str(tmp_path)))
     scene.run()
     scene.finish()
     with open(tmp_path / "scenario.json") as f:
-        assert json.load(f)["compute"] == Compute(workers=2).as_dict()
+        assert json.load(f)["compute"] == Compute(kind_batch=1000).as_dict()
     with open(tmp_path / "run.json") as f:
         run = json.load(f)["compute"]
     budget = Compute().thread_count()
     assert run["threads"]["requested"] == "auto" and run["threads"]["budget"] == budget
-    assert run["threads"]["numba"] == min(budget, numba.config.NUMBA_NUM_THREADS) and run["pool"] is None
+    assert run["threads"]["numba"] == min(budget, numba.config.NUMBA_NUM_THREADS) and "pool" not in run
     assert run["threads"]["processors"] == compute_module.machine()["processors"]
     assert all(threads == 1 for threads in run["threads"]["blas"].values())
     assert isinstance(run["timing"], dict)                    # the kernels' and solvers' (none in this toy scene)

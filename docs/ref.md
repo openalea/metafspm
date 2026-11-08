@@ -144,7 +144,7 @@ The solvers are chosen by key in `graph_system(solver=...)`: `"newton"`, `"newto
    :members: Scene, AllMasks
 
 .. automodule:: openalea.metafspm.compute
-   :members: Compute, WorkerPool, WorkerError, worker_state, in_worker, machine, processors, core_types
+   :members: Compute, machine, processors, core_types
 
 .. automodule:: openalea.metafspm.scene.environment
    :members: EnvironmentModel
