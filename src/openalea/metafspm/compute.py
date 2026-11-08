@@ -4,8 +4,9 @@ A scene's run configuration: how many threads and processes it uses, its device 
     scene = Scene(planting, ..., compute=Compute(threads="auto", workers="auto", memory="trim"))
 
   threads        the threads' budget of the scene's parallel work while it builds and runs: numba's kernels
-                 (numba.set_num_threads) and the linear solves' independent blocks (solve.linear: in threads, each
-                 block's factorisation sequential). "auto" (default): the processors this process may run on
+                 (numba.set_num_threads), the linear solves' independent blocks (solve.linear: in threads, each
+                 block's factorisation sequential) and the kinds of a reduction's batch (solve.reduction: each kind's
+                 work after the library's run in a thread, its SuperLU factorisation outside the GIL). "auto" (default): the processors this process may run on
                  (machine(): its CPU affinity), 1 in a pool's process (the pool is the parallel work there); an
                  integer: that many. Each parallel section takes min(the budget, its independent work units: chunks,
                  blocks; the section's ceiling): the reduction's scatter (bandwidth bound) at most
@@ -69,6 +70,7 @@ import gc
 import multiprocessing
 import os
 import sys
+import threading
 import time
 import traceback
 import weakref
@@ -79,6 +81,7 @@ DEVICES = ("cpu", "cuda")
 MEMORY = ("trim", "keep")
 WARM_UP_GROUP = "openalea.metafspm.warm_up"   # the entry points of the ports' warm_up() (warm_up runs them)
 _ACTIVE = []                  # the Computes whose limits() are entered, the innermost last
+_COUNTING = threading.Lock()  # Compute.count's: timings counted from several threads (the kinds')
 POOL_WORK = 1.                # s: the estimated work of a batch above which "auto" starts a pool
 SECONDS_PER_CELL = 3e-5       # s per interior cell of a kind: its evaluation's estimated cost (measured on use case 1:
                               # 3.2e-5 s per cell over 2 plants to day 8, the library's update included)
@@ -205,12 +208,13 @@ class Compute:
     def count(self, name: str, seconds: float, threads: int = None) -> None:
         """A call of *seconds* counted under *name* (a kernel's, a solver's: run.json's "compute"/"timing"), and its
         *threads* ("threads": {threads: calls})."""
-        entry = self._timings.setdefault(name, {"seconds": 0., "calls": 0})
-        entry["seconds"] += seconds
-        entry["calls"] += 1
-        if threads is not None:
-            counts = entry.setdefault("threads", {})
-            counts[str(int(threads))] = counts.get(str(int(threads)), 0) + 1
+        with _COUNTING:                        # counted from the kinds' threads too
+            entry = self._timings.setdefault(name, {"seconds": 0., "calls": 0})
+            entry["seconds"] += seconds
+            entry["calls"] += 1
+            if threads is not None:
+                counts = entry.setdefault("threads", {})
+                counts[str(int(threads))] = counts.get(str(int(threads)), 0) + 1
 
     def timing_info(self) -> dict:
         """{name: {"seconds", "calls", "threads": {threads: calls}}} of the kernels, solvers and steps (functor.<Class>.

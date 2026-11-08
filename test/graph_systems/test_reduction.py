@@ -584,3 +584,34 @@ def test_plants_of_different_parameters_share_one_library_one_plant_each(monkeyp
     solved[True].instance.run()
     assert len(set(reduction._kinds) - before) == 1                  # the second plant's kind, evaluated again
     assert len(library.plants) == 1                                   # that batch's one signature: one plant
+
+
+def test_a_batchs_kinds_are_the_same_bit_for_bit_in_threads():
+    """Each kind of a batch is worked out in its own thread (Compute.threads: the Kron reductions' SuperLU outside the
+    GIL): the kinds are those of one thread, bit for bit, in the requests' order, and the threads were used."""
+    from openalea.metafspm.compute import Compute
+
+    class KindedPlant(_model(False)):
+        reduction = Reduction(location="SubOrgan", where={"label": "RootSegment"}, ports=_xylem, keep=_soil_walls,
+                              kind={"soil_water_potential": None}, systems=("NodeHydraulics._hydraulics",))
+
+    def kinds(threads):
+        compute = Compute(threads=threads)
+        with compute.limits():
+            population = population_data_structure(planting([Planting()], KindedPlant, {}), KindedPlant)
+            ds = population.data_structure
+            section = np.asarray(ds.owner("SubOrgan"))
+            ds.set("soil_water_potential", -0.2 - 0.05 * section.astype(float))     # one kind per section
+            population.instance.run()
+        reduction = ds.structure.reduction
+        return compute, list(reduction._kinds), [by_system["NodeHydraulics._hydraulics"]
+                                                 for by_system in reduction._kinds.values()]
+
+    _, keys, alone = kinds(1)
+    compute, threaded_keys, threaded = kinds(4)
+    assert len(keys) == N_SEGMENTS and threaded_keys == keys
+    assert compute.timing_info()["kinds.tails"]["threads"] == {"4": 1}
+    for kind, again in zip(alone, threaded):
+        for name in ("D", "e", "interior_source", "kept_rows", "interior_rows"):
+            np.testing.assert_array_equal(getattr(kind, name), getattr(again, name))
+        assert kind.reduction.reduced is None and kind.reduction._lu is None           # released, S freed

@@ -2,6 +2,15 @@
 
 ## Unreleased (release2026)
 
+### The kinds in threads (devplan_generic_kernels GK-5)
+
+- **Each kind of a batch is worked out in its own thread** after the library's run (`_kinds_of_batch`:
+  `Compute.section_threads(kinds, "compute")`, the largest interiors first): its blocks, its Kron reduction (one
+  sequential SuperLU factorisation, outside the GIL), inputs, outputs, `@kind_derived` values, recovery and release.
+  The kinds are added in the requests' order and are the same bit for bit at any thread count; numba's kernels
+  within a kind run on one thread. run.json times them under `kinds.tails` (with their threads).
+- `Compute.count` is thread-safe (the kinds' threads count their solves).
+
 ### The kinds' batches (devplan_generic_kernels GK-4)
 
 - **One library population per reduction and time step, one plant per plant parameters:** the kinds of plants of

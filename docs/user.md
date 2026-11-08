@@ -1113,7 +1113,9 @@ Its README describes each file and shows the figures.
 omitted) says how the scene uses the machine:
 
 - `threads`: the threads' budget of the scene's parallel work while it builds and runs: numba's kernels
-  (`numba.set_num_threads`) and the independent blocks of a linear solve (in threads, each block factorised in one).
+  (`numba.set_num_threads`), the independent blocks of a linear solve (in threads, each block factorised in one)
+  and the kinds of a reduction's batch (each kind's blocks, Kron reduction and derived values in a thread, its
+  SuperLU factorisation outside the GIL, the largest first).
   `"auto"` (default): the processors the process may run on (its CPU affinity: `compute.machine()`, which also
   records the core types of a hybrid CPU), one in a pool's process (the pool is the parallel work there); an
   integer: that many. Each parallel section takes at most the budget, one thread per independent work unit (a

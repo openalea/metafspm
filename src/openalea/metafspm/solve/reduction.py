@@ -1982,8 +1982,34 @@ class _Batch:
 
 
 def _kinds_of_batch(reduction: Reduction, batch: _Batch, items: list) -> list:
-    """The Kinds of the batch *items* for *batch*'s system, in their order (_kind_from_batch for each)."""
-    return [_kind_from_batch(reduction, batch, k, kind_key, key) for k, (kind_key, (_, key, _)) in enumerate(items)]
+    """
+    The Kinds of the batch *items* for *batch*'s system, in their order: _kind_from_batch for each, in threads
+    (Compute.section_threads over the kinds, "compute": the budget, one per kind at most), the largest interior
+    first. Each kind's work is its own (its blocks, one sequential SuperLU factorisation, which runs outside the GIL;
+    its Python parts take turns), so its bits are the same at any thread count; numba's kernels within a kind's
+    work run on one thread (its thread is the parallel unit). Timed under "kinds.tails".
+    """
+    from openalea.metafspm.compute import Compute
+    compute = Compute.current()
+    count = len(items)
+    threads = compute.section_threads(count, "compute") if count > 1 else 1
+
+    def one(k):
+        return _kind_from_batch(reduction, batch, k, items[k][0], items[k][1][1])
+
+    with compute.timed("kinds.tails", threads):
+        if threads <= 1:
+            return [one(k) for k in range(count)]
+        import numba
+        from concurrent.futures import ThreadPoolExecutor
+
+        def in_thread(k):
+            numba.set_num_threads(1)              # thread-local: the kind's thread is the parallel unit
+            return one(k)
+        order = sorted(range(count), key=lambda k: -reduction._interior_cells(items[k][1][1]))
+        with ThreadPoolExecutor(max_workers=threads, thread_name_prefix="metafspm-kinds") as executor:
+            futures = {k: executor.submit(in_thread, k) for k in order}
+            return [futures[k].result() for k in range(count)]
 
 
 def _kind_from_batch(reduction: Reduction, batch: _Batch, k: int, kind_key, key) -> Kind:
