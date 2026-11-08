@@ -2,6 +2,20 @@
 
 ## Unreleased (release2026)
 
+### The states an MPG-style step leaves, read back in bulk (devplan_scene_parallel, after P5: bulk reads)
+
+- **One lookup per location, not per variable:** a view's `at()` (`DataStructureColumn`) keeps the positions of
+  read-only vids (a read plan's, `_read_plan`) in the location's sorted ids (shared by its variables) for the next
+  read; the presence of the entities synchronised before is found the same way; a small overlay's keys are looked
+  up in ascending vids instead of the vids in the overlay; the overlay's entries at the DataStructure's entities are
+  dropped by looking its keys up (`drop_at_entities`).
+- **`contains(vids)`** (new, `ArrayDict` and `DataStructureColumn`): which vids have an entry, with no merge of a
+  view's keys (`_kept_at_instances` used `np.isin(ids, prop.keys_array())`); the instanced entities known before the
+  step are found once per location.
+- **An object variable is read in one bulk read** (`MPGDataStructure._mtg_objects`: the column's `at()`, with the
+  templates' values on an MPG with instances), not one dict lookup per vertex.
+- Bit-identical.
+
 ### Wiring rules in bulk (devplan_scene_parallel, after P5: bulk wiring)
 
 - **A wiring rule is evaluated once over every pair it joins, not once per pair** (`MPG.wire_junctions`, new

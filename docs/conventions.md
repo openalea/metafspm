@@ -175,6 +175,11 @@ For metafspm and every port: no Python loop over groups, nodes or entities in a 
    not `g.linked_parent(v, scale)` vertex by vertex; `g.components_at_scale` lists each scale in one loop, in
    openalea.mtg's order (an order a port's creation of vertices may depend on). A traversal whose order does not
    matter reads the topology arrays or the scale column instead (`g._vertices_at_scale(scale)`).
+   Read the same vids at many variables of a location in bulk, through the location's shared arrays: a view's
+   `at()` keeps the positions of read-only vids in the location's sorted ids for the next variable (the states an
+   MPG-style step leaves are read back so, with the instanced vertices known before the step found once per
+   location), `contains(vids)` tells which have an entry without reading them, and an object variable is read with
+   one bulk read, never a lookup per vertex.
 3. **numba where a loop stays sequential or a scatter is irregular** (tree scans, z-buffers, form factors, a turtle,
    a reduction's dense blocks into the scene's sparse matrix): numba is a hard dependency, no fallback. Every kernel
    is `@njit(cache=True)` in its package's `kernels.py` (one module to warm up, review and port), `nogil=True` when a

@@ -1356,6 +1356,7 @@ class StructuralComponent(DataStructureComponent):
         versions = {spec.name: _property_version(properties.get(spec.name)) for spec in states}
         instanced = g is not None and getattr(g, "_instanced", lambda: False)()
         known = {location: ds.entity_ids(location) for location in ("node", "edge")} if instanced else {}
+        kept = {}                           # per location: its instanced entities known before the step
         self.__dict__["_in_mpg_step"] = True
         try:
             run()
@@ -1376,22 +1377,25 @@ class StructuralComponent(DataStructureComponent):
                 if values is None:
                     continue
                 if instanced and spec.location in known:
-                    values = self._kept_at_instances(spec, values, known[spec.location])
+                    if spec.location not in kept:
+                        ids = ds.entity_ids(spec.location)
+                        kept[spec.location] = ds._instanced_at(spec.location) & np.isin(ids, known[spec.location])
+                    values = self._kept_at_instances(spec, values, kept[spec.location])
                 ds.set(spec.name, values)
                 if hasattr(ds, "_mark_mtg_synced"):
                     ds._mark_mtg_synced(spec.name)
         if weights is not None:
             self._repartition(weight_before, active_before)
 
-    def _kept_at_instances(self, spec, values, known_ids):
-        """*values* read back from the MPG, except at the instanced vertices known before the step without an entry
-        of their own: there the MPG holds their template's value, not their current one (the DataStructure's, not
-        written back), which is kept."""
+    def _kept_at_instances(self, spec, values, known_instanced):
+        """*values* read back from the MPG, except at the instanced vertices known before the step
+        (*known_instanced*, over the location's entities) without an entry of their own: there the MPG holds their
+        template's value, not their current one (the DataStructure's, not written back), which is kept."""
         ds, g = self.data_structure, self.data_structure._mtg
         ids = ds.entity_ids(spec.location)
         prop = g.properties().get(spec.name)
-        own = np.isin(ids, prop.keys_array()) if prop is not None else np.zeros(len(ids), dtype=bool)
-        keep = ds._instanced_at(spec.location) & np.isin(ids, known_ids) & ~own
+        own = prop.contains(ids) if prop is not None else np.zeros(len(ids), dtype=bool)
+        keep = known_instanced & ~own
         if not keep.any():
             return values
         current = ds.get(spec.name)

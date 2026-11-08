@@ -302,6 +302,13 @@ class ArrayDict(MutableMapping):
         positions, found = self._positions(vids)
         return found, self.arr[positions[found]]
 
+    def contains(self, vids) -> np.ndarray:
+        """Which of *vids* (an int array) are keys, by binary search."""
+        vids = np.asarray(vids, dtype=np.int64)
+        if self.size == 0 or vids.size == 0:
+            return np.zeros(vids.size, dtype=bool)
+        return self._positions(vids)[1]
+
     # --- indexed / scatter ops ----------------------------------------------
 
     def indices_of(self, vids):

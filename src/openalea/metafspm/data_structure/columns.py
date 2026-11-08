@@ -118,7 +118,10 @@ class DataStructureColumn(ArrayDict):
         """The DataStructure holds the values of its entities (it wrote them over the MPG's before): the overlay's
         entries at them dropped, every entity present."""
         if self.overlay.size:
-            self.overlay.delete_many(self._source_index()[0])
+            keys = self.overlay.order[:self.overlay.size]          # the overlay's few keys looked up, not the reverse
+            doomed = keys[_member(self._source_index()[0], keys)]
+            if doomed.size:
+                self.overlay.delete_many(doomed)
         self._synced, self._hidden, self._pending = None, np.empty(0, dtype=np.int64), []
 
     def hide(self, keys) -> None:
@@ -152,7 +155,8 @@ class DataStructureColumn(ArrayDict):
 
     def _present(self, keys) -> np.ndarray:
         """Which of the DataStructure's entities *keys* the MPG has an entry for."""
-        present = np.ones(len(keys), dtype=bool) if self._synced is None else _member(self._synced, keys)
+        present = np.ones(len(keys), dtype=bool) if self._synced is None else \
+            _member_shared(self._synced, keys).copy()
         hidden = self._hidden_keys()
         if hidden.size:
             present &= ~_member(hidden, keys)
@@ -180,16 +184,26 @@ class DataStructureColumn(ArrayDict):
         found = np.zeros(vids.size, dtype=bool)
         out = np.empty(vids.size, dtype=self._dtype(array))
         if keys.size and vids.size:
-            at = np.searchsorted(keys, vids).clip(0, keys.size - 1)
-            found = keys[at] == vids
-            if not self.pure():
-                found[found] = self._present(vids[found])
+            at, found = _positions_shared(keys, vids)
+            found = found & self._present(vids) if not self.pure() else found.copy()     # the shared one kept
             out[found] = array[positions[at[found]]]
         if self.overlay.size and vids.size:
-            in_overlay, overlay_values = self.overlay.at(vids)
+            in_overlay, overlay_values = _overlay_at(self.overlay, vids)
             out[in_overlay] = overlay_values
-            found |= in_overlay
+            found = found | in_overlay
         return found, out[found]
+
+    def contains(self, vids) -> np.ndarray:
+        """Which of *vids* (an int array) the MPG has an entry of the property for (at()'s found, no values read)."""
+        vids = np.asarray(vids, dtype=np.int64)
+        keys = self._source_index()[0]
+        found = np.zeros(vids.size, dtype=bool)
+        if keys.size and vids.size:
+            found = _positions_shared(keys, vids)[1]
+            found = found & self._present(vids) if not self.pure() else found.copy()
+        if self.overlay.size and vids.size:
+            found = found | _overlay_at(self.overlay, vids)[0]
+        return found
 
     def value_at(self, k, default=None):
         """The value of vertex *k*, *default* when the MPG has none."""
@@ -377,6 +391,52 @@ class DataStructureColumn(ArrayDict):
     def _check_invariant(self) -> bool:
         keys = self._merged()[0]
         return bool(np.all(keys[:-1] < keys[1:])) if keys.size > 1 else True
+
+
+_SHARED_POSITIONS = {}          # (id(sorted keys), id(values)) -> (sorted keys, values, positions, found)
+SHARED_POSITIONS_KEPT = 8
+
+
+def _positions_shared(sorted_keys, values) -> tuple:
+    """(positions of *values* in *sorted_keys* (ascending), clipped; whether each is there), by binary search: kept
+    for the next reads of the same two arrays when both are read-only (a location's sorted ids and a read plan's
+    vids, read by every variable of the location), else computed."""
+    values = np.asarray(values, dtype=np.int64)
+    shared = not sorted_keys.flags.writeable and not values.flags.writeable
+    if shared:
+        hit = _SHARED_POSITIONS.get((id(sorted_keys), id(values)))
+        if hit is not None and hit[0] is sorted_keys and hit[1] is values:
+            return hit[2], hit[3]
+    at = np.searchsorted(sorted_keys, values).clip(0, sorted_keys.size - 1)
+    found = sorted_keys[at] == values
+    if shared:
+        at.flags.writeable = found.flags.writeable = False
+        if len(_SHARED_POSITIONS) >= SHARED_POSITIONS_KEPT:
+            _SHARED_POSITIONS.pop(next(iter(_SHARED_POSITIONS)))
+        _SHARED_POSITIONS[(id(sorted_keys), id(values))] = (sorted_keys, values, at, found)
+    return at, found
+
+
+def _member_shared(sorted_keys, values) -> np.ndarray:
+    """_member, through _positions_shared."""
+    values = np.asarray(values, dtype=np.int64)
+    if sorted_keys.size == 0 or values.size == 0:
+        return np.zeros(values.size, dtype=bool)
+    return _positions_shared(sorted_keys, values)[1]
+
+
+def _overlay_at(overlay, vids) -> tuple:
+    """overlay.at(vids): (found, values). When the overlay is small and *vids* strictly ascending, its keys are
+    looked up in *vids* (one binary search per key, not per vid): the same result."""
+    size = overlay.size
+    if size * 16 >= vids.size or vids.size < 2 or not (vids[1:] > vids[:-1]).all():
+        return overlay.at(vids)
+    keys = overlay.order[:size]
+    at = np.searchsorted(vids, keys).clip(0, vids.size - 1)
+    hit = vids[at] == keys
+    found = np.zeros(vids.size, dtype=bool)
+    found[at[hit]] = True
+    return found, overlay.arr[:size][hit]
 
 
 def _member(sorted_keys, values) -> np.ndarray:

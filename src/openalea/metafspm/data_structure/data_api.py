@@ -2605,6 +2605,7 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
         keys = (np.asarray(vids, dtype=np.int64) if scale is None or scale == self._node_scale()
                 else self._owners_at(vids, scale))
         unique, inverse = np.unique(keys, return_inverse=True)
+        unique.flags.writeable = False          # shared by the reads at these vids (their positions kept: columns)
         plan = (unique, inverse, self._mtg.instances.plan(unique))
         if len(cache) > 16:
             cache.clear()
@@ -2762,17 +2763,9 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
                 raise ValueError(f"'{spec.name}' holds objects: only node or coarse variables at their own scale are "
                                  "read")
             if spec.location != "node":                 # one object per entity of a coarse location (e.g. SubOrgan)
-                prop = self._mtg.properties().get(spec.name)
-                if prop is None or len(prop) == 0:
-                    return None
-                return [prop.get(int(v)) for v in self.entity_ids(spec.location).tolist()]
-            if getattr(self._mtg, "_instanced", lambda: False)():
-                values = self._mtg.values_of(spec.name, self._idx_to_vid)
-                return [values.get(int(v)) for v in self._idx_to_vid.tolist()] if values else None
-            prop = self._mtg.properties().get(spec.name)
-            if prop is None or len(prop) == 0:
-                return None
-            return [prop.get(int(v)) for v in self._idx_to_vid.tolist()]
+                return self._mtg_objects(spec.name, self.entity_ids(spec.location), instanced=False)
+            return self._mtg_objects(spec.name, self._idx_to_vid,
+                                     instanced=getattr(self._mtg, "_instanced", lambda: False)())
         fill = spec.default if isinstance(spec.default, (int, float)) and not isinstance(spec.default, bool) else None
         if spec.location == "node":
             return self._mtg_to_node_array(spec.name, scale=spec.scale, fill=fill)
@@ -2792,6 +2785,28 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
                 raise ValueError(f"'{spec.name}' is aggregated with weight '{spec.weight}', which is not registered")
             weights = self.get(spec.weight)
         return self._map(values, "node", spec.location, spec.mapping, weights)
+
+    def _mtg_objects(self, name: str, vids, instanced: bool):
+        """The objects of MTG property *name* at *vids* (None where a vertex has none), as a list, in one bulk read:
+        the vertices' own entries, and with *instanced* their templates' values (MPG.values_at); None when no vertex
+        has one (instanced) or the property is absent or empty."""
+        vids = np.asarray(vids, dtype=np.int64)
+        if instanced:
+            unique = np.unique(vids)
+            found, values = self._mtg.values_at(name, unique)
+            if not found.size:
+                return None
+            at = np.searchsorted(found, vids).clip(0, found.size - 1)
+            present = found[at] == vids
+            picked = values[at[present]]
+        else:
+            prop = self._mtg.properties().get(name)
+            if prop is None or len(prop) == 0:
+                return None
+            present, picked = prop.at(vids)
+        out = np.full(vids.size, None, dtype=object)
+        out[present] = picked if picked.dtype == object else picked.astype(object)
+        return out.tolist()
 
     # ── Lazy MTG synchronisation: the DataStructure is the reference, the MTG a view kept up to date on read ──
 

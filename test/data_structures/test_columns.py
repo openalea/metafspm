@@ -127,3 +127,34 @@ def test_any_property_is_a_typed_column():
     g.properties().setdefault("tags", {})[plant] = "x"   # setdefault gives the stored column
     assert g.property("tags")[plant] == "x"
     assert g.label(plant) == g.property("label")[plant] and g.edge_type(plant) == "/"
+
+
+def test_a_views_bulk_reads_equal_the_reference_lookups_with_an_overlay_hidden_entities_and_shared_positions():
+    """at() and contains() of a view (overlay, entities absent until the next synchronisation, removals) equal the
+    lookups in its merged keys, whether the positions are shared (read-only arrays) or not, and whether the overlay's
+    keys are looked up in the vids (ascending) or the vids in the overlay."""
+    from openalea.metafspm.data_structure import columns
+    g, seedling, ds = _seedling()
+    _tracked(g, ds)
+    new = g.add_child(seedling.root_segment6, **PropsConfig(scale=g.scales.SubOrgan, edge_type='<',
+                                                            label=g.labels.SubOrgan.RootSegment))
+    ds.update_topology()
+    view = g.properties()["water"]
+    ids = np.sort(ds.entity_ids("node"))
+    g.set_values("water", [int(ids[1]), new], [42., 43.])          # an overlay
+    g._delete_properties([int(ids[3])])                             # a hidden entity
+    keys, values = view.items_arrays()
+    for vids in (ids, ids[::-1].copy(), np.concatenate((ids, ids)), np.append(ids, ids.max() + 100)):
+        for shared in (False, True):
+            vids = vids.copy()
+            vids.flags.writeable = not shared
+            for repeat in range(2):                                 # the second read of shared arrays: kept
+                found, read = view.at(vids)
+                expected = np.isin(vids, keys)
+                assert found.tolist() == expected.tolist() and view.contains(vids).tolist() == expected.tolist()
+                assert read.tolist() == values[np.searchsorted(keys, vids[expected])].tolist()
+                found[:] = False                                    # the caller's own array, not the shared one
+    store = ArrayDict.from_items([5, 9], [1., 2.])
+    assert store.contains(np.array([1, 5, 9, 10])).tolist() == [False, True, True, False]
+    small, ascending = ArrayDict.from_items([3, 7], [1., 2.]), np.arange(100)
+    assert [a.tolist() for a in columns._overlay_at(small, ascending)] == [a.tolist() for a in small.at(ascending)]
