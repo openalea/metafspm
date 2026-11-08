@@ -292,3 +292,25 @@ def test_an_object_value_of_a_coarse_vertex_is_read_as_one_object():
     g.properties()["rank"] = {segment: k for k, segment in enumerate(segments)}
     _, ranks = g.values_at("rank", np.asarray(segments, dtype=np.int64))
     assert ranks.tolist() == [0, 1] and ranks.dtype != object
+
+
+def test_the_column_of_an_instanced_mpg_is_its_values_at_every_vid():
+    """MPG.column on an instanced MPG (each template's values gathered at its instances, the explicit entries over
+    them, no sweep of the vid index): the values at every vid, their type and their presence, as values_at reads
+    them one by one, for every property (numbers, labels, links, an entry overriding its template's)."""
+    _, (h, segments, sections, ds) = _pair(3)
+    x1 = sections[segments[0]]["x1"]
+    h.set_values("vessel_index", [x1], [5.])
+    h.set_values("note", [x1, segments[1]], ["an instanced vertex's", ("a", "record")])     # an object column
+    vids = np.arange(h._id + 1, dtype=np.int64)
+    for name in list(h.properties()) + ["absent"]:
+        values, present = h.column(name)
+        keys, expected = h.values_at(name, vids)
+        np.testing.assert_array_equal(np.flatnonzero(present), keys, err_msg=name)
+        assert values.dtype == expected.dtype, name
+        if values.dtype == object:
+            got = values[keys].tolist()
+            assert got == expected.tolist() and [type(v) for v in got] == [type(v) for v in expected], name
+        else:
+            np.testing.assert_array_equal(values[keys], expected, err_msg=name)
+    assert h.column("vessel_index")[0][x1] == 5.

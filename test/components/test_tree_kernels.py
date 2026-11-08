@@ -263,3 +263,68 @@ def test_chains_at_a_coarse_location(plant):
         assert site[i] == (wanted[0] if wanted.size else -1.)
     with pytest.raises(ValueError, match="group and rank"):
         ds.define_chain("bad", edge_type="<", location=location)
+
+
+def _python_orders(indptr, indices, roots):
+    """The depth-first pre and post orders with an explicit stack of (node, done), the loop the kernel replaced."""
+    pre, post = [], []
+    for root in roots:
+        stack = [(int(root), False)]
+        while stack:
+            node, done = stack.pop()
+            if done:
+                post.append(node)
+                continue
+            pre.append(node)
+            stack.append((node, True))
+            for child in indices[indptr[node]:indptr[node + 1]][::-1]:
+                stack.append((int(child), False))
+    return np.array(pre, dtype=np.int64), np.array(post, dtype=np.int64)
+
+
+def _python_levels(parents):
+    """Levels by pointer doubling of the depths and a stable sort, the code the kernel replaced."""
+    dist, jump = (parents >= 0).astype(np.int64), parents.copy()
+    while True:
+        idx = np.flatnonzero(jump >= 0)
+        if idx.size == 0:
+            break
+        above = jump[idx]
+        dist_above, jump_above = dist[above].copy(), jump[above].copy()
+        dist[idx] += dist_above
+        jump[idx] = jump_above
+    order = np.argsort(dist, kind="stable")
+    bounds = np.flatnonzero(np.r_[True, np.diff(dist[order]) != 0, True])
+    return dist, [order[bounds[i]:bounds[i + 1]] for i in range(bounds.size - 1)]
+
+
+@pytest.mark.parametrize("seed", [0, 1, 2])
+def test_the_traversal_and_levels_kernels_are_the_loops_they_replace(seed):
+    """kernels.depth_first_orders (tree_kernels.traversal), tree_depths and tree_levels on random forests (children
+    in a given order, several roots, a single node, none) equal the Python loops, element for element."""
+    from openalea.metafspm.data_structure import tree_kernels
+    rng = np.random.default_rng(seed)
+    for n in (0, 1, 2, 50, 400):
+        parents = np.array([-1 if (v == 0 or rng.random() < 0.05) else int(rng.integers(0, v)) for v in range(n)],
+                           dtype=np.int64)
+        relabel = rng.permutation(n)                       # parents not before children, children in any order
+        shuffled = np.full(n, -1, dtype=np.int64)
+        shuffled[relabel] = np.where(parents >= 0, relabel[np.maximum(parents, 0)], -1)
+        for parent in (parents, shuffled):
+            result = tree_kernels.traversal(parent)
+            indptr, indices = result["children"]
+            pre, post = _python_orders(indptr, indices, np.flatnonzero(parent < 0))
+            np.testing.assert_array_equal(result["pre"], pre)
+            np.testing.assert_array_equal(result["post"], post)
+            reversed_children = np.concatenate([indices[indptr[v]:indptr[v + 1]][::-1] for v in range(n)]) \
+                if n else indices
+            given = tree_kernels.traversal(parent, children=(indptr, reversed_children))
+            expected = _python_orders(indptr, reversed_children, np.flatnonzero(parent < 0))
+            np.testing.assert_array_equal(given["pre"], expected[0])
+            np.testing.assert_array_equal(given["post"], expected[1])
+            depth, levels = _python_levels(parent)
+            np.testing.assert_array_equal(tree_kernels.depth(parent), depth)
+            got = tree_kernels.levels(parent)
+            assert len(got) == len(levels) and all(np.array_equal(a, b) for a, b in zip(got, levels))
+    with pytest.raises(ValueError):
+        tree_kernels.depth(np.array([1, 0], dtype=np.int64))      # a cycle

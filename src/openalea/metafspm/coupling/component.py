@@ -906,6 +906,15 @@ class DataStructureComponent(Component):
         """
         return self.data_structure.parameter_view(name, location)
 
+    def parameter_table(self, names, location: str = "node") -> dict:
+        """
+        {name: per-entity values of *location*} of the per-plant parameters *names* (parameter_values for each): the
+        entities' owners found once per topology and shared, each parameter one gather from its per-plant values
+        (read-only arrays, a zero-stride one when every plant has the same value).
+        """
+        ds = self.data_structure
+        return {name: ds.parameter_view(name, location) for name in names}
+
     # Seed of this component's random streams; a scenario may set it
     random_seed = 0
 

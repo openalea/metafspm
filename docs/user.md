@@ -223,7 +223,8 @@ carbon()                                  # one time step: every step, in the sc
   run without a Scene (the Scene sets its time step on each of its DataStructures: Scenes of other steps run in one
   process; none: a component runs one of its own steps per call).
 - **Outside steps** (structural code, helpers, harnesses): `self.parameter_value(name)` is a parameter's single
-  value for the population (it raises when plants differ; `parameter_values(name, location)` gives one per entity);
+  value for the population (it raises when plants differ; `parameter_values(name, location)` gives one per entity,
+  `parameter_table(names, location)` several at once);
   `self.cached(name, build, key=None)` keeps a value until *key* changes (by default the topology version), e.g. a
   per-node array read from the MTG's labels; `component.run_stage("postsegmentation")` runs the steps of one
   schedule row only (e.g. after another model wrote the inputs they read).

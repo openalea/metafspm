@@ -128,7 +128,8 @@ Declarations that cannot be written back raise when the component is created: a 
 - **MTG properties are columns** (`g.properties()`: typed columns, an object column for any value), read and written in bulk:
   - `g.values_at(name, vids)`: (the sorted *vids* having a value, their values);
   - `g.set_values(name, vids, values)`: existing and new vertices, a value each or one for all;
-  - `g.column(name)`: (values, present), two arrays over the vid index, to index with numpy;
+  - `g.column(name)`: (values, present), two arrays over the vid index, to index with numpy (on an MPG with instances: each template's values gathered at its instances, the explicit entries over them, no vid located);
+  - `g.compartments_csr(from_scale)`: the Compartments of each owner as one CSR (`owners`, `indptr`, `compartments`; `has`, `compartments_of`), kept until the next structural edit; `g.compartments_by_owner` is its dict, for code reading it owner by owner;
   - `g.view(name)`: a property read vertex by vertex (its column, with the instanced vertices' template values);
   - `g.property(name)` is openalea.mtg's read API: a read-only mapping built on demand (slow; a write raises).
 - **Checkpoints:** `ds.checkpoint(path)` and `Class.restore(path)`. Derivation formulas and mask rules are module-level functions or picklable objects, not lambdas.
@@ -150,6 +151,7 @@ Models never write traversals: they call the DataStructure's kernels, which run 
 | `ds.path_window(budget, volume, values, where=apex)` | supply windows towards the base |
 | `ds.chain_shift` / `ds.chain_write` | neighbours on a chain, and forward writes |
 | `ds.path_compose` | frames |
+| `ds.order("pre")`, `ds.levels()`, `ds.fold(update, values)` | traversal orders, depths and level-by-level folds (`kernels.depth_first_orders`, `tree_levels`) |
 
 Chains are `"axis"` ('<' successors) by default, or declared with `define_chain(name, group=, rank=)`.
 
@@ -268,7 +270,7 @@ the residuals' and the steps' history and the floor estimate, so a tolerance set
 - **Storage.** Numeric parameters declared without a scale are stored per plant (`"Plant"`; `"scalar"` on grids). They are uniform unless the plants' scenarios differ.
 - **In steps and equations,** parameters are **arguments**, broadcast to the equation's nodes or edges: uniform values as zero-stride views, varied ones per entity. `self.<parameter>` raises there.
 - **Outside them,** `self.k` reads the value (or the per-plant values when they differ), and `model.k = v` sets every plant.
-- **MPG-style structural steps** use `self.parameter_values("k")`.
+- **MPG-style structural steps** use `self.parameter_values("k")`; several parameters at once, `self.parameter_table(names, location)` ({name: values per entity}: each entity's owner found once per topology, one gather per parameter).
 
 ## Scenes
 

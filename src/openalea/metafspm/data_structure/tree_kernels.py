@@ -11,7 +11,7 @@ Exactness: chain scans and path windows add their terms in the same sequential o
 import numpy as np
 
 from openalea.metafspm.kernels import (_chain_positions, _count_window, _follow_chains, _path_window, _segmented_scan,
-                                       _window_contributions)
+                                       _window_contributions, depth_first_orders, tree_depths, tree_levels)
 
 
 # ── Chains ─────────────────────────────────────────────────────────────────────
@@ -96,26 +96,48 @@ def chain_write(event, values, chains: dict, k: int = 1, base=None) -> np.ndarra
 # ── Levels and accumulations ───────────────────────────────────────────────────
 
 def depth(parents: np.ndarray) -> np.ndarray:
-    """Number of edges from each node to its root (pointer doubling, synchronous updates)."""
-    parents = np.asarray(parents, dtype=np.int64)
-    dist = (parents >= 0).astype(np.int64)
-    jump = parents.copy()
-    while True:
-        idx = np.flatnonzero(jump >= 0)
-        if idx.size == 0:
-            return dist
-        above = jump[idx]
-        dist_above, jump_above = dist[above].copy(), jump[above].copy()
-        dist[idx] += dist_above
-        jump[idx] = jump_above
+    """Number of edges from each node to its root (kernels.tree_depths)."""
+    return tree_depths(np.ascontiguousarray(parents, dtype=np.int64))
 
 
 def levels(parents: np.ndarray) -> list:
-    """Node indices grouped by depth, from the roots."""
-    d = depth(parents)
-    order = np.argsort(d, kind="stable")
-    bounds = np.flatnonzero(np.r_[True, np.diff(d[order]) != 0, True])
-    return [order[bounds[i]:bounds[i + 1]] for i in range(bounds.size - 1)]
+    """Node indices grouped by depth, from the roots, ascending within each (kernels.tree_levels)."""
+    order, offsets = tree_levels(np.ascontiguousarray(parents, dtype=np.int64))
+    if order.size == 0:
+        return [order]                          # no node: one empty level (as a fold over none expects)
+    return [order[offsets[i]:offsets[i + 1]] for i in range(offsets.size - 1)]
+
+
+def children_csr(parents: np.ndarray) -> tuple:
+    """(indptr, indices): each node's children, ascending, as a CSR (the children of v: indices[indptr[v]:indptr[v +
+    1]]) from *parents* (-1 at a root)."""
+    parents = np.asarray(parents, dtype=np.int64)
+    n = parents.size
+    order = np.argsort(parents, kind="stable")
+    has = parents[order] >= 0
+    indices = order[has]
+    indptr = np.searchsorted(parents[order][has], np.arange(n + 1))
+    return indptr, indices
+
+
+def traversal(parents: np.ndarray, children: tuple = None, roots: np.ndarray = None) -> dict:
+    """
+    The traversal arrays of a forest given by each node's *parents* index (-1 at a root): {"parents", "children" (its
+    CSR: *children*, default children_csr, ascending), "roots" (default: the nodes without parent, ascending), "tips",
+    "pre", "post"}, the depth-first orders from each root in turn, each node's children in their CSR order
+    (kernels.depth_first_orders). A node not reached from the roots raises (a cycle).
+    """
+    parents = np.asarray(parents, dtype=np.int64)
+    n = parents.size
+    indptr, indices = children_csr(parents) if children is None else children
+    roots = np.flatnonzero(parents < 0) if roots is None else np.asarray(roots, dtype=np.int64)
+    tips = np.flatnonzero(np.diff(indptr) == 0)
+    pre, post = depth_first_orders(np.ascontiguousarray(indptr, dtype=np.int64),
+                                   np.ascontiguousarray(indices, dtype=np.int64), roots, n)
+    if pre.size != n:
+        raise ValueError("the graph has a cycle: traversal orders need a tree")
+    return {"parents": parents, "children": (indptr, indices), "roots": roots, "tips": tips, "pre": pre,
+            "post": post}
 
 
 def accumulate(values, parents: np.ndarray, direction: str = "up", op: str = "sum") -> np.ndarray:

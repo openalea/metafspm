@@ -2,6 +2,26 @@
 
 ## Unreleased (release2026)
 
+### Data access without a sweep of the vid index (devplan_generic_kernels GK-1)
+
+- **`MPG.column(name)` on an MPG with instances** is built from the explicit column and each template's values
+  gathered at its instances (`Instances.property_entries`: one gather per template), the explicit entries over them:
+  no `np.arange` over the vid index, no `np.isin`, no instance located. The values, their type and their presence
+  are those of `values_at` over every vid (a test on an instanced toy MPG).
+- **`FunctionalComponent.parameter_table(names, location)`** (new): {name: one value per entity} of several per-plant
+  parameters. `parameter_view` (and so `parameter_values` and the steps' parameter arguments) gathers a parameter's
+  per-plant values through each entity's owner index, found once per topology and location and shared by every
+  parameter (`_parameter_owners`), not one broadcast map per parameter.
+- **`MPG.compartments_csr(from_scale)`** (new, `OwnerCompartments`: `owners`, `indptr`, `compartments`, `has`,
+  `has_all`, `compartments_of`, `items`): the Compartments of each owner as one CSR, the owners in order of their first
+  Compartment, built in one sort from `compartment_owners`; `compartments_by_owner` is its dict.
+- **Traversal orders and levels as kernels:** `kernels.depth_first_orders` (one explicit stack, the pre and post
+  orders of the recursive visit), `tree_depths` and `tree_levels` (a stable counting sort by depth) replace the Python
+  stack walks of `MPGDataStructure._traversal` and the coarse locations' traversals (`tree_kernels.traversal`, new;
+  `_tree_traversal` gone) and the pointer doubling of `tree_kernels.depth`/`levels`: the same orders, depths and
+  levels, element for element (tests against the loops).
+- Bit-identical.
+
 ### Each step timed in run.json (devplan_generic_kernels GK-0)
 
 - **`run.json`'s `"compute"`/`"timing"` holds each step's wall time and calls**, `functor.<Class>.<step>` beside the

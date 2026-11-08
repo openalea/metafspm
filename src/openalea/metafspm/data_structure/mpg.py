@@ -346,8 +346,7 @@ class MPG(MTG):
         size = int(self._id) + 1
         prop = self._properties.get(name)
         if self._instanced():
-            vids = np.arange(size, dtype=np.int64)
-            keys, values = self._property_at(name, vids)
+            keys, values = self._instanced_column(name, size)
         elif prop is None:
             keys, values = np.empty(0, dtype=np.int64), np.empty(0)
         else:
@@ -360,6 +359,33 @@ class MPG(MTG):
         present[keys] = True
         out[keys] = values
         return out, present
+
+    def _instanced_column(self, name, size: int) -> tuple:
+        """(keys, values) of property *name* on an instanced MPG, every vertex having one: the explicit entries, and
+        each instance's template values at the instanced vertices without an entry of their own (Instances.
+        property_entries: one gather per template, no sweep of the vid index). The values' type is
+        _property_at_instanced's: the explicit ones' when no template value is used, else an object array when either
+        holds objects, float64 otherwise."""
+        if name in self._properties:
+            keys, raw = self._properties[name].items_arrays()
+            values = _values_array(raw.tolist()) if raw.dtype == object else raw
+        else:
+            keys, values = np.zeros(0, dtype=np.int64), np.empty(0)
+        vids, template_values = self.instances.property_entries(name)
+        if keys.size and vids.size:
+            explicit = np.zeros(size, dtype=bool)
+            explicit[keys] = True
+            alone = ~explicit[vids]
+            vids, template_values = vids[alone], template_values[alone]
+        if not vids.size:
+            return keys, values
+        if values.dtype == object or template_values.dtype == object:
+            merged = np.empty(keys.size + vids.size, dtype=object)
+            merged[:keys.size] = values.tolist()
+            merged[keys.size:] = template_values.tolist()
+        else:
+            merged = np.concatenate((np.asarray(values, dtype=np.float64), template_values))
+        return np.concatenate((np.asarray(keys, dtype=np.int64), vids)), merged
 
     def set_values(self, name, vids, values) -> None:
         """property *name* = *values* at *vids* (a sequence aligned with them, or one value for all), in bulk: in
@@ -961,15 +987,16 @@ class MPG(MTG):
             out[coarser] = self.complex_at_scale_array(owners[coarser], scale)
         return out
 
-    def compartments_by_owner(self, from_scale=None) -> dict:
+    def compartments_csr(self, from_scale=None) -> "OwnerCompartments":
         """
-        {owner vid: [Compartment vids]}: the Compartments of each vertex's anatomy, ascending. With *from_scale*, the
-        owners are the vertices of that scale (e.g. each SubOrgan with all its Compartments, under its Layers and
-        Cells or anchored to it); without, each Compartment's own owner (compartment_owners). Cached until the next
-        structural edit: the dict is shared, read it without modifying it.
+        The Compartments of each owner as one CSR (OwnerCompartments: owners, indptr, compartments), arrays only:
+        the owners in order of their first Compartment's vid, each one's Compartments ascending. With *from_scale*,
+        the owners are the vertices of that scale (e.g. each SubOrgan with all its Compartments, under its Layers and
+        Cells or anchored to it); without, each Compartment's own owner (compartment_owners). Built in one sort from
+        compartment_owners (patched from the structure's delta), kept until the next structural edit (read only).
         """
         signature = self._structure_signature()
-        cache = self.__dict__.setdefault("_owner_maps", {})
+        cache = self.__dict__.setdefault("_owner_csr", {})
         hit = cache.get(from_scale)
         if hit is not None and hit[0] == signature:
             return hit[1]
@@ -979,10 +1006,30 @@ class MPG(MTG):
         kept = owners >= 0
         vids, owners = vids[kept], owners[kept]
         order = np.argsort(owners, kind="stable")                  # ascending vids within each owner
+        grouped = vids[order]
         keys, first, counts = np.unique(owners[order], return_index=True, return_counts=True)
-        chunks = np.split(vids[order], first[1:]) if keys.size else []
-        appearance = np.argsort(np.minimum.reduceat(vids[order], first), kind="stable") if keys.size else []
-        grouped = {int(keys[i]): chunks[i].tolist() for i in appearance}   # owners in order of their first vid
+        if keys.size:
+            appearance = np.argsort(np.minimum.reduceat(grouped, first), kind="stable")   # by their first vid
+            keys, first, counts = keys[appearance], first[appearance], counts[appearance]
+        indptr = np.zeros(keys.size + 1, dtype=np.int64)
+        np.cumsum(counts, out=indptr[1:])
+        compartments = grouped[np.repeat(first - indptr[:-1], counts) + np.arange(indptr[-1], dtype=np.int64)]
+        value = OwnerCompartments(*_read_only_arrays((keys.astype(np.int64), indptr, compartments)))
+        cache[from_scale] = (signature, value)
+        return value
+
+    def compartments_by_owner(self, from_scale=None) -> dict:
+        """
+        {owner vid: [Compartment vids]}: compartments_csr as a dict (owners in order of their first Compartment's vid,
+        each one's Compartments ascending), for code reading it owner by owner. Cached until the next structural
+        edit: the dict is shared, read it without modifying it.
+        """
+        signature = self._structure_signature()
+        cache = self.__dict__.setdefault("_owner_maps", {})
+        hit = cache.get(from_scale)
+        if hit is not None and hit[0] == signature:
+            return hit[1]
+        grouped = self.compartments_csr(from_scale).as_dict()
         cache[from_scale] = (signature, grouped)
         return grouped
 
@@ -1854,6 +1901,53 @@ def _check_same(name, patched, built) -> None:
         a, b = np.asarray(a), np.asarray(b)
         if a.shape != b.shape or a.dtype != b.dtype or not np.array_equal(a, b, equal_nan=a.dtype.kind == "f"):
             raise AssertionError(f"the patched '{name}' differs from its build ({a.shape} vs {b.shape})")
+
+
+class OwnerCompartments:
+    """
+    The Compartments of each owner (MPG.compartments_csr), one CSR: *owners* (vids, in order of their first
+    Compartment's vid), *indptr*, *compartments* (each owner's ascending): owner i's are
+    compartments[indptr[i]:indptr[i + 1]]. Read only.
+    """
+    __slots__ = ("owners", "indptr", "compartments", "_rows")
+
+    def __init__(self, owners, indptr, compartments):
+        self.owners, self.indptr, self.compartments = owners, indptr, compartments
+        self._rows = None
+
+    def __len__(self) -> int:
+        return int(self.owners.size)
+
+    def _row(self) -> dict:
+        if self._rows is None:
+            self._rows = {owner: i for i, owner in enumerate(self.owners.tolist())}
+        return self._rows
+
+    def has(self, owner) -> bool:
+        """Whether *owner* has Compartments."""
+        return owner in self._row()
+
+    def has_all(self, owners) -> bool:
+        """Whether every one of *owners* (vids) has Compartments."""
+        owners = np.asarray(owners, dtype=np.int64)
+        return bool(np.isin(owners, self.owners).all()) if owners.size else True
+
+    def compartments_of(self, owner) -> np.ndarray:
+        """*owner*'s Compartments (ascending vids), empty when it has none."""
+        row = self._row().get(owner)
+        if row is None:
+            return self.compartments[:0]
+        return self.compartments[self.indptr[row]:self.indptr[row + 1]]
+
+    def items(self):
+        """(owner, its Compartments) in the owners' order."""
+        for row, owner in enumerate(self.owners.tolist()):
+            yield owner, self.compartments[self.indptr[row]:self.indptr[row + 1]]
+
+    def as_dict(self) -> dict:
+        """{owner vid: [Compartment vids]} in the owners' order."""
+        lists = np.split(self.compartments, self.indptr[1:-1]) if self.owners.size else []
+        return {owner: chunk.tolist() for owner, chunk in zip(self.owners.tolist(), lists)}
 
 
 class _SortedIds:

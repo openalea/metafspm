@@ -425,6 +425,32 @@ class Instances:
             has[at[present]] = True
         return has, values
 
+    def property_entries(self, name: str) -> tuple:
+        """(vids, values) of property *name* at every instanced vertex whose template holds it, its template's values
+        (links shifted to the instance's block), instance by instance and in each its template's rows: one gather
+        per template, no vertex located. values float64, or an object array when any template holds objects (as
+        values())."""
+        numeric = all(name not in t.properties or t.properties[name][1].dtype != object
+                      for t in self.templates.values())
+        dtype = np.float64 if numeric else object
+        vids, values = [], []
+        for key, code in self.codes.items():
+            entry = self.templates[key].properties.get(name)
+            if entry is None or entry[0].size == 0:
+                continue
+            first = self.first[self.code == code]
+            if first.size == 0:
+                continue
+            rows, stored = entry
+            vids.append((first[:, None] + rows[None, :]).ravel())
+            picked = np.tile(stored, first.size)
+            if name in self.templates[key].links:
+                picked = picked + np.repeat(first, rows.size)
+            values.append(picked.astype(dtype, copy=False))
+        if not vids:
+            return np.zeros(0, dtype=np.int64), np.zeros(0, dtype=dtype)
+        return np.concatenate(vids), np.concatenate(values)
+
     def structure(self, vids) -> tuple:
         """(scale, complex, parent) of instanced *vids* (complex and parent as vertex ids, -1 for none); *anchors*
         resolved by the caller (ANCHOR codes are returned as -2 - scale)."""

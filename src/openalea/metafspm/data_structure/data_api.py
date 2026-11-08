@@ -822,14 +822,38 @@ class VariableStoreMixin:
         elif values.size == 0 or np.all(values == values.flat[0]):
             view = np.broadcast_to(np.asarray(values.flat[0] if values.size else 0., dtype=float), shape)
         else:
-            view = np.ascontiguousarray(self._broadcast_to_entities(values, stored, location, name))
+            owners = self._parameter_owners(stored, location)
+            if (owners >= 0).all():
+                view = values[owners]
+            else:                                   # entities without an owner there read the default
+                fill = self._default_of(name)
+                view = np.full(owners.shape + values.shape[1:], fill, dtype=np.result_type(values, np.asarray(fill)))
+                view[owners >= 0] = values[owners[owners >= 0]]
+            view = np.ascontiguousarray(view)
         view = view.view()
         view.flags.writeable = False
         cache[key] = (stamp, view)
         return view
 
-    def _broadcast_to_entities(self, values, location: str, to: str, name: str = None) -> np.ndarray:
-        return self._map(values, location, to, "broadcast", fill=self._default_of(name))
+    def _parameter_owners(self, stored: str, location: str) -> np.ndarray:
+        """Per entity of *location*, the index of its owner at *stored* (a parameter's location, e.g. "Plant"), -1
+        for none: _broadcast_to_entities of the owners' indices, found once per topology and shared by every
+        parameter read there (parameter_view gathers each one's values with it)."""
+        cache = self.__dict__.setdefault("_parameter_owners_cache", {})
+        stamp = (self.topology_version, tuple(self._location_shape(location)), tuple(self._location_shape(stored)))
+        hit = cache.get((stored, location))
+        if hit is not None and hit[0] == stamp:
+            return hit[1]
+        count = int(self._location_shape(stored)[0])
+        owners = np.asarray(self._broadcast_to_entities(np.arange(count, dtype=np.int64), stored, location,
+                                                        fill=-1))
+        if owners.dtype != np.int64:
+            owners = owners.astype(np.int64)
+        cache[(stored, location)] = (stamp, owners)
+        return owners
+
+    def _broadcast_to_entities(self, values, location: str, to: str, name: str = None, fill=None) -> np.ndarray:
+        return self._map(values, location, to, "broadcast", fill=self._default_of(name) if fill is None else fill)
 
     def default(self, name):
         """The declared default of variable *name* (0 when unknown): e.g. the value of entities a step creates."""
@@ -1701,24 +1725,8 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
         indptr = np.zeros(n + 1, dtype=np.int64)
         np.add.at(indptr, a + 1, 1)
         indptr = np.cumsum(indptr)
-        roots = np.flatnonzero(parent < 0)
-        tips = np.flatnonzero(np.diff(indptr) == 0)
-        pre, post = [], []
-        for root in roots:
-            stack = [(int(root), False)]
-            while stack:
-                node, done = stack.pop()
-                if done:
-                    post.append(node)
-                    continue
-                pre.append(node)
-                stack.append((node, True))
-                for child in indices[indptr[node]:indptr[node + 1]][::-1]:
-                    stack.append((int(child), False))
-        if len(pre) != n:
-            raise ValueError("the graph has a cycle: traversal orders need a tree")
-        result = {"parents": parent, "children": (indptr, indices), "roots": roots, "tips": tips,
-                  "pre": np.array(pre, dtype=np.int64), "post": np.array(post, dtype=np.int64)}
+        from openalea.metafspm.data_structure import tree_kernels
+        result = tree_kernels.traversal(parent, children=(indptr, indices))     # its children in Connection order
         self.__dict__["_traversal_cache"] = ((self.topology_version, n, self.n_edges()), result)
         return result
 
@@ -1755,7 +1763,8 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
         raw = arrays["parent"][ids]
         position = np.searchsorted(ids, raw).clip(0, max(ids.size - 1, 0))
         known = (raw >= 0) & (ids.size > 0) & (ids[position] == raw)
-        result = _tree_traversal(np.where(known, position, -1))
+        from openalea.metafspm.data_structure import tree_kernels
+        result = tree_kernels.traversal(np.where(known, position, -1))
         cache[location] = (stamp, result)
         return result
 
@@ -2466,13 +2475,13 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
                           weights, "the plant")
         return super()._map(values, from_location, to_location, aggregation, weights)
 
-    def _broadcast_to_entities(self, values, location: str, to: str, name: str = None) -> np.ndarray:
+    def _broadcast_to_entities(self, values, location: str, to: str, name: str = None, fill=None) -> np.ndarray:
         """
         Owner values for nodes, and for edges the value of their child node (edges never join two plants); at a
         coarse location *to* (e.g. a plant's value for each of its Axes), each entity's owner's. Nodes without an
-        entity at *location* (anatomy walls and junctions at the Cell scale) read *name*'s default.
+        entity at *location* (anatomy walls and junctions at the Cell scale) read *name*'s default (or *fill*).
         """
-        fill = self._default_of(name)
+        fill = self._default_of(name) if fill is None else fill
         if to not in ("node", "edge"):                # between two coarse locations (Plant -> Axis, Organ)
             return self._map(values, location, to, "broadcast", fill=fill)
         on_nodes = self._map(values, location, "node", "broadcast", fill=fill) if location != "node" else values
@@ -3998,31 +4007,6 @@ class ArrayDataStructure(VariableStoreMixin, FieldDataStructure):
 
 
 
-def _tree_traversal(parent: np.ndarray) -> dict:
-    """Children (CSR), roots, tips and the pre and post orders of a forest given by each entity's *parent* index (-1
-    at a root), as _traversal's arrays."""
-    n = parent.size
-    order = np.argsort(parent, kind="stable")
-    has = parent[order] >= 0
-    indices = order[has]
-    indptr = np.searchsorted(parent[order][has], np.arange(n + 1))
-    roots = np.flatnonzero(parent < 0)
-    tips = np.flatnonzero(np.diff(indptr) == 0)
-    pre, post = [], []
-    stack = [(int(r), False) for r in roots[::-1]]
-    while stack:
-        node, done = stack.pop()
-        if done:
-            post.append(node)
-            continue
-        pre.append(node)
-        stack.append((node, True))
-        for child in indices[indptr[node]:indptr[node + 1]][::-1]:
-            stack.append((int(child), False))
-    return {"parents": parent, "children": (indptr, indices), "roots": roots, "tips": tips,
-            "pre": np.array(pre, dtype=np.int64), "post": np.array(post, dtype=np.int64)}
-
-
 def _grouped_extreme(values, owner, size: int, aggregation: str) -> np.ndarray:
     """The largest ("max") or smallest ("min") of *values* per owner (NaN for an owner of none, NaNs ignored)."""
     out = np.full(size, np.nan)
@@ -4757,7 +4741,8 @@ class EntityView(DataStructure):
             parent = inner._parent_pairs()[0] if inner is self._base else inner.parents()
             parent = np.asarray(parent, dtype=np.int64)[selection]
             parent = np.where(parent >= 0, position[np.maximum(parent, 0)], -1)      # outside the view: a base
-            return _tree_traversal(parent)
+            from openalea.metafspm.data_structure import tree_kernels
+            return tree_kernels.traversal(parent)
         return self._cached("traversal", build)
 
     def parents(self) -> np.ndarray:
@@ -4878,8 +4863,8 @@ class EntityView(DataStructure):
                           weights, "the plant")
         raise ValueError(f"an entity view cannot map {from_location} to {to_location} ({aggregation})")
 
-    def _broadcast_to_entities(self, values, location: str, to: str, name: str = None) -> np.ndarray:
-        return self._map(values, location, to, "broadcast", fill=self._default_of(name))
+    def _broadcast_to_entities(self, values, location: str, to: str, name: str = None, fill=None) -> np.ndarray:
+        return self._map(values, location, to, "broadcast", fill=self._default_of(name) if fill is None else fill)
 
     # ── geometry: the component's triangles, also given to the base in its node indices ──
     def add_geometry_provider(self, component) -> None:

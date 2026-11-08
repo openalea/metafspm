@@ -61,7 +61,7 @@ The solvers are chosen by key in `graph_system(solver=...)`: `"newton"`, `"newto
    :members: AdaptiveGridDataStructure
 
 .. automodule:: openalea.metafspm.data_structure.mpg
-   :members: MPG
+   :members: MPG, OwnerCompartments
 
 .. automodule:: openalea.metafspm.data_structure.wiring
    :members: SectionPairs, junctions, label_pairs
@@ -76,7 +76,8 @@ The solvers are chosen by key in `graph_system(solver=...)`: `"newton"`, `"newto
    :members:
 
 .. automodule:: openalea.metafspm.kernels
-   :members: warm_up, follow_parents, left_of, roll_right, down, turn_left, roll_to_vertical
+   :members: warm_up, follow_parents, left_of, roll_right, down, turn_left, roll_to_vertical, depth_first_orders,
+             tree_depths, tree_levels
 
 .. automodule:: openalea.metafspm.compute
    :members: warm_up

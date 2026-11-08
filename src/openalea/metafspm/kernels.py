@@ -131,6 +131,95 @@ def _window_contributions(targets, parents, budget, extent, values, include, off
                 remaining = 0.
 
 
+@njit(cache=True, nogil=True)
+def depth_first_orders(indptr, indices, roots, n):
+    """
+    (pre, post): the depth-first pre and post orders of a forest of *n* nodes given by its children's CSR (*indptr*,
+    *indices*: the children of node v are indices[indptr[v]:indptr[v + 1]], in that order), from each of *roots* in
+    turn: a node, then each child's subtree in its order (pre); each child's subtree, then the node (post). One
+    explicit stack (a node and its next child), as a recursive visit; the nodes not reached are left out.
+    """
+    pre = np.empty(n, dtype=np.int64)
+    post = np.empty(n, dtype=np.int64)
+    stack_node = np.empty(n, dtype=np.int64)
+    stack_next = np.empty(n, dtype=np.int64)
+    visited = 0
+    finished = 0
+    for r in range(roots.size):
+        root = roots[r]
+        top = 0
+        stack_node[0] = root
+        stack_next[0] = indptr[root]
+        pre[visited] = root
+        visited += 1
+        while top >= 0:
+            node = stack_node[top]
+            k = stack_next[top]
+            if k < indptr[node + 1]:
+                stack_next[top] = k + 1
+                child = indices[k]
+                if visited >= n or top + 1 >= n:
+                    raise ValueError("depth_first_orders: the graph is not a forest (a node reached twice)")
+                top += 1
+                stack_node[top] = child
+                stack_next[top] = indptr[child]
+                pre[visited] = child
+                visited += 1
+            else:
+                post[finished] = node
+                finished += 1
+                top -= 1
+    return pre[:visited], post[:finished]
+
+
+@njit(cache=True, nogil=True)
+def tree_depths(parents):
+    """The number of edges from each node to its root in the forest given by *parents* (-1 at a root): each node's
+    chain walked up to the first node of known depth, the chain's depths written down from it."""
+    n = parents.size
+    depth = np.full(n, -1, dtype=np.int64)
+    chain = np.empty(n, dtype=np.int64)
+    for v in range(n):
+        if depth[v] >= 0:
+            continue
+        length = 0
+        node = v
+        while node >= 0 and depth[node] < 0:
+            if length >= n:
+                raise ValueError("tree_depths: the parents hold a cycle")
+            chain[length] = node
+            length += 1
+            node = parents[node]
+        known = -1 if node < 0 else depth[node]
+        for i in range(length - 1, -1, -1):
+            known += 1
+            depth[chain[i]] = known
+    return depth
+
+
+@njit(cache=True, nogil=True)
+def tree_levels(parents):
+    """(order, offsets): the nodes grouped by depth from the roots (tree_depths), ascending within each depth (a
+    stable counting sort): level d is order[offsets[d]:offsets[d + 1]]."""
+    depth = tree_depths(parents)
+    n = parents.size
+    deepest = -1
+    for v in range(n):
+        if depth[v] > deepest:
+            deepest = depth[v]
+    offsets = np.zeros(deepest + 2, dtype=np.int64)
+    for v in range(n):
+        offsets[depth[v] + 1] += 1
+    for d in range(deepest + 1):
+        offsets[d + 1] += offsets[d]
+    cursor = offsets[:-1].copy()
+    order = np.empty(n, dtype=np.int64)
+    for v in range(n):
+        order[cursor[depth[v]]] = v
+        cursor[depth[v]] += 1
+    return order, offsets
+
+
 # ── The turtle's frame operations (PlantGL's PglTurtle), on heading and up arrays (3,) changed in place ──
 
 
@@ -368,6 +457,8 @@ def warm_up() -> None:
         tree_kernels.chain_scan(np.column_stack([values, values]), chains, op=op, reverse=True, exclusive=True)
     extent = np.ones(4)
     tree_kernels.path_window(parents, 2., extent, values)
+    tree_kernels.levels(parents), tree_kernels.depth(parents)
+    tree_kernels.traversal(parents)
     tree_kernels.path_contributions(parents, 2., extent, values, np.arange(4, dtype=np.int64))
     base = np.zeros((2, 3))
     heading, up = np.tile([0., 0., 1.], (2, 1)), np.tile([1., 0., 0.], (2, 1))
@@ -389,3 +480,4 @@ def warm_up() -> None:
     blocks = List([np.ones((2, 2)), np.full((2, 2), 2.)])
     scatter_weighted_blocks(np.empty(indices.size), slots[:4].reshape(1, 2, 2), np.array([[0, 1]], dtype=np.int64),
                             np.array([[0.5, 0.5]]), blocks, work_chunks(1, 4))
+
