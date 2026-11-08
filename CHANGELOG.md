@@ -10,6 +10,10 @@
   The kinds are added in the requests' order and are the same bit for bit at any thread count; numba's kernels
   within a kind run on one thread. run.json times them under `kinds.tails` (with their threads).
 - `Compute.count` is thread-safe (the kinds' threads count their solves).
+- **The process pool stays** (`Compute.workers`): the QG-3 gate was not met. At 8 plants to day 8 the threads
+  ("auto", no pool) take 298.0 s, against the 4-worker pool's 286.5 s, at a peak 0.85 GB lower; level at day 13
+  (4.15 against 4.13–4.14 s per step). A pool's processes keep one thread each; the threads work the kinds in the
+  main process.
 
 ### The kinds' batches (devplan_generic_kernels GK-4)
 
