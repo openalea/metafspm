@@ -133,30 +133,18 @@ class GraphView:
     def _laplacian_pattern(self) -> tuple:
         """(indptr, indices, entry_pointer, entry_edges, entry_signs, chunks) of laplacian: the canonical CSR pattern
         of every entry an edge reaches (its two ends and the two between them; a loop's none), and each entry's edges
-        in ascending order with their signs; built once per view."""
+        in ascending order with their signs (kernels.laplacian_pattern, linear in the edges); built once per view."""
         cached = self.__dict__.get("_laplacian")
         if cached is not None:
             return cached
-        from openalea.metafspm.kernels import work_chunks
+        from openalea.metafspm.kernels import laplacian_pattern, work_chunks
         n = self.n_nodes
-        tail, head = np.asarray(self.tail, dtype=np.int64), np.asarray(self.head, dtype=np.int64)
-        edges = np.flatnonzero(tail != head)
-        t, h = tail[edges], head[edges]
-        rows = np.concatenate((t, h, t, h))
-        columns = np.concatenate((t, h, h, t))
-        signs = np.concatenate((np.ones(2 * edges.size, dtype=np.int8), -np.ones(2 * edges.size, dtype=np.int8)))
-        contributing = np.tile(edges, 4)
-        keys = rows * n + columns
-        order = np.lexsort((contributing, keys))                  # by entry, then by edge
-        keys, contributing, signs = keys[order], contributing[order], signs[order]
-        unique, first = np.unique(keys, return_index=True)
-        entry_pointer = np.append(first, keys.size).astype(np.int64)
+        indptr, indices, entry_pointer, entry_edges, entry_signs = laplacian_pattern(
+            np.ascontiguousarray(self.tail, dtype=np.int64), np.ascontiguousarray(self.head, dtype=np.int64), n)
         index_dtype = np.int32 if max(n, 1) < 2 ** 31 else np.int64
-        indices = (unique % max(n, 1)).astype(index_dtype)
-        indptr = np.zeros(n + 1, dtype=index_dtype)
-        np.cumsum(np.bincount(unique // max(n, 1), minlength=n), out=indptr[1:])
-        chunks = work_chunks(int(unique.size), max(1, int(keys.size // max(unique.size, 1))))
-        cached = (indptr, indices, entry_pointer, contributing.astype(np.int64), signs, chunks)
+        indptr, indices = indptr.astype(index_dtype), indices.astype(index_dtype)
+        chunks = work_chunks(int(indices.size), max(1, int(entry_edges.size // max(indices.size, 1))))
+        cached = (indptr, indices, entry_pointer, entry_edges, entry_signs, chunks)
         object.__setattr__(self, "_laplacian", cached)              # frozen: not a field
         return cached
 

@@ -5,13 +5,14 @@
 ### Assembly into kept patterns (devplan_generic_kernels GK-3)
 
 - **`GraphView.laplacian(weights)`** (new): B diag(w) Bᵀ through a pattern kept per view (each entry's edges with
-  their signs), filled by `kernels.scatter_edges` (parallel over chunks of entries made from the work only): each
-  entry summed over its edges in ascending order and the exact zeros dropped, as scipy's product does, so the same
-  matrix bit for bit. MECHA's Jacobians of the plant and standard problems and its osmotic input Jacobian call it.
-- **A graph system's Jacobian with explicit terms or reduced groups** (`decorator.jac_evaluator`): the equations'
-  Jacobian, the explicit terms' and the reduced D are summed into their union's pattern, kept while the terms'
-  patterns are unchanged (`solve.assembly.TermSum`, `kernels.scatter_terms`), term after term in their order, the
-  exact zeros dropped: the matrix of their chain of scipy additions, entry for entry.
+  their signs, `kernels.laplacian_pattern`: linear in the edges), filled by `kernels.scatter_edges` (parallel over
+  chunks of entries made from the work only): each entry summed over its edges in ascending order and the exact
+  zeros dropped, as scipy's product does, so the same matrix bit for bit. MECHA's Jacobians of the plant and standard
+  problems and its osmotic input Jacobian call it.
+- **Not done: the Jacobian's terms summed into a kept union pattern.** Tried (a `TermSum` in `jac_evaluator`) and
+  removed: use case 1's topology changes nearly every hour, so the union is built at almost every step, and building
+  it (a sort of every term's entries) costs seconds at 8 plants where scipy's chain of additions costs 13 ms; kept,
+  its scatter is no faster than that chain. `jac_evaluator` adds its terms with scipy, as before.
 - Bit-identical.
 
 ### Gathers by owner and tree orders as kernels (devplan_generic_kernels GK-2)

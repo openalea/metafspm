@@ -1218,14 +1218,12 @@ class _GraphSystemBuilder:
             added_jacobians.append(lambda ctx, _D=reduced[0]: _D)
         if jac_evaluator is not None and added_jacobians:
             equations_jacobian = jac_evaluator
-            from openalea.metafspm.solve.assembly import TermSum
-            kept = instance.caches() if hasattr(instance, "caches") else instance.__dict__.setdefault("_caches", {})
-            term_sum = kept.setdefault(("jacobian_terms", spec_def["inner_class"].__name__), TermSum())
 
-            def jac_evaluator(ctx, _base=equations_jacobian, _added=tuple(added_jacobians), _sum=term_sum):
-                # the equations' Jacobian, then the explicit terms' and the reduced groups', into their union's
-                # pattern kept while theirs are unchanged (the same matrix as their chain of additions)
-                return _sum([_base(ctx)] + [add(ctx) for add in _added])
+            def jac_evaluator(ctx, _base=equations_jacobian, _added=tuple(added_jacobians)):
+                J = _base(ctx)
+                for add in _added:
+                    J = J + add(ctx)
+                return J.tocsr() if issparse(J) else J
         if jac_evaluator is not None and any(set_terms.values()):
             # The user's Jacobian covers the equations; the framework adds the boundary sets' terms
             user_jacobian = jac_evaluator

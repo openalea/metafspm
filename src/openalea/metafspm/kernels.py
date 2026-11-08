@@ -468,6 +468,65 @@ def gather_local(owner, owner_key, table_offsets, flat, fill):
 # ── A graph's Laplacian B diag(w) Bᵀ into its kept pattern (data_structure.GraphView.laplacian) ──
 
 
+@njit(cache=True, nogil=True)
+def laplacian_pattern(tail, head, n):
+    """
+    The pattern of B diag(w) Bᵀ on *n* nodes (B: an edge's tail +1, its head -1): (indptr, indices: each row's
+    columns ascending, a canonical CSR; entry_pointer, entry_edges, entry_signs: each entry's contributing edges,
+    ascending, +1 on a diagonal, -1 off it). A loop (tail == head) contributes nothing. Each row's entries by a
+    counting sort on the rows, then an insertion sort by (column, edge) within the row (a node's degree is small).
+    """
+    m = tail.size
+    count = np.zeros(n + 1, dtype=np.int64)
+    for e in range(m):
+        if tail[e] != head[e]:
+            count[tail[e] + 1] += 2
+            count[head[e] + 1] += 2
+    for r in range(n):
+        count[r + 1] += count[r]
+    total = count[n]
+    column = np.empty(total, dtype=np.int64)
+    edge = np.empty(total, dtype=np.int64)
+    cursor = count[:n].copy()
+    for e in range(m):
+        t, h = tail[e], head[e]
+        if t == h:
+            continue
+        for row, other in ((t, h), (h, t)):
+            k = cursor[row]
+            column[k], edge[k] = row, e
+            column[k + 1], edge[k + 1] = other, e
+            cursor[row] = k + 2
+    for r in range(n):                                   # insertion sort by (column, edge) within each row
+        for a in range(count[r] + 1, count[r + 1]):
+            c, e = column[a], edge[a]
+            b = a - 1
+            while b >= count[r] and (column[b] > c or (column[b] == c and edge[b] > e)):
+                column[b + 1], edge[b + 1] = column[b], edge[b]
+                b -= 1
+            column[b + 1], edge[b + 1] = c, e
+    indptr = np.zeros(n + 1, dtype=np.int64)
+    entry_pointer = np.empty(total + 1, dtype=np.int64)
+    indices = np.empty(total, dtype=np.int64)
+    entries = 0
+    for r in range(n):
+        for a in range(count[r], count[r + 1]):
+            if a == count[r] or column[a] != column[a - 1]:
+                indices[entries] = column[a]
+                entry_pointer[entries] = a
+                entries += 1
+        indptr[r + 1] = entries
+    entry_pointer[entries] = total
+    signs = np.empty(total, dtype=np.int8)
+    rows = np.empty(total, dtype=np.int64)
+    for r in range(n):
+        for a in range(count[r], count[r + 1]):
+            rows[a] = r
+    for a in range(total):
+        signs[a] = 1 if column[a] == rows[a] else -1
+    return indptr, indices[:entries], entry_pointer[:entries + 1], edge, signs
+
+
 @njit(cache=True, nogil=True, parallel=True)
 def scatter_edges(data, entry_pointer, entry_edges, entry_signs, weights, chunks):
     """
@@ -488,19 +547,6 @@ def scatter_edges(data, entry_pointer, entry_edges, entry_signs, weights, chunks
                     else:
                         total = total - weight
             data[entry] = total
-
-
-# ── A sum of sparse terms into their union's kept pattern (solve.assembly.TermSum) ──
-
-
-@njit(cache=True, nogil=True, parallel=True)
-def scatter_terms(data, slots, values, chunks):
-    """data[slots[k]] += values[k] for one term (its entries' slots in the union pattern: distinct), parallel over
-    *chunks* of its entries (made from the work only): each entry written once, the same bits at any thread count.
-    Called term after term, in the terms' order (each entry's sum: its terms in that order, from 0)."""
-    for chunk in prange(chunks.size - 1):
-        for k in range(chunks[chunk], chunks[chunk + 1]):
-            data[slots[k]] += values[k]
 
 
 def work_chunks(count: int, work_each: int, target: int = 1 << 16) -> np.ndarray:
@@ -550,7 +596,6 @@ def warm_up() -> None:
                             np.array([[0.5, 0.5]]), blocks, work_chunks(1, 4))
     gather_local(np.array([0, 1, 0, -1], dtype=np.int64), np.array([0, 1], dtype=np.int64),
                  np.array([0, 2, 3], dtype=np.int64), np.array([1., 2., 3.]), np.nan)
-    scatter_terms(np.zeros(3), np.array([0, 2], dtype=np.int32), np.array([1., 2.]), work_chunks(2, 1))
     from scipy.sparse import csc_matrix
     from openalea.metafspm.data_structure.data_api import GraphView
     tail, head = np.array([0, 1], dtype=np.int64), np.array([1, 2], dtype=np.int64)
