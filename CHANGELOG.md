@@ -2,6 +2,19 @@
 
 ## Unreleased (release2026)
 
+### Gathers by owner and tree orders as kernels (devplan_generic_kernels GK-2)
+
+- **`DataStructure.local_gather(owner, owner_key, tables, fill=)`** (new, `kernels.gather_local`, nogil): per entity,
+  its owner's table at its local row (its rank among its owner's entities). MECHA's per-node geometry of each
+  section (cell ranks, relative x, root nodes) is one gather over its distinct geometries.
+- **`MPGDataStructure.preorder(branches_first=True, defer=None)`** (new, `kernels.depth_first_orders`): the nodes in a
+  depth-first pre-order over the MPG's children (in its children order), branches before successors, *defer*'s
+  vertices visited as the last branches of others. Adel's `turtle.traversal_order` is it.
+- **`chain_scan(..., cut=mask)`**: a chain cut after the entities of *mask* (its next one starts a chain). ArchiSimple's
+  distance from tip is a reverse scan cut at its apices and nodules instead of a level-by-level fold (its terms in the
+  fold's order).
+- Bit-identical.
+
 ### Data access without a sweep of the vid index (devplan_generic_kernels GK-1)
 
 - **`MPG.column(name)` on an MPG with instances** is built from the explicit column and each template's values

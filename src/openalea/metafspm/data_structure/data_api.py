@@ -1098,6 +1098,26 @@ class VariableStoreMixin:
                                     None if weights is None else np.asarray(weights, dtype=float)))
 
     @staticmethod
+    def local_gather(owner, owner_key, tables, fill=np.nan) -> np.ndarray:
+        """
+        Per entity (one per *owner* entry: its owner's index, -1 for none), the value of its owner's table at its local
+        row: tables[owner_key[owner]][row], its row its rank among its owner's entities (ascending), e.g. a section's
+        nodes reading their template's per-node geometry, each template's table once. *owner_key*: per owner, the
+        index of its table in *tables* (-1: none); *fill* for the entities without either. kernels.gather_local (one
+        pass, nogil): gathers only, the tables' values as they are (float64).
+        """
+        from openalea.metafspm.kernels import gather_local
+        owner, owner_key = np.asarray(owner, dtype=np.int64), np.asarray(owner_key, dtype=np.int64)
+        if (owner.size and owner.max() >= owner_key.size) or (owner_key.size and owner_key.max() >= len(tables)):
+            raise ValueError("local_gather: an owner without a key, or a key without a table")
+        tables = [np.asarray(table, dtype=np.float64).reshape(-1) for table in tables]
+        offsets = np.zeros(len(tables) + 1, dtype=np.int64)
+        np.cumsum([table.size for table in tables], out=offsets[1:])
+        flat = np.concatenate(tables) if tables else np.zeros(0)
+        return gather_local(np.ascontiguousarray(owner, dtype=np.int64), np.ascontiguousarray(owner_key, dtype=np.int64),
+                            offsets, flat, float(fill))
+
+    @staticmethod
     def _reduce(values, aggregation: str, weights=None, axis=None):
         if aggregation == "sum":
             return np.sum(values, axis=axis)
@@ -1882,6 +1902,61 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
             raise ValueError("traversal='openalea' is available for kind='post' only")
         return self._openalea_post_order()
 
+    def preorder(self, branches_first: bool = True, defer=None) -> np.ndarray:
+        """
+        The nodes' positions in a depth-first pre-order over the MPG's topology (segment mode): from each base node (a
+        node whose topological parent is not a node), in the nodes' order, a node then its children's subtrees in the
+        MPG's children order; with *branches_first*, its branches (any edge but '<') before its successors ('<').
+        *defer*: (vertex, after) pairs of node indices, *vertex* visited as the last branch of *after* (after its own
+        branches, before its successors) instead of under its parent (e.g. Adel's tiller T1 after its phytomer's
+        sheath and blade). kernels.depth_first_orders over the children's CSR, cached per topology and *defer*.
+        """
+        if getattr(self, "_anatomy", False):
+            raise ValueError("preorder is defined on segments (segment mode)")
+        deferred = np.asarray([] if defer is None else defer, dtype=np.int64).reshape(-1, 2)
+        key = (self.topology_version, self.n_nodes(), self.n_edges(), bool(branches_first), deferred.tobytes())
+        cache = self.__dict__.get("_preorder_cache")
+        if cache is not None and cache[0] == key:
+            return cache[1]
+        from openalea.metafspm.kernels import depth_first_orders
+        g = self._mtg
+        vids = np.asarray(self.entity_ids("node"), dtype=np.int64)
+        n = vids.size
+        arrays = g.topology_arrays()
+        lookup = np.full(arrays["parent"].size, -1, dtype=np.int64)
+        lookup[vids] = np.arange(n, dtype=np.int64)
+        children = g._children
+        lists = [children.get(v, ()) for v in vids.tolist()]
+        counts = np.fromiter((len(c) for c in lists), count=n, dtype=np.int64)
+        flat = np.fromiter((c for these in lists for c in these), count=int(counts.sum()), dtype=np.int64)
+        owner = np.repeat(np.arange(n, dtype=np.int64), counts)
+        child = np.where(flat < lookup.size, lookup[np.minimum(flat, lookup.size - 1)], -1)
+        among = child >= 0
+        owner, child, flat = owner[among], child[among], flat[among]
+        group = np.where(arrays["edge_type"][flat] == g._EDGE_TYPE_CODES["<"], 2, 0) if branches_first else \
+            np.zeros(child.size, dtype=np.int64)
+        sequence = np.arange(child.size, dtype=np.int64)
+        if deferred.size:
+            moved = np.zeros(n, dtype=bool)
+            moved[deferred[:, 0]] = True
+            keep = ~moved[child]
+            owner, child, group, sequence = owner[keep], child[keep], group[keep], sequence[keep]
+            owner = np.concatenate((owner, deferred[:, 1]))
+            child = np.concatenate((child, deferred[:, 0]))
+            group = np.concatenate((group, np.ones(deferred.shape[0], dtype=np.int64)))
+            sequence = np.concatenate((sequence, np.arange(deferred.shape[0], dtype=np.int64)))
+        order = np.lexsort((sequence, group, owner))
+        indices = child[order]
+        indptr = np.zeros(n + 1, dtype=np.int64)
+        np.cumsum(np.bincount(owner, minlength=n), out=indptr[1:])
+        parent = arrays["parent"][vids]
+        base = (parent < 0) | (lookup[np.maximum(parent, 0)] < 0)
+        if deferred.size:
+            base[deferred[:, 0]] = False
+        pre, _ = depth_first_orders(indptr, indices, np.flatnonzero(base), n)
+        self.__dict__["_preorder_cache"] = (key, pre)
+        return pre
+
     def _openalea_post_order(self) -> np.ndarray:
         if getattr(self, "_anatomy", False):
             raise ValueError("the openalea post order is defined on segments (segment mode)")
@@ -1985,10 +2060,30 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
         return cache[name][1]
 
     def chain_scan(self, values, chain: str = "axis", op: str = "sum", reverse: bool = False,
-                   exclusive: bool = False) -> np.ndarray:
-        """Cumulative sum or max along each chain (e.g. distance from tip: chain_scan(length, reverse=True))."""
+                   exclusive: bool = False, cut=None) -> np.ndarray:
+        """Cumulative sum or max along each chain (e.g. distance from tip: chain_scan(length, reverse=True)). *cut*: a
+        mask of the chain's entities after which their chain is cut (the next one starts a chain of its own), e.g.
+        the scan of a distance from a tip restarting at each apex."""
         from openalea.metafspm.data_structure import tree_kernels
-        return tree_kernels.chain_scan(values, self.chain(chain), op=op, reverse=reverse, exclusive=exclusive)
+        chains = self.chain(chain) if cut is None else self._cut_chains(chain, cut)
+        return tree_kernels.chain_scan(values, chains, op=op, reverse=reverse, exclusive=exclusive)
+
+    def _cut_chains(self, chain: str, cut) -> dict:
+        """Chain *chain*'s chains cut after the entities where *cut* holds (tree_kernels.chains_from_predecessors on
+        its predecessors, each one's dropped where its predecessor is cut)."""
+        from openalea.metafspm.data_structure import tree_kernels
+        chains = self.chain(chain)
+        order, offsets = chains["order"], chains["offsets"]
+        predecessor = np.full(order.size, -1, dtype=np.int64)
+        follows = np.ones(order.size, dtype=bool)
+        follows[offsets[:-1][offsets[:-1] < order.size]] = False                   # each chain's first
+        later = np.flatnonzero(follows)
+        predecessor[order[later]] = order[later - 1]
+        cut = np.asarray(cut, dtype=bool)
+        if cut.shape != (order.size,):
+            raise ValueError(f"chain_scan(cut=): one value per entity of the chain ({order.size}), got {cut.shape}")
+        predecessor[(predecessor >= 0) & cut[np.maximum(predecessor, 0)]] = -1
+        return tree_kernels.chains_from_predecessors(predecessor)
 
     def chain_shift(self, values, k: int = 1, chain: str = "axis", fill=np.nan) -> np.ndarray:
         """The value of the node k positions earlier on the same chain (k < 0: later)."""

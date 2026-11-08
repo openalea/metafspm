@@ -328,3 +328,90 @@ def test_the_traversal_and_levels_kernels_are_the_loops_they_replace(seed):
             assert len(got) == len(levels) and all(np.array_equal(a, b) for a, b in zip(got, levels))
     with pytest.raises(ValueError):
         tree_kernels.depth(np.array([1, 0], dtype=np.int64))      # a cycle
+
+
+def test_a_scan_cut_at_some_nodes_is_the_loop_stopping_there(plant):
+    """chain_scan(cut=): the distance from tip restarting at the cut nodes (ArchiSimple's apices and nodules: d =
+    length at a cut node or a tip, else the successor's d + length), bit for bit, and the tips' ids carried down."""
+    g, ds, rng = plant
+    length = rng.random(ds.n_nodes()) * 1e-3
+    cut = rng.random(ds.n_nodes()) < 0.1
+    vids = ds.entity_ids("node").tolist()
+    index = {v: i for i, v in enumerate(vids)}
+    reference, tips = {}, {}
+
+    def distance(vid):
+        if vid not in reference:
+            successor = _successor(g, vid)
+            if successor is None or cut[index[vid]]:
+                reference[vid], tips[vid] = length[index[vid]], vid
+            else:
+                reference[vid], tips[vid] = distance(successor) + length[index[vid]], tips[distance_tip(successor)]
+        return reference[vid]
+
+    def distance_tip(vid):
+        distance(vid)
+        return vid
+
+    for vid in vids:
+        distance(vid)
+    after = ds.chain_scan(np.ones(len(vids)), reverse=True, exclusive=True, cut=cut)
+    scanned = ds.chain_scan(np.column_stack([length, np.where(after == 0., np.asarray(vids, float), 0.)]),
+                            reverse=True, cut=cut)
+    assert _by_vid(ds, scanned[:, 0]) == reference                                  # bit for bit
+    assert _by_vid(ds, scanned[:, 1].astype(np.int64)) == tips
+
+
+def test_the_preorder_is_the_walk_branches_first_with_deferred_vertices(plant):
+    """ds.preorder: from each base node in the nodes' order, depth first over the MPG's children (in its order),
+    branches before successors, deferred vertices visited as the last branches of others: an explicit-stack walk."""
+    g, ds, rng = plant
+    vids = ds.entity_ids("node").tolist()
+    position = {v: i for i, v in enumerate(vids)}
+    edge = g.view("edge_type")
+    branches = [v for v in vids if edge.get(v) == "+" and g.parent(v) in position]
+    pairs = [(position[v], position[vids[int(rng.integers(0, len(vids)))]]) for v in branches[:3]]
+    pairs = [(v, after) for v, after in pairs if after != v and not _below(g, vids[after], vids[v])]
+    for defer in ([], pairs):
+        moved = {vids[v] for v, _ in defer}
+        later = {}
+        for v, after in defer:
+            later.setdefault(vids[after], []).append(vids[v])
+        order = []
+        for root in [v for v in vids if g.parent(v) not in position]:
+            stack = [root]
+            while stack:
+                vid = stack.pop()
+                order.append(position[vid])
+                children = [c for c in g.children(vid) if c in position and c not in moved]
+                stack.extend(reversed([c for c in children if edge.get(c) != "<"] + later.get(vid, [])
+                                      + [c for c in children if edge.get(c) == "<"]))
+        np.testing.assert_array_equal(ds.preorder(defer=defer), order)
+
+
+def _below(g, vid, ancestor) -> bool:
+    while vid is not None:
+        if vid == ancestor:
+            return True
+        vid = g.parent(vid)
+    return False
+
+
+def test_a_local_gather_is_the_loop_over_owners(plant):
+    """ds.local_gather: per entity, its owner's table at its rank among the owner's entities, as a loop writing each
+    owner's table at its entities (ascending); the fill where an owner or its key is none."""
+    _, ds, rng = plant
+    n, owners = 500, 40
+    owner = np.where(rng.random(n) < 0.1, -1, rng.integers(0, owners, n))
+    counts = np.bincount(owner[owner >= 0], minlength=owners)
+    tables = [rng.random(size) for size in sorted(set(counts.tolist()))]
+    key = np.array([sorted(set(counts.tolist())).index(c) for c in counts], dtype=np.int64)
+    key[::7] = -1
+    expected = np.full(n, -2.)
+    for o in range(owners):
+        if key[o] >= 0:
+            expected[np.flatnonzero(owner == o)] = tables[key[o]]
+    got = ds.local_gather(owner, key, tables, fill=-2.)
+    assert got.tobytes() == expected.tobytes()
+    with pytest.raises(ValueError):
+        ds.local_gather(np.array([0, 0]), np.array([0]), [np.ones(1)])               # more entities than rows

@@ -435,6 +435,36 @@ def scatter_weighted_blocks(data, slots, kinds, weights, blocks, chunks):
                     data[slots[g, i, j]] = total[i, j]
 
 
+# ── Gathers by owner (DataStructure.local_gather) ──
+
+
+@njit(cache=True, nogil=True)
+def gather_local(owner, owner_key, table_offsets, flat, fill):
+    """
+    Per entity e: the value at its local row of its owner's table, flat[table_offsets[k] + row] with k =
+    owner_key[owner[e]], its local row its rank among its owner's entities (ascending e); *fill* where its owner or
+    the owner's key is -1. A row beyond its table raises (the owner's entities and its table differ in size).
+    """
+    n = owner.size
+    out = np.empty(n)
+    rows = np.zeros(owner_key.size, dtype=np.int64)
+    for e in range(n):
+        o = owner[e]
+        if o < 0:
+            out[e] = fill
+            continue
+        row = rows[o]
+        rows[o] = row + 1
+        k = owner_key[o]
+        if k < 0:
+            out[e] = fill
+            continue
+        if row >= table_offsets[k + 1] - table_offsets[k]:
+            raise ValueError("gather_local: an owner has more entities than its table has rows")
+        out[e] = flat[table_offsets[k] + row]
+    return out
+
+
 def work_chunks(count: int, work_each: int, target: int = 1 << 16) -> np.ndarray:
     """Boundaries of chunks of *count* items of *work_each* work (e.g. nonzeros) each, about *target* work a chunk:
     from the work only, never the thread count (determinism, conventions.md)."""
@@ -480,4 +510,6 @@ def warm_up() -> None:
     blocks = List([np.ones((2, 2)), np.full((2, 2), 2.)])
     scatter_weighted_blocks(np.empty(indices.size), slots[:4].reshape(1, 2, 2), np.array([[0, 1]], dtype=np.int64),
                             np.array([[0.5, 0.5]]), blocks, work_chunks(1, 4))
+    gather_local(np.array([0, 1, 0, -1], dtype=np.int64), np.array([0, 1], dtype=np.int64),
+                 np.array([0, 2, 3], dtype=np.int64), np.array([1., 2., 3.]), np.nan)
 

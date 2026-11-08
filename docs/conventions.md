@@ -145,6 +145,9 @@ Models never write traversals: they call the DataStructure's kernels, which run 
 | Kernel | For |
 |---|---|
 | `ds.chain_scan(length, reverse=True)` | distance from tip (rhizodep) |
+| `ds.chain_scan(length, reverse=True, cut=apex)` | the same, each chain cut after its apices (ArchiSimple's tips and nodules) |
+| `ds.preorder(branches_first=True, defer=pairs)` | a depth-first visit in the MPG's children order, branches first, some vertices visited after others (Adel's turtle) |
+| `ds.local_gather(owner, owner_key, tables)` | per entity, its owner's table at its local row (MECHA's per-node geometry of each section's template) |
 | `ds.chain_scan(height, chain="phytomers", op="max", exclusive=True)` | the maximum over lower ranks (cnwgrass pseudostem) |
 | `ds.accumulate(x)` | subtree totals |
 | `ds.accumulate(dx, direction="down")` | positions from the base |
@@ -157,7 +160,9 @@ Chains are `"axis"` ('<' successors) by default, or declared with `define_chain(
 
 ## Performance rules
 
-For metafspm and every port: no Python loop over groups, nodes or entities in a step.
+For metafspm and every port: no Python loop over groups, nodes or entities in a step. A loop over owners or vertices
+in a functor is one of the platform's primitives (the tree kernels above, `ds.local_gather`, `ds.preorder`,
+`graph_view.laplacian`): the ports declare what they compute, metafspm owns the kernels.
 
 1. **numpy first.** Per-group quantities by `np.unique(owner, return_index=True)`, `np.bincount`/`np.add.at`,
    `searchsorted`; work batched by kind or template (all groups of a kind at once: groups × members arrays), not

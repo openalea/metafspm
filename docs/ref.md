@@ -77,7 +77,7 @@ The solvers are chosen by key in `graph_system(solver=...)`: `"newton"`, `"newto
 
 .. automodule:: openalea.metafspm.kernels
    :members: warm_up, follow_parents, left_of, roll_right, down, turn_left, roll_to_vertical, depth_first_orders,
-             tree_depths, tree_levels
+             tree_depths, tree_levels, gather_local
 
 .. automodule:: openalea.metafspm.compute
    :members: warm_up
