@@ -1959,15 +1959,14 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
 
     def preorder(self, branches_first: bool = True, defer=None) -> np.ndarray:
         """
-        The nodes' positions in a depth-first pre-order over the MPG's topology (segment mode): from each base node (a
+        The nodes' positions in a depth-first pre-order over the MPG's topology (the nodes' own vertices: a view's at
+        its location, e.g. the SubOrgans of an anatomy-mode plant): from each base node (a
         node whose topological parent is not a node), in the nodes' order, a node then its children's subtrees in the
         MPG's children order; with *branches_first*, its branches (any edge but '<') before its successors ('<').
         *defer*: (vertex, after) pairs of node indices, *vertex* visited as the last branch of *after* (after its own
         branches, before its successors) instead of under its parent (e.g. Adel's tiller T1 after its phytomer's
         sheath and blade). kernels.depth_first_orders over the children's CSR, cached per topology and *defer*.
         """
-        if getattr(self, "_anatomy", False):
-            raise ValueError("preorder is defined on segments (segment mode)")
         deferred = np.asarray([] if defer is None else defer, dtype=np.int64).reshape(-1, 2)
         key = (self.topology_version, self.n_nodes(), self.n_edges(), bool(branches_first), deferred.tobytes())
         cache = self.__dict__.get("_preorder_cache")
@@ -4380,6 +4379,7 @@ class LocatedView(DataStructure):
     random = VariableStoreMixin.random
     parameter_view = VariableStoreMixin.parameter_view
     _broadcast_to_entities = VariableStoreMixin._broadcast_to_entities
+    _parameter_owners = VariableStoreMixin._parameter_owners
     _default_of = VariableStoreMixin._default_of
     levels = MPGDataStructure.levels
     accumulate = MPGDataStructure.accumulate
@@ -4390,6 +4390,8 @@ class LocatedView(DataStructure):
     _chain_spec = MPGDataStructure._chain_spec
     _chain_groups = MPGDataStructure._chain_groups
     chain_scan = MPGDataStructure.chain_scan
+    _cut_chains = MPGDataStructure._cut_chains
+    preorder = MPGDataStructure.preorder
     chain_shift = MPGDataStructure.chain_shift
     chain_write = MPGDataStructure.chain_write
     chain_recurrence = MPGDataStructure.chain_recurrence
@@ -5055,6 +5057,7 @@ class EntityView(DataStructure):
     parameter_view = VariableStoreMixin.parameter_view
     _default_of = VariableStoreMixin._default_of
     default = VariableStoreMixin.default
+    _parameter_owners = VariableStoreMixin._parameter_owners
     depth = MPGDataStructure.depth
     levels = MPGDataStructure.levels
     accumulate = MPGDataStructure.accumulate
@@ -5068,6 +5071,8 @@ class EntityView(DataStructure):
     _chain_spec = MPGDataStructure._chain_spec
     _chain_groups = MPGDataStructure._chain_groups
     chain_scan = MPGDataStructure.chain_scan
+    _cut_chains = MPGDataStructure._cut_chains
+    preorder = MPGDataStructure.preorder
     chain_shift = MPGDataStructure.chain_shift
     chain_write = MPGDataStructure.chain_write
     chain_gather = MPGDataStructure.chain_gather

@@ -66,6 +66,15 @@ def test_a_parameter_viewed_at_a_coarse_location_and_owner_between_coarse_scales
     np.testing.assert_array_equal(ds.owner("Organ"), np.repeat(np.arange(4), 2))   # the nodes' (the SubOrgans')
 
 
+def test_a_located_view_reads_its_own_entities_parameters():
+    """A view at a coarse location (ds.at): its parameter views are per entity of its own nodes (each one's plant's
+    value), the owners found on the view, not on the DataStructure it views."""
+    ds = _population().data_structure
+    view = ds.at("Organ")
+    np.testing.assert_allclose(view.parameter_view("supply_rate", "node"), [1., 1., 3., 3.])
+    np.testing.assert_allclose(ds.parameter_view("supply_rate", "node"), np.repeat([1., 1., 3., 3.], 2))
+
+
 def test_an_optional_input_nothing_provides_is_its_default_unregistered():
     population = _population()
     ds = population.data_structure
