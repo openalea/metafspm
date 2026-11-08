@@ -78,6 +78,7 @@ computes it live or the kind holds it.
 """
 import copy
 import itertools
+import os
 import pickle
 import weakref
 from contextlib import contextmanager
@@ -398,6 +399,7 @@ class Reduction:
         state.pop("_display_parts", None)  # the frames' parts built from it (io.encoding3d): made again
         state.pop("_table", None)          # the groups' arrays: per DataStructure and topology
         state.pop("_assigned", None)
+        state.pop("_parameters_kept", None)  # the plants' parameters read: per DataStructure
         state.pop("_token", None)          # its number in a pool's processes: this process's
         state.pop("_worker_time_step", None)
         return state
@@ -417,6 +419,7 @@ class Reduction:
         out._reduced, out._full, out._kept, out._rows, out._merged = {}, {}, {}, {}, {}
         out.__dict__.pop("_table", None)
         out.__dict__.pop("_assigned", None)
+        out.__dict__.pop("_parameters_kept", None)
         out.__dict__.pop("_display_parts", None)
         out.__dict__.pop("_token", None)
         return out
@@ -755,7 +758,44 @@ class Reduction:
         """{plant index: its parameters and the components' settings}, for every plant of *ds*: the fields read once
         per component class, each parameter's values once for all the plants. Those of the components the library
         runs only (_library_components): another component's (a root architecture's random draws, a shoot's
-        development) changes no kind, so plants differing in them only share their kinds."""
+        development) changes no kind, so plants differing in them only share their kinds. Kept while the parameters
+        are (_parameters_stamp: their write counts where the DataStructure stores them, the components' values
+        else), with their signatures (_plant_signatures)."""
+        stamp = self._parameters_stamp(ds)
+        cached = self.__dict__.get("_parameters_kept")
+        if cached is not None and cached[0] == stamp:
+            return cached[1]
+        out = self._read_plant_parameters(ds)
+        self.__dict__["_parameters_kept"] = (stamp, out, {})
+        return out
+
+    def _plant_signatures(self, ds, plants) -> dict:
+        """{plant index: _signature of its parameters} of *plants*, kept with _plant_parameters' values."""
+        parameters = self._plant_parameters(ds)
+        signatures = self.__dict__["_parameters_kept"][2]
+        for p in plants:
+            if p not in signatures:
+                signatures[p] = _signature(self, parameters[p])
+        return {p: signatures[p] for p in plants}
+
+    def _parameters_stamp(self, ds) -> tuple:
+        """What _plant_parameters' values depend on: the DataStructure and its plants, each library component's
+        settings and parameters (a stored one's write count, else its value: an object by identity)."""
+        out = [id(ds), len(ds.entity_ids("Plant"))]
+        for component in _library_components(self.instance, self.systems):
+            settings, numeric, located, records = _parameter_fields(type(component))
+            out.append(id(component))
+            for name in (*settings, *numeric, *records):
+                if ds.has(name):
+                    out.append(("written", name, ds.write_count(name)))
+                else:
+                    value = getattr(component, name, None)
+                    out.append((name, value) if isinstance(value, (int, float, str, bool, type(None))) else
+                               (name, id(value)))
+        return tuple(out)
+
+    def _read_plant_parameters(self, ds) -> dict:
+        """_plant_parameters' values, read."""
         plants = len(ds.entity_ids("Plant"))
         out = {p: {} for p in range(plants)}
         for component in _library_components(self.instance, self.systems):
@@ -798,7 +838,7 @@ class Reduction:
         if table is None:
             return None
         parameters = self._plant_parameters(ds)
-        signatures = {p: _signature(self, parameters[p]) for p in np.unique(table.plant).tolist()}
+        signatures = self._plant_signatures(ds, np.unique(table.plant).tolist())
         stamp = (id(table), tuple(ds.write_count(name) for name in self.kind), tuple(sorted(signatures.items())))
         cached = self.__dict__.get("_assigned")
         if (cached is not None and cached[0] == stamp
@@ -892,9 +932,11 @@ class Reduction:
     def _evaluate_requests(self, missing: dict) -> None:
         """
         Evaluate the kinds *missing* ({signature: (a plant's parameters, {kind key: (a representative group vertex,
-        its reduced template key, its kind values)})}): in the process (_evaluate_missing), or over the Compute's
-        pool when Compute.pool_size gives more than one process for them (_evaluate_in_pool: each process its share,
-        in its own library); the kinds added in the requests' order either way (deterministic, the same kinds).
+        its reduced template key, its kind values)})}): in the process (_evaluate_missing: every signature's in the
+        same batches, in one library), or over the Compute's pool when Compute.pool_size gives more than one process
+        for them (_evaluate_in_pool: each process its share, in its own library); the kinds added in the requests'
+        order either way (deterministic, the same kinds). With METAFSPM_CHECK_KINDS=1, every kind evaluated is
+        evaluated again alone, in a freshly built library, and compared bit for bit (check_kinds).
         """
         from openalea.metafspm.compute import Compute, in_worker
         compute = Compute.current()
@@ -906,19 +948,23 @@ class Reduction:
                     for request in requests.values())
         workers = 1 if (self.library or in_worker()) else compute.pool_size(kinds, cells)
         if workers <= 1:
-            for parameters, requests in described.values():
-                self._evaluate_missing(parameters, requests)
-            return
-        evaluated = _evaluate_in_pool(self, compute, workers, described)
-        for _, requests in described.values():
-            for kind_key in requests:
-                self._kinds[kind_key] = evaluated[kind_key]
+            self._evaluate_missing(described)
+        else:
+            evaluated = _evaluate_in_pool(self, compute, workers, described)
+            for _, requests in described.values():
+                for kind_key in requests:
+                    self._kinds[kind_key] = evaluated[kind_key]
+        if os.environ.get("METAFSPM_CHECK_KINDS") == "1" and not self.library:
+            check_kinds(self, described)
 
-    def _evaluate_missing(self, parameters: dict, requests: dict) -> None:
-        """Evaluate the kinds *requests* ({kind key: (its representative group's description (_describe), its reduced
-        template key, its kind values)}) of a plant of *parameters*, in batches of at most Compute.current()
-        .kind_batch interior cells (one kind at least), the library's transients freed between batches
-        (Compute.trim)."""
+    def _evaluate_missing(self, described: dict) -> None:
+        """Evaluate the kinds *described* ({signature: (its plants' parameters, {kind key: (its representative
+        group's description (_describe), its reduced template key, its kind values)})}), every signature's in the
+        same batches of at most Compute.current().kind_batch interior cells (one kind at least), in the requests'
+        order, in the reduction's one library (one plant per signature); the library's transients freed between
+        batches (Compute.trim)."""
+        parameters = {signature: values for signature, (values, _) in described.items()}
+        requests = {kind_key: request for _, (_, by_kind) in described.items() for kind_key, request in by_kind.items()}
         for batch in _batches(self, requests):
             self._kinds.update(_evaluate(self, parameters, batch))
 
@@ -1306,27 +1352,33 @@ _STRUCTURAL = ("scale", "edge_type", "label", "isanchor")     # the vertex prope
 
 class _Library:
     """
-    A reduction's library population for one plant's parameters (their signature) and the scene's time step: a
-    population of the plant model (its own components, those of the reduced systems and of their inputs at the
-    cells run), built once and kept on the Reduction (_libraries, not checkpointed), its components reset to their
-    built state at each batch (no state left from the former groups). Each batch of kinds gets one full and one reduced group per kind (a
-    representative group's complexes, label and properties, its template's instance); the next batch's replace them
-    (removed in the same update of the library's DataStructure: a library of no group would have no plant).
+    A reduction's library population at the scene's time step: a population of the plant model (its own components,
+    those of the reduced systems and of their inputs at the cells run) of one plant per plant parameters (their
+    signature) of the batch it evaluates, built once and kept on the Reduction (_libraries, not checkpointed), its
+    components reset to their built state at each batch (no state left from the former groups). Each batch of kinds
+    gets one full and one reduced group per kind (a representative group's complexes, label and properties, its
+    template's instance) under its signature's plant; the next batch's replace them (removed in the same update of
+    the library's DataStructure: a library of no group would have no plant), a plant whose signature the batch has
+    not removed with them and a new signature's plant added.
     """
 
-    def __init__(self, reduction: Reduction, parameters: dict, time_step: float):
-        self.reduction, self.parameters, self.time_step = reduction, parameters, time_step
+    def __init__(self, reduction: Reduction, time_step: float):
+        self.reduction, self.time_step = reduction, time_step
         self.population, self.model, self.built = None, None, {}
+        self.plants = {}                 # {signature: its plant's vertex}, in the order they were added
+        self.parameters = {}             # {signature: its plants' parameters and the components' settings}
         self.placed = []                 # the last batch's vertices (each group's complexes, then the group)
 
-    def place(self, g, plant, items) -> dict:
+    def place(self, g, items) -> dict:
         """{group vertex: (k, "full" | "reduced")}: the groups of the kinds *items* placed in the library's MPG *g*
-        under *plant*, each as its representative's description (_describe: its complexes, label and properties)."""
+        under their signature's plant, each as its representative's description (_describe: its complexes, label
+        and properties)."""
         from openalea.metafspm.data_structure.configs import PropsConfig
         reduction = self.reduction
         made = {}
-        for k, (_, (description, key, _)) in enumerate(items):
+        for k, (kind_key, (description, key, _)) in enumerate(items):
             chain, (scale, label), properties = description
+            plant = self.plants[kind_key[2]]
             for which, template in (("full", reduction._full[key]),
                                     ("reduced", reduction._reduced[reduction._full[key].key])):
                 parent, vertices = plant, []
@@ -1350,17 +1402,29 @@ class _Library:
                 g.remove_vertex(vertex)
         self.placed = []
 
-    def groups(self, items) -> dict:
-        """{group vertex: (k, which)} of the batch *items*: the population built at the first batch, its groups
-        placed in it after."""
-        reduction = self.reduction
+    @staticmethod
+    def signatures(items) -> list:
+        """The signatures of the kinds *items*, in their order of first appearance."""
+        return list(dict.fromkeys(kind_key[2] for kind_key, _ in items))
+
+    def groups(self, items, parameters: dict) -> dict:
+        """{group vertex: (k, which)} of the batch *items* ({signature: parameters} *parameters*): the population
+        built at the first batch (one plant per signature), its groups placed in it after (a plant per signature
+        of the batch: the others' removed, a new one's added)."""
+        signatures = self.signatures(items)
+        self.parameters.update({signature: parameters[signature] for signature in signatures})
         if self.population is not None:
             ds = self.population.data_structure
             g = ds.structure
-            plant = int(ds.entity_ids("Plant")[0])
             self.remove(g)
+            for signature in [signature for signature in self.plants if signature not in signatures]:
+                g.remove_vertex(self.plants.pop(signature))
+                self.parameters.pop(signature, None)
+            for signature in signatures:
+                if signature not in self.plants:
+                    self.plants[signature] = _add_plant(g)
             ds.forget_ids_above(g.reuse_ids())   # the removed groups' ids given to the new ones, as new entities:
-            made = self.place(g, plant, items)    # the library's ids stay bounded (no growth with the batches)
+            made = self.place(g, items)           # the library's ids stay bounded (no growth with the batches)
             self._reset_components()
             ds.update_topology()
             self._read_structure()
@@ -1368,26 +1432,29 @@ class _Library:
             return made
         from openalea.metafspm.coupling.component import StructuralComponent
         from openalea.metafspm.scene.population import Planting, planting, population_data_structure
+        reduction = self.reduction
         made = {}
 
         class LibraryStructure(StructuralComponent):
-            # (library, batch, made) while the library population builds, then None: no reference from the class
-            # (which the planting table's object column holds, a reference gc does not see) to the library, which
-            # would keep it, its population and its plants' reduction alive for ever
+            # (library, batch, made, signatures left) while the library population builds, then None: no reference
+            # from the class (which the planting table's object column holds, a reference gc does not see) to the
+            # library, which would keep it, its population and its plants' reduction alive for ever
             building = None
 
             @classmethod
             def initiate_plant(cls, g, plant, scenario):
-                library, batch, placed = cls.building
+                library, batch, placed, left = cls.building
                 g.share_objects(library.reduction.g)  # the plants' registries (their templates: ds.objects; in
                                                       # a pool's process, those it was sent: _RegistryHolder)
-                placed.update(library.place(g, plant, batch))
+                library.plants[left.pop(0)] = plant
+                if not left:                          # every plant built: the batch's groups placed under them
+                    placed.update(library.place(g, batch))
 
         self.model = model = type(f"Library{reduction.model.__name__}", (reduction.model,),
                                   dict(initiators=(LibraryStructure,), wiring=(), reduction=None))
-        LibraryStructure.building = (self, items, made)
+        LibraryStructure.building = (self, items, made, list(signatures))
         try:
-            population = population_data_structure(planting([Planting()], model, {}), model,
+            population = population_data_structure(planting([Planting() for _ in signatures], model, {}), model,
                                                    time_step=self.time_step)       # the scene's step (_library)
         finally:
             LibraryStructure.building = None
@@ -1406,13 +1473,20 @@ class _Library:
 
     def _reset_components(self) -> None:
         """Each component's state as the library built it (its fields, its construction's records): what a run left
-        on it (a solve's previous values, its caches and memos, sized to the former groups) dropped."""
+        on it (a solve's previous values, its caches and memos, sized to the former groups) dropped, but the caches
+        it keeps itself (keep(name, saved=False): rebuilt when missing, each checked by the component against its
+        own key, e.g. MECHA's geometries per template), which stay valid from one batch to the next as from one step
+        to the next in the plants' scene."""
         for component in self.population.instance.components:
             built = self.built[id(component)]
+            own = {key: value for key, value in component.__dict__.get("_caches", {}).items()
+                   if isinstance(key, tuple) and len(key) == 2 and key[0] == "kept"}
             for name in [name for name in component.__dict__ if name not in built]:
                 del component.__dict__[name]
             for name, value in built.items():
                 component.__dict__[name] = copy.copy(value) if isinstance(value, (dict, list, set)) else value
+            if own:
+                component.caches().update(own)
 
     def _read_structure(self) -> None:
         """The variables its MPG holds (its groups' templates' and properties' values) read again, as a library built
@@ -1432,22 +1506,36 @@ class _Library:
                     ds.set(spec.name, values)
 
     def _apply_parameters(self) -> None:
-        """The plant's parameters and the components' settings given to the library's plant and components."""
+        """Each plant's parameters given to it (a parameter stored per plant) and the components' settings (and the
+        parameters they hold, the same for every plant of the population) to the library's components."""
         from dataclasses import fields
         ds, instance = self.population.data_structure, self.population.instance
+        plant_index = {int(v): i for i, v in enumerate(ds.entity_ids("Plant").tolist())}
+        by_index = {plant_index[int(vertex)]: self.parameters[signature] for signature, vertex in self.plants.items()}
+        first = self.parameters[next(iter(self.plants))]
         for component in instance.components:
             names = {f.name for f in fields(component) if f.metadata.get("variable_type") in ("setting", "parameter")}
-            for name, value in self.parameters.items():
+            for name, value in first.items():
                 if name not in names:
                     continue
-                if ds.has(name) and ds.location(name) == "Plant":   # the library's one plant: its value there
+                if ds.has(name) and ds.location(name) == "Plant":   # each plant's value there
                     stored = np.asarray(ds.get(name))
                     values = np.empty(stored.shape, dtype=object) if stored.dtype == object else stored.copy()
                     for i in range(len(values)):
-                        values[i] = value                         # a record as it is (a dict, nested lists)
+                        values[i] = by_index[i][name] if i in by_index else value  # a record as it is (a dict)
                     ds.set(name, values)
                 else:
                     setattr(component, name, value)
+
+
+def _add_plant(g) -> int:
+    """A library plant added to its MPG *g* (as a planting's, at the origin and the soil surface): its vertex."""
+    from openalea.metafspm.data_structure.configs import PropsConfig
+    plant = g.add_component(g.root, **PropsConfig(scale=g.scales.Plant, edge_type='/'))
+    for name in ("x", "y", "rotation"):
+        g.set_values(name, [plant], [0.])
+    g.set_values("z", [plant], [float(getattr(g, "soil_surface", 0.))])
+    return plant
 
 
 def _time_step(reduction: Reduction) -> float:
@@ -1460,21 +1548,109 @@ def _time_step(reduction: Reduction) -> float:
     return next((float(step) for step in steps if step is not None), 3600.)
 
 
-def _library(reduction: Reduction, parameters: dict) -> _Library:
-    """The reduction's library for a plant of *parameters* at the scene's time step (built at its first batch)."""
+def _library(reduction: Reduction) -> _Library:
+    """The reduction's library at the scene's time step (built at its first batch)."""
     time_step = _time_step(reduction)
     libraries = reduction.__dict__.setdefault("_libraries", {})
-    key = (_signature(reduction, parameters), time_step)
-    if key not in libraries:
-        libraries[key] = _Library(reduction, parameters, time_step)
-    return libraries[key]
+    if time_step not in libraries:
+        libraries[time_step] = _Library(reduction, time_step)
+    return libraries[time_step]
 
 
 def _evaluate(reduction: Reduction, parameters: dict, requests: dict) -> dict:
-    """{kind key: {system: Kind}} of *requests* ({kind key: (a representative group vertex, its reduced template
-    key, its kind values)}) for a plant of *parameters*: one full and one reduced group per kind in the reduction's
-    library for those parameters (_Library), isolated, replaced by the next batch's."""
-    return _evaluate_in(reduction, _library(reduction, parameters), list(requests.items()))
+    """{kind key: {system: Kind}} of *requests* ({kind key: (a representative group's description, its reduced
+    template key, its kind values)}, the signature its key's last part; *parameters* {signature: its plants'
+    parameters}): one full and one reduced group per kind in the reduction's library (_Library), under its
+    signature's plant, isolated, replaced by the next batch's."""
+    return _evaluate_in(reduction, _library(reduction), list(requests.items()), parameters)
+
+
+def check_kinds(reduction: Reduction, described: dict) -> None:
+    """
+    METAFSPM_CHECK_KINDS=1: each kind of *described* (_evaluate_requests') evaluated again alone, in a library built
+    for it (one plant, its signature's), and compared with the kind the batches gave, bit for bit: its terms, inputs,
+    outputs, interior and recovery (a difference: a group property outside the kind's key changed it, or the
+    library's batches left state on its groups). Raises AssertionError at the first difference.
+    """
+    time_step = _time_step(reduction)
+    for signature, (parameters, requests) in described.items():
+        for kind_key, request in requests.items():
+            alone = _evaluate_in(reduction, _Library(reduction, time_step), [(kind_key, request)],
+                                 {signature: parameters})[kind_key]
+            for system, kind in alone.items():
+                difference = _difference(reduction._kinds[kind_key][system], kind)
+                if difference is not None:
+                    raise AssertionError(f"METAFSPM_CHECK_KINDS: the kind {kind_key[:2]} of {system} differs from "
+                                         f"its evaluation alone: {difference}")
+
+
+_KIND_FIELDS = ("D", "e", "interior_source", "kept_rows", "interior_rows", "inputs", "outputs", "key", "system",
+                "contraction", "merged_rows", "merged_kept", "recovery")
+
+
+def _difference(first, second, path: str = "kind"):
+    """Where *first* and *second* differ (a path and the two values' kinds), None when they are the same bit for bit:
+    Kinds by their fields, KronReductions by their blocks, arrays (NaN equal to NaN) and sparse matrices by their
+    entries, dicts, sequences and numbers by their parts."""
+    from scipy.sparse import issparse
+    from openalea.metafspm.solve.network import KronReduction
+    if isinstance(first, Kind) or isinstance(second, Kind):
+        if type(first) is not type(second):
+            return f"{path}: {type(first).__name__} and {type(second).__name__}"
+        for name in _KIND_FIELDS:
+            found = _difference(getattr(first, name), getattr(second, name), f"{path}.{name}")
+            if found is not None:
+                return found
+        return _difference(first.reduction, second.reduction, f"{path}.reduction")
+    if isinstance(first, KronReduction) or isinstance(second, KronReduction):
+        if type(first) is not type(second):
+            return f"{path}: {type(first).__name__} and {type(second).__name__}"
+        for name in ("kept_nodes", "interior_nodes", "_A_KI", "_A_IK", "_A_II", "symmetric"):
+            found = _difference(getattr(first, name), getattr(second, name), f"{path}.{name}")
+            if found is not None:
+                return found
+        return None
+    if issparse(first) or issparse(second):
+        if not (issparse(first) and issparse(second)) or first.shape != second.shape:
+            return f"{path}: sparse shapes or types differ"
+        a, b = first.tocsr(), second.tocsr()
+        a.sort_indices()
+        b.sort_indices()
+        same = all(np.array_equal(x, y) for x, y in ((a.indptr, b.indptr), (a.indices, b.indices))) and \
+            np.array_equal(a.data, b.data, equal_nan=True)
+        return None if same else f"{path}: sparse entries differ"
+    if isinstance(first, np.ndarray) or isinstance(second, np.ndarray):
+        a, b = np.asarray(first), np.asarray(second)
+        if a.shape != b.shape or a.dtype != b.dtype:
+            return f"{path}: shapes {a.shape}, {b.shape} or dtypes {a.dtype}, {b.dtype} differ"
+        same = np.array_equal(a, b, equal_nan=a.dtype.kind in "fc") if a.dtype != object else \
+            all(_difference(x, y) is None for x, y in zip(a.reshape(-1).tolist(), b.reshape(-1).tolist()))
+        if same:
+            return None
+        if a.dtype.kind in "fc":
+            at = np.flatnonzero(~((a == b) | (np.isnan(a) & np.isnan(b))).reshape(-1))
+            return f"{path}: {at.size} values differ (first at {int(at[0])}: {a.reshape(-1)[at[0]]!r}, " \
+                   f"{b.reshape(-1)[at[0]]!r})"
+        return f"{path}: values differ"
+    if isinstance(first, dict) or isinstance(second, dict):
+        if not (isinstance(first, dict) and isinstance(second, dict)) or list(first) != list(second):
+            return f"{path}: keys differ"
+        for name in first:
+            found = _difference(first[name], second[name], f"{path}[{name!r}]")
+            if found is not None:
+                return found
+        return None
+    if isinstance(first, (list, tuple)) or isinstance(second, (list, tuple)):
+        if type(first) is not type(second) or len(first) != len(second):
+            return f"{path}: lengths or types differ"
+        for index, (x, y) in enumerate(zip(first, second)):
+            found = _difference(x, y, f"{path}[{index}]")
+            if found is not None:
+                return found
+        return None
+    if isinstance(first, float) and isinstance(second, float) and np.isnan(first) and np.isnan(second):
+        return None
+    return None if (type(first) is type(second) and first == second) else f"{path}: {first!r} and {second!r}"
 
 
 def _describe(plant_g, vertex: int) -> tuple:
@@ -1573,7 +1749,8 @@ def _worker_copy(reduction: Reduction, registries: dict) -> Reduction:
     needed: ports, keep, explicit_edges)."""
     out = copy.copy(reduction)
     out.__dict__ = {name: value for name, value in reduction.__dict__.items()
-                    if name not in ("_table", "_assigned", "_display_parts", "_token", "_pickles")}
+                    if name not in ("_table", "_assigned", "_display_parts", "_token", "_pickles",
+                                    "_parameters_kept")}
     out._kinds, out._blends, out._libraries = {}, {}, {}
     out.instance, out.g = None, _RegistryHolder(registries)
     out.ports = out.keep = out.explicit_edges = None
@@ -1670,22 +1847,19 @@ def _evaluate_in_pool(reduction: Reduction, compute, workers: int, described: di
     time_step = _time_step(reduction)
     calls, sent = [], []
     for worker, share in zip(pool.workers, shares):
-        groups = {}
-        for position in sorted(share):
-            signature, kind_key, request = entries[position]
-            groups.setdefault(signature, (described[signature][0], []))[1].append((kind_key, request))
-        calls.append((_worker_evaluate, (token, _sync_blob(reduction, worker, sent), time_step,
-                                         list(groups.values()))))
+        items = [entries[position][1:] for position in sorted(share)]
+        parameters = {entries[position][0]: described[entries[position][0]][0] for position in sorted(share)}
+        calls.append((_worker_evaluate, (token, _sync_blob(reduction, worker, sent), time_step, parameters, items)))
     evaluated = {}
     for result in pool.run(calls):
         evaluated.update(result)
     return evaluated
 
 
-def _worker_evaluate(token: int, sync: bytes, time_step: float, groups: list) -> dict:
-    """In a pool's process: the kinds of *groups* ([(parameters, [(kind key, request)])]) of the reduction *token*,
-    its copy updated with *sync* (_sync_for's, pickled: _sync_blob), evaluated in batches in its library for those
-    parameters; none kept."""
+def _worker_evaluate(token: int, sync: bytes, time_step: float, parameters: dict, items: list) -> dict:
+    """In a pool's process: the kinds *items* ([(kind key, request)]; *parameters* {signature: its plants'
+    parameters}) of the reduction *token*, its copy updated with *sync* (_sync_for's, pickled: _sync_blob),
+    evaluated in batches in its library; none kept."""
     sync = pickle.loads(sync)
     from openalea.metafspm.compute import worker_state
     held = worker_state().setdefault("reductions", {})
@@ -1708,9 +1882,8 @@ def _worker_evaluate(token: int, sync: bytes, time_step: float, groups: list) ->
             registry.add(key, value)
     reduction.__dict__["_worker_time_step"] = float(time_step)
     out = {}
-    for parameters, items in groups:
-        for batch in _batches(reduction, dict(items)):
-            out.update(_evaluate(reduction, parameters, batch))
+    for batch in _batches(reduction, dict(items)):
+        out.update(_evaluate(reduction, parameters, batch))
     return out
 
 
@@ -1731,11 +1904,11 @@ def _contraction(reduction: Reduction, full_template, compartments) -> tuple:
     return csr_matrix((np.ones(n), (np.arange(n), contraction)), shape=(n, m)), alive, contraction
 
 
-def _evaluate_in(reduction: Reduction, library: _Library, items: list) -> dict:
-    """_evaluate's kinds *items* in *library*."""
+def _evaluate_in(reduction: Reduction, library: _Library, items: list, parameters: dict) -> dict:
+    """_evaluate's kinds *items* in *library* (*parameters*: {signature: its plants' parameters})."""
     from openalea.metafspm.solve.decorator import _GraphSystemBuilder, declared_system, kind_derived_methods
     from openalea.metafspm.data_structure.configs import ScalesConfig
-    groups_made = library.groups(items)
+    groups_made = library.groups(items, parameters)
     ds = library.population.data_structure
     instance = library.population.instance
     ids = ds.entity_ids(reduction.location).tolist()
@@ -1761,6 +1934,7 @@ def _evaluate_in(reduction: Reduction, library: _Library, items: list) -> dict:
     finally:
         decorator._SKIPPED.difference_update(reduction.systems)
     out = {kind_key: {} for kind_key, _ in items}
+    node_ids = np.asarray(ds.entity_ids("node"))
     for system in reduction.systems:
         component_name, attr = system.split(".")
         component = next(c for c in instance.components if declared_system(c, attr, (system,)) is not None)
@@ -1775,75 +1949,113 @@ def _evaluate_in(reduction: Reduction, library: _Library, items: list) -> dict:
             context = spec.make_context(x, None, None)
             input_jacobians = {name: csr_matrix(evaluator(context))
                                for name, evaluator in builder.input_jacobian_evaluators.items()}
-        derived = kind_derived_methods(component)
-        node_of = {int(v): j for j, v in enumerate(spec.graph.node_ids.tolist())}
-        for k, (kind_key, (_, key, _)) in enumerate(items):
-            full_entities = np.flatnonzero(owner == group_of[(k, "full")])        # DataStructure indices
-            reduced_nodes = np.flatnonzero(owner == group_of[(k, "reduced")])
-            full_nodes = np.array([node_of[int(v)] for v in ds.entity_ids("node")[full_entities]])
-            reduced_nodes = np.array([node_of[int(v)] for v in ds.entity_ids("node")[reduced_nodes]])
-            full_template = reduction._full[key]
-            compartments = np.flatnonzero(full_template.scale == ScalesConfig.Compartment)
-            kept = np.isin(compartments, reduction._kept[key])
-            A_full = A[full_nodes][:, full_nodes]
-            c_full = c[full_nodes]
-            contract, alive, contraction = _contraction(reduction, full_template, compartments)
-            if contract is not None:              # merged nodes: their rows and columns summed (held equal)
-                A_full, c_full = (contract.T @ A_full @ contract).tocsr(), contract.T @ c_full
-                compartments, kept = compartments[alive], kept[alive]
-            kron = kron_reduction(A_full, kept)
-            I, K = kron.interior_nodes, kron.kept_nodes
-            S, s = kron.reduced, c_full[K] + kron.inject(c_full[I])
-            A_red, c_red = A[reduced_nodes][:, reduced_nodes].toarray(), c[reduced_nodes]
-            inputs = {}
-            declared = [name for name in input_jacobians if name in reduction.inputs]
-            if declared:                       # −Xᵀ for a symmetric operator (no solve), only for a declared input
-                carry = kron.injection()
-            for name in declared:
-                Jp = input_jacobians[name]
-                J_full = Jp[full_nodes][:, full_nodes]
-                if contract is not None:
-                    J_full = (contract.T @ J_full @ contract).tocsr()
-                response = np.asarray(J_full[K].toarray()) + np.asarray((J_full[I].T @ carry.T).T)
-                own = Jp[reduced_nodes][:, reduced_nodes].toarray()
-                base = np.asarray(ds.get(name), dtype=float)
-                base_full = base[np.flatnonzero(owner == group_of[(k, "full")])]
-                if contract is not None:
-                    base_full = base_full[alive]
-                categories = {}
-                by = reduction.inputs[name].get("by")
-                if by is not None and by in full_template.properties:
-                    rows, values = full_template.properties[by]
-                    label = np.full(full_template.size, None, dtype=object)
-                    label[rows] = values
-                    hidden = label[compartments][I]
-                    for category in sorted({t for t in hidden.tolist() if t is not None}):
-                        cells = I[hidden == category]
-                        categories[category] = (response[:, cells].sum(axis=1), response[:, cells] @ base_full[cells])
-                inputs[name] = {"kept": response[:, K] - own, "base_kept": base_full[K],
-                                "categories": categories, "interior": J_full[I]}
-            full_group = group_of[(k, "full")]
-            group_outputs = {}
-            for name in reduction.output_names:
-                if ds.has(name):
-                    values = np.asarray(ds.get(name), dtype=float)
-                    group_outputs[name] = float(values[full_group] if ds.location(name) == reduction.location else
-                                                values[np.flatnonzero(owner == full_group)[0]])
-            kind = Kind(D=S - A_red, e=s - c_red, reduction=kron, interior_source=c_full[I],
-                        kept_rows=compartments[K], interior_rows=compartments[I], inputs=inputs,
-                        outputs=group_outputs, key=kind_key, system=system)
-            if contract is not None:
-                full_entities = full_entities[alive]
-                kind.contraction = contraction
-                members = np.flatnonzero(~alive)
-                kind.merged_rows = np.flatnonzero(full_template.scale == ScalesConfig.Compartment)[members]
-                kind.merged_kept = np.searchsorted(K, contraction[members])
-            for name, method in derived.items():   # while the factorisation is live
-                kind.outputs[name] = method(kind, full_template, kron, full_entities)
-            if np.count_nonzero(full_template.scale == ScalesConfig.Compartment) * (K.size + 1) \
-                    <= DISPLAY_DENSE_MAX:              # its recovery operator, for display instances
-                kind.recovery = _dense_recovery(kind, kron)
-            kron.release()                     # its factorisation (the full interior's) made again on recovery
-            out[kind_key][system] = kind
+        batch = _Batch(system=system, A=A, c=c, input_jacobians=input_jacobians, owner=owner, group_of=group_of,
+                       node_of={int(v): j for j, v in enumerate(spec.graph.node_ids.tolist())}, node_ids=node_ids,
+                       derived=kind_derived_methods(component),
+                       inputs={name: np.asarray(ds.get(name), dtype=float) for name in input_jacobians
+                               if name in reduction.inputs},
+                       outputs={name: (np.asarray(ds.get(name), dtype=float), ds.location(name) == reduction.location)
+                                for name in reduction.output_names if ds.has(name)})
+        for k, kind in enumerate(_kinds_of_batch(reduction, batch, items)):
+            out[items[k][0]][system] = kind
     return out
 
+
+@dataclass
+class _Batch:
+    """What each kind of a library batch is taken from (_kind_from_batch), for one reduced system: its Jacobian A
+    and constant c over the library's nodes, its inputs' Jacobians, the nodes' groups (owner: their entity at the
+    groups' location; group_of: each kind's (k, "full" | "reduced") group), each node's position in the system
+    (node_of, by vertex; node_ids: the DataStructure's node vertices), the component's @kind_derived methods, the
+    declared inputs' base values and the outputs' values (and whether at the groups' location)."""
+    system: str
+    A: object
+    c: np.ndarray
+    input_jacobians: dict
+    owner: np.ndarray
+    group_of: dict
+    node_of: dict
+    node_ids: np.ndarray
+    derived: dict
+    inputs: dict
+    outputs: dict
+
+
+def _kinds_of_batch(reduction: Reduction, batch: _Batch, items: list) -> list:
+    """The Kinds of the batch *items* for *batch*'s system, in their order (_kind_from_batch for each)."""
+    return [_kind_from_batch(reduction, batch, k, kind_key, key) for k, (kind_key, (_, key, _)) in enumerate(items)]
+
+
+def _kind_from_batch(reduction: Reduction, batch: _Batch, k: int, kind_key, key) -> Kind:
+    """
+    The *k*-th kind of a library batch (key *kind_key*, reduced template key *key*) for *batch*'s system: its full
+    and reduced groups' blocks of the batch's operator, the full one's Kron reduction (its interior factorised
+    once), its inputs' responses, its outputs, its @kind_derived values (while the factorisation is live), its
+    recovery operator for display (small kinds), then the factorisation released. Reads *batch* only (no
+    DataStructure write).
+    """
+    from openalea.metafspm.data_structure.configs import ScalesConfig
+    A, c, owner, group_of, node_of = batch.A, batch.c, batch.owner, batch.group_of, batch.node_of
+    full_entities = np.flatnonzero(owner == group_of[(k, "full")])                # DataStructure indices
+    reduced_nodes = np.flatnonzero(owner == group_of[(k, "reduced")])
+    full_nodes = np.array([node_of[int(v)] for v in batch.node_ids[full_entities]])
+    reduced_nodes = np.array([node_of[int(v)] for v in batch.node_ids[reduced_nodes]])
+    full_template = reduction._full[key]
+    compartments = np.flatnonzero(full_template.scale == ScalesConfig.Compartment)
+    kept = np.isin(compartments, reduction._kept[key])
+    A_full = A[full_nodes][:, full_nodes]
+    c_full = c[full_nodes]
+    contract, alive, contraction = _contraction(reduction, full_template, compartments)
+    if contract is not None:              # merged nodes: their rows and columns summed (held equal)
+        A_full, c_full = (contract.T @ A_full @ contract).tocsr(), contract.T @ c_full
+        compartments, kept = compartments[alive], kept[alive]
+    kron = kron_reduction(A_full, kept)
+    I, K = kron.interior_nodes, kron.kept_nodes
+    S, s = kron.reduced, c_full[K] + kron.inject(c_full[I])
+    A_red, c_red = A[reduced_nodes][:, reduced_nodes].toarray(), c[reduced_nodes]
+    inputs = {}
+    declared = [name for name in batch.input_jacobians if name in reduction.inputs]
+    if declared:                       # −Xᵀ for a symmetric operator (no solve), only for a declared input
+        carry = kron.injection()
+    for name in declared:
+        Jp = batch.input_jacobians[name]
+        J_full = Jp[full_nodes][:, full_nodes]
+        if contract is not None:
+            J_full = (contract.T @ J_full @ contract).tocsr()
+        response = np.asarray(J_full[K].toarray()) + np.asarray((J_full[I].T @ carry.T).T)
+        own = Jp[reduced_nodes][:, reduced_nodes].toarray()
+        base_full = batch.inputs[name][np.flatnonzero(owner == group_of[(k, "full")])]
+        if contract is not None:
+            base_full = base_full[alive]
+        categories = {}
+        by = reduction.inputs[name].get("by")
+        if by is not None and by in full_template.properties:
+            rows, values = full_template.properties[by]
+            label = np.full(full_template.size, None, dtype=object)
+            label[rows] = values
+            hidden = label[compartments][I]
+            for category in sorted({t for t in hidden.tolist() if t is not None}):
+                cells = I[hidden == category]
+                categories[category] = (response[:, cells].sum(axis=1), response[:, cells] @ base_full[cells])
+        inputs[name] = {"kept": response[:, K] - own, "base_kept": base_full[K],
+                        "categories": categories, "interior": J_full[I]}
+    full_group = group_of[(k, "full")]
+    group_outputs = {}
+    for name, (values, at_groups) in batch.outputs.items():
+        group_outputs[name] = float(values[full_group] if at_groups else values[np.flatnonzero(owner == full_group)[0]])
+    kind = Kind(D=S - A_red, e=s - c_red, reduction=kron, interior_source=c_full[I],
+                kept_rows=compartments[K], interior_rows=compartments[I], inputs=inputs,
+                outputs=group_outputs, key=kind_key, system=batch.system)
+    if contract is not None:
+        full_entities = full_entities[alive]
+        kind.contraction = contraction
+        members = np.flatnonzero(~alive)
+        kind.merged_rows = np.flatnonzero(full_template.scale == ScalesConfig.Compartment)[members]
+        kind.merged_kept = np.searchsorted(K, contraction[members])
+    for name, method in batch.derived.items():   # while the factorisation is live
+        kind.outputs[name] = method(kind, full_template, kron, full_entities)
+    if np.count_nonzero(full_template.scale == ScalesConfig.Compartment) * (K.size + 1) \
+            <= DISPLAY_DENSE_MAX:              # its recovery operator, for display instances
+        kind.recovery = _dense_recovery(kind, kron)
+    kron.release()                     # its factorisation (the full interior's), X and S: made again on recovery
+    return kind

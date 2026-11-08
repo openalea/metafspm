@@ -365,9 +365,11 @@ class SoilDiffusion(FunctionalComponent):
   use, so a growing plant's kinds saturate; an exact kind no group has any more is released at the next solve (its
   arrays freed, evaluated again if a group comes back to it). The plants of one population share their kinds when
   those parameters are the same (plants differing in another component's only, their root draws say, share them). The missing kinds are evaluated in batches of at most `Compute.kind_batch`
-  interior cells (the Scene's Compute, `Compute.current()`; the memory freed between batches), in one library
-  population per plant parameters kept on the reduction (each batch's groups replacing the former's, its
-  components reset to their built state); with `Compute.workers` allowing a pool, the batch's kinds are dealt over
+  interior cells (the Scene's Compute, `Compute.current()`; the memory freed between batches), every plant
+  parameters' kinds in the same batches, in one library population kept on the reduction (one plant per plant
+  parameters of the batch; each batch's groups replacing the former's, its components reset to their built state
+  but for the caches they keep themselves, `keep(name, saved=False)`); `METAFSPM_CHECK_KINDS=1` evaluates every kind
+  again alone in a library built for it and checks the two are the same, bit for bit; with `Compute.workers` allowing a pool, the batch's kinds are dealt over
   its processes, each its share in its own library (the same kinds, bit for bit). The kinds are checkpointed with the population (`Kind`, a shared part
   of `scene.shared`, saved once; never a factorisation): a resumed run evaluates none again. A value derived from a kind (a section's condensed volumes)
   is a method of the reduced system's component tagged `@kind_derived(name)`: `method(self, kind, full_template,

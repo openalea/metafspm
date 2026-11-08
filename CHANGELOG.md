@@ -2,6 +2,27 @@
 
 ## Unreleased (release2026)
 
+### The kinds' batches (devplan_generic_kernels GK-4)
+
+- **One library population per reduction and time step, one plant per plant parameters:** the kinds of plants of
+  different parameters (signatures) are evaluated in the same batches (`kind_batch` cells at most), each kind's
+  groups under its signature's plant, each plant given its parameters; a batch removes the plants of the
+  signatures it has not and adds one for a new signature. It was one library, and one batch, per signature.
+- **`Reduction.assignment`'s plant parameters and signatures are kept** while the library components' settings and
+  parameters are the same (their write counts, or their values): not read and digested at every call.
+- **A library's components keep their own caches across its batches** (`keep(name, saved=False)`, rebuilt by the
+  component when its key no longer matches); their other state is reset as before. MECHA's per-template unit
+  volumes (`@kind_derived` condensed volumes) are kept that way.
+- **`KronReduction.release()` also frees S** (`reduced`), with the factorisation and X; `pairs()` and `shunts()` need
+  S and are not available after `release()`.
+- **`METAFSPM_CHECK_KINDS=1`** (new): every kind evaluated is evaluated again alone, in a library built for it, and
+  compared field by field, bit for bit (`solve.reduction.check_kinds`).
+- Each kind's work after the library's run (its blocks, Kron reduction, inputs, outputs, `@kind_derived`, recovery,
+  release) is one function of the batch's arrays (`_kind_from_batch`).
+- Not done (measured, devplan_generic_kernels GK-4 note): slot pools reused across batches and the library running
+  only the reduced systems' closure.
+- Bit-identical.
+
 ### Assembly into kept patterns (devplan_generic_kernels GK-3)
 
 - **`GraphView.laplacian(weights)`** (new): B diag(w) Bᵀ through a pattern kept per view (each entry's edges with

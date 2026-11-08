@@ -177,7 +177,8 @@ in a functor is one of the platform's primitives (the tree kernels above, `ds.lo
    the nodes' owners at each coarse scale) drop the removed ids and append the added ones (larger ids: arrays
    sorted by id stay sorted). A port edits the MPG as before and calls `ds.update_topology()`, nothing else; a cache
    of its own derived from the structure can use `MPG._derived(name, build, patch)`. A change no delta describes (a
-   kept vertex moved, ids given again) rebuilds. `METAFSPM_CHECK_TOPOLOGY=1` checks every patch against a build.
+   kept vertex moved, ids given again) rebuilds. `METAFSPM_CHECK_TOPOLOGY=1` checks every patch against a build;
+   `METAFSPM_CHECK_KINDS=1` checks every kind of a reduction's batches against its evaluation alone.
    `update_topology` carries a location's float and int variables over as one block per dtype, each a row taken
    from its old array through the location's match in one gather, without copying the old arrays first.
    Read edges as arrays: `ds.edge_endpoints()` ((edges, 2), read-only), not `ds.edges()` (Python tuples).

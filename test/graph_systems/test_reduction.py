@@ -534,3 +534,53 @@ def test_a_group_description_builds_no_key_dict_of_the_plants_properties():
         assert properties["length"] == k * 0.5 and type(properties["length"]) is float
         assert properties.get("kind_class") == ("lateral" if k % 2 == 0 else None)
     assert g._properties["length"]._index is None
+
+
+def _factored_conductance_model(reduced):
+    """The toy plant with its Connections' conductances a per-plant factor (a parameter of the library's components:
+    plants of different factors have kinds of their own)."""
+    @dataclass
+    class FactoredConductance(FunctionalComponent):
+        factor: float = parameter(**DOC, default=1., scale=scales.Plant)
+        K: float = state_variable(**DOC, default=1., scale=scales.Connection, location="edge", kind="intensive")
+
+        @rate
+        def _K(self, K):
+            return np.asarray(self.parameter_values("factor", "edge"), dtype=float) * 3.
+
+    @dataclass
+    class GivenHydraulics(NodeHydraulics):
+        K: float = input_variable(**DOC, by="FactoredConductance", default=1., scale=scales.Connection,
+                                  location="edge")
+
+    class FactoredPlant(_model(reduced)):
+        parts = {"conductance": FactoredConductance, "hydraulics": GivenHydraulics}
+    return FactoredPlant
+
+
+def test_plants_of_different_parameters_share_one_library_one_plant_each(monkeypatch):
+    """The kinds of plants of different parameters (signatures) are evaluated in the same batches of one library,
+    one plant per signature: the potentials are the full model's, each kind the one it gives alone in a library
+    built for it (METAFSPM_CHECK_KINDS=1, bit for bit); a plant's parameter changed, its kinds are evaluated again
+    (the plants' parameters and signatures kept only while they are)."""
+    monkeypatch.setenv("METAFSPM_CHECK_KINDS", "1")
+    solved = {}
+    for reduced in (False, True):
+        model = _factored_conductance_model(reduced)
+        population = population_data_structure(planting([Planting(), Planting(x=1.)], model, plant_scenarios=[
+            {"factor": 2.}, {"factor": 5.}]), model)
+        population.instance.run()
+        solved[reduced] = population
+    full, reduced = solved[False].data_structure, solved[True].data_structure
+    reduction = reduced.structure.reduction
+    assert len({key[2] for key in reduction._kinds}) == 2
+    (library,) = reduction._libraries.values()
+    assert len(library.plants) == 2 and len(library.population.data_structure.entity_ids("Plant")) == 2
+    row = {place: i for i, place in enumerate(_places(full))}
+    rows = [row[place] for place in _places(reduced)]
+    np.testing.assert_allclose(reduced.get("water_potential"), full.get("water_potential")[rows], rtol=1e-11)
+    before = set(reduction._kinds)
+    reduced.set("factor", np.array([2., 7.]))
+    solved[True].instance.run()
+    assert len(set(reduction._kinds) - before) == 1                  # the second plant's kind, evaluated again
+    assert len(library.plants) == 1                                   # that batch's one signature: one plant

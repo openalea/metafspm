@@ -65,8 +65,8 @@ def test_the_injection_matrix_is_inject():
 
 
 def test_a_released_reduction_factorises_its_interior_again():
-    """release() frees the interior's factorisation (a reduction kept for its reduced matrix): inject, injection and
-    recover give the same values, the interior factorised again at each call and not kept."""
+    """release() frees the interior's factorisation, X and the reduced matrix S (a reduction kept for recovery):
+    inject, injection and recover give the same values, the interior factorised again at each call and not kept."""
     rng = np.random.default_rng(3)
     A, _ = _network(rng)
     reduction = kron_reduction(A, [2, 11, 40])
@@ -75,7 +75,7 @@ def test_a_released_reduction_factorises_its_interior_again():
     before = reduction.inject(b), reduction.injection(), reduction.recover(x_K, b), reduction.recover(np.eye(3))
     reduction.release()
     after = reduction.inject(b), reduction.injection(), reduction.recover(x_K, b), reduction.recover(np.eye(3))
-    assert reduction._lu is None
+    assert reduction._lu is None and reduction._X is None and reduction.reduced is None
     for value, again in zip(before, after):
         np.testing.assert_allclose(again, value, rtol=1e-12, atol=1e-14)
 

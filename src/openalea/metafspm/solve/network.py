@@ -255,7 +255,7 @@ class KronReduction:
       injection()       inject's matrix (kept × interior): −Xᵀ for a symmetric A (X = A_II⁻¹ A_IK), no solve
       shares(T, v_I)    the interior values *v_I* shared among the kept nodes *T* by the recovery weights
       recover(x_K, b_I) the interior's potentials (A_II⁻¹ (b_I − A_IK x_K)), from the kept nodes' and the sources
-      release()         the interior's factorisation and X freed: a reduction kept for S, recovered from rarely
+      release()         the interior's factorisation, X and S freed: a reduction kept for recovery, from rarely
 
     Kept and interior nodes are local indices of *A* (kept_nodes, interior_nodes). The interior is factorised once,
     and X = A_II⁻¹ A_IK (dense, interior × kept: S's) solved once, both kept until release(): what a reduction needs
@@ -297,10 +297,11 @@ class KronReduction:
         return lu
 
     def release(self) -> None:
-        """Free the interior's factorisation and X, and keep none from now on: inject, injection, shares and recover
-        factorise the interior again at each call (a reduction kept for its reduced matrix, recovered from
-        rarely)."""
-        self._lu, self._X, self._keep = None, None, False
+        """Free the interior's factorisation, X and the reduced matrix S, and keep none from now on: inject,
+        injection, shares and recover factorise the interior again at each call (a reduction kept for recovery,
+        recovered from rarely: what was derived from S was taken before, e.g. a kind's D); pairs and shunts need S,
+        so are not available after."""
+        self._lu, self._X, self._keep, self.reduced = None, None, False, None
 
     def pairs(self) -> tuple:
         """(i, j, conductance) of the equivalent network's pairs i < j (local indices among the kept nodes)."""
