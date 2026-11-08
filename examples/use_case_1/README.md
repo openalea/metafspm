@@ -218,17 +218,20 @@ every hour (the tables can be read while it runs):
   `checkpoints/shared`): `Scene.load_checkpoint` resumes the run from it, bit for bit.
 
 The run's configuration, `Compute(threads="auto", workers="auto")` (metafspm's default, shown in `run.py`): the
-processors for numba's kernels and the plant system's blocks, each part taking those that pay (the plant system's
-blocks in the count found fastest on its own solves: 4 on this laptop; BLAS stays at one thread at any `threads`:
-the results are the same bit for bit at any number; 8 plants, day 13: 4.46 s per hour at 1 thread, 4.20 with
-"auto", measured 2026-11-08 after the generic kernels' GK-1 to GK-3, against 4.93 and 4.75 the same day before them), the memory freed given
+processors for numba's kernels, the plant system's blocks and the reduction's kinds (each kind's Kron reduction in
+a thread), each part taking those that pay (the plant system's blocks in the count found fastest on its own solves:
+4 on this laptop; BLAS stays at one thread at any `threads`: the results are the same bit for bit at any number;
+8 plants, day 13: 4.35 s per hour at 1 thread, 4.08 with "auto", measured 2026-11-08 after the generic kernels'
+GK-1 to GK-5, against 4.93 and 4.75 the same day before them), the memory freed given
 back after each hour (`malloc_trim`), and the environment's `MALLOC_ARENA_MAX=2` (`environment.yaml`'s
 `variables:`; outside the conda environment, `export MALLOC_ARENA_MAX=2` before running). Its `workers="auto"` starts a pool of processes for the
 reduction's kinds when a batch is worth it (the first hours, the days the organs emerge): measured on a 14-thread
 laptop (2026-11-06), the same results bit for bit with 1, "auto" (6) or 4 processes; 2 plants to day 8 in 235 s
 with 1, 212 s with "auto" (last day 1.97 → 1.83 s per hour, first hour 6.3 → 4.1 s), 208 s with 4 (1.68 s), the
 memory's peak, the processes included, 3.4, 4.3 and 5.0 GB; 8 plants to day 4, last day 1.08 → 0.97 s; 16 plants,
-1.78 → 1.52 s. `benchmark.py --workers 1|auto|n --linear-solver superlu|superlu_reuse|cholmod|pardiso|mumps` compares them
+1.78 → 1.52 s. After the generic kernels (2026-11-08), 8 plants to day 8 take 275 s with 4 processes and 298 s
+without the pool at `threads="auto"` (the kinds' threads), the scope's peak 3.8 and 3.2 GB: the pool stays the
+faster where batches are large, at about 0.6–1.2 GB more. `benchmark.py --workers 1|auto|n --linear-solver superlu|superlu_reuse|cholmod|pardiso|mumps` compares them
 (`--threads auto|n`: the budget of numba's kernels and the plant system's blocks, "auto" by default; BLAS stays at
 one thread; the benchmark's entry records the threads chosen and each kernel's and solver's time, per step).
 
