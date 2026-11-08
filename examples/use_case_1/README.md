@@ -179,7 +179,7 @@ exchange's canopy height was 0 and no element exchanged (gs, An and the transpir
 `run.py` is the script to read first: two plants over two weeks of May, hour by hour, from their sowing (`python
 run.py [days] [plants] [folder]`, by default 14 days, 2 plants, `outputs/from_sowing`). It reads top to bottom: the
 settings (days, plants, the time step, the sowing's date), the stand (one row, 5 cm apart, 3 cm deep), the Scene
-(the plants, the soil and the light, the weather, the run configuration `Compute(threads="auto", workers="auto")`), its
+(the plants, the soil and the light, the weather, the run configuration `Compute(threads="auto")`), its
 recorder (the tables, frames every 12 hours with their views, the first plant's sections once a day, a checkpoint a
 day), `scene.simulate(...)`, then `scene.recorder.pack()`, the frames in one archive. What it assembles lives in
 `models.py`: the plant model and its scenario, the soil's and the light's scenarios (`SOIL_SCENARIO`: a loam 50 cm
@@ -217,30 +217,30 @@ every hour (the tables can be read while it runs):
 - `checkpoints/`: one a day (the last two kept; the anatomy templates and the reduced sections saved once, in
   `checkpoints/shared`): `Scene.load_checkpoint` resumes the run from it, bit for bit.
 
-The run's configuration, `Compute(threads="auto", workers="auto")` (metafspm's default, shown in `run.py`): the
+The run's configuration, `Compute(threads="auto")` (metafspm's default, shown in `run.py`): the
 processors for numba's kernels, the plant system's blocks and the reduction's kinds (each kind's Kron reduction in
 a thread), each part taking those that pay (the plant system's blocks in the count found fastest on its own solves:
 4 on this laptop; BLAS stays at one thread at any `threads`: the results are the same bit for bit at any number;
-8 plants, day 13: 4.35 s per hour at 1 thread, 4.08 with "auto", measured 2026-11-08 after the generic kernels'
-GK-1 to GK-5, against 4.93 and 4.75 the same day before them), the memory freed given
-back after each hour (`malloc_trim`), and the environment's `MALLOC_ARENA_MAX=2` (`environment.yaml`'s
-`variables:`; outside the conda environment, `export MALLOC_ARENA_MAX=2` before running). Its `workers="auto"` starts a pool of processes for the
-reduction's kinds when a batch is worth it (the first hours, the days the organs emerge): measured on a 14-thread
-laptop (2026-11-06), the same results bit for bit with 1, "auto" (6) or 4 processes; 2 plants to day 8 in 235 s
-with 1, 212 s with "auto" (last day 1.97 → 1.83 s per hour, first hour 6.3 → 4.1 s), 208 s with 4 (1.68 s), the
-memory's peak, the processes included, 3.4, 4.3 and 5.0 GB; 8 plants to day 4, last day 1.08 → 0.97 s; 16 plants,
-1.78 → 1.52 s. After the generic kernels (2026-11-08), 8 plants to day 8 take 275 s with 4 processes and 298 s
-without the pool at `threads="auto"` (the kinds' threads), the scope's peak 3.8 and 3.2 GB: the pool stays the
-faster where batches are large, at about 0.6–1.2 GB more. `benchmark.py --workers 1|auto|n --linear-solver superlu|superlu_reuse|cholmod|pardiso|mumps` compares them
-(`--threads auto|n`: the budget of numba's kernels and the plant system's blocks, "auto" by default; BLAS stays at
-one thread; the benchmark's entry records the threads chosen and each kernel's and solver's time, per step).
+8 plants, day 13: 4.27 s per hour at 1 thread, 3.92 with "auto", measured 2026-11-08 after the generic kernels'
+GK-1 to GK-5 and the process pool's removal, against 4.93 and 4.75 the same day before them), the memory freed
+given back after each hour (`malloc_trim`), and the environment's `MALLOC_ARENA_MAX=2` (`environment.yaml`'s
+`variables:`; outside the conda environment, `export MALLOC_ARENA_MAX=2` before running). The reduction's kinds
+are worked out in the run's process, each in a thread (metafspm's process pool was removed on 2026-11-08, QG-3 of
+its devplan_generic_kernels): measured that day on this 14-thread laptop, 8 plants to day 8 take 292.6 s at
+"auto" (the scope's peak 3.15 GB) against 283.1 s and 3.83 GB with the former pool ("auto": 7 processes), every
+step's results identical bit for bit; resumed from day 8, day 12 and 13 take 3.59 and 4.27 s per hour at 1 thread,
+3.27 and 3.92 at "auto" (the scope's peak 3.9 GB, the checkpoint's load included). `benchmark.py --threads auto|n
+--linear-solver superlu|superlu_reuse|cholmod|pardiso|mumps` compares them (`--threads`: the budget of numba's
+kernels, the plant system's blocks and the kinds, "auto" by default; BLAS stays at one thread; the benchmark's entry
+records the threads chosen and each kernel's and solver's time, per step).
 
 **Scaling** (measured 2026-11-07 on the same laptop, metafspm f3a2148, GRANAP c626201, after the incremental
 topology updates; `benchmark.py --variability 1`: each plant its own root draws, the plants sharing their kinds;
-under an 8 GB bound, the memory the scope's peak, the pool's processes included; each row the day's mean step, and
+under an 8 GB bound, the memory the scope's peak, the process pool of the time included (its processes in the
+"workers" column; the pool is removed since); each row the day's mean step, and
 before them, at metafspm d2e708e, every step's results identical):
 
-| plants, day | workers | s per step (before) | kinds evaluated that day (s per step) | nodes | memory peak |
+| plants, day | pool processes (then) | s per step (before) | kinds evaluated that day (s per step) | nodes | memory peak |
 |---|---|---|---|---|---|
 | 2, day 8 (identical plants) | auto (7) | 1.44 (1.49) | 139 | 13,924 | 3.6 GB |
 | 8, day 8 (the day-13 run) | 1 | 2.65 (2.85) | 115 (0.60) | 56,598 | |
@@ -254,9 +254,9 @@ few tenths of a second per step); the step grows with the plants' nodes (the roo
 about 25 µs per node per step from day 10 on, MECHA's plant solve first, then GRANAP's anatomies and the topology
 updates), and so does the memory (about 10 kB per node beyond 1.5 GB). Extrapolated, 40 plants at day 14 would hold
 about 1.7 million nodes, take about 40 to 45 s per step and need 13 to 18 GB: beyond this laptop (the run is a
-workstation's, or fewer plants, or a coarser root anatomy). On a large scene the pool's forked processes add 1 to
-2.5 GB (the pages of the main process they touch are copied): beyond about 150,000 nodes, `--workers 1` or `2` keeps the memory down at little cost (the
-kinds take a few tenths of a second per step there). Recorded (`benchmark.py --frames`: a frame a day, p0's sections
+workstation's, or fewer plants, or a coarser root anatomy). The process pool of the time added 1 to 2.5 GB on a
+large scene (the pages of the main process its forked processes touched were copied); without it, the scope's peak
+is the run's process alone. Recorded (`benchmark.py --frames`: a frame a day, p0's sections
 drawn as instances), 8 plants to day 8 take 357 s (334 s unrecorded), the frames 1.1 MB at the sowing to 25 MB at day
 8 (about 0.45 kB per node), the parts 81 MB (77 files), the folder 176 MB.
 On a machine with an NVIDIA GPU and CuPy, `benchmark.py --device cuda` runs the kinds' Kron reductions and the
@@ -273,7 +273,7 @@ leaf_ports=bundles vapour_path=air_spaces` (`plant_reduction`'s options: the sho
 a leaf's evaporating walls per air space); each step records the reduced groups' dense blocks (their nonzeros), the
 end the kinds held and their pickled size. `--memory` adds what the scene holds at the end by owner
 (`memory_probe.report`: the DataStructure's columns, the MPG's properties and topology, the Instances, the GRANAP
-templates, the kinds' parts, the group tables, the libraries, the solver's caches, the pool's processes, and the
+templates, the kinds' parts, the group tables, the libraries, the solver's caches, and the
 process before and after `malloc_trim`), `--tracemalloc 8` the allocations alive at the end by line and by stack
 (about 8 times slower), `--thread-scaling` the last step's large linear solves, its parallel kernels (a
 reduction's terms among them) and the memory bandwidth timed at 1 to 12 threads, `--threads` the run's
