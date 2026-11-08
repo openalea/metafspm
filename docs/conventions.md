@@ -170,6 +170,8 @@ For metafspm and every port: no Python loop over groups, nodes or entities in a 
    sorted by id stay sorted). A port edits the MPG as before and calls `ds.update_topology()`, nothing else; a cache
    of its own derived from the structure can use `MPG._derived(name, build, patch)`. A change no delta describes (a
    kept vertex moved, ids given again) rebuilds. `METAFSPM_CHECK_TOPOLOGY=1` checks every patch against a build.
+   `update_topology` carries a location's float and int variables over as one block per dtype, each a row taken
+   from its old array through the location's match in one gather, without copying the old arrays first.
    Read edges as arrays: `ds.edge_endpoints()` ((edges, 2), read-only), not `ds.edges()` (Python tuples).
    Read every vertex's linked parent at a scale at once, `g.linked_parents(scale)` (a dict, cached per structure),
    not `g.linked_parent(v, scale)` vertex by vertex; `g.components_at_scale` lists each scale in one loop, in

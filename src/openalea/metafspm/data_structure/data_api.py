@@ -368,6 +368,12 @@ def _split(totals, owner, weights, owners_name: str) -> np.ndarray:
     return out
 
 
+def _integral(value) -> bool:
+    """Whether *value* is an integer (an int variable's default carried in its int block)."""
+    return isinstance(value, (int, np.integer)) and not isinstance(value, bool) or \
+        (isinstance(value, (float, np.floating)) and np.isfinite(value) and float(value).is_integer())
+
+
 def _canonical_dtype(dtype):
     """float, int or object (the dtypes of DataStructure variables)."""
     if dtype in (float, np.float64, "float", None):
@@ -3143,7 +3149,7 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
             keys = stored_ids.get(location)
             if keys is None or keys.size != size:
                 keys = np.asarray(self.entity_ids(location), dtype=np.int64)[:size]
-            old[location] = (keys, {name: arr.copy() for name, arr in store.items()})
+            old[location] = (keys, dict(store))     # the carry replaces the arrays, never writes in them
         self.__dict__["_carrying"] = old         # the MPG's views read the carried (old) values meanwhile
         try:
             self._carry_variables(old, stored_ids)
@@ -3203,34 +3209,48 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
 
     def _carried_together(self, variables: dict, meta: dict, keys, sorted_keys, order, matched) -> dict:
         """
-        _carry_over of a location's float64 scalar variables (default on growth, or inherited in anatomy mode), as
-        one gather: their old arrays stacked (variables × old entities), the known entities' columns gathered at
-        once, the new ones' filled per variable (its default, or its inherited source's value). {name: its row of the
-        new block}, each contiguous; the other variables are carried one by one.
+        _carry_over of a location's numeric scalar variables (default on growth, or inherited in anatomy mode), one
+        block per dtype (float, int): each variable's row taken from its old array through the location's match in
+        one gather (np.take, no stack of the old arrays), the new entities' filled per variable (its default, or its
+        inherited source's value). {name: its row of the block}, each contiguous; the other variables (objects,
+        shaped, an int with a default that is no integer) are carried one by one.
         """
-        names = [name for name, array in variables.items()
-                 if name in meta and array.ndim == 1 and array.dtype == np.float64
-                 and _canonical_dtype(meta[name].get("dtype", float)) is float and not meta[name].get("shape")
-                 and (meta[name]["on_grow"] != "inherit" or self._anatomy)]
-        if not names:
+        groups = {}
+        for name, array in variables.items():
+            policy = meta.get(name)
+            if policy is None or array.ndim != 1 or policy.get("shape") or \
+                    (policy["on_grow"] == "inherit" and not self._anatomy):
+                continue
+            dtype = _canonical_dtype(policy.get("dtype", float))
+            if dtype is float and array.dtype == np.float64:
+                groups.setdefault(np.float64, []).append(name)
+            elif dtype is int and array.dtype == np.int64 and _integral(policy["default"]):
+                groups.setdefault(np.int64, []).append(name)
+        if not groups:
             return {}
         known, position = matched
-        stacked = np.stack([variables[name] for name in names])
-        block = np.empty((len(names), keys.size))
-        block[:, known] = stacked[:, order[position[known]]]
+        source = np.where(known, order[position.clip(0, max(order.size - 1, 0))] if order.size else 0, 0)
         unknown = np.flatnonzero(~known)
-        if unknown.size:
-            inherited = [j for j, name in enumerate(names) if meta[name]["on_grow"] == "inherit"]
+        inherited_rows = inherited_at = None
+        if unknown.size and any(meta[name]["on_grow"] == "inherit" for names in groups.values() for name in names):
+            by_key = _KeyedValues(sorted_keys, None)       # the new Compartments' sources, found once per update
+            sources = self._inheritance_sources(keys[unknown], by_key)
+            found, at = by_key.match(np.maximum(sources, 0))
+            found &= sources >= 0
+            inherited_rows, inherited_at = unknown[found], order[at[found]]
+        out = {}
+        for dtype, names in groups.items():
+            block = np.empty((len(names), keys.size), dtype=dtype)
             for j, name in enumerate(names):
-                block[j, unknown] = meta[name]["default"]
-            if inherited:               # the sources of the new Compartments, found once per update (inheritance)
-                by_key = _KeyedValues(sorted_keys, None)
-                sources = self._inheritance_sources(keys[unknown], by_key)
-                found, at = by_key.match(np.maximum(sources, 0))
-                found &= sources >= 0
-                rows = np.asarray(inherited, dtype=np.int64)[:, None]
-                block[rows, unknown[found][None, :]] = stacked[rows, order[at[found]][None, :]]
-        return {name: block[j] for j, name in enumerate(names)}
+                row, old = block[j], variables[name]
+                if old.size:
+                    np.take(old, source, out=row)
+                if unknown.size:
+                    row[unknown] = meta[name]["default"]
+                    if inherited_rows is not None and meta[name]["on_grow"] == "inherit":
+                        row[inherited_rows] = old[inherited_at]
+                out[name] = row
+        return out
 
     # ── Anatomy mode: incremental junction rewiring ──
 

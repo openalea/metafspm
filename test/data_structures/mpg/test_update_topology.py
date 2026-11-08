@@ -264,6 +264,23 @@ def test_a_locations_float_variables_are_carried_over_as_one_gather():
     assert d_of[new_vid] == -3. and all(d_of[v] == float(v) for v in d_of if v != new_vid)
 
 
+def test_a_locations_int_variables_are_carried_over_as_their_own_block_and_the_old_arrays_are_not_shared():
+    g, seedling, ds = seedling_ds()
+    for name in ("i", "j"):
+        ds.register(name, np.array([int(v) for v in ds.entity_ids("node")]), location="node", default=-1, dtype=int)
+    ds.register("c", np.array([float(v) for v in ds.entity_ids("node")]), location="node", default=-1.)
+    old = {name: ds.get(name) for name in ("i", "j", "c")}
+    new_vid = grow_root(g, seedling)
+    ds.update_topology()
+    i, j = ds.get("i"), ds.get("j")
+    assert i.dtype == np.int64 and i.base is not None and i.base is j.base     # one int block
+    assert ds.get("c").base is not i.base
+    i_of = dict(zip(ds.entity_ids("node"), i))
+    assert i_of[new_vid] == -1 and all(i_of[v] == v for v in i_of if v != new_vid)
+    for name, array in old.items():                                         # new arrays, none an old one's view
+        assert not np.shares_memory(array, ds.get(name))
+
+
 def test_update_topology_keeps_aliases():
     g, seedling, ds = seedling_ds()
     ds.register("hexose", location="node", default=1.)

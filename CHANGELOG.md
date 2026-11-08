@@ -2,6 +2,20 @@
 
 ## Unreleased (release2026)
 
+### The carry-over of every numeric dtype in bulk (devplan_scene_parallel, after P5: bulk carry-over)
+
+- **`update_topology` no longer copies every variable's array before carrying it over:** the carry replaces the
+  stores' arrays, it never writes into the old ones.
+- **One block per dtype and location:** the float and int scalar variables (an int's default an integer) are each a
+  row of their dtype's block, taken from the old array through the location's match in one gather (`np.take`), no
+  stack of the old arrays; the new entities get the default or, in anatomy mode, their inherited source's value.
+  The int variables, carried one by one through floats before, keep their dtype throughout. Object and shaped
+  variables are carried one by one, as before.
+- The functors' `_write_outputs` were measured, not changed: their writes are one `ds.set` per variable and call
+  (0.03 s a step at 8 plants, day 12); the 0.5 s a profile shows under them is the `update_topology` that
+  `_create_nodes` triggers.
+- Bit-identical.
+
 ### The states an MPG-style step leaves, read back in bulk (devplan_scene_parallel, after P5: bulk reads)
 
 - **One lookup per location, not per variable:** a view's `at()` (`DataStructureColumn`) keeps the positions of
