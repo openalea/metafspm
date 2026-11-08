@@ -3278,20 +3278,20 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
             else:
                 column[:] = [prop.get(nv) for nv in vids.tolist()]
             columns.append(column)
-        return {"parents": g.linked_parents(from_scale), "vids": vids, "owners": owner_of,
-                "columns": columns}
+        vertices, parents = g.linked_parent_arrays(from_scale)
+        return {"vertices": vertices, "parents": parents, "vids": vids, "owners": owner_of, "columns": columns}
 
     @staticmethod
-    def _changed_anatomies(old: dict, new: dict) -> set:
-        """The vertices whose owned Compartments (vids or rule properties) differ between two signatures."""
+    def _changed_anatomies(old: dict, new: dict) -> np.ndarray:
+        """The vertices whose owned Compartments (vids or rule properties) differ between two signatures, ascending."""
         in_new = np.isin(old["vids"], new["vids"], assume_unique=True)
         in_old = np.isin(new["vids"], old["vids"], assume_unique=True)
-        changed = set(old["owners"][~in_new].tolist()) | set(new["owners"][~in_old].tolist())
         a, b = np.flatnonzero(in_new), np.flatnonzero(in_old)            # the common vids, in the same order
         differ = old["owners"][a] != new["owners"][b]
         for old_column, new_column in zip(old["columns"], new["columns"]):
             differ |= np.asarray(old_column[a] != new_column[b], dtype=bool)
-        return changed | set(old["owners"][a][differ].tolist()) | set(new["owners"][b][differ].tolist())
+        return np.unique(np.concatenate((old["owners"][~in_new], new["owners"][~in_old], old["owners"][a][differ],
+                                         new["owners"][b][differ])))
 
     @property
     def from_scale(self) -> int:
@@ -3331,21 +3331,25 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
             old = self._anatomy_signatures()
         new = self._anatomy_signatures()
         changed = self._changed_anatomies(old, new)
-        old_parents = old["parents"]
-        rewire = {vid for vid, parent in new["parents"].items()
-                  if vid not in old_parents or old_parents[vid] != parent or vid in changed
-                  or (parent is not None and (parent not in old_parents or parent in changed))}
+        vertices, parents = new["vertices"], new["parents"]
+        old_vertices, old_parents = old["vertices"], old["parents"]
+        at = np.searchsorted(old_vertices, vertices).clip(0, max(old_vertices.size - 1, 0))
+        known = (old_vertices[at] == vertices) if old_vertices.size else np.zeros(vertices.size, dtype=bool)
+        moved = (old_parents[at] != parents) if old_vertices.size else np.ones(vertices.size, dtype=bool)
+        parent_known = np.isin(parents, old_vertices)
+        rewire = vertices[~known | moved | np.isin(vertices, changed)
+                          | ((parents >= 0) & (~parent_known | np.isin(parents, changed)))]
         alive = g.owned_compartments(self._from_scale)
         n_id_a, n_id_b = g._column("n_id_a"), g._column("n_id_b")
         junctions = np.asarray(g.junction_vids(), dtype=np.int64)
         tails, heads = _values_at(n_id_a, junctions), _values_at(n_id_b, junctions)
         head_alive = np.isin(heads, alive)
         sections = self._sections_of(np.where(head_alive, heads, -1))
-        stale = junctions[~np.isin(tails, alive) | ~head_alive | np.isin(sections, list(rewire))]
+        stale = junctions[~np.isin(tails, alive) | ~head_alive | np.isin(sections, rewire)]
         g.remove_connections(stale.tolist())
-        g.wire_junctions(self._from_scale, self._wiring, children=sorted(rewire))
+        g.wire_junctions(self._from_scale, self._wiring, children=rewire.tolist())
         self._anatomy_signature = new
-        self.rewired = sorted(rewire)   # introspection: the vertices whose junctions were rebuilt
+        self.rewired = rewire.tolist()  # introspection: the vertices whose junctions were rebuilt
 
     # Anatomy mode: the rule giving new Compartments their source, a callable (ds, new_vids, is_known) -> source vids
     # (-1: none), where is_known(vids) tells which vids had values before the update. None: _inherited_compartment

@@ -33,7 +33,10 @@ ds = MPGDataStructure(g, from_scale=g.scales.SubOrgan, nodes="Compartment", wiri
 ```
 
 - **Segment mode** (default): one node per segment. **Anatomy mode**: the Compartments inside each segment are the
-  nodes, wired to their neighbours' by junction rules. A segment's anatomy may have Layers and Cells
+  nodes, wired to their neighbours' by junction rules (`wiring`: declared dicts, each evaluated once over every pair
+  of linked segments, e.g. `{"node_label": "MetaXylem", "edge_label": ..., "ordering": "vessel_index", "match":
+  "equal"}`, or a port's `{"pairs": f, ...}` taking all the pairs at once, as GRANAP's `junction_rules`). A segment's
+  anatomy may have Layers and Cells
   (SubOrgan → Layer → Cell → Compartment), with Compartments shared by several cells (walls) anchored to the
   segment; `"Layer"` and `"Cell"` are then locations, and the walls, owned by no Cell, read the defaults there.
 - After the MTG's structure changes (growth, pruning), `ds.update_topology()` extends the graph incrementally and

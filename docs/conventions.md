@@ -213,6 +213,7 @@ For metafspm and every port: no Python loop over groups, nodes or entities in a 
     - anchored to the SubOrgan (`add_component_with_topo(compartment_anchor, suborgan)`), e.g. a wall or wall junction shared by several cells, or every Compartment when there are no Layers or Cells.
   - A Compartment's owner is its Cell, or the SubOrgan it is anchored to. Its entity at a coarser scale is the one above its owner.
   - Edges are the anatomy Connections plus the junctions that `wiring` creates between linked SubOrgans.
+  - **Wiring rules** are declared dicts, each evaluated once over every (linked parent, child) pair being wired, never per pair (`MPG.wire_junctions`): the platform's `{"node_label", "edge_label", "ordering", "match"}`, or `{"pairs": f, "edge_label": E, "properties": p}` with `f(g, section_pairs) -> (pair, tails, heads)` and `p(g, section_pairs, pair, tails, heads) -> {name: values}` (`wiring.SectionPairs`: the pairs and each side's Compartments as one CSR). Junctions are created pair by pair, then rule by rule, in the order each rule gives them.
   - Both are keyed by their own vids.
   - `add_components_bulk` creates many components in one call, taking one complex, or one per component (e.g. the protoplasts of many Cells).
 - **Locations.** `"SubOrgan"` and coarser scales are coarse locations, and so are `"Layer"` and `"Cell"` when they own Compartments. `scale=scales.Compartment` declarations read the Compartments' properties, and `scale=scales.Cell` declarations the Cells'.

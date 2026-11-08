@@ -2,6 +2,24 @@
 
 ## Unreleased (release2026)
 
+### Wiring rules in bulk (devplan_scene_parallel, after P5: bulk wiring)
+
+- **A wiring rule is evaluated once over every pair it joins, not once per pair** (`MPG.wire_junctions`, new
+  `data_structure.wiring`): the (linked parent, child) pairs and each side's Compartments come as one
+  `wiring.SectionPairs` (`parents`, `children`, the sections' Compartments as one CSR by label in order of first
+  appearance, `parent_compartments(i)`, `child_compartments(i)`, `compartments_of(vertex)`). A callable rule is
+  `{"pairs": f, "edge_label": E}` with `f(g, section_pairs) -> (pair, tails, heads)`, its properties
+  `p(g, section_pairs, pair, tails, heads) -> {name: one value per junction}`. **The per-pair form
+  `{"rule": f(g, parent, child, parent_compartments, child_compartments)}` is gone** (a dict with `"rule"` raises,
+  naming `"pairs"`), as is `MPG._junction_pairs`; the declared rules (`node_label`, `ordering`, `match`) are evaluated
+  through the same entry. The junctions keep their order (pair by pair, then rule by rule, as each rule gives them),
+  so their vids and every system's node and edge order are unchanged.
+- **`_rewire_junctions` compares arrays:** `MPG.linked_parent_arrays(scale)` (new: every vertex and its linked
+  parent, -1 for none; `linked_parents` is its dict) gives the changed sections in a few array operations; the anatomy
+  signature (checkpointed) holds those arrays. Checkpoints of an earlier version do not load (their wiring rules and
+  signature are of the per-pair form).
+- Bit-identical; use case 1 at 8 plants, day 13: see the use case's README.
+
 ### One knob: `Compute(threads="auto")` (devplan_scene_parallel P5)
 
 - **`threads="auto"`, the default:** the threads' budget is the processors the process may run on (its CPU affinity,

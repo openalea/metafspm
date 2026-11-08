@@ -826,27 +826,43 @@ class MPG(MTG):
 
     def linked_parents(self, from_scale) -> dict:
         """
-        {vertex: linked_parent(vertex, from_scale)} of every vertex at *from_scale* (_valid_vids_at's): their parent
-        at once when it is one of them (most), linked_parent's walk for the others (an axis' first vertex). Cached
-        until the next structural edit: the dict is shared, read it without modifying it.
+        {vertex: linked_parent(vertex, from_scale)} of every vertex at *from_scale* (_valid_vids_at's), from
+        linked_parent_arrays. Cached until the next structural edit: the dict is shared, read it without modifying it.
         """
         signature = self._structure_signature()
         cache = self.__dict__.setdefault("_linked_parents", {})
         hit = cache.get(from_scale)
         if hit is not None and hit[0] == signature:
             return hit[1]
+        vids, parents = self.linked_parent_arrays(from_scale)
+        out = {vid: (None if parent < 0 else parent) for vid, parent in zip(vids.tolist(), parents.tolist())}
+        cache[from_scale] = (signature, out)
+        return out
+
+    def linked_parent_arrays(self, from_scale) -> tuple:
+        """
+        (every vertex at *from_scale* (_valid_vids_at's), ascending; its linked parent, -1 for none): their parent at
+        once when it is one of them (most), linked_parent's walk for the others (an axis' first vertex). Read-only,
+        cached until the next structural edit.
+        """
+        signature = self._structure_signature()
+        cache = self.__dict__.setdefault("_linked_parent_arrays", {})
+        hit = cache.get(from_scale)
+        if hit is not None and hit[0] == signature:
+            return hit[1]
         valid = self._valid_vids_at(from_scale)
-        vids = np.fromiter(valid, dtype=np.int64, count=len(valid))
+        vids = np.sort(np.fromiter(valid, dtype=np.int64, count=len(valid)))
         parent = self.topology_arrays()["parent"]
         inside = vids < parent.size
         parents = np.full(vids.size, -1, dtype=np.int64)
         parents[inside] = parent[vids[inside]]
         direct = np.isin(parents, vids) & inside
-        out = dict(zip(vids[direct].tolist(), parents[direct].tolist()))
-        for vid in vids[~direct].tolist():
-            out[vid] = self.linked_parent(vid, from_scale, valid)
-        cache[from_scale] = (signature, out)
-        return out
+        for at in np.flatnonzero(~direct).tolist():
+            found = self.linked_parent(int(vids[at]), from_scale, valid)
+            parents[at] = -1 if found is None else int(found)
+        value = _read_only_arrays((vids, parents))
+        cache[from_scale] = (signature, value)
+        return value
 
     def compartment_owners(self) -> tuple:
         """
@@ -999,103 +1015,41 @@ class MPG(MTG):
         Create the junction Connections between the Compartments of linked vertices at *from_scale*, for each
         vertex of *children* (default: every vertex) and its linked parent (linked_parent). Returns their vids.
 
-        rules: list of dict, one per link type::
+        rules: list of dict, one per link type, each evaluated once over every pair (a wiring.SectionPairs)::
 
           {"node_label": L, "edge_label": E, "ordering": prop, "match": "nearest" | "equal" | "all"}
               pairs the Compartments labelled L of both sides: "all" pairs every one with every one (the default
               without ordering), "nearest" greedily matches the closest values of *ordering* (the default with
               it), "equal" matches equal values of *ordering*;
-          {"rule": callable, "edge_label": E}
-              rule(g, parent_vid, child_vid, parent_compartments, child_compartments) -> [(a, b), ...].
+          {"pairs": f, "edge_label": E}
+              f(g, section_pairs) -> (pair, tails, heads): one entry per junction, the index of its pair and its
+              Compartments on the parent's and the child's side.
 
-        A rule may also give "properties": properties(g, parent_vid, child_vid, pairs) -> {name: [one value per
-        pair]}, written on the junctions it creates (e.g. their geometry), so that they carry them from their creation.
+        A rule may also give "properties": properties(g, section_pairs, pair, tails, heads) -> {name: [one value per
+        junction]}, written on the junctions it creates (e.g. their geometry), so that they carry them from their
+        creation. The junctions are created pair by pair (children ascending), rule by rule, in the order each rule
+        gives them.
 
         Junctions get is_junction = 1 (anatomy Connections do not carry it); n_id_a is on the parent side, n_id_b on
         the child side.
         """
+        from openalea.metafspm.data_structure.wiring import SectionPairs, junctions
         edge_anchor = self.scales.anchors[self.scales.Connection]
         valid_vids = self._valid_vids_at(from_scale, filter_in, filter_out)
         targets = sorted(valid_vids if children is None else set(children) & valid_vids)
         linked = self.linked_parents(from_scale) if not (filter_in or filter_out) else None
-        parents = {vid: linked[vid] if linked is not None else self.linked_parent(vid, from_scale, valid_vids)
-                   for vid in targets}
-        owners = self.compartments_by_owner(from_scale)
-        involved = sorted((set(targets) | {p for p in parents.values() if p is not None}) & set(owners))
-        anatomy = {}                                        # only the vertices wired and their parents
-        if involved:
-            comps = [np.asarray(owners[owner], dtype=np.int64) for owner in involved]
-            every = np.concatenate(comps)
-            order = np.argsort(every, kind="stable")
-            found, values = self._property_at('label', every[order])
-            label_of = np.full(every.size, None, dtype=object)
-            label_of[order[np.searchsorted(every[order], found)]] = values.tolist()
-            at = 0
-            for owner, these in zip(involved, comps):       # by label, in order of first appearance, vids ascending
-                own = label_of[at:at + these.size]
-                at += these.size
-                groups = anatomy[owner] = {}
-                for label in dict.fromkeys(own.tolist()):
-                    groups[label] = these[own == label].tolist()
-        tails, heads, labels, extra = [], [], [], {}
-        for vid in targets:
-            parent = parents[vid]
-            if parent is None:
-                continue
-            for rule in rules:
-                pairs = self._junction_pairs(rule, parent, vid, anatomy.get(parent, {}), anatomy.get(vid, {}))
-                if not pairs:
-                    continue
-                at = len(tails)
-                for n_a, n_b in pairs:
-                    tails.append(n_a)
-                    heads.append(n_b)
-                    labels.append(rule['edge_label'])
-                if "properties" in rule:
-                    for name, values in rule["properties"](self, parent, vid, pairs).items():
-                        extra.setdefault(name, []).append((at, list(values)))
+        pairs = [(parent, int(vid)) for vid in targets for parent in [
+            linked[vid] if linked is not None else self.linked_parent(vid, from_scale, valid_vids)]
+            if parent is not None]
+        section_pairs = SectionPairs.build(self, from_scale, [int(p) for p, _ in pairs], [c for _, c in pairs])
+        tails, heads, labels, extra = junctions(self, rules, section_pairs)
         created = self.add_components_bulk(edge_anchor, len(tails), **dict(
-            PropsConfig(scale=self.scales.Connection, edge_type='/'), label=labels, n_id_a=tails, n_id_b=heads,
-            is_junction=1.))
-        for name, chunks in extra.items():                 # the rules' properties of their junctions
-            vids = [created[at + i] for at, values in chunks for i in range(len(values))]
-            self.set_values(name, vids, [v for _, values in chunks for v in values])
+            PropsConfig(scale=self.scales.Connection, edge_type='/'), label=labels, n_id_a=tails.tolist(),
+            n_id_b=heads.tolist(), is_junction=1.))
+        created_array = np.asarray(created, dtype=np.int64)
+        for name, (at, values) in extra.items():           # the rules' properties of their junctions
+            self.set_values(name, created_array[at], values)
         return created
-
-    def _junction_pairs(self, rule, parent, child, parent_anatomy, child_anatomy) -> list:
-        if "rule" in rule:
-            comps_a = [nv for comps in parent_anatomy.values() for nv in comps]
-            comps_b = [nv for comps in child_anatomy.values() for nv in comps]
-            return list(rule["rule"](self, parent, child, comps_a, comps_b))
-        n_as = parent_anatomy.get(rule['node_label'], [])
-        n_bs = child_anatomy.get(rule['node_label'], [])
-        if not n_as or not n_bs:
-            return []
-        ordering = rule.get('ordering')
-        match = rule.get('match', "nearest" if ordering else "all")
-        if match == "all":
-            return [(n_a, n_b) for n_a in n_as for n_b in n_bs]
-        if ordering is None:
-            raise ValueError(f"junction rule {rule}: match '{match}' needs an ordering property")
-        ordering_p = self.values_of(ordering, n_as + n_bs) if self._instanced() else self._column(ordering)
-
-        def _val(nv):
-            v = ordering_p.get(nv)
-            return float(v) if v is not None else 0.0
-
-        sorted_a, sorted_b = sorted(n_as, key=_val), sorted(n_bs, key=_val)
-        used_b, pairs = set(), []
-        for n_a in sorted_a:
-            candidates = [n_b for n_b in sorted_b if n_b not in used_b]
-            if match == "equal":
-                candidates = [n_b for n_b in candidates if _val(n_b) == _val(n_a)]
-            elif match != "nearest":
-                raise ValueError(f"junction rule {rule}: match must be 'all', 'nearest' or 'equal'")
-            if candidates:
-                best_b = min(candidates, key=lambda n_b: abs(_val(n_a) - _val(n_b)))
-                used_b.add(best_b)
-                pairs.append((n_a, best_b))
-        return pairs
 
     def junction_vids(self) -> list:
         """Vids of the junction Connections (created by wire_junctions)."""

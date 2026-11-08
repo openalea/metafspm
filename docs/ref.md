@@ -63,6 +63,9 @@ The solvers are chosen by key in `graph_system(solver=...)`: `"newton"`, `"newto
 .. automodule:: openalea.metafspm.data_structure.mpg
    :members: MPG
 
+.. automodule:: openalea.metafspm.data_structure.wiring
+   :members: SectionPairs, junctions, label_pairs
+
 .. automodule:: openalea.metafspm.data_structure.objects
    :members: ObjectRegistry
 
