@@ -2,6 +2,13 @@
 
 ## Unreleased (release2026)
 
+### Each step timed in run.json (devplan_generic_kernels GK-0)
+
+- **`run.json`'s `"compute"`/`"timing"` holds each step's wall time and calls**, `functor.<Class>.<step>` beside the
+  kernels' and solvers' (`Functor.__call__` under `Compute.timed`): inclusive of the steps it runs inside (a
+  reduction's library components while it evaluates kinds). `benchmark.py` records them per step (`"kernels"`).
+- Results unchanged.
+
 ### The carry-over of every numeric dtype in bulk (devplan_scene_parallel, after P5: bulk carry-over)
 
 - **`update_topology` no longer copies every variable's array before carrying it over:** the carry replaces the

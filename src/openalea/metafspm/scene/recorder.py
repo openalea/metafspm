@@ -15,8 +15,8 @@ scene's steps, or "step" (every step); an output is written when the scene's tim
                                       versions, the threads chosen and in use ("compute": "threads": the
                                       Compute's threads, its budget, the bandwidth-bound sections' ceiling and its
                                       source, the processors and core types, BLAS libraries, numba:
-                                      Compute.thread_info), the time, calls and threads of each kernel and solver
-                                      ("timing": Compute.timing_info) and the process pool (None: in the process);
+                                      Compute.thread_info), the time, calls and threads of each kernel, solver and
+                                      step ("timing": Compute.timing_info; functor.<Class>.<step>) and the process pool (None: in the process);
                                       rewritten after every step (a running run's progress)
     scenario.json                     the scene: time step, size, populations (model, plants and their scenarios),
                                       environment models and their scenarios, forcings, the run configuration

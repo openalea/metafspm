@@ -17,7 +17,8 @@ A scene's run configuration: how many threads and processes it uses, its device 
                  last bits with its thread count and only oversubscribes the step's small dense work. As a context:
                  a user's own numpy outside the scene is untouched. The results are the same, bit for bit, at any
                  number (the kernels' chunks and the blocks come from the work only); run.json records the threads
-                 chosen (thread_info) and the time of each kernel and solver (timing_info)
+                 chosen (thread_info) and the time of each kernel, solver and step (timing_info: the functors'
+                 functor.<Class>.<step>)
   workers        the process pool of the scene's parallel work (the kinds of a reduction): "auto" (default) starts
                  none until a batch is worth it (pool_size: at least 2 kinds and about 1 s of estimated work), then a pool kept for the run (WorkerPool: started once,
                  grown to the largest batch's need, closed by Scene.finish); an integer forces it (1: sequential, in
@@ -212,8 +213,8 @@ class Compute:
             counts[str(int(threads))] = counts.get(str(int(threads)), 0) + 1
 
     def timing_info(self) -> dict:
-        """{name: {"seconds", "calls", "threads": {threads: calls}}} of the kernels and solvers timed since the run
-        began (timed, count): run.json's record."""
+        """{name: {"seconds", "calls", "threads": {threads: calls}}} of the kernels, solvers and steps (functor.<Class>.
+        <step>: solve.functor.Functor) timed since the run began (timed, count): run.json's record."""
         return {name: {**entry, "seconds": round(entry["seconds"], 6),
                        **({"threads": dict(entry["threads"])} if "threads" in entry else {})}
                 for name, entry in sorted(self._timings.items())}

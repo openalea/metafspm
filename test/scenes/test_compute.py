@@ -266,6 +266,19 @@ def test_scenario_and_run_record_the_compute(tmp_path):
     assert isinstance(run["timing"], dict)                    # the kernels' and solvers' (none in this toy scene)
 
 
+def test_each_step_is_timed_in_run_json(tmp_path):
+    """Each functor's wall time and calls: run.json's "compute"/"timing" functor.<Class>.<step>, one call per step
+    run (the toy scene's steps once a time step)."""
+    scene = _scene(recorder=SceneRecorder(str(tmp_path)))
+    scene.run()
+    scene.finish()
+    with open(tmp_path / "run.json") as f:
+        timing = json.load(f)["compute"]["timing"]
+    functors = {name: entry for name, entry in timing.items() if name.startswith("functor.")}
+    assert functors and all(entry["calls"] >= 1 and entry["seconds"] >= 0. for entry in functors.values())
+    assert all(len(name.split(".")) == 3 for name in functors)
+
+
 def test_warm_up_runs_metafspms_kernels_and_every_registered_ports(monkeypatch):
     from importlib import metadata
 

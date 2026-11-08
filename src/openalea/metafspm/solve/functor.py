@@ -12,6 +12,7 @@ class Functor:
         self.class_qualname = self.fun.__qualname__.rsplit('.', 1)[0]
         self.class_name = self.class_qualname.rsplit('.', 1)[-1]
         self.family = f"{self.fun.__module__}:{self.class_qualname}"
+        self.timing_name = f"functor.{self.class_name}.{self.name}"     # run.json's "compute"/"timing" entry
         self.iterating = iteraring
         self.total = total
         self.input_names = self.inputs(self.fun)
@@ -259,7 +260,14 @@ class Functor:
         return _infer_output_location(f"{type(instance).__name__}.{self.name}", name, values.shape, shapes)
 
     def __call__(self, instance, data, *args):
-        """Run the step on *data*, the component's DataStructure (iterating steps only receive the instance)."""
+        """Run the step on *data*, the component's DataStructure (iterating steps only receive the instance). Its
+        wall time and calls are counted under functor.<Class>.<step> (Compute.timed: run.json's "compute"/"timing"),
+        inclusive of the steps it runs inside (e.g. a reduction's library components evaluating its kinds)."""
+        from openalea.metafspm.compute import Compute
+        with Compute.current().timed(self.timing_name):
+            self._run(instance, data)
+
+    def _run(self, instance, data):
         if self.iterating:
             # Steps without arguments of a StructuralComponent edit the MPG: the component synchronises around them
             run_mpg_step = getattr(instance, "_run_mpg_step", None)

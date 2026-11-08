@@ -1127,7 +1127,9 @@ omitted) says how the scene uses the machine:
   the blocks come from the work only. `run.json` records the threads chosen (`"compute": {"threads": {"requested",
   "budget", "processors", "core_types", ...}}`) and each kernel's and solver's time, calls and threads (`"compute":
   {"timing": {"solve.superlu": {"seconds", "calls", "threads": {threads: calls}}, "kernels.scatter_weighted_blocks":
-  ...}}`).
+  ...}}`), and each step's (`"functor.<Class>.<step>": {"seconds", "calls"}`, its wall time inclusive of the steps
+  it runs inside, e.g. a reduction's library components while it evaluates kinds): where a step's time goes, without
+  a profiler.
 - `workers`: the process pool of the scene's parallel work: a reduction's missing kinds. `"auto"` (default) starts none until a batch of kinds is worth it (more than
   about a second of work, estimated from their interior cells, and at least two kinds), then
   `min(processors // 2, kinds)` processes, one processor left free, kept for the run and grown to the largest

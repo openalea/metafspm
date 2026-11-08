@@ -23,8 +23,8 @@ shared parts once); --resume loads one into the freshly built scene and runs on 
 time and memory, then each step's: a resumed run evaluates no kind again); --scenario updates the plants' scenario
 (models.WHEAT_SCENARIO; a value read as JSON when it is, e.g. length_classes=0.2, else a string); --threads, --workers
 and --linear-solver the Compute's (the threads' budget of the kernels and solves, "auto" by default, the pool of the
-kinds, the sparse solver; the threads chosen recorded, "threads", and each kernel's and solver's time, per step and
-in all, "kernels"),
+kinds, the sparse solver; the threads chosen recorded, "threads", and each kernel's, solver's and step's
+(functor.<Class>.<step>) time, per step and in all, "kernels"),
 --device its device (cuda: the kinds' Kron
 reductions and the linear solves on the GPU, CuPy needed, docs/gpu.md; the device's transfers recorded at the end,
 "device"), the pool recorded per step and the peak
