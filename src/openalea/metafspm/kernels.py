@@ -465,6 +465,44 @@ def gather_local(owner, owner_key, table_offsets, flat, fill):
     return out
 
 
+# ── A graph's Laplacian B diag(w) Bᵀ into its kept pattern (data_structure.GraphView.laplacian) ──
+
+
+@njit(cache=True, nogil=True, parallel=True)
+def scatter_edges(data, entry_pointer, entry_edges, entry_signs, weights, chunks):
+    """
+    data[s] = the sum, from 0, of +w or -w over the edges contributing to entry s of a Laplacian's pattern
+    (entry_edges[entry_pointer[s]:entry_pointer[s + 1]], ascending, with their signs: +1 on a diagonal, -1 off it),
+    an edge of weight 0 adding nothing (as scipy's product, which drops it): the order of B @ diag(w) @ Bᵀ's sums.
+    Parallel over *chunks* of entries (made from the work only): each entry written once, the same bits for any
+    thread count.
+    """
+    for chunk in prange(chunks.size - 1):
+        for entry in range(chunks[chunk], chunks[chunk + 1]):
+            total = 0.
+            for k in range(entry_pointer[entry], entry_pointer[entry + 1]):
+                weight = weights[entry_edges[k]]
+                if weight != 0.:
+                    if entry_signs[k] > 0:
+                        total = total + weight
+                    else:
+                        total = total - weight
+            data[entry] = total
+
+
+# ── A sum of sparse terms into their union's kept pattern (solve.assembly.TermSum) ──
+
+
+@njit(cache=True, nogil=True, parallel=True)
+def scatter_terms(data, slots, values, chunks):
+    """data[slots[k]] += values[k] for one term (its entries' slots in the union pattern: distinct), parallel over
+    *chunks* of its entries (made from the work only): each entry written once, the same bits at any thread count.
+    Called term after term, in the terms' order (each entry's sum: its terms in that order, from 0)."""
+    for chunk in prange(chunks.size - 1):
+        for k in range(chunks[chunk], chunks[chunk + 1]):
+            data[slots[k]] += values[k]
+
+
 def work_chunks(count: int, work_each: int, target: int = 1 << 16) -> np.ndarray:
     """Boundaries of chunks of *count* items of *work_each* work (e.g. nonzeros) each, about *target* work a chunk:
     from the work only, never the thread count (determinism, conventions.md)."""
@@ -512,4 +550,11 @@ def warm_up() -> None:
                             np.array([[0.5, 0.5]]), blocks, work_chunks(1, 4))
     gather_local(np.array([0, 1, 0, -1], dtype=np.int64), np.array([0, 1], dtype=np.int64),
                  np.array([0, 2, 3], dtype=np.int64), np.array([1., 2., 3.]), np.nan)
-
+    scatter_terms(np.zeros(3), np.array([0, 2], dtype=np.int32), np.array([1., 2.]), work_chunks(2, 1))
+    from scipy.sparse import csc_matrix
+    from openalea.metafspm.data_structure.data_api import GraphView
+    tail, head = np.array([0, 1], dtype=np.int64), np.array([1, 2], dtype=np.int64)
+    incidence = csc_matrix((np.array([1., -1., 1., -1.]), (np.array([0, 1, 1, 2]), np.array([0, 0, 1, 1]))),
+                           shape=(3, 2))
+    GraphView(node_ids=np.arange(3), edge_ids=np.arange(2), tail=tail, head=head, incidence=incidence,
+              boundary_incidence=csc_matrix((3, 0)), boundary_names=()).laplacian(np.array([1., 0.]))

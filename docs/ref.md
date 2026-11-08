@@ -43,6 +43,9 @@
 .. automodule:: openalea.metafspm.solve.conservation
    :members: Conservation
 
+.. automodule:: openalea.metafspm.solve.assembly
+   :members: TermSum
+
 .. automodule:: openalea.metafspm.coupling.choregrapher
    :members: Choregrapher, family_of
 ```
@@ -77,7 +80,7 @@ The solvers are chosen by key in `graph_system(solver=...)`: `"newton"`, `"newto
 
 .. automodule:: openalea.metafspm.kernels
    :members: warm_up, follow_parents, left_of, roll_right, down, turn_left, roll_to_vertical, depth_first_orders,
-             tree_depths, tree_levels, gather_local
+             tree_depths, tree_levels, gather_local, scatter_edges, scatter_terms
 
 .. automodule:: openalea.metafspm.compute
    :members: warm_up

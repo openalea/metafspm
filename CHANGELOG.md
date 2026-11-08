@@ -2,6 +2,18 @@
 
 ## Unreleased (release2026)
 
+### Assembly into kept patterns (devplan_generic_kernels GK-3)
+
+- **`GraphView.laplacian(weights)`** (new): B diag(w) Bᵀ through a pattern kept per view (each entry's edges with
+  their signs), filled by `kernels.scatter_edges` (parallel over chunks of entries made from the work only): each
+  entry summed over its edges in ascending order and the exact zeros dropped, as scipy's product does, so the same
+  matrix bit for bit. MECHA's Jacobians of the plant and standard problems and its osmotic input Jacobian call it.
+- **A graph system's Jacobian with explicit terms or reduced groups** (`decorator.jac_evaluator`): the equations'
+  Jacobian, the explicit terms' and the reduced D are summed into their union's pattern, kept while the terms'
+  patterns are unchanged (`solve.assembly.TermSum`, `kernels.scatter_terms`), term after term in their order, the
+  exact zeros dropped: the matrix of their chain of scipy additions, entry for entry.
+- Bit-identical.
+
 ### Gathers by owner and tree orders as kernels (devplan_generic_kernels GK-2)
 
 - **`DataStructure.local_gather(owner, owner_key, tables, fill=)`** (new, `kernels.gather_local`, nogil): per entity,

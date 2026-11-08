@@ -105,6 +105,61 @@ class GraphView:
             object.__setattr__(self, "_edge_difference", cached)              # frozen: not a field
         return cached
 
+    def laplacian(self, weights) -> csr_matrix:
+        """
+        B diag(*weights*) Bᵀ (B the incidence: an edge's tail +1, its head -1), one weight per edge, as a canonical
+        CSR: the sum of each entry over its edges in ascending order, as scipy's product sums it, and its exact zeros
+        dropped as the product drops them (the same matrix, entry for entry). The pattern (each entry's edges, with
+        their signs) is kept per view, so a call only sums: kernels.scatter_edges, parallel over chunks of entries
+        made from the work only (the same bits at any thread count).
+        """
+        from openalea.metafspm.compute import Compute
+        from openalea.metafspm.kernels import scatter_edges, work_chunks
+        weights = np.ascontiguousarray(weights, dtype=np.float64)
+        if weights.shape != (self.n_edges,):
+            raise ValueError(f"GraphView.laplacian: one weight per edge ({self.n_edges}), got shape {weights.shape}")
+        indptr, indices, entry_pointer, entry_edges, entry_signs, chunks = self._laplacian_pattern()
+        data = np.empty(indices.size)
+        with Compute.current().parallel("kernels.scatter_edges", chunks.size - 1, section="bandwidth"):
+            scatter_edges(data, entry_pointer, entry_edges, entry_signs, weights, chunks)
+        kept = data != 0.
+        if kept.all():
+            return csr_matrix((data, indices.copy(), indptr.copy()), shape=(self.n_nodes, self.n_nodes))
+        rows = np.repeat(np.arange(self.n_nodes), np.diff(indptr))
+        new_indptr = np.zeros(self.n_nodes + 1, dtype=indptr.dtype)
+        np.cumsum(np.bincount(rows[kept], minlength=self.n_nodes), out=new_indptr[1:])
+        return csr_matrix((data[kept], indices[kept], new_indptr), shape=(self.n_nodes, self.n_nodes))
+
+    def _laplacian_pattern(self) -> tuple:
+        """(indptr, indices, entry_pointer, entry_edges, entry_signs, chunks) of laplacian: the canonical CSR pattern
+        of every entry an edge reaches (its two ends and the two between them; a loop's none), and each entry's edges
+        in ascending order with their signs; built once per view."""
+        cached = self.__dict__.get("_laplacian")
+        if cached is not None:
+            return cached
+        from openalea.metafspm.kernels import work_chunks
+        n = self.n_nodes
+        tail, head = np.asarray(self.tail, dtype=np.int64), np.asarray(self.head, dtype=np.int64)
+        edges = np.flatnonzero(tail != head)
+        t, h = tail[edges], head[edges]
+        rows = np.concatenate((t, h, t, h))
+        columns = np.concatenate((t, h, h, t))
+        signs = np.concatenate((np.ones(2 * edges.size, dtype=np.int8), -np.ones(2 * edges.size, dtype=np.int8)))
+        contributing = np.tile(edges, 4)
+        keys = rows * n + columns
+        order = np.lexsort((contributing, keys))                  # by entry, then by edge
+        keys, contributing, signs = keys[order], contributing[order], signs[order]
+        unique, first = np.unique(keys, return_index=True)
+        entry_pointer = np.append(first, keys.size).astype(np.int64)
+        index_dtype = np.int32 if max(n, 1) < 2 ** 31 else np.int64
+        indices = (unique % max(n, 1)).astype(index_dtype)
+        indptr = np.zeros(n + 1, dtype=index_dtype)
+        np.cumsum(np.bincount(unique // max(n, 1), minlength=n), out=indptr[1:])
+        chunks = work_chunks(int(unique.size), max(1, int(keys.size // max(unique.size, 1))))
+        cached = (indptr, indices, entry_pointer, contributing.astype(np.int64), signs, chunks)
+        object.__setattr__(self, "_laplacian", cached)              # frozen: not a field
+        return cached
+
     @property
     def n_nodes(self) -> int:
         return int(self.node_ids.size)

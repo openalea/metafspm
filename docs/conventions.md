@@ -148,6 +148,7 @@ Models never write traversals: they call the DataStructure's kernels, which run 
 | `ds.chain_scan(length, reverse=True, cut=apex)` | the same, each chain cut after its apices (ArchiSimple's tips and nodules) |
 | `ds.preorder(branches_first=True, defer=pairs)` | a depth-first visit in the MPG's children order, branches first, some vertices visited after others (Adel's turtle) |
 | `ds.local_gather(owner, owner_key, tables)` | per entity, its owner's table at its local row (MECHA's per-node geometry of each section's template) |
+| `self.graph_view.laplacian(w)` | B diag(w) Bᵀ in a graph system's Jacobian, into a pattern kept per view (scipy's product, bit for bit) |
 | `ds.chain_scan(height, chain="phytomers", op="max", exclusive=True)` | the maximum over lower ranks (cnwgrass pseudostem) |
 | `ds.accumulate(x)` | subtree totals |
 | `ds.accumulate(dx, direction="down")` | positions from the base |
