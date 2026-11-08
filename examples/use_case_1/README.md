@@ -220,8 +220,8 @@ every hour (the tables can be read while it runs):
 The run's configuration, `Compute(threads="auto", workers="auto")` (metafspm's default, shown in `run.py`): the
 processors for numba's kernels and the plant system's blocks, each part taking those that pay (the plant system's
 blocks in the count found fastest on its own solves: 4 on this laptop; BLAS stays at one thread at any `threads`:
-the results are the same bit for bit at any number; 8 plants, day 13: 4.80 s per hour at 1 thread, 4.53 with
-"auto", measured 2026-11-08), the memory freed given
+the results are the same bit for bit at any number; 8 plants, day 13: 4.46 s per hour at 1 thread, 4.20 with
+"auto", measured 2026-11-08 after the generic kernels' GK-1 to GK-3, against 4.93 and 4.75 the same day before them), the memory freed given
 back after each hour (`malloc_trim`), and the environment's `MALLOC_ARENA_MAX=2` (`environment.yaml`'s
 `variables:`; outside the conda environment, `export MALLOC_ARENA_MAX=2` before running). Its `workers="auto"` starts a pool of processes for the
 reduction's kinds when a batch is worth it (the first hours, the days the organs emerge): measured on a 14-thread
