@@ -1764,10 +1764,6 @@ class _GraphSystemDescriptor:
 # Public class decorator
 # ═══════════════════════════════════════════════════════════════════════════════
 
-_GRAPH_SYSTEM_RENAMES = {"max_iter": "max_iterations", "tol": "tolerance", "fd_eps": "finite_difference_step",
-                         "n_substeps": "substeps"}
-
-
 def graph_system(
     node_unknowns,
     edge_unknowns          = (),
@@ -1793,7 +1789,6 @@ def graph_system(
     condense               = None,
     conserved              = None,
     symmetric              = False,
-    **renamed,
 ):
     """
     Inner-class decorator that wires a graph-system solve into the schedule::
@@ -1870,26 +1865,7 @@ def graph_system(
         eliminated or held by a Robin term): checked once per pattern (solve.linear.SymmetryError when it is not).
         A property, not a library: the run's Compute(linear_solver=) maps it to a backend, e.g.
         {"symmetric": "cholmod"} (CHOLMOD's Cholesky), or names the system itself ("Component._system").
-
-    The former names max_iter, tol, fd_eps, n_substeps and integrate="step" are accepted with a warning for one
-    release.
     """
-    for name, value in renamed.items():
-        if name not in _GRAPH_SYSTEM_RENAMES:
-            raise TypeError(f"graph_system() got an unexpected keyword argument '{name}'")
-        warnings.warn(f"graph_system({name}=...) is renamed {_GRAPH_SYSTEM_RENAMES[name]}=", DeprecationWarning,
-                      stacklevel=2)
-        if name == "max_iter":
-            max_iterations = value
-        elif name == "tol":
-            tolerance = value
-        elif name == "fd_eps":
-            finite_difference_step = value
-        else:
-            substeps = value
-    if integrate == "step":
-        warnings.warn('graph_system(integrate="step") is renamed integrate="once"', DeprecationWarning, stacklevel=2)
-        integrate = "once"
 
     _check_filters(filters, "graph_system")
     pools = {}

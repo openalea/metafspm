@@ -2,6 +2,13 @@
 
 ## Unreleased (release2026)
 
+### Breaking: the former keyword names removed
+
+- `graph_system(max_iter=, tol=, fd_eps=, n_substeps=)` raise `TypeError` (use `max_iterations=`, `tolerance=`,
+  `finite_difference_step=`, `substeps=`), and `integrate="step"` raises `ValueError` (use `integrate="once"`); they
+  warned for one release. Likewise `state_variable`, `input_variable` and `parameter` no longer take `initialize=`,
+  `state_variable_type=` or `mapping=` (use `default=`, `kind=`, `aggregation=`): `TypeError`.
+
 ### Breaking: the linear solver per graph system (fix-D)
 
 - **`Compute(linear_solver=)` is a backend's name (every system, as before) or a mapping, one per system**:

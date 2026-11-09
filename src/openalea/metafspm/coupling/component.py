@@ -21,7 +21,6 @@ _SCALE_INT_TO_LOC: dict = {
 }
 
 
-_RENAMED = {"initialize": "default", "state_variable_type": "kind", "mapping": "aggregation"}
 DECLARATION_COLUMNS = ["name", "role", "kind", "scale", "unit", "description", "default", "by", "min_value",
                        "max_value", "references", "DOI", "unit_comment", "value_comment", "upscaling"]
 UPSCALING_LAWS = ("sum", "mean", "weighted_mean", "series", "network")
@@ -56,19 +55,6 @@ def upscaling(of, law: str = "network", protocol: str = "", references: str = ""
     if law not in UPSCALING_LAWS:
         raise ValueError(f"upscaling(law=...): one of {UPSCALING_LAWS}, got {law!r}")
     return Upscaling(of=of, law=law, protocol=protocol, references=references)
-
-
-def _renamed(function: str, given: dict) -> dict:
-    """The former keyword names of the declarations (initialize, state_variable_type, mapping), accepted with a
-    warning for one release; any other unknown keyword raises."""
-    import warnings
-    found = {}
-    for name, value in given.items():
-        if name not in _RENAMED:
-            raise TypeError(f"{function}() got an unexpected keyword argument '{name}'")
-        warnings.warn(f"{function}({name}=...) is renamed {_RENAMED[name]}=", DeprecationWarning, stacklevel=3)
-        found[_RENAMED[name]] = value
-    return found
 
 
 def _declare(role: str, unit: str = "", description: str = "", default=None, default_factory=None, kind=None,
@@ -126,22 +112,22 @@ _KINDS = """
 def state_variable(unit: str = "", description: str = "", default=None, kind=None, scale=None, location=None,
                    aggregation=None, weight=None, on_grow="default", dtype=None, shape=None, by: str = None,
                    min_value=None, max_value=None, unit_comment: str = "", value_comment: str = "",
-                   references: str = "", DOI=None, upscaling=None, record=None, **renamed):
-    return _declare("state_variable", **_merge(locals(), "state_variable"))
+                   references: str = "", DOI=None, upscaling=None, record=None):
+    return _declare("state_variable", **locals())
 
 
 def input_variable(unit: str = "", description: str = "", default=None, kind=None, by: str = None, scale=None,
                    location=None, aggregation=None, weight=None, on_grow="default", dtype=None, shape=None,
                    min_value=None, max_value=None, unit_comment: str = "", value_comment: str = "",
-                   references: str = "", DOI=None, optional: bool = False, record=None, **renamed):
-    return _declare("input", **_merge(locals(), "input_variable"))
+                   references: str = "", DOI=None, optional: bool = False, record=None):
+    return _declare("input", **locals())
 
 
 def parameter(unit: str = "", description: str = "", default=None, kind=None, by: str = None, scale=None,
               location=None, aggregation=None, weight=None, on_grow="default", dtype=None, min_value=None,
               max_value=None, unit_comment: str = "", value_comment: str = "", references: str = "", DOI=None,
-              sections=None, record=None, **renamed):
-    return _declare("parameter", **_merge(locals(), "parameter"))
+              sections=None, record=None):
+    return _declare("parameter", **locals())
 
 
 def geometry_input(description: str = "the plants' elements' geometry (DataStructure.triangles)",
@@ -177,16 +163,6 @@ def planting_variable(name: str, **options):
                      scale=_ScalesConfig.Plant, references="metafspm")
     arguments.update(options)
     return input_variable(**arguments)
-
-
-def _merge(arguments: dict, function: str) -> dict:
-    arguments = dict(arguments)
-    renamed = _renamed(function, arguments.pop("renamed"))
-    for name, value in renamed.items():
-        if arguments.get(name) is not None:
-            raise TypeError(f"{function}(): give {name}= only (its former name is also given)")
-        arguments[name] = value
-    return arguments
 
 
 state_variable.__doc__ = """Declare a state variable, computed by this component's steps or solves. *default*: its
@@ -1052,7 +1028,7 @@ class FunctionalComponent(DataStructureComponent):
         Value of unknown *name*, managed by the framework::
 
               at="substep" (default): at the start of the current (sub-)step of the solve;
-              at="solve":             at the start of this call's solve (the same with integrate="step");
+              at="solve":             at the start of this call's solve (the same with integrate="once");
               at="step":              at the start of the component's call, e.g. for operator splitting between
                                       several graph systems of one component.
         """

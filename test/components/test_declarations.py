@@ -70,10 +70,9 @@ def test_places_and_their_locations(seedling):
     assert _spec(Places, "undeclared_scale", ds) is None
 
 
-def test_the_former_declaration_forms_raise_or_warn(seedling):
+def test_the_former_declaration_forms_raise(seedling):
     """scale="node" (a location) and the edge aggregations "proximal" / "distal" are gone; initialize=,
-    state_variable_type= and mapping= are renamed default=, kind= and aggregation=, accepted with a warning for one
-    release."""
+    state_variable_type= and mapping= (now default=, kind= and aggregation=) raise."""
     _, _, ds = seedling
     former = {"scale": "no" + "de"}                          # spelled out of reach of the converters
 
@@ -85,12 +84,9 @@ def test_the_former_declaration_forms_raise_or_warn(seedling):
         _spec(Former, "location_as_scale", ds)
     with pytest.raises(ValueError, match="'child' or 'parent'"):
         sv(default=0., scale=scales.SubOrgan, aggregation="proxi" + "mal")
-    for old, new, value in (("initia" + "lize", "default", 2.), ("state_variable" + "_type", "kind", "extensive"),
-                            ("map" + "ping", "aggregation", "child")):
-        with pytest.warns(DeprecationWarning, match=f"renamed {new}="):
-            declared = sv(**{old: value})
-        assert (declared.default if new == "default" else declared.metadata[{"kind": "kind", "aggregation":
-                                                                              "mapping"}[new]]) == value
+    for old, value in (("initia" + "lize", 2.), ("state_variable" + "_type", "extensive"), ("map" + "ping", "child")):
+        with pytest.raises(TypeError, match="unexpected keyword"):
+            sv(**{old: value})
     with pytest.raises(TypeError, match="unexpected keyword"):
         sv(default=0., **{"edge_" + "mapping": "child"})
 

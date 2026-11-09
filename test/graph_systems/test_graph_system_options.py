@@ -73,12 +73,11 @@ def test_a_solver_is_chosen_by_its_key_only():
             graph_system(node_unknowns=["u"], solver=solver)
 
 
-def test_the_former_option_names_warn():
-    for old, new in (("max_iter", "max_iterations"), ("tol", "tolerance"), ("fd_eps", "finite_difference_step"),
-                     ("n_substeps", "substeps")):
-        with pytest.warns(DeprecationWarning, match=f"renamed {new}="):
+def test_the_former_option_names_raise():
+    for old in ("max_iter", "tol", "fd_eps", "n_substeps"):
+        with pytest.raises(TypeError, match="unexpected keyword"):
             graph_system(node_unknowns=["u"], **{old: 2})
-    with pytest.warns(DeprecationWarning, match='integrate="once"'):
+    with pytest.raises(ValueError, match="integrate must be"):
         graph_system(node_unknowns=["u"], integrate="st" + "ep")
 
 
