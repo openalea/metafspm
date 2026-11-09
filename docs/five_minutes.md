@@ -58,6 +58,33 @@ The models ported to metafspm are in their own packages, on their development br
 | [MECHA](https://github.com/openalea-incubator/MECHA-dev/tree/to_metafspm) (`to_metafspm`) | the flow of water (and solutes) across a root's or a needle's tissues | `MechaHydraulics` (water), `MechaSolutes` (sucrose and starch), `MechaOsmoticPresets` (osmotic potentials); on GRANAP's anatomies |
 | [CNW-Grass](https://github.com/openalea/cnwgrass/tree/to_metafspm) (`to_metafspm`) | the gas exchange of wheat leaves: photosynthesis, stomatal conductance, transpiration, leaf temperature | `GasExchange` (functional); the plant model `ExchangingWheat` puts it on Adel's shoots, lit by Caribu |
 
+Ports coming next, not available yet (the component, and the model it is ported from):
+
+- `NitrogenMetabolism`, from openalea.rootcynaps
+- `WaterTransport`, from openalea.hydroroot and openalea.hydroshoot
+- `WaterTransportMunch`, from openalea.rootcynaps
+- `CarbonMetabolism`, from openalea.rhizodep
+- `CNMetabolism`, from openalea.rootbridges
+- `RootGrowth`, from openalea.rhizodep
+- `SimplifiedAnatomy`, from openalea.rhizodep
+- openalea.cnwgrass's components:
+  - `Growth`
+  - `GasExchange`
+  - `Morphogenesis`
+  - `Respiration`
+  - `Senescence`
+  - `Hydraulics`
+  - `CNMetabolism`
+- `ShootRootJunctionStructure`, from openalea.grassbridges
+- `ShootRootJunctionCoordination`, from openalea.grassbridges
+- `BrassicaArchitecture`, from openalea.colzette
+- `LegumeArchitecture`, from openalea.colzette
+- `ChamberLightModel`, from openalea.spice
+- `SoilTemperature`, from openalea.soiltemp
+- `SoilWaterTransport`, from the common Richards equations
+- `SoluteAdvectionDiffusion`
+- `MicrobialSoil`, from MIMICS-CN
+
 ## Installing them
 
 metafspm and these ports are not published on the `openalea3` channel yet. Each is **cloned on its branch and

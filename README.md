@@ -26,6 +26,33 @@ with step-by-step user tutorials (`example/tutorials/user/`) for newcomers and d
 | [MECHA](https://github.com/openalea-incubator/MECHA-dev/tree/to_metafspm) (`to_metafspm`) | water and solutes across root and needle tissues | `MechaHydraulics`, `MechaSolutes`, `MechaOsmoticPresets` |
 | [CNW-Grass](https://github.com/openalea/cnwgrass/tree/to_metafspm) (`to_metafspm`) | leaves' gas exchange (photosynthesis, stomata, transpiration) | `GasExchange` (plant model `ExchangingWheat`, on Adel's shoots lit by Caribu) |
 
+Ports coming next, not available yet (the component, and the model it is ported from):
+
+- `NitrogenMetabolism`, from openalea.rootcynaps
+- `WaterTransport`, from openalea.hydroroot and openalea.hydroshoot
+- `WaterTransportMunch`, from openalea.rootcynaps
+- `CarbonMetabolism`, from openalea.rhizodep
+- `CNMetabolism`, from openalea.rootbridges
+- `RootGrowth`, from openalea.rhizodep
+- `SimplifiedAnatomy`, from openalea.rhizodep
+- openalea.cnwgrass's components:
+  - `Growth`
+  - `GasExchange`
+  - `Morphogenesis`
+  - `Respiration`
+  - `Senescence`
+  - `Hydraulics`
+  - `CNMetabolism`
+- `ShootRootJunctionStructure`, from openalea.grassbridges
+- `ShootRootJunctionCoordination`, from openalea.grassbridges
+- `BrassicaArchitecture`, from openalea.colzette
+- `LegumeArchitecture`, from openalea.colzette
+- `ChamberLightModel`, from openalea.spice
+- `SoilTemperature`, from openalea.soiltemp
+- `SoilWaterTransport`, from the common Richards equations
+- `SoluteAdvectionDiffusion`
+- `MicrobialSoil`, from MIMICS-CN
+
 None of them is on the `openalea3` channel in these versions yet (Adel's and Caribu's packages there are the original
 models, without these components): clone each one on its branch next to metafspm and install both with
 `pip install -e`, in the environment of the package's `conda/environment.y(a)ml` (mamba, from `openalea3` and
