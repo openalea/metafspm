@@ -212,34 +212,39 @@ def test_a_missing_optional_package_raises_at_the_scenes_build_with_its_install_
     from scene_doubles import DT, RootPopulation, SceneSoil, Seedlings, doubles_planting, soil_translator
     from openalea.metafspm.scene.scene import Scene
     _missing_sksparse(monkeypatch)
-    with pytest.raises(ImportError, match="pip install scikit-sparse"):
+    with pytest.raises(ImportError, match="scikit-sparse>=0.5"):
         Scene(doubles_planting([RootPopulation, Seedlings]), environment=[SceneSoil],
               translator=soil_translator("SceneExudation", "SeedlingExudation"), time_step=DT,
               compute=Compute(linear_solver="cholmod"))
 
 
 class _StandInFactor:
-    """scikit-sparse's Factor, its symbolic analysis kept (a stand-in: scipy's LU of the matrix it is given)."""
+    """scikit-sparse's CholeskyFactor (0.5): cho_factor(A) analyses and factorises, factorize(A) again on the same
+    pattern, solve(b) (a stand-in: scipy's LU of the matrix it is given)."""
     analyses = 0
 
     def __init__(self, matrix):
         type(self).analyses += 1
         self.pattern = (matrix.indptr.copy(), matrix.indices.copy())
+        self._factorise(matrix)
 
-    def cholesky_inplace(self, matrix):
+    def factorize(self, matrix):
         assert np.array_equal(matrix.indptr, self.pattern[0]) and np.array_equal(matrix.indices, self.pattern[1])
+        self._factorise(matrix)
+
+    def _factorise(self, matrix):
         np.testing.assert_allclose(matrix.toarray(), matrix.toarray().T)
         assert matrix.diagonal().min() > 0                      # definite: a negative one given as its opposite
         self.lu = sp.linalg.splu(matrix.tocsc())
 
-    def __call__(self, rhs):
+    def solve(self, rhs):
         return self.lu.solve(rhs)
 
 
 def test_cholmods_adapter_keeps_its_analysis_and_solves_a_negative_definite_system_as_its_opposite(monkeypatch):
     module = types.ModuleType("sksparse")
     cholmod = types.ModuleType("sksparse.cholmod")
-    cholmod.analyze = _StandInFactor
+    cholmod.cho_factor = _StandInFactor
     module.cholmod = cholmod
     monkeypatch.setitem(sys.modules, "sksparse", module)
     monkeypatch.setitem(sys.modules, "sksparse.cholmod", cholmod)
@@ -253,6 +258,42 @@ def test_cholmods_adapter_keeps_its_analysis_and_solves_a_negative_definite_syst
     N, c = _matrix(symmetric=False)
     np.testing.assert_allclose(solver.solve(N, c, key="solutes"), spsolve(N.tocsc(), c), rtol=1e-10)   # SuperLU's
     assert _StandInFactor.analyses == 1
+    other, d = _matrix(n=150)                          # a pattern more: the first one's factor freed, then analysed
+    for values, rhs in ((other, d), (A, b)):           # again when it comes back
+        np.testing.assert_allclose(solver.solve(values, rhs, key="water", symmetric=True),
+                                   spsolve(values.tocsc(), rhs), rtol=1e-10)
+    assert _StandInFactor.analyses == 3
+
+
+def test_cholmods_factorisation_and_single_solve_for_a_symmetric_system(monkeypatch):
+    """factorize (a Kron reduction's interior, a condensation's kinds) and solve_once (a condensation's system left,
+    its held rows first) by CHOLMOD for a system declared symmetric, a negative definite one as its opposite;
+    SuperLU's otherwise."""
+    module = types.ModuleType("sksparse")
+    cholmod = types.ModuleType("sksparse.cholmod")
+    cholmod.cho_factor = _StandInFactor
+    module.cholmod = cholmod
+    monkeypatch.setitem(sys.modules, "sksparse", module)
+    monkeypatch.setitem(sys.modules, "sksparse.cholmod", cholmod)
+    _StandInFactor.analyses = 0
+    A, b = _matrix()
+    solver = linear_solver("cholmod")
+    rhs = np.stack([b, 2. * b], axis=1)
+    np.testing.assert_allclose(solver.factorize(-A, symmetric=True).solve(rhs), spsolve(-A.tocsc(), rhs),
+                               rtol=1e-10)
+    np.testing.assert_allclose(solver.factorize(A, symmetric=True).solve(sp.csr_matrix(rhs), trans="T"),
+                               spsolve(A.tocsc(), rhs), rtol=1e-10)
+    assert _StandInFactor.analyses == 2
+    held = (-A).tolil()
+    held[3, :] = 0.
+    held[3, 3] = 1.
+    held = held.tocsc()
+    np.testing.assert_allclose(solver.solve_once(held, b, symmetric=True), spsolve(held, b), rtol=1e-10)
+    N, c = _matrix(symmetric=False)
+    with pytest.raises(SymmetryError):
+        solver.factorize(N, symmetric=True)
+    np.testing.assert_array_equal(solver.solve_once(N, c), spsolve(N.tocsc(), c))           # SuperLU's
+    assert _StandInFactor.analyses == 3
 
 
 def test_cholmod_itself():
@@ -366,7 +407,7 @@ def test_cholmod_solves_the_held_rows_first(monkeypatch):
     """A Dirichlet row (its diagonal alone, its column coupled): solved first, the symmetric rest by CHOLMOD."""
     module = types.ModuleType("sksparse")
     cholmod = types.ModuleType("sksparse.cholmod")
-    cholmod.analyze = _StandInFactor
+    cholmod.cho_factor = _StandInFactor
     module.cholmod = cholmod
     monkeypatch.setitem(sys.modules, "sksparse", module)
     monkeypatch.setitem(sys.modules, "sksparse.cholmod", cholmod)

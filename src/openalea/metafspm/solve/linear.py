@@ -1,28 +1,52 @@
 """
-The sparse solvers of the graph systems' linear steps (J δ = −R), chosen by Compute(linear_solver=...)::
+The sparse solvers of the graph systems' linear algebra, a registry of backends chosen by Compute(linear_solver=...),
+the same backend everywhere or one per system::
 
     scene = Scene(..., compute=Compute(linear_solver="superlu_reuse"))
+    scene = Scene(..., compute=Compute(linear_solver={"default": "superlu", "symmetric": "cholmod",
+                                                      "MechaHydraulics._plant_problem": "superlu_reuse"}))
 
-  "superlu"        scipy's SuperLU (spsolve, the MMD_AT_PLUS_A ordering): the default
+A system's backend (resolve): its qualified name "Component._system" (the component's class or one of its bases,
+as Reduction(systems=) names it), else a property it declares (SYSTEM_PROPERTIES: @graph_system(symmetric=True)),
+else "default" (the device's default when the mapping gives none). Components declare properties, never a library;
+the nonlinear method stays the system's own (@graph_system(solver="newton"): solve.solver's registry). The mapping
+is checked when the Compute is made (its backends, its keys' form) and when the Scene is built (its packages; each
+qualified name one of the scene's graph systems): a mistake raises naming its key, never at the first solve.
+
+What a backend solves, for the system resolved:
+  solve        a Newton step's J δ = −R (LinearSolver.solve: its caches per system, its independent blocks apart)
+  solve_once   a system solved once, nothing kept: a static condensation's systems (solve.network.condensed_solve),
+               a network's equivalent conductance (solve.network.equivalent_conductance)
+  factorize    a factorisation kept for many right-hand sides (solve(rhs, trans)): a static condensation's kinds of
+               group, a reduction's kinds' interiors (solve.network.KronReduction)
+
+  "superlu"        scipy's SuperLU: solve with the MMD_AT_PLUS_A ordering, solve_once and factorize with its default
+                   (COLAMD; factorize the Compute's device's: backend.HostBackend, or SuperLU's factors copied to the
+                   GPU on "cuda"): the default
   "superlu_reuse"  SuperLU, its column ordering kept per system while the matrix's pattern does not change (the
                    steps of a constant topology), and its factorisation while the matrix itself does not (a linear
                    system's second Newton iteration): the same result as "superlu", bit for bit
-  "cholmod"        CHOLMOD (scikit-sparse, optional: pip install scikit-sparse, or conda install -c conda-forge
-                   scikit-sparse), its symbolic analysis kept while the pattern does not change, for the systems
-                   declared @graph_system(symmetric=True) (symmetric definite: a negative definite one factorised as
-                   its opposite); the others are solved by SuperLU
+  "cholmod"        CHOLMOD (scikit-sparse 0.5 or later, optional: conda install -c conda-forge scikit-sparse), its
+                   symbolic analysis kept while the pattern does not change (cho_factor, then factorize), for the
+                   systems declared @graph_system(symmetric=True) (symmetric definite: a negative definite one
+                   factorised as its opposite), in its three uses; the others are solved by SuperLU (a system named
+                   in a mapping must be declared symmetric)
   "cupy"           the GPU's (Compute(device="cuda"), its default there; CuPy optional): a system of at least
                    backend.DEVICE_MIN_NONZEROS entries solved on the device whole, its independent blocks together in
                    one call (one copy each way: the batch), by cuDSS when nvmath-python is installed, else cupyx's
                    spsolve; its pattern copied once per pattern, its values and right-hand side at each solve; a
-                   smaller one by SuperLU on the host (backend's module)
+                   smaller one by SuperLU on the host (backend's module); solve_once and factorize "superlu"'s
   "pardiso"        MKL's PARDISO (pypardiso, optional, x86 only: pip install pypardiso), its analysis (ordering,
                    symbolic factorisation) kept per block while the pattern does not change, each block factorised
                    and solved on one MKL thread, the blocks in the Compute's threads (no bandwidth bound: they scale
-                   to 12 on a laptop where SuperLU's stop at 4)
+                   to 12 on a laptop where SuperLU's stop at 4); solve_once PARDISO's, factorize "superlu"'s
   "mumps"          MUMPS (python-mumps, optional, its sequential build: conda install -c conda-forge python-mumps),
                    its analysis kept per block while the pattern does not change; its blocks in sequence (MUMPS is
-                   not thread-safe)
+                   not thread-safe); solve_once MUMPS's, factorize "superlu"'s
+
+Outside the registry: the dense solves (numpy.linalg.solve of a dense Jacobian, a diagonal block's inverse), and the
+scipy solvers' own internal factorisations, solve_ivp's (solver="scipy_ivp_bdf", "scipy_ivp_radau") and root's
+(solver="scipy_krylov", "scipy_anderson", "scipy_hybr"): scipy factorises within them, out of the Compute's reach.
 
 The optional solvers "pardiso" and "mumps" are registered only when their package is importable (OPTIONAL_SOLVERS);
 naming one that is not raises with its install line. Measured on use case 1's plant system (day 13, 8 plants, a new
@@ -44,9 +68,13 @@ count found fastest on the system's own solves, BlockThreads), PARDISO's "comput
 threads. Each solve's time and threads are counted in the Compute's timing ("solve.<name>": run.json).
 
 A solver: LinearSolver.solve(matrix, rhs, key=None, symmetric=False); key names the system (its caches: patterns,
-orderings, factors), None for none. A new one is registered in LINEAR_SOLVERS by name.
+orderings, factors), None for none; solve_once(matrix, rhs, symmetric) and factorize(matrix, symmetric). A new one
+is registered in LINEAR_SOLVERS by name.
 """
+import re
+from collections.abc import Mapping
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass
 from time import perf_counter
 
 import numpy as np
@@ -71,6 +99,24 @@ SYSTEMS_KEPT = 32                   # the systems a solver keeps caches for (the
 PATTERN_BYTES_KEPT = 64 * 2 ** 20   # the patterns a solver keeps, in bytes over its systems, at most (the least
                                     # recently solved dropped first; the one being solved always kept): a growing
                                     # plant's pattern changes at every step, its former ones would pile up
+
+
+SYSTEM_PROPERTIES = ("symmetric",) # the properties a graph system declares (@graph_system) that a mapping may name,
+                                    # in the order a system's are looked up
+
+
+@dataclass(frozen=True)
+class LinearSystem:
+    """A graph system as its linear algebra sees it: *key* its caches' (one per component and system), *names* its
+    qualified names ("Component._system": the component's class first, then the bases declaring it), *properties*
+    those of SYSTEM_PROPERTIES it declares."""
+    key: object = None
+    names: tuple = ()
+    properties: frozenset = frozenset()
+
+    @property
+    def symmetric(self) -> bool:
+        return "symmetric" in self.properties
 
 
 class SymmetryError(ValueError):
@@ -214,6 +260,18 @@ class LinearSolver:
         """(x, state): a block's solution, and the state kept for its next solve of the same pattern."""
         raise NotImplementedError
 
+    def solve_once(self, matrix, rhs, symmetric: bool = False) -> np.ndarray:
+        """x of matrix · x = rhs (sparse) solved once, nothing kept (a static condensation's systems, a network's):
+        SuperLU's, its default ordering (scipy's spsolve: a singular matrix gives NaN with a MatrixRankWarning)."""
+        return np.asarray(spsolve(csc_matrix(matrix), rhs), dtype=np.float64)
+
+    def factorize(self, matrix, symmetric: bool = False):
+        """A factorisation of *matrix* (sparse) kept for many right-hand sides: solve(rhs, trans="N") (a static
+        condensation's kinds of group, a Kron reduction's interior). SuperLU's, its default ordering, on the current
+        Compute's device (backend.HostBackend.factorize; on "cuda" its factors copied to the GPU)."""
+        from openalea.metafspm.compute import Compute
+        return Compute.current().backend().factorize(csc_matrix(matrix))
+
     def _pattern(self, matrix, key) -> _Pattern:
         if key is None:
             return _Pattern(matrix)
@@ -289,12 +347,13 @@ class Cholmod(LinearSolver):
     as its opposite), its symbolic analysis kept while the pattern does not change; the others SuperLU's."""
     name = "cholmod"
     package = "sksparse"
-    install = "pip install scikit-sparse (or conda install -c conda-forge scikit-sparse)"
+    install = ("conda install -c conda-forge \"scikit-sparse>=0.5\" (or pip install \"scikit-sparse>=0.5\", built from "
+               "source)")
 
     def factor_solve(self, matrix, rhs, state, symmetric: bool):
         if not symmetric:
             return np.asarray(spsolve(matrix, rhs, permc_spec="MMD_AT_PLUS_A"), dtype=np.float64), None
-        from sksparse.cholmod import analyze
+        from sksparse.cholmod import cho_factor
         if state is None:
             held = held_rows(matrix)
             rest = np.setdiff1d(np.arange(matrix.shape[0]), held)
@@ -308,11 +367,44 @@ class Cholmod(LinearSolver):
         if rest.size:
             sign = -1. if block.diagonal().max() < 0 else 1.
             definite = (sign * block).tocsc()
-            if state["factor"] is None:
-                state["factor"] = analyze(definite)
-            state["factor"].cholesky_inplace(definite)
-            x[rest] = sign * np.asarray(state["factor"](right), dtype=np.float64).reshape(-1)
+            if state.get("factor") is None:             # its symbolic analysis (again when _pattern freed it)
+                state["factor"] = cho_factor(definite)
+            else:
+                state["factor"].factorize(definite)
+            x[rest] = sign * np.asarray(state["factor"].solve(right), dtype=np.float64).reshape(-1)
         return x, state
+
+    def solve_once(self, matrix, rhs, symmetric: bool = False) -> np.ndarray:
+        if not symmetric:
+            return super().solve_once(matrix, rhs)
+        matrix = csc_matrix(matrix, dtype=np.float64)
+        matrix.sort_indices()
+        _check_symmetric(matrix, "solved once")
+        return self.factor_solve(matrix, np.asarray(rhs, dtype=np.float64).reshape(-1), None, True)[0]
+
+    def factorize(self, matrix, symmetric: bool = False):
+        if not symmetric:
+            return super().factorize(matrix)
+        return _CholmodFactor(matrix)
+
+
+class _CholmodFactor:
+    """CHOLMOD's factorisation of a symmetric definite matrix (a negative definite one as its opposite):
+    solve(rhs, trans) (trans changes nothing: symmetric)."""
+
+    def __init__(self, matrix):
+        from sksparse.cholmod import cho_factor
+        matrix = csc_matrix(matrix, dtype=np.float64)
+        matrix.sort_indices()
+        _check_symmetric(matrix, "factorised")
+        self.sign = -1. if matrix.shape[0] and matrix.diagonal().max() < 0 else 1.
+        self.factor = cho_factor((self.sign * matrix).tocsc())
+
+    def solve(self, rhs, trans: str = "N") -> np.ndarray:
+        if issparse(rhs):
+            rhs = rhs.toarray()
+        rhs = np.asarray(rhs, dtype=np.float64)
+        return self.sign * np.asarray(self.factor.solve(rhs), dtype=np.float64).reshape(rhs.shape)
 
 
 class Cupy(LinearSolver):
@@ -391,6 +483,9 @@ class Pardiso(LinearSolver):
             state = {"factor": _PardisoFactor(matrix)}
         return np.asarray(state["factor"].call(matrix, rhs), dtype=np.float64), state
 
+    def solve_once(self, matrix, rhs, symmetric: bool = False) -> np.ndarray:
+        return _solved_once(self, matrix, rhs, symmetric)
+
 
 class Mumps(LinearSolver):
     """MUMPS (python-mumps, optional; its sequential build), its analysis (METIS's ordering) kept per block while the
@@ -413,6 +508,16 @@ class Mumps(LinearSolver):
         state["factor"].factor(reuse_analysis=True)
         return np.asarray(state["factor"].solve(rhs), dtype=np.float64).reshape(-1), state
 
+    def solve_once(self, matrix, rhs, symmetric: bool = False) -> np.ndarray:
+        return _solved_once(self, matrix, rhs, symmetric)
+
+
+def _solved_once(solver: LinearSolver, matrix, rhs, symmetric: bool) -> np.ndarray:
+    """*solver*'s own factor_solve of one system, nothing kept."""
+    matrix = csc_matrix(matrix, dtype=np.float64)
+    matrix.sort_indices()
+    return solver.factor_solve(matrix, np.asarray(rhs, dtype=np.float64).reshape(-1), None, symmetric)[0]
+
 
 OPTIONAL_SOLVERS = (Pardiso, Mumps)       # registered when their package is importable
 
@@ -429,29 +534,119 @@ LINEAR_SOLVERS = {solver.name: solver for solver in (SuperLU, SuperLUReuse, Chol
                   + tuple(solver for solver in OPTIONAL_SOLVERS if _importable(solver.package))}
 
 
-def linear_solver(name: str) -> LinearSolver:
-    """A new solver of the registry's *name* (its package checked)."""
-    if name not in LINEAR_SOLVERS:
-        raise ValueError(unknown_solver(name))
-    solver = LINEAR_SOLVERS[name]
-    solver.check()
-    return solver()
-
-
 def unknown_solver(name: str) -> str:
     """The message for a linear solver *name* not registered: an optional one whose package is missing gives its
     install line."""
     for solver in OPTIONAL_SOLVERS:
         if solver.name == name and name not in LINEAR_SOLVERS:
-            return (f"linear_solver {name!r} needs the package {solver.package}, not installed: {solver.install} "
+            return (f"{name!r} needs the package {solver.package}, not installed: {solver.install} "
                     f"(the solvers available: {sorted(LINEAR_SOLVERS)})")
-    return f"linear_solver: one of {sorted(LINEAR_SOLVERS)}, got {name!r}"
+    return f"one of {sorted(LINEAR_SOLVERS)}, got {name!r}"
 
 
-def solve(matrix, rhs, key=None, symmetric: bool = False) -> np.ndarray:
-    """matrix · x = rhs by the current Compute's solver (Compute.current().linear())."""
+# ── the setting: one backend, or one per system ──
+
+DEFAULT = "default"                 # a mapping's key for the systems neither named nor of a property it maps
+_QUALIFIED = re.compile(r"^[A-Za-z_]\w*\.[A-Za-z_]\w*$")      # "Component._system"
+
+
+def checked_setting(setting, device: str):
+    """Compute(linear_solver=)'s *setting* checked and normalised: None the *device*'s default ("superlu" on the
+    cpu, "cupy" on cuda); a name, registered; a mapping {key: name}, each key "default", one of SYSTEM_PROPERTIES or
+    a qualified system name "Component._system" (checked against the scene's systems when it is built:
+    check_systems), each name registered; "default" added as the device's when missing. A mistake raises a
+    ValueError naming its key."""
+    default = "cupy" if device == "cuda" else "superlu"
+    if setting is None:
+        return default
+    if isinstance(setting, str):
+        _check_name(setting, device, "Compute(linear_solver=)")
+        return setting
+    if not isinstance(setting, Mapping):
+        raise TypeError(f"Compute(linear_solver=): a solver's name or a mapping {{key: name}}, got {setting!r}")
+    checked = {}
+    for key, name in setting.items():
+        where = f"Compute(linear_solver={{{key!r}: ...}})"
+        if not isinstance(key, str) or not (key == DEFAULT or key in SYSTEM_PROPERTIES or _QUALIFIED.match(key)):
+            raise ValueError(f"{where}: the key {key!r} is neither {DEFAULT!r}, a system property "
+                             f"{SYSTEM_PROPERTIES} nor a graph system's qualified name 'Component._system'")
+        if not isinstance(name, str):
+            raise TypeError(f"{where}: a solver's name, got {name!r}")
+        _check_name(name, device, where)
+        checked[key] = name
+    checked.setdefault(DEFAULT, default)
+    return checked
+
+
+def _check_name(name: str, device: str, where: str) -> None:
+    if name not in LINEAR_SOLVERS:
+        raise ValueError(f"{where}: {unknown_solver(name)}")
+    if name == "cupy" and device != "cuda":
+        raise ValueError(f"{where}: 'cupy' solves on the GPU: give Compute(device='cuda')")
+
+
+def setting_names(setting) -> dict:
+    """{key: name} of a checked setting (a name alone: {"default": name})."""
+    return {DEFAULT: setting} if isinstance(setting, str) else dict(setting)
+
+
+def check_packages(setting) -> None:
+    """Each backend of a checked *setting* present (its optional package), else an ImportError naming its key and
+    giving the install line."""
+    for key, name in setting_names(setting).items():
+        try:
+            LINEAR_SOLVERS[name].check()
+        except ImportError as error:
+            raise ImportError(f"Compute(linear_solver=) {key!r}: {error}") from error
+
+
+def check_systems(setting, systems: dict) -> None:
+    """A checked mapping's qualified names against the scene's graph *systems* ({qualified name: LinearSystem}):
+    each one of them, and one mapped to "cholmod" declared symmetric; else a ValueError naming the key."""
+    if isinstance(setting, str):
+        return
+    for key, name in setting.items():
+        if key == DEFAULT or key in SYSTEM_PROPERTIES:
+            continue
+        if key not in systems:
+            raise ValueError(f"Compute(linear_solver={{{key!r}: ...}}): no graph system {key!r} in the scene "
+                             f"(its systems: {sorted(systems)})")
+        if name == "cholmod" and not systems[key].symmetric:
+            raise ValueError(f"Compute(linear_solver={{{key!r}: 'cholmod'}}): CHOLMOD solves symmetric systems, and "
+                             f"{key} is not declared @graph_system(symmetric=True)")
+
+
+def resolve(setting, system: LinearSystem = None) -> str:
+    """The backend's name for *system* under a checked *setting*: a name alone; a mapping's entry for one of the
+    system's qualified names (its class's first), else for a property it declares (SYSTEM_PROPERTIES' order), else
+    its "default" (None, no system: "default")."""
+    if isinstance(setting, str):
+        return setting
+    if system is not None:
+        for name in system.names:
+            if name in setting:
+                return setting[name]
+        for name in SYSTEM_PROPERTIES:
+            if name in system.properties and name in setting:
+                return setting[name]
+    return setting[DEFAULT]
+
+
+def linear_solver(name: str) -> LinearSolver:
+    """A new solver of the registry's *name* (its package checked)."""
+    if name not in LINEAR_SOLVERS:
+        raise ValueError(f"linear_solver: {unknown_solver(name)}")
+    solver = LINEAR_SOLVERS[name]
+    solver.check()
+    return solver()
+
+
+def solve(matrix, rhs, system: LinearSystem = None) -> np.ndarray:
+    """matrix · x = rhs by the current Compute's solver for *system* (Compute.current().linear(system)), its caches
+    under system.key, its symmetric declaration given."""
     from openalea.metafspm.compute import Compute
-    return Compute.current().linear().solve(matrix, rhs, key=key, symmetric=symmetric)
+    return Compute.current().linear(system).solve(matrix, rhs, key=None if system is None else system.key,
+                                                  symmetric=system is not None and system.symmetric)
 
 
 def held_rows(matrix) -> np.ndarray:

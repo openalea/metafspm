@@ -79,16 +79,10 @@ def test_the_three_solvers_conserve_the_total():
     np.testing.assert_allclose(totals, totals[0], rtol=1e-6)
 
 
-def test_implicit_euler_is_a_deprecated_alias_of_newton():
-    with pytest.warns(DeprecationWarning, match="implicit_euler' is deprecated"):
-        model_class = _model("implicit_euler")
-    ds = _ds()
-    model = model_class(data_structure=ds)
-    u0 = np.linspace(0., 1., ds.n_nodes())
-    ds.set("u", u0)
-    model()
-    np.testing.assert_allclose(ds.get("u"), np.linalg.solve(np.eye(ds.n_nodes()) + DT * K * _laplacian(ds), u0),
-                               rtol=1e-10)
+def test_implicit_euler_is_no_solver_key():
+    """A backward-Euler step is "newton" with transient=True (the alias "implicit_euler" removed)."""
+    with pytest.raises(ValueError, match="Unknown solver 'implicit_euler'"):
+        _model("implicit_euler")
 
 
 @dataclass

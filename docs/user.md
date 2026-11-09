@@ -328,11 +328,15 @@ class SoilDiffusion(FunctionalComponent):
   read from the forcing of its name at each sub-step when one is given.
 - **Solvers.** `@graph_system(solver=...)` takes one of the keys `solve.solver.solver_names()` lists; a solver class
   of one's own (a subclass of `NewtonSolver`) is given a key with `solve.solver.register_solver(name,
-  solver_class)`. The sparse solver of the Newton steps' linear systems is the run's (`Compute(linear_solver=)`,
-  below; `solve.linear.LINEAR_SOLVERS`, a solver of one's own registered there by name).
+  solver_class)`: another nonlinear method, chosen per system (a scenario's choice, not the run's). The sparse
+  linear algebra within the methods (the Newton steps' solves, a static condensation's, a reduction's Kron
+  factorisations) is the run's (`Compute(linear_solver=)`, below, one backend or one per system;
+  `solve.linear.LINEAR_SOLVERS`, a backend of one's own registered there by name); `solve_ivp`'s and `root`'s
+  (`"scipy_ivp_*"`, `"scipy_krylov"`, `"scipy_anderson"`, `"scipy_hybr"`) factorise inside scipy, outside it.
   `@graph_system(symmetric=True)` declares the system's matrix symmetric (a conductance network: its held
   Dirichlet rows aside, a row holding its diagonal alone): checked once per matrix pattern (`solve.linear.
-  SymmetryError` when it is not), and what lets `linear_solver="cholmod"` factorise it by Cholesky (MECHA's standard
+  SymmetryError` when it is not). A component declares the property, never a library: the run maps it to a backend,
+  e.g. `Compute(linear_solver={"symmetric": "cholmod"})` for Cholesky (MECHA's standard
   problem declares it; its plant problem cannot: the leaves' vapour path makes it unsymmetric once they transpire). A graph system's equations class, to call or re-solve its
   equations outside the component, is `Component._system.equations`.
 - **Outputs and Jacobians.** `@graph_output(name, location=...)` derives outputs after the solve; `@graph_jacobian`
@@ -1146,16 +1150,19 @@ omitted) says how the scene uses the machine:
   threads). The kinds' threads took the place of a pool of processes (measured on use case 1, 8 plants: to day 8,
   298.0 s at a scope peak of 3.21 GB, against 286.5 s and 4.06 GB for 4 processes; at day 13, 4.15 s per step
   against 4.13–4.14; devplan_generic_kernels GK-5): 4 % slower to day 8, level at day 13, 0.85–1.4 GB less.
-- `linear_solver`: the sparse solver of the graph systems' Newton steps (`solve.linear`): `"superlu"` (default,
+- `linear_solver`: the sparse solver of the graph systems' linear algebra (`solve.linear`: their Newton steps'
+  solves, their static condensations', their reductions' Kron factorisations), a backend's name for every system,
+  or a mapping giving each system its own (below). The backends: `"superlu"` (default,
   scipy's SuperLU with the MMD ordering); `"superlu_reuse"`, the same solution bit for bit with its column ordering
   kept per system while the matrix's pattern does not change, and its factorisation while the matrix itself does
   not (a linear system's second Newton iteration), at the memory of one factorisation kept per system (measured
   on use case 1, 2 plants to day 8: no gain, the plant solve being a small share of the step, and the process's
   memory growing 0.6 GB a day more than with "superlu" although the caches hold 66 MB: not advised there);
   `"cupy"` (the default with `device="cuda"`, not allowed on the cpu: [Running on a GPU](gpu.md));
-  `"cholmod"` (scikit-sparse, optional: `pip install scikit-sparse` or `conda install -c conda-forge
-  scikit-sparse`), CHOLMOD's Cholesky for the systems declared `@graph_system(symmetric=True)`, its symbolic
-  analysis kept while the pattern does not change, the other systems SuperLU's; `"pardiso"` (MKL's PARDISO through
+  `"cholmod"` (scikit-sparse 0.5 or later, optional: `conda install -c conda-forge "scikit-sparse>=0.5"`, or pip,
+  which builds it from source), CHOLMOD's Cholesky for the systems declared `@graph_system(symmetric=True)`, its symbolic
+  analysis kept while the pattern does not change (their condensations' and Kron reductions' factorisations
+  CHOLMOD's too), the other systems SuperLU's; `"pardiso"` (MKL's PARDISO through
   pypardiso, optional, x86 only: `pip install "openalea.metafspm[pardiso]"` or `pip install pypardiso`) and
   `"mumps"` (MUMPS through python-mumps, optional: `conda install -c conda-forge python-mumps`), registered only when
   their package is importable, each keeping its analysis (ordering, symbolic factorisation) per block while the
@@ -1171,6 +1178,28 @@ omitted) says how the scene uses the machine:
   blocks of at least `solve.linear.BLOCKS_MIN_NONZEROS` (200k) entries is solved block by block (the blocks found
   once per pattern, each block's matrix gathered from the whole one's values), the blocks in threads within
   `threads`; the same blocks whatever the threads, so the same results.
+
+  Many solving strategies coexist in one scene, so `linear_solver` may be a mapping, one backend per system:
+
+  ```python
+  Compute(linear_solver={"default": "superlu", "symmetric": "cholmod",
+                         "MechaHydraulics._plant_problem": "superlu_reuse"})
+  ```
+
+  A graph system's backend is, in this order: its qualified name's, `"Component._system"` (the component's class,
+  or a base class declaring the system, as `Reduction(systems=)` names it); else that of a property it declares
+  (`solve.linear.SYSTEM_PROPERTIES`: `"symmetric"`, from `@graph_system(symmetric=True)`); else `"default"` (the
+  device's, `"superlu"` or `"cupy"`, when the mapping does not give it). A Kron reduction's and a static
+  condensation's factorisations and solves are those of the system they belong to (MECHA's sections' kinds: its
+  plant problem's); what belongs to none (a network's equivalent conductance) is `"default"`'s. Within a backend,
+  `"superlu"` solves a Newton step with the MMD ordering, and a condensation's systems and the factorisations kept
+  for many right-hand sides with SuperLU's default ordering (COLAMD), as before the registry: the same bits. The
+  mapping is checked when the `Compute` is made (each backend registered, `"cupy"` only on `"cuda"`, each key
+  `"default"`, a known property or a `"Component._system"` name) and when the Scene is built (each backend's
+  package; each qualified name one of the scene's graph systems, one mapped to `"cholmod"` declared symmetric): a
+  mistake raises naming its key, never at the first solve. There is no `dense_solver` entry: the dense solves (a
+  system declared `prefer_sparse=False`, the edge unknowns' recovery) are LAPACK's, with no other backend to
+  choose.
 - `device`: `"cpu"` (default) or `"cuda"`: the array backend of the heavy linear algebra (`openalea.metafspm.backend`:
   numpy/scipy or CuPy). On `"cuda"`, the kinds' Kron reductions solve their many right-hand sides on the GPU (SuperLU's
   factors copied once), the linear solves go to `linear_solver="cupy"` (its default there: a system of at least
@@ -1186,7 +1215,8 @@ omitted) says how the scene uses the machine:
   memory freed between them: a blade's kind is about 10k cells, a stem's 45k).
 
 Within the scene's build and steps, `Compute.current()` is the scene's Compute (what runs there reads it without
-being given it: a reduction's batches); outside, a default `Compute()`. `scenario.json` records the Compute,
+being given it: a reduction's batches, the linear solvers resolved per system); outside, a default `Compute()`.
+`scenario.json` records the Compute (a mapping as given, its `"default"` filled in),
 `run.json` the threads chosen and the kernels' and solvers' timing.
 
 ### Repeated runs: `run_variants`

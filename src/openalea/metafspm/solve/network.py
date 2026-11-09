@@ -6,11 +6,24 @@ Linear algebra on a DataStructure's graph, for the upscaled variables a model de
 
 No physics: the model assembles its network's conductances and chooses the protocol (which nodes are held at which
 potential); the operator solves it once.
+
+Every factorisation and solve here is the run's linear solver's (Compute(linear_solver=), solve.linear's registry:
+LinearSolver.solve_once, factorize), resolved for the graph system the work belongs to (*system*, a
+solve.linear.LinearSystem: a graph system's static condensation, a reduction's kinds), else under "default".
 """
 import numpy as np
 from scipy.sparse import csr_matrix, diags
 from scipy.sparse.csgraph import connected_components
-from scipy.sparse.linalg import spsolve
+
+
+def _solver(system):
+    """The current Compute's LinearSolver for *system* (None: its "default")."""
+    from openalea.metafspm.compute import Compute
+    return Compute.current().linear(system)
+
+
+def _symmetric(system) -> bool:
+    return system is not None and system.symmetric
 
 
 def _mask(nodes, n: int, name: str) -> np.ndarray:
@@ -25,7 +38,7 @@ def _mask(nodes, n: int, name: str) -> np.ndarray:
 
 
 def equivalent_conductance(view, edge_conductance, sources, sinks, source_conductance=None, groups=None,
-                           cache: dict = None, extra=None) -> tuple:
+                           cache: dict = None, extra=None, system=None) -> tuple:
     """
     The equivalent conductance of a network between two sets of nodes: (conductance, inflow).
 
@@ -41,7 +54,8 @@ def equivalent_conductance(view, edge_conductance, sources, sinks, source_conduc
 
     *groups* (an integer per node, e.g. each node's segment; *cache* kept between calls): the solve by static
     condensation on them (condensed_solve), the sources and sinks kept. *extra*: a matrix (nodes × nodes) added to
-    the network's (e.g. a reduction's groups' interiors, solve.reduction).
+    the network's (e.g. a reduction's groups' interiors, solve.reduction). *system*: the
+    solve.linear.LinearSystem the solve is resolved for (Compute(linear_solver=)); None: "default".
     """
     incidence = csr_matrix(view.incidence)
     n = incidence.shape[0]
@@ -72,9 +86,9 @@ def equivalent_conductance(view, edge_conductance, sources, sinks, source_conduc
     if free.any() and groups is not None:
         held = sources[free] if robin is not None else np.zeros(int(free.sum()), dtype=bool)
         potential[free] = condensed_solve(matrix, np.asarray(rhs).reshape(-1), np.asarray(groups)[free], held,
-                                          cache=cache)
+                                          cache=cache, system=system)
     elif free.any():
-        potential[free] = spsolve(matrix.tocsc(), rhs)
+        potential[free] = _solver(system).solve_once(matrix.tocsc(), rhs, _symmetric(system))
     if robin is not None:
         inflow = np.where(sources, robin * (1. - potential), 0.)
     else:
@@ -84,7 +98,8 @@ def equivalent_conductance(view, edge_conductance, sources, sinks, source_conduc
 
 # ── Static condensation: a sparse system solved through its groups' interiors, factorised once per kind of group ──
 
-def condensed_solve(matrix, rhs, groups, kept=None, cache: dict = None, _local: bool = True) -> np.ndarray:
+def condensed_solve(matrix, rhs, groups, kept=None, cache: dict = None, system=None,
+                    _local: bool = True) -> np.ndarray:
     """
     The solution of *matrix* x = *rhs* by static condensation on node *groups* (an integer per node, e.g. each
     node's segment; < 0: in no group).
@@ -104,6 +119,9 @@ def condensed_solve(matrix, rhs, groups, kept=None, cache: dict = None, _local: 
     *cache*: a dict kept between calls (e.g. by the graph system): the partition of the matrix's pattern (computed
     once per pattern) and the factorisations of the kinds of group, reused while their blocks are unchanged (each
     block is compared with its kind's at every call).
+
+    *system*: the solve.linear.LinearSystem whose backend factorises the kinds and solves the systems left
+    (Compute(linear_solver=)); None: "default".
     """
     from scipy.sparse import coo_matrix
     A = csr_matrix(matrix)
@@ -113,9 +131,10 @@ def condensed_solve(matrix, rhs, groups, kept=None, cache: dict = None, _local: 
     groups = np.asarray(groups, dtype=np.int64).reshape(-1)
     kept = np.zeros(n, dtype=bool) if kept is None else np.asarray(kept, dtype=bool).reshape(-1)
     cache = {} if cache is None else cache
+    solver, symmetric = _solver(system), _symmetric(system)
     plan = _condensation_plan(A, groups, kept, cache.setdefault("plans", {}))
     if plan is None:
-        return np.asarray(spsolve(A.tocsc(), b), dtype=np.float64)
+        return solver.solve_once(A.tocsc(), b, symmetric)
     kinds = cache.setdefault("kinds", {})
     interior, kept_nodes, position = plan["interior"], plan["kept_nodes"], plan["position"]
     data = A.data
@@ -126,7 +145,8 @@ def condensed_solve(matrix, rhs, groups, kept=None, cache: dict = None, _local: 
         block, coupling, back = (csr_matrix((data[where], indices, indptr), shape=shape)
                                  for where, indices, indptr, shape in (block_s, coupling_s, back_s))
         factor = float(block.data[0]) if block.nnz and block.data[0] != 0 else 1.
-        pending.setdefault(_condensation_kind(block, coupling, back, factor, kinds), []).append((g, factor))
+        pending.setdefault(_condensation_kind(block, coupling, back, factor, kinds, solver, symmetric),
+                           []).append((g, factor))
     starts, ends, columns = plan["starts"], plan["ends"], plan["columns"]
     solutions = {}
     reduction_order = []
@@ -147,9 +167,10 @@ def condensed_solve(matrix, rhs, groups, kept=None, cache: dict = None, _local: 
     if _local and not shared[kept_nodes].all():           # the groups' own kept nodes, eliminated within each
         local = cache.setdefault("local", {})
         local["kinds"] = {}                               # their terms change between calls: nothing kept
-        x_K = condensed_solve(reduced, b_K, groups[kept_nodes], shared[kept_nodes], cache=local, _local=False)
+        x_K = condensed_solve(reduced, b_K, groups[kept_nodes], shared[kept_nodes], cache=local, system=system,
+                              _local=False)
     else:
-        x_K = np.asarray(spsolve(reduced.tocsc(), b_K), dtype=np.float64).reshape(-1)
+        x_K = solver.solve_once(reduced.tocsc(), b_K, symmetric).reshape(-1)
     x = np.empty(n, dtype=np.float64)
     x[kept_nodes] = x_K
     for kind, (members, Z) in solutions.items():
@@ -219,10 +240,10 @@ def _condensation_plan(A, groups, kept, plans: dict):
     return plan
 
 
-def _condensation_kind(block, coupling, back, factor, kinds: dict):
+def _condensation_kind(block, coupling, back, factor, kinds: dict, solver, symmetric: bool):
     """The kind of a group (its key in *kinds*): its blocks divided by *factor*, matched with a kind's within
-    round-off; a new kind is factorised (its interior LU, X = A_II⁻¹ A_IK and S = A_KI X, for factor 1)."""
-    from scipy.sparse.linalg import splu
+    round-off; a new kind is factorised by *solver* (its interior's factorisation, X = A_II⁻¹ A_IK and S = A_KI X,
+    for factor 1)."""
     scaled = [m.multiply(1. / factor).tocsr() for m in (block, coupling, back)]
     structure = tuple(bytes(m.indptr.tobytes()) + bytes(m.indices.tobytes()) + bytes(np.int64(m.shape[1]).tobytes())
                       for m in scaled)
@@ -235,7 +256,7 @@ def _condensation_kind(block, coupling, back, factor, kinds: dict):
         slot += 1
     key = (signature, slot)
     block, coupling, back = scaled
-    lu = splu(block.tocsc())
+    lu = solver.factorize(block.tocsc(), symmetric)
     X = lu.solve(coupling.toarray()) if coupling.shape[1] else np.zeros((block.shape[0], 0))
     kinds[key] = {"blocks": scaled, "lu": lu, "X": X, "S": np.asarray(back @ X), "back": back}
     return key
@@ -262,12 +283,14 @@ class KronReduction:
     of them (its injection, its shares) is computed before. After release, the reduction keeps the sparse blocks of
     *A* only.
 
-    The interior's factorisation and its solves are the current Compute's device's (Compute.current().backend():
-    backend.HostBackend's SuperLU on the cpu; on "cuda", SuperLU's factors copied to the GPU and X's many right-hand
-    sides solved there, A_IK sent sparse and densified on the device, X copied back once).
+    The interior's factorisation and its solves are the current Compute's linear solver's for *system* (a
+    solve.linear.LinearSystem, the graph system reduced; None: "default"): LinearSolver.factorize, by default the
+    device's (backend.HostBackend's SuperLU on the cpu; on "cuda", SuperLU's factors copied to the GPU and X's many
+    right-hand sides solved there, A_IK sent sparse and densified on the device, X copied back once); CHOLMOD's for
+    a system declared symmetric mapped to "cholmod".
     """
 
-    def __init__(self, matrix, kept):
+    def __init__(self, matrix, kept, system=None):
         A = csr_matrix(matrix)
         n = A.shape[0]
         kept = _mask(kept, n, "kept")
@@ -278,7 +301,7 @@ class KronReduction:
         self._A_II = A[I][:, I].tocsc()
         difference = abs(A - A.T)
         self.symmetric = bool(difference.nnz == 0 or difference.max() <= 1e-14 * abs(A).max())
-        self._lu, self._keep = None, True
+        self._lu, self._keep, self._system = None, True, system
         from openalea.metafspm.compute import Compute
         with Compute.current().timed("solve.kron_reduction"):          # run.json's timing (a kind's reduction)
             self._X = (self._factorisation().solve(self._A_IK) if I.size and K.size
@@ -286,12 +309,11 @@ class KronReduction:
         self.reduced = np.asarray(A[K][:, K].toarray() - self._A_KI @ self._X)
 
     def _factorisation(self):
-        """The interior's LU factorisation (the current Compute's backend's: solve(rhs, trans)): the kept one, else a
-        new one (kept unless released)."""
+        """The interior's factorisation (the current Compute's linear solver's for the system: solve(rhs, trans)): the
+        kept one, else a new one (kept unless released)."""
         if self._lu is not None:
             return self._lu
-        from openalea.metafspm.compute import Compute
-        lu = Compute.current().backend().factorize(self._A_II)
+        lu = _solver(self._system).factorize(self._A_II, _symmetric(self._system))
         if self._keep:
             self._lu = lu
         return lu
@@ -375,6 +397,7 @@ class KronReduction:
         return np.asarray(self._factorisation().solve(b))
 
 
-def kron_reduction(matrix, kept) -> KronReduction:
-    """The Kron reduction of *matrix* onto its *kept* nodes (a mask or local indices): KronReduction."""
-    return KronReduction(matrix, kept)
+def kron_reduction(matrix, kept, system=None) -> KronReduction:
+    """The Kron reduction of *matrix* onto its *kept* nodes (a mask or local indices), factorised by the linear
+    solver of *system* (a solve.linear.LinearSystem; None: "default"): KronReduction."""
+    return KronReduction(matrix, kept, system)

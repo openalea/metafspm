@@ -1687,7 +1687,8 @@ def _contraction(reduction: Reduction, full_template, compartments) -> tuple:
 
 def _evaluate_in(reduction: Reduction, library: _Library, items: list, parameters: dict) -> dict:
     """_evaluate's kinds *items* in *library* (*parameters*: {signature: its plants' parameters})."""
-    from openalea.metafspm.solve.decorator import _GraphSystemBuilder, declared_system, kind_derived_methods
+    from openalea.metafspm.solve.decorator import (_GraphSystemBuilder, declared_system, kind_derived_methods,
+                                                   linear_system)
     from openalea.metafspm.data_structure.configs import ScalesConfig
     groups_made = library.groups(items, parameters)
     ds = library.population.data_structure
@@ -1730,7 +1731,8 @@ def _evaluate_in(reduction: Reduction, library: _Library, items: list, parameter
             context = spec.make_context(x, None, None)
             input_jacobians = {name: csr_matrix(evaluator(context))
                                for name, evaluator in builder.input_jacobian_evaluators.items()}
-        batch = _Batch(system=system, A=A, c=c, input_jacobians=input_jacobians, owner=owner, group_of=group_of,
+        batch = _Batch(system=system, linear_system=linear_system(component, attr), A=A, c=c,
+                       input_jacobians=input_jacobians, owner=owner, group_of=group_of,
                        node_of={int(v): j for j, v in enumerate(spec.graph.node_ids.tolist())}, node_ids=node_ids,
                        derived=kind_derived_methods(component),
                        inputs={name: np.asarray(ds.get(name), dtype=float) for name in input_jacobians
@@ -1748,8 +1750,10 @@ class _Batch:
     and constant c over the library's nodes, its inputs' Jacobians, the nodes' groups (owner: their entity at the
     groups' location; group_of: each kind's (k, "full" | "reduced") group), each node's position in the system
     (node_of, by vertex; node_ids: the DataStructure's node vertices), the component's @kind_derived methods, the
-    declared inputs' base values and the outputs' values (and whether at the groups' location)."""
+    declared inputs' base values and the outputs' values (and whether at the groups' location); linear_system the
+    system as the run's linear solver resolves it (its Kron reductions' factorisations: Compute(linear_solver=))."""
     system: str
+    linear_system: object
     A: object
     c: np.ndarray
     input_jacobians: dict
@@ -1816,7 +1820,7 @@ def _kind_from_batch(reduction: Reduction, batch: _Batch, k: int, kind_key, key)
     if contract is not None:              # merged nodes: their rows and columns summed (held equal)
         A_full, c_full = (contract.T @ A_full @ contract).tocsr(), contract.T @ c_full
         compartments, kept = compartments[alive], kept[alive]
-    kron = kron_reduction(A_full, kept)
+    kron = kron_reduction(A_full, kept, batch.linear_system)
     I, K = kron.interior_nodes, kron.kept_nodes
     S, s = kron.reduced, c_full[K] + kron.inject(c_full[I])
     A_red, c_red = A[reduced_nodes][:, reduced_nodes].toarray(), c[reduced_nodes]

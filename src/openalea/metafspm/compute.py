@@ -28,13 +28,23 @@ A scene's run configuration: how many threads it uses, its device and its memory
                  the install line); nothing imports cupy otherwise
   memory         "trim" (default): glibc's malloc_trim(0) after each step, the memory freed given back to the system
                  (a no-op where there is no malloc_trim: macOS, Windows); "keep": nothing
-  linear_solver  the sparse solver of the graph systems' linear steps (solve.linear's registry): "superlu"
-                 (the default on the cpu, scipy's), "cupy" (the default on cuda: the device's), "superlu_reuse" (its
+  linear_solver  the sparse solver of the graph systems' linear algebra (solve.linear's registry: their Newton
+                 steps' solves, their static condensations', the reductions' Kron factorisations): "superlu" (the
+                 default on the cpu, scipy's), "cupy" (the default on cuda: the device's), "superlu_reuse" (its
                  column ordering kept while the matrix's pattern does not change), "cholmod" (scikit-sparse,
                  optional: the systems declared @graph_system(symmetric=True), the others SuperLU's), "pardiso"
                  (pypardiso, MKL) and "mumps" (python-mumps), optional and registered when their package is
-                 importable; a missing optional package raises when the Scene is built (or, for an unregistered one,
-                 at the Compute), with its install line
+                 importable. A name: that backend for every system. A mapping: one per system, e.g.
+                 {"default": "superlu", "symmetric": "cholmod", "MechaHydraulics._plant_problem": "superlu_reuse"},
+                 a system's backend its qualified name's ("Component._system", its component's class or a base's),
+                 else that of a property it declares (solve.linear.SYSTEM_PROPERTIES: "symmetric"), else "default"
+                 (the device's when not given). An unknown backend or key raises at the Compute; a missing optional
+                 package, or a qualified name that is none of the scene's graph systems, when the Scene is built,
+                 naming its key (and the install line). The nonlinear method stays the system's own
+                 (@graph_system(solver=)), a scenario's setting, not the Compute's. There is no dense entry: the
+                 dense solves (a system declared prefer_sparse=False, the edge unknowns' recovery) are LAPACK's
+                 (numpy.linalg.solve), with no other backend to choose; solve_ivp's and root's own factorisations
+                 are scipy's, outside the registry
   kind_batch     the most interior cells evaluated at once in a reduction's library (its kinds' batches; the
                  library's transients freed between batches)
 
@@ -80,27 +90,22 @@ class Compute:
     threads: object = "auto"
     device: str = "cpu"
     memory: str = "trim"
-    linear_solver: str = None              # None: "superlu" on the cpu, "cupy" on cuda
+    linear_solver: object = None           # a name, or {key: name}; None: "superlu" on the cpu, "cupy" on cuda
     kind_batch: int = 200_000
     _controller: object = field(default=None, init=False, repr=False, compare=False)
-    _linear: object = field(default=None, init=False, repr=False, compare=False)
+    _linear: dict = field(default_factory=dict, init=False, repr=False, compare=False)
     _backend: object = field(default=None, init=False, repr=False, compare=False)
     _timings: dict = field(default_factory=dict, init=False, repr=False, compare=False)
 
     def __post_init__(self):
-        from openalea.metafspm.solve.linear import LINEAR_SOLVERS, unknown_solver
+        from openalea.metafspm.solve.linear import checked_setting
         if self.threads != "auto" and (isinstance(self.threads, bool) or not isinstance(self.threads, int)
                                        or self.threads < 1):
             raise ValueError(f"Compute: threads is 'auto' or a positive integer, got {self.threads!r}")
-        if self.linear_solver is None:
-            self.linear_solver = "cupy" if self.device == "cuda" else "superlu"
         for name, value, choices in (("device", self.device, DEVICES), ("memory", self.memory, MEMORY)):
             if value not in choices:
                 raise ValueError(f"Compute: {name} is one of {choices}, got {value!r}")
-        if self.linear_solver not in LINEAR_SOLVERS:
-            raise ValueError(f"Compute: {unknown_solver(self.linear_solver)}")
-        if self.linear_solver == "cupy" and self.device != "cuda":
-            raise ValueError("Compute: linear_solver 'cupy' solves on the GPU: give device='cuda'")
+        self.linear_solver = checked_setting(self.linear_solver, self.device)
         if isinstance(self.kind_batch, bool) or not isinstance(self.kind_batch, int) or self.kind_batch < 1:
             raise ValueError(f"Compute: kind_batch is a positive integer (interior cells), got {self.kind_batch!r}")
 
@@ -110,7 +115,7 @@ class Compute:
 
     def __getstate__(self):
         state = dict(self.__dict__)
-        state.update(_controller=None, _linear=None, _backend=None, _timings={})
+        state.update(_controller=None, _linear={}, _backend=None, _timings={})
         return state
 
     @staticmethod
@@ -212,21 +217,31 @@ class Compute:
 
     # ── the linear solves ──
 
-    def linear(self):
-        """The graph systems' LinearSolver (solve.linear: linear_solver's, made once, its caches kept for the run)."""
-        if self._linear is None:
-            from openalea.metafspm.solve.linear import linear_solver
-            self._linear = linear_solver(self.linear_solver)
-        return self._linear
+    def linear(self, system=None):
+        """The LinearSolver of *system* (a solve.linear.LinearSystem; None: the "default" one): linear_solver's
+        backend resolved for it (solve.linear.resolve), one instance per backend made once, its caches kept for the
+        run."""
+        from openalea.metafspm.solve.linear import linear_solver, resolve
+        name = resolve(self.linear_solver, system)
+        if name not in self._linear:
+            self._linear[name] = linear_solver(name)
+        return self._linear[name]
 
     def check(self) -> None:
-        """What the Compute needs present (at the Scene's build): linear_solver's optional package, the device's
-        (CuPy and a CUDA device for "cuda"), else an ImportError giving the install line (or a RuntimeError: no
-        device)."""
+        """What the Compute needs present (at the Scene's build): its linear solvers' optional packages, the
+        device's (CuPy and a CUDA device for "cuda"), else an ImportError giving the install line (or a
+        RuntimeError: no device)."""
         from openalea.metafspm.backend import BACKENDS
-        from openalea.metafspm.solve.linear import LINEAR_SOLVERS
+        from openalea.metafspm.solve.linear import check_packages
         BACKENDS[self.device].check()
-        LINEAR_SOLVERS[self.linear_solver].check()
+        check_packages(self.linear_solver)
+
+    def check_systems(self, components) -> None:
+        """linear_solver's qualified names against the graph systems of *components* (the Scene's, once built):
+        each one of them, else a ValueError naming its key (solve.linear.check_systems)."""
+        from openalea.metafspm.solve.decorator import linear_systems
+        from openalea.metafspm.solve.linear import check_systems
+        check_systems(self.linear_solver, linear_systems(components))
 
     # ── the device ──
 

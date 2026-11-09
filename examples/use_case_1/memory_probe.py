@@ -399,10 +399,11 @@ def report(scene) -> dict:
         components[type(component).__name__] += sizer.size(component)
     out["components"] = dict(sorted(components.items(), key=lambda item: -item[1]))
     compute = scene.compute
-    linear = compute.__dict__.get("_linear")
-    patterns = linear.__dict__.get("_patterns", {}) if linear is not None else {}
-    out["linear_solver"] = {"systems": len(patterns), "patterns": sum(len(p) for p in patterns.values()),
-                            "bytes": sizer.size(linear)}
+    linear = compute.__dict__.get("_linear") or {}                  # {backend: LinearSolver} (per system's)
+    patterns = [solver.__dict__.get("_patterns", {}) for solver in linear.values()]
+    out["linear_solver"] = {"systems": sum(len(found) for found in patterns),
+                            "patterns": sum(len(p) for found in patterns for p in found.values()),
+                            "bytes": sum(sizer.size(solver) for solver in linear.values())}
     environment = {}
     for model in scene.environment:
         ds = getattr(model, "data_structure", None)

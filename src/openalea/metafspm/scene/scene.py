@@ -210,6 +210,7 @@ class Scene:
                 _root_data_structure(data_structure).simulation_time_step = time_step
             _run_in_step(component, time_step)
         self._apply_compute(environment_scenarios)
+        self.compute.check_systems(self.components)     # linear_solver's qualified names: the scene's graph systems
         self._name_components()
 
         self.translator = _with_identity_links(Translator.load(translator), self.populations, self.environment)

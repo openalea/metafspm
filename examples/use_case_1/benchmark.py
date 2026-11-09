@@ -508,7 +508,9 @@ def main(argv=None):
                              "solves' blocks and the kinds (BLAS stays at 1)")
     parser.add_argument("--linear-solver", default=None,
                         help="Compute(linear_solver=): the device's default (superlu on cpu, cupy on cuda), "
-                             "superlu_reuse, cholmod, pardiso, mumps")
+                             "superlu_reuse, cholmod, pardiso, mumps; or a mapping in JSON, one backend per system, "
+                             "e.g. '{\"symmetric\": \"cholmod\"}' (a system's qualified name, else its declared "
+                             "property, else \"default\")")
     parser.add_argument("--device", default="cpu", choices=("cpu", "cuda"), help="Compute(device=)")
     parser.add_argument("--variability", type=int, default=None, metavar="SEED",
                         help="the plants differ (plant_variability: each its own seeded root draws)")
@@ -527,8 +529,11 @@ def main(argv=None):
                         help="time the last step's large solves and parallel kernels at 1-12 threads")
     arguments = parser.parse_args(argv)
     from openalea.metafspm.compute import Compute
+    linear_solver = arguments.linear_solver
+    if linear_solver is not None and linear_solver.lstrip().startswith("{"):
+        linear_solver = json.loads(linear_solver)                  # a mapping: one backend per system
     compute = Compute(threads=arguments.threads if arguments.threads == "auto" else int(arguments.threads),
-                      linear_solver=arguments.linear_solver, device=arguments.device)
+                      linear_solver=linear_solver, device=arguments.device)
     label = arguments.label or f"{arguments.plants}p_{arguments.days:g}d"
     result = benchmark(arguments.plants, arguments.days, arguments.outputs, tuple(arguments.checkpoint_at),
                        arguments.resume, label, scenario_entries(arguments.scenario), compute, arguments.variability,

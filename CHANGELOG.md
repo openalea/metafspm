@@ -2,6 +2,45 @@
 
 ## Unreleased (release2026)
 
+### Breaking: the linear solver per graph system (fix-D)
+
+- **`Compute(linear_solver=)` is a backend's name (every system, as before) or a mapping, one per system**:
+  `Compute(linear_solver={"default": "superlu", "symmetric": "cholmod", "MechaHydraulics._plant_problem":
+  "superlu_reuse"})`. A graph system's backend is its qualified name's (`"Component._system"`, its component's
+  class or a base class declaring it, as `Reduction(systems=)` names it), else that of a property it declares
+  (`solve.linear.SYSTEM_PROPERTIES`: `"symmetric"`, `@graph_system(symmetric=True)`), else `"default"` (the device's
+  when the mapping does not give it). Components declare properties, never a library; the nonlinear method stays the
+  system's own (`@graph_system(solver=)`). The mapping is checked when the Compute is made (each backend registered,
+  `"cupy"` only on `"cuda"`, each key `"default"`, a known property or a `"Component._system"` name) and when the
+  Scene is built (each backend's package, `Compute.check`; each qualified name one of the scene's graph systems, one
+  mapped to `"cholmod"` declared symmetric, `Compute.check_systems`): a mistake raises naming its key.
+  `Compute.linear(system)` resolves (one LinearSolver per backend, its caches kept); `solve.linear.solve(matrix,
+  rhs, system=)` takes a `solve.linear.LinearSystem` (key, qualified names, properties) instead of `key=`,
+  `symmetric=`; `spec.parameters["linear_system"]` is one; `solve.decorator.linear_system(component, name)` and
+  `linear_systems(components)` build them.
+- **The static condensation and the Kron reduction go through the registry**: a backend gives `solve_once(matrix,
+  rhs, symmetric)` (a system solved once: `condensed_solve`'s, `equivalent_conductance`'s) and `factorize(matrix,
+  symmetric)` (a factorisation kept for many right-hand sides: a condensation's kinds, `KronReduction`'s interior),
+  resolved for the system they belong to (`condensed_solve(..., system=)`, `kron_reduction(matrix, kept, system)`,
+  `equivalent_conductance(..., system=)`; a reduction's kinds its reduced system's), else `"default"`. `"superlu"`
+  keeps SuperLU's default ordering (COLAMD) there and the device's factorisation (backend.HostBackend, or its factors
+  on the GPU): use case 1 (2 plants, 3 days) is bit-identical, every table and frame. `"cholmod"` factorises a
+  symmetric system's there too; `"pardiso"` and `"mumps"` solve once with their own, factorize with SuperLU.
+- **There is no `dense_solver`**: the dense solves (a system declared `prefer_sparse=False`, the edge unknowns'
+  recovery) are LAPACK's, with no other backend to choose. `solve_ivp`'s and scipy `root`'s factorisations stay
+  inside scipy, outside the registry (documented).
+- **CHOLMOD with scikit-sparse 0.5** (the current release: `cho_factor`, then `factorize` on the same pattern, `solve`);
+  the former adapter called 0.4's `analyze`/`cholesky_inplace`, absent from 0.5, and a pattern coming back after
+  another one's (the solver frees the others' factors) raised `KeyError: 'factor'`: both found running it for real
+  (it had been tested on a stand-in only).
+- **`solver="implicit_euler"` removed** (a deprecated alias): a backward-Euler step is `solver="newton"` with
+  `transient=True`. `register_solver` documents nonlinear methods only (the linear algebra is the Compute's).
+- Use case 1's `benchmark.py --linear-solver` takes a JSON mapping; `memory_probe` counts every backend's caches.
+- Docs: user.md (the run configuration, the solvers), README, gpu.md, ref.md; `tutorial_fspm2026_new_solver`
+  (the method and the linear algebra within it: a mapping, its resolution order) and
+  `tutorial_fspm2026_general_usage` (the plain form), both re-run. Caribu's own `linear_solver` setting is renamed
+  `radiosity_method` (its radiosity system's iterative method).
+
 ### Fixed: a variable two components of one model read from the same provider exchanged once
 
 - `coupling.cross.Exchanges` joined each (receiver component, provider) pair a link matches, and added the values of

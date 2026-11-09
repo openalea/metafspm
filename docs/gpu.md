@@ -17,7 +17,9 @@ numpy and scipy (`"cpu"`) and CuPy (`"cuda"`). The backend takes the following w
 
 - **A reduction's kinds** (their Kron reductions, `KronReduction`). Each kind solves its interior once per kept node
   (X = A_II⁻¹ A_IK, a few dozen right-hand sides over tens of thousands of cells), and this is where the evaluation
-  spends its time.
+  spends its time. (This is the factorisation of the reduced system's backend, `LinearSolver.factorize`: SuperLU's
+  on the device's backend, under `"cupy"` and `"superlu"` alike; a symmetric system mapped to `"cholmod"` is
+  factorised by CHOLMOD on the host.)
   - The factorisation is SuperLU's, on the host, the same one the CPU uses (cupyx's own `splu` also factorises on
     the host).
   - Its L and U factors are copied to the device once, and the right-hand sides are solved there.

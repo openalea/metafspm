@@ -1,14 +1,17 @@
 
 """
 Solvers of graph systems, selected by ``@graph_system(solver=...)``: one of the keys "newton", "newton_fd",
-"explicit_euler", "scipy_krylov", "scipy_anderson", "scipy_hybr", "scipy_ivp_bdf", "scipy_ivp_radau"
-("implicit_euler" is a deprecated alias of "newton" with transient=True), or a key given to a solver class of one's
-own by register_solver(name, solver_class) (e.g. a Newton solver with another linear solver). A solve that fails
+"explicit_euler", "scipy_krylov", "scipy_anderson", "scipy_hybr", "scipy_ivp_bdf", "scipy_ivp_radau" (a
+backward-Euler step: "newton" with transient=True), or a key given to a solver class of one's own by
+register_solver(name, solver_class): another nonlinear method. The linear algebra within the Newton steps is not
+chosen here: it is the run's Compute(linear_solver=) (solve.linear's registry of backends, per system); the scipy
+solvers (solve_ivp: scipy_ivp_bdf, scipy_ivp_radau; root: scipy_krylov, scipy_anderson, scipy_hybr) factorise
+within scipy, outside that registry. A solve that fails
 (no convergence, a residual or a step that is not finite, a singular system) raises SolverConvergenceError, which
 graph_system(integrate="adaptive") catches to retry with a shorter sub-step. The Newton family
 solves residuals (time terms written by the equations, or by the framework from a @node_rate); explicit_euler and
 the IVP solvers integrate the du/dt of a @node_rate. The rest of this module (the solve() time loop, SolverResult,
-linear assembly with LinearDirectSolver, ODE specifications, make_solver) is internal and may change without notice.
+ODE specifications, make_solver) is internal and may change without notice.
 
 ::
 
@@ -18,9 +21,8 @@ linear assembly with LinearDirectSolver, ODE specifications, make_solver) is int
       └── ODESolver (abstract)      adaptive time loop, _integrate_step abstract
             └── DAESolver (abstract) BC injection, algebraic recovery, _recover_algebraic abstract
                   ├── ExplicitEulerSolver       forward Euler  (solver="explicit_euler")
-                  ├── NewtonSolver              quasi-static  (solver="newton"/"newton_fd")
-                  ├── ImplicitEulerSolver       backward-Euler (solver="implicit_euler")
-                  ├── LinearDirectSolver        Ax=b           (solver="linear_direct")
+                  ├── NewtonSolver              Newton         (solver="newton"/"newton_fd"; backward
+                  │                                              Euler with transient=True)
                   ├── ScipyRootSolver           scipy.root     (solver="scipy_krylov/anderson/hybr")
                   └── ScipyIVPSolver            solve_ivp      (solver="scipy_ivp_bdf/radau")
 
@@ -39,9 +41,7 @@ Design rationale::
                          with the previous-field state for time-derivative terms.
                        • solve       overrides ODESolver.solve() to thread prev_fields
                          through the loop and call _recover_algebraic after each step.
-    NewtonSolver     — _integrate_step = Newton on R(x,y)=0 (quasi-static, ignores h as dt).
-    ImplicitEulerSolver — _integrate_step = backward-Euler Newton; h IS the dt.
-    LinearDirectSolver  — _integrate_step = direct sparse A x = b.
+    NewtonSolver     — _integrate_step = Newton on R(x,y)=0 (the equations' time terms, if any, use h as dt).
     ScipyRootSolver     — _integrate_step = scipy.optimize.root.
     ScipyIVPSolver      — _integrate_step = one solve_ivp step from t to t+h;
                           _recover_algebraic = inner Newton for edge algebraics (explicit path).
@@ -159,11 +159,13 @@ class AbstractSolver(ABC):
         """
         Solve J δ = −R, sparse-aware.
 
-        Sparse J → the Compute's LinearSolver (solve.linear: SuperLU by default), the system's key and symmetric
-        declaration from spec.parameters["linear_system"]. When *spec* has edge unknowns whose block of J is diagonal (an edge law on each edge's
-        own flux, e.g. explicit laws j − k ΔΨ), they are eliminated exactly (Schur complement) and the node system is
-        solved alone: the full system's node rows hold only fluxes, a zero diagonal that makes the direct solver pivot
-        and fill in (25 s against 0.1 s on a 16 x 16 x 32 soil grid).
+        Sparse J → the Compute's LinearSolver for the system (solve.linear: SuperLU by default; its backend
+        resolved by Compute(linear_solver=) for spec.parameters["linear_system"], a solve.linear.LinearSystem: its
+        qualified name, its declared properties, its caches' key). When *spec* has edge unknowns whose block of J is
+        diagonal (an edge law on each edge's own flux, e.g. explicit laws j − k ΔΨ), they are eliminated exactly
+        (Schur complement) and the node system is solved alone: the full system's node rows hold only fluxes, a
+        zero diagonal that makes the direct solver pivot and fill in (25 s against 0.1 s on a 16 x 16 x 32 soil
+        grid).
         Dense J  → numpy.linalg.solve (O(N³)).
         A singular J, or a step that is not finite, raises SolverConvergenceError.
         """
@@ -185,16 +187,16 @@ class AbstractSolver(ABC):
         if issparse(jac) and condensation is not None:
             from openalea.metafspm.solve.network import condensed_solve
             groups, kept, cache = condensation
-            return condensed_solve(jac, -residual, groups, kept, cache=cache)
+            return condensed_solve(jac, -residual, groups, kept, cache=cache, system=_linear_system(spec))
         if issparse(jac):
             from openalea.metafspm.solve.linear import solve
-            key, symmetric = _linear_system(spec)
+            system = _linear_system(spec)
             edges = _edge_unknowns(spec, jac.shape[0])
             if edges is not None:
-                delta = _solve_eliminating(jac.tocsr(), residual, edges, key=key, symmetric=symmetric)
+                delta = _solve_eliminating(jac.tocsr(), residual, edges, system=system)
                 if delta is not None:
                     return delta
-            return np.asarray(solve(jac, -residual, key=key, symmetric=symmetric), dtype=np.float64)
+            return np.asarray(solve(jac, -residual, system=system), dtype=np.float64)
         return np.linalg.solve(np.asarray(jac, dtype=np.float64), -residual)
 
     def _armijo_linesearch(self, spec, packed: np.ndarray,
@@ -395,7 +397,7 @@ class DAESolver(ODESolver):
        Two paths:
          Explicit path (NewtonSolver/ScipyRootSolver): x is stepped without
            y, then _recover_algebraic solves g=0 to find y.
-         Implicit path (ImplicitEulerSolver and others): x and y are solved
+         Implicit path (NewtonSolver with edge unknowns): x and y are solved
            jointly in one Newton loop; _recover_algebraic is a no-op
            (return empty array).
 
@@ -424,7 +426,7 @@ class DAESolver(ODESolver):
         p          : parameters (already updated with BCs at time t)
         prev_fields: dict[field_name, np.ndarray] | None
                      Node field values from the previous accepted step.
-                     Required by ImplicitEulerSolver; None for quasi-static.
+                     Read by a transient system's time terms; None for quasi-static.
 
         Returns (x_new, error_estimate), both shape (n_unknowns,).
         """
@@ -665,7 +667,7 @@ class ExplicitEulerSolver(DAESolver):
     Use ``ScipyIVPSolver`` when adaptive stepping is needed.
 
     Not suitable for stiff systems (e.g. coupled fast hydraulics + slow growth).
-    Use ``ImplicitEulerSolver`` or ``ScipyIVPSolver`` for stiff problems.
+    Use ``solver="newton"`` with transient=True or ``ScipyIVPSolver`` for stiff problems.
 
     solver="explicit_euler"
     """
@@ -903,7 +905,9 @@ def _infinity_norm(matrix) -> float:
 def register_solver(name: str, solver_class: type) -> None:
     """
     Make *solver_class* (a subclass of one of the solvers here: DAESolver, NewtonSolver...) available to
-    ``@graph_system(solver=name)``: e.g. a Newton solver with another linear solver. A name already used raises.
+    ``@graph_system(solver=name)``: another nonlinear method (an iteration, a time integration). A name already
+    used raises. The sparse linear solves within a method are not chosen here: they are the run's backend
+    (Compute(linear_solver=), solve.linear's LinearSolver registry, per system).
     """
     if not (isinstance(solver_class, type) and issubclass(solver_class, AbstractSolver)):
         raise TypeError(f"register_solver: a solver class (an AbstractSolver), got {solver_class!r}")
@@ -956,14 +960,14 @@ def _edge_unknowns(spec, size: int):
     return np.arange(start, stop)
 
 
-def _linear_system(spec) -> tuple:
-    """(key, symmetric) of *spec*'s linear solves (spec.parameters["linear_system"]: the graph system's), else
-    (None, False)."""
+def _linear_system(spec):
+    """The solve.linear.LinearSystem of *spec*'s linear solves (spec.parameters["linear_system"]: the graph
+    system's), else None (the Compute's "default" backend, no cache)."""
     parameters = getattr(spec, "parameters", None) or {}
-    return parameters.get("linear_system", (None, False))
+    return parameters.get("linear_system")
 
 
-def _solve_eliminating(jac, residual: np.ndarray, eliminated: np.ndarray, key=None, symmetric: bool = False):
+def _solve_eliminating(jac, residual: np.ndarray, eliminated: np.ndarray, system=None):
     """
     J δ = −R with the unknowns *eliminated* solved last, when their block D of J is diagonal and nonsingular:
     (A − B D⁻¹ C) δ_k = −R_k + B D⁻¹ R_e, then δ_e = D⁻¹ (−R_e − C δ_k). None when D is not diagonal.
@@ -983,7 +987,7 @@ def _solve_eliminating(jac, residual: np.ndarray, eliminated: np.ndarray, key=No
     delta = np.empty_like(residual)
     if kept.size:
         from openalea.metafspm.solve.linear import solve
-        delta[kept] = solve(schur, -(r_k - B @ (inverse @ r_e)), key=key, symmetric=symmetric)
+        delta[kept] = solve(schur, -(r_k - B @ (inverse @ r_e)), system=system)
         delta[eliminated] = inverse @ (-r_e - C @ delta[kept])
     else:
         delta[eliminated] = -(inverse @ r_e)

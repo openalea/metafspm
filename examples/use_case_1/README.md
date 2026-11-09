@@ -231,7 +231,13 @@ a thread), each part taking those that pay (the plant system's blocks in the cou
 8 plants, day 13: 4.27 s per hour at 1 thread, 3.92 with "auto", measured 2026-11-08 after the generic kernels'
 GK-1 to GK-5 and the process pool's removal, against 4.93 and 4.75 the same day before them), the memory freed
 given back after each hour (`malloc_trim`), and the environment's `MALLOC_ARENA_MAX=2` (`environment.yaml`'s
-`variables:`; outside the conda environment, `export MALLOC_ARENA_MAX=2` before running). The reduction's kinds
+`variables:`; outside the conda environment, `export MALLOC_ARENA_MAX=2` before running). Its sparse solver may be
+chosen per graph system: `Compute(threads="auto", linear_solver={"default": "superlu", "symmetric": "cholmod"})`
+sends MECHA's standard problem (declared symmetric) to CHOLMOD (scikit-sparse 0.5, optional), the plant problem, its
+Kron reductions and the soil keeping SuperLU (`benchmark.py --linear-solver '{"symmetric": "cholmod"}'`). Measured
+2026-11-09 at 2 plants over 3 days: its 38 solves 0.50 s against SuperLU's 0.88 s, the run 60.2 s against 56.0-59.4
+(within the runs' spread), the results within 1.6e-14 relative (the standard uptake), the frames identical: not
+worth it at this size. The reduction's kinds
 are worked out in the run's process, each in a thread (metafspm's process pool was removed on 2026-11-08, QG-3 of
 its devplan_generic_kernels): measured that day on this 14-thread laptop, 8 plants to day 8 take 292.6 s at
 "auto" (the scope's peak 3.15 GB) against 283.1 s and 3.83 GB with the former pool ("auto": 7 processes), every

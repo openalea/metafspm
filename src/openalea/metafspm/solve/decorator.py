@@ -418,6 +418,29 @@ def declared_system(instance, inner_name: str, systems) -> str:
     return None
 
 
+def linear_system(instance, name: str):
+    """*instance*'s graph system *name* as its linear algebra sees it (solve.linear.LinearSystem): its caches' key,
+    its qualified names "Component._system" (its class's, then its bases' declaring it: Compute(linear_solver=)'s
+    mapping may name either) and the properties it declares (SYSTEM_PROPERTIES: symmetric=True)."""
+    from openalea.metafspm.solve.linear import LinearSystem
+    spec_def = type(instance)._graph_system_specs[name]
+    names = tuple(f"{cls.__name__}.{name}" for cls in type(instance).__mro__
+                  if name in getattr(cls, "_graph_system_specs", {}))
+    return LinearSystem(key=(type(instance).__name__, name, id(instance)), names=names,
+                        properties=frozenset({"symmetric"} if spec_def.get("symmetric") else ()))
+
+
+def linear_systems(components) -> dict:
+    """{qualified name: LinearSystem} of the graph systems of *components* (linear_system: each of its names)."""
+    found = {}
+    for component in components:
+        for name in getattr(type(component), "_graph_system_specs", {}):
+            system = linear_system(component, name)
+            for qualified in system.names:
+                found.setdefault(qualified, system)
+    return found
+
+
 def graph_output(name, location: str = None, filters=None):
     """
     Tag a method as a named post-solve output hook. *location* ("node" or "edge") is required when *name* is not a
@@ -1283,8 +1306,7 @@ class _GraphSystemBuilder:
         spec.parameters["time_hook"] = lambda t, _i=instance: _i.__dict__.__setitem__("_ivp_time", t)
         condense = spec_def.get("condense")
         location = condense(instance) if callable(condense) else condense
-        spec.parameters["linear_system"] = ((type(instance).__name__, spec_def["inner_class"].__name__, id(instance)),
-                                            bool(spec_def.get("symmetric")))
+        spec.parameters["linear_system"] = linear_system(instance, spec_def["name"])
         if location is not None:
             owner = np.asarray(ds.owner(location), dtype=np.int64)
             take = _take(instance, "node")
@@ -1723,7 +1745,7 @@ class _GraphSystemDescriptor:
         Choregrapher().add_process(Functor(_trampoline),
                                    name=self._spec["schedule_as"])
 
-        spec_with_cls = {**self._spec, "inner_class": self._inner_cls, "trampoline": _trampoline}
+        spec_with_cls = {**self._spec, "inner_class": self._inner_cls, "trampoline": _trampoline, "name": name}
         owner._graph_system_specs = {
             **getattr(owner, "_graph_system_specs", {}),
             name: spec_with_cls,
@@ -1791,8 +1813,10 @@ def graph_system(
     node_unknowns, edge_unknowns: the ordered names of the node (field= of the equations) and edge unknowns.
 
     solver: a key, "newton" (default), "newton_fd" (finite-difference Jacobian), "explicit_euler",
-        "scipy_krylov", "scipy_anderson", "scipy_hybr", "scipy_ivp_bdf" or "scipy_ivp_radau" ("implicit_euler" is
-        "newton" with transient=True, accepted with a warning for one release).
+        "scipy_krylov", "scipy_anderson", "scipy_hybr", "scipy_ivp_bdf" or "scipy_ivp_radau" (a backward-Euler
+        step is "newton" with transient=True, the equations writing their time terms or given as @node_rate), or
+        a key registered by solve.solver.register_solver. The nonlinear method only: the linear algebra's backend
+        is the run's (Compute(linear_solver=), by the system's qualified name or its declared properties).
 
     max_iterations, tolerance (||R||_inf), relative_tolerance (converged when ||R||_inf < tolerance +
         relative_tolerance ||R_0||_inf, R_0 the first iterate's residual; 0: absolute only), step_tolerance
@@ -1843,8 +1867,9 @@ def graph_system(
         SceneRecorder's conservation.csv after every step).
 
     symmetric: its linear steps' matrix is symmetric (a conductance network's Jacobian, its Dirichlet nodes
-        eliminated or held by a Robin term): checked once per pattern (solve.linear.SymmetryError when it is not),
-        and solved by CHOLMOD with Compute(linear_solver="cholmod").
+        eliminated or held by a Robin term): checked once per pattern (solve.linear.SymmetryError when it is not).
+        A property, not a library: the run's Compute(linear_solver=) maps it to a backend, e.g.
+        {"symmetric": "cholmod"} (CHOLMOD's Cholesky), or names the system itself ("Component._system").
 
     The former names max_iter, tol, fd_eps, n_substeps and integrate="step" are accepted with a warning for one
     release.
@@ -1891,11 +1916,6 @@ def graph_system(
     if not isinstance(solver, str):
         raise TypeError(f"graph_system(solver=...): a solver key, one of {sorted(_SOLVER_REGISTRY)}, got "
                         f"{solver!r}")
-    if solver == "implicit_euler":
-        warnings.warn("solver='implicit_euler' is deprecated: it is solver='newton' with transient=True, the "
-                      "equations writing their time terms (or given as @node_rate)", DeprecationWarning, stacklevel=2)
-        solver = "newton"
-        transient = True if transient is None else transient
     solver_cls = _SOLVER_REGISTRY.get(solver)
     if solver_cls is None:
         raise ValueError(f"Unknown solver {solver!r}. Valid keys: {sorted(_SOLVER_REGISTRY)}.")
