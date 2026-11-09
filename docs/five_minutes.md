@@ -69,7 +69,6 @@ Ports coming next, not available yet (the component, and the model it is ported 
 - `SimplifiedAnatomy`, from openalea.rhizodep
 - openalea.cnwgrass's components:
   - `Growth`
-  - `GasExchange`
   - `Morphogenesis`
   - `Respiration`
   - `Senescence`
