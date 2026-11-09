@@ -28,7 +28,7 @@ def scene(folder=None, tolerance=1e-6, root_radial_k=(0.4, 0.5, 0.6), soil_scena
     table = planting(sown, SeedlingWater, plant_scenarios=per_plant)
     stop = largest_change(tolerance)
     built = Scene(table, environment=[Soil], environment_scenarios=[soil_scenario or {}],
-                  translator=SCENE_TRANSLATOR, time_step=3600, stop_when=stop,
+                  translator=SCENE_TRANSLATOR, time_step="1 h", stop_when=stop,
                   recorder=SceneRecorder(folder, segment_plants=["p0"], segment_period="1 h") if folder else None)
     return built, stop
 

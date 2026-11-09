@@ -41,7 +41,7 @@ def run(scenario: dict, folder: str, hours: int = HOURS) -> Scene:
                      yrange=0.2)
     recorder = SceneRecorder(folder, frame_period="6 h", checkpoint_period="12 h", keep_checkpoints=1)
     scene = Scene(table, environment=[Soil], environment_scenarios=[scenario.get("Soil", {})],
-                  translator=SCENE_TRANSLATOR, time_step=3600, forcings=forcings,
+                  translator=SCENE_TRANSLATOR, time_step="1 h", forcings=forcings,
                   recorder=recorder)
     scene.simulate(hours)
     return scene
