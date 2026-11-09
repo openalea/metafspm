@@ -635,10 +635,18 @@ class Exchanges:
         components = list(components)
         self.mappings = list(mappings)
         self.links = []
+        joined = set()          # (receiver DataStructure, variable, provider DataStructure, link): exchanged once
         for link, receiver, provider in ((link, receiver, provider) for link in translator.links
                                          for receiver, provider in link_pairs(link, components)):
             if receiver.data_structure is provider.data_structure:
                 continue
+            # two components of one model on one DataStructure reading the same variable from the same provider
+            # receive it once (their links' values were added, as several providers' are: twice the value)
+            key = (id(receiver.data_structure), link.variable, id(provider.data_structure), repr(link.sources),
+                   repr(link.formula), link.aggregation, link.weight)
+            if key in joined:
+                continue
+            joined.add(key)
             mapping, direction, part = self._mapping_between(link, provider.data_structure, receiver.data_structure)
             name = f"{link.receiver}.{link.variable} <- {link.provider}"
             link = check_link(link, receiver, provider)

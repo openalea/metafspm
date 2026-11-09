@@ -3,18 +3,22 @@ The plant / soil contract of the DataStructure doubles (PlantCarbon, PlantNitrog
 plant model couples its components within its MPG, the scene exchanges the soil links through a CrossMapping, and
 several plants feed one soil without zeroing (formerly play_Orchestra with Transport and Coupler).
 """
+from dataclasses import dataclass
+
 import numpy as np
 import pandas as pd
 import pytest
 
 import doubles
 import doubles_ds
+from openalea.metafspm.coupling.component import FunctionalComponent
 from openalea.metafspm.coupling.composite_wrapper import CompositeModel
 from openalea.metafspm.coupling.translator import Translator
 from openalea.metafspm.data_structure.configs import PropsConfig
 from openalea.metafspm.data_structure.data_api import ArrayDataStructure
 from openalea.metafspm.scene.environment import EnvironmentModel
 from openalea.metafspm.scene.scene import Scene
+from openalea.metafspm.solve.decorator import rate
 
 SIDE = doubles.SOIL_VOXEL_SIDE
 
@@ -99,3 +103,36 @@ def test_the_contract_models_run_in_a_scene(scene):
     cells = scene.mappings[0].cells
     np.testing.assert_allclose(plants.get("C_hexose_soil"), (grid.get("DOC") / SIDE ** 3).reshape(-1)[cells])
     assert len(set(np.unravel_index(cells, grid.shape)[0].tolist())) == 3      # one column per plant
+
+
+@dataclass
+class TemperatureReader(FunctionalComponent):
+    """A second component of the plant model reading the soil's temperature, as PlantCarbon does."""
+    soil_temperature: float = doubles_ds._var("input", default=10., by="SoilModel")
+    felt_temperature: float = doubles_ds._var("state_variable", kind="intensive")
+
+    @rate
+    def _felt_temperature(self, soil_temperature):
+        return np.asarray(soil_temperature, dtype=float).copy()
+
+
+class TwoReadersPlant(ContractPlant):
+    parts = {"carbon": doubles_ds.PlantCarbon, "nitrogen": doubles_ds.PlantNitrogen, "reader": TemperatureReader}
+
+
+def test_two_components_reading_one_soil_variable_receive_it_once(tmp_path):
+    """Two components of one plant model on its DataStructure, each linked to the soil's temperature: the scene
+    exchanges it once (their two links' values were added, as several providers' are: twice the temperature)."""
+    nested = doubles_ds.translator(soil=doubles_ds.SOIL)
+    TwoReadersPlant.translator = doubles.write_translator(tmp_path / "plant_translator.yaml", nested)
+    links = _soil_links(nested)
+    links.link("TemperatureReader", "soil_temperature", doubles_ds.SOIL, {"soil_temperature": 1.},
+               aggregation="broadcast")
+    table = pd.DataFrame([dict(plant="p0", model=TwoReadersPlant, x=0.025, y=0.025, depth=0.01, rotation=0.,
+                               scenario={})])
+    scene = Scene(table, environment=[ContractSoil], translator=links, time_step=doubles.TIME_STEP, xrange=0.05,
+                  yrange=0.05)
+    scene.run()
+    plants = scene.populations[0].data_structure
+    np.testing.assert_allclose(plants.get("soil_temperature"), 10.)
+    np.testing.assert_allclose(plants.get("felt_temperature"), 10.)

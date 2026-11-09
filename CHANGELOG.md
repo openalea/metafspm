@@ -2,6 +2,18 @@
 
 ## Unreleased (release2026)
 
+### Fixed: a variable two components of one model read from the same provider exchanged once
+
+- `coupling.cross.Exchanges` joined each (receiver component, provider) pair a link matches, and added the values of
+  the links writing the same variable of the same DataStructure, as several providers' are: two components of one
+  plant model (or environment model) on one DataStructure, each reading the same variable from the same provider,
+  received it **twice** (a broadcast soil temperature 20 °C for 10, an extensive lit area doubled). Such a link is
+  now kept once per (receiver DataStructure, variable, provider DataStructure, sources, formula, aggregation,
+  weight). Found when Caribu's `PlantOptics` declared `lit_area` beside `AbsorbedLight` (fix-C); test
+  `test_two_components_reading_one_soil_variable_receive_it_once`. Use case 1 has no such pair (2 plants, 3 days
+  bit-identical).
+- The soil-plant-atmosphere examples give the Scene's time step as the duration `"1 h"`; both tutorials re-run.
+
 ### Breaking: a packed run's frames folder removed once its archive is checked
 
 - **`SceneRecorder.pack(keep_folder=None)`** and **`pack_at_finish`** check `frames.fspm.zip` once written
