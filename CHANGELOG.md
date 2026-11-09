@@ -2,6 +2,17 @@
 
 ## Unreleased (release2026)
 
+### Breaking: frames' missing property values as row ranges
+
+- An MPGDataStructure's frame writes its properties' missing values compactly: the extras' **`absent_rows`** (the
+  rows of a scale without the property) and **`none_rows`** (those holding it as None) are flat `[start, stop, ...]`
+  lists of half-open ranges over the scale's rows (`io/encoding3d._row_ranges`, read back by `_ranges_mask`); they
+  replace `absent` and `none`, one vid per row. Use case 1's last frame (2 plants, day 23): 838,773 vid runs in
+  15.9 M vids become 209,388 row ranges, the frame's JSON chunk from 162 MB to a few MB (see below), so that every
+  reader parses a large frame quickly (encoding3d's ParaView reader: about 1 GB less at day 23). `from_frame` refuses a
+  frame of the former lists (`ValueError`: rewrite the frame). The extras are metafspm's own: encoding3d's
+  specification, its conformance files and its codecs do not read them and are unchanged.
+
 ### Breaking: the process pool removed (devplan_generic_kernels QG-3)
 
 - **`Compute.workers` is gone, with no alias** (`Compute(workers=...)` raises a TypeError): a reduction's kinds are

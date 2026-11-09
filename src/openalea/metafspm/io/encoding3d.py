@@ -350,6 +350,22 @@ def _hashable(key):
 _MISSING = object()
 
 
+def _row_ranges(mask: np.ndarray) -> list:
+    """The rows where *mask* holds, as the flat run-length list [start, stop, start, stop ...] of half-open ranges
+    (the extras' absent_rows and none_rows: a few runs where vid lists ran to millions of values)."""
+    edges = np.flatnonzero(np.diff(np.concatenate([[0], np.asarray(mask, dtype=np.int8), [0]])))
+    return edges.tolist()
+
+
+def _ranges_mask(ranges, count: int) -> np.ndarray:
+    """The mask of *count* rows holding the half-open ranges *ranges* (_row_ranges')."""
+    bounds = np.asarray(ranges, dtype=np.int64).reshape(-1, 2)
+    steps = np.zeros(count + 1, dtype=np.int64)
+    np.add.at(steps, bounds[:, 0], 1)
+    np.add.at(steps, bounds[:, 1], -1)
+    return np.cumsum(steps[:count]) > 0
+
+
 def _lookup(prop, vids: np.ndarray) -> tuple:
     """(present, values) of the MPG property *prop* at *vids*: a mask, and the values (a float array, NaN where
     absent, for a float column; a list, None where absent, for another), read in bulk from its sorted keys."""
@@ -463,7 +479,8 @@ def _mpg_data_structure(identifier: str, ds, metadata: dict, standard_names: dic
     label_property, edge_property = properties.get("label", {}), properties.get("edge_type", {})
     extras = {"class": "MPGDataStructure", "construction": ds._construction(), "last_id": int(g._id),
               "anchors": sorted(int(v) for v in anchors), "scales": {}, "label_codes": {}, "properties": {},
-              "absent": {}, "none": {}, "variables": {}, "tracked": sorted(ds.__dict__.get("_mtg_tracked", {})),
+              "absent_rows": {}, "none_rows": {}, "variables": {},
+              "tracked": sorted(ds.__dict__.get("_mtg_tracked", {})),
               "aliases": ds.aliases()}
     tables = {}
 
@@ -557,12 +574,12 @@ def _mpg_data_structure(identifier: str, ds, metadata: dict, standard_names: dic
             entry = extras["properties"].setdefault(property_name, {
                 "container": "ArrayDict" if numeric else "dict", "column": column})
             entry.setdefault("dtypes", {})[name] = kind
-            if not present.all():
-                extras["absent"][f"{name}.{property_name}"] = vids[~present].tolist()
-            none = ([] if numeric else
-                    [v for v, here, value in zip(listed, present, values) if here and value is None])
-            if none:
-                extras["none"][f"{name}.{property_name}"] = none
+            if not present.all():                       # the rows (of the scale's vids) without the property
+                extras["absent_rows"][f"{name}.{property_name}"] = _row_ranges(~present)
+            if not numeric:                             # and those holding it as None
+                none = np.array([here and value is None for here, value in zip(present.tolist(), values)], dtype=bool)
+                if none.any():
+                    extras["none_rows"][f"{name}.{property_name}"] = _row_ranges(none)
             if data is not None:
                 columns[column] = data
         tables[scale] = columns
@@ -1918,6 +1935,9 @@ def from_frame(frame) -> dict:
             raise ValueError(f"'{data_structure.id}' was written folded into its pattern ({extras['folded']}), for "
                              "display: it cannot be rebuilt (write it unfolded to exchange it)")
         if extras["class"] == "MPGDataStructure":
+            if "absent_rows" not in extras:
+                raise ValueError(f"'{data_structure.id}' was written by a metafspm before 2026-11-09 (its properties' "
+                                 "absent vids listed one by one): rewrite the frame to rebuild it")
             out[data_structure.id] = _mpg_from(data_structure, extras)
         else:
             out[data_structure.id] = _grid_from(data_structure, extras)
@@ -1970,8 +1990,8 @@ def _mpg_from(data_structure, extras: dict):
         for name, kind in entry["dtypes"].items():
             table = tables[name]
             ids = table.columns["id"]
-            absent = np.isin(ids, extras["absent"].get(f"{name}.{property_name}", ()))
-            none = np.isin(ids, extras["none"].get(f"{name}.{property_name}", ()))
+            absent = _ranges_mask(extras["absent_rows"].get(f"{name}.{property_name}", ()), ids.size)
+            none = _ranges_mask(extras["none_rows"].get(f"{name}.{property_name}", ()), ids.size)
             column = table.columns.get(entry["column"]) if kind is not None else None
             if entry["container"] == "ArrayDict":
                 kept = ~absent & ~none

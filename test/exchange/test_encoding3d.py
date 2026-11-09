@@ -412,6 +412,37 @@ def test_what_numbers_and_text_alone_cannot_hold():
     assert again.structure.property("anatomy_class")[segment] == ("root", 3, 0.5)
 
 
+def test_absent_and_none_values_are_row_ranges():
+    """The rows without a property, and those holding it as None, are written as half-open row ranges (a few runs,
+    not one vid each), read back as they were; a frame of the former vid lists is refused."""
+    from openalea.metafspm.io.encoding3d import EXTRAS, _ranges_mask, _row_ranges
+    mask = np.array([0, 1, 1, 0, 0, 1, 0, 1, 1, 1], dtype=bool)
+    assert _row_ranges(mask) == [1, 3, 5, 6, 7, 10]
+    np.testing.assert_array_equal(_ranges_mask(_row_ranges(mask), mask.size), mask)
+    assert _row_ranges(np.zeros(4, dtype=bool)) == [] and not _ranges_mask([], 4).any()
+    ds = _population()
+    models = _models(ds)
+    _steps(models, 1)
+    g = ds.structure
+    segments = [int(vid) for vid in ds.entity_ids("node")]
+    g.add_property("tag")                                  # on every other segment, None on the first
+    g.set_values("tag", segments[::2], [None] + ["kept"] * (len(segments[::2]) - 1))
+    frame = to_frame({"plants": ds}, components={"plants": models})
+    extras = frame.data_structure("plants").extras[EXTRAS]
+    assert "absent" not in extras and "none" not in extras
+    scale = next(key for key in extras["absent_rows"] if key.endswith(".tag"))
+    ranges = extras["absent_rows"][scale]
+    assert len(ranges) % 2 == 0 and all(isinstance(value, int) for value in ranges)
+    start, stop = extras["none_rows"][scale]                # one row holds None
+    assert stop - start == 1
+    again = _round_trip({"plants": ds}, components={"plants": models})["plants"]
+    _same_mpg(ds.structure, again.structure)
+    assert again.structure.property("tag")[segments[0]] is None and segments[1] not in again.structure.property("tag")
+    del extras["absent_rows"]
+    with pytest.raises(ValueError, match="rewrite the frame"):
+        from_frame(frame)
+
+
 def test_frames_written_to_and_read_from_files(tmp_path):
     """export_frame and export_scene write .glb files, import_frame rebuilds the DataStructures from one."""
     from types import SimpleNamespace
