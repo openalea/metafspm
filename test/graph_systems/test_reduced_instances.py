@@ -444,41 +444,95 @@ def _recorded_scene(out, **options):
     return scene
 
 
-def test_the_recorder_lists_the_parts_prunes_them_on_resume_and_packs_the_frames(tmp_path):
+def test_the_recorder_lists_the_parts_packs_the_frames_and_unpacks_them_on_resume(tmp_path):
     import json
     import types
+    import zipfile
     out = str(tmp_path / "run")
     scene = _recorded_scene(out, pack_at_finish=True)
     for _ in range(2):
         scene.run()
     scene.finish()
-    frames = os.path.join(out, "frames")
-    index = encoding3d.read_index(os.path.join(frames, "scene.fspm.json"))
+    frames, archive = os.path.join(out, "frames"), os.path.join(out, "frames.fspm.zip")
+    assert not os.path.exists(frames)                                 # packed, checked, then removed
+    index = encoding3d.read_index(archive)                            # read as the folder
     used = set()
     for entry in index["frames"]:
         used |= set(encoding3d.codec.frame_part_keys(entry["path"]))
         assert encoding3d.read(entry["path"]).data_structure(scene.populations[0].name).instance_sets
     assert used and set(index["parts"]) == used
-    assert sorted(os.listdir(os.path.join(frames, "parts"))) == sorted(f"{key}.glb" for key in used)
-    assert validate_file(os.path.join(frames, "scene.fspm.json")).ok
+    with zipfile.ZipFile(archive) as opened:
+        assert sorted(name for name in opened.namelist() if name.startswith("parts/")) == \
+            sorted(f"parts/{key}.glb" for key in used)
+    report = validate_file(archive)
+    assert report.ok, str(report)
     with open(os.path.join(out, "scenario.json")) as file:
         recorder = json.load(file)["recorder"]
-    assert (recorder["display"], recorder["pack_at_finish"], recorder["pack_compression"]) == ("instances", True,
-                                                                                               "deflate")
-    archive = os.path.join(out, "frames.fspm.zip")                  # read as the folder
-    last = encoding3d.read_index(archive)["frames"][-1]["path"]
-    np.testing.assert_allclose(np.concatenate(encoding3d.evaluate(encoding3d.read(last), "water_potential")),
-                               np.concatenate(encoding3d.evaluate(encoding3d.read(index["frames"][-1]["path"]),
-                                                                  "water_potential")))
+    assert (recorder["display"], recorder["pack_at_finish"], recorder["pack_compression"],
+            recorder["pack_keep_folder"]) == ("instances", True, "deflate", False)
     with open(os.path.join(out, "run.json")) as file:
         assert json.load(file)["frames_archive"] == "frames.fspm.zip"
+    last = encoding3d.read(index["frames"][-1]["path"])
+    assert [entry["step"] for entry in index["frames"]] == [0, 1, 2]
+    scene.recorder.resume_at(types.SimpleNamespace(iteration=1, time=3600.))     # the folder back from the archive
+    resumed = encoding3d.read_index(os.path.join(frames, "scene.fspm.json"))
+    assert [entry["step"] for entry in resumed["frames"]] == [0, 1]
+    assert not os.path.exists(os.path.join(frames, "frame_000002.glb"))  # the later frame removed with its entry
+    np.testing.assert_allclose(np.concatenate(encoding3d.evaluate(encoding3d.read(resumed["frames"][-1]["path"]),
+                                                                  "water_potential")),
+                               np.concatenate(encoding3d.evaluate(encoding3d.read(index["frames"][1]["path"]),
+                                                                  "water_potential")))
+    assert last.step == 2
     stray = os.path.join(frames, "parts", "0" * 64 + ".glb")         # a part no frame kept refers to
     with open(stray, "wb") as file:
         file.write(b"")
     scene.recorder.resume_at(types.SimpleNamespace(iteration=1, time=3600.))
-    resumed = encoding3d.read_index(os.path.join(frames, "scene.fspm.json"))
-    assert [entry["step"] for entry in resumed["frames"]] == [0, 1] and not os.path.exists(stray)
-    assert set(resumed["parts"]) == used
+    assert not os.path.exists(stray) and set(encoding3d.read_index(os.path.join(frames, "scene.fspm.json"))["parts"]) \
+        <= used
+
+
+def test_the_recorder_keeps_the_frames_folder_when_asked(tmp_path):
+    out = str(tmp_path / "run")
+    scene = _recorded_scene(out, pack_at_finish=True, pack_keep_folder=True)
+    scene.run()
+    scene.finish()
+    frames = os.path.join(out, "frames")
+    assert validate_file(os.path.join(frames, "scene.fspm.json")).ok
+    assert validate_file(os.path.join(out, "frames.fspm.zip")).ok
+    path = scene.recorder.pack(keep_folder=False)                     # on demand, the folder removed
+    assert validate_file(path).ok and not os.path.exists(frames)
+
+
+def test_a_corrupted_archive_keeps_the_frames_folder(tmp_path, monkeypatch):
+    import zipfile
+    from openalea.encoding3d import ArchiveCheckError, archive as archives
+    out = str(tmp_path / "run")
+    scene = _recorded_scene(out, pack_compression="stored")
+    scene.run()
+    scene.finish()
+    frames = os.path.join(out, "frames")
+    before = {name: os.path.getsize(os.path.join(frames, name)) for name in os.listdir(frames)
+              if name.endswith(".glb")}
+    original = archives._write
+
+    def corrupted(base, members, path, compression, level):         # a byte of the last frame's data flipped
+        original(base, members, path, compression, level)
+        with zipfile.ZipFile(path) as opened:
+            info = opened.getinfo("frame_000001.glb")
+        with open(path, "r+b") as file:
+            file.seek(info.header_offset + 26)
+            name_length, extra_length = np.frombuffer(file.read(4), dtype="<u2")
+            file.seek(info.header_offset + 30 + int(name_length) + int(extra_length) + 100)
+            byte = file.read(1)
+            file.seek(-1, os.SEEK_CUR)
+            file.write(bytes([byte[0] ^ 0xFF]))
+    monkeypatch.setattr(archives, "_write", corrupted)
+    with pytest.raises(ArchiveCheckError, match="frame_000001.glb"):
+        scene.recorder.pack()
+    assert not os.path.exists(os.path.join(out, "frames.fspm.zip"))
+    assert {name: os.path.getsize(os.path.join(frames, name)) for name in os.listdir(frames)
+            if name.endswith(".glb")} == before
+    assert validate_file(os.path.join(frames, "scene.fspm.json")).ok
 
 
 def test_the_recorder_s_display_options_are_checked(tmp_path):

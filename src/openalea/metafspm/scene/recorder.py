@@ -45,12 +45,15 @@ scene's steps, or "step" (every step); an output is written when the scene's tim
     frames/parts/<key>.glb            the parts the frames share (encoding3d 0.4): each template drawn and each
                                       kind's recovery operator, written once (its key: its content's hash), listed
                                       in scene.fspm.json; those no frame refers to removed (a resumed run)
-    frames.fspm.zip                   with pack_at_finish: the frames folder in one archive (encoding3d.pack),
-                                      written when the run finishes; ParaView and encoding3d.read open it as the
-                                      folder
+    frames.fspm.zip                   with pack_at_finish (or recorder.pack()): the frames folder in one archive
+                                      (encoding3d.pack), written when the run finishes and checked (every file a
+                                      member, its size and CRC-32 read back, the archive valid), then the folder
+                                      removed (pack_keep_folder=True keeps it); ParaView and encoding3d.read open it
+                                      as the folder, and a run resumed from a checkpoint unpacks it to go on
     frames/views.json                 with frame_views: the layers ParaView shows (encoding3d's views), written at the
                                       first frame
-    checkpoints/step_<iteration>/     Scene.checkpoint every checkpoint_period, the last keep_checkpoints kept
+    checkpoints/step_<iteration>/     Scene.checkpoint every checkpoint_period, the last keep_checkpoints kept (2:
+                                      the last two; 1: the last only, each removed once the next is written)
     checkpoints/shared/               the checkpoints' parts saved once (scene.shared: anatomy templates, sections),
                                       those no kept checkpoint refers to removed
 
@@ -175,6 +178,12 @@ def _on(period, time: float) -> bool:
         return True
     ratio = float(time) / float(period)
     return abs(ratio - round(ratio)) <= 1e-9 * max(1., abs(ratio))
+
+
+def _remove_file(path: str) -> None:
+    """The file *path* removed, when there is one."""
+    if os.path.isfile(path):
+        os.remove(path)
 
 
 def _write_json(path: str, content: dict) -> None:
@@ -407,7 +416,8 @@ class SceneRecorder:
     (ParaView: Select at scale), the templates and the kinds' recovery operators shared parts written once in
     frames/parts; "full" every interior recovered and written in every display frame; None the reduced groups not
     drawn. *pack_at_finish*: the frames folder packed into frames.fspm.zip when the run finishes (*pack_compression*
-    "deflate", the default, "lzma": about 3 times smaller, 5 times slower to pack, or "stored"), the folder kept.
+    "deflate", the default, "lzma": about 3 times smaller, 5 times slower to pack, or "stored"), the archive checked,
+    then the folder removed, unless *pack_keep_folder* (recorder.pack()).
     *checkpoint_period* and *keep_checkpoints* (None: all); *tables* {name: function(scene)} and *table_period*.
     *frame_views*: the frames' views.json (encoding3d's views: layers for ParaView), written at the first frame: None
     (none), "default" (io.encoding3d.default_views: the shoots, the roots as tubes, the soil grids), a views dict, or the
@@ -420,7 +430,7 @@ class SceneRecorder:
                  checkpoint_period=None, keep_checkpoints: int = 2, tables: dict = None,
                  table_period="step", frame_views=None, display_period=None, display_plants=None,
                  display: str = "instances", pack_at_finish: bool = False, pack_compression: str = "deflate",
-                 conservation: bool = True):
+                 pack_keep_folder: bool = False, conservation: bool = True):
         self.folder = os.fspath(folder) if folder is not None else None
         self.summaries, self.summary_period = bool(summaries), _period(summary_period, "summary_period")
         self.conservation = bool(conservation)
@@ -448,6 +458,7 @@ class SceneRecorder:
                              "frame_options['display']")
         self.display = display
         self.pack_at_finish, self.pack_compression = bool(pack_at_finish), str(pack_compression)
+        self.pack_keep_folder = bool(pack_keep_folder)
         if self.pack_at_finish and not self.frame_period:
             raise ValueError("SceneRecorder(pack_at_finish=True) packs the frames: give it a frame_period")
         if self.pack_compression not in ("deflate", "lzma", "stored"):
@@ -872,6 +883,8 @@ class SceneRecorder:
         os.makedirs(folder, exist_ok=True)
         index_path = os.path.join(folder, encoding3d.codec.INDEX_FILE)
         first = self._frames is None
+        if not first or self.resume:            # the frames packed, the folder removed: the run goes on in it
+            self._unpack_frames()
         if first:
             self._frames, self._parts = [], set()
             if self.resume and os.path.exists(index_path):       # a restored run: the frames up to its step
@@ -880,6 +893,9 @@ class SceneRecorder:
                 for entry in self._frames:
                     entry.pop("path", None)
                 self._parts = set(index.get("parts", {}))
+            elif os.path.exists(index_path):    # an earlier run's frames in this folder: removed (its parts below)
+                for entry in encoding3d.read_index(index_path)["frames"]:
+                    _remove_file(os.path.join(folder, entry["file"]))
         name = f"frame_{scene.iteration:06d}.glb"
         if self._frame_variables is None:              # a filter keeps what the views show: the views first
             filtered = self.frame_options.get("variables") is not None
@@ -901,19 +917,30 @@ class SceneRecorder:
             self._parts = set(encoding3d.read_index(index_path).get("parts", {}))
         return os.path.join(folder, name)
 
-    def pack(self) -> str:
+    def pack(self, keep_folder: bool = None) -> str:
         """The frames folder packed into frames.fspm.zip next to it (encoding3d.pack, pack_compression: each file
-        an unchanged member, read as the folder); its path. SceneRecorder(pack_at_finish=True) calls it when the run
-        finishes."""
+        an unchanged member, read as the folder), the archive checked (every file a member, its size and CRC-32
+        read back, the archive valid: else encoding3d.ArchiveCheckError, the folder kept), then the folder removed
+        unless *keep_folder* (None: pack_keep_folder); its path. SceneRecorder(pack_at_finish=True) calls it when
+        the run finishes. Frames written after it (the run going on, or resumed) unpack the archive first."""
         from openalea.metafspm.io.encoding3d import _encoding3d
         encoding3d = _encoding3d()
+        keep_folder = self.pack_keep_folder if keep_folder is None else bool(keep_folder)
         path = encoding3d.pack(os.path.join(self.folder, "frames"), os.path.join(self.folder, "frames.fspm.zip"),
-                               compression=self.pack_compression)
+                               compression=self.pack_compression, keep_folder=keep_folder)
         if self._run is not None:
             self._run["frames_archive"] = os.path.relpath(path, self.folder)
             if self._run.get("ended"):                 # packed after the run finished: run.json says so too
                 _write_json(os.path.join(self.folder, "run.json"), self._run)
         return path
+
+    def _unpack_frames(self) -> None:
+        """frames/ back from frames.fspm.zip when the folder was removed by pack (a run going on, or resumed)."""
+        folder = os.path.join(self.folder, "frames")
+        archive = os.path.join(self.folder, "frames.fspm.zip")
+        if not os.path.exists(os.path.join(folder, "scene.fspm.json")) and os.path.isfile(archive):
+            from openalea.metafspm.io.encoding3d import _encoding3d
+            _encoding3d().unpack(archive, folder)
 
     def _checkpoint(self, scene) -> str:
         """Scene.checkpoint into checkpoints/step_<iteration>, their parts saved once in checkpoints/shared; the older
@@ -951,12 +978,16 @@ class SceneRecorder:
                 kept = table[table["time"] <= scene.time + 1e-9 * max(1., abs(scene.time))]
                 if len(kept) < len(table):
                     kept.to_csv(path, index=False)
+        self._unpack_frames()
         index_path = os.path.join(self.folder, "frames", "scene.fspm.json")
         if os.path.exists(index_path):
             from openalea.metafspm.io.encoding3d import _encoding3d
             encoding3d = _encoding3d()
             index = encoding3d.read_index(index_path)
             frames = [entry for entry in index["frames"] if entry["step"] <= scene.iteration]
+            for entry in index["frames"]:          # the interrupted run's later frames removed
+                if entry["step"] > scene.iteration:
+                    _remove_file(entry["path"])
             for entry in frames:
                 entry.pop("path", None)
             encoding3d.write_index(index_path, frames, time_unit="s", parts=sorted(index.get("parts", {})))
@@ -1028,7 +1059,7 @@ class SceneRecorder:
                          "frame_period": self.frame_period, "frame_options": _described(self.frame_options),
                          "display_period": self.display_period, "display_plants": self.display_plants,
                          "display": self.display, "pack_at_finish": self.pack_at_finish,
-                         "pack_compression": self.pack_compression,
+                         "pack_compression": self.pack_compression, "pack_keep_folder": self.pack_keep_folder,
                          "frame_views": self.frame_views if self.frame_views in (None, "default") else "given",
                          "checkpoint_period": self.checkpoint_period, "tables": sorted(self.tables),
                          "table_period": self.table_period, "conservation": self.conservation}}

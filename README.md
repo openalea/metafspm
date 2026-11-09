@@ -175,8 +175,9 @@ A reduction's groups (e.g. the cells of reduced cross sections) are written as i
 (`SceneRecorder(display="instances")`, the default; `"full"` draws every recovered interior, `None` leaves them out):
 the templates and the kinds' recovery operators are shared parts written once, and the reader rebuilds the values
 of the instances it selects. `SceneRecorder(pack_at_finish=True)` packs the frames into one `frames.fspm.zip` at
-the end (`recorder.pack()`; `encoding3d unpack ARCHIVE.fspm.zip FOLDER` restores the folder; encoding3d and its
-ParaView reader also read the archive as it is).
+the end (`recorder.pack()`), checks it (every file a member, read back unchanged, the archive valid), then removes
+the folder (`pack_keep_folder=True` keeps it; `encoding3d unpack ARCHIVE.fspm.zip FOLDER` restores it; encoding3d
+and its ParaView reader also read the archive as it is, and a run resumed from a checkpoint unpacks it).
 
 encoding3d's Python package, `openalea.encoding3d`, is a dependency of metafspm. Until it is published, clone
 [encoding3d](https://github.com/openalea/encoding3d) next to metafspm; `conda/environment.yml` installs it from there

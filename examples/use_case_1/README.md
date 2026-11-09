@@ -181,7 +181,8 @@ run.py [days] [plants] [folder]`, by default 14 days, 2 plants, `outputs/from_so
 settings (days, plants, the time step, the sowing's date), the stand (one row, 5 cm apart, 3 cm deep), the Scene
 (the plants, the soil and the light, the weather, the run configuration `Compute(threads="auto")`), its
 recorder (the tables, frames every 12 hours with their views, the first plant's sections once a day, a checkpoint a
-day), `scene.simulate(...)`, then `scene.recorder.pack()`, the frames in one archive. What it assembles lives in
+day, the last one kept), `scene.simulate(...)`, then `scene.recorder.pack()`, the frames in one archive, checked,
+then their folder removed. What it assembles lives in
 `models.py`: the plant model and its scenario, the soil's and the light's scenarios (`SOIL_SCENARIO`: a loam 50 cm
 deep, ten layers of 5 cm cells refined once where the roots take up water; `LIGHT_SCENARIO`), the weather
 (`weather(start)`: a clear day's PAR, the air's temperature and humidity in a daily course, a rain of 5 mm on the
@@ -211,11 +212,17 @@ every hour (the tables can be read while it runs):
 - `run.json`: the run's progress after every hour, then its end, with the wall time per model and per component
   (`timing`), the calls per component, the threads chosen and each kernel's and solver's time and threads
   (`compute`) and the frames' archive;
-- `frames/`: a frame every 12 hours with its views (`frame_views="default"`), the sections of the first plant
-  (`display_plants=["p0"]`) drawn in the frames of every 24 hours and the last (`display_period`), packed at the end
-  into `frames.fspm.zip`;
-- `checkpoints/`: one a day (the last two kept; the anatomy templates and the reduced sections saved once, in
-  `checkpoints/shared`): `Scene.load_checkpoint` resumes the run from it, bit for bit.
+- `frames/`, while the run goes: a frame every 12 hours with its views (`frame_views="default"`), the sections of the
+  first plant (`display_plants=["p0"]`) drawn in the frames of every 24 hours and the last (`display_period`);
+- `frames.fspm.zip`, at the end (`scene.recorder.pack()`): the frames folder in one archive, each file an unchanged
+  member. The archive is checked once written (every file of the folder a member, of the same size and CRC-32 read
+  back, and the archive valid by encoding3d's validator), then the folder is removed (`pack(keep_folder=True)`
+  keeps it; when the check fails, the folder stays and the error is raised). ParaView, `encoding3d.read_index` and
+  `read` open the archive as the folder; `encoding3d unpack frames.fspm.zip frames` gives it back;
+- `checkpoints/`: one a day, the last one kept (`keep_checkpoints=1`: each removed once the next is written; the
+  anatomy templates and the reduced sections saved once, in `checkpoints/shared`, those no kept checkpoint uses
+  removed): `Scene.load_checkpoint` resumes the run from it, bit for bit, the frames unpacked from `frames.fspm.zip`
+  into `frames/` again, the next ones added, all packed again at the end.
 
 The run's configuration, `Compute(threads="auto")` (metafspm's default, shown in `run.py`): the
 processors for numba's kernels, the plant system's blocks and the reduction's kinds (each kind's Kron reduction in
@@ -338,10 +345,10 @@ per template and per kind, in `frames/parts/` (listed in `scene.fspm.json`), the
 select. In ParaView (encoding3d's plugin): show the hidden layer "WheatPlant GranapAnatomy instances", pick a
 section, apply "encoding3d Select at scale" (scale SubOrgan): the section is drawn with `psi` on each cell (or tick
 the reader's "Evaluate Derived Fields" for every section). `run.py`'s last line, `scene.recorder.pack()`, writes
-`frames.fspm.zip` (deflate, each frame an unchanged member: 16 MB for the 47 MB folder of a 3-day run), which
-ParaView opens as the folder (`encoding3d.read_index` and `read` too; `encoding3d unpack` gives the folder back).
-`pvbatch encoding3d/paraview/check_in_paraview.py --instances shots outputs/<run>/frames/scene.fspm.json` checks it
-by hand (it passed on a 2-day run: three sections selected, their 30,065 and 3,420 cells' `psi` equal to
+`frames.fspm.zip` (deflate, each frame an unchanged member: 16.3 MB for the 45.0 MB folder of a 2-plant 3-day run,
+which it then removes), which ParaView opens as the folder (`encoding3d.read_index` and `read` too; `encoding3d
+unpack` gives the folder back). `pvbatch encoding3d/paraview/check_in_paraview.py --instances shots
+outputs/<run>/frames.fspm.zip` checks it by hand (it passed on a 2-day run: three sections selected, their 30,065 and 3,420 cells' `psi` equal to
 `encoding3d.evaluate`'s).
 
 Measured with `benchmark.py --outputs` (2026-11-06; the display frames draw p0's sections, the use case's frame
@@ -359,6 +366,12 @@ kind's operator, 0.6 to 5.7 MB as its sparse system, when a new kind is drawn: t
 run's frames grow by the kinds drawn, not by the frames. A 2-day run (1 plant, 5 frames, 3 drawing the sections):
 frames 0.3 to 0.6 MB, parts 34 MB, the folder 37 MB, packed 14 MB. A checkpoint is 8 MB at day 3 (1 plant), 36 MB at
 day 8 (2 plants), the anatomy templates and the kinds (0.4 to 0.9 GB) written once in `checkpoints/shared`.
+
+The disk a run takes (`python run.py 3 2`, 2026-11-09): 343.6 MB at its end, of which `frames.fspm.zip` 16.3 MB
+(7 frames and 27 parts; the folder it replaces 45.0 MB, its parts 41.2 MB), `checkpoints/` 327.1 MB (the last
+one, `step_000072`, 8.5 MB; `shared` 318.6 MB) and the tables 0.2 MB. Before, the run kept the folder beside its
+archive and the last two checkpoints: about 45 MB and a checkpoint (8 MB at day 3, 36 MB at day 8) more. The
+shared parts, not the checkpoints themselves, take most of the disk, written once whatever `keep_checkpoints`.
 
 Its tests are in `test/test_assembly.py` (the example's own, as the plant's), on one plant grown from its sowing to
 its first blade's emergence by daily steps (Adel and ArchiSimple grow it whatever the step; the light, the gas

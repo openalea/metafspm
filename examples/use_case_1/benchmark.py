@@ -388,8 +388,8 @@ def outputs(scene) -> dict:
     display frame with the sections of DISPLAY_PLANTS drawn as instances (display_instances_<k>: the frame, the
     parts it adds to the frames' parts/ folder, their count) and whole (display_full_<k>), at this step (k 1) and
     the next (k 2: the parts it shares with the first not written again), the instances' two frames and parts packed
-    (display_instances_packed: deflate, encoding3d.pack); two checkpoints one step apart into one shared folder (the
-    second refers to the first's parts); their size (MB) and time (s)."""
+    (display_instances_packed: deflate, encoding3d.pack: checked, then the folder removed); two checkpoints one step
+    apart into one shared folder (the second refers to the first's parts); their size (MB) and time (s)."""
     import shutil
     from openalea.metafspm.io.encoding3d import _encoding3d, default_views, scene_to_frame, with_view_columns
     folder = os.path.join(BENCHMARKS, "outputs")
@@ -432,11 +432,11 @@ def outputs(scene) -> dict:
     encoding3d.write_index(os.path.join(instances, "scene.fspm.json"),
                            [{"time": float(k), "step": k, "file": f"frame_{k:06d}.glb"} for k in (1, 2)],
                            time_unit="s", parts=sorted(keys))
+    instances_MB = folder_size(instances) / 1e6
     started = time.perf_counter()
-    packed = encoding3d.pack(instances, os.path.join(folder, "instances.fspm.zip"))
+    packed = encoding3d.pack(instances, os.path.join(folder, "instances.fspm.zip"))    # checked, the folder removed
     found["display_instances_packed"] = {"seconds": time.perf_counter() - started,
-                                         "MB": os.path.getsize(packed) / 1e6,
-                                         "folder_MB": folder_size(instances) / 1e6}
+                                         "MB": os.path.getsize(packed) / 1e6, "folder_MB": instances_MB}
     found["display_full_folder"] = {"seconds": found["display_full_1"]["seconds"]
                                     + found["display_full_2"]["seconds"],
                                     "MB": folder_size(os.path.join(folder, "full")) / 1e6}

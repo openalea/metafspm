@@ -135,7 +135,8 @@ variables, the soil, and the 3D shapes.
   shape (`frames/parts/`) and coloured on demand: select one at a scale ("encoding3d Select at scale") to see its
   cells' values.
 - `SceneRecorder("outputs", frame_period="1 d", pack_at_finish=True)` also packs the frames into one file,
-  `outputs/frames.fspm.zip`, to share or archive; ParaView opens it like the folder.
+  `outputs/frames.fspm.zip`, to share or archive, then removes the folder once the archive is checked; ParaView
+  opens it like the folder.
 
 encoding3d is installed with metafspm (the steps above). ParaView's plugin is the file
 `encoding3d/paraview/plugin_encoding3d.py`, loaded once from ParaView's Tools → Manage Plugins... menu (Load New ...,

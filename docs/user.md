@@ -885,8 +885,10 @@ time (an event's, a planting time) is a duration since time 0 or a date (`"2026-
     the end of each accepted sub-step times its length, over the solved entities), the change of what is held and
     their residual, change − (inflow − outflow), the solver's tolerance for a conservative system
     (`component.conservation(reset=False)` reads it);
-  - `frames/` (encoding3d, every `frame_period`) and `checkpoints/step_<n>` (every `checkpoint_period`, the last
-    `keep_checkpoints` kept; their unchanging parts saved once in `checkpoints/shared`, below).
+  - `frames/` (encoding3d, every `frame_period`; `frames.fspm.zip` instead once packed, below) and
+    `checkpoints/step_<n>` (every `checkpoint_period`, the last `keep_checkpoints` kept, 2 by default, 1 for the
+    last only: the older one is removed once the next is written; their unchanging parts saved once in
+    `checkpoints/shared`, below).
 
   Each output is switched on its own (`summaries=False`, `frame_period=None`, ...); the initial state is recorded
   at the first step and the last one at the end. Without a folder the tables stay in memory, and
@@ -970,8 +972,13 @@ time (an event's, a planting time) is a duration since time 0 or a date (`"2026-
   `examples/use_case_1/README.md` for the day-8 and 2-plant numbers.
   **One file to share:** `SceneRecorder(pack_at_finish=True)` packs the frames folder into `frames.fspm.zip` when
   the run finishes (`pack_compression="deflate"`, the default, about a third of the folder for instances' frames;
-  `"lzma"` smaller and slower; `"stored"`), keeping the folder (`recorder.pack()` packs it on demand; `encoding3d
-  pack FOLDER OUT.fspm.zip` from the command line, `encoding3d unpack` back). ParaView's reader and
+  `"lzma"` smaller and slower; `"stored"`; `recorder.pack()` packs it on demand). The archive is checked once
+  written (`encoding3d.check_archive`: every file of the folder a member, of the same size and CRC-32 read back,
+  and the archive valid by encoding3d's validator); only then is the folder removed. `pack_keep_folder=True` (or
+  `recorder.pack(keep_folder=True)`) keeps it; when the check fails, nothing replaces the archive, the folder stays
+  and `encoding3d.ArchiveCheckError` is raised. A run resumed from a checkpoint (`Scene.load_checkpoint`), or going
+  on after a pack, unpacks the archive into `frames/` first, then adds its frames. From the command line:
+  `encoding3d pack FOLDER OUT.fspm.zip [--keep-folder]`, `encoding3d unpack` back. ParaView's reader and
   `encoding3d.read_index`/`read` open the archive as the folder (`frames.fspm.zip/frame_000024.glb`).
   `frame_options=` passes
   `scene_to_frame`'s options (e.g. `geometry=False`). For logging, the options also filter what each frame keeps:

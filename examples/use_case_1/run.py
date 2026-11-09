@@ -14,9 +14,10 @@ What the run writes in its folder, after every hour (all tables can be read whil
                         the leaves' gas exchange, the roots' water, the water diagnostics (models.TABLES)
     conservation.csv    the plant's and the soil's water balances (inflow, outflow, change, residual)
     run.json            the run's progress, then its end: the time each model and component took
-    frames/             an encoding3d frame every 12 hours (open frames/scene.fspm.json in ParaView), packed into
-                        frames.fspm.zip at the end
-    checkpoints/        the last two days' (Scene.load_checkpoint resumes the run from one)
+    frames/             an encoding3d frame every 12 hours (open frames/scene.fspm.json in ParaView), while it runs
+    frames.fspm.zip     at the end, the frames packed into one file, checked, then the folder removed (ParaView
+                        opens the archive as the folder)
+    checkpoints/        the last day's (Scene.load_checkpoint resumes the run from it, the frames unpacked again)
 """
 import os
 import sys
@@ -61,8 +62,9 @@ scene = Scene(
         frame_options={"variables": FRAME_VARIABLES},
         display_period="1 d",                 # the sections drawn once a day, those of the first plant only
         display_plants=["p0"],
-        checkpoint_period="1 d"),
+        checkpoint_period="1 d",
+        keep_checkpoints=1),                  # the last one only: each removed once the next is written
 )
 
 scene.simulate(round(DAYS * 24))
-scene.recorder.pack()                         # the frames in one file, frames.fspm.zip, to share or archive
+scene.recorder.pack()      # the frames in one file, frames.fspm.zip, checked, then the folder removed

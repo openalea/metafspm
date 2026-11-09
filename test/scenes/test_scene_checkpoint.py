@@ -167,6 +167,29 @@ def test_checkpoints_every_period_the_last_ones_kept(tmp_path):
     assert restored.iteration == 6
 
 
+def test_a_packed_run_resumes_from_its_one_checkpoint(tmp_path):
+    """keep_checkpoints=1 keeps the last checkpoint only; the frames packed at the end (the folder removed) are
+    unpacked by the restored run, which appends its own and packs them all again."""
+    from openalea.encoding3d import read_index
+    from openalea.encoding3d.validate import validate_file
+    out = tmp_path / "out"
+    recorder = dict(frame_period="1 h", checkpoint_period="2 h", keep_checkpoints=1, pack_at_finish=True)
+    scene = _scene(str(out), **recorder)
+    scene.simulate(4)
+    assert sorted(os.listdir(out / "checkpoints")) == ["step_000004"] and not os.path.exists(out / "frames")
+    assert [entry["step"] for entry in read_index(str(out / "frames.fspm.zip"))["frames"]] == [0, 1, 2, 3, 4]
+    restored = Scene.restore(str(out / "checkpoints" / "step_000004"), **_scene_arguments(str(out), **recorder))
+    restored.simulate(2)
+    assert sorted(os.listdir(out / "checkpoints")) == ["step_000006"] and not os.path.exists(out / "frames")
+    archive = str(out / "frames.fspm.zip")
+    assert [entry["step"] for entry in read_index(archive)["frames"]] == [0, 1, 2, 3, 4, 5, 6]
+    assert validate_file(archive).ok
+    straight = tmp_path / "straight"
+    _scene(str(straight), **recorder).simulate(6)
+    summaries = "Plant/RootPopulation/summaries.csv"
+    pd.testing.assert_frame_equal(pd.read_csv(out / summaries), pd.read_csv(straight / summaries))
+
+
 def test_a_scene_restored_with_other_arguments_is_refused(tmp_path):
     scene = _scene()
     scene.checkpoint(str(tmp_path / "c"))

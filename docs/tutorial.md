@@ -152,7 +152,8 @@ The dry air pulls more water through the seedling than the humid one, despite it
   colour its cells by their water potential, or tick the reader's "Evaluate Derived Fields" to colour every section
   (slower on large stands). `SceneRecorder(display="full")` writes every cell's value in every frame instead.
 - **One file to share.** `SceneRecorder(..., pack_at_finish=True)` packs `frames/` into `frames.fspm.zip` when the
-  run finishes (about a third of its size); ParaView and encoding3d open the archive as they open the folder.
+  run finishes (about a third of its size), checks the archive, then removes the folder (`pack_keep_folder=True`
+  keeps it); ParaView and encoding3d open the archive as they open the folder.
 - **Restart.** `Scene.restore("outputs/dry/checkpoints/step_000048", **the same arguments)` continues the run.
   The recorder then cuts its tables back to the checkpoint's time, so a run that went past it leaves no duplicate
   rows. To go on with a changed parameter, build the scene with the changed scenario and resume with

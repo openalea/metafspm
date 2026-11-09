@@ -2,6 +2,25 @@
 
 ## Unreleased (release2026)
 
+### Breaking: a packed run's frames folder removed once its archive is checked
+
+- **`SceneRecorder.pack(keep_folder=None)`** and **`pack_at_finish`** check `frames.fspm.zip` once written
+  (encoding3d's `pack`: every file of the frames folder a member, of the same size and CRC-32, each member read back;
+  the archive valid, 0 errors), then **remove the frames folder**. `SceneRecorder(pack_keep_folder=True)` (or
+  `pack(keep_folder=True)`) keeps it; when the check fails, the folder stays, no archive replaces the former one and
+  `encoding3d.ArchiveCheckError` is raised. scenario.json's recorder records `pack_keep_folder`.
+- A run resumed from a checkpoint (`Scene.load_checkpoint`, `Scene.restore`), or going on after a pack, **unpacks
+  `frames.fspm.zip` into `frames/`** when the folder is gone, cuts it back to the restored step and adds its frames;
+  the next pack holds them all. The frame files the cut removes from the index are removed too (they were left
+  behind), and so are a former run's frames when a new run starts in the same folder, so that the folder holds its
+  sequence only and can be removed whole.
+- Use case 1's `run.py`: `keep_checkpoints=1` (the last day's only) and `scene.recorder.pack()` removing the folder;
+  a 2-plant 3-day run takes 343.6 MB at its end (`frames.fspm.zip` 16.3 MB for its 45.0 MB folder, `checkpoints/`
+  327.1 MB: the last 8.5 MB, `shared` 318.6 MB); the archive validates with 0 errors (the soil's 3 "cell ids
+  reused" errors are gone with encoding3d's validator fix: an adaptive grid's cell refined again is the same cell),
+  ParaView's reader opens it, and the run resumes from its one checkpoint (frames 0 to 84 packed again).
+  `benchmark.py --outputs` measures the instances' folder before packing it.
+
 ### Breaking: frames' missing property values as row ranges
 
 - An MPGDataStructure's frame writes its properties' missing values compactly: the extras' **`absent_rows`** (the
