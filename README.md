@@ -1,11 +1,15 @@
 # MetaFSPM
+[![Anaconda-Server Badge](https://anaconda.org/openalea3/openalea.metafspm/badges/license.svg)](https://anaconda.org/openalea3/openalea.metafspm)
+
+[![Build Status](https://github.com/openalea/metafspm/actions/workflows/conda-build.yml/badge.svg?branch=main)](https://github.com/openalea/metafspm/actions/workflows/conda-build.yml?query=branch%3Amain)
 [![Docs](https://readthedocs.org/projects/metafspm/badge/?version=latest)](https://metafspm.readthedocs.io/)
-(Not yet)
-[![Build Status](https://github.com/openalea/mtg/actions/workflows/conda-package-build.yml/badge.svg?branch=master)](https://github.com/openalea/mtg/actions/workflows/conda-package-build.yml?query=branch%3Amaster)
+
+[![Anaconda-Server Badge](https://anaconda.org/openalea3/openalea.metafspm/badges/version.svg)](https://anaconda.org/openalea3/openalea.metafspm)
+[![Anaconda-Server Badge](https://anaconda.org/openalea3/openalea.metafspm/badges/platforms.svg)](https://anaconda.org/openalea3/openalea.metafspm)
 [![Python Version](https://img.shields.io/badge/python-3.8%20%7C%203.9%20%7C%203.10%20%7C%203.11%20%7C%203.12-blue)](https://www.python.org/downloads/)
-[![License](https://img.shields.io/badge/License--CeCILL-C-blue)](https://www.cecill.info/licences/Licence_CeCILL-C_V1-en.html)
-(Not yet)
-[![Anaconda-Server Badge](https://anaconda.org/openalea3/mtg/badges/version.svg)](https://anaconda.org/openalea3/metafspm)
+[![Downloads](https://anaconda.org/openalea3/openalea.metafspm/badges/downloads.svg)](https://anaconda.org/openalea3/openalea.metafspm)
+
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.1003173.svg)](https://doi.org/10.5281/zenodo.1003173)
 
 ## Purpose 
 
@@ -56,7 +60,8 @@ None of them is on the `openalea3` channel in these versions yet (Adel's and Car
 models, without these components): clone each one on its branch next to metafspm and install both with
 `pip install -e`, in the environment of the package's `conda/environment.y(a)ml` (mamba, from `openalea3` and
 `conda-forge`). The steps for each package are in [metafspm in five minutes](docs/five_minutes.md#installing-them),
-which also explains, in plain words, what a component, a plant model and a scene are.
+which also explains metafspm's core ideas in plain words through use case 1: components, plant models, links, the
+scene and its step, the recorder.
 
 The rest of this page is for those who build or couple models.
 
