@@ -19,7 +19,8 @@ include-package-data = false # force explicit declaration of data (disable autom
 name = "openalea.metafspm"
 authors = [
   { name = "Tristan Gérault", email = "tristan.gerault@uclouvain.be" },
-  { name = "Christophe Pradal", email = "christophe.pradal@cirad.fr" }
+  { name = "Christophe Pradal", email = "christophe.pradal@cirad.fr" },
+  { name = "Fabrice Bauget" },
 ]
 description = "Generic Management of FSPM dynamic processes and scheduling for OpenAlea"
 readme = "README.md"

@@ -14,6 +14,8 @@ authors:
   - family-names: "Gérault"
     given-names: "Tristan"
     email: "tristan.gerault@uclouvain.be"
+    affiliation: "UCLouvain"
+    orcid: "https://orcid.org/0000-0000-0000-0000"      # stand-in: your ORCID
   - family-names: "Rees"
     given-names: "F."
   - family-names: "Barillot"
@@ -21,6 +23,15 @@ authors:
   - family-names: "Pradal"
     given-names: "Christophe"
     email: "christophe.pradal@cirad.fr"
+    affiliation: "CIRAD"                                 # stand-in: check (e.g. "CIRAD, Inria")
+    orcid: "https://orcid.org/0000-0000-0000-0000"      # stand-in
+  - family-names: "Bauget"
+    given-names: "Fabrice"
+    affiliation: "Affiliation"                           # stand-in
+    orcid: "https://orcid.org/0000-0000-0000-0000"      # stand-in
+# The concept DOI Zenodo gives the first archived release (it resolves to the latest version); the version DOIs
+# are Zenodo's, one per release, and need not be listed here.
+doi: "10.5281/zenodo.0000000"                            # stand-in: the concept DOI once Zenodo has minted it
 repository-code: "https://github.com/openalea/metafspm"
 url: "https://metafspm.readthedocs.io"
 license: CECILL-C
