@@ -333,6 +333,17 @@ unchanged (2.8 s: elements appear every hour while the plants grow, so it is rel
 light, the mean over the rest of the interval rather than over the hour, moves PARa up to 38 % at an hour (An up to
 41 %, transpiration 26 %). A sparser lighting would need the relight rule relaxed.
 
+**The nested light** (`LIGHT_SCENARIO`'s `mode="nested"` since 2026-11-10; the measures above were made with the
+direct light). Measured that day (`benchmark.py`, from the sowing, "auto"): the step is the direct light's within
+the runs' spread, Caribu 0.20 s per step at 8 plants day 8, 0.27 s at days 12 and 13 (the direct light's 0.17 and
+0.21), 0.23, 0.28 and 0.33 s at 2 plants days 16, 19 and 22 (0.18, 0.24, 0.26); at 1 thread, 8 plants day 13,
+0.59 s of a 4.32 s step. The canopy is small (376 triangles at 8 plants day 13, 268 at 2 plants day 22) and its
+pattern narrower than the 0.5 m sphere: the near field holds every triangle's images, 50 to 64 pairs per triangle,
+and costs 0.04 to 0.06 s; the sky's and the sun's projections (direct light's z-buffer) remain two thirds of
+Caribu's time, the radiosity solve (5 MGCR steps) under a millisecond. The plants absorb 1.19 to 1.27 times the
+direct light's PAR (the same triangles): the soil's reflection reaching the leaves from below and, less, their
+scattering.
+
 The frames keep a few variables, the run's explicit choice (`models.FRAME_VARIABLES`, the recorder's
 `frame_options={"variables": ...}`; without it, every variable), and what the frames' views show, which the recorder
 adds itself (in italics below). Every entity set keeps its structure (ids, labels, complex and parent links, the
