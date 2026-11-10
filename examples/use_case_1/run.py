@@ -5,7 +5,8 @@ Use case 1: wheat plants growing in their soil and their light, hour by hour, fr
 
 Each plant is Adel's shoot on its crown, ArchiSimple's roots, GRANAP's anatomy of every section, MECHA's water flow
 from the soil to the leaves, CNW-Grass's gas exchange and Caribu's light (models.WheatPlant); the soil is Richards'
-equation on an adaptive grid (component.RichardsSoilModel).
+equation on an adaptive grid (component.RichardsSoilModel). Caribu's light is the direct light and its scattering in
+the infinite canopy (its nested radiosity, models.LIGHT_SCENARIO), the sun's and the sky's, every hour.
 
 What the run writes in its folder, after every hour (all tables can be read while it runs):
     Plant/WheatPlant/summaries.csv, Soil/RichardsSoilModel/summaries.csv

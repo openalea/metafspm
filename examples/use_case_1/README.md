@@ -1,7 +1,8 @@
 # Use case 1: a wheat plant in its soil and its light
 
 A soil–plant–atmosphere assembly that tests metafspm before the release: ArchiSimple's roots, Adel's shoot, GRANAP's
-anatomies, MECHA's water flow, CNW-Grass's gas exchange, Caribu's light, and the soil of this folder. The
+anatomies, MECHA's water flow, CNW-Grass's gas exchange, Caribu's light (the direct light and its scattering in the
+infinite canopy), and the soil of this folder. The
 environment is `environment.yaml` (`mamba env create -f environment.yaml`, the repositories cloned side by side).
 
 ## The soil (`component.py`)
@@ -184,7 +185,10 @@ recorder (the tables, frames every 12 hours with their views, the first plant's 
 day, the last one kept), `scene.simulate(...)`, then `scene.recorder.pack()`, the frames in one archive, checked,
 then their folder removed. What it assembles lives in
 `models.py`: the plant model and its scenario, the soil's and the light's scenarios (`SOIL_SCENARIO`: a loam 50 cm
-deep, ten layers of 5 cm cells refined once where the roots take up water; `LIGHT_SCENARIO`), the weather
+deep, ten layers of 5 cm cells refined once where the roots take up water; `LIGHT_SCENARIO`: Caribu's nested
+radiosity, `mode="nested"`, the direct light and its scattering in the infinite canopy, radiosity between the
+triangles within a sphere of 0.5 m around each, their periodic images included, and a turbid medium of 10 layers
+beyond, the sun at Paris' latitude, lit every hour), the weather
 (`weather(start)`: a clear day's PAR, the air's temperature and humidity in a daily course, a rain of 5 mm on the
 second day, `forcings.pulse`: its total reaches the soil whatever the step), the tables (`TABLES`) and the frames'
 variables (`FRAME_VARIABLES`).

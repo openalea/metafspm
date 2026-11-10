@@ -26,7 +26,8 @@ translators linking their components.
                         PARa and the optics are the Scene's default identity links
     SOIL_SCENARIO, LIGHT_SCENARIO
                         the environment's scenarios: a loam 50 cm deep, refined once where the roots take up water;
-                        Caribu's light with the sun, every hour
+                        Caribu's light (direct light and its scattering in the infinite canopy: nested
+                        radiosity) with the sun, every hour
     weather(start)      the Scene's forcings: a clear May day's PAR, the air's daily course, a rain on the second day
     TABLES              what the recorder writes after each step besides its summaries (declared tables, Summary):
                         the water diagnostics of decision U-6 (WATER_TABLES: plant_water, leaf_water, soil_water), the
@@ -193,9 +194,12 @@ FRAME_VARIABLES = {
 # The soil: a loam 50 cm deep (ten layers of 5 cm cells, below the roots of two weeks), refined once where the roots
 # take up water, its water at -1 m of head
 SOIL_SCENARIO = {"depth": 0.5, "voxel": 0.05, "max_level": 1, "initial_pressure_head": -1.}
-# The light: Caribu with the sun at Paris' latitude, lit every hour (its lighting step's cadence)
+# The light: Caribu's direct light and its scattering in the infinite canopy (nested radiosity: radiosity between
+# the triangles within a sphere of 0.5 m around each, its periodic images included, a turbid medium of 10 layers
+# beyond: the component's defaults, the scene in m), with the sun at Paris' latitude, lit every hour (its lighting
+# step's cadence)
 LATITUDE = 48.85
-LIGHT_SCENARIO = {"sun": True, "latitude": LATITUDE, "cadence": {"light": "1 h"}}
+LIGHT_SCENARIO = {"mode": "nested", "sun": True, "latitude": LATITUDE, "cadence": {"light": "1 h"}}
 # The rain: 5 mm in the afternoon of the second day (a pulse: its total reaches the soil whatever the time step)
 RAIN = ("38 h", "39 h", 5e-3)
 
