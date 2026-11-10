@@ -38,6 +38,11 @@
   reads are at fresh arrays (`values_at`, `values_of`), 535 plans a step at 8 plants, day 12, the repeated ones
   small (28 % of the vertices located), no cache hit for the read-only ones (`_read_plan` keeps its own); the step
   is unchanged within the runs' spread (3.80-3.84 s against 3.82).
+- **The recorder's summaries and tables** (`scene.recorder`): an entity grouping sorted out once for every variable
+  of a summary (`Grouping(owner, groups).aggregate`, `grouped` its one-variable form: the same entities in the same
+  order, bit for bit), a union part's layout (the light's) once per summary, and the summary plan once per step
+  (`SceneRecorder.summary_plan`, kept while the DataStructure's variables and topology are the same, for the
+  summaries and every table). 8 plants at day 12: 0.110 → 0.052 s a step.
 - The user guide (*Cores of a hybrid CPU*) and use case 1's README document the main thread's core on a hybrid CPU:
   `taskset -c 0-3` keeps a run on the performance cores when the machine is shared (8 plants at day 12: +29 % on the
   efficient cores, +122 % on the low-power ones; nothing gained on an idle machine). No Compute setting.

@@ -166,6 +166,52 @@ def test_summary_arguments_and_grouping():
     assert pd.isna(grouped([1.], [0], 2, "max")[1])
 
 
+def test_a_grouping_aggregates_as_the_masked_entities_bit_for_bit():
+    """Grouping(owner, groups).aggregate, the owners sorted out once for several variables: the same values, bit for
+    bit, as the entities kept (an owner, a finite value and weight) aggregated in their order."""
+    from openalea.metafspm.scene.recorder import Grouping
+    generator = np.random.default_rng(3)
+    for owner in (generator.integers(-1, 4, 1000), generator.integers(0, 4, 1000)):
+        grouping = Grouping(owner, 5)
+        for _ in range(3):
+            values = generator.normal(size=1000) * 1e3
+            values[generator.random(1000) < 0.1] = np.nan
+            weights = generator.random(1000)
+            weights[generator.random(1000) < 0.05] = np.inf
+            for how, weight in (("sum", None), ("mean", None), ("mean", weights), ("min", None), ("max", None)):
+                kept = (owner >= 0) & np.isfinite(values) & (True if weight is None else np.isfinite(weight))
+                if how == "sum":
+                    expected = np.bincount(owner[kept], weights=values[kept], minlength=5)
+                elif how == "mean":
+                    w = np.ones(int(kept.sum())) if weight is None else weight[kept]
+                    total = np.bincount(owner[kept], weights=w, minlength=5)
+                    sums = np.bincount(owner[kept], weights=values[kept] * w, minlength=5)
+                    expected = np.divide(sums, total, out=np.full(5, np.nan), where=total > 0)
+                else:
+                    expected = np.full(5, np.inf if how == "min" else -np.inf)
+                    (np.minimum if how == "min" else np.maximum).at(expected, owner[kept], values[kept])
+                    expected[~np.isfinite(expected)] = np.nan
+                got = grouping.aggregate(values, how, weight)
+                assert got.tobytes() == expected.tobytes(), how
+                assert grouped(values, owner, 5, how, weight).tobytes() == expected.tobytes()
+
+
+def test_the_summary_plan_is_kept_for_the_step():
+    """The recorder's summary plan of a DataStructure is made once per step (the summaries and every table read it),
+    and made again at the next step or when the DataStructure's variables change (its version)."""
+    scene = _scene()
+    with pytest.warns(UserWarning):
+        scene.simulate(1)
+    recorder, ds = scene.recorder, scene.populations[0].data_structure
+    plan = recorder.summary_plan(scene, ds)
+    assert recorder.summary_plan(scene, ds) is plan
+    ds.register("extra", np.zeros(ds.n_nodes()), location="node")         # a new variable: its version
+    assert recorder.summary_plan(scene, ds) is not plan
+    plan = recorder.summary_plan(scene, ds)
+    scene.simulate(1)
+    assert recorder.summary_plan(scene, ds) is not plan
+
+
 def test_a_grids_intensive_variables_are_weighted_by_its_cells_volumes():
     """An environment model's grid: an intensive variable's mean weighted by its cells' volumes (refined cells
     weigh less), an extensive one summed, a descriptor left out."""

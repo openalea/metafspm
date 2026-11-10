@@ -102,28 +102,52 @@ def grouped(values, owner, groups: int, how: str, weights=None) -> np.ndarray:
     """
     *values* aggregated by group (*owner*: each entity's group index, -1 for none): "sum", "mean" (weighted by
     *weights* when given), "min" or "max"; the entities with a NaN value (or a NaN weight) left out; NaN for a group
-    without entities (a mean, an extreme) or with no weight.
+    without entities (a mean, an extreme) or with no weight. (Grouping(owner, groups).aggregate: the same, the owners
+    sorted out once for several variables.)
     """
-    values = np.asarray(values, dtype=float)
-    owner = np.asarray(owner, dtype=np.int64)
-    kept = (owner >= 0) & np.isfinite(values)
-    if weights is not None:
-        weights = np.asarray(weights, dtype=float)
-        kept &= np.isfinite(weights)
-    owner, values = owner[kept], values[kept]
-    if how == "sum":
-        return np.bincount(owner, weights=values, minlength=groups)
-    if how == "mean":
-        weights = np.ones(values.size) if weights is None else weights[kept]
-        total = np.bincount(owner, weights=weights, minlength=groups)
-        sums = np.bincount(owner, weights=values * weights, minlength=groups)
-        return np.divide(sums, total, out=np.full(groups, np.nan), where=total > 0)
-    if how in ("min", "max"):
-        out = np.full(groups, np.inf if how == "min" else -np.inf)
-        (np.minimum if how == "min" else np.maximum).at(out, owner, values)
-        out[~np.isfinite(out)] = np.nan
-        return out
-    raise ValueError(f"grouped(how=...): 'sum', 'mean', 'min' or 'max', got '{how}'")
+    return Grouping(owner, groups).aggregate(values, how, weights)
+
+
+class Grouping:
+    """The entities' groups (*owner*: each entity's group index, -1 for none; *groups* of them), sorted out once for
+    every variable aggregated over them (a summary's columns): aggregate(values, how, weights) is grouped()'s, the
+    same entities in the same order."""
+
+    def __init__(self, owner, groups: int):
+        owner = np.asarray(owner, dtype=np.int64)
+        self.groups = groups
+        self.valid = owner >= 0
+        self.every = bool(self.valid.all())
+        self.owner = owner if self.every else owner[self.valid]
+
+    def aggregate(self, values, how: str, weights=None) -> np.ndarray:
+        values = np.asarray(values, dtype=float)
+        if not self.every:
+            values = values[self.valid]
+        kept = np.isfinite(values)
+        if weights is not None:
+            weights = np.asarray(weights, dtype=float)
+            if not self.every:
+                weights = weights[self.valid]
+            kept &= np.isfinite(weights)
+        owner = self.owner
+        if not kept.all():
+            owner, values = owner[kept], values[kept]
+            weights = None if weights is None else weights[kept]
+        groups = self.groups
+        if how == "sum":
+            return np.bincount(owner, weights=values, minlength=groups)
+        if how == "mean":
+            weights = np.ones(values.size) if weights is None else weights
+            total = np.bincount(owner, weights=weights, minlength=groups)
+            sums = np.bincount(owner, weights=values * weights, minlength=groups)
+            return np.divide(sums, total, out=np.full(groups, np.nan), where=total > 0)
+        if how in ("min", "max"):
+            out = np.full(groups, np.inf if how == "min" else -np.inf)
+            (np.minimum if how == "min" else np.maximum).at(out, owner, values)
+            out[~np.isfinite(out)] = np.nan
+            return out
+        raise ValueError(f"grouped(how=...): 'sum', 'mean', 'min' or 'max', got '{how}'")
 
 
 def compartment(model) -> str:
@@ -361,24 +385,24 @@ class Summary:
             if factor is not None:
                 values = values * np.concatenate([self._values(ds, factor, location) for ds, location, _ in parts])
             return values
-        owner = np.concatenate([np.asarray(owner, dtype=np.int64) for _, _, owner in parts])
+        grouping = Grouping(np.concatenate([np.asarray(owner, dtype=np.int64) for _, _, owner in parts]), groups)
         out = {}
         for name, factor in self.sum.items():
-            out[name] = grouped(pooled(name, factor), owner, groups, "sum")
+            out[name] = grouping.aggregate(pooled(name, factor), "sum")
         for name, weight in self.mean.items():
             if weight == "declared":
                 plans = [recorder.summary_plan(scene, ds).get(name) for ds, _, _ in parts]
                 declared = {plan[2] for plan in plans if plan is not None}
                 weight = declared.pop() if len(declared) == 1 else None
-            out[name] = grouped(pooled(name), owner, groups, "mean", None if weight is None else pooled(weight))
+            out[name] = grouping.aggregate(pooled(name), "mean", None if weight is None else pooled(weight))
         for name in self.min:
-            out[f"{name}_min"] = grouped(pooled(name), owner, groups, "min")
+            out[f"{name}_min"] = grouping.aggregate(pooled(name), "min")
         for name in self.max:
-            out[f"{name}_max"] = grouped(pooled(name), owner, groups, "max")
+            out[f"{name}_max"] = grouping.aggregate(pooled(name), "max")
         for name in self.max_change:
             change = np.concatenate([np.abs(self._values(ds, name, location) - _previous(ds, name, location))
                                      for ds, location, _ in parts])
-            out[f"{name}_max_change"] = grouped(change, owner, groups, "max")
+            out[f"{name}_max_change"] = grouping.aggregate(change, "max")
         return out
 
 
@@ -583,6 +607,19 @@ class SceneRecorder:
         return [c for c in scene.components if base_of(getattr(c, "data_structure", None)) is ds]
 
     def summary_plan(self, scene, ds) -> dict:
+        """summary_plan's plan (_summary_plan), kept for the scene's iteration while *ds*'s variables and topology
+        are the same (its version, topology_version): the summaries and the tables of one record read it once."""
+        key = (id(ds), getattr(ds, "version", None), getattr(ds, "topology_version", None))
+        iteration = (id(scene), getattr(scene, "iteration", None), getattr(scene, "time", None))
+        kept = self.__dict__.get("_plans")
+        if kept is None or kept[0] != iteration:
+            kept = self.__dict__["_plans"] = (iteration, {})
+        hit = kept[1].get(key)
+        if hit is None or hit[0] is not ds:
+            hit = kept[1][key] = (ds, self._summary_plan(scene, ds))
+        return hit[1]
+
+    def _summary_plan(self, scene, ds) -> dict:
         """
         {name: (location, kind, weight, holder, part, entities)} of what summaries.csv holds for *ds*: the float state
         variables of every component on *ds* or on one of its views (each at its location on *ds*: a view's
@@ -654,23 +691,32 @@ class SceneRecorder:
         return {f"{name}_{j}": flat[:, j] for j in range(flat.shape[1])}
 
     @staticmethod
-    def _planned_values(ds, name, holder, part):
+    def _planned_values(ds, name, holder, part, layouts: dict = None):
         """The values of a summarised variable at its entities of *ds*: a union's at the entities of *ds*'s part it
-        holds (by their ids: the union's layout may be a step behind the part's growth), NaN elsewhere."""
+        holds (by their ids: the union's layout may be a step behind the part's growth), NaN elsewhere. *layouts*: a
+        dict keeping each union part's layout (its offset in the union, which of its ids *ds* holds and where) for
+        the next variables of the same summaries."""
         if name == CELL_VOLUME:
             cells = int(np.prod(ds._location_shape("cell")))
             return np.broadcast_to(np.asarray(ds.cell_volume(), dtype=float), (cells,))
         if part is None:                                   # a view's variable: the base's, every entity
             return np.asarray(ds.get(name), dtype=float)
-        k = next(j for j, other in enumerate(holder.parts) if other is part)
-        offset = int(sum(len(ids) for ids in holder._ids[:k]))
-        ids = np.asarray(holder._ids[k], dtype=np.int64)
-        held = np.asarray(holder.get(name), dtype=float)[offset:offset + ids.size]
-        location = part.__dict__.get("_at", "node")
-        known = np.asarray(ds.entity_ids(location), dtype=np.int64)
-        out = np.full(known.size, np.nan)
-        present = np.isin(ids, known)
-        out[np.asarray(ds.index_of(ids[present], location), dtype=np.int64)] = held[present]
+        layout = None if layouts is None else layouts.get((id(holder), id(part)))
+        if layout is None:
+            k = next(j for j, other in enumerate(holder.parts) if other is part)
+            offset = int(sum(len(ids) for ids in holder._ids[:k]))
+            ids = np.asarray(holder._ids[k], dtype=np.int64)
+            location = part.__dict__.get("_at", "node")
+            known = np.asarray(ds.entity_ids(location), dtype=np.int64)
+            present = np.isin(ids, known)
+            layout = (offset, ids.size, known.size, present,
+                      np.asarray(ds.index_of(ids[present], location), dtype=np.int64))
+            if layouts is not None:
+                layouts[(id(holder), id(part))] = layout
+        offset, size, count, present, rows = layout
+        held = np.asarray(holder.get(name), dtype=float)[offset:offset + size]
+        out = np.full(count, np.nan)
+        out[rows] = held[present]
         return out
 
     def plant_summaries(self, scene, population) -> pd.DataFrame:
@@ -681,10 +727,10 @@ class SceneRecorder:
         plants = np.asarray(ds.entity_ids("Plant"))
         names = population.plant_names()
         table = {"time": float(scene.time), "plant": [names.get(int(v), str(v)) for v in plants]}
-        owners = {}
+        owners, groupings, layouts = {}, {}, {}
         for name, (location, kind, weight, holder, part, entities) in self.summary_plan(scene, ds).items():
-            values = self._planned_values(ds, name, holder, part)
-            weights = None if weight is None else self._planned_values(ds, weight, holder, part)
+            values = self._planned_values(ds, name, holder, part, layouts)
+            weights = None if weight is None else self._planned_values(ds, weight, holder, part, layouts)
             if location == "Plant":
                 table.update(self._columns_of(ds, name, values, location))
                 continue
@@ -695,20 +741,23 @@ class SceneRecorder:
             if location not in owners:
                 owners[location] = np.asarray(ds.owner("Plant") if location == "node" else
                                               ds.owner("Plant", of=location), dtype=np.int64)
-            owner = owners[location] if entities is None else np.where(entities, owners[location], -1)
+            grouping = groupings.get((location, id(entities)))     # the owners sorted out once per entities
+            if grouping is None or grouping[0] is not entities:
+                owner = owners[location] if entities is None else np.where(entities, owners[location], -1)
+                grouping = groupings[(location, id(entities))] = (entities, Grouping(owner, plants.size))
             for column, column_values in self._columns_of(ds, name, values, location).items():
-                table[column] = grouped(column_values, owner, plants.size,
-                                        "sum" if kind in EXTENSIVE_KINDS else "mean", weights)
+                table[column] = grouping[1].aggregate(column_values, "sum" if kind in EXTENSIVE_KINDS else "mean",
+                                                      weights)
         return pd.DataFrame(table)
 
     def environment_summary(self, scene, ds) -> pd.DataFrame:
         """One row: time, the float state variables of *ds* (an environment model's), extensive ones summed over
         their entities, intensive ones their mean weighted by their declared weight (a grid's: its cells' volume),
         else plain; the entities without a value (NaN) left out."""
-        row = {"time": float(scene.time)}
+        row, layouts = {"time": float(scene.time)}, {}
         for name, (location, kind, weight, holder, part, entities) in self.summary_plan(scene, ds).items():
-            values = self._planned_values(ds, name, holder, part)
-            weights = None if weight is None else self._planned_values(ds, weight, holder, part)
+            values = self._planned_values(ds, name, holder, part, layouts)
+            weights = None if weight is None else self._planned_values(ds, weight, holder, part, layouts)
             for column, column_values in self._columns_of(ds, name, values, location).items():
                 if location == "scalar":
                     row[column] = float(np.ravel(column_values)[0])
