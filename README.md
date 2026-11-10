@@ -143,8 +143,8 @@ goes through it on a seedling in a soil column (`examples/soil_plant_atmosphere/
 
 How a run uses the machine is its `Compute` (`Scene(..., compute=Compute(threads="auto", device="cpu",
 memory="trim", linear_solver=None))`, the default): the threads (`"auto"`: the processors, each parallel part taking
-those that pay, a reduction's kinds included, the results the same at any number), an optional GPU, the memory given
-back after each step and the graph systems' sparse solver (`linear_solver="superlu_reuse"`, say, for every system;
+those that pay, a reduction's kinds included, the results the same at any number), an optional GPU, the memory (glibc's allocator held to two arenas, the memory freed given
+back after each step) and the graph systems' sparse solver (`linear_solver="superlu_reuse"`, say, for every system;
 a mapping such as `{"default": "superlu", "symmetric": "cholmod"}` gives each system its own, by its qualified name
 `"Component._system"`, else a property it declares, else `"default"`). `scene.timing` gives the time per model and per component.
 See the user guide's *Performance notes* and [Running on a GPU](docs/gpu.md), which also covers repeated runs

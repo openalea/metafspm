@@ -57,8 +57,3 @@ dependencies:
     - "-e ../../../GRANAP"       # openalea.granap: an anatomy per segment
     - "-e ../../../MECHA-dev"    # openalea.mecha: the water flow on the whole plant's network
     - "-e ../../../cnwgrass"     # openalea.cnwgrass (branch to_metafspm): the gas exchange component, once ported
-
-# glibc's allocator: two arenas (read when the process starts, not settable from Python), 0.6 GB less at the peak of
-# a 2-plant run for no time; metafspm's Compute(memory="trim") gives the freed memory back after each step
-variables:
-  MALLOC_ARENA_MAX: "2"

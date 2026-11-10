@@ -2,6 +2,19 @@
 
 ## Unreleased (release2026)
 
+### Outside the solvers: the allocator, the recorder and the lookups (bit-identical)
+
+- **`Compute(memory="trim")`, the default, holds glibc's allocator to two arenas** (`mallopt(M_ARENA_MAX, 2)`,
+  `compute.ARENAS`, `Compute.limit_arenas`), once per process when a Compute's `limits()` is first entered (the
+  Scene's build, before its worker threads), besides `malloc_trim(0)` after each step. It matches the environment
+  variable `MALLOC_ARENA_MAX=2` at the process's start (use case 1, 8 plants resumed from day 12: resident memory
+  2.73-2.76 GB against 3.17-3.31, peak 3.68-3.76 GB against 4.13-4.23, the step unchanged), which the use case's
+  `environment.yaml` no longer sets. An arena limit set in the environment (`MALLOC_ARENA_MAX`, `GLIBC_TUNABLES`) is
+  kept; `memory="keep"` does neither; both are no-ops where the C library is not glibc.
+- The user guide (*Cores of a hybrid CPU*) and use case 1's README document the main thread's core on a hybrid CPU:
+  `taskset -c 0-3` keeps a run on the performance cores when the machine is shared (8 plants at day 12: +29 % on the
+  efficient cores, +122 % on the low-power ones; nothing gained on an idle machine). No Compute setting.
+
 ### Breaking: the former keyword names removed
 
 - `graph_system(max_iter=, tol=, fd_eps=, n_substeps=)` raise `TypeError` (use `max_iterations=`, `tolerance=`,

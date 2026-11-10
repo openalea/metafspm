@@ -1207,10 +1207,14 @@ omitted) says how the scene uses the machine:
   `device` defaults to it (Caribu's near field). CuPy is optional: a missing one, or no CUDA device, raises when the
   Scene is built, with the install line; nothing imports it otherwise. The transfers are counted in `run.json`
   (`"compute": {"device": ...}`). What moves, when it pays and how to check it: [Running on a GPU](gpu.md).
-- `memory="trim"`: glibc's `malloc_trim(0)` after each step, the memory freed given back (use case 1 at day 8: 4.7 →
-  2.5 GB); `"keep"`: nothing. The allocator's arenas are an environment variable read when the process starts:
-  `MALLOC_ARENA_MAX=2` (0.6 GB less at the peak, no time cost), set in the examples' `environment.yaml`
-  (`variables:`) or in the shell (`export MALLOC_ARENA_MAX=2`).
+- `memory="trim"`: glibc's allocator held to two arenas, and `malloc_trim(0)` after each step, the memory freed given
+  back (use case 1 at day 8: 4.7 → 2.5 GB); `"keep"`: neither. glibc gives each thread that allocates an arena of its
+  own (up to 8 per core), each keeping the memory freed in it: `mallopt(M_ARENA_MAX, 2)`, set once per process when
+  the Scene is built (before its threads), keeps 0.4-0.6 GB less (use case 1, 8 plants resumed from day 12: the
+  resident memory 2.73-2.76 GB against 3.17-3.31, the peak 3.68-3.76 against 4.13-4.23, the step 3.82 s against
+  3.83-3.85; measured 2026-11-10), as the environment variable `MALLOC_ARENA_MAX=2` does at the process's start (the
+  same numbers). A `MALLOC_ARENA_MAX` (or `GLIBC_TUNABLES` `glibc.malloc.arena_max`) set in the environment is kept.
+  Both are no-ops where the C library is not glibc (macOS, Windows, musl).
 - `kind_batch=200_000`: the most interior cells a reduction evaluates at once (its missing kinds in batches, the
   memory freed between them: a blade's kind is about 10k cells, a stem's 45k).
 
@@ -1218,6 +1222,20 @@ Within the scene's build and steps, `Compute.current()` is the scene's Compute (
 being given it: a reduction's batches, the linear solvers resolved per system); outside, a default `Compute()`.
 `scenario.json` records the Compute (a mapping as given, its `"default"` filled in),
 `run.json` the threads chosen and the kernels' and solvers' timing.
+
+### Cores of a hybrid CPU
+
+A step is one chain of components on the main thread; the other threads only take the parallel sections (numba's
+kernels, the linear solves' blocks, the kinds, Caribu's projections). Its time therefore follows the core the main
+thread runs on. On a hybrid CPU (performance and efficient cores) the scheduler keeps a busy thread on a performance
+core when the machine is idle, so pinning gains nothing there; beside other work (a test suite, a browser, a second
+run), the run can be moved to slower cores. Use case 1, 8 plants resumed from day 12, at 1 thread on a Core Ultra 7
+255U (measured 2026-11-10): 4.02 s per hour on its performance cores or unpinned, **5.19 s (+29 %) on its efficient
+cores, 8.92 s (+122 %) on its low-power efficient cores**, the results identical. On Linux, `taskset -c 0-3 python
+run.py` keeps the run on the performance cores (here processors 0-3; `lscpu --extended` or
+`/sys/devices/cpu_core/cpus` lists them); `threads="auto"` then counts those processors (`machine()`, its
+`core_types` recorded in `run.json`). There is no Compute setting for it: an idle machine gains nothing, and macOS
+has no affinity setting.
 
 ### Repeated runs: `run_variants`
 

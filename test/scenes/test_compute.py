@@ -1,7 +1,7 @@
 """
 The run configuration (openalea.metafspm.compute.Compute): the threads limited while a scene runs and restored after,
-the memory trimmed after each step, threads="auto" (the processors) and each parallel section's threads, the
-kernels' and solvers' timing, the components' threads and device settings, and what scenario.json and run.json
+the memory trimmed after each step and the allocator's arenas limited, threads="auto" (the processors) and each
+parallel section's threads, the kernels' and solvers' timing, the components' threads and device settings, and what scenario.json and run.json
 record.
 """
 import json
@@ -189,6 +189,56 @@ def test_the_memory_is_trimmed_after_each_step_unless_kept(monkeypatch):
     assert calls == []
     monkeypatch.setattr(compute_module, "_malloc_trim", lambda: None)       # no malloc_trim (macOS, Windows)
     assert Compute().trim() is False
+
+
+def test_the_allocators_arenas_are_limited_once_when_the_compute_is_applied(monkeypatch):
+    calls = []
+
+    def mallopt(parameter, value):
+        calls.append((parameter, value))
+        return 1
+
+    monkeypatch.delenv("MALLOC_ARENA_MAX", raising=False)
+    monkeypatch.delenv("GLIBC_TUNABLES", raising=False)
+    monkeypatch.setattr(compute_module, "_ARENAS", [])
+    monkeypatch.setattr(compute_module, "_glibc", lambda name, argtypes: mallopt if name == "mallopt" else None)
+    scene = _scene()                                    # the Scene's build enters limits(): the limit set there
+    assert calls == [(compute_module.M_ARENA_MAX, compute_module.ARENAS)] == [(-8, 2)]
+    scene.run()
+    assert Compute().limit_arenas() is True and len(calls) == 1     # once per process
+    assert Compute(memory="keep").limit_arenas() is False
+
+
+def test_the_environments_arena_limit_is_kept(monkeypatch):
+    calls = []
+    monkeypatch.setattr(compute_module, "_ARENAS", [])
+    monkeypatch.setattr(compute_module, "_glibc", lambda name, argtypes: lambda *args: calls.append(args) or 1)
+    monkeypatch.delenv("GLIBC_TUNABLES", raising=False)
+    monkeypatch.setenv("MALLOC_ARENA_MAX", "4")
+    assert Compute().limit_arenas() is False
+    monkeypatch.delenv("MALLOC_ARENA_MAX")
+    monkeypatch.setenv("GLIBC_TUNABLES", "glibc.malloc.arena_max=3")
+    assert Compute().limit_arenas() is False
+    assert calls == []
+
+
+def test_the_arena_limit_is_a_no_op_outside_glibc(monkeypatch):
+    monkeypatch.delenv("MALLOC_ARENA_MAX", raising=False)
+    monkeypatch.delenv("GLIBC_TUNABLES", raising=False)
+    monkeypatch.setattr(compute_module, "_ARENAS", [])
+    monkeypatch.setattr(compute_module, "_LIBC", [None])          # macOS, Windows, musl: no glibc found
+    assert compute_module._glibc("mallopt", []) is None and compute_module._malloc_trim() is None
+    assert Compute().limit_arenas() is False
+    assert Compute().trim() is False
+    _scene().run()                                                 # runs all the same
+
+
+@pytest.mark.skipif(compute_module._libc() is None, reason="glibc only")
+def test_glibcs_mallopt_takes_the_arena_limit(monkeypatch):
+    monkeypatch.delenv("MALLOC_ARENA_MAX", raising=False)
+    monkeypatch.delenv("GLIBC_TUNABLES", raising=False)
+    monkeypatch.setattr(compute_module, "_ARENAS", [])
+    assert Compute().limit_arenas() is True
 
 
 def test_the_same_results_whatever_the_threads():

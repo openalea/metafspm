@@ -234,8 +234,10 @@ a thread), each part taking those that pay (the plant system's blocks in the cou
 4 on this laptop; BLAS stays at one thread at any `threads`: the results are the same bit for bit at any number;
 8 plants, day 13: 4.27 s per hour at 1 thread, 3.92 with "auto", measured 2026-11-08 after the generic kernels'
 GK-1 to GK-5 and the process pool's removal, against 4.93 and 4.75 the same day before them), the memory freed
-given back after each hour (`malloc_trim`), and the environment's `MALLOC_ARENA_MAX=2` (`environment.yaml`'s
-`variables:`; outside the conda environment, `export MALLOC_ARENA_MAX=2` before running). Its sparse solver may be
+given back after each hour (`malloc_trim`) and glibc's allocator held to two arenas (`Compute(memory="trim")`, the
+default: resumed from day 12, 8 plants keep 2.73-2.76 GB against 3.17-3.31 GB with glibc's default arenas, the
+peak 3.68-3.76 GB against 4.13-4.23, at the same time per hour, as `MALLOC_ARENA_MAX=2` in the environment gives;
+measured 2026-11-10). Its sparse solver may be
 chosen per graph system: `Compute(threads="auto", linear_solver={"default": "superlu", "symmetric": "cholmod"})`
 sends MECHA's standard problem (declared symmetric) to CHOLMOD (scikit-sparse 0.5, optional), the plant problem, its
 Kron reductions and the soil keeping SuperLU (`benchmark.py --linear-solver '{"symmetric": "cholmod"}'`). Measured
@@ -250,6 +252,17 @@ step's results identical bit for bit; resumed from day 8, day 12 and 13 take 3.5
 --linear-solver superlu|superlu_reuse|cholmod|pardiso|mumps` compares them (`--threads`: the budget of numba's
 kernels, the plant system's blocks and the kinds, "auto" by default; BLAS stays at one thread; the benchmark's entry
 records the threads chosen and each kernel's and solver's time, per step).
+
+**Cores of a hybrid CPU.** A step is one chain of components on the main thread (the other threads only take
+Caribu's projections, the kinds, the plant system's blocks and numba's kernels), so its time follows the core the
+main thread runs on. This laptop's Core Ultra 7 255U has 2 performance cores (processors 0-3), 8 efficient cores
+(4-11) and 2 low-power efficient cores (12-13): resumed from day 12, 8 plants take 4.02 s per hour at 1 thread on
+the performance cores, **5.19 s (+29 %) on the efficient cores and 8.92 s (+122 %) on the low-power ones** (measured
+2026-11-10, `taskset`; the results identical whatever the cores). On an idle machine the scheduler already keeps the
+busy main thread on a performance core (4.02 s unpinned too): pinning gains nothing there. Beside other work (a test
+suite, a browser, a second run), the run can be moved to the slower cores; `taskset -c 0-3 python run.py` keeps it
+on the performance cores (`lscpu --extended` or `/sys/devices/cpu_core/cpus` lists them; Linux only, macOS has no
+affinity setting). `threads="auto"` then counts the processors given (4 here).
 
 **Scaling** (measured 2026-11-07 on the same laptop, metafspm f3a2148, GRANAP c626201, after the incremental
 topology updates; `benchmark.py --variability 1`: each plant its own root draws, the plants sharing their kinds;

@@ -26,8 +26,11 @@ A scene's run configuration: how many threads it uses, its device and its memory
                  its default there) and the default of the components' setting named device (Caribu's near field).
                  "cuda" needs CuPy (optional: a missing CuPy, or no CUDA device, raises when the Scene is built, with
                  the install line); nothing imports cupy otherwise
-  memory         "trim" (default): glibc's malloc_trim(0) after each step, the memory freed given back to the system
-                 (a no-op where there is no malloc_trim: macOS, Windows); "keep": nothing
+  memory         "trim" (default): glibc's allocator held to ARENAS arenas (mallopt(M_ARENA_MAX), once per process, when
+                 a Compute's limits() is first entered: the Scene's build, before the scene's worker threads; as the
+                 environment's MALLOC_ARENA_MAX=2, which a set MALLOC_ARENA_MAX or GLIBC_TUNABLES arena_max overrides:
+                 limit_arenas) and malloc_trim(0) after each step, the memory freed given back to the system (both
+                 no-ops where the C library is not glibc: macOS, Windows, musl); "keep": nothing
   linear_solver  the sparse solver of the graph systems' linear algebra (solve.linear's registry: their Newton
                  steps' solves, their static condensations', the reductions' Kron factorisations): "superlu" (the
                  default on the cpu, scipy's), "cupy" (the default on cuda: the device's), "superlu_reuse" (its
@@ -59,8 +62,11 @@ per machine: their cache, NUMBA_CACHE_DIR for a read-only install): warm_up(), o
 runs every kernel on tiny inputs, metafspm's (kernels.warm_up) and every installed port's (the entry points of group
 "openalea.metafspm.warm_up"): once at install, and in CI before the suites.
 
-The allocator's arenas are not set here (MALLOC_ARENA_MAX=2 saves 0.6 GB on use case 1): an environment variable read
-when the process starts, set in the examples' environment.yaml (docs/user.md).
+The allocator's arenas: glibc gives each thread that allocates its own arena, up to 8 per core, and keeps the memory
+freed in each; two arenas keep 0.4-0.6 GB less on use case 1 (8 plants, day 12) at no time cost. glibc fixes its
+limit when the ninth arena is made and never lowers it, the arenas made before staying: limit_arenas() therefore runs
+when a Compute's limits() is first entered (the Scene's build, before its kernels', solves' and kinds' threads), and
+matches the environment variable set at the process's start (measured: the same memory, the same time).
 """
 import argparse
 import ctypes
@@ -73,6 +79,9 @@ from dataclasses import dataclass, field, fields
 
 DEVICES = ("cpu", "cuda")
 MEMORY = ("trim", "keep")
+ARENAS = 2                    # glibc's arenas with memory "trim" (limit_arenas): 0.4-0.6 GB less on use case 1, no
+                              # time cost (8 plants, day 12: as MALLOC_ARENA_MAX=2)
+M_ARENA_MAX = -8              # glibc's mallopt parameter (malloc.h)
 WARM_UP_GROUP = "openalea.metafspm.warm_up"   # the entry points of the ports' warm_up() (warm_up runs them)
 _ACTIVE = []                  # the Computes whose limits() are entered, the innermost last
 _COUNTING = threading.Lock()  # Compute.count's: timings counted from several threads (the kinds')
@@ -148,6 +157,7 @@ class Compute:
         (threadpoolctl) held at 1 (BLAS_THREADS), both restored after; Compute.current() is this Compute within it."""
         from threadpoolctl import ThreadpoolController
         import numba
+        self.limit_arenas()
         if self._controller is None:
             self._controller = ThreadpoolController()
         numba_threads = numba.get_num_threads()
@@ -262,6 +272,19 @@ class Compute:
 
     # ── memory ──
 
+    def limit_arenas(self) -> bool:
+        """With memory "trim", glibc's allocator held to ARENAS arenas (mallopt(M_ARENA_MAX, ARENAS)), once per
+        process (limits() calls it first: before the scene's worker threads, the arenas made before staying), unless
+        the environment sets the limit itself (MALLOC_ARENA_MAX, or arena_max in GLIBC_TUNABLES: read by glibc at
+        the process's start, the user's choice kept). Whether this process's limit is ARENAS by this call (now or
+        earlier); False with memory "keep", an environment's limit, or a C library other than glibc."""
+        if self.memory != "trim" or _arenas_from_environment():
+            return False
+        if not _ARENAS:
+            mallopt = _glibc("mallopt", [ctypes.c_int, ctypes.c_int])
+            _ARENAS.append(mallopt is not None and mallopt(M_ARENA_MAX, ARENAS) == 1)
+        return _ARENAS[0]
+
     def trim(self) -> bool:
         """With memory "trim", the freed memory given back to the system (glibc's malloc_trim(0)): whether it was."""
         if self.memory != "trim":
@@ -274,21 +297,42 @@ class Compute:
 
 
 _LIBC = []
+_ARENAS = []                  # limit_arenas's result, once per process
+
+
+def _libc():
+    """The C library when it is glibc (it has gnu_get_libc_version), else None (macOS, Windows, musl)."""
+    if not _LIBC:
+        found = None
+        try:
+            libc = ctypes.CDLL(ctypes.util.find_library("c") or "libc.so.6")
+            if getattr(libc, "gnu_get_libc_version", None) is not None:
+                found = libc
+        except OSError:
+            pass
+        _LIBC.append(found)
+    return _LIBC[0]
+
+
+def _glibc(name: str, argtypes: list):
+    """glibc's function *name* (its arguments *argtypes*, an int returned), or None where the C library is not
+    glibc."""
+    libc = _libc()
+    function = None if libc is None else getattr(libc, name, None)
+    if function is not None:
+        function.argtypes, function.restype = argtypes, ctypes.c_int
+    return function
 
 
 def _malloc_trim():
-    """glibc's malloc_trim, or None where the C library has none."""
-    if not _LIBC:
-        function = None
-        try:
-            libc = ctypes.CDLL(ctypes.util.find_library("c") or "libc.so.6")
-            function = getattr(libc, "malloc_trim", None)
-        except OSError:
-            pass
-        if function is not None:
-            function.argtypes, function.restype = [ctypes.c_size_t], ctypes.c_int
-        _LIBC.append(function)
-    return _LIBC[0]
+    """glibc's malloc_trim, or None where the C library is not glibc."""
+    return _glibc("malloc_trim", [ctypes.c_size_t])
+
+
+def _arenas_from_environment() -> bool:
+    """Whether the environment sets glibc's arena limit (MALLOC_ARENA_MAX, or arena_max in GLIBC_TUNABLES), which
+    glibc read at the process's start."""
+    return "MALLOC_ARENA_MAX" in os.environ or "glibc.malloc.arena_max" in os.environ.get("GLIBC_TUNABLES", "")
 
 
 # ── the machine ───────────────────────────────────────────────────────────
