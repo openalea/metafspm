@@ -1,6 +1,6 @@
 """
-Smoke test of examples/soil_plant_atmosphere: the scenes (one plant, a population, one plant on an adaptive soil)
-converge to a steady state whose water balances close, and their plots are written; the tutorial's path from a
+Smoke test of examples/soil_plant_atm_fspm2026_workshop: the scenes (one plant, a population, one plant on an adaptive
+soil) converge to a steady state whose water balances close, and their plots are written; the tutorial's path from a
 scenario table to its outputs runs and its outputs read back.
 """
 import os
@@ -10,7 +10,7 @@ import numpy as np
 import pytest
 
 pytest.importorskip("matplotlib")
-EXAMPLE = os.path.join(os.path.dirname(__file__), "..", "..", "examples", "soil_plant_atmosphere")
+EXAMPLE = os.path.join(os.path.dirname(__file__), "..", "..", "examples", "soil_plant_atm_fspm2026_workshop")
 sys.path.insert(0, os.path.abspath(EXAMPLE))
 
 import one_plant                                                                     # noqa: E402

@@ -8,11 +8,11 @@ The one path through a metafspm simulation, five steps:
 4. read the outputs back;
 5. vary a parameter within its bounds.
 
-The script `examples/soil_plant_atmosphere/scenario_to_outputs.py` does all of it on a seedling in a column of soil
-under a day-and-night air, and runs in a few seconds:
+The script `examples/soil_plant_atm_fspm2026_workshop/scenario_to_outputs.py` does all of it on a seedling in a
+column of soil under a day-and-night air, and runs in a few seconds:
 
 ```bash
-cd examples/soil_plant_atmosphere
+cd examples/soil_plant_atm_fspm2026_workshop
 python scenario_to_outputs.py outputs/scenarios
 ```
 

@@ -1,5 +1,5 @@
 # MetaFSPM
-[![Docs](https://readthedocs.org/projects/mtg/badge/?version=latest)](https://metafspm.readthedocs.io/)
+[![Docs](https://readthedocs.org/projects/metafspm/badge/?version=latest)](https://metafspm.readthedocs.io/)
 (Not yet)
 [![Build Status](https://github.com/openalea/mtg/actions/workflows/conda-package-build.yml/badge.svg?branch=master)](https://github.com/openalea/mtg/actions/workflows/conda-package-build.yml?query=branch%3Amaster)
 [![Python Version](https://img.shields.io/badge/python-3.8%20%7C%203.9%20%7C%203.10%20%7C%203.11%20%7C%203.12-blue)](https://www.python.org/downloads/)
@@ -139,7 +139,8 @@ environment. See the documentation in `docs/`: the user guide (`docs/user.md`), 
 A simulation follows one path: a scenario table (`read_scenarios`), `planting`, a `Scene` with its `forcings=` and
 a `SceneRecorder`, `simulate`, then the outputs read back (`run.json`, the `Plant/` and `Soil/` summaries, the
 frames), and `variants` of a scenario within the declared bounds. [From a scenario to its outputs](docs/tutorial.md)
-goes through it on a seedling in a soil column (`examples/soil_plant_atmosphere/scenario_to_outputs.py`).
+goes through it on a seedling in a soil column
+(`examples/soil_plant_atm_fspm2026_workshop/scenario_to_outputs.py`).
 
 How a run uses the machine is its `Compute` (`Scene(..., compute=Compute(threads="auto", device="cpu",
 memory="trim", linear_solver=None))`, the default): the threads (`"auto"`: the processors, each parallel part taking

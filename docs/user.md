@@ -1101,8 +1101,8 @@ MECHA's developer tutorial 10 goes through all of it on a seedling's root system
 
 ## 8. A complete example
 
-`examples/soil_plant_atmosphere/` puts every feature above together, on water flow from a water table through the
-soil and seedlings to a dry atmosphere:
+`examples/soil_plant_atm_fspm2026_workshop/` puts every feature above together, on water flow from a water table
+through the soil and seedlings to a dry atmosphere:
 - transport components for the plants' anatomy graph and for the soil grid, on shared flow equations;
 - structural components building the seedlings at every scale, with their anatomies, and computing the conductances;
 - boundary sets and boundary equations;

@@ -146,7 +146,7 @@ tick Auto Load); `encoding3d/paraview/README.md` is the how-to (layers, colour m
 
 - The **framework guide** ({doc}`user`) describes each part: data structures, components, structure, coupling,
   scenes, performance, and how to port a model.
-- metafspm's tutorial `examples/soil_plant_atmosphere/tutorial_fspm2026_general_usage.ipynb` builds components
+- metafspm's tutorial `examples/soil_plant_atm_fspm2026_workshop/tutorial_fspm2026_general_usage.ipynb` builds components
   step by step and couples them with a soil.
 - Each package's **developer tutorials** (`example/tutorials/developer/`) read its component through this
   formalism.

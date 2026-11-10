@@ -2,6 +2,13 @@
 
 ## Unreleased (release2026)
 
+### Renamed: the soil–plant–atmosphere example
+
+- **`examples/soil_plant_atmosphere/` is now `examples/soil_plant_atm_fspm2026_workshop/`** (the scripts, figures,
+  scenarios and the two FSPM2026 workshop notebooks, unchanged), and its smoke test
+  `test/examples/test_soil_plant_atm_fspm2026_workshop.py`. The README, the docs, `conda/meta.yaml` and the ports'
+  developer notebooks point to the new path.
+
 ### Outside the solvers: the allocator, the recorder and the lookups (bit-identical)
 
 - **`Compute(memory="trim")`, the default, holds glibc's allocator to two arenas** (`mallopt(M_ARENA_MAX, 2)`,
