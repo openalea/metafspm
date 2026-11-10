@@ -414,6 +414,32 @@ def _previous(ds, name: str, location: str) -> np.ndarray:
         return np.full(int(np.prod(ds._location_shape(location))), np.nan)
 
 
+FRAME_WRITINGS = ("background", "synchronous")
+
+
+def _snapshot(value):
+    """*value* (a frame, or a part of it) with every array copied and every container new: nothing in it is shared
+    with what built it (the scene's arrays, a component's caches), so that the next steps may change those while it
+    is written. The shared parts (encoding3d Template, Operator: immutable, keyed by their content) are kept."""
+    import copy
+    from openalea.encoding3d import Operator, Template
+    if isinstance(value, np.ndarray):
+        return value.copy()
+    if isinstance(value, dict):
+        return {key: _snapshot(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_snapshot(item) for item in value]
+    if isinstance(value, tuple):
+        return tuple(_snapshot(item) for item in value)
+    if value is None or isinstance(value, (str, bytes, int, float, bool, np.generic, Template, Operator, type)):
+        return value
+    if hasattr(value, "__dict__"):
+        out = copy.copy(value)
+        out.__dict__.update({name: _snapshot(item) for name, item in value.__dict__.items()})
+        return out
+    return copy.deepcopy(value)
+
+
 class SceneRecorder:
     """
     The outputs of a Scene (see the module; every period a duration, "12 h", or "step"): *folder* (None: in memory,
@@ -447,6 +473,12 @@ class SceneRecorder:
     (none), "default" (io.encoding3d.default_views: the shoots, the roots as tubes, the soil grids), a views dict, or the
     path of a views file; its names are checked against that frame, with a warning for each one it lacks. A restored
     run keeps the views.json it finds.
+    *frame_writing*: "background" (default) each frame built in the step's thread (io.encoding3d.scene_to_frame),
+    then a snapshot of it (its arrays copied: nothing the next steps change) written by one writer thread
+    (encoding3d.write, then the frames' index) while the next steps run; a frame waits for the one before (one
+    snapshot in memory at most); a checkpoint, pack(), the run's end and a restore wait for it, and an error of the
+    writer is raised in the run's thread there or at the next frame. "synchronous": written in the step's thread.
+    The files are the same, byte for byte.
     """
 
     def __init__(self, folder: str = None, summaries: bool = True, summary_period="step", segment_plants=(),
@@ -454,7 +486,7 @@ class SceneRecorder:
                  checkpoint_period=None, keep_checkpoints: int = 2, tables: dict = None,
                  table_period="step", frame_views=None, display_period=None, display_plants=None,
                  display: str = "instances", pack_at_finish: bool = False, pack_compression: str = "deflate",
-                 pack_keep_folder: bool = False, conservation: bool = True):
+                 pack_keep_folder: bool = False, conservation: bool = True, frame_writing: str = "background"):
         self.folder = os.fspath(folder) if folder is not None else None
         self.summaries, self.summary_period = bool(summaries), _period(summary_period, "summary_period")
         self.conservation = bool(conservation)
@@ -481,6 +513,11 @@ class SceneRecorder:
             raise ValueError("SceneRecorder: the reduced groups' drawing is given by display=, not "
                              "frame_options['display']")
         self.display = display
+        if frame_writing not in FRAME_WRITINGS:
+            raise ValueError(f"SceneRecorder(frame_writing=...): one of {FRAME_WRITINGS}, got {frame_writing!r}")
+        self.frame_writing = frame_writing
+        self._writer = None            # the frames' writer thread (frame_writing "background"), made at the first frame
+        self._writing = None           # the frame being written there (a Future)
         self.pack_at_finish, self.pack_compression = bool(pack_at_finish), str(pack_compression)
         self.pack_keep_folder = bool(pack_keep_folder)
         if self.pack_at_finish and not self.frame_period:
@@ -541,6 +578,7 @@ class SceneRecorder:
         timing: a running run's state, read while it runs)."""
         self._record(scene)
         if self.checkpoint_period and _on(self.checkpoint_period, scene.time):
+            self.wait_for_frames()             # the checkpoint sees the frames written, their index complete
             self._checkpoint(scene)
         elif self.folder is not None and self._run is not None:
             self._write_run(scene)
@@ -548,6 +586,13 @@ class SceneRecorder:
     def finish(self, scene, status: str = "finished", error: BaseException = None) -> None:
         """The run's end: the last state (when not recorded at this step) and its status."""
         self._record(scene, final=True)
+        try:
+            self.wait_for_frames()
+        except Exception:
+            if error is None:              # (a run that failed keeps its own error)
+                raise
+        finally:
+            self._close_writer()
         if self.pack_at_finish and self._frames:
             self.pack()
         if self.folder is not None and self._run is not None:
@@ -953,18 +998,53 @@ class SceneRecorder:
         options = {**self.frame_options, "variables": self._frame_variables[0]}
         frame = scene_to_frame(scene, display_meshes=display, display_plants=self.display_plants,
                                display=self.display, **options)
-        self._parts.update(encoding3d.write(os.path.join(folder, name), frame))    # its parts: each written once
         if self.frame_views is not None and not self._views_written:
             if self._views is None:
                 self._views = self._views_content(scene, folder, display, unfiltered=frame)
             self._write_views(frame, folder, self._views)
-        self._frames = [entry for entry in self._frames if entry["step"] != scene.iteration]
-        self._frames.append({"time": float(scene.time), "step": int(scene.iteration), "file": name})
+        entry = {"time": float(scene.time), "step": int(scene.iteration), "file": name}
+        if self.frame_writing == "synchronous":
+            self._store_frame(frame, folder, entry, first)
+        else:                          # a snapshot written by the writer thread, once the frame before is
+            self.wait_for_frames()     # (one snapshot in memory at most)
+            snapshot = _snapshot(frame)
+            del frame
+            if self._writer is None:
+                from concurrent.futures import ThreadPoolExecutor
+                self._writer = ThreadPoolExecutor(max_workers=1, thread_name_prefix="metafspm-frames")
+            self._writing = self._writer.submit(self._store_frame, snapshot, folder, entry, first)
+        return os.path.join(folder, name)
+
+    def _store_frame(self, frame, folder: str, entry: dict, first: bool) -> None:
+        """*frame* written to folder/entry["file"] (its parts each once), and the frames' index updated."""
+        from openalea.metafspm.io.encoding3d import _encoding3d
+        encoding3d = _encoding3d()
+        index_path = os.path.join(folder, encoding3d.codec.INDEX_FILE)
+        self._parts.update(encoding3d.write(os.path.join(folder, entry["file"]), frame))   # its parts: once each
+        self._frames = [known for known in self._frames if known["step"] != entry["step"]]
+        self._frames.append(entry)
         encoding3d.write_index(index_path, self._frames, time_unit="s", parts=sorted(self._parts))
         if first:                     # the parts of frames not listed (an earlier run in this folder) removed
             encoding3d.prune_parts(index_path)
             self._parts = set(encoding3d.read_index(index_path).get("parts", {}))
-        return os.path.join(folder, name)
+
+    def wait_for_frames(self) -> None:
+        """The frame being written by the writer thread (frame_writing "background") complete: its file and the
+        frames' index written; the writer's error, if any, raised here."""
+        writing, self._writing = self._writing, None
+        if writing is not None:
+            writing.result()
+
+    def _close_writer(self) -> None:
+        if self._writer is not None:
+            self._writer.shutdown(wait=True)
+            self._writer = None
+
+    def __getstate__(self):
+        self.wait_for_frames()
+        state = dict(self.__dict__)
+        state.update(_writer=None, _writing=None)
+        return state
 
     def pack(self, keep_folder: bool = None) -> str:
         """The frames folder packed into frames.fspm.zip next to it (encoding3d.pack, pack_compression: each file
@@ -975,6 +1055,7 @@ class SceneRecorder:
         from openalea.metafspm.io.encoding3d import _encoding3d
         encoding3d = _encoding3d()
         keep_folder = self.pack_keep_folder if keep_folder is None else bool(keep_folder)
+        self.wait_for_frames()                 # the frame being written, complete before the folder is packed
         path = encoding3d.pack(os.path.join(self.folder, "frames"), os.path.join(self.folder, "frames.fspm.zip"),
                                compression=self.pack_compression, keep_folder=keep_folder)
         if self._run is not None:
@@ -1013,6 +1094,7 @@ class SceneRecorder:
     def resume_at(self, scene) -> None:
         """After a restore at *scene*'s time: every table cut back to its rows up to that time (the interrupted
         run's later rows removed), the frames' index to its steps up to that iteration; appended to from here."""
+        self.wait_for_frames()
         self.resume = True
         self._columns, self._frames = {}, None
         self._called = {output: scene.iteration for output in ("frames", "summaries", "segments", "conservation",
@@ -1107,7 +1189,8 @@ class SceneRecorder:
                          "segment_plants": sorted(self.segment_plants), "segment_period": self.segment_period,
                          "frame_period": self.frame_period, "frame_options": _described(self.frame_options),
                          "display_period": self.display_period, "display_plants": self.display_plants,
-                         "display": self.display, "pack_at_finish": self.pack_at_finish,
+                         "display": self.display, "frame_writing": self.frame_writing,
+                         "pack_at_finish": self.pack_at_finish,
                          "pack_compression": self.pack_compression, "pack_keep_folder": self.pack_keep_folder,
                          "frame_views": self.frame_views if self.frame_views in (None, "default") else "given",
                          "checkpoint_period": self.checkpoint_period, "tables": sorted(self.tables),

@@ -180,6 +180,9 @@ of the instances it selects. `SceneRecorder(pack_at_finish=True)` packs the fram
 the end (`recorder.pack()`), checks it (every file a member, read back unchanged, the archive valid), then removes
 the folder (`pack_keep_folder=True` keeps it; `encoding3d unpack ARCHIVE.fspm.zip FOLDER` restores it; encoding3d
 and its ParaView reader also read the archive as it is, and a run resumed from a checkpoint unpacks it).
+Each frame's file is written by a writer thread while the next steps run (`SceneRecorder(frame_writing=
+"background")`, the default; `"synchronous"` in the step's thread; the same files): a checkpoint, `pack()` and the
+run's end wait for it, `recorder.wait_for_frames()` too.
 
 encoding3d's Python package, `openalea.encoding3d`, is a dependency of metafspm. Until it is published, clone
 [encoding3d](https://github.com/openalea/encoding3d) next to metafspm; `conda/environment.yml` installs it from there

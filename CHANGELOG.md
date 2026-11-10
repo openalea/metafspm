@@ -43,6 +43,15 @@
   order, bit for bit), a union part's layout (the light's) once per summary, and the summary plan once per step
   (`SceneRecorder.summary_plan`, kept while the DataStructure's variables and topology are the same, for the
   summaries and every table). 8 plants at day 12: 0.110 → 0.052 s a step.
+- **Frames written in the background:** `SceneRecorder(frame_writing="background")`, the default (or
+  `"synchronous"`): each frame built in the step's thread, then a snapshot of it (`recorder._snapshot`: every array
+  copied, the shared parts kept) written by one writer thread (`encoding3d.write`, the frames' index) while the next
+  steps run; a frame waits for the one before (one snapshot in memory at most); `Scene.checkpoint`, the recorder's
+  checkpoints, `pack()`, the run's end and `resume_at` wait for it (`SceneRecorder.wait_for_frames`), and the
+  writer's error is raised in the run's thread there or at the next frame (a failed run keeps its own error).
+  Byte-identical to the synchronous writer (use case 1, 2 plants, 3 days; resumed from day 2 too); scenario.json
+  records it. Behaviour change: the frames folder read after `scene.run()` (not `simulate`) needs
+  `recorder.wait_for_frames()` first (metafspm's tests do).
 - The user guide (*Cores of a hybrid CPU*) and use case 1's README document the main thread's core on a hybrid CPU:
   `taskset -c 0-3` keeps a run on the performance cores when the machine is shared (8 plants at day 12: +29 % on the
   efficient cores, +122 % on the low-power ones; nothing gained on an idle machine). No Compute setting.

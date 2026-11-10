@@ -144,6 +144,7 @@ def test_a_variables_filter_keeps_what_the_views_show(tmp_path):
                              frame_options={"variables": named})
     scene = _scene(recorder)
     scene.run()
+    recorder.wait_for_frames()                               # the frame written in the background
     roots = _layers(views.read_views(_views_file(out)))["RootPopulation roots"]       # the unfiltered frame's views
     assert roots["color_by"]["variable"] == "struct_mass" and roots["tube"]["radius"] == "radius"
     assert {"length", "struct_mass", "radius"} <= _columns(out)
@@ -153,8 +154,10 @@ def test_a_variables_filter_keeps_what_the_views_show(tmp_path):
         {"name": "soil", "source": {"data_structure": "SceneSoil", "kind": "grid"},
          "color_by": {"entity_set": "cell", "variable": "soil_nitrate"}}]}}}
     out = str(tmp_path / "given")
-    _scene(SceneRecorder(out, frame_period="2 h", frame_views=given, summaries=False,
-                         frame_options={"variables": {"SceneSoil": []}})).run()
+    scene = _scene(SceneRecorder(out, frame_period="2 h", frame_views=given, summaries=False,
+                                 frame_options={"variables": {"SceneSoil": []}}))
+    scene.run()
+    scene.recorder.wait_for_frames()
     assert "soil_nitrate" in _columns(out, "cell", "SceneSoil")
     assert filtered_view_columns(given, {"SceneSoil": []}) == ["mine/soil: SceneSoil/cell/soil_nitrate"]
 
@@ -166,6 +169,7 @@ def test_the_recorded_variables(tmp_path):
     scene = _scene(SceneRecorder(out, summaries=False, frame_period="2 h", frame_views="default",
                                  frame_options={"variables": "recorded"}))
     scene.run()
+    scene.recorder.wait_for_frames()
     soil = _columns(out, "cell", "SceneSoil")
     assert "cell_volume" not in soil and "boundary_high_z" not in soil              # the grid's descriptors
     ds, _, components = scene.data_structures()["SceneSoil"]
@@ -204,6 +208,7 @@ def test_a_restored_run_keeps_its_views(tmp_path):
                                                                                  "SeedlingExudation"),
                              time_step=DT, recorder=recorder())
     restored.run()
+    restored.recorder.wait_for_frames()
     with open(os.path.join(out, "frames", "scene.fspm.json")) as file:
         assert [entry["step"] for entry in json.load(file)["frames"]] == [0, 2]      # a frame written since
     assert views.read_views(_views_file(out)) == saved

@@ -787,6 +787,8 @@ class Scene:
         """
         import json
         from openalea.metafspm.scene.shared import SharedStore
+        if hasattr(self.recorder, "wait_for_frames"):
+            self.recorder.wait_for_frames()          # the frame being written in the background, complete first
         os.makedirs(path, exist_ok=True)
         folder = os.path.abspath(os.path.join(path, "shared") if shared is None else os.fspath(shared))
         stores = self.__dict__.setdefault("_shared_stores", {})

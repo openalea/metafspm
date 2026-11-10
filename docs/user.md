@@ -984,6 +984,14 @@ time (an event's, a planting time) is a duration since time 0 or a date (`"2026-
   on after a pack, unpacks the archive into `frames/` first, then adds its frames. From the command line:
   `encoding3d pack FOLDER OUT.fspm.zip [--keep-folder]`, `encoding3d unpack` back. ParaView's reader and
   `encoding3d.read_index`/`read` open the archive as the folder (`frames.fspm.zip/frame_000024.glb`).
+  **Frames written in the background:** `SceneRecorder(frame_writing="background")`, the default, builds each frame
+  in the step's thread (`scene_to_frame`), then hands a snapshot of it (its arrays copied: nothing the next steps
+  change) to one writer thread, which writes the GLB file and the frames' index while the next steps run. A frame
+  waits for the one before it (one snapshot in memory at most); a checkpoint (`Scene.checkpoint`, the recorder's),
+  `recorder.pack()`, the run's end and a restore wait for the frame being written, and an error of the writer is
+  raised in the run's thread there, or at the next frame. Reading the frames folder in the middle of a run (after
+  `scene.run()`, not `simulate`) needs `recorder.wait_for_frames()` first. `frame_writing="synchronous"` writes in
+  the step's thread. The files are the same, byte for byte.
   `frame_options=` passes
   `scene_to_frame`'s options (e.g. `geometry=False`). For logging, the options also filter what each frame keeps:
   `data_structures=` (which ones), `scales=` (e.g. `["Plant", "SubOrgan"]`), `entities=` (a plant, by vid or by its
