@@ -11,10 +11,10 @@ dependencies:
   - scipy
   - pandas
   - threadpoolctl
+  - openalea.encoding3d  # the encoding3d exchange format (io.encoding3d); until it is published on openalea3, drop this
+                         # line and install the clone next to metafspm: pip install -e ../../encoding3d
   - pip
   - pytest
   # let pip install the rest using pyproject.toml (if you are okay with conda/pip mix)
-  - jsonschema           # openalea.encoding3d's
   - pip:
-      - -e ../../encoding3d   # openalea.encoding3d, from the encoding3d clone next to metafspm until it is published
       - -e .."[doc]"

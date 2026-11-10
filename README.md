@@ -190,9 +190,10 @@ Each frame's file is written by a writer thread while the next steps run (`Scene
 "background")`, the default; `"synchronous"` in the step's thread; the same files): a checkpoint, `pack()` and the
 run's end wait for it, `recorder.wait_for_frames()` too.
 
-encoding3d's Python package, `openalea.encoding3d`, is a dependency of metafspm. Until it is published, clone
-[encoding3d](https://github.com/openalea/encoding3d) next to metafspm; `conda/environment.yml` installs it from there
-(`pip install -e ../encoding3d`).
+encoding3d's Python package, `openalea.encoding3d`, is a dependency of metafspm (`pyproject.toml` and
+`conda/environment.yml`, from `openalea3`). Until it is published there, clone
+[encoding3d](https://github.com/openalea/encoding3d) next to metafspm and install it from the clone
+(`pip install -e ../encoding3d`), leaving out the environment's `openalea.encoding3d` line.
 
 ## Code Structure
 
