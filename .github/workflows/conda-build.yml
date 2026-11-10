@@ -22,3 +22,14 @@ jobs:
     secrets:
       anaconda_token: ${{ secrets.ANACONDA_TOKEN }}
 
+  ci-ok:
+    name: CI OK
+    needs: build
+    if: always()          # run even if build failed/cancelled, otherwise it'd be "skipped" (= passes!)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check all OpenAlea CI jobs succeeded
+        run: |
+          echo "build result: ${{ needs.build.result }}"
+          [ "${{ needs.build.result }}" = "success" ]
+
