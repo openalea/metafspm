@@ -116,7 +116,7 @@ Declarations that cannot be written back raise when the component is created: a 
   - `@graph_output(name, location="node")`;
   - `@rate(location="edge")`, or `@rate(locations={"extra_output": "Organ"})` for supplementary outputs.
 - Total steps and single values are `scalar`.
-- Shape inference remains only when exactly one location matches, with a `DeprecationWarning`.
+- Any other undeclared output raises a `ValueError` naming the component and the output (no shape inference).
 
 **MTG synchronisation.**
 - **`mtg_sync = "lazy"`** (the default): the DataStructure is the reference, and the MTG a view of it. A state variable held at its own scale is read from its column (one storage). A mapped one changed since its last synchronisation is written to the MTG:

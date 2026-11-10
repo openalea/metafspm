@@ -197,9 +197,8 @@ class Functor:
                       and (values.ndim == 1 or (ds.has(name) and ds.get(name).shape[1:] == values.shape[1:])))
             if not ds.has(name):
                 if masked and name not in declared:
-                    from openalea.metafspm.solve.decorator import _infer_output_location
-                    location = _infer_output_location(f"{type(instance).__name__}.{self.name}", name, values.shape,
-                                                     {mask_location: values.shape})
+                    from openalea.metafspm.solve.decorator import _undeclared_output
+                    _undeclared_output(f"{type(instance).__name__}.{self.name}", name)
                 else:
                     location = self._output_location(instance, ds, name, values, declared)
                 ds.register(name, location=location)
@@ -244,7 +243,7 @@ class Functor:
     def _output_location(self, instance, ds, name, values, declared):
         """
         Location of an output that is not a registered variable: given by
-        the step decorator, "scalar" for total steps and 0-d values, else inferred from its shape when unambiguous.
+        the step decorator, "scalar" for total steps and 0-d values, else an error (its location must be declared).
         """
         if name in declared:
             location = declared[name]
@@ -254,10 +253,8 @@ class Functor:
             return location
         if self.total or values.ndim == 0:
             return "scalar"
-        from openalea.metafspm.solve.decorator import _infer_output_location
-        stores = ds._var_stores()
-        shapes = {location: ds._location_shape(location) for location in ("node", "edge", "cell") if location in stores}
-        return _infer_output_location(f"{type(instance).__name__}.{self.name}", name, values.shape, shapes)
+        from openalea.metafspm.solve.decorator import _undeclared_output
+        _undeclared_output(f"{type(instance).__name__}.{self.name}", name)
 
     def __call__(self, instance, data, *args):
         """Run the step on *data*, the component's DataStructure (iterating steps only receive the instance). Its

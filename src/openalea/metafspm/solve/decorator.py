@@ -461,20 +461,11 @@ def graph_output(name, location: str = None, filters=None):
     return decorator
 
 
-def _infer_output_location(owner: str, name: str, shape: tuple, shapes: dict) -> str:
-    """
-    Location of an undeclared output that gives none, from its shape: accepted, with a DeprecationWarning, only
-    when exactly one of *shapes* ({location: shape}) matches; ambiguous or unmatched shapes raise.
-    """
-    matches = [location for location, location_shape in shapes.items() if tuple(location_shape) == tuple(shape)]
-    if len(matches) == 1:
-        warnings.warn(f"{owner}: output '{name}' has no declared location, '{matches[0]}' was inferred from its "
-                      "shape; declare the field or give location=", DeprecationWarning, stacklevel=3)
-        return matches[0]
-    if not matches:
-        raise ValueError(f"{owner}: output '{name}' of shape {tuple(shape)} matches no location {shapes}")
-    raise ValueError(f"{owner}: output '{name}' of shape {tuple(shape)} matches several locations {matches}: "
-                     "declare the field or give location=")
+def _undeclared_output(owner: str, name: str):
+    """An output that is neither a registered variable nor given a location: an error asking to declare it."""
+    raise ValueError(f"{owner}: output '{name}' has no declared location: declare it as a field (state_variable("
+                     "location=...)) or give the step's decorator location= / locations={...} (@graph_output("
+                     "location=) for a graph system)")
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -1695,8 +1686,7 @@ def _solve_once(self, method_name: str, spec_def: dict) -> None:
                                  f"'{oname}' is registered at {ds.location(oname)}")
         else:
             if location is None:
-                location = _infer_output_location(type(self).__name__, oname, arr.shape,
-                                                  {"node": (n,), "edge": (self._graph_view.n_edges,)})
+                _undeclared_output(type(self).__name__, oname)
             ds.register(oname, location=_entity_location(ds, location))
         if restriction is None:
             ds.set(oname, arr)

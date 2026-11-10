@@ -8,6 +8,9 @@
   `finite_difference_step=`, `substeps=`), and `integrate="step"` raises `ValueError` (use `integrate="once"`); they
   warned for one release. Likewise `state_variable`, `input_variable` and `parameter` no longer take `initialize=`,
   `state_variable_type=` or `mapping=` (use `default=`, `kind=`, `aggregation=`): `TypeError`.
+- An output that is neither a declared field nor given a location (`@rate(location=, locations=)`,
+  `@graph_output(location=)`) raises a `ValueError` naming the component and the output; its location was inferred
+  from its shape with a `DeprecationWarning`. No port relied on it.
 
 ### Breaking: the linear solver per graph system (fix-D)
 
