@@ -13,7 +13,7 @@ abstract: >-
 authors:
   - family-names: "Gérault"
     given-names: "Tristan"
-    email: "tristan.gerault@inrae.fr"
+    email: "tristan.gerault@uclouvain.be"
   - family-names: "Rees"
     given-names: "F."
   - family-names: "Barillot"
