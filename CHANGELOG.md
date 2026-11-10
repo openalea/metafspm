@@ -8,6 +8,11 @@
   scenarios and the two FSPM2026 workshop notebooks, unchanged), and its smoke test
   `test/examples/test_soil_plant_atm_fspm2026_workshop.py`. The README, the docs, `conda/meta.yaml` and the ports'
   developer notebooks point to the new path.
+- **`docs/five_minutes.md` walks through use case 1** (`examples/use_case_1`): what metafspm is for, components and
+  their declarations (units, locations), DataStructures, `CompositeModel`, the Translator's links and unit checks,
+  the Scene (planting, stand, environment models, scenarios, forcings, time step, `Compute`), one step's order and
+  the one-step lag (decision U-6, `FixedPoint`), the SceneRecorder, running use case 1 and looking at its tables and
+  frames; the models' table, the ports to come and the installation steps kept.
 
 ### Outside the solvers: the allocator, the recorder and the lookups (bit-identical)
 

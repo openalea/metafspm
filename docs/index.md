@@ -17,8 +17,9 @@ processes, around the Multiscale Tree Graph (MTG) of OpenAlea.
 
 ## Using models
 
-For those who want to run a plant model built with metafspm: what a component, a plant model and a scene are, in
-plain words, and the models available with their tutorials.
+For those who want to run a plant model built with metafspm: its core ideas in plain words, through use case 1
+(components, plant models, links, the scene and its step, the recorder), and the models available with their
+tutorials.
 
 ```{toctree}
 :maxdepth: 1
