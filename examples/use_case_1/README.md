@@ -401,6 +401,22 @@ run's frames grow by the kinds drawn, not by the frames. A 2-day run (1 plant, 5
 frames 0.3 to 0.6 MB, parts 34 MB, the folder 37 MB, packed 14 MB. A checkpoint is 8 MB at day 3 (1 plant), 36 MB at
 day 8 (2 plants), the anatomy templates and the kinds (0.4 to 0.9 GB) written once in `checkpoints/shared`.
 
+The recorder's cost at larger sizes (measured 2026-11-10, after the bulk frame build, the copy-free GLB writer,
+the streamed checkpoints, the summaries' groupings and the background frame writer; resumed scenes, one step, the
+process's peak over its resident memory): 8 plants at day 12 (220 k nodes), a frame 2.5 s (13.0 s before, +0.40 GB
+against +0.47), with p0's sections 2.8 s (16.6 s), its write 0.2 s (+0.05 GB against +0.19), a checkpoint 0.3 s
+after the first (0.65 s, +0.05 GB against +0.33), the summaries and tables 0.05 s a step (0.11 s); 2 plants at day 21
+(427 k nodes), a frame 10.3 s (+0.89 GB), its write 0.6 s (+0.17 GB), a checkpoint 0.9 s (+0.10 GB). The frames
+are written by a writer thread while the next hours run (`SceneRecorder(frame_writing="background")`, the default):
+a run's day of 2 frames and a checkpoint at 2 plants, day 21, costs about 20 s on top of its 24 hours' steps
+(about 170 s; from the sowing to hour 520 the recording took 144 s of the run's 1441 s).
+Every hour's frame (`frame_period="step"`) is not cheap: 8 plants at day 12, 9.5-9.7 s per hour against 4.6 s
+without frames (background or synchronous alike), 1.1 GB of frames a simulated day (195 MB packed, `pack()` 73 s);
+2 plants at day 21, 18.7 s per hour in the background against 23.8 s synchronous and 8.3 s without frames, 2.3 GB a
+day (386 MB packed, `pack()` 2.3-2.9 min). The build stays in the hour's thread: built in a second thread beside the
+step, both slow down (8 plants, day 12: the step 5.7 → 13.0 s, the build 3.5 → 9.2 s; the GIL), more than building
+in turn.
+
 The disk a run takes (`python run.py 3 2`, 2026-11-09): 343.6 MB at its end, of which `frames.fspm.zip` 16.3 MB
 (7 frames and 27 parts; the folder it replaces 45.0 MB, its parts 41.2 MB), `checkpoints/` 327.1 MB (the last
 one, `step_000072`, 8.5 MB; `shared` 318.6 MB) and the tables 0.2 MB. Before, the run kept the folder beside its
