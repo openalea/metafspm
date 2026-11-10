@@ -1,0 +1,33 @@
+cff-version: 1.2.0
+message: "If you use metafspm, please cite it as below."
+type: software
+title: "metafspm: a framework for coupling functional-structural plant models"
+abstract: >-
+  metafspm is an OpenAlea framework for functional-structural plant models (FSPM). Each process is a component
+  that declares its variables (units, locations on a multiscale plant graph, kinds), its parameters and its
+  equations; components make plant models, and plant models and environment models (soil, light) make a scene that
+  plants a stand, links the models' variables with unit checks and steps them in time. The scene schedules and
+  solves the coupled processes (graph systems, linear and nonlinear solvers, kernels), records tables, checkpoints
+  and encoding3d frames of the whole scene. Ported models include root and shoot architectures (ArchiSimple, Adel),
+  root anatomies (GRANAP), root hydraulics (MECHA), light (Caribu) and gas exchange (CNW-Grass).
+authors:
+  - family-names: "Gérault"
+    given-names: "Tristan"
+    email: "tristan.gerault@inrae.fr"
+  - family-names: "Rees"
+    given-names: "F."
+  - family-names: "Barillot"
+    given-names: "R."
+  - family-names: "Pradal"
+    given-names: "Christophe"
+    email: "christophe.pradal@cirad.fr"
+repository-code: "https://github.com/openalea/metafspm"
+url: "https://metafspm.readthedocs.io"
+license: CECILL-C
+keywords:
+  - functional-structural plant model
+  - FSPM
+  - model coupling
+  - multiscale tree graph
+  - OpenAlea
+  - plant modelling
