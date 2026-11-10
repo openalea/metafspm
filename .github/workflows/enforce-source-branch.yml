@@ -1,0 +1,19 @@
+name: Enforce source branch
+
+on:
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  check-source-branch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check PR source branch
+        run: |
+          if [ "${{ github.head_ref }}" != "develop" ]; then
+            echo "❌ PRs to main must originate from the 'develop' branch."
+            echo "   This PR is from: ${{ github.head_ref }}"
+            exit 1
+          fi
+          echo "✅ Source branch is 'develop'. OK."
