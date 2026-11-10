@@ -333,3 +333,40 @@ def test_shared_checkpoint_parts_are_written_once_and_pruned_with_their_checkpoi
         os.remove(shared / name)
     with pytest.raises(FileNotFoundError, match="shared part"):
         Scene.restore(kept, **dict(arguments, recorder=None))
+
+
+def test_a_checkpoint_of_the_former_in_memory_writer_loads_and_keeps_its_parts_keys(tmp_path):
+    """The pickles are streamed to their files (no copy in memory), the shared parts' digests computed on the way:
+    the same bytes and keys as the former writer's (a pickle made in memory, then written), so a checkpoint written
+    before loads, its parts recognised (not written again); a state.pkl of the former store-less writer
+    (pickle.dumps) loads too; the restored scene continues bit for bit."""
+    import hashlib
+    import io
+    import pickle
+    from openalea.metafspm.scene.shared import SharedStore, _Pickler
+    arguments = dict(_scene_arguments(), environment=[SharedSolverSoil])
+    scene = Scene(**arguments)
+    scene.simulate(2)
+    path, shared = tmp_path / "step", tmp_path / "shared"
+    scene.checkpoint(str(path), shared=str(shared))
+    store = SharedStore(str(shared))
+    former = io.BytesIO()                                  # the former writer: the part's pickle in memory
+    _Pickler(former, store, top=scene.environment[0].table).dump(scene.environment[0].table)
+    key = f"soil_table-{hashlib.sha256(former.getvalue()).hexdigest()[:20]}"
+    assert (shared / f"{key}.pkl").read_bytes() == former.getvalue()
+    for folder in sorted(path.glob("data_structure_*")):  # every state.pkl as the former writers made it
+        with open(folder / "state.pkl", "rb") as f:
+            content = store.load(f)
+        in_memory = io.BytesIO()
+        _Pickler(in_memory, store).dump(content)
+        (folder / "state.pkl").write_bytes(pickle.dumps(content) if folder.name.endswith("_1") else
+                                           in_memory.getvalue())
+    store.end_load()
+    restored = Scene.restore(str(path), **arguments)
+    scene.simulate(2)
+    restored.simulate(2)
+    for before, after in zip(_state(scene), _state(restored)):
+        for name in before:
+            np.testing.assert_array_equal(before[name], after[name], err_msg=name)
+    restored.checkpoint(str(tmp_path / "again"), shared=str(shared))
+    assert sorted(name for name in os.listdir(shared) if name.startswith("soil_table")) == [f"{key}.pkl"]

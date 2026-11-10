@@ -42,13 +42,23 @@ class Shared:
         return _identity, (self.value,)            # pickled without a SharedStore: the value itself, inline
 
 
+# The types never shared (their instances are pickled as they are, without a look at their class): most of the objects
+# of a checkpoint (an MPG's dicts of ints, floats, strings and tuples: about 13 million at 8 plants, day 12)
+_NEVER_SHARED = frozenset((int, float, str, bool, type(None), bytes, tuple, list, dict, set, frozenset, complex))
+_SHARED_BY_TYPE = {}            # {type: its instances' shared name (shared_in_checkpoints), Shared (theirs), or None}
+
+
 def _shared_name(obj):
-    """The name under which *obj* is shared (a Shared's, or its class' shared_in_checkpoints), else None."""
-    if isinstance(obj, Shared):
-        return obj.name
-    if isinstance(obj, type):
+    """The name under which *obj* is shared (a Shared's, or its class' shared_in_checkpoints), else None. The
+    builtin containers and scalars at once (_NEVER_SHARED), another class' name looked up once (_SHARED_BY_TYPE)."""
+    kind = type(obj)
+    if kind in _NEVER_SHARED:
         return None
-    return getattr(type(obj), "shared_in_checkpoints", None)
+    if kind not in _SHARED_BY_TYPE:
+        _SHARED_BY_TYPE[kind] = Shared if issubclass(kind, Shared) else None if issubclass(kind, type) else \
+            getattr(kind, "shared_in_checkpoints", None)
+    name = _SHARED_BY_TYPE[kind]
+    return obj.name if name is Shared else name
 
 
 class SharedStore:
@@ -67,32 +77,40 @@ class SharedStore:
 
     # ── writing ──
     def key_of(self, name: str, value) -> str:
-        """The key of *value* (name-digest), writing its part when it is not in the folder."""
+        """The key of *value* (name-digest: of its pickle's bytes), writing its part when it is not in the folder: the
+        pickle streamed into a temporary file of the folder, its digest computed on the way (no copy of it in
+        memory), the file then named by its key."""
         known = self._keys.get(id(value))
-        payload = None
         if known is not None and known[0] is value:
             key = known[1]
+            path = os.path.join(self.folder, key + ".pkl")
+            if not os.path.exists(path):               # pruned since it was last referred to
+                self._write(value, path)
         else:
-            payload = self.dumps(value)
-            key = f"{name}-{hashlib.sha256(payload).hexdigest()[:20]}"
+            key = self._write(value, None, name)
             self._keys[id(value)] = (value, key)
-        path = os.path.join(self.folder, key + ".pkl")
-        if not os.path.exists(path):                   # new, or pruned since it was last referred to
-            os.makedirs(self.folder, exist_ok=True)
-            temporary = path + ".part"
-            with open(temporary, "wb") as file:
-                file.write(self.dumps(value) if payload is None else payload)
-            os.replace(temporary, path)
         self.referenced.add(key)
         return key
 
-    def dumps(self, value) -> bytes:
-        """*value*'s pickle, the shared parts it holds referred to (and written)."""
-        buffer = io.BytesIO()
-        _Pickler(buffer, self, top=value).dump(value)
-        return buffer.getvalue()
+    def _write(self, value, path: str = None, name: str = None) -> str:
+        """*value*'s part written to *path*, or (no *path*) to the file of its key (name-digest), unless one is there;
+        its key."""
+        os.makedirs(self.folder, exist_ok=True)
+        temporary = os.path.join(self.folder, f"{name or os.path.basename(path)}.{os.getpid()}.{id(value)}.part")
+        with open(temporary, "wb") as file:
+            writer = _Hashing(file)
+            _Pickler(writer, self, top=value).dump(value)
+        key = f"{name}-{writer.digest.hexdigest()[:20]}" if path is None else os.path.basename(path)[:-len(".pkl")]
+        path = os.path.join(self.folder, key + ".pkl") if path is None else path
+        if os.path.exists(path):                       # the same content, written before: kept
+            os.remove(temporary)
+        else:
+            os.replace(temporary, path)
+        return key
 
     def dump(self, value, file) -> None:
+        """*value* pickled straight to the open binary *file*, the shared parts it holds referred to (and written):
+        the arrays written from their own memory (protocol 5, in band), no copy of the pickle in memory."""
         _Pickler(file, self).dump(value)
 
     # ── reading ──
@@ -149,13 +167,25 @@ def prune(folder: str, checkpoints) -> list:
     return removed
 
 
+class _Hashing:
+    """A binary file's writer that hashes (sha256) what it writes."""
+
+    def __init__(self, file):
+        self.file, self.digest = file, hashlib.sha256()
+
+    def write(self, data) -> int:
+        self.digest.update(data)
+        return self.file.write(data)
+
+
 class _Pickler(pickle.Pickler):
     def __init__(self, file, store: SharedStore, top=None):
         super().__init__(file, protocol=PROTOCOL)
         self.store, self.top = store, top
 
     def persistent_id(self, obj):
-        if obj is self.top:                        # the part being written itself
+        # called for every object pickled: the builtin scalars and containers return at once
+        if type(obj) in _NEVER_SHARED or obj is self.top:          # (self.top: the part being written itself)
             return None
         name = _shared_name(obj)
         if name is None:

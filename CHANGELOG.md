@@ -19,6 +19,18 @@
   The frames are byte-identical (use case 1, 2 plants, 3 days: every frame file and table; 8 plants resumed from
   day 12: both frames and their parts). 8 plants at day 12: a frame 13.0 → 2.5 s, with p0's sections 16.6 → 6.1 s
   (3.7 s of it GRANAP's `display_triangles`), the build's peak +0.47 → +0.40 GB.
+- **The checkpoints' fast path** (`scene.shared`): the pickler's `persistent_id`, called for every object pickled
+  (about 13 million at 8 plants, day 12: the MPG's dicts), returns at once for the builtin scalars and containers
+  (one `type()` lookup in a frozenset) and looks a class' `shared_in_checkpoints` up once (`_SHARED_BY_TYPE`). The
+  pickles are streamed to their files instead of made in memory first: a DataStructure's `state.pkl`
+  (`SharedStore.dump`, or protocol 5 straight to the file without a store) and the shared parts, their digest
+  computed on the way (`SharedStore.key_of`: a temporary file of the folder, then named by its key; `SharedStore.
+  dumps` removed). The files and the parts' keys are the former writer's bytes (former checkpoints load and keep
+  their parts), but for a store-less `ds.checkpoint(path, shared=None)`, now protocol 5 (pickle.dumps' default 4
+  before; both load). 8 plants at day 12: the first checkpoint of a resumed scene (every kind's part pickled for its key)
+  4.0 → 2.5 s, the next one 0.65 → 0.30 s, the peak over the resident memory +0.41 → +0.06 GB and +0.33 →
+  +0.05 GB. Protocol 5's out-of-band buffers were measured and not adopted: protocol 5 already writes the arrays
+  from their memory in band when the pickle goes straight to a file (the same time and peak), and the format stays.
 - The user guide (*Cores of a hybrid CPU*) and use case 1's README document the main thread's core on a hybrid CPU:
   `taskset -c 0-3` keeps a run on the performance cores when the machine is shared (8 plants at day 12: +29 % on the
   efficient cores, +122 % on the low-power ones; nothing gained on an idle machine). No Compute setting.

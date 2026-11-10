@@ -1254,15 +1254,20 @@ class VariableStoreMixin:
                  if name in self.__dict__}
         content = {"objects": objects, "state": state, "mtg": getattr(self, "_mtg", None) if include_mtg else None}
         self.__dict__["_columns_detached"] = True  # the MPG's views of the columns pickled without them (arrays.npz)
-        try:
-            payload = pickle.dumps(content) if shared is None else shared.dumps(content)
+        state_file = os.path.join(path, "state.pkl")
+        try:                                       # straight to the file: no copy of the pickle in memory
+            with open(state_file, "wb") as f:
+                if shared is None:
+                    from openalea.metafspm.scene.shared import PROTOCOL
+                    pickle.Pickler(f, protocol=PROTOCOL).dump(content)
+                else:
+                    shared.dump(content, f)
         except (pickle.PicklingError, AttributeError, TypeError) as error:
+            os.remove(state_file)
             raise TypeError(f"checkpoint: {error}. Derivation formulas and mask rules are kept by reference: define "
                             "them as module-level functions (or picklable objects), not lambdas") from None
         finally:
             self.__dict__.pop("_columns_detached", None)
-        with open(os.path.join(path, "state.pkl"), "wb") as f:
-            f.write(payload)
         with open(os.path.join(path, "manifest.json"), "w") as f:
             json.dump({"format": 1, "class": type(self).__name__, "construction": self._construction(),
                        "variables": variables, "version": self.version, "topology_version": self.topology_version,
