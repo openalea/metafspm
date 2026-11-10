@@ -11,6 +11,14 @@
   2.73-2.76 GB against 3.17-3.31, peak 3.68-3.76 GB against 4.13-4.23, the step unchanged), which the use case's
   `environment.yaml` no longer sets. An arena limit set in the environment (`MALLOC_ARENA_MAX`, `GLIBC_TUNABLES`) is
   kept; `memory="keep"` does neither; both are no-ops where the C library is not glibc.
+- **The frame build in bulk** (`io.encoding3d._mpg_data_structure`): each scale's instanced vertices located once
+  (`Instances.plan`) and every property read through that plan (`_lookup(prop, vids, plan)`,
+  `_InstancedProperty.lookup`, `MPG._explicit_property_mask`), the scale's vids read-only so that the
+  DataStructure's columns share their positions (`columns._positions_shared`); the vertices by scale, their own
+  complex and parent, the labels, the edge types and the MTG edge codes by array operations instead of per vertex.
+  The frames are byte-identical (use case 1, 2 plants, 3 days: every frame file and table; 8 plants resumed from
+  day 12: both frames and their parts). 8 plants at day 12: a frame 13.0 → 2.5 s, with p0's sections 16.6 → 6.1 s
+  (3.7 s of it GRANAP's `display_triangles`), the build's peak +0.47 → +0.40 GB.
 - The user guide (*Cores of a hybrid CPU*) and use case 1's README document the main thread's core on a hybrid CPU:
   `taskset -c 0-3` keeps a run on the performance cores when the machine is shared (8 plants at day 12: +29 % on the
   efficient cores, +122 % on the low-power ones; nothing gained on an idle machine). No Compute setting.

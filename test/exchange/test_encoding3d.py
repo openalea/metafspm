@@ -187,6 +187,34 @@ def test_a_variable_at_instanced_vertices_is_framed_with_the_data_structures_val
     np.testing.assert_array_equal(again.get("kind"), ds.get("kind"))
 
 
+def test_the_instanced_properties_are_read_through_one_plan_per_scale():
+    """The frame reads every MPG property of a scale with one location of the instanced vertices (Instances.plan): the
+    same mask and values as MPG._property_at's (an entry of its own first, else the template's), at every scale and
+    for every property, an explicit entry at an instanced vertex and object values included."""
+    from openalea.metafspm.io.encoding3d import _lookup, _mpg_properties
+    g, _, _ = make_instanced_anatomy(n_segments=2)
+    instanced = g.instances.vids_at_scale(g.scales.Compartment)
+    g.set_values("label", instanced[:1], [g.property("label").get(int(instanced[1]), 0)])     # its own entry
+    g.set_values("note", instanced[:3], ["a", ("b", 1), None])                               # objects
+    arrays = g.topology_arrays()
+    properties = _mpg_properties(g)
+    for scale in np.unique(arrays["scale"][arrays["scale"] >= 0]).tolist():
+        vids = np.flatnonzero(arrays["scale"] == scale).astype(np.int64)
+        plan = g.instances.plan(vids)
+        for name, prop in properties.items():
+            present, values = _lookup(prop, vids, plan)
+            found, expected = g._property_at(name, vids)                # the reference: MPG's own merge
+            np.testing.assert_array_equal(present, np.isin(vids, found), err_msg=name)
+            listed = values[present] if isinstance(values, np.ndarray) else \
+                [value for value, here in zip(values, present) if here]
+            if isinstance(values, np.ndarray):
+                np.testing.assert_array_equal(listed, np.asarray(expected, dtype=np.float64), err_msg=name)
+            else:
+                assert listed == expected.tolist(), name
+            again = _lookup(prop, vids)                                 # without a plan: located here
+            np.testing.assert_array_equal(again[0], present)
+
+
 @dataclass
 class SegmentEnds(StructuralComponent):
     """An architecture at the SubOrgans of an anatomy-mode plant: its segments' ends and radii, drawn as cylinders."""

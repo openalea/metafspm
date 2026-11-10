@@ -366,19 +366,26 @@ def _ranges_mask(ranges, count: int) -> np.ndarray:
     return np.cumsum(steps[:count]) > 0
 
 
-def _lookup(prop, vids: np.ndarray) -> tuple:
+def _listed(present: np.ndarray, items: list) -> list:
+    """A list over *present*'s rows: *items* (one per present row, in order) where present, None elsewhere."""
+    out = np.empty(present.size, dtype=object)
+    out[present] = np.fromiter(items, dtype=object, count=len(items))
+    return out.tolist()
+
+
+def _lookup(prop, vids: np.ndarray, plan: tuple = None) -> tuple:
     """(present, values) of the MPG property *prop* at *vids*: a mask, and the values (a float array, NaN where
-    absent, for a float column; a list, None where absent, for another), read in bulk from its sorted keys."""
+    absent, for a float column; a list, None where absent, for another), read in bulk from its sorted keys. *plan*:
+    the instances' plan of *vids* (Instances.plan), located once for every property read at them."""
     if isinstance(prop, _InstancedProperty):
-        return prop.lookup(np.asarray(vids, dtype=np.int64))
+        return prop.lookup(np.asarray(vids, dtype=np.int64), plan)
     if isinstance(prop, ArrayDict):
         present, values = prop.at(np.asarray(vids, dtype=np.int64))
         if values.dtype.kind == "f":
             out = np.full(present.size, np.nan)
             out[present] = values
             return present, out
-        listed = iter(values.tolist())
-        return present, [next(listed) if here else None for here in present.tolist()]
+        return present, _listed(present, values.tolist())
     get = prop.get
     values = [get(v, _MISSING) for v in vids.tolist()]
     present = np.array([value is not _MISSING for value in values], dtype=bool)
@@ -398,16 +405,44 @@ class _InstancedProperty:
             self.numeric = all(template.properties[name][1].dtype != object
                                for template in g.instances.templates.values() if name in template.properties)
 
-    def lookup(self, vids: np.ndarray) -> tuple:
-        found, values = self.g._property_at(self.name, vids)
-        position = np.searchsorted(found, vids).clip(0, max(found.size - 1, 0))
-        present = (found[position] == vids) if found.size else np.zeros(vids.size, dtype=bool)
+    def lookup(self, vids: np.ndarray, plan: tuple = None) -> tuple:
+        """(present, values) at sorted unique *vids*, as _lookup gives them. *plan*: g.instances.plan(vids), the
+        instanced vertices located once for every property (else located here): the same present and values as
+        MPG._property_at's, merged in the vids' order without sorting them again."""
+        if plan is None:
+            plan = self.g.instances.plan(vids)
+        explicit, values = self.g._explicit_property_mask(self.name, vids)
+        has, template_values = self.g.instances.values(self.name, vids, plan)
+        has &= ~explicit                                 # an entry of its own first (MPG._property_at_instanced)
+        if not has.any():
+            present, merged = explicit, values
+        else:
+            present = explicit | has
+            rank = np.cumsum(present) - 1                 # each present vid's place among them (ids ascending)
+            if values.dtype == object or template_values.dtype == object:
+                merged = np.empty(int(rank[-1]) + 1, dtype=object)
+                merged[rank[explicit]] = np.fromiter(values.tolist(), dtype=object, count=values.size)
+                merged[rank[has]] = template_values[has]
+            else:
+                merged = np.empty(int(rank[-1]) + 1, dtype=np.float64)
+                merged[rank[explicit]] = np.asarray(values, dtype=np.float64)
+                merged[rank[has]] = template_values[has]
         if self.numeric:
             out = np.full(vids.size, np.nan)
-            out[present] = np.asarray(values, dtype=np.float64)[position[present]]
+            out[present] = np.asarray(merged, dtype=np.float64)
             return present, out
-        listed = values.tolist()
-        return present, [listed[i] if here else None for here, i in zip(present.tolist(), position.tolist())]
+        return present, _listed(present, merged.tolist())
+
+
+def _by_vid(mapping: dict, size: int) -> np.ndarray:
+    """The integer values of *mapping* ({vid: value}: an MTG's dict) by vid, -1 for a missing or None value."""
+    out = np.full(size, -1, dtype=np.int64)
+    if mapping:
+        keys = np.fromiter(mapping.keys(), dtype=np.int64, count=len(mapping))
+        values = np.array(list(mapping.values()), dtype=object)
+        values[np.equal(values, None)] = -1
+        out[keys] = values.astype(np.int64)
+    return out
 
 
 def _mpg_properties(g) -> dict:
@@ -456,10 +491,12 @@ def _mpg_data_structure(identifier: str, ds, metadata: dict, standard_names: dic
     names = _scale_names(g)
     arrays = g.topology_arrays()
     anchors = set(np.flatnonzero(arrays["is_anchor"]).tolist()) | {g.root}
-    by_scale = {}
-    for vid in sorted(g._scale):
-        if vid not in anchors:
-            by_scale.setdefault(g._scale[vid], []).append(vid)
+    # the MTG's own scale, complex and parent of each vertex, by vid (-1: none), read from its dicts in bulk
+    size = max(arrays["scale"].size, *(max(mapping, default=-1) + 1 for mapping in (g._scale, g._complex, g._parent)))
+    own_scale, own_complex, own_parent = (_by_vid(mapping, size) for mapping in (g._scale, g._complex, g._parent))
+    explicit = np.flatnonzero(own_scale >= 0)
+    explicit = explicit[~np.isin(explicit, list(anchors))]
+    by_scale = {scale: explicit[own_scale[explicit] == scale] for scale in np.unique(own_scale[explicit]).tolist()}
     instanced = g._instanced()
     if instanced:                                  # the instanced vertices, as their copies would be listed
         blocks = [np.arange(f, f + n, dtype=np.int64)
@@ -467,12 +504,11 @@ def _mpg_data_structure(identifier: str, ds, metadata: dict, standard_names: dic
         virtual = np.concatenate(blocks)
         for scale in np.unique(arrays["scale"][virtual]).tolist():
             here = virtual[arrays["scale"][virtual] == scale]
-            by_scale[scale] = np.union1d(np.asarray(by_scale.get(scale, []), dtype=np.int64), here).tolist()
-        _, own_complex, own_parent = g.instances.structure(virtual)
-        anchored = own_complex <= -2
-        own_complex[anchored] = [g.scales.anchors[int(-2 - c)] for c in own_complex[anchored].tolist()]
-        own_links = (dict(zip(virtual.tolist(), own_complex.tolist())),
-                     dict(zip(virtual.tolist(), own_parent.tolist())))
+            by_scale[scale] = np.union1d(by_scale.get(scale, np.zeros(0, dtype=np.int64)), here)
+        _, virtual_complex, virtual_parent = g.instances.structure(virtual)
+        anchored = virtual_complex <= -2
+        virtual_complex[anchored] = [g.scales.anchors[int(-2 - c)] for c in virtual_complex[anchored].tolist()]
+        own_complex[virtual], own_parent[virtual] = virtual_complex, virtual_parent     # an instance's links first
     connection = g.scales.Connection
     translator = dict(g.labels.translator)
     properties = _mpg_properties(g)                # the columns (g.property() builds a mapping)
@@ -486,35 +522,32 @@ def _mpg_data_structure(identifier: str, ds, metadata: dict, standard_names: dic
 
     for scale, vids in sorted(by_scale.items()):
         vids = np.asarray(vids, dtype=np.int64)
+        # read-only for the properties' reads: the DataStructure's columns share their positions in their location's
+        # ids (columns._positions_shared), and the instanced vertices are located once for every property (plan)
+        read = vids.view()
+        read.flags.writeable = False
+        plan = g.instances.plan(read) if instanced else None
         name = names[scale]
         relation = scale == connection
         reserved = _RELATION_RESERVED if relation else _GRAPH_RESERVED
-        listed = vids.tolist()
-        if instanced:
-            raw_complex = np.array([own_links[0].get(v, g._complex.get(v, -1)) for v in listed], dtype=np.int64)
-            raw_parent = np.array([own_links[1][v] if v in own_links[1] else
-                                   (-1 if g._parent.get(v) is None else g._parent[v]) for v in listed], dtype=np.int64)
-        else:
-            raw_complex = np.array([g._complex.get(v, -1) for v in listed], dtype=np.int64)
-            raw_parent = np.array([-1 if g._parent.get(v) is None else g._parent[v] for v in listed],
-                                  dtype=np.int64)
+        raw_complex, raw_parent = own_complex[vids], own_parent[vids]
         columns = {"id": vids}
-        present, codes = _lookup(label_property, vids)
-        codes = np.array([np.nan if code is None else code for code in codes], dtype=float)
+        present, codes = _lookup(label_property, read, plan)
+        if not isinstance(codes, np.ndarray) or codes.dtype != np.float64:
+            codes = np.array([np.nan if code is None else code for code in codes], dtype=float)
         if present.any():
-            names_of = {}
+            label_column = np.full(vids.size, "_none", dtype=object)
             for code in np.unique(codes[present]):
                 label = translator.get(int(code), f"label_{int(code)}")
                 known = extras["label_codes"].setdefault(name, {})
                 if label in known and known[label] != code:     # the same name for two codes at this scale
                     label = f"{label}_{int(code)}"
                 known[label] = int(code) if float(code).is_integer() else float(code)
-                names_of[float(code)] = label
-            columns["relation" if relation else "label"] = np.array(
-                [names_of[float(code)] if here else "_none" for here, code in zip(present, codes)], dtype=object)
+                label_column[present & (codes == code)] = label
+            columns["relation" if relation else "label"] = label_column
         if relation:
-            columns["source"] = _lookup(properties.get("n_id_a", {}), vids)[1].astype(np.int64)
-            columns["target"] = _lookup(properties.get("n_id_b", {}), vids)[1].astype(np.int64)
+            columns["source"] = _lookup(properties.get("n_id_a", {}), read, plan)[1].astype(np.int64)
+            columns["target"] = _lookup(properties.get("n_id_b", {}), read, plan)[1].astype(np.int64)
         else:
             same_scale = (raw_parent >= 0) & (arrays["scale"][np.maximum(raw_parent, 0)] == scale)
             resolved = arrays["complex"][vids]
@@ -526,20 +559,24 @@ def _mpg_data_structure(identifier: str, ds, metadata: dict, standard_names: dic
                 columns["complex"] = complex_.astype(np.int64)
             columns["parent"] = np.where(same_scale, raw_parent, NO_ID).astype(np.int64)
             edge_codes = arrays["edge_type"][vids]
-            columns["edge_type"] = np.array(["none" if not same else ("branch" if code == 3 else "successor")
-                                             for same, code in zip(same_scale, edge_codes)], dtype=object)
+            edge_types = np.full(vids.size, "none", dtype=object)
+            edge_types[same_scale] = np.where(edge_codes[same_scale] == 3, "branch", "successor")
+            columns["edge_type"] = edge_types
         columns["metafspm_complex"], columns["metafspm_parent"] = raw_complex, raw_parent
-        raw_edges = (_lookup(edge_property, vids)[1] if isinstance(edge_property, _InstancedProperty)
-                     else [edge_property.get(v) for v in listed])
-        if not set(raw_edges) <= {None, "/", "<", "+"}:
+        raw_edges = np.array(_lookup(edge_property, read, plan)[1] if isinstance(edge_property, _InstancedProperty)
+                             else _lookup(edge_property, read)[1] if isinstance(edge_property, ArrayDict)
+                             else [edge_property.get(v) for v in vids.tolist()], dtype=object)
+        if not set(raw_edges.tolist()) <= {None, "/", "<", "+"}:
             raise ValueError(f"{name}: edge types other than '/', '<' and '+' cannot be exchanged")
-        columns["metafspm_edge_type"] = np.array([{"/": 1, "<": 2, "+": 3}.get(edge, 0) for edge in raw_edges],
-                                                 dtype=np.uint8)
+        edge_type_codes = np.zeros(vids.size, dtype=np.uint8)
+        for edge, code in (("/", 1), ("<", 2), ("+", 3)):
+            edge_type_codes[raw_edges == edge] = code
+        columns["metafspm_edge_type"] = edge_type_codes
 
         for property_name, prop in properties.items():
             if property_name in ("label", "edge_type") or (relation and property_name in ("n_id_a", "n_id_b")):
                 continue
-            present, values = _lookup(prop, vids)
+            present, values = _lookup(prop, read, plan)
             if not present.any():
                 continue
             column = f"mtg_{property_name}" if property_name in reserved or property_name in LINK_COLUMNS \

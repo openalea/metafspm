@@ -768,11 +768,18 @@ class MPG(MTG):
         return ids[order], merged[order]
 
     def _explicit_property_at(self, name, vids) -> tuple:
+        vids = np.asarray(vids, dtype=np.int64)
+        found, values = self._explicit_property_mask(name, vids)
+        return vids[found], values
+
+    def _explicit_property_mask(self, name, vids) -> tuple:
+        """(which of *vids* have an entry of property *name* of their own, those entries' values): an instanced
+        vertex's template value is not read."""
         prop, vids = self._properties.get(name), np.asarray(vids, dtype=np.int64)
         if prop is None:
-            return vids[:0], np.empty(0)
+            return np.zeros(vids.size, dtype=bool), np.empty(0)
         found, values = prop.at(vids)
-        return vids[found], (_values_array(values.tolist()) if values.dtype == object else values)
+        return found, (_values_array(values.tolist()) if values.dtype == object else values)
 
     def _valid_vids_at(self, from_scale, filter_in=None, filter_out=None, as_array=False):
         """Non-anchor vertices at *from_scale* passing the filters (a set, or a sorted array). Without filters, cached
