@@ -111,3 +111,4 @@ test/*.png
 examples/**/outputs/
 
 /dev*.md
+/.devplan/
