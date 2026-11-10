@@ -31,6 +31,13 @@
   4.0 → 2.5 s, the next one 0.65 → 0.30 s, the peak over the resident memory +0.41 → +0.06 GB and +0.33 →
   +0.05 GB. Protocol 5's out-of-band buffers were measured and not adopted: protocol 5 already writes the arrays
   from their memory in band when the pickle goes straight to a file (the same time and peak), and the format stays.
+- **The instanced lookups** (`Instances.plan`, `structure`): the located vertices grouped by template with one stable
+  sort of their codes (`Instances._group_indices`) instead of one comparison per template; `MPG._property_at` takes
+  an instanced vertex's own entry by its mask (`_explicit_property_mask`) instead of `np.isin`. Bit-identical. The
+  plans and `ArrayDict` searches kept per topology change, as planned, were measured and dropped: within a step the
+  reads are at fresh arrays (`values_at`, `values_of`), 535 plans a step at 8 plants, day 12, the repeated ones
+  small (28 % of the vertices located), no cache hit for the read-only ones (`_read_plan` keeps its own); the step
+  is unchanged within the runs' spread (3.80-3.84 s against 3.82).
 - The user guide (*Cores of a hybrid CPU*) and use case 1's README document the main thread's core on a hybrid CPU:
   `taskset -c 0-3` keeps a run on the performance cores when the machine is shared (8 plants at day 12: +29 % on the
   efficient cores, +122 % on the low-power ones; nothing gained on an idle machine). No Compute setting.

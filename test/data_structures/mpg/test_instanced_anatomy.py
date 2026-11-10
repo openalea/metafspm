@@ -153,6 +153,28 @@ def test_the_instances_rows_follow_their_additions_and_removals():
     assert restored.block(200) == (5000, 10) and len(restored) == 41 and len(instances) == 40
 
 
+def test_an_instance_plan_groups_the_vertices_by_template_in_one_sort():
+    """Instances.plan groups the located vertices by template with one stable sort of their codes: as a mask per
+    template would (positions ascending, the templates in their codes' order), on vids holding every template, none
+    and repeated vertices; MPG._property_at merges an entry of its own before the template's value."""
+    _, (h, segments, sections, ds) = _pair(n_segments=3)
+    instances = h.instances
+    for vids in (np.arange(h._id + 1, dtype=np.int64), np.zeros(0, dtype=np.int64),
+                 np.repeat(instances.vids_at_scale(h.scales.Compartment)[::3], 2)):
+        found, row, local, groups = instances.plan(vids)
+        codes = instances.code[row[found]]
+        by_mask = [(key, np.flatnonzero(found)[codes == code]) for key, code in instances.codes.items()
+                   if (codes == code).any()]
+        assert [key for key, _ in groups] == [key for key, _ in by_mask]
+        for (_, at), (_, expected) in zip(groups, by_mask):
+            np.testing.assert_array_equal(at, expected)
+    x1 = sections[segments[0]]["x1"]
+    h.set_values("vessel_index", [x1], [5.])
+    vids = np.arange(h._id + 1, dtype=np.int64)
+    found, values = h._property_at("vessel_index", vids)
+    assert np.all(np.diff(found) > 0) and values[np.searchsorted(found, x1)] == 5.
+
+
 def test_the_ids_freed_at_the_end_are_given_again():
     """MPG.reuse_ids: once the last vertices are removed (an instance's block with them), the id counter comes back
     to the last id in use, the next vertex gets the first freed id; nothing changes while the last id is in use."""

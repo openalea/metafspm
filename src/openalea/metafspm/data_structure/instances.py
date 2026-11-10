@@ -336,10 +336,25 @@ class Instances:
         found = (local >= 0) & (local < self.size[row])
         return found, row, local
 
-    def _groups(self, rows) -> dict:
-        """{template key: mask} over *rows*."""
+    def _group_indices(self, rows) -> list:
+        """[(template key, the positions in *rows* of its instances, ascending)], the templates in the order of their
+        codes (their registration): one stable sort of the rows' codes, not a comparison per template."""
         codes = self.code[np.asarray(rows, dtype=np.int64)]
-        return {key: codes == code for key, code in self.codes.items() if (codes == code).any()}
+        if codes.size == 0:
+            return []
+        order = np.argsort(codes, kind="stable")
+        ordered = codes[order]
+        starts = np.flatnonzero(np.concatenate(([True], ordered[1:] != ordered[:-1])))
+        ends = np.append(starts[1:], ordered.size)
+        keys = self._keys_by_code()
+        return [(keys[int(ordered[start])], order[start:end]) for start, end in zip(starts.tolist(), ends.tolist())]
+
+    def _keys_by_code(self) -> list:
+        """The template key of each code."""
+        keys = [None] * len(self.codes)
+        for key, code in self.codes.items():
+            keys[code] = key
+        return keys
 
     def vids_at_scale(self, scale: int) -> np.ndarray:
         """The instanced vertices at *scale*, ascending."""
@@ -398,7 +413,8 @@ class Instances:
     def plan(self, vids) -> tuple:
         """locate(vids) and its grouping by template, for reading several properties at the same *vids* (values)."""
         found, row, local = self.locate(vids)
-        groups = [(key, np.flatnonzero(found)[mask]) for key, mask in self._groups(row[found]).items()]
+        positions = np.flatnonzero(found)
+        groups = [(key, positions[at]) for key, at in self._group_indices(row[found])]
         return found, row, local, groups
 
     def values(self, name: str, vids, plan: tuple = None) -> tuple:
@@ -460,9 +476,8 @@ class Instances:
         scale = np.empty(found.size, dtype=np.int64)
         complex_ = np.empty(found.size, dtype=np.int64)
         parent = np.empty(found.size, dtype=np.int64)
-        for key, mask in self._groups(row).items():
+        for key, at in self._group_indices(row):
             template = self.templates[key]
-            at = np.flatnonzero(mask)
             first, owner, here = self.first[row[at]], self.owner[row[at]], local[at]
             scale[at] = template.scale[here]
             for codes, out in ((template.complex[here], complex_), (template.parent[here], parent)):

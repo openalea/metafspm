@@ -752,8 +752,8 @@ class MPG(MTG):
         return self._explicit_property_at(name, vids)
 
     def _property_at_instanced(self, name, vids) -> tuple:
-        found, values = self._explicit_property_at(name, vids)
-        rest = vids[~np.isin(vids, found, assume_unique=False)]
+        explicit, values = self._explicit_property_mask(name, vids)
+        found, rest = vids[explicit], vids[~explicit]           # the entries of their own first, else the template's
         has, template_values = self.instances.values(name, rest)
         if not has.any():
             return found, values
