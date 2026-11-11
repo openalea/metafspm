@@ -208,6 +208,7 @@ naming the renames (a frame still displays in ParaView): run again, there is no 
 | deep imports of the public names (`from openalea.metafspm.scene.scene import Scene`, …) | `from openalea.metafspm import Scene, ...` (its `__all__`) |
 | GRANAP's node variable `kind` (codes 0-4) | `compartment_type` |
 | MECHA's `collar_kind`, `soil_node_kind` | `collar_condition`, `soil_node_condition` |
+| MECHA's node variable `collar_value` (hPa, or cm3 d-1 where `collar_node_condition` is 2) | `collar_potential` (hPa, `collar_node_condition` 1), `collar_inflow` (cm3 d-1, `collar_node_condition` 2) |
 
 ## 8. The self-checks are a Compute option (QA-10)
 
