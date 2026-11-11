@@ -34,7 +34,7 @@ def test_the_run_and_its_scenario_are_written(tmp_path):
     run = _json(tmp_path / "run.json")
     assert run["status"] == "finished" and run["iterations"] == 2 and run["time"] == 2 * DT
     assert {"RootPopulation", "Seedlings", "SceneSoil", "exchanges", "recording"} <= set(run["timing"])
-    assert run["wall_time"] >= 0. and "openalea.metafspm" in run["versions"] and "ended" in run
+    assert run["wall_time"] >= 0. and "openalea.metafspm" in run["provenance"]["packages"] and "ended" in run
     scenario = _json(tmp_path / "scenario.json")
     assert scenario["time_step"] == DT and [p["model"].split(".")[-1] for p in scenario["populations"]] == [
         "RootPopulation", "Seedlings"]

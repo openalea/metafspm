@@ -866,7 +866,7 @@ time (an event's, a planting time) is a duration since time 0 or a date (`"2026-
   - `run.json`: status (running, finished, stopped, failed with its error), times, wall time per model and per
     component (`scene.timing`: `"<Model>"` and `"<Model>.<Component>"`; `scene.calls`, the calls each component ran;
     a component's calls and its steps run
-    together with others, `Component.wall_time()`), versions;
+    together with others, `Component.wall_time()`), its provenance and the forcings applied (below);
   - `scenario.json`: the planting, the scenarios, the environment models, the forcings (tables in `forcings/`);
   - `Plant/<Model>/summaries.csv`: one row per plant and step, the float state variables of every component on the
     plants' DataStructure **and on its views** (a structural component's SubOrgans, Adel's or ArchiSimple's
@@ -904,6 +904,16 @@ time (an event's, a planting time) is a duration since time 0 or a date (`"2026-
   at the first step and the last one at the end. Without a folder the tables stay in memory, and
   `recorder.table(name)` reads any of them back. `Scene.simulate` sets the run's status; a loop of `scene.run()`
   ends with `scene.finish()` (a recording scene dropped without it warns).
+- **Provenance.** run.json's `"provenance"` records what produced the run (`openalea.metafspm.scene.provenance`):
+  python's version and, for metafspm, numpy, scipy, pandas, numba, openalea.mtg, encoding3d and every package the
+  scene's models and components come from (each port), its version and, for a clone installed with `pip install -e`,
+  its git commit and `dirty` (its tracked files modified); the start date, the coupling, the links
+  (`scene.translator`), each component's `random_seed`, and the parameters (`"hash"`: every component's parameters
+  and settings as the scene runs them; `"non_default"`: those differing from their declared default). Its
+  `"forcings"` give, for each forcing, the mean, least and greatest of the per-step means applied and the steps
+  (a forcing given by a function, use case 1's weather, is recovered this way). A checkpoint's `scene.json` holds
+  the same provenance with each component's declared variables, and every frame's `writer` the versions and
+  commits. Nothing to set: every run records it.
 - **Restarts.** `scene.checkpoint(path)` and `Scene.restore(path, **arguments)` continue a run bit for bit; models
   keep non-variable state through `checkpoint_state()` / `restore_state(state)` (an external solver's state; the
   objects the components share by content are the DataStructures' `data_structure.objects`, saved with them).
@@ -911,7 +921,11 @@ time (an event's, a planting time) is a duration since time 0 or a date (`"2026-
   **arguments)`): with `"checkpoint"` (the default) the run goes on with the checkpoint's parameters and settings,
   whatever the scene was built with; with `"current"` the scene's own scenarios (its planting table's, its
   environment scenarios) are applied again after the load: a resumed run with a changed parameter (only the entries
-  the scenarios give; the others keep the checkpoint's values). What does not change from one checkpoint to the
+  the scenarios give; the others keep the checkpoint's values). Loading a checkpoint compares its provenance with
+  the scene's and warns once with each difference ("openalea.mecha: 0.1 commit 9bcb3f9e7 (clean) then, ... now",
+  "MECHA.Anatomy declares variables the checkpoint lacks: radial_surface", "the parameters differ: ...", the
+  parameters left out with `"current"`); the checkpoint loads all the same (only another format number is refused).
+  What does not change from one checkpoint to the
   next is saved once (`scene.shared`): a `checkpoint_state()` returns `Shared(name, value)` for such a value (at any
   depth), and the sections' templates (reduced or instanced) are shared the same way; each part is written once in
   the shared folder (`scene.checkpoint(path, shared=folder)`, by default `path/shared`; the SceneRecorder's

@@ -52,6 +52,15 @@ from openalea.metafspm.data_structure.data_api import ArrayDataStructure, MPGDat
 from openalea.metafspm.data_structure.mpg import MPG
 
 PLATFORM = "openalea.metafspm"
+
+
+def _platform_version() -> str:
+    """metafspm's installed version (a frame's writer; the recorder adds the commits: scene.provenance)."""
+    from openalea.metafspm.scene.provenance import package
+    described = package("openalea.metafspm")
+    return None if described is None else described[1]["version"]
+
+
 EXTRAS = "metafspm"
 # The format of the extras (extras["metafspm"]["format"]): 2 since the 2026 renames (QA-6: the declarations'
 # "aggregation" and "role", the kind values, a grid's "spacing"). A frame of an older format still displays (its
@@ -1329,7 +1338,8 @@ def to_frame(data_structures: dict, components: dict = None, mappings: dict = No
     names = {key: value for key, value in names.items() if value}
     from openalea.metafspm.coupling.durations import duration, label
     frame = encoding3d.Frame(time=float(time), time_unit=label(duration(time_unit, "time_unit")), step=int(step),
-                          writer={"platform": PLATFORM}, vocabulary_version=vocabulary.version())
+                          writer={"platform": PLATFORM, "version": _platform_version()},
+                          vocabulary_version=vocabulary.version())
     if variables is not None:
         variables = {identifier: resolved_variables(_for(variables, identifier), data_structure,
                                                     (components or {}).get(identifier, ()))

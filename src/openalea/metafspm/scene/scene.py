@@ -54,6 +54,7 @@ from openalea.metafspm.coupling.cross import CrossMapping, Exchanges, UnionDataS
 from openalea.metafspm.coupling.translator import Translator, link_pairs, _matches, _scene_name
 from openalea.metafspm.data_structure.data_api import (CHECKPOINT_FORMAT, MPGDataStructure, _root_data_structure,
                                                       check_checkpoint_format)
+from openalea.metafspm.scene.provenance import ForcingSummary, mismatches, provenance
 from openalea.metafspm.scene.recorder import SceneRecorder
 from openalea.metafspm.scene.population import (Population, _apply_model_scenario, _flat_scenario, _model_arguments,
                                                 _model_keywords, planting as _planting, population_data_structure)
@@ -242,6 +243,7 @@ class Scene:
                              key=lambda event: event[0])
         self._n_events = len(self.events)
         self.stop_when, self.stopped = stop_when, False
+        self.forcing_summary = ForcingSummary()       # the forcings applied (run.json's "forcings": provenance)
         for model in self.environment + [population.instance for population in self.populations]:
             if hasattr(model, "spin_up"):
                 model.spin_up(self)
@@ -525,8 +527,10 @@ class Scene:
             if is_spatial(forcing):
                 values = spatial_mean(forcing, data_structure.entity_ids(data_structure.location(name)), start, end)
                 data_structure.set(name, np.broadcast_to(values, np.shape(data_structure.get(name))).copy())
+                self.forcing_summary.add(name, values)
                 continue
             value = forcing_mean(forcing, start, end)
+            self.forcing_summary.add(name, value)
             data_structure.set(name, np.full(np.shape(data_structure.get(name)), value, dtype=float))
 
     # ── running ───────────────────────────────────────────────────────────────
@@ -807,7 +811,9 @@ class Scene:
         with open(os.path.join(path, "scene.json"), "w") as f:
             json.dump({"format": CHECKPOINT_FORMAT, "time": self.time, "step_count": self.step_count, "stopped": self.stopped,
                        "events_fired": self._n_events - len(self.events),
-                       "data_structures": len(self._all_data_structures())}, f)
+                       "data_structures": len(self._all_data_structures()),
+                       "forcing_summary": self.forcing_summary.state,
+                       "provenance": provenance(self, variables=True)}, f, indent=1)
 
     @classmethod
     def restore(cls, path: str, *args, scenario: str = "checkpoint", **kwargs) -> "Scene":
@@ -859,6 +865,13 @@ class Scene:
             self._apply_scenarios()
         self.time, self.step_count, self.stopped = saved["time"], saved["step_count"], saved["stopped"]
         self.events = self.events[saved["events_fired"]:]         # the ones not fired yet, whatever their time
+        self.forcing_summary = ForcingSummary(saved.get("forcing_summary"))
+        differences = mismatches(saved.get("provenance"), provenance(self, variables=True),
+                                 parameters=scenario == "checkpoint")      # "current": changed on purpose
+        if differences:
+            warnings.warn(f"{path} was written by another run's code or settings than this scene's (it is loaded "
+                          "as it is; a variable it lacks keeps this scene's initial value or fails at the first "
+                          "step):\n  " + "\n  ".join(differences), stacklevel=2)
         if self.recorder is not None:
             self.recorder.resume_at(self)              # its tables cut back to this step, appended to from here
 

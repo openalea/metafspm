@@ -102,7 +102,7 @@ The folder then holds:
 
 ```text
 outputs/dry/
-  run.json                           status, start and end, wall time per model, versions
+  run.json                           status, start and end, wall time per model, provenance
   scenario.json                      the planting, each model's scenario, the forcings, the recorder's settings
   forcings/air_water_potential.csv   the forcing, as given
   Plant/SeedlingWater/summaries.csv  one row per plant and step: the plant's state variables, summed or averaged

@@ -12,7 +12,11 @@ scene's steps, or "step" (every step); an output is written when the scene's tim
                                       error), started, ended, wall time, iterations, simulated time, time step, wall
                                       time per model and per component ("<Model>.<Component>": Scene.timing), the
                                       calls that ran per component (Scene.calls: a cadence's fewer than the steps),
-                                      versions, the threads chosen and in use ("compute": "threads": the
+                                      provenance (scene.provenance: python's, metafspm's and each port's version
+                                      and git commit with its modified flag, numpy, scipy, numba...; the start
+                                      date, coupling, links, seeds, the parameters' hash and non-default values),
+                                      forcings (the mean, least and greatest of each forcing's per-step means
+                                      applied), the threads chosen and in use ("compute": "threads": the
                                       Compute's threads, its budget, the bandwidth-bound sections' ceiling and its
                                       source, the processors and core types, BLAS libraries, numba:
                                       Compute.thread_info), the time, calls and threads of each kernel, solver and
@@ -76,6 +80,7 @@ import numpy as np
 import pandas as pd
 
 from openalea.metafspm.coupling.declaration import EXTENSIVE_KINDS, INTENSIVE_KINDS, MASSIC_KINDS
+from openalea.metafspm.scene.provenance import frame_writer, provenance
 
 COMPARTMENTS = ("Plant", "Soil", "Atmosphere")
 _PACKAGE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))   # openalea.metafspm's folder
@@ -215,17 +220,6 @@ def _write_json(path: str, content: dict) -> None:
     with open(temporary, "w") as file:
         json.dump(content, file, indent=1)
     os.replace(temporary, path)                      # a reader never sees half a file
-
-
-def _versions() -> dict:
-    from importlib.metadata import PackageNotFoundError, version
-    found = {"python": platform.python_version()}
-    for package in ("openalea.metafspm", "numpy", "pandas", "openalea.encoding3d"):
-        try:
-            found[package] = version(package)
-        except PackageNotFoundError:
-            pass
-    return found
 
 
 def _scene_location(data_structure, location: str) -> str:
@@ -561,7 +555,7 @@ class SceneRecorder:
         if self.folder is not None:
             previous = self._read_run() if self.resume else {}
             self._run = {"status": "running", "started": previous.get("started", self._started.isoformat()),
-                         "time_step": float(scene.time_step), "versions": _versions(), "host": platform.node(),
+                         "time_step": float(scene.time_step), "provenance": provenance(scene), "host": platform.node(),
                          "command": " ".join(sys.argv),
                          "compute": {"threads": scene.compute.thread_info()}}
             if self.resume:
@@ -998,6 +992,7 @@ class SceneRecorder:
         options = {**self.frame_options, "variables": self._frame_variables[0]}
         frame = scene_to_frame(scene, display_meshes=display, display_plants=self.display_plants,
                                display=self.display, **options)
+        frame.writer.update(frame_writer(scene))       # the versions and commits that wrote it (provenance)
         if self.frame_views is not None and not self._views_written:
             if self._views is None:
                 self._views = self._views_content(scene, folder, display, unfiltered=frame)
@@ -1141,6 +1136,7 @@ class SceneRecorder:
                          calls=dict(getattr(scene, "calls", {})))
         if getattr(scene, "coupling", "explicit") != "explicit":         # a fixed point's iterations (Scene)
             self._run["coupling_iterations"] = dict(scene.coupling_iterations)
+        self._run["forcings"] = scene.forcing_summary.as_dict()      # the forcings applied: their per-step means'
         self._run.setdefault("compute", {})["timing"] = scene.compute.timing_info()     # the kernels' and solvers'
         device = scene.compute.device_info()     # the GPU used and its transfers, None on the cpu (not recorded)
         if device is not None:
