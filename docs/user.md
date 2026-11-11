@@ -1257,6 +1257,9 @@ omitted) says how the scene uses the machine:
   with its evaluation alone in a library built for it), e.g. `Compute(checks={"topology", "archetypes"})`. An
   unknown name raises ValueError; run.json's provenance records them (`"checks"`).
 
+- `processes`: where the populations run, 1 (default), an integer or `"auto"`: [Populations in
+  processes](#populations-in-processes-computeprocesses).
+
 Within the scene's build and steps, `Compute.current()` is the scene's Compute (what runs there reads it without
 being given it: a reduction's batches, the linear solvers resolved per system); outside, a default `Compute()`.
 `scenario.json` records the Compute (a mapping as given, its `"default"` filled in),
@@ -1275,6 +1278,43 @@ run.py` keeps the run on the performance cores (here processors 0-3; `lscpu --ex
 `/sys/devices/cpu_core/cpus` lists them); `threads="auto"` then counts those processors (`machine()`, its
 `core_types` recorded in `run.json`). There is no Compute setting for it: an idle machine gains nothing, and macOS
 has no affinity setting.
+
+### Populations in processes: `Compute(processes=)`
+
+`Compute(processes=n)` runs the scene's populations in n worker processes, forked from the scene's process at the
+first step (after the build, a restore, numba's kernels loaded: their memory shared, copy-on-write); the scene's
+process keeps the environment models (the soil, the light), the exchanges, the recorder and the checkpoints.
+Nothing else changes: the same tables, frames and checkpoints, **the same bits at any process count**, the step's
+order the same.
+
+```python
+scene = Scene(planting(stand(8, ...), WheatPlant, WHEAT_SCENARIO, population=[f"wheat{k}" for k in range(8)]),
+              environment=[RichardsSoilModel, CaribuLightModel], ..., compute=Compute(processes=4))
+scene.simulate(24 * 14)
+scene.population("wheat3").data_structure.get("psi")        # the scene process's copy, up to date after each step
+```
+
+- A worker runs **whole populations**: split the plants into populations to spread them
+  (`planting(..., population=)`, which gives the same bits as one population: the plant order). `processes` beyond the
+  populations raises.
+- `1` (default): the populations in the scene's process, in turn. `"auto"`: the most workers that the populations, the
+  physical cores (less one, the scene's process's) and the memory budget allow (MemAvailable and a cgroup's limit,
+  less 10 %; each worker predicted at `runner.PRIVATE_FIXED_MB` + `runner.PER_PLANT_MB` per plant), else 1.
+- Cores: each process runs on a core set of its own (`os.sched_setaffinity`, Linux), its threads held to it; on a
+  hybrid CPU the scene's process takes the performance cores (the environment, Caribu) and the workers the efficient
+  ones, the low-power cores left out. `run.json` records the placement under `"processes"` (groups, core sets,
+  threads, memory budget, predicted and measured memory per worker, the balance: the slowest group's time over the
+  mean), and the time of the publications (`"timing"` `"publication"`).
+- Limits: Linux and macOS (fork), the cpu, `coupling="explicit"` (a FixedPoint across processes is a later phase); a
+  link between two populations, or an environment model working on a population's own DataStructure, keeps
+  `processes=1` (refused, named).
+- Failures: a worker's death (killed, out of memory) ends the run with a RuntimeError naming its group, its plants,
+  the step, its last memory and the last checkpoint (run.json "failed"); an exception in a worker is raised again in
+  the scene's process, its message prefixed with the group, the worker's traceback appended.
+- Checkpoints: as in one process; one written at any process count resumes at any other.
+- When it pays: a population's step must outweigh its publication (its DataStructure checkpointed into RAM and loaded
+  back each step, tens of ms for a young wheat plant) and the environment's step, which stays serial. Small scenes
+  (one or two young plants) gain little or lose; measure with your scene (use case 1's README gives the numbers).
 
 ### Repeated runs: `run_variants`
 

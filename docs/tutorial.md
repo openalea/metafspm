@@ -115,6 +115,24 @@ Plant summaries sum the extensive variables over each plant's elements (the tran
 average the others (a water potential). An environment model's summaries go to `Soil/` or `Atmosphere/`, given by
 its `compartment` attribute. Every table has its time column, `time`, in s.
 
+**Several plants, several cores.** A scene of many plants can step its populations in worker processes, the scene's
+own process keeping the soil, the light and the outputs: give each group of plants its population and ask the
+processes. The outputs are the same, to the last digit, at any number of processes.
+
+```python
+from openalea.metafspm import Compute
+
+table = planting([Planting(x=0.05 + 0.1 * k, y=0.1) for k in range(4)], SeedlingWater, scenarios["dry"]["SeedlingWater"],
+                 population=["a", "b", "a", "b"])                 # two populations of two plants
+scene = Scene(table, environment=[Soil], translator=SCENE_TRANSLATOR, time_step=3600, recorder="outputs/dry_4",
+              compute=Compute(processes=2))                         # one worker per population; "auto": as many as fit
+scene.simulate(48)
+```
+
+`run.json` then says where each population ran (`"processes"`: its groups, cores and memory). It pays when the plants
+are large (days of growth, an anatomy each); on young seedlings like these the exchanges between the processes cost
+more than they save ([user guide](user.md#populations-in-processes-computeprocesses)).
+
 ## 4. Reading the outputs back
 
 ```python

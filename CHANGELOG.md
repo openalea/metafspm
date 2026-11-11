@@ -4,6 +4,20 @@
 
 ### Added
 
+- Populations in worker processes (route B, B2): `Compute(processes=1 | n | "auto")` (default 1). With n, the scene's
+  process forks n workers at the first step, each running a group of whole populations on a core set of its own
+  (`os.sched_setaffinity`; on a hybrid CPU the scene's process on the performance cores, the workers on the
+  efficient ones, the low-power cores left out), its threads held to it; the scene's process keeps the environment
+  models, the exchanges, the recorder and the checkpoints, and a copy of each population's DataStructure, published
+  by its worker after each step (a checkpoint into /dev/shm, loaded in place) (`scene.runner`: `SequentialRunner`,
+  `ProcessRunner`, `placement`, `cpu_topology`, `memory_budget_mb`). `"auto"` picks the most workers the
+  populations, the cores and the memory budget allow. `scene.apply(function, population=)` runs a function on the
+  live DataStructure where it lives. A worker's death or exception ends the run naming its group, plants, step and
+  memory; run.json gains `"processes"` (groups, core sets, threads, memory predicted and measured, balance) and the
+  publications' time. The same bits at any process count: use case 1, 2 plants as 2 populations x 3 days, every
+  table and frame byte-identical at 1 and 2 processes; checkpoints resume at any count. Limits: whole populations
+  per worker (split with `planting(population=)`), `coupling="explicit"`, the cpu, fork (Linux, macOS).
+  docs/user.md "Populations in processes", docs/conventions.md "Owners, publication, copies".
 - Variable lookups cached (route A, A4): the DataStructure's stores dict is kept while its coarse scales stay and
   each name's store is remembered while it holds the name (`_find`, `_var_stores`, the located views' alike):
   `data_structure.get` of every variable of use case 1's 9 structures 9.2 -> 7.2 ms; use case 1, 2 plants x 3 days

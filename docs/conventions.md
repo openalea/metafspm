@@ -253,6 +253,32 @@ so the same plants laid out in one population, in several (`planting(..., popula
 processes give **the same bits** (test/scenes/test_plant_order.py). A developer writing a scene-level aggregation over
 plants sums per plant, in plant order, the same way.
 
+## Owners, publication, copies (processes)
+
+With `Compute(processes=n)` (`scene.runner`) the scene's process, the coordinator, forks n workers at the first step,
+each running a group of whole populations. Every DataStructure has one **owner**, the process that runs the
+components writing it: a population's is its worker, an environment model's (a grid, the plants' union) the
+coordinator. The coordinator keeps a **copy** of each population's DataStructure, which its exchanges, the recorder,
+the frames, the checkpoints and `scene.population(name).data_structure` read, unchanged code:
+
+- after its run, a worker **publishes** its DataStructure: `data_structure.checkpoint(...)` into its folder of
+  `/dev/shm` (RAM; the parts saved once, its sections' templates, written once), loaded by the coordinator into its
+  copy in place (`load_checkpoint`), in the populations' order; the mappings and the union rebuild what the topology
+  moved (their stamps);
+- before a worker's run, what the coordinator wrote into its copy since the last publication (the forcings, the
+  planting mask, the exchanges into the population, a user's or an event's `set`: the DataStructure's write counters
+  tell which) goes in the step message, with the write counts;
+- a component's own state (a solver's memo, GRANAP's records) stays in its worker; the checkpoints ask the workers
+  for it (`checkpoint_state`), its wall times, calls and conservation balances come back with each step;
+- `scene.apply(function, population=)` runs a module-level function on the live DataStructure in its worker (the
+  developer's way to anything the copy does not hold, an MPG method's state).
+
+What crosses processes is the explicit coupling only: a component of one population reading another's within the
+step, an environment model's component on a population's own DataStructure, or a `FixedPoint` keep `processes=1`
+(refused with their names). A component never writes a DataStructure it does not own: an environment component reads
+the plants through the union or a mapping, as in one process. The results are the same bits at any process count
+(the plant order above; test/scenes/test_runner.py).
+
 ## Couplings and derived variables
 
 - **Identity links:** components on one DataStructure share variables by name.

@@ -148,6 +148,9 @@ The solvers are chosen by key in `graph_system(solver=...)`: `"newton"`, `"newto
 .. automodule:: openalea.metafspm.compute
    :members: Compute, machine, processors, core_types
 
+.. automodule:: openalea.metafspm.scene.runner
+   :members: SequentialRunner, ProcessRunner, placement, cpu_topology, memory_budget_mb, deal, make_runner
+
 .. automodule:: openalea.metafspm.scene.environment
    :members: EnvironmentModel
 
