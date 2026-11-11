@@ -19,18 +19,18 @@ SCALES = {"SubOrgan": (14, 13), "Organ": (8, 7)}
 
 
 def nitrogen_ds(scale="SubOrgan"):
-    g, _ = generate_simple_mpg_seedling()
-    g.populate_graph(getattr(g.scales, scale))
-    g.convert_properties_to_arraydict()
-    ds = MPGDataStructure(g, from_scale=getattr(g.scales, scale))
-    is_root = np.zeros(ds.n_nodes())
-    is_root[ds.roots()[0]] = 1.
-    ds.register("is_root", is_root, location="node")
-    return ds
+    mtg, _ = generate_simple_mpg_seedling()
+    mtg.populate_graph(getattr(mtg.scales, scale))
+    mtg.convert_properties_to_arraydict()
+    data_structure = MPGDataStructure(mtg, from_scale=getattr(mtg.scales, scale))
+    is_root = np.zeros(data_structure.n_nodes())
+    is_root[data_structure.roots()[0]] = 1.
+    data_structure.register("is_root", is_root, location="node")
+    return data_structure
 
 
-def incidence(ds):
-    return ds._incidence_matrix().toarray()
+def incidence(data_structure):
+    return data_structure._incidence_matrix().toarray()
 
 
 # ---------------------------------------------------------------- the equations

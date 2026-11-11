@@ -56,15 +56,15 @@ class ActiveDiffusion(DiffusionFields):
 
 
 def _ds(alive=None):
-    g, s = generate_simple_mpg_seedling()
-    g.populate_graph(g.scales.SubOrgan)
-    g.convert_properties_to_arraydict()
-    ds = MPGDataStructure(g, from_scale=g.scales.SubOrgan)
-    ds.register("concentration", np.linspace(1., 2., ds.n_nodes()), location="node")
-    ds.register("source", np.linspace(0., 0.3, ds.n_nodes()), location="node")
-    ds.register("alive", 1. if alive is None else alive, location="node")
-    ds.define_mask("active", {"alive": ">0"})
-    return s, ds
+    mtg, s = generate_simple_mpg_seedling()
+    mtg.populate_graph(mtg.scales.SubOrgan)
+    mtg.convert_properties_to_arraydict()
+    data_structure = MPGDataStructure(mtg, from_scale=mtg.scales.SubOrgan)
+    data_structure.register("concentration", np.linspace(1., 2., data_structure.n_nodes()), location="node")
+    data_structure.register("source", np.linspace(0., 0.3, data_structure.n_nodes()), location="node")
+    data_structure.register("alive", 1. if alive is None else alive, location="node")
+    data_structure.define_mask("active", {"alive": ">0"})
+    return s, data_structure
 
 
 def test_all_active_equals_the_whole_graph_solve():
@@ -78,46 +78,46 @@ def test_all_active_equals_the_whole_graph_solve():
 
 
 def test_inactive_nodes_are_frozen_and_dropped_edges_carry_no_flux():
-    s, ds = _ds()
-    dead = ds.index_of(s.root_segment2)            # cuts the root axis below it and the lateral branch off
-    alive = np.ones(ds.n_nodes()); alive[dead] = 0.
-    ds.set("alive", alive)
-    model = ActiveDiffusion(data_structure=ds)
-    before = np.array(ds.get("concentration"))
+    s, data_structure = _ds()
+    dead = data_structure.index_of(s.root_segment2)            # cuts the root axis below it and the lateral branch off
+    alive = np.ones(data_structure.n_nodes()); alive[dead] = 0.
+    data_structure.set("alive", alive)
+    model = ActiveDiffusion(data_structure=data_structure)
+    before = np.array(data_structure.get("concentration"))
     model()
-    after = ds.get("concentration")
+    after = data_structure.get("concentration")
     assert after[dead] == before[dead]
     tail, head = model._graph_view.tail, model._graph_view.head
     touching = (tail == dead) | (head == dead)
-    np.testing.assert_array_equal(ds.get("flux")[touching], 0.)
+    np.testing.assert_array_equal(data_structure.get("flux")[touching], 0.)
     active = alive > 0                             # mass balance over the active nodes (dt = 1)
-    assert (after - before)[active].sum() == pytest.approx(ds.get("source")[active].sum())
+    assert (after - before)[active].sum() == pytest.approx(data_structure.get("source")[active].sum())
 
 
 def test_a_node_activated_between_two_steps_joins_the_solve():
-    s, ds = _ds()
-    tip = ds.index_of(s.root_segment6)
-    alive = np.ones(ds.n_nodes()); alive[tip] = 0.
-    ds.set("alive", alive)
-    model = ActiveDiffusion(data_structure=ds)
+    s, data_structure = _ds()
+    tip = data_structure.index_of(s.root_segment6)
+    alive = np.ones(data_structure.n_nodes()); alive[tip] = 0.
+    data_structure.set("alive", alive)
+    model = ActiveDiffusion(data_structure=data_structure)
     model()
-    frozen = float(ds.get("concentration")[tip])
-    ds.set("alive", 1.)                            # it emerges: the mask changes through its variable
-    before = np.array(ds.get("concentration"))
+    frozen = float(data_structure.get("concentration")[tip])
+    data_structure.set("alive", 1.)                            # it emerges: the mask changes through its variable
+    before = np.array(data_structure.get("concentration"))
     model()
-    after = ds.get("concentration")
+    after = data_structure.get("concentration")
     assert after[tip] != frozen                    # solved again
-    assert (after - before).sum() == pytest.approx(ds.get("source").sum())   # previous() = its value at activation
+    assert (after - before).sum() == pytest.approx(data_structure.get("source").sum())   # previous() = its value at activation
 
 
 def test_an_empty_mask_skips_the_solve():
-    _, ds = _ds(alive=0.)
-    model = ActiveDiffusion(data_structure=ds)
-    ds.set("flux", 1.)
-    before = np.array(ds.get("concentration"))
+    _, data_structure = _ds(alive=0.)
+    model = ActiveDiffusion(data_structure=data_structure)
+    data_structure.set("flux", 1.)
+    before = np.array(data_structure.get("concentration"))
     model()
-    np.testing.assert_array_equal(ds.get("concentration"), before)
-    np.testing.assert_array_equal(ds.get("flux"), 0.)
+    np.testing.assert_array_equal(data_structure.get("concentration"), before)
+    np.testing.assert_array_equal(data_structure.get("flux"), 0.)
 
 
 # ---------------------------------------------------------------- steady systems need anchors
@@ -149,24 +149,24 @@ def s_vid(name):
 
 
 def _steady_ds(dead_vid=None):
-    s, ds = _ds()
-    collar = np.zeros(ds.n_nodes()); collar[ds.roots()[0]] = 1.
-    ds.register("is_collar", collar, location="node")
+    s, data_structure = _ds()
+    collar = np.zeros(data_structure.n_nodes()); collar[data_structure.roots()[0]] = 1.
+    data_structure.register("is_collar", collar, location="node")
     if dead_vid is not None:
-        alive = np.ones(ds.n_nodes()); alive[ds.index_of(dead_vid)] = 0.
-        ds.set("alive", alive)
-    return s, ds
+        alive = np.ones(data_structure.n_nodes()); alive[data_structure.index_of(dead_vid)] = 0.
+        data_structure.set("alive", alive)
+    return s, data_structure
 
 
 def test_a_steady_connected_subgraph_with_an_anchor_solves():
-    _, ds = _steady_ds()
-    SteadyPotential(data_structure=ds)()
-    np.testing.assert_allclose(ds.get("potential"), -0.1)     # no flux: uniform at the anchor's value
+    _, data_structure = _steady_ds()
+    SteadyPotential(data_structure=data_structure)()
+    np.testing.assert_allclose(data_structure.get("potential"), -0.1)     # no flux: uniform at the anchor's value
 
 
 def test_a_steady_piece_without_anchor_raises_with_its_nodes():
-    s, ds = _steady_ds(dead_vid=s_vid("root_segment2"))
-    model = SteadyPotential(data_structure=ds)
+    s, data_structure = _steady_ds(dead_vid=s_vid("root_segment2"))
+    model = SteadyPotential(data_structure=data_structure)
     with pytest.raises(ValueError, match=r"_steady: piece of \d+ nodes .* has no Dirichlet or positive-weight Robin anchor"):
         model()
 

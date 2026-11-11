@@ -5,7 +5,7 @@ A StructuralComponent may provide ``triangles(where=None) -> Triangles``: every 
 scene's frame, and the node index (in its DataStructure) of the element each belongs to. A light model gathers them
 (one population's, or a UnionDataStructure's, the populations' node indices offset), runs on them, and gives its
 results back per element (np.bincount on the owners). An environment model, given DataStructures, calls
-``ds.triangles()``: each StructuralComponent registers itself on its DataStructure as their provider. No PlantGL in the path: a PlantGL scene, for display, can be
+``data_structure.triangles()``: each StructuralComponent registers itself on its DataStructure as their provider. No PlantGL in the path: a PlantGL scene, for display, can be
 built from the same arrays. Segment models (roots, stems drawn as segments x1…z2 with a radius) get a default:
 segment_triangles.
 
@@ -26,7 +26,7 @@ placing it. Any reduction, at any location: a section's cells, a coarse cell's s
 
 What of the elements lies in a domain (a HalfSpace; "air" and "soil", the half spaces of the scene's soil surface,
 Scene(soil_surface=)), vectorised: Triangles.clip and Triangles.fraction_in (exact cuts at the plane), and per entity
-a DataStructure's geometry (ds.geometry: Geometry.clipped, fraction_in, centre_in, by area or by length);
+a DataStructure's geometry (data_structure.geometry: Geometry.clipped, fraction_in, centre_in, by area or by length);
 FractionIn and CentreIn give them to translator links as geometric variables (DataStructure.derive_geometry).
 
 The turtle's frame operations follow PlantGL's PglTurtle (the same angles in degrees, the same senses), for models
@@ -230,7 +230,7 @@ class TemplateShapes:
 class HalfSpace:
     """
     The points on one side of a horizontal (or axis-normal) plane: *axis*'s coordinate >= *level* (*above*) or <=
-    *level*. A domain of Triangles.clip, Triangles.fraction_in and the DataStructures' geometry (ds.geometry).
+    *level*. A domain of Triangles.clip, Triangles.fraction_in and the DataStructures' geometry (data_structure.geometry).
     The strings "air" and "soil" are the half spaces above and below the scene's soil surface (Scene(soil_surface=)).
     """
     level: float = 0.
@@ -290,14 +290,14 @@ def segment_fraction_in(start, end, domain) -> tuple:
 
 class Geometry:
     """
-    The geometry of a DataStructure's elements (ds.geometry), vectorised: their triangles (its geometry providers')
+    The geometry of a DataStructure's elements (data_structure.geometry), vectorised: their triangles (its geometry providers')
     or their segments (x1 … z2), and what of them lies in a domain ("air", "soil": the scene's soil surface; a
     HalfSpace)::
 
-        ds.geometry.clipped("air", where="planted")                       the triangles above the soil (a light model's)
-        ds.geometry.fraction_in("air", location="SubOrgan", by="area", weight="green")
+        data_structure.geometry.clipped("air", where="planted")                       the triangles above the soil (a light model's)
+        data_structure.geometry.fraction_in("air", location="SubOrgan", by="area", weight="green")
                                                                           each element's green area fraction above it
-        ds.geometry.centre_in("air", by="length")                         the middle of each segment's part above it
+        data_structure.geometry.centre_in("air", by="length")                         the middle of each segment's part above it
 
     by "area": the triangles' areas (weighted by a per-triangle attribute, *weight*: Adel's "green", the green share
     of each triangle); by "length": the segments' lengths (their ends' variables x1, y1, z1, x2, y2, z2). *location*:
@@ -315,21 +315,21 @@ class Geometry:
 
     def _holder(self, location):
         """(the DataStructure drawing the entities of *location*, the owner map from its nodes to them or None)."""
-        ds = self.data_structure
-        if location in (None, "node") or location == ds.__dict__.get("_at"):
-            return ds, None
-        if getattr(ds, "_anatomy", False) and hasattr(ds, "at"):
-            return ds.at(location), None
-        return ds, np.asarray(ds.owner(location), dtype=np.int64)
+        data_structure = self.data_structure
+        if location in (None, "node") or location == data_structure.__dict__.get("_at"):
+            return data_structure, None
+        if getattr(data_structure, "_anatomy", False) and hasattr(data_structure, "at"):
+            return data_structure.at(location), None
+        return data_structure, np.asarray(data_structure.owner(location), dtype=np.int64)
 
     def _size(self, location) -> int:
-        ds = self.data_structure
-        if location in (None, "node") or location == ds.__dict__.get("_at"):
-            return int(ds.n_nodes())
-        return int(len(ds.entity_ids(location)))
+        data_structure = self.data_structure
+        if location in (None, "node") or location == data_structure.__dict__.get("_at"):
+            return int(data_structure.n_nodes())
+        return int(len(data_structure.entity_ids(location)))
 
     def triangles(self, where=None, location=None):
-        """The elements' triangles (ds.triangles), owned by the entities of *location*."""
+        """The elements' triangles (data_structure.triangles), owned by the entities of *location*."""
         holder, owner = self._holder(location)
         triangles = holder.triangles(where)
         if owner is not None:
@@ -341,14 +341,14 @@ class Geometry:
         return self.triangles(where, location).clip(self.domain(domain))
 
     def _segments(self, location):
-        ds = self.data_structure
-        missing = [name for name in self.COORDINATES if not ds.has(name)]
+        data_structure = self.data_structure
+        missing = [name for name in self.COORDINATES if not data_structure.has(name)]
         if missing:
-            raise ValueError(f"{type(ds).__name__}.geometry by length: no segment ends {missing}")
-        stored = ds.location("x1")
-        if location not in (None, "node", stored) and location != ds.__dict__.get("_at"):
+            raise ValueError(f"{type(data_structure).__name__}.geometry by length: no segment ends {missing}")
+        stored = data_structure.location("x1")
+        if location not in (None, "node", stored) and location != data_structure.__dict__.get("_at"):
             raise ValueError(f"geometry by length: the segment ends are at {stored}, not at {location}")
-        x1, y1, z1, x2, y2, z2 = (np.asarray(ds.get(name), dtype=float).reshape(-1) for name in self.COORDINATES)
+        x1, y1, z1, x2, y2, z2 = (np.asarray(data_structure.get(name), dtype=float).reshape(-1) for name in self.COORDINATES)
         return np.stack([x1, y1, z1], axis=1), np.stack([x2, y2, z2], axis=1)
 
     def fraction_in(self, domain, location=None, by: str = "area", weight: str = None, where=None,
@@ -409,16 +409,16 @@ class Geometry:
     def stamp(self, location=None, by: str = "area") -> tuple:
         """What the geometry is made from: the topology, and the geometry providers' stamps
         (StructuralComponent.geometry_stamp) or, by length, the segment ends' writes."""
-        ds = self.data_structure
+        data_structure = self.data_structure
         if by == "length":
-            return (ds.topology_version, tuple(ds.write_count(name) for name in self.COORDINATES if ds.has(name)))
+            return (data_structure.topology_version, tuple(data_structure.write_count(name) for name in self.COORDINATES if data_structure.has(name)))
         holder, _ = self._holder(location)
         providers = holder.__dict__.get("_geometry_providers", [])
         stamps = []
         for provider in providers:
             drawn = getattr(provider, "_drawn_by", provider)
             stamps.append(drawn.geometry_stamp() if hasattr(drawn, "geometry_stamp") else None)
-        return (ds.topology_version, tuple(stamps))
+        return (data_structure.topology_version, tuple(stamps))
 
 
 @dataclass(frozen=True)
@@ -527,12 +527,11 @@ def drawn_ends(data_structure, nodes=None) -> tuple:
     are drawn: their display ends (display_x1 ... display_z2, data_structure.mpg.DISPLAY_ENDS) where given (finite),
     else their topological ends (x1 ... z2)."""
     from openalea.metafspm.data_structure.mpg import DISPLAY_ENDS
-    ds = data_structure
-    ends = np.stack([np.asarray(ds.get(name), dtype=float).reshape(-1) for name in SEGMENT_ENDS], axis=1)
+    ends = np.stack([np.asarray(data_structure.get(name), dtype=float).reshape(-1) for name in SEGMENT_ENDS], axis=1)
     if nodes is not None:
         ends = ends[nodes]
-    if all(ds.has(name) for name in DISPLAY_ENDS):
-        display = np.stack([np.asarray(ds.get(name), dtype=float).reshape(-1) for name in DISPLAY_ENDS], axis=1)
+    if all(data_structure.has(name) for name in DISPLAY_ENDS):
+        display = np.stack([np.asarray(data_structure.get(name), dtype=float).reshape(-1) for name in DISPLAY_ENDS], axis=1)
         if nodes is not None:
             display = display[nodes]
         given = np.isfinite(display).all(axis=1)
@@ -544,11 +543,10 @@ def segment_cylinders(data_structure, where=None):
     """The elements' default triangles (Triangles: each one's node index): a slim cylinder per element of nonzero
     drawn length, from its drawn ends (drawn_ends: its display ends, else x1 ... z2) with its radius; *where*: a node
     mask restricting them. None when the DataStructure has no segment ends (x1 ... z2 and radius)."""
-    ds = data_structure
-    if not all(ds.has(name) for name in SEGMENT_ENDS + ("radius",)):
+    if not all(data_structure.has(name) for name in SEGMENT_ENDS + ("radius",)):
         return None
-    radius = np.asarray(ds.get("radius"), dtype=float).reshape(-1)
+    radius = np.asarray(data_structure.get("radius"), dtype=float).reshape(-1)
     nodes = np.arange(radius.size) if where is None else np.flatnonzero(where)
-    start, end = drawn_ends(ds, nodes)
+    start, end = drawn_ends(data_structure, nodes)
     vertices, drawn = segment_triangles(start, end, radius[nodes])
     return Triangles(vertices[drawn].reshape(-1, 3, 3), np.repeat(nodes[drawn], vertices.shape[1]))

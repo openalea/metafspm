@@ -59,28 +59,28 @@ def test_a_plants_step_gets_its_parameters_per_plant_and_dt():
 
 
 def test_a_parameter_viewed_at_a_coarse_location_and_owner_between_coarse_scales():
-    ds = _population().data_structure
-    np.testing.assert_allclose(ds.parameter_view("supply_rate", "Organ"), [1., 1., 3., 3.])
-    plants = ds.owner("Plant", of="Organ")
+    data_structure = _population().data_structure
+    np.testing.assert_allclose(data_structure.parameter_view("supply_rate", "Organ"), [1., 1., 3., 3.])
+    plants = data_structure.owner("Plant", of="Organ")
     np.testing.assert_array_equal(plants, [0, 0, 1, 1])
-    np.testing.assert_array_equal(ds.owner("Organ"), np.repeat(np.arange(4), 2))   # the nodes' (the SubOrgans')
+    np.testing.assert_array_equal(data_structure.owner("Organ"), np.repeat(np.arange(4), 2))   # the nodes' (the SubOrgans')
 
 
 def test_a_located_view_reads_its_own_entities_parameters():
-    """A view at a coarse location (ds.at): its parameter views are per entity of its own nodes (each one's plant's
+    """A view at a coarse location (data_structure.at): its parameter views are per entity of its own nodes (each one's plant's
     value), the owners found on the view, not on the DataStructure it views."""
-    ds = _population().data_structure
-    view = ds.at("Organ")
+    data_structure = _population().data_structure
+    view = data_structure.at("Organ")
     np.testing.assert_allclose(view.parameter_view("supply_rate", "node"), [1., 1., 3., 3.])
-    np.testing.assert_allclose(ds.parameter_view("supply_rate", "node"), np.repeat([1., 1., 3., 3.], 2))
+    np.testing.assert_allclose(data_structure.parameter_view("supply_rate", "node"), np.repeat([1., 1., 3., 3.], 2))
 
 
 def test_an_optional_input_nothing_provides_is_its_default_unregistered():
     population = _population()
-    ds = population.data_structure
-    assert not ds.has("display_x")
+    data_structure = population.data_structure
+    assert not data_structure.has("display_x")
     population.instance.run()
-    np.testing.assert_array_equal(ds.get("seen_x"), -1.)
+    np.testing.assert_array_equal(data_structure.get("seen_x"), -1.)
 
 
 def test_object_outputs_stay_objects():

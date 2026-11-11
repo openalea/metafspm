@@ -96,40 +96,40 @@ class TissueHydraulicsFD(TissueHydraulics):
 def _anatomy(component_class=TissueHydraulics):
     """
     The seedling root-system graph, with conductances typed by the child segment's label (stem: symplastic, root:
-    transmembrane, leaf: apoplastic), the soil at the root tips and the xylem at the collar. Returns (ds, soil, collar).
+    transmembrane, leaf: apoplastic), the soil at the root tips and the xylem at the collar. Returns (data_structure, soil, collar).
     """
-    g, _ = generate_simple_mpg_seedling()
-    g.populate_graph(g.scales.SubOrgan)
-    g.convert_properties_to_arraydict()
-    ds = MPGDataStructure(g, from_scale=g.scales.SubOrgan)
-    model = component_class(data_structure=ds)
+    mtg, _ = generate_simple_mpg_seedling()
+    mtg.populate_graph(mtg.scales.SubOrgan)
+    mtg.convert_properties_to_arraydict()
+    data_structure = MPGDataStructure(mtg, from_scale=mtg.scales.SubOrgan)
+    model = component_class(data_structure=data_structure)
 
-    labels = g.property("label")
-    root = g.labels.SubOrgan.RootSegment
-    collar = [int(ds.roots()[0])]
-    soil = [int(i) for i in ds.tips() if labels[ds.entity_ids("node")[i]] == root]
+    labels = mtg.property("label")
+    root = mtg.labels.SubOrgan.RootSegment
+    collar = [int(data_structure.roots()[0])]
+    soil = [int(i) for i in data_structure.tips() if labels[data_structure.entity_ids("node")[i]] == root]
     for name, nodes in (("is_soil", soil), ("is_collar", collar)):
-        flags = np.zeros(ds.n_nodes())
+        flags = np.zeros(data_structure.n_nodes())
         flags[nodes] = 1.
-        ds.set(name, flags)
-    child = np.array([labels[b] for _, b in ds.edges()])
-    K_sym = np.where(child == g.labels.SubOrgan.StemElement, 0.80, 0.)
+        data_structure.set(name, flags)
+    child = np.array([labels[b] for _, b in data_structure.edges()])
+    K_sym = np.where(child == mtg.labels.SubOrgan.StemElement, 0.80, 0.)
     K_mem = np.where(child == root, 0.35, 0.)
-    ds.set("K_symplastic", K_sym)
-    ds.set("K_membrane", K_mem)
-    ds.set("K_apoplastic", np.where((K_sym == 0.) & (K_mem == 0.), 1.10, 0.))
+    data_structure.set("K_symplastic", K_sym)
+    data_structure.set("K_membrane", K_mem)
+    data_structure.set("K_apoplastic", np.where((K_sym == 0.) & (K_mem == 0.), 1.10, 0.))
     model()
-    return ds, soil, collar
+    return data_structure, soil, collar
 
 
-def _conductances(ds):
-    return np.asarray(ds.get("K_membrane")) + np.asarray(ds.get("K_symplastic")) + np.asarray(ds.get("K_apoplastic"))
+def _conductances(data_structure):
+    return np.asarray(data_structure.get("K_membrane")) + np.asarray(data_structure.get("K_symplastic")) + np.asarray(data_structure.get("K_apoplastic"))
 
 
 def test_uc3_the_balance_holds_and_water_flows_to_the_xylem():
-    ds, soil, collar = _anatomy()
-    B, p = ds._incidence_matrix().toarray(), np.asarray(ds.get("water_potential"))
-    residual = B @ (_conductances(ds) * (B.T @ p))
+    data_structure, soil, collar = _anatomy()
+    B, p = data_structure._incidence_matrix().toarray(), np.asarray(data_structure.get("water_potential"))
+    residual = B @ (_conductances(data_structure) * (B.T @ p))
     residual[soil] += SOIL_WEIGHT * (p[soil] - 0.)
     residual[collar] += XYLEM_WEIGHT * (p[collar] - (-1.))
     np.testing.assert_allclose(residual, 0., atol=1e-10)
@@ -138,10 +138,10 @@ def test_uc3_the_balance_holds_and_water_flows_to_the_xylem():
 
 
 def test_uc3_the_edge_flux_output_is_written():
-    ds, _, _ = _anatomy()
-    B, p = ds._incidence_matrix().toarray(), np.asarray(ds.get("water_potential"))
-    flux = np.asarray(ds.get("edge_water_flux"))
-    np.testing.assert_allclose(flux, _conductances(ds) * (B.T @ p), atol=1e-12)
+    data_structure, _, _ = _anatomy()
+    B, p = data_structure._incidence_matrix().toarray(), np.asarray(data_structure.get("water_potential"))
+    flux = np.asarray(data_structure.get("edge_water_flux"))
+    np.testing.assert_allclose(flux, _conductances(data_structure) * (B.T @ p), atol=1e-12)
     assert np.abs(flux).max() > 0
 
 
@@ -212,33 +212,33 @@ class ChainNeumann(ChainFields):
 
 def _chain(component_class):
     """3 segments (3 nodes, 2 edges), K = 1, the collar at the graph root."""
-    g = MPG()
-    scale = g.scales.SubOrgan
-    vid = g._add_system_root_at_scale(scale, label=g.labels.SubOrgan.RootSegment)
+    mtg = MPG()
+    scale = mtg.scales.SubOrgan
+    vid = mtg._add_system_root_at_scale(scale, label=mtg.labels.SubOrgan.RootSegment)
     for _ in range(2):
-        vid = g.add_component_with_topo(g.scales.anchors[scale], vid, **PropsConfig(
-            scale=scale, edge_type="<", label=g.labels.SubOrgan.RootSegment))
-    g.populate_graph(scale)
-    g.convert_properties_to_arraydict()
-    ds = MPGDataStructure(g, from_scale=scale)
-    model = component_class(data_structure=ds)
-    collar = np.zeros(ds.n_nodes())
-    collar[ds.roots()[0]] = 1.
-    ds.set("is_collar", collar)
+        vid = mtg.add_component_with_topo(mtg.scales.anchors[scale], vid, **PropsConfig(
+            scale=scale, edge_type="<", label=mtg.labels.SubOrgan.RootSegment))
+    mtg.populate_graph(scale)
+    mtg.convert_properties_to_arraydict()
+    data_structure = MPGDataStructure(mtg, from_scale=scale)
+    model = component_class(data_structure=data_structure)
+    collar = np.zeros(data_structure.n_nodes())
+    collar[data_structure.roots()[0]] = 1.
+    data_structure.set("is_collar", collar)
     model()
-    return ds
+    return data_structure
 
 
 def test_uc4_a_dirichlet_set_brings_the_whole_chain_to_its_value():
-    ds = _chain(ChainDirichlet)
-    np.testing.assert_allclose(ds.get("pressure"), 2.0, atol=1e-10)
+    data_structure = _chain(ChainDirichlet)
+    np.testing.assert_allclose(data_structure.get("pressure"), 2.0, atol=1e-10)
 
 
 def test_uc4_a_neumann_inflow_is_balanced_by_the_leakage():
-    ds = _chain(ChainNeumann)
-    B, p = ds._incidence_matrix().toarray(), np.asarray(ds.get("pressure"))
-    collar = int(ds.roots()[0])
-    inflow = np.zeros(ds.n_nodes())
+    data_structure = _chain(ChainNeumann)
+    B, p = data_structure._incidence_matrix().toarray(), np.asarray(data_structure.get("pressure"))
+    collar = int(data_structure.roots()[0])
+    inflow = np.zeros(data_structure.n_nodes())
     inflow[collar] = 1.
     np.testing.assert_allclose(B @ (B.T @ p) + 0.5 * p - inflow, 0., atol=1e-10)
     assert p.sum() * 0.5 == pytest.approx(1.)                                   # the leakage carries the inflow out
@@ -260,6 +260,6 @@ class ChainDirichletSparse(ChainFields):
 
 
 def test_uc4_a_dirichlet_set_with_a_sparse_jacobian():
-    ds = _chain(ChainDirichletSparse)
-    np.testing.assert_allclose(ds.get("pressure"), 2.0, atol=1e-12)
+    data_structure = _chain(ChainDirichletSparse)
+    np.testing.assert_allclose(data_structure.get("pressure"), 2.0, atol=1e-12)
 

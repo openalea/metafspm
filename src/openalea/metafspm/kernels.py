@@ -287,7 +287,7 @@ def follow_parents(order, parent, base_position, base_heading, base_up, pre_roll
        (PglTurtle.F's, whatever the length; none for a zero length, as F(0));
     5. forward by *length*.
 
-    *order*: a pre-order of the elements (a parent before its children, e.g. ds.order("pre")); *parent*: each one's
+    *order*: a pre-order of the elements (a parent before its children, e.g. data_structure.order("pre")); *parent*: each one's
     parent's index, -1 for none; per element arrays, base_* (n, 3). Returns (position, heading, up, end), each (n, 3):
     the element's start, its frame after the tropism (the one it is drawn in, and its children start from), its end.
     """
@@ -372,17 +372,17 @@ def _pieces(p1, p2, origin, dx, counts, offsets, middles, fractions):
 @njit(cache=True, nogil=True)
 def group_pattern(local, offsets, n):
     """
-    The CSR pattern (indptr, indices, sorted per row: scipy's canonical one) of dense blocks local[offsets[g]:
+    The CSR pattern (indptr, indices, sorted per row: scipy's canonical one) of dense blocks local[offsets[mtg]:
     offsets[g + 1]] × the same, one per group, on *n* rows; slots: each group's (row, column) entry's position in
     the CSR data, row by row (concatenated, k² per group of k nodes). A node is in one group at most (ValueError).
     """
     groups = offsets.size - 1
     counts = np.zeros(n, dtype=np.int64)
     size = 0
-    for g in range(groups):
-        k = offsets[g + 1] - offsets[g]
+    for group in range(groups):
+        k = offsets[group + 1] - offsets[group]
         size += k * k
-        for i in range(offsets[g], offsets[g + 1]):
+        for i in range(offsets[group], offsets[group + 1]):
             if counts[local[i]] != 0:
                 raise ValueError("a node in two reduced groups")
             counts[local[i]] = k
@@ -392,8 +392,8 @@ def group_pattern(local, offsets, n):
     indices = np.empty(indptr[n], dtype=np.int32)
     slots = np.empty(size, dtype=np.int32)
     at = 0
-    for g in range(groups):
-        nodes = local[offsets[g]:offsets[g + 1]]
+    for group in range(groups):
+        nodes = local[offsets[group]:offsets[group + 1]]
         k = nodes.size
         order = np.argsort(nodes)
         rank = np.empty(k, dtype=np.int64)
@@ -412,27 +412,27 @@ def group_pattern(local, offsets, n):
 @njit(cache=True, nogil=True, parallel=True)
 def scatter_weighted_blocks(data, slots, archetypes, weights, blocks, chunks):
     """
-    data[slots[g, i, j]] = the weighted sum of the groups' archetypes' blocks: for each group g of one template (k × k
-    blocks), from 0, corner by corner (archetypes[g, c] >= 0: blocks[archetypes[g, c]], weighted by weights[g, c]), as
+    data[slots[mtg, i, j]] = the weighted sum of the groups' archetypes' blocks: for each group g of one template (k × k
+    blocks), from 0, corner by corner (archetypes[mtg, c] >= 0: blocks[archetypes[mtg, c]], weighted by weights[mtg, c]), as
     numpy's corner by corner accumulation gives it. Parallel over *chunks* (group boundaries, made from the work
     only): each entry written once, the same bits for any thread count.
     """
     k = slots.shape[1]
     for chunk in prange(chunks.size - 1):
         total = np.empty((k, k))                 # one buffer a chunk: no allocation per group (threads contend)
-        for g in range(chunks[chunk], chunks[chunk + 1]):
+        for group in range(chunks[chunk], chunks[chunk + 1]):
             total[:] = 0.
             for c in range(archetypes.shape[1]):
-                archetype = archetypes[g, c]
+                archetype = archetypes[group, c]
                 if archetype < 0:
                     continue
-                block, weight = blocks[archetype], weights[g, c]
+                block, weight = blocks[archetype], weights[group, c]
                 for i in range(k):
                     for j in range(k):
                         total[i, j] += weight * block[i, j]
             for i in range(k):
                 for j in range(k):
-                    data[slots[g, i, j]] = total[i, j]
+                    data[slots[group, i, j]] = total[i, j]
 
 
 # ── Gathers by owner (DataStructure.local_gather) ──

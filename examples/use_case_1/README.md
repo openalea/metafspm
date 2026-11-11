@@ -12,7 +12,7 @@ an `AdaptiveGridDataStructure`.
 
 - **Equation.** The mixed form (Celia et al. 1990), the pressure head h (m) as each cell's unknown:
   (θ(h) − θ(h_prev)) V + dt (Σ q + uptake − boundary inflows) = 0, written per cell volume.
-- **Fluxes.** On each face, q = K_f A (Δh/d + g), with g = 1 on the z faces (z points down from the surface).
+- **Fluxes.** On each face, q = K_f A (Δh/d + mtg), with g = 1 on the z faces (z points down from the surface).
   K_f is upstream-weighted by default; the arithmetic mean is a setting (`face_conductivity`).
 - **Soil.** van Genuchten–Mualem, with θr, θs, α, n, Ks and l per cell, set by layers (`set_soil_layers`). A loam
   by default (Carsel & Parrish 1988's classes in `SOILS`). Gardner's exponential soil is a setting
@@ -92,10 +92,10 @@ model's sites.
   - A leaf appears when its axis' Haun stage reaches its rank minus one. Its time is interpolated within the step.
   - A leaf whose site would lie below its axis' first phytomer asks for none.
 - **What it writes:** `nodal_axes_requested` per phytomer, the cumulative count ArchiSimple reads. ArchiSimple
-  grows the difference with the roots it grew, `'+'` on the phytomer's bearer (metafspm's `ds.bearer`: the element
+  grows the difference with the roots it grew, `'+'` on the phytomer's bearer (metafspm's `data_structure.bearer`: the element
   at its node, its internode's top). Each leaf's request is counted once, when it falls due: none is lost, whatever
   the steps.
-- **Where the nodal roots start:** each phytomer's node, their bearer's end (metafspm's `ds.position("Phytomer",
+- **Where the nodal roots start:** each phytomer's node, their bearer's end (metafspm's `data_structure.position("Phytomer",
   at="end")`, from the elements' topological ends: each element's base at its parent's end, whatever the axes'
   inclination): on the crown while the internodes below have not elongated (the tillering zone). Adel's turtle draws
   a phytomer's first element on the top of the visible parts below it (phytomer 2 on the coleoptile's top, out of
@@ -209,7 +209,7 @@ every hour (the tables can be read while it runs):
 - `plant_water.csv`, `leaf_water.csv`, `soil_water.csv` (`models.WATER_TABLES`, decision U-6: the plant and the soil
   exchange once per step): the plant's uptake and transpiration, what the soil gave the roots, the largest changes
   of the plant's and the soil's water potentials since the hour before (`Summary(max_change=)`, from the values
-  before the step the Scene keeps: `ds.previous`);
+  before the step the Scene keeps: `data_structure.previous`);
 - `conservation.csv`: the plant's and the soil's water balances, each conserved quantity's inflow, outflow, change and
   residual per step (their solves' declared conservation: MECHA's `PLANT_WATER`, the soil's `WATER`; the residuals
   are round-off);

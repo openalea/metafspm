@@ -28,19 +28,19 @@ from openalea.metafspm.data_structure.data_api import (
 # Graph layout — abstract API only
 # ═══════════════════════════════════════════════════════════════════════════════
 
-def plant_graph_pos(ds: GraphDataStructure) -> dict:
+def plant_graph_pos(data_structure: GraphDataStructure) -> dict:
     """
     Compute 2D (x, y) positions for a tree-structured graph.
 
-    Uses only ``ds.node_ids()`` and ``ds.edges()``.
+    Uses only ``data_structure.node_ids()`` and ``data_structure.edges()``.
     Disconnected nodes (e.g. anchor vertices) are placed off to the side.
 
     Returns
     -------
     dict : vid → (float x, float y)
     """
-    ids   = ds.node_ids()
-    edges = ds.edges()
+    ids   = data_structure.node_ids()
+    edges = data_structure.edges()
 
     children_of: dict = {v: [] for v in ids}
     has_parent:  set  = set()
@@ -93,7 +93,7 @@ def plant_graph_pos(ds: GraphDataStructure) -> dict:
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def plot_graph_property(
-    ds: GraphDataStructure,
+    data_structure: GraphDataStructure,
     var_name: str,
     *,
     title: str = "",
@@ -105,15 +105,15 @@ def plot_graph_property(
     Draw graph nodes coloured by a scalar node property, edges as grey lines.
 
     Abstract API consumed:
-        ds.node_ids(), ds.edges(), ds._node_property(var_name)
+        data_structure.node_ids(), data_structure.edges(), data_structure._node_property(var_name)
     """
     if ax is None:
         ax = plt.gca()
 
-    ids    = ds.node_ids()               # abstract API
-    edges  = ds.edges()                  # abstract API
-    values = ds._node_property(var_name)  # abstract API
-    pos    = plant_graph_pos(ds)
+    ids    = data_structure.node_ids()               # abstract API
+    edges  = data_structure.edges()                  # abstract API
+    values = data_structure._node_property(var_name)  # abstract API
+    pos    = plant_graph_pos(data_structure)
 
     # Edges
     for src, tgt in edges:
@@ -131,11 +131,11 @@ def plot_graph_property(
 
     ax.set_aspect('equal')
     ax.axis('off')
-    ax.set_title(title or f"{ds.__class__.__name__}\n{var_name}")
+    ax.set_title(title or f"{data_structure.__class__.__name__}\n{var_name}")
 
 
 def plot_incidence_structure(
-    ds: GraphDataStructure,
+    data_structure: GraphDataStructure,
     *,
     title: str = "",
     ax=None,
@@ -143,14 +143,14 @@ def plot_incidence_structure(
     """
     Show the incidence matrix B as a colour image.
 
-    Abstract API consumed:  ds._incidence_matrix()
+    Abstract API consumed:  data_structure._incidence_matrix()
 
     Works identically for a dense and a sparse (CSR) matrix.
     """
     if ax is None:
         ax = plt.gca()
 
-    B = ds._incidence_matrix()           # abstract API
+    B = data_structure._incidence_matrix()           # abstract API
     try:
         B_dense = B.toarray()
     except AttributeError:
@@ -162,7 +162,7 @@ def plot_incidence_structure(
     ax.set_xlabel('edge index')
     ax.set_ylabel('node index')
     ax.set_title(title or f"B  ({B_dense.shape[0]}×{B_dense.shape[1]})\n"
-                          f"[{ds.__class__.__name__}]")
+                          f"[{data_structure.__class__.__name__}]")
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -170,7 +170,7 @@ def plot_incidence_structure(
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def plot_1d_profile(
-    ds: FieldDataStructure,
+    data_structure: FieldDataStructure,
     var_name: str,
     *,
     title: str = "",
@@ -184,13 +184,13 @@ def plot_1d_profile(
     Plot a 1-D spatial field as a horizontal depth profile.
 
     Abstract API consumed:
-        ds.coordinates(), ds.extract_state([var_name]), ds.n_dof
+        data_structure.coordinates(), data_structure.extract_state([var_name]), data_structure.n_dof
     """
     if ax is None:
         ax = plt.gca()
 
-    coords = ds.coordinates()[:, 0]          # abstract API
-    values = ds.extract_state([var_name])    # abstract API — length == n_dof
+    coords = data_structure.coordinates()[:, 0]          # abstract API
+    values = data_structure.extract_state([var_name])    # abstract API — length == n_dof
 
     kw = dict(linewidth=2.0)
     if color:
@@ -199,6 +199,6 @@ def plot_1d_profile(
     ax.set_xlabel(xlabel)
     ax.set_ylabel(ylabel)
     ax.invert_yaxis()
-    ax.set_title(title or f"{ds.__class__.__name__} — {var_name}")
+    ax.set_title(title or f"{data_structure.__class__.__name__} — {var_name}")
     if label:
         ax.legend(fontsize=8)

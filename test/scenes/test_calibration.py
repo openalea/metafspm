@@ -32,9 +32,9 @@ class Uptake(FunctionalComponent):
                                    kind="extensive")
 
     def __call__(self):
-        ds = self.data_structure
-        ds.set("uptake", np.asarray(ds.parameter_view("rate", "node")) * (1. + np.asarray(
-            ds.parameter_view("inhibition", "node"))))
+        data_structure = self.data_structure
+        data_structure.set("uptake", np.asarray(data_structure.parameter_view("rate", "node")) * (1. + np.asarray(
+            data_structure.parameter_view("inhibition", "node"))))
 
 
 class Roots(CompositeModel):

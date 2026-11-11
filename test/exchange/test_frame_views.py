@@ -68,8 +68,8 @@ def test_a_shoot_coloured_by_an_organ_variable_and_display_meshes_hidden():
     sections.name = "SectionDrawing"
     plants.meshes.append(sections)
     found = scene.data_structures()
-    ds, model, components = found["RootPopulation"]
-    found["RootPopulation"] = (ds, model, [_ShootLight()] + list(components))
+    data_structure, model, components = found["RootPopulation"]
+    found["RootPopulation"] = (data_structure, model, [_ShootLight()] + list(components))
     stand_in = types.SimpleNamespace(populations=scene.populations, data_structures=lambda: found)
     document = default_views(stand_in, frame)
     assert views.check_views(document, frame).ok
@@ -172,8 +172,8 @@ def test_the_recorded_variables(tmp_path):
     scene.recorder.wait_for_frames()
     soil = _columns(out, "cell", "SceneSoil")
     assert "cell_volume" not in soil and "boundary_high_z" not in soil              # the grid's descriptors
-    ds, _, components = scene.data_structures()["SceneSoil"]
-    left = unrecorded(ds, components)
+    data_structure, _, components = scene.data_structures()["SceneSoil"]
+    left = unrecorded(data_structure, components)
     assert {"cell_volume", "face_normal_z"} <= left
     assert not left & soil
     plants, _, components = scene.data_structures()["RootPopulation"]
@@ -269,10 +269,10 @@ def test_display_shapes_of_some_plants(tmp_path):
     population.instance.components.append(_Drawing(population.data_structure))
     scene.run()
     scene.finish()
-    ds = population.data_structure
+    data_structure = population.data_structure
     frame = encoding3d.read(os.path.join(out, "frames", "frame_000001.glb"))
     mesh = next(mesh for mesh in frame.data_structure("RootPopulation").meshes if mesh.name == "_Drawing")
-    plants = np.asarray(ds.entity_ids("Plant"))[np.asarray(ds.owner("Plant"))]
+    plants = np.asarray(data_structure.entity_ids("Plant"))[np.asarray(data_structure.owner("Plant"))]
     p1 = {name: vid for vid, name in population.plant_names().items()}["p1"]
     assert mesh.indices is not None and mesh.indices.size == 3 * int(np.sum(plants == p1))
     assert len(mesh.positions) == mesh.indices.size                     # no vertex shared by two of these triangles

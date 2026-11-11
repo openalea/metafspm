@@ -9,10 +9,10 @@ A wiring rule is a declared dict, evaluated once over all the (linked parent, ch
       default without ordering; "nearest": the closest values of *ordering*, greedily, the default with it;
       "equal": equal values of *ordering*);
   {"pairs": f, "edge_label": E}
-      f(g, section_pairs) -> (pair, tails, heads): integer arrays, one entry per junction: the index of its pair in
+      f(mtg, section_pairs) -> (pair, tails, heads): integer arrays, one entry per junction: the index of its pair in
       section_pairs, its Compartment on the parent's side (n_id_a) and on the child's (n_id_b).
 
-Either may give "properties": p(g, section_pairs, pair, tails, heads) -> {name: one value per junction}, written on
+Either may give "properties": p(mtg, section_pairs, pair, tails, heads) -> {name: one value per junction}, written on
 the junctions it creates (their geometry, say).
 """
 import numpy as np
@@ -41,18 +41,18 @@ class SectionPairs:
         self.child_at = self._positions(self.children)
 
     @classmethod
-    def build(cls, g, from_scale, parents, children) -> "SectionPairs":
-        """The pairs (*parents*, *children*: vertices at *from_scale*) of MPG *g*, with the Compartments the vertices
+    def build(cls, mtg, from_scale, parents, children) -> "SectionPairs":
+        """The pairs (*parents*, *children*: vertices at *from_scale*) of MPG *mtg*, with the Compartments the vertices
         own (MPG.compartment_owners) read in bulk: one label read, no dict per owner."""
         parents, children = np.asarray(parents, dtype=np.int64), np.asarray(children, dtype=np.int64)
-        vids, owners = g.compartment_owners()
-        owners = g.owners_at_scale(owners, from_scale)
+        vids, owners = mtg.compartment_owners()
+        owners = mtg.owners_at_scale(owners, from_scale)
         involved = np.union1d(parents, children)
         kept = (owners >= 0) & np.isin(owners, involved)
         vids, owners = vids[kept], owners[kept]
         order = np.argsort(owners, kind="stable")             # by owner, ascending vids within each
         vids, owners = vids[order], owners[order]
-        found, values = g._property_at("label", np.sort(vids))
+        found, values = mtg._property_at("label", np.sort(vids))
         labels = np.full(vids.size, None, dtype=object)
         if found.size:
             labels[_positions_in(vids, found)] = values.tolist()
@@ -111,7 +111,7 @@ def _codes(values) -> np.ndarray:
                        count=values.size)
 
 
-def junctions(g, rules, section_pairs) -> tuple:
+def junctions(mtg, rules, section_pairs) -> tuple:
     """
     Every rule evaluated over *section_pairs*: (tails, heads, edge labels, {name: (positions, values)}), the
     junctions in the order of their pairs, then of the rules, then as each rule gives them; each property's values
@@ -120,12 +120,12 @@ def junctions(g, rules, section_pairs) -> tuple:
     tails, heads, pair_of, rule_of, within, given = [], [], [], [], [], []
     for index, rule in enumerate(rules):
         if "rule" in rule:
-            raise ValueError("a wiring rule's callable is declared as {'pairs': f, ...}, f(g, section_pairs) -> "
+            raise ValueError("a wiring rule's callable is declared as {'pairs': f, ...}, f(mtg, section_pairs) -> "
                              "(pair, tails, heads), evaluated over every pair at once (MPG.wire_junctions)")
         if "pairs" in rule:
-            pair, tail, head = rule["pairs"](g, section_pairs)
+            pair, tail, head = rule["pairs"](mtg, section_pairs)
         else:
-            pair, tail, head = label_pairs(g, rule, section_pairs)
+            pair, tail, head = label_pairs(mtg, rule, section_pairs)
         pair, tail, head = (np.asarray(a, dtype=np.int64).reshape(-1) for a in (pair, tail, head))
         if not pair.size == tail.size == head.size:
             raise ValueError(f"wiring rule {index}: pair, tails and heads differ in length")
@@ -151,7 +151,7 @@ def junctions(g, rules, section_pairs) -> tuple:
         offset += pair.size
         if "properties" not in rule or not pair.size:
             continue
-        for name, values in rule["properties"](g, section_pairs, pair, tail, head).items():
+        for name, values in rule["properties"](mtg, section_pairs, pair, tail, head).items():
             values = np.asarray(values)
             if values.shape[:1] != (pair.size,):
                 raise ValueError(f"wiring rule properties '{name}': {len(values)} values for {pair.size} junctions")
@@ -165,7 +165,7 @@ def junctions(g, rules, section_pairs) -> tuple:
     return np.concatenate(tails)[order], np.concatenate(heads)[order], labels, merged
 
 
-def label_pairs(g, rule, section_pairs) -> tuple:
+def label_pairs(mtg, rule, section_pairs) -> tuple:
     """The platform's rule {"node_label", "ordering", "match"} over every pair: (pair, tails, heads)."""
     label = rule["node_label"]
     ordering = rule.get("ordering")
@@ -180,7 +180,7 @@ def label_pairs(g, rule, section_pairs) -> tuple:
     if match != "all":
         compartments = section_pairs.compartments
         unique = np.unique(compartments[labelled])
-        found, values = g._property_at(ordering, unique)
+        found, values = mtg._property_at(ordering, unique)
         value_of = dict(zip(found.tolist(), np.asarray(values, dtype=np.float64).tolist()))
     pairs, tails, heads = [], [], []
     for index in range(len(section_pairs)):

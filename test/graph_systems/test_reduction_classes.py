@@ -24,18 +24,18 @@ def _population(classes, lengths):
     """A plant of the toy sections of *lengths* (one per section), not solved."""
     model = _model(classes)
     population = population_data_structure(planting([Planting()], model, {}), model)
-    ds = population.data_structure
-    owner = np.asarray(ds.owner("SubOrgan"))
-    ds.set("length", np.asarray(lengths, dtype=float)[owner])
+    data_structure = population.data_structure
+    owner = np.asarray(data_structure.owner("SubOrgan"))
+    data_structure.set("length", np.asarray(lengths, dtype=float)[owner])
     return population
 
 
 def _archetypes(population) -> dict:
     """{group: the plant system's Archetype} of every reduced group."""
-    ds = population.data_structure
-    reduction = ds.structure.reduction
+    data_structure = population.data_structure
+    reduction = data_structure.structure.reduction
     return {i: by_system[SYSTEM] for i, by_system in
-            reduction.group_archetypes(ds, reduction.reduced_groups(ds), release=True).items()}
+            reduction.group_archetypes(data_structure, reduction.reduced_groups(data_structure), release=True).items()}
 
 
 class _Counter:
@@ -121,14 +121,14 @@ def test_the_blends_interior_is_its_class_kinds_weighted():
     lengths = [_class(2) * (1 + 0.04 * i) for i in range(N_SEGMENTS)]
     population = _population(CLASS, lengths)
     population.instance.run()
-    ds = population.data_structure
-    reduction = ds.structure.reduction
+    data_structure = population.data_structure
+    reduction = data_structure.structure.reduction
     archetypes = _archetypes(population)
-    every = reduction.recover_interiors(ds)
+    every = reduction.recover_interiors(data_structure)
     for i, archetype in archetypes.items():
-        kept = np.flatnonzero(np.asarray(ds.owner("SubOrgan")) == i)
-        values = np.asarray(ds.get("water_potential"))[kept]
-        rows, interior = reduction.recover(ds, i, values)
+        kept = np.flatnonzero(np.asarray(data_structure.owner("SubOrgan")) == i)
+        values = np.asarray(data_structure.get("water_potential"))[kept]
+        rows, interior = reduction.recover(data_structure, i, values)
         parts = archetype.parts or ((1., archetype),)
         expected = sum(weight * part.reduction.recover(values, -part.interior_source) for weight, part in parts)
         np.testing.assert_allclose(interior, expected, rtol=1e-12)
@@ -141,19 +141,19 @@ def test_the_kinds_saturate_each_class_evaluated_once(monkeypatch):
     use), so once every class is seen no archetype is evaluated again; the exact archetypes are evaluated at every length."""
     counter = _Counter(monkeypatch)
     population = _population(CLASS, [_class(0)] * N_SEGMENTS)
-    ds = population.data_structure
-    owner = np.asarray(ds.owner("SubOrgan"))
+    data_structure = population.data_structure
+    owner = np.asarray(data_structure.owner("SubOrgan"))
     growth = np.linspace(0., 12., 40)
     for cycle in range(2):
         for t in growth:
             lengths = np.array([_class(0) * (1 + WIDTH) ** (t + i / N_SEGMENTS) for i in range(N_SEGMENTS)])
-            ds.set("length", lengths[owner])
+            data_structure.set("length", lengths[owner])
             _archetypes(population)
         if cycle == 0:
             first = counter.archetypes
     assert first <= 14 + 1                    # the 14 classes from (1.1)^0 to (1.1)^13, once each
     assert counter.archetypes == first             # the second growth: none evaluated again
-    reduction = ds.structure.reduction
+    reduction = data_structure.structure.reduction
     assert len(reduction._archetypes) == first
 
 

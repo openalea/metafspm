@@ -58,19 +58,19 @@ def test_a_nested_model_gives_its_components_initiators_and_links():
     assert {link.variable for link in plant.translator.links} == {"sugar"}      # the nested model's link
     assert [(step.name, step.form) for step in plant.steps()] == [("roots", "model"), ("uptake", "component")]
     scene.run()
-    ds = scene.populations[0].data_structure
-    np.testing.assert_allclose(ds.get("uptake"), 2. * np.asarray(ds.get("C_hexose_root")))
+    data_structure = scene.populations[0].data_structure
+    np.testing.assert_allclose(data_structure.get("uptake"), 2. * np.asarray(data_structure.get("C_hexose_root")))
     assert scene.calls["Plant.RootGrowthProbe"] == scene.calls["Plant.Uptake"] == 1
 
 
 def test_the_steps_reads_and_writes_and_their_conflicts():
     plant = _scene().populations[0].instance
     roots, uptake = plant.steps()
-    ds = scene_ds = plant.data_structure
-    assert (ds, STRUCTURE) in roots.writes and (ds, STRUCTURE) in uptake.reads      # growth changes the structure
-    assert (ds, "C_hexose_root") in uptake.reads                                   # its 'sugar', as stored
-    assert (scene_ds, "uptake") in uptake.writes and (ds, "uptake") not in roots.reads
-    assert conflicts(roots, uptake) >= {(ds, STRUCTURE), (ds, "C_hexose_root")}
+    data_structure = scene_ds = plant.data_structure
+    assert (data_structure, STRUCTURE) in roots.writes and (data_structure, STRUCTURE) in uptake.reads      # growth changes the structure
+    assert (data_structure, "C_hexose_root") in uptake.reads                                   # its 'sugar', as stored
+    assert (scene_ds, "uptake") in uptake.writes and (data_structure, "uptake") not in roots.reads
+    assert conflicts(roots, uptake) >= {(data_structure, STRUCTURE), (data_structure, "C_hexose_root")}
     growth, carbon = plant.roots.steps()
     assert not conflicts(growth, growth) - growth.writes                            # a step with itself: its own
 
@@ -107,13 +107,13 @@ class LitRoots(CompositeModel):
 def test_a_split_schedule_runs_a_components_stages_at_their_own_cadences():
     scene = _scene(LitRoots, forcings={"incident": lambda t: 10. + t / DT})
     model = scene.populations[0].instance
-    ds = scene.populations[0].data_structure
+    data_structure = scene.populations[0].data_structure
     for step in range(4):
         scene.run()
-        lit = (np.asarray(ds.get("relative")) > 0) & (np.asarray(ds.get("incident")) > 0)    # lit, given the light
+        lit = (np.asarray(data_structure.get("relative")) > 0) & (np.asarray(data_structure.get("incident")) > 0)    # lit, given the light
                                                                                 # (the Scene's, at the step's start)
-        np.testing.assert_allclose(np.asarray(ds.get("absorbed"))[lit], 0.5 * (10.5 + step))   # every step
-    assert ds.get("lightings").max() == 2. and model.counted == 4                  # lit at steps 0 and 3
+        np.testing.assert_allclose(np.asarray(data_structure.get("absorbed"))[lit], 0.5 * (10.5 + step))   # every step
+    assert data_structure.get("lightings").max() == 2. and model.counted == 4                  # lit at steps 0 and 3
     assert scene.calls["LitRoots.Light"] == 4                                      # the steps it ran in, once each
     with pytest.raises(ValueError, match="no step of the stages"):
         model.light._call(stages=("segmentation",))
@@ -164,10 +164,10 @@ def test_a_component_on_an_entity_view_exchanges_with_a_grid():
     soil = scene.environment[0].grid
     soil.set("soil_nitrate", 2.)
     scene.run()                                     # the soil's nitrate into the apices, before the plants' step
-    ds = scene.populations[0].data_structure
+    data_structure = scene.populations[0].data_structure
     view = scene.populations[0].instance.apices.data_structure
-    assert view.n_nodes() < ds.n_nodes() and np.all(np.asarray(view.get("soil_nitrate")) > 0.)
+    assert view.n_nodes() < data_structure.n_nodes() and np.all(np.asarray(view.get("soil_nitrate")) > 0.)
     scene.exchanges.exchange(into=soil)             # the apices' exudation alone into the cells
     exuded = np.asarray(view.get("exudation"))
-    assert exuded.sum() > 0. and np.asarray(ds.get("exudation")).sum() == pytest.approx(exuded.sum())
+    assert exuded.sum() > 0. and np.asarray(data_structure.get("exudation")).sum() == pytest.approx(exuded.sum())
     np.testing.assert_allclose(np.sum(soil.get("exudation")), exuded.sum(), rtol=1e-12)

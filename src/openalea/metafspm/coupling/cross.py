@@ -5,7 +5,7 @@ Links between DataStructures::
       UnionDataStructure([population_1, population_2])               the nodes of several DataStructures, one after the other
       UnionMapping(union)                                            one-to-one between a union and its parts
       Exchanges(translator, components, mappings)                    translator links across DataStructures, run at the
-                                                                     scene's fixed points by exchange(into=ds)
+                                                                     scene's fixed points by exchange(into=data_structure)
 
 Mappings recompute themselves when their source's topology or coordinates changed, at the next exchange. Values go
 "up" from plant entities to cells (sum, mean, weighted_mean) and "down" from cells to plant entities (broadcast:
@@ -509,8 +509,8 @@ class UnionMapping:
     def __init__(self, union: UnionDataStructure):
         self.union = union
 
-    def part_index(self, ds) -> Optional[int]:
-        return next((i for i, part in enumerate(self.union.parts) if part is ds), None)
+    def part_index(self, data_structure) -> Optional[int]:
+        return next((i for i, part in enumerate(self.union.parts) if part is data_structure), None)
 
 
 # ── Translator links across DataStructures (fixed-point exchanges) ─────────────────
@@ -542,21 +542,21 @@ class _CrossLink:
         return int(np.prod(shape)) if shape else 0
 
     def source_values(self) -> np.ndarray:
-        ds, link = self.provider_ds, self.link
+        data_structure, link = self.provider_ds, self.link
         if link.formula is not None:
-            values = np.asarray(link.formula(*(ds.get(source) for source in link.sources)), dtype=float)
+            values = np.asarray(link.formula(*(data_structure.get(source) for source in link.sources)), dtype=float)
         else:
-            values = sum(float(factor) * np.asarray(ds.get(source), dtype=float)
+            values = sum(float(factor) * np.asarray(data_structure.get(source), dtype=float)
                          for source, factor in link.sources.items())
-        return self.expanded(values, ds)
+        return self.expanded(values, data_structure)
 
-    def expanded(self, values, ds):
-        """*values* of *ds*, among the mapped entities when *ds* is an entity view up a CrossMapping (theirs, 0 for
+    def expanded(self, values, data_structure):
+        """*values* of *data_structure*, among the mapped entities when *data_structure* is an entity view up a CrossMapping (theirs, 0 for
         the others), else as they are."""
-        selection = _selection(ds) if isinstance(self.mapping, CrossMapping) and self.direction == "up" else None
+        selection = _selection(data_structure) if isinstance(self.mapping, CrossMapping) and self.direction == "up" else None
         if selection is None:
             return values
-        return _expanded(values, selection, ds.__dict__["_inner"].n_nodes())
+        return _expanded(values, selection, data_structure.__dict__["_inner"].n_nodes())
 
 
 def _per_column(apply, values, components: int = 0, pair: bool = False):
@@ -574,19 +574,19 @@ def _per_column(apply, values, components: int = 0, pair: bool = False):
     return np.stack([np.asarray(r).reshape(-1) for r in results], axis=1)
 
 
-def _plant_side(mapping, ds) -> bool:
-    """Whether *ds* is the source of CrossMapping *mapping*, or the view of it at the mapping's location (an
-    anatomy-mode plant's SubOrgans, ds.at("SubOrgan")), or an entity view of either (a component working on its own
+def _plant_side(mapping, data_structure) -> bool:
+    """Whether *data_structure* is the source of CrossMapping *mapping*, or the view of it at the mapping's location (an
+    anatomy-mode plant's SubOrgans, data_structure.at("SubOrgan")), or an entity view of either (a component working on its own
     entities, its values those of some of the mapped entities: _selection)."""
-    if isinstance(ds, EntityView):
-        ds = ds.__dict__["_inner"]
-    return ds is mapping.source or (mapping._by_owner and isinstance(ds, LocatedView)
-                                    and ds.__dict__["_base"] is mapping.source and ds._at == mapping.location)
+    if isinstance(data_structure, EntityView):
+        data_structure = data_structure.__dict__["_inner"]
+    return data_structure is mapping.source or (mapping._by_owner and isinstance(data_structure, LocatedView)
+                                    and data_structure.__dict__["_base"] is mapping.source and data_structure._at == mapping.location)
 
 
-def _selection(ds):
+def _selection(data_structure):
     """The indices, among the mapped entities, of an entity view's (EntityView: its values are theirs), else None."""
-    return ds._selection()[0] if isinstance(ds, EntityView) else None
+    return data_structure._selection()[0] if isinstance(data_structure, EntityView) else None
 
 
 def _expanded(values, selection, size: int) -> np.ndarray:
@@ -597,22 +597,22 @@ def _expanded(values, selection, size: int) -> np.ndarray:
     return full
 
 
-def _plant_location(mapping, ds, names) -> str:
-    """The location of the values *ds* gives (or receives) through CrossMapping *mapping*, named *names*: the nodes,
+def _plant_location(mapping, data_structure, names) -> str:
+    """The location of the values *data_structure* gives (or receives) through CrossMapping *mapping*, named *names*: the nodes,
     or the mapping's location (an anatomy-mode plant's SubOrgans: the view of them, or a variable held there)."""
     if not mapping._by_owner:
         return "node"
-    if ds is not mapping.source:
+    if data_structure is not mapping.source:
         return mapping.location                       # its view at the mapping's location
-    held = {ds.location(name) for name in names if ds.has(name)}
+    held = {data_structure.location(name) for name in names if data_structure.has(name)}
     return mapping.location if held == {mapping.location} else "node"
 
 
-def _underlying(ds):
-    """The DataStructure *ds* is a view of (a LocatedView's, an EntityView's base), or *ds* itself."""
-    while "_base" in getattr(ds, "__dict__", {}):
-        ds = ds.__dict__["_base"]
-    return ds
+def _underlying(data_structure):
+    """The DataStructure *data_structure* is a view of (a LocatedView's, an EntityView's base), or *data_structure* itself."""
+    while "_base" in getattr(data_structure, "__dict__", {}):
+        data_structure = data_structure.__dict__["_base"]
+    return data_structure
 
 
 class Exchanges:
@@ -736,12 +736,12 @@ class Exchanges:
     def exchange(self, into) -> None:
         """Run the links into DataStructure (or component) *into*, and into the views of it its components work on
         (an anatomy-mode plant's LocatedView at its SubOrgans, an EntityView)."""
-        ds = getattr(into, "data_structure", into)
-        if isinstance(ds, UnionDataStructure):
-            ds.update_topology()
+        data_structure = getattr(into, "data_structure", into)
+        if isinstance(data_structure, UnionDataStructure):
+            data_structure.update_topology()
         pending, keep, receivers, missing = {}, {}, {}, {}
         for cross in self.links:
-            if _underlying(cross.receiver_ds) is not _underlying(ds):
+            if _underlying(cross.receiver_ds) is not _underlying(data_structure):
                 continue
             receiver = cross.receiver_ds
             receivers[id(receiver)] = receiver
@@ -775,8 +775,8 @@ class Exchanges:
                     v, cross.provider_ds is cross.mapping.column, cross.aggregation), values, components)
                 denominator = None
             elif cross.direction == "into_union":
-                numerator, denominator = np.zeros(ds.n_nodes()), None
-                numerator[ds.part_slice(cross.part)] = np.asarray(values, dtype=float).reshape(-1)
+                numerator, denominator = np.zeros(data_structure.n_nodes()), None
+                numerator[data_structure.part_slice(cross.part)] = np.asarray(values, dtype=float).reshape(-1)
             else:
                 numerator, denominator = np.asarray(values, dtype=float).reshape(-1)[
                     cross.provider_ds.part_slice(cross.part)], None
@@ -792,19 +792,19 @@ class Exchanges:
                 if denominator is not None:
                     entry[1] = entry[1] + denominator
         for key, (numerator, denominator) in pending.items():
-            ds, variable = receivers[key[0]], key[1]
-            if not ds.has(variable):
-                ds.register(variable)
+            data_structure, variable = receivers[key[0]], key[1]
+            if not data_structure.has(variable):
+                data_structure.register(variable)
             if denominator is not None:
                 # a receiving entity no source contributes to: its default (the link's missing="default"), or NaN
                 default = (np.nan if missing.get(key) == "nan"
-                           else ds._variable_meta().get(ds._resolve(variable), {}).get("default", 0.))
+                           else data_structure._variable_meta().get(data_structure._resolve(variable), {}).get("default", 0.))
                 if numerator.ndim == 2 and denominator.ndim == 1:
                     denominator = denominator[:, None]
                 numerator = np.where(denominator > 0., numerator / np.where(denominator > 0., denominator, 1.),
                                      default)
-            stored = ds.get(variable)
+            stored = data_structure.get(variable)
             if key in keep:
                 kept = keep[key] if numerator.ndim == 1 else keep[key][:, None]
                 numerator = np.where(kept, numerator, np.asarray(stored).reshape(numerator.shape))
-            ds.set(variable, np.reshape(numerator, stored.shape))
+            data_structure.set(variable, np.reshape(numerator, stored.shape))

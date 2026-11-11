@@ -76,20 +76,20 @@ class MergeSegments(StructuralComponent):
     """A chain of root segments, each an instance of the toy merge section (reduced when the plant declares it)."""
 
     @classmethod
-    def initiate_plant(cls, g, plant, scenario):
-        s, L = g.scales, g.labels
+    def initiate_plant(cls, mtg, plant, scenario):
+        s, L = mtg.scales, mtg.labels
         parent = plant
         for scale, label in ((s.Axis, L.Axis.Root), (s.GrowthUnit, L.GrowthUnit.Root), (s.Phytomer, L.Phytomer.Root),
                              (s.Organ, L.Organ.RootInternode)):
-            parent = g.add_component(parent, **PropsConfig(scale=scale, edge_type='/', label=label))
+            parent = mtg.add_component(parent, **PropsConfig(scale=scale, edge_type='/', label=label))
         template = merge_template()[0]
-        reduction = getattr(g, "reduction", None)
+        reduction = getattr(mtg, "reduction", None)
         previous = None
         for _ in range(N_SEGMENTS):
             props = PropsConfig(scale=s.SubOrgan, edge_type='<' if previous else '/', label=L.SubOrgan.RootSegment)
-            previous = g.add_child(previous, **props) if previous else g.add_component(parent, **props)
-            reduced = reduction is not None and reduction.reduces(g, previous)
-            g.add_instance(previous, reduction.template_for(template) if reduced else template)
+            previous = mtg.add_child(previous, **props) if previous else mtg.add_component(parent, **props)
+            reduced = reduction is not None and reduction.reduces(mtg, previous)
+            mtg.add_instance(previous, reduction.template_for(template) if reduced else template)
 
 
 def _reduction(merge=MERGE):
@@ -103,8 +103,8 @@ def _model(reduction):
         from_scale, nodes, initiators = "SubOrgan", "Compartment", (MergeSegments,)
 
         @staticmethod
-        def wiring(g):
-            return wiring(g)
+        def wiring(mtg):
+            return wiring(mtg)
 
         parts = {"hydraulics": NodeHydraulics}
     MergePlant.reduction = reduction
@@ -118,18 +118,18 @@ def _solved(reduction):
     return population
 
 
-def _rows(ds):
+def _rows(data_structure):
     """Each node as (its section, its row in the full template)."""
-    g = ds.structure
+    mtg = data_structure.structure
     template = merge_template()[0]
-    reduction = getattr(g, "reduction", None)
+    reduction = getattr(mtg, "reduction", None)
     if reduction is None:
         held = np.flatnonzero(template.scale == scales.Compartment)
     else:
         key = reduction.template_for(template).key
         held = reduction.full_rows(key)
         held = held[template.scale[held] == scales.Compartment]
-    owner, out, seen = np.asarray(ds.owner("SubOrgan")), [], {}
+    owner, out, seen = np.asarray(data_structure.owner("SubOrgan")), [], {}
     for o in owner.tolist():
         k = seen.get(o, 0)
         seen[o] = k + 1

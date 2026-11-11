@@ -46,42 +46,42 @@ def _population(n_plants=2):
 
 def test_a_memoized_step_computes_again_only_when_its_values_changed():
     population = _population()
-    ds, model = population.data_structure, population.instance
+    data_structure, model = population.data_structure, population.instance
     CALLS.clear()
     model.run()
     model.run()
     assert len(CALLS) == 1                                       # the same values: its outputs again
-    ds.set("element_area", np.asarray(ds.get("element_area")))   # written, the same values: not computed
+    data_structure.set("element_area", np.asarray(data_structure.get("element_area")))   # written, the same values: not computed
     model.run()
     assert len(CALLS) == 1
-    ds.set("element_area", 2. * np.asarray(ds.get("element_area")))
+    data_structure.set("element_area", 2. * np.asarray(data_structure.get("element_area")))
     model.run()
     assert len(CALLS) == 2
-    np.testing.assert_allclose(ds.get("doubled"), 2. * np.asarray(ds.get("element_area")))
-    ds.set("factor", np.full(2, 3.))                             # a parameter changed
+    np.testing.assert_allclose(data_structure.get("doubled"), 2. * np.asarray(data_structure.get("element_area")))
+    data_structure.set("factor", np.full(2, 3.))                             # a parameter changed
     model.run()
     assert len(CALLS) == 3
 
 
 def test_max_and_min_aggregations():
-    ds = _population().data_structure
-    area = np.asarray(ds.get("element_area"))
-    owner = np.asarray(ds.owner("Organ"))
-    expected = [area[owner == k].max() for k in range(len(ds.entity_ids("Organ")))]
-    np.testing.assert_allclose(ds.map_to(area, "node", "Organ", "max"), expected)
-    np.testing.assert_allclose(ds.map_to(area, "node", "Plant", "min"), [1., 1.])
+    data_structure = _population().data_structure
+    area = np.asarray(data_structure.get("element_area"))
+    owner = np.asarray(data_structure.owner("Organ"))
+    expected = [area[owner == k].max() for k in range(len(data_structure.entity_ids("Organ")))]
+    np.testing.assert_allclose(data_structure.map_to(area, "node", "Organ", "max"), expected)
+    np.testing.assert_allclose(data_structure.map_to(area, "node", "Plant", "min"), [1., 1.])
 
 
 def test_active_ids_at_a_coarse_location_are_the_planted_plants():
     population = _population()
-    ds, component = population.data_structure, population.instance.costly
-    assert component.active_ids("Organ").tolist() == ds.entity_ids("Organ").tolist()   # no emergence: all
-    plant = np.asarray(ds.owner("Plant"))
-    ds.register("planted", (plant == 1).astype(float), location="node")
-    ds.define_mask("active", {"planted": ">0"})
-    organs = ds.entity_ids("Organ")[ds.map_to(np.arange(2.), "Plant", "Organ", "broadcast") == 1]
+    data_structure, component = population.data_structure, population.instance.costly
+    assert component.active_ids("Organ").tolist() == data_structure.entity_ids("Organ").tolist()   # no emergence: all
+    plant = np.asarray(data_structure.owner("Plant"))
+    data_structure.register("planted", (plant == 1).astype(float), location="node")
+    data_structure.define_mask("active", {"planted": ">0"})
+    organs = data_structure.entity_ids("Organ")[data_structure.map_to(np.arange(2.), "Plant", "Organ", "broadcast") == 1]
     assert component.active_ids("Organ").tolist() == organs.tolist()
-    assert component.active_ids("Plant").tolist() == [ds.entity_ids("Plant")[1]]
+    assert component.active_ids("Plant").tolist() == [data_structure.entity_ids("Plant")[1]]
 
 
 def test_lineage_keys_depend_on_the_place_in_the_plant_only():
@@ -94,14 +94,14 @@ def test_lineage_keys_depend_on_the_place_in_the_plant_only():
 
 def test_the_public_accessors():
     population = _population()
-    ds, component = population.data_structure, population.instance.costly
-    g = ds.structure
-    vids = np.sort(ds.entity_ids("Organ"))
-    found, values = g.values_at("diameter", vids)
+    data_structure, component = population.data_structure, population.instance.costly
+    mtg = data_structure.structure
+    vids = np.sort(data_structure.entity_ids("Organ"))
+    found, values = mtg.values_at("diameter", vids)
     assert found.tolist() == vids.tolist() and set(values.tolist()) == {2e-3, 3e-3}
-    assert not g.has_instances() and g.last_vid == max(g.vertices())
-    assert g.anchored(int(vids[0])) == [] and ds.reduction is None
-    assert ds.default("doubled") == 0. and ds.structure_stamp() == ds.structure_stamp()
+    assert not mtg.has_instances() and mtg.last_vid == max(mtg.vertices())
+    assert mtg.anchored(int(vids[0])) == [] and data_structure.reduction is None
+    assert data_structure.default("doubled") == 0. and data_structure.structure_stamp() == data_structure.structure_stamp()
     assert component.variable_specs["doubled"].location == "node"
     from openalea.metafspm.coupling.component import FunctionalComponent
     assert isinstance(FunctionalComponent.graph_view, property)          # the graph systems' graph, in their terms

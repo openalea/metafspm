@@ -12,162 +12,162 @@ from simple_seedling import generate_simple_mpg_seedling
 
 
 def _seedling_ds():
-    g, seedling = generate_simple_mpg_seedling()
-    g.populate_graph(g.scales.SubOrgan)
-    g.convert_properties_to_arraydict()
-    return g, seedling, MPGDataStructure(g, from_scale=g.scales.SubOrgan)
+    mtg, seedling = generate_simple_mpg_seedling()
+    mtg.populate_graph(mtg.scales.SubOrgan)
+    mtg.convert_properties_to_arraydict()
+    return mtg, seedling, MPGDataStructure(mtg, from_scale=mtg.scales.SubOrgan)
 
 
-def _by_vid(ds, name):
-    return dict(zip(ds.entity_ids("node"), ds.get(name)))
+def _by_vid(data_structure, name):
+    return dict(zip(data_structure.entity_ids("node"), data_structure.get(name)))
 
 
-def _organ_of(g, ds):
-    return {v: g.complex_at_scale(v, g.scales.Organ) for v in ds.entity_ids("node")}
+def _organ_of(mtg, data_structure):
+    return {v: mtg.complex_at_scale(v, mtg.scales.Organ) for v in data_structure.entity_ids("node")}
 
 
 # ---------------------------------------------------------------- derived variables
 
 def test_linear_derived_variable_is_refreshed_in_place():
-    _, _, ds = _seedling_ds()
-    n = ds.n_nodes()
-    ds.register("amino_acids", np.arange(n, dtype=float), location="node")
-    ds.register("nitrate", np.full(n, 4.), location="node")
-    ds.derive("nitrogen_status", {"amino_acids": 1.0, "nitrate": 0.5})
-    view = ds.get("nitrogen_status")
+    _, _, data_structure = _seedling_ds()
+    n = data_structure.n_nodes()
+    data_structure.register("amino_acids", np.arange(n, dtype=float), location="node")
+    data_structure.register("nitrate", np.full(n, 4.), location="node")
+    data_structure.derive("nitrogen_status", {"amino_acids": 1.0, "nitrate": 0.5})
+    view = data_structure.get("nitrogen_status")
     np.testing.assert_allclose(view, np.arange(n) + 2.)
 
-    ds.set("nitrate", 0.)
+    data_structure.set("nitrate", 0.)
     assert view[1] == pytest.approx(3.)          # not refreshed yet
-    ds.refresh("nitrogen_status")
+    data_structure.refresh("nitrogen_status")
     np.testing.assert_allclose(view, np.arange(n))
-    assert ds.get("nitrogen_status") is view
+    assert data_structure.get("nitrogen_status") is view
 
 
 def test_formula_derived_variable():
-    _, _, ds = _seedling_ds()
-    ds.register("a", 2., location="node")
-    ds.register("b", 3., location="node")
-    ds.derive("c", sources=("a", "b"), formula=lambda a, b: a * b + 1)
-    assert (ds.get("c") == 7.).all()
+    _, _, data_structure = _seedling_ds()
+    data_structure.register("a", 2., location="node")
+    data_structure.register("b", 3., location="node")
+    data_structure.derive("c", sources=("a", "b"), formula=lambda a, b: a * b + 1)
+    assert (data_structure.get("c") == 7.).all()
 
 
 def test_derived_chain_refreshes_dependencies_first():
-    _, _, ds = _seedling_ds()
-    ds.register("x", 1., location="node")
-    ds.derive("y", {"x": 2.})
-    ds.derive("z", {"y": 3.})
-    ds.set("x", 10.)
-    ds.refresh("z")
-    assert (ds.get("y") == 20.).all() and (ds.get("z") == 60.).all()
-    ds.set("x", 1.)
-    ds.refresh()                                  # everything, in dependency order
-    assert (ds.get("z") == 6.).all()
+    _, _, data_structure = _seedling_ds()
+    data_structure.register("x", 1., location="node")
+    data_structure.derive("y", {"x": 2.})
+    data_structure.derive("z", {"y": 3.})
+    data_structure.set("x", 10.)
+    data_structure.refresh("z")
+    assert (data_structure.get("y") == 20.).all() and (data_structure.get("z") == 60.).all()
+    data_structure.set("x", 1.)
+    data_structure.refresh()                                  # everything, in dependency order
+    assert (data_structure.get("z") == 6.).all()
 
 
 def test_derived_errors():
-    _, _, ds = _seedling_ds()
-    ds.register("x", 1., location="node")
-    ds.register("q", 1., location="edge")
+    _, _, data_structure = _seedling_ds()
+    data_structure.register("x", 1., location="node")
+    data_structure.register("q", 1., location="edge")
     with pytest.raises(KeyError, match="missing"):
-        ds.derive("y", {"missing": 1.})
-    ds.derive("y", {"x": 2.})
+        data_structure.derive("y", {"missing": 1.})
+    data_structure.derive("y", {"x": 2.})
     with pytest.raises(ValueError, match="cycle"):
-        ds.derive("x", {"y": 1.})
+        data_structure.derive("x", {"y": 1.})
     with pytest.raises(ValueError, match="location"):
-        ds.derive("w", {"x": 1., "q": 1.})
+        data_structure.derive("w", {"x": 1., "q": 1.})
     with pytest.raises(ValueError, match="aggregation"):
-        ds.derive("e", {"x": 1.}, location="edge")
+        data_structure.derive("e", {"x": 1.}, location="edge")
 
 
 def test_derived_variables_follow_aliases():
-    _, _, ds = _seedling_ds()
-    ds.register("hexose", 2., location="node")
-    ds.alias("sugar", "hexose")
-    ds.derive("carbon_supply", {"sugar": 2.})
-    assert (ds.get("carbon_supply") == 4.).all()
+    _, _, data_structure = _seedling_ds()
+    data_structure.register("hexose", 2., location="node")
+    data_structure.alias("sugar", "hexose")
+    data_structure.derive("carbon_supply", {"sugar": 2.})
+    assert (data_structure.get("carbon_supply") == 4.).all()
 
 
 # ---------------------------------------------------------------- scale operators
 
 def test_sum_mean_and_weighted_mean_to_a_coarser_scale():
-    g, _, ds = _seedling_ds()
-    vids = ds.entity_ids("node")
-    ds.register("length", np.array([float(v) for v in vids]), location="node")
-    ds.register("mass", np.array([1. + (v % 2) for v in vids]), location="node")
-    ds.derive("organ_length", {"length": 1.}, location="Organ", aggregation="sum")
-    ds.derive("organ_mean_length", {"length": 1.}, location="Organ", aggregation="mean")
-    ds.derive("organ_weighted_length", {"length": 1.}, location="Organ", aggregation="weighted_mean", weight="mass")
+    mtg, _, data_structure = _seedling_ds()
+    vids = data_structure.entity_ids("node")
+    data_structure.register("length", np.array([float(v) for v in vids]), location="node")
+    data_structure.register("mass", np.array([1. + (v % 2) for v in vids]), location="node")
+    data_structure.derive("organ_length", {"length": 1.}, location="Organ", aggregation="sum")
+    data_structure.derive("organ_mean_length", {"length": 1.}, location="Organ", aggregation="mean")
+    data_structure.derive("organ_weighted_length", {"length": 1.}, location="Organ", aggregation="weighted_mean", weight="mass")
 
-    organ_of = _organ_of(g, ds)
-    organs = ds.entity_ids("Organ")
+    organ_of = _organ_of(mtg, data_structure)
+    organs = data_structure.entity_ids("Organ")
     assert list(organs) == sorted(set(organ_of.values()))
     for i, organ in enumerate(organs):
         members = [v for v in vids if organ_of[v] == organ]
         masses = [1. + (v % 2) for v in members]
-        assert ds.get("organ_length")[i] == pytest.approx(sum(members))
-        assert ds.get("organ_mean_length")[i] == pytest.approx(np.mean(members))
-        assert ds.get("organ_weighted_length")[i] == pytest.approx(np.average(members, weights=masses))
+        assert data_structure.get("organ_length")[i] == pytest.approx(sum(members))
+        assert data_structure.get("organ_mean_length")[i] == pytest.approx(np.mean(members))
+        assert data_structure.get("organ_weighted_length")[i] == pytest.approx(np.average(members, weights=masses))
 
 
 def test_broadcast_from_a_coarser_scale():
-    g, _, ds = _seedling_ds()
-    organs = ds.entity_ids("Organ")
-    ds.register("organ_temperature", np.array([float(o) for o in organs]), location="Organ")
-    ds.derive("temperature", {"organ_temperature": 1.}, location="node", aggregation="broadcast")
-    organ_of = _organ_of(g, ds)
-    assert _by_vid(ds, "temperature") == {v: float(organ_of[v]) for v in ds.entity_ids("node")}
+    mtg, _, data_structure = _seedling_ds()
+    organs = data_structure.entity_ids("Organ")
+    data_structure.register("organ_temperature", np.array([float(o) for o in organs]), location="Organ")
+    data_structure.derive("temperature", {"organ_temperature": 1.}, location="node", aggregation="broadcast")
+    organ_of = _organ_of(mtg, data_structure)
+    assert _by_vid(data_structure, "temperature") == {v: float(organ_of[v]) for v in data_structure.entity_ids("node")}
 
 
 def test_node_to_edge_mappings():
-    _, _, ds = _seedling_ds()
-    ds.register("c", np.array([float(v) for v in ds.entity_ids("node")]), location="node")
+    _, _, data_structure = _seedling_ds()
+    data_structure.register("c", np.array([float(v) for v in data_structure.entity_ids("node")]), location="node")
     for aggregation in ("child", "parent", "mean"):
-        ds.derive(f"c_{aggregation}", {"c": 1.}, location="edge", aggregation=aggregation)
-    parents, children = zip(*ds.edges())
-    np.testing.assert_array_equal(ds.get("c_child"), children)          # the child owns the edge
-    np.testing.assert_array_equal(ds.get("c_parent"), parents)
-    np.testing.assert_allclose(ds.get("c_mean"), (np.array(parents) + np.array(children)) / 2)
+        data_structure.derive(f"c_{aggregation}", {"c": 1.}, location="edge", aggregation=aggregation)
+    parents, children = zip(*data_structure.edges())
+    np.testing.assert_array_equal(data_structure.get("c_child"), children)          # the child owns the edge
+    np.testing.assert_array_equal(data_structure.get("c_parent"), parents)
+    np.testing.assert_allclose(data_structure.get("c_mean"), (np.array(parents) + np.array(children)) / 2)
 
 
 def test_plant_scale_and_scalar_store():
-    _, _, ds = _seedling_ds()
-    ds.register("struct_mass", 2., location="node")
-    ds.derive("total_struct_mass", {"struct_mass": 1.}, location="scalar", aggregation="sum")
-    assert ds.get("total_struct_mass").shape == ()
-    assert float(ds.get("total_struct_mass")) == pytest.approx(2. * ds.n_nodes())
-    ds.register("collar_flow", 3., location="scalar")
-    ds.derive("flow_share", {"collar_flow": 1.}, location="node", aggregation="broadcast")
-    assert (ds.get("flow_share") == 3.).all()
-    assert ds.location("collar_flow") == "scalar"
+    _, _, data_structure = _seedling_ds()
+    data_structure.register("struct_mass", 2., location="node")
+    data_structure.derive("total_struct_mass", {"struct_mass": 1.}, location="scalar", aggregation="sum")
+    assert data_structure.get("total_struct_mass").shape == ()
+    assert float(data_structure.get("total_struct_mass")) == pytest.approx(2. * data_structure.n_nodes())
+    data_structure.register("collar_flow", 3., location="scalar")
+    data_structure.derive("flow_share", {"collar_flow": 1.}, location="node", aggregation="broadcast")
+    assert (data_structure.get("flow_share") == 3.).all()
+    assert data_structure.location("collar_flow") == "scalar"
 
 
 def test_unknown_coarse_scale_is_rejected():
-    _, _, ds = _seedling_ds()
-    ds.register("x", 1., location="node")
+    _, _, data_structure = _seedling_ds()
+    data_structure.register("x", 1., location="node")
     with pytest.raises(ValueError, match="Compartment"):
-        ds.register("y", location="Compartment")
+        data_structure.register("y", location="Compartment")
 
 
 # ---------------------------------------------------------------- growth
 
 def test_links_survive_growth():
-    g, seedling, ds = _seedling_ds()
-    ds.register("length", 1., location="node")
-    ds.derive("organ_length", {"length": 1.}, location="Organ", aggregation="sum")
-    ds.register("collar_flow", 3., location="scalar")
-    before = dict(zip(ds.entity_ids("Organ"), ds.get("organ_length")))
+    mtg, seedling, data_structure = _seedling_ds()
+    data_structure.register("length", 1., location="node")
+    data_structure.derive("organ_length", {"length": 1.}, location="Organ", aggregation="sum")
+    data_structure.register("collar_flow", 3., location="scalar")
+    before = dict(zip(data_structure.entity_ids("Organ"), data_structure.get("organ_length")))
 
-    new_vid = g.add_child(seedling.root_segment6,
-                          **PropsConfig(scale=g.scales.SubOrgan, edge_type='<', label=g.labels.SubOrgan.RootSegment))
-    ds.update_topology()
-    ds.set("length", 1.)
-    ds.refresh()
+    new_vid = mtg.add_child(seedling.root_segment6,
+                          **PropsConfig(scale=mtg.scales.SubOrgan, edge_type='<', label=mtg.labels.SubOrgan.RootSegment))
+    data_structure.update_topology()
+    data_structure.set("length", 1.)
+    data_structure.refresh()
 
-    after = dict(zip(ds.entity_ids("Organ"), ds.get("organ_length")))
-    grown_organ = g.complex_at_scale(new_vid, g.scales.Organ)
+    after = dict(zip(data_structure.entity_ids("Organ"), data_structure.get("organ_length")))
+    grown_organ = mtg.complex_at_scale(new_vid, mtg.scales.Organ)
     assert after[grown_organ] == before[grown_organ] + 1.
-    assert float(ds.get("collar_flow")) == 3.
+    assert float(data_structure.get("collar_flow")) == 3.
 
 
 # ---------------------------------------------------------------- grids

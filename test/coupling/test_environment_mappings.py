@@ -23,10 +23,10 @@ from growth import DOC, RootGrowthProbe
 def _population(sizes):
     table = pd.DataFrame([dict(plant=f"p{i}", model=None, x=0., y=0., depth=0., rotation=0.,
                                scenario={"n_segments": n}) for i, n in enumerate(sizes)])
-    g, _ = _build_population(table, initiators=(RootGrowthProbe,))
-    g.populate_graph(g.scales.SubOrgan)
-    g.convert_properties_to_arraydict()
-    return MPGDataStructure(g, from_scale=g.scales.SubOrgan)
+    mtg, _ = _build_population(table, initiators=(RootGrowthProbe,))
+    mtg.populate_graph(mtg.scales.SubOrgan)
+    mtg.convert_properties_to_arraydict()
+    return MPGDataStructure(mtg, from_scale=mtg.scales.SubOrgan)
 
 
 @dataclass
@@ -151,7 +151,7 @@ def test_a_column_reads_the_grid_by_layer_overlaps():
     layer_mean = grid.get("moisture").mean(axis=(0, 1))
     layer_total = grid.get("uptake").sum(axis=(0, 1))
     for i in range(4):
-        w = np.array([_overlap(0.25 * i, 0.25 * (i + 1), 0.2 * g, 0.2 * (g + 1)) for g in range(5)])
+        w = np.array([_overlap(0.25 * i, 0.25 * (i + 1), 0.2 * mtg, 0.2 * (mtg + 1)) for mtg in range(5)])
         assert column.get("moisture")[i] == pytest.approx((w * layer_mean).sum() / w.sum())
         assert column.get("uptake_profile")[i] == pytest.approx((w / 0.2 * layer_total).sum())
     assert column.get("uptake_profile").sum() == pytest.approx(grid.get("uptake").sum())     # conserved
@@ -164,7 +164,7 @@ def test_a_grid_reads_the_column_by_layer_overlaps():
     exchanges.exchange(into=grid)
     temperature = grid.get("temperature")
     assert (temperature == temperature[:1, :1, :]).all()                                     # broadcast in x, y
-    for g in range(5):
-        w = np.array([_overlap(0.25 * i, 0.25 * (i + 1), 0.2 * g, 0.2 * (g + 1)) for i in range(4)])
-        assert temperature[0, 0, g] == pytest.approx((w * [10., 12., 14., 16.]).sum() / w.sum())
+    for layer in range(5):
+        w = np.array([_overlap(0.25 * i, 0.25 * (i + 1), 0.2 * layer, 0.2 * (layer + 1)) for i in range(4)])
+        assert temperature[0, 0, layer] == pytest.approx((w * [10., 12., 14., 16.]).sum() / w.sum())
     assert grid.get("heat").sum() == pytest.approx(10.)                                       # conserved

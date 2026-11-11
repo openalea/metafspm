@@ -41,12 +41,12 @@ def test_the_equivalent_network_gives_the_kept_nodes_flows_and_the_interior():
     np.testing.assert_allclose(reduction.reduced @ x_K - reduction.inject(b[I]), flows, rtol=1e-10, atol=1e-12)
     np.testing.assert_allclose(reduction.recover(x_K, b[I]), x[I], rtol=1e-10, atol=1e-12)
     # the equivalent network: its pairs' conductances and shunts rebuild the reduced matrix
-    i, j, g = reduction.pairs()
+    i, j, mtg = reduction.pairs()
     rebuilt = np.diag(reduction.shunts())
-    for p, q, c in zip(i, j, g):
+    for p, q, c in zip(i, j, mtg):
         rebuilt[p, p] += c; rebuilt[q, q] += c; rebuilt[p, q] -= c; rebuilt[q, p] -= c
     np.testing.assert_allclose(rebuilt, reduction.reduced, rtol=1e-10, atol=1e-12)
-    assert (g >= -1e-12).all()                       # a network of conductances reduces to conductances
+    assert (mtg >= -1e-12).all()                       # a network of conductances reduces to conductances
 
 
 def test_a_network_of_conductances_alone_has_no_shunt():

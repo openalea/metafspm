@@ -34,14 +34,14 @@ EXACT_1  = np.exp(-H_TEST)   # ≈ 0.9048
 @pytest.mark.parametrize("method", ["scipy_ivp_bdf", "scipy_ivp_radau"])
 def test_scipy_ivp_one_step_decay(method, spec_decay_1node):
     solver = _make_solver(method)
-    x_new  = solver.step_once(spec_decay_1node, dt=H_TEST)
+    x_new  = solver.step_once(spec_decay_1node, step_duration=H_TEST)
     np.testing.assert_allclose(x_new[0], EXACT_1, rtol=1e-4)
 
 
 @pytest.mark.parametrize("method", ["scipy_ivp_bdf", "scipy_ivp_radau"])
 def test_scipy_ivp_residual_near_exact(method, spec_decay_1node):
     solver = _make_solver(method)
-    x_new  = solver.step_once(spec_decay_1node, dt=H_TEST)
+    x_new  = solver.step_once(spec_decay_1node, step_duration=H_TEST)
     assert abs(x_new[0] - EXACT_1) < 1e-4
 
 
@@ -49,19 +49,19 @@ def test_scipy_ivp_residual_near_exact(method, spec_decay_1node):
 
 @pytest.mark.parametrize("method", ["scipy_ivp_bdf", "scipy_ivp_radau"])
 def test_step_once_returns_ndarray(method, spec_decay_1node):
-    result = _make_solver(method).step_once(spec_decay_1node, dt=H_TEST)
+    result = _make_solver(method).step_once(spec_decay_1node, step_duration=H_TEST)
     assert isinstance(result, np.ndarray)
 
 
 @pytest.mark.parametrize("method", ["scipy_ivp_bdf", "scipy_ivp_radau"])
 def test_step_once_1d(method, spec_decay_1node):
-    result = _make_solver(method).step_once(spec_decay_1node, dt=H_TEST)
+    result = _make_solver(method).step_once(spec_decay_1node, step_duration=H_TEST)
     assert result.ndim == 1
 
 
 @pytest.mark.parametrize("method", ["scipy_ivp_bdf", "scipy_ivp_radau"])
 def test_step_once_shape(method, spec_decay_1node):
-    result = _make_solver(method).step_once(spec_decay_1node, dt=H_TEST)
+    result = _make_solver(method).step_once(spec_decay_1node, step_duration=H_TEST)
     assert result.shape == (1,)
 
 
@@ -78,7 +78,7 @@ def test_scipy_ivp_more_accurate_than_explicit_euler(method, spec_decay_1node):
     euler_error     = abs(explicit_approx - EXACT_1)  # ≈ 0.0048
 
     solver = _make_solver(method)
-    x_new  = solver.step_once(spec_decay_1node, dt=H_TEST)
+    x_new  = solver.step_once(spec_decay_1node, step_duration=H_TEST)
     ivp_error = abs(x_new[0] - EXACT_1)
     assert ivp_error < euler_error * 0.1, (
         f"{method!r} error {ivp_error:.2e} should be much less than "
@@ -91,7 +91,7 @@ def test_scipy_ivp_more_accurate_than_explicit_euler(method, spec_decay_1node):
 @pytest.mark.parametrize("h", [0.01, 0.05, 0.2])
 def test_scipy_ivp_bdf_various_h(h, spec_decay_1node):
     solver   = _make_solver("scipy_ivp_bdf")
-    x_new    = solver.step_once(spec_decay_1node, dt=h)
+    x_new    = solver.step_once(spec_decay_1node, step_duration=h)
     expected = np.exp(-h)
     np.testing.assert_allclose(x_new[0], expected, rtol=1e-4)
 
@@ -116,7 +116,7 @@ def test_scipy_ivp_bdf_5_steps_track_exact():
     x      = 1.0
     for k in range(1, 6):
         spec  = build_spec_decay_1node(x_init=x)
-        x_new = solver.step_once(spec, dt=h)
+        x_new = solver.step_once(spec, step_duration=h)
         x     = float(x_new[0])
     t_final = 5 * h
     np.testing.assert_allclose(x, np.exp(-t_final), rtol=1e-3)

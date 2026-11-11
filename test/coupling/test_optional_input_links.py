@@ -47,9 +47,9 @@ def _link(**options):
 
 def _plant(translator):
     """Three root segments with their anatomies (four Compartments each), the first segment's liquid volume 0."""
-    g, segments, _ = make_rooted_anatomy(n_segments=3)
-    ds = MPGDataStructure(g, from_scale=g.scales.SubOrgan, nodes="Compartment", wiring=wiring(g))
-    ds.simulation_time_step = 1
+    mtg, segments, _ = make_rooted_anatomy(n_segments=3)
+    data_structure = MPGDataStructure(mtg, from_scale=mtg.scales.SubOrgan, nodes="Compartment", wiring=wiring(mtg))
+    data_structure.simulation_time_step = 1
 
     links = translator
 
@@ -57,40 +57,40 @@ def _plant(translator):
         parts = {"hydraulics": Hydraulics, "stomata": Stomata}
         translator = links
 
-    plant = Plant(ds, None)
-    owner = np.asarray(ds.owner("SubOrgan"))
-    ds.set("water_potential", -1000. * (owner + 1.) - np.arange(ds.n_nodes()))
-    ds.set("liquid_volume", np.where(owner == 0, 0., 1. + np.arange(ds.n_nodes())))
-    return ds, plant, owner
+    plant = Plant(data_structure, None)
+    owner = np.asarray(data_structure.owner("SubOrgan"))
+    data_structure.set("water_potential", -1000. * (owner + 1.) - np.arange(data_structure.n_nodes()))
+    data_structure.set("liquid_volume", np.where(owner == 0, 0., 1. + np.arange(data_structure.n_nodes())))
+    return data_structure, plant, owner
 
 
 def test_a_link_into_an_unregistered_optional_input_derives_it_where_the_receiver_declares_it():
-    ds, plant, owner = _plant(_link())
+    data_structure, plant, owner = _plant(_link())
     assert isinstance(plant.stomata.data_structure, LocatedView)
-    assert ds.location("leaf_water_potential") == "SubOrgan"            # not the sources' Compartments
-    water, liquid = np.asarray(ds.get("water_potential")), np.asarray(ds.get("liquid_volume"))
+    assert data_structure.location("leaf_water_potential") == "SubOrgan"            # not the sources' Compartments
+    water, liquid = np.asarray(data_structure.get("water_potential")), np.asarray(data_structure.get("liquid_volume"))
     expected = [np.sum(water[owner == k] * liquid[owner == k]) / np.sum(liquid[owner == k]) * 1e-4 for k in (1, 2)]
     values = np.asarray(plant.stomata.data_structure.get("leaf_water_potential"))
     np.testing.assert_allclose(values[1:], expected, rtol=1e-12)
 
 
 def test_the_links_scale_places_it_and_must_agree_with_the_declaration():
-    ds, _, _ = _plant(_link(scale=scales.SubOrgan))
-    assert ds.location("leaf_water_potential") == "SubOrgan"
+    data_structure, _, _ = _plant(_link(scale=scales.SubOrgan))
+    assert data_structure.location("leaf_water_potential") == "SubOrgan"
     with pytest.raises(ValueError, match="declares it at SubOrgan"):
         _plant(_link(scale=scales.Organ))
 
 
 def test_an_entity_without_contribution_keeps_the_receivers_default():
     """The first segment's Compartments all weigh 0 (no liquid): its mean is the receiver's default, not NaN."""
-    ds, _, _ = _plant(_link())
-    values = np.asarray(ds.get("leaf_water_potential"))
+    data_structure, _, _ = _plant(_link())
+    values = np.asarray(data_structure.get("leaf_water_potential"))
     assert values[0] == DEFAULT and np.isfinite(values).all()
 
 
 def test_missing_nan_marks_the_entities_without_contribution():
-    ds, _, _ = _plant(_link(missing="nan"))
-    values = np.asarray(ds.get("leaf_water_potential"))
+    data_structure, _, _ = _plant(_link(missing="nan"))
+    values = np.asarray(data_structure.get("leaf_water_potential"))
     assert np.isnan(values[0]) and np.isfinite(values[1:]).all()
 
 

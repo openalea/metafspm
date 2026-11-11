@@ -34,8 +34,8 @@ Replace the flat modules, following this table:
 @dataclass
 class RootCNUnified(Model):
     hexose: float = declare(default=1e-3, ..., role="state_variable", ...)
-    def __init__(self, g, time_step, **scenario):
-        self.props = g.properties(); self.vertices = ...
+    def __init__(self, mtg, time_step, **scenario):
+        self.props = mtg.properties(); self.vertices = ...
         self.apply_scenario(**scenario); self.link_self_to_mtg()     # apply_scenario is removed: the Scene sets them
         self.choregrapher.add_time_and_data(instance=self, sub_time_step=time_step, data=self.props)
 ```
@@ -57,7 +57,7 @@ class RootCNUnified(FunctionalComponent):
     @rate(vectorized=False)                                  # opt-in: one call per element, for scalar logic
     def _something_with_ifs(self, hexose): ...
 
-model = RootCNUnified(data_structure=MPGDataStructure(g, from_scale=g.scales.SubOrgan))
+model = RootCNUnified(data_structure=MPGDataStructure(mtg, from_scale=mtg.scales.SubOrgan))
 ```
 
 The rules:
@@ -73,13 +73,13 @@ The rules:
 - **Growth:** declare `on_grow="inherit"` for variables that new segments should take from their parent. The default is the declared value. The growth model may still overwrite new entities, e.g. from parent concentrations or split extensive quantities.
 - **Growth models** become `StructuralComponent`s on the plant DataStructure (the reference is `test/helpers/growth.py`):
   - their steps without arguments edit `self.mtg` as before (`add_child`, property writes);
-  - the framework writes the declared variables to the MPG before each such step, and calls `ds.update_topology()` after it when vertices were added or removed;
+  - the framework writes the declared variables to the MPG before each such step, and calls `data_structure.update_topology()` after it when vertices were added or removed;
   - declared state variables (length, radius, `struct_mass`, …) are re-read from the MPG after each such step;
   - a `post_growth_updating` pass becomes a `@postsegmentation` step; the other components' variables are repartitioned after structural steps by kind (`partition_weight`, `active`).
 
   Registered variables are carried over, and FunctionalComponents rebuild their graph views.
 - **Segment geometry:** the growth model registers `x1, x2, y1, y2, z1, z2` as node variables. The soil coupling needs them.
-- **`self.props` is gone.** Replace reads with `self.data_structure.get(name)` (or take the variable as a step argument), and writes with `ds.set(name, values)`. Translator-derived inputs are read-only.
+- **`self.props` is gone.** Replace reads with `self.data_structure.get(name)` (or take the variable as a step argument), and writes with `data_structure.set(name, values)`. Translator-derived inputs are read-only.
 - **Boundary conditions on sets of nodes** (leaves, root surfaces, the collar) become `boundary_set(...)` in the graph system, with value and weight as DataStructure variables, rather than Robin terms assembled in the balance and the Jacobian by hand (`test_uc5_leaf_transpiration.py` is the reference).
 - **Undeclared outputs** give their location: `@graph_output(name, location=...)`, `@rate(location=...)`.
 - **Missing variables raise:** a graph-system argument or a filter variable must be registered (declared, or set before the solve). Missing values are no longer read as zeros.
@@ -91,14 +91,14 @@ A plant model is built once for all the plants of that model in a scene:
 
 ```python
 class GrassBRIDGES(CompositeModel):
-    initiators = (RootGrowth, ShootGrowth)       # StructuralComponents: initiate_plant(g, plant, scenario) per plant
+    initiators = (RootGrowth, ShootGrowth)       # StructuralComponents: initiate_plant(mtg, plant, scenario) per plant
     from_scale = "SubOrgan"                      # the graph nodes; nodes = "Compartment" for anatomies
     parts = {"growth": RootGrowth, "carbon": RootCNUnified, ...}   # built on the MPG's DataStructure, coupled
     translator = TRANSLATOR                      # None: every input shared by its name
     # schedule = ("growth", "carbon", ...)       # the parts in order by default (coupling.schedule)
 ```
 
-- **Plants:** each structural component builds a plant's initial structure in `initiate_plant(g, plant, scenario)`, from the Plant variables `x, y, z, rotation` (z the soil surface minus the planting's depth), its elements placed with `g.add_organ` and `g.add_element`, its parameters `cls.plant_parameters(scenario)`. Several initiators run in order.
+- **Plants:** each structural component builds a plant's initial structure in `initiate_plant(mtg, plant, scenario)`, from the Plant variables `x, y, z, rotation` (z the soil surface minus the planting's depth), its elements placed with `mtg.add_organ` and `mtg.add_element`, its parameters `cls.plant_parameters(scenario)`. Several initiators run in order.
 - **Parameters:**
   - numeric parameters are stored per plant and come from each plant's scenario;
   - steps take them as arguments;
@@ -111,8 +111,8 @@ class GrassBRIDGES(CompositeModel):
 - **Removed:** the queues, `name`, `coordinates`, `rotation`, `Transport` and `handshake_shape`. The scene does the exchanges.
 - **Initial values:** the soil inputs are no longer reset to 0 at coupling; they keep their declared `initialize` until the first exchange.
 - **MPG-style steps** loop over `self.active_ids()`, so that plants before their planting time are skipped.
-- **MTG reads:** a state variable held at its own scale is read from its DataStructure column by the MTG; mapped ones reach the MTG lazily (`mtg_sync = "lazy"`). Code that reads the MTG object directly, such as a Logger or plotting, calls `ds.flush_mtg()` first, or reads `ds.mtg`.
-- **MTG properties:** `g.property(name)` is read-only (a mapping built on demand). Write `g.set_values(name, vids, values)` instead of `g.property(name)[v] = x`; read in bulk with `g.values_at(name, vids)` or `g.column(name)`, vertex by vertex with `g.view(name)`.
+- **MTG reads:** a state variable held at its own scale is read from its DataStructure column by the MTG; mapped ones reach the MTG lazily (`mtg_sync = "lazy"`). Code that reads the MTG object directly, such as a Logger or plotting, calls `data_structure.flush_mtg()` first, or reads `data_structure.mtg`.
+- **MTG properties:** `mtg.property(name)` is read-only (a mapping built on demand). Write `mtg.set_values(name, vids, values)` instead of `mtg.property(name)[v] = x`; read in bulk with `mtg.values_at(name, vids)` or `mtg.column(name)`, vertex by vertex with `mtg.view(name)`.
 - **Check:** in the package's own tests, add `openalea.metafspm.testing.assert_component_couplable(Component, translator)` for every component.
 
 ## 4. Environment models and the scene (RhizoSoil, the light model)

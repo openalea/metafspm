@@ -30,25 +30,25 @@ class ToySegments(StructuralComponent):
     entity_sets = {"walls": {"compartment_type": WALL}}
 
     @classmethod
-    def initiate_plant(cls, g, plant, scenario):
-        s, L = g.scales, g.labels
+    def initiate_plant(cls, mtg, plant, scenario):
+        s, L = mtg.scales, mtg.labels
         parent = plant
         for scale, label in ((s.Axis, L.Axis.Root), (s.GrowthUnit, L.GrowthUnit.Root), (s.Phytomer, L.Phytomer.Root),
                              (s.Organ, L.Organ.RootInternode)):
-            parent = g.add_component(parent, **PropsConfig(scale=scale, edge_type='/', label=label))
+            parent = mtg.add_component(parent, **PropsConfig(scale=scale, edge_type='/', label=label))
         template = section_template()[0]
-        reduction = getattr(g, "reduction", None)
+        reduction = getattr(mtg, "reduction", None)
         previous = None
         for _ in range(N_SEGMENTS):
             props = PropsConfig(scale=s.SubOrgan, edge_type='<' if previous else '/', label=L.SubOrgan.RootSegment)
-            previous = g.add_child(previous, **props) if previous else g.add_component(parent, **props)
-            reduced = reduction is not None and reduction.reduces(g, previous)
-            g.add_instance(previous, reduction.template_for(template) if reduced else template)
+            previous = mtg.add_child(previous, **props) if previous else mtg.add_component(parent, **props)
+            reduced = reduction is not None and reduction.reduces(mtg, previous)
+            mtg.add_instance(previous, reduction.template_for(template) if reduced else template)
 
 
-def _collar(ds):
+def _collar(data_structure):
     """The first section's xylem (a module-level function: a checkpoint keeps the DataStructure's filters)."""
-    return (ds.get("label") == ds.mtg.labels.Cell.MetaXylem) & (ds.owner("SubOrgan") == 0)
+    return (data_structure.get("label") == data_structure.mtg.labels.Cell.MetaXylem) & (data_structure.owner("SubOrgan") == 0)
 
 
 @dataclass
@@ -99,8 +99,8 @@ def _model(reduced):
                               systems=("NodeHydraulics._hydraulics",)) if reduced else None
 
         @staticmethod
-        def wiring(g):
-            return wiring(g)
+        def wiring(mtg):
+            return wiring(mtg)
 
         parts = {"hydraulics": NodeHydraulics}
     return ToyPlant
@@ -113,15 +113,15 @@ def _solved(reduced):
     return population
 
 
-def _places(ds):
+def _places(data_structure):
     """Each node as (its section, its row in the full template): a full section's k-th node is the template's k-th
     Compartment, a reduced one's the k-th kept."""
-    g = ds.structure
+    mtg = data_structure.structure
     template = section_template()[0]
     compartments = np.flatnonzero(template.scale == scales.Compartment)
-    reduction = getattr(g, "reduction", None)
+    reduction = getattr(mtg, "reduction", None)
     kept = reduction._kept[reduction.template_for(template).key] if reduction is not None else compartments
-    owner, out, seen = np.asarray(ds.owner("SubOrgan")), [], {}
+    owner, out, seen = np.asarray(data_structure.owner("SubOrgan")), [], {}
     for o in owner.tolist():
         k = seen.get(o, 0)
         seen[o] = k + 1
@@ -186,7 +186,7 @@ def test_a_reduced_plant_loaded_from_a_checkpoint_solves_as_before(tmp_path):
     fresh = population_data_structure(planting([Planting()], model, {}), model)
     fresh.data_structure.load_checkpoint(str(tmp_path / "checkpoint"))
     reduction = fresh.data_structure.structure.reduction
-    assert reduction.instance is fresh.instance and reduction.g is fresh.data_structure.structure
+    assert reduction.instance is fresh.instance and reduction.mtg is fresh.data_structure.structure
     fresh.instance.run()
     np.testing.assert_allclose(fresh.data_structure.get("water_potential"), solved.get("water_potential"),
                                rtol=1e-12)
@@ -195,10 +195,10 @@ def test_a_reduced_plant_loaded_from_a_checkpoint_solves_as_before(tmp_path):
 def test_a_reduced_groups_interior_is_recovered():
     full_population, reduced_population = _solved(False), _solved(True)
     full, reduced = full_population.data_structure, reduced_population.data_structure
-    g = reduced.structure
+    mtg = reduced.structure
     group = 2
     kept = np.flatnonzero(np.asarray(reduced.owner("SubOrgan")) == group)
-    rows, values = g.reduction.recover(reduced, group, reduced.get("water_potential")[kept])
+    rows, values = mtg.reduction.recover(reduced, group, reduced.get("water_potential")[kept])
     row = {place: i for i, place in enumerate(_places(full))}
     np.testing.assert_allclose(values, full.get("water_potential")[[row[(group, int(r))] for r in rows]], rtol=1e-11)
 
@@ -398,23 +398,23 @@ def test_the_kinds_no_group_has_any_more_are_released():
 
     def solved(soil_water_potential):
         population = population_data_structure(planting([Planting()], KindedPlant, {}), KindedPlant)
-        ds = population.data_structure
-        ds.set("soil_water_potential", np.full(ds.n_nodes(), soil_water_potential))
+        data_structure = population.data_structure
+        data_structure.set("soil_water_potential", np.full(data_structure.n_nodes(), soil_water_potential))
         population.instance.run()
         return population
 
     population = solved(-0.2)
-    ds = population.data_structure
-    reduction = ds.structure.reduction
+    data_structure = population.data_structure
+    reduction = data_structure.structure.reduction
     former = [archetype for by_system in reduction._archetypes.values() for archetype in by_system.values()]
     assert len(reduction._archetypes) == 1 and former[0].D is not None
-    ds.set("soil_water_potential", np.full(ds.n_nodes(), -0.3))
+    data_structure.set("soil_water_potential", np.full(data_structure.n_nodes(), -0.3))
     population.instance.run()
     assert len(reduction._archetypes) == 1 and all(archetype.D is None and archetype.reduction is None for archetype in former)
     fresh = solved(-0.3).data_structure
-    np.testing.assert_allclose(ds.get("water_potential"), fresh.get("water_potential"), rtol=1e-12)
-    kept = np.flatnonzero(np.asarray(ds.owner("SubOrgan")) == 2)
-    rows, values = reduction.recover(ds, 2, ds.get("water_potential")[kept])
+    np.testing.assert_allclose(data_structure.get("water_potential"), fresh.get("water_potential"), rtol=1e-12)
+    kept = np.flatnonzero(np.asarray(data_structure.owner("SubOrgan")) == 2)
+    rows, values = reduction.recover(data_structure, 2, data_structure.get("water_potential")[kept])
     fresh_rows, fresh_values = fresh.structure.reduction.recover(fresh, 2, fresh.get("water_potential")[kept])
     np.testing.assert_array_equal(rows, fresh_rows)
     np.testing.assert_allclose(values, fresh_values, rtol=1e-12)
@@ -429,10 +429,10 @@ def test_the_librarys_ids_stay_bounded_and_its_kinds_do_not_depend_on_the_batche
                               archetype_variables={"soil_water_potential": None}, systems=("NodeHydraulics._hydraulics",))
 
     def solved(population, soil_water_potential):
-        ds = population.data_structure
-        ds.set("soil_water_potential", np.full(ds.n_nodes(), soil_water_potential))
+        data_structure = population.data_structure
+        data_structure.set("soil_water_potential", np.full(data_structure.n_nodes(), soil_water_potential))
         population.instance.run()
-        reduction = ds.structure.reduction
+        reduction = data_structure.structure.reduction
         (library,) = reduction.__dict__["_libraries"].values()
         (by_system,) = reduction._archetypes.values()
         return library.population.data_structure.structure._id, {name: archetype.D.copy()
@@ -500,19 +500,19 @@ def test_entity_sets_select_by_name_on_templates_groups_and_data_structures():
     by_name = Reduction(where={"label": "RootSegment"}, ports=_xylem, keep="ToySegments.walls")
     by_rule = Reduction(where={"label": "RootSegment"}, ports=_xylem, keep=_soil_walls)
     assert by_name.template_for(template).size == by_rule.template_for(template).size < template.size
-    ds = _solved(False).data_structure
-    ds.define_mask("walls", entities="ToySegments.walls")
-    np.testing.assert_array_equal(ds.mask("walls"), ds.get("compartment_type") == WALL)
+    data_structure = _solved(False).data_structure
+    data_structure.define_mask("walls", entities="ToySegments.walls")
+    np.testing.assert_array_equal(data_structure.mask("walls"), data_structure.get("compartment_type") == WALL)
     with pytest.raises(TypeError):
-        ds.define_mask("both", {"compartment_type": WALL}, entities="ToySegments.walls")
-    g = ds.structure
-    segment = int(ds.entity_ids("SubOrgan")[0])
-    assert Reduction(where={"label": "RootSegment", "Organ.label": "RootInternode"}).reduces(g, segment)
-    assert not Reduction(where={"label": ["RootApex", "StemElement"]}).reduces(g, segment)
-    assert not Reduction(where={"Organ.label": "Sheath"}).reduces(g, segment)
-    assert Reduction().reduces(g, segment)
+        data_structure.define_mask("both", {"compartment_type": WALL}, entities="ToySegments.walls")
+    mtg = data_structure.structure
+    segment = int(data_structure.entity_ids("SubOrgan")[0])
+    assert Reduction(where={"label": "RootSegment", "Organ.label": "RootInternode"}).reduces(mtg, segment)
+    assert not Reduction(where={"label": ["RootApex", "StemElement"]}).reduces(mtg, segment)
+    assert not Reduction(where={"Organ.label": "Sheath"}).reduces(mtg, segment)
+    assert Reduction().reduces(mtg, segment)
     with pytest.raises(KeyError, match="labels"):
-        Reduction(where={"label": "Rootsegment"}).reduces(g, segment)
+        Reduction(where={"label": "Rootsegment"}).reduces(mtg, segment)
 
 
 def test_a_group_description_builds_no_key_dict_of_the_plants_properties():
@@ -521,19 +521,19 @@ def test_a_group_description_builds_no_key_dict_of_the_plants_properties():
     from openalea.metafspm.data_structure.arraydict import SEARCHES_BEFORE_INDEX, ArrayDict
     from openalea.metafspm.data_structure.mpg import MPG
     from openalea.metafspm.solve.reduction import _describe
-    g = MPG()
-    plant = g.add_component(g.root, **PropsConfig(scale=g.scales.Plant, edge_type='/'))
-    segment = g.labels.SubOrgan.RootSegment
-    vids = [g.add_component(plant, **PropsConfig(scale=g.scales.SubOrgan, edge_type='/', label=segment))
+    mtg = MPG()
+    plant = mtg.add_component(mtg.root, **PropsConfig(scale=mtg.scales.Plant, edge_type='/'))
+    segment = mtg.labels.SubOrgan.RootSegment
+    vids = [mtg.add_component(plant, **PropsConfig(scale=mtg.scales.SubOrgan, edge_type='/', label=segment))
             for _ in range(3 * SEARCHES_BEFORE_INDEX)]
-    g._properties["length"] = ArrayDict.from_items(vids, np.arange(len(vids)) * 0.5)
-    g._properties["archetype_class"] = {v: "lateral" for v in vids[::2]}
+    mtg._properties["length"] = ArrayDict.from_items(vids, np.arange(len(vids)) * 0.5)
+    mtg._properties["archetype_class"] = {v: "lateral" for v in vids[::2]}
     for k, v in enumerate(vids):
-        chain, (scale, label), properties = _describe(g, v)
+        chain, (scale, label), properties = _describe(mtg, v)
         assert label == segment
         assert properties["length"] == k * 0.5 and type(properties["length"]) is float
         assert properties.get("archetype_class") == ("lateral" if k % 2 == 0 else None)
-    assert g._properties["length"]._index is None
+    assert mtg._properties["length"]._index is None
 
 
 def _factored_conductance_model(reduced):
@@ -599,11 +599,11 @@ def test_a_batchs_kinds_are_the_same_bit_for_bit_in_threads():
         compute = Compute(threads=threads)
         with compute.limits():
             population = population_data_structure(planting([Planting()], KindedPlant, {}), KindedPlant)
-            ds = population.data_structure
-            section = np.asarray(ds.owner("SubOrgan"))
-            ds.set("soil_water_potential", -0.2 - 0.05 * section.astype(float))     # one archetype per section
+            data_structure = population.data_structure
+            section = np.asarray(data_structure.owner("SubOrgan"))
+            data_structure.set("soil_water_potential", -0.2 - 0.05 * section.astype(float))     # one archetype per section
             population.instance.run()
-        reduction = ds.structure.reduction
+        reduction = data_structure.structure.reduction
         return compute, list(reduction._archetypes), [by_system["NodeHydraulics._hydraulics"]
                                                  for by_system in reduction._archetypes.values()]
 

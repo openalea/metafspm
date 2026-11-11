@@ -46,17 +46,17 @@ SYSTEM = "NetworkHydraulics._hydraulics"
 CLASSES = Relative(0.1)
 
 
-def _network(g, segment) -> dict:
+def _network(mtg, segment) -> dict:
     """The nodes and edges of *segment*'s network, anchored to it (no Layer, no Cell); {name: vid}."""
-    s, L = g.scales, g.labels
+    s, L = mtg.scales, mtg.labels
     node_anchor, edge_anchor = s.anchors[s.Compartment], s.anchors[s.Connection]
     vids = {}
     for name, compartment_type, port, group in NODES:
-        vids[name] = g.add_component_with_topo(node_anchor, segment, **PropsConfig(
+        vids[name] = mtg.add_component_with_topo(node_anchor, segment, **PropsConfig(
             scale=s.Compartment, edge_type='/', label=L.Compartment.Symplastic if compartment_type == PIPE
             else L.Compartment.Apoplastic, compartment_type=compartment_type, port=port, merge_group=group))
     for a, b in EDGES:
-        g.add_component_with_topo(edge_anchor, segment, **PropsConfig(scale=s.Connection, edge_type='/',
+        mtg.add_component_with_topo(edge_anchor, segment, **PropsConfig(scale=s.Connection, edge_type='/',
                                                                       label=L.Connection.Apoplastic, n_id_a=vids[a],
                                                                       n_id_b=vids[b]))
     return vids
@@ -81,9 +81,9 @@ def network_template():
     return _TEMPLATE["template"], _TEMPLATE["rows"]
 
 
-def wiring(g):
+def wiring(mtg):
     """The pipe nodes of equal port joined from a segment to the next."""
-    return [dict(node_label=g.labels.Compartment.Symplastic, edge_label=g.labels.Connection.Apoplastic,
+    return [dict(node_label=mtg.labels.Compartment.Symplastic, edge_label=mtg.labels.Connection.Apoplastic,
                  ordering="port", match="equal")]
 
 
@@ -91,25 +91,25 @@ class NetworkSegments(StructuralComponent):
     """A chain of root segments, each an instance of the toy network (reduced when the plant declares it)."""
 
     @classmethod
-    def initiate_plant(cls, g, plant, scenario):
-        s, L = g.scales, g.labels
+    def initiate_plant(cls, mtg, plant, scenario):
+        s, L = mtg.scales, mtg.labels
         parent = plant
         for scale, label in ((s.Axis, L.Axis.Root), (s.GrowthUnit, L.GrowthUnit.Root), (s.Phytomer, L.Phytomer.Root),
                              (s.Organ, L.Organ.RootInternode)):
-            parent = g.add_component(parent, **PropsConfig(scale=scale, edge_type='/', label=label))
+            parent = mtg.add_component(parent, **PropsConfig(scale=scale, edge_type='/', label=label))
         template = network_template()[0]
-        reduction = getattr(g, "reduction", None)
+        reduction = getattr(mtg, "reduction", None)
         previous = None
         for _ in range(N_SEGMENTS):
             props = PropsConfig(scale=s.SubOrgan, edge_type='<' if previous else '/', label=L.SubOrgan.RootSegment)
-            previous = g.add_child(previous, **props) if previous else g.add_component(parent, **props)
-            reduced = reduction is not None and reduction.reduces(g, previous)
-            g.add_instance(previous, reduction.template_for(template) if reduced else template)
+            previous = mtg.add_child(previous, **props) if previous else mtg.add_component(parent, **props)
+            reduced = reduction is not None and reduction.reduces(mtg, previous)
+            mtg.add_instance(previous, reduction.template_for(template) if reduced else template)
 
 
-def _inlet(ds):
+def _inlet(data_structure):
     """The first segment's pipe node of port 0 (held)."""
-    return (ds.get("compartment_type") == PIPE) & (ds.get("port") == 0.) & (ds.owner("SubOrgan") == 0)
+    return (data_structure.get("compartment_type") == PIPE) & (data_structure.get("port") == 0.) & (data_structure.owner("SubOrgan") == 0)
 
 
 def _conductances(view, K, compartment_type, length) -> np.ndarray:
@@ -170,8 +170,8 @@ def _model(reduced=True, merge=True):
             if reduced else None
 
         @staticmethod
-        def wiring(g):
-            return wiring(g)
+        def wiring(mtg):
+            return wiring(mtg)
 
         parts = {"hydraulics": NetworkHydraulics}
     return NetworkPlant
@@ -183,8 +183,8 @@ LENGTHS = (1., 1.1, 1.05, 1.2, 0.97)          # class values and lengths between
 def _solved(reduced=True, merge=True):
     model = _model(reduced, merge)
     population = population_data_structure(planting([Planting()], model, {}), model)
-    ds = population.data_structure
-    ds.set("length", np.asarray(LENGTHS, dtype=float)[np.asarray(ds.owner("SubOrgan"))])
+    data_structure = population.data_structure
+    data_structure.set("length", np.asarray(LENGTHS, dtype=float)[np.asarray(data_structure.owner("SubOrgan"))])
     population.instance.run()
     return population
 
@@ -195,13 +195,9 @@ class NetworkDrawer(FunctionalComponent):
     z (its plane scaled by its length): display_triangles in the scene's coordinates (a reduced segment whole, its
     interior by display id), display_instances once per template. No variable of its own."""
 
-    @property
-    def ds(self):
-        return self.data_structure
-
     def _transform(self, segment) -> np.ndarray:
-        ds = self.ds
-        position = int(np.searchsorted(ds.entity_ids("SubOrgan"), segment))
+        data_structure = self.data_structure
+        position = int(np.searchsorted(data_structure.entity_ids("SubOrgan"), segment))
         transform = np.diag([LENGTHS[position], LENGTHS[position], 1., 1.])
         transform[:3, 3] = (0.5, -0.25, float(position))
         return transform
@@ -215,9 +211,9 @@ class NetworkDrawer(FunctionalComponent):
         return Triangles(vertices, np.asarray(rows, dtype=np.int64))
 
     def display_instances(self, owners):
-        ds = self.ds
-        reduction = ds.structure.reduction
-        reduced = {int(owner): key for owner, key in reduction.reduced_groups(ds).values()}
+        data_structure = self.data_structure
+        reduction = data_structure.structure.reduction
+        reduced = {int(owner): key for owner, key in reduction.reduced_groups(data_structure).values()}
         drawn = [int(owner) for owner in owners if int(owner) in reduced]
         shapes = {}
         for owner in drawn:
@@ -228,14 +224,14 @@ class NetworkDrawer(FunctionalComponent):
 
     def display_triangles(self, where=None):
         from openalea.metafspm.solve.reduction import display_ids
-        ds = self.ds
-        g = ds.structure
-        reduction = g.reduction
-        wanted = np.ones(ds.n_nodes(), dtype=bool) if where is None else np.asarray(where, dtype=bool)
-        segments = ds.entity_ids("SubOrgan")
-        owner = np.asarray(ds.owner("SubOrgan"))
+        data_structure = self.data_structure
+        mtg = data_structure.structure
+        reduction = mtg.reduction
+        wanted = np.ones(data_structure.n_nodes(), dtype=bool) if where is None else np.asarray(where, dtype=bool)
+        segments = data_structure.entity_ids("SubOrgan")
+        owner = np.asarray(data_structure.owner("SubOrgan"))
         parts = []
-        reduced = {int(o): key for o, key in reduction.reduced_groups(ds).values()} if reduction is not None else {}
+        reduced = {int(o): key for o, key in reduction.reduced_groups(data_structure).values()} if reduction is not None else {}
         template, _ = network_template()
         compartments = np.flatnonzero(template.scale == scales.Compartment)
         for position, segment in enumerate(segments.tolist()):
@@ -248,12 +244,12 @@ class NetworkDrawer(FunctionalComponent):
                 rows = np.concatenate([held[np.isin(held, compartments)], interior])
                 shape = self._shape(rows)
                 ids = np.concatenate([np.flatnonzero(owner == position), np.full(interior.size, -1)])
-                owner_ids = np.concatenate([ds.entity_ids("node")[np.flatnonzero(owner == position)],
+                owner_ids = np.concatenate([data_structure.entity_ids("node")[np.flatnonzero(owner == position)],
                                             display_ids(segment, interior)])
             else:
                 rows, ids = compartments, nodes
                 shape = self._shape(rows)
-                owner_ids = ds.entity_ids("node")[nodes]
+                owner_ids = data_structure.entity_ids("node")[nodes]
             transform = self._transform(segment)
             points = shape.vertices.reshape(-1, 3) @ transform[:3, :3].T + transform[:3, 3]
             parts.append(Triangles(points.reshape(-1, 3, 3), ids, owner_ids))
@@ -266,19 +262,19 @@ def solved():
     return population.data_structure, population.instance
 
 
-def _frame(ds, instance, **options):
-    return to_frame({"plants": ds}, components={"plants": list(instance.components) + [NetworkDrawer(data_structure=ds)]},
+def _frame(data_structure, instance, **options):
+    return to_frame({"plants": data_structure}, components={"plants": list(instance.components) + [NetworkDrawer(data_structure=data_structure)]},
                     **options)
 
 
-def _expected(ds):
+def _expected(data_structure):
     """{segment vid: the unknown on its full template's Compartments}: recover_interiors' on the interior (a merged
     member its node's value), the kept nodes' own."""
-    reduction = ds.structure.reduction
+    reduction = data_structure.structure.reduction
     out = {}
-    values = np.asarray(ds.get("water_potential"))
-    owner = np.asarray(ds.owner("SubOrgan"))
-    for i, (segment, key, full, interior_rows, interior) in reduction.recover_interiors(ds).items():
+    values = np.asarray(data_structure.get("water_potential"))
+    owner = np.asarray(data_structure.owner("SubOrgan"))
+    for i, (segment, key, full, interior_rows, interior) in reduction.recover_interiors(data_structure).items():
         rows = np.flatnonzero(full.scale == scales.Compartment)
         field = np.full(rows.size, np.nan)
         held = reduction.full_rows(key)
@@ -290,13 +286,13 @@ def _expected(ds):
 
 
 def test_the_groups_are_instances_whose_derived_field_is_the_recovery(solved):
-    ds, instance = solved
-    frame = _frame(ds, instance)
+    data_structure, instance = solved
+    frame = _frame(data_structure, instance)
     plants = frame.data_structures[0]
     assert [instance_set.name for instance_set in plants.instance_sets] == ["NetworkDrawer"]
     sections = plants.instance_set("NetworkDrawer")
     assert sections.owners == "SubOrgan"
-    np.testing.assert_array_equal(sections.columns["owner"], ds.entity_ids("SubOrgan"))
+    np.testing.assert_array_equal(sections.columns["owner"], data_structure.entity_ids("SubOrgan"))
     assert DISPLAY_ONLY not in plants.entity_set("Compartment").columns       # no interior rows: the instances
     templates = [part for part in sections.parts if isinstance(part, encoding3d.Template)]
     operators = [part for part in sections.parts if isinstance(part, encoding3d.Operator)]
@@ -308,7 +304,7 @@ def test_the_groups_are_instances_whose_derived_field_is_the_recovery(solved):
     assert between.any() and (~between).any()
     np.testing.assert_allclose(field.weights.sum(axis=1), 1.)
     assert len(operators) == len(np.unique(field.operators[field.operators >= 0]))   # each kind once
-    expected = _expected(ds)
+    expected = _expected(data_structure)
     evaluated = encoding3d.evaluate(frame, "water_potential")
     for owner, values in zip(sections.columns["owner"].tolist(), evaluated):
         np.testing.assert_allclose(values, expected[owner], rtol=1e-12, atol=1e-14)
@@ -322,24 +318,24 @@ def test_the_groups_are_instances_whose_derived_field_is_the_recovery(solved):
 
 
 def test_a_merged_member_has_its_node_s_value_and_the_kept_nodes_their_own(solved):
-    ds, instance = solved
-    frame = _frame(ds, instance)
+    data_structure, instance = solved
+    frame = _frame(data_structure, instance)
     _, rows = network_template()
     compartments = np.flatnonzero(network_template()[0].scale == scales.Compartment)
     m0, m1 = (int(np.searchsorted(compartments, rows[name])) for name in ("m0", "m1"))
-    values = np.asarray(ds.get("water_potential"))
-    owner = np.asarray(ds.owner("SubOrgan"))
+    values = np.asarray(data_structure.get("water_potential"))
+    owner = np.asarray(data_structure.owner("SubOrgan"))
     for position, field in enumerate(encoding3d.evaluate(frame, "water_potential")):
         assert field[m0] == field[m1]                                   # m1 merged into m0
         assert np.isin(values[owner == position], field).all()          # the kept nodes' own values
 
 
 def test_placed_instances_draw_what_display_triangles_draws(solved):
-    ds, instance = solved
-    frame = _frame(ds, instance)
+    data_structure, instance = solved
+    frame = _frame(data_structure, instance)
     placed = encoding3d.placed_meshes(frame, "plants", "NetworkDrawer")
-    whole = NetworkDrawer(data_structure=ds).display_triangles()
-    drawn = NetworkDrawer(data_structure=ds).display_instances(ds.entity_ids("SubOrgan")).placed()
+    whole = NetworkDrawer(data_structure=data_structure).display_triangles()
+    drawn = NetworkDrawer(data_structure=data_structure).display_instances(data_structure.entity_ids("SubOrgan")).placed()
     np.testing.assert_allclose(np.sort(drawn.vertices.reshape(-1)), np.sort(whole.vertices.reshape(-1)))
     corners = placed.positions[placed.triangles]                       # the frame's, placed by its transforms
     assert corners.shape == whole.vertices.shape
@@ -347,40 +343,40 @@ def test_placed_instances_draw_what_display_triangles_draws(solved):
 
 
 def test_full_and_none_displays(solved):
-    ds, instance = solved
-    full = _frame(ds, instance, display="full").data_structures[0]
+    data_structure, instance = solved
+    full = _frame(data_structure, instance, display="full").data_structures[0]
     assert not full.instance_sets and np.asarray(full.entity_set("Compartment").columns[DISPLAY_ONLY]).any()
-    none = _frame(ds, instance, display=None).data_structures[0]
+    none = _frame(data_structure, instance, display=None).data_structures[0]
     assert not none.instance_sets and DISPLAY_ONLY not in none.entity_set("Compartment").columns
     assert "NetworkDrawer" not in {mesh.name for mesh in none.meshes}     # every segment reduced: none drawn
-    instances = _frame(ds, instance).data_structures[0]
+    instances = _frame(data_structure, instance).data_structures[0]
     assert "NetworkDrawer" not in {mesh.name for mesh in instances.meshes}  # the reduced groups not in the mesh
     with pytest.raises(ValueError, match="display"):
-        _frame(ds, instance, display="whole")
+        _frame(data_structure, instance, display="whole")
 
 
 def test_an_instances_frame_is_rebuilt_and_filtered(solved):
-    ds, instance = solved
-    rebuilt = from_frame(_frame(ds, instance))["plants"]
-    np.testing.assert_array_equal(rebuilt.entity_ids("node"), ds.entity_ids("node"))
-    np.testing.assert_allclose(rebuilt.get("water_potential"), ds.get("water_potential"))
-    segment = int(ds.entity_ids("SubOrgan")[2])
-    kept = filter_frame(_frame(ds, instance), entities=[segment]).data_structures[0].instance_set("NetworkDrawer")
+    data_structure, instance = solved
+    rebuilt = from_frame(_frame(data_structure, instance))["plants"]
+    np.testing.assert_array_equal(rebuilt.entity_ids("node"), data_structure.entity_ids("node"))
+    np.testing.assert_allclose(rebuilt.get("water_potential"), data_structure.get("water_potential"))
+    segment = int(data_structure.entity_ids("SubOrgan")[2])
+    kept = filter_frame(_frame(data_structure, instance), entities=[segment]).data_structures[0].instance_set("NetworkDrawer")
     assert kept.columns["owner"].tolist() == [segment]
     assert kept.derived_field("water_potential").operators.shape[0] == 1 and len(kept.vectors["water_potential_kept"]) == 1
-    frame = _frame(ds, instance)
+    frame = _frame(data_structure, instance)
     expected = encoding3d.evaluate(frame, "water_potential")[2]
-    filtered = filter_frame(_frame(ds, instance), entities=[segment])
+    filtered = filter_frame(_frame(data_structure, instance), entities=[segment])
     np.testing.assert_allclose(encoding3d.evaluate(filtered, "water_potential")[0], expected)
-    dropped = filter_frame(_frame(ds, instance), scales=["Plant", "Axis"]).data_structures[0]
+    dropped = filter_frame(_frame(data_structure, instance), scales=["Plant", "Axis"]).data_structures[0]
     assert not dropped.instance_sets                                   # their owners' scale dropped
 
 
 def test_the_sparse_system_gives_the_dense_operator(solved, monkeypatch):
     """Above DISPLAY_DENSE_MAX a kind keeps no dense recovery: its operator is its sparse system, solved by the
     reader, the same field."""
-    ds, instance = solved
-    dense = encoding3d.evaluate(_frame(ds, instance), "water_potential")
+    data_structure, instance = solved
+    dense = encoding3d.evaluate(_frame(data_structure, instance), "water_potential")
     monkeypatch.setattr(reduction_module, "DISPLAY_DENSE_MAX", 0)
     population = _solved()
     frame = _frame(population.data_structure, population.instance)
@@ -392,13 +388,13 @@ def test_the_sparse_system_gives_the_dense_operator(solved, monkeypatch):
 
 
 def test_parts_are_written_once_and_the_views_declare_the_instances(solved, tmp_path):
-    ds, instance = solved
+    data_structure, instance = solved
     first, second = str(tmp_path / "frame_000000.glb"), str(tmp_path / "frame_000001.glb")
-    keys = encoding3d.write(first, _frame(ds, instance, time_unit="s"))
+    keys = encoding3d.write(first, _frame(data_structure, instance, time_unit="s"))
     parts = sorted(os.listdir(tmp_path / "parts"))
     assert parts == sorted(f"{key}.glb" for key in keys)
     times = {name: os.path.getmtime(tmp_path / "parts" / name) for name in parts}
-    assert encoding3d.write(second, _frame(ds, instance, time=1., step=1, time_unit="s")) == keys   # not again
+    assert encoding3d.write(second, _frame(data_structure, instance, time=1., step=1, time_unit="s")) == keys   # not again
     assert {name: os.path.getmtime(tmp_path / "parts" / name) for name in parts} == times
     encoding3d.write_index(str(tmp_path / "scene.fspm.json"), [{"time": 0., "step": 0, "file": "frame_000000.glb"},
                                                                {"time": 1., "step": 1, "file": "frame_000001.glb"}],
@@ -406,17 +402,17 @@ def test_parts_are_written_once_and_the_views_declare_the_instances(solved, tmp_
     report = validate_file(str(tmp_path / "scene.fspm.json"))
     assert report.ok, [issue for issue in report.issues if issue.severity == "error"]
     read = encoding3d.read(first)
-    for left, right in zip(encoding3d.evaluate(read, "water_potential"), _expected(ds).values()):
+    for left, right in zip(encoding3d.evaluate(read, "water_potential"), _expected(data_structure).values()):
         np.testing.assert_allclose(left, right, rtol=1e-12, atol=1e-14)
 
 
 def test_default_views_declare_the_instanced_layer(solved):
     from openalea.encoding3d import views
-    ds, instance = solved
-    frame = _frame(ds, instance)
+    data_structure, instance = solved
+    frame = _frame(data_structure, instance)
     layers = {}
     from openalea.metafspm.io.encoding3d import _plant_layers, _declarations
-    for layer in _plant_layers(frame.data_structures[0], ds, _declarations(instance.components)):
+    for layer in _plant_layers(frame.data_structures[0], data_structure, _declarations(instance.components)):
         layers[layer["name"]] = layer
     layer = layers["plants NetworkDrawer instances"]
     assert layer["source"] == {"data_structure": "plants", "kind": "instances", "instance_set": "NetworkDrawer"}
@@ -427,9 +423,9 @@ def test_default_views_declare_the_instanced_layer(solved):
 
 def test_without_a_reduction_nothing_is_instanced():
     population = _solved(reduced=False)
-    ds = population.data_structure
-    plants = to_frame({"plants": ds}, components={"plants": list(population.instance.components)
-                                                  + [NetworkDrawer(data_structure=ds)]}).data_structures[0]
+    data_structure = population.data_structure
+    plants = to_frame({"plants": data_structure}, components={"plants": list(population.instance.components)
+                                                  + [NetworkDrawer(data_structure=data_structure)]}).data_structures[0]
     assert not plants.instance_sets
     assert "NetworkDrawer" in {mesh.name for mesh in plants.meshes}
 
@@ -548,8 +544,8 @@ def test_the_recorder_s_display_options_are_checked(tmp_path):
 
 
 def test_a_variables_filter_keeps_the_templates_columns_it_names(solved):
-    ds, instance = solved
-    frame = _frame(ds, instance, variables={"plants": {"Compartment": ["water_potential", "port"], "*": []}})
+    data_structure, instance = solved
+    frame = _frame(data_structure, instance, variables={"plants": {"Compartment": ["water_potential", "port"], "*": []}})
     sections = frame.data_structures[0].instance_set("NetworkDrawer")
     template = next(part for part in sections.parts if isinstance(part, encoding3d.Template))
     assert set(template.entity_set("Compartment").columns) == {"id", "label", "port"}

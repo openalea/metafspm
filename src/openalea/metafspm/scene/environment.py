@@ -31,8 +31,8 @@ from openalea.metafspm.coupling.composite_wrapper import CompositeModel
 from openalea.metafspm.coupling.cross import UnionDataStructure
 
 
-def _scale_name(ds, scale) -> str:
-    return next(name for name, value in vars(type(ds.structure.scales)).items()
+def _scale_name(data_structure, scale) -> str:
+    return next(name for name, value in vars(type(data_structure.structure.scales)).items()
                 if isinstance(value, int) and not name.startswith("_") and value == scale)
 
 
@@ -58,8 +58,8 @@ class EnvironmentModel(CompositeModel):
         variables reach the plant models through the scene translator's links (identity ones by default, Scene). Built
         once."""
         if self._plants is None:
-            parts = [ds.at(_scale_name(ds, ds.from_scale)) if getattr(ds, "_anatomy", False) else ds
-                     for ds in self.plant_data_structures]
+            parts = [data_structure.at(_scale_name(data_structure, data_structure.from_scale)) if getattr(data_structure, "_anatomy", False) else data_structure
+                     for data_structure in self.plant_data_structures]
             self._plants = UnionDataStructure(parts)
         return self._plants
 

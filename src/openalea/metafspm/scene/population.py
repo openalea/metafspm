@@ -172,8 +172,8 @@ def population_data_structure(table: pd.DataFrame, model, time_step: float = 360
     it, every plant's scenario applied: what the Scene builds for each of its models, for a model run without one.
     The model's initiators build each plant's structure (on the nodes of its from_scale, or its own nodes for
     anatomies), its wiring joins them; *scenario*: the one the model is built with (default: the first plant's);
-    *soil_surface*: the soil surface's height (m, the Scene's), the MPG's g.soil_surface while the initiators build
-    (a crown placed below it) and the DataStructure's after (ds.soil_surface); *name*: the population's (default:
+    *soil_surface*: the soil surface's height (m, the Scene's), the MPG's mtg.soil_surface while the initiators build
+    (a crown placed below it) and the DataStructure's after (data_structure.soil_surface); *name*: the population's (default:
     the table's population column, else the model's class name).
     """
     table = table.reset_index(drop=True)
@@ -183,26 +183,26 @@ def population_data_structure(table: pd.DataFrame, model, time_step: float = 360
     read_by_initiators = set()
     reduction = _model_reduction(model, table, scenario, read_by_initiators)
     from openalea.metafspm.coupling.composite_wrapper import model_initiators, model_translator
-    g, plants = _build_population(table, initiators=model_initiators(model),
+    mtg, plants = _build_population(table, initiators=model_initiators(model),
                                   read_by_initiators=read_by_initiators, reduction=reduction,
                                   translator=model_translator(model), soil_surface=soil_surface)
     scale = getattr(model, "from_scale", None) or "SubOrgan"
-    scale = getattr(g.scales, scale) if isinstance(scale, str) else scale
+    scale = getattr(mtg.scales, scale) if isinstance(scale, str) else scale
     nodes = getattr(model, "nodes", None)
     if nodes is None:
-        g.populate_graph(scale)                 # anatomy mode: the initiators built the Compartments
-    g.convert_properties_to_arraydict()
+        mtg.populate_graph(scale)                 # anatomy mode: the initiators built the Compartments
+    mtg.convert_properties_to_arraydict()
     wiring = getattr(model, "wiring", None)
-    wiring = wiring(g) if callable(wiring) else wiring
-    ds = MPGDataStructure(g, from_scale=scale, nodes=nodes, wiring=wiring)
-    ds.soil_surface = soil_surface
-    ds.simulation_time_step = time_step               # the model's components run in it (the Scene's step)
-    instance = model(data_structure=ds, time_step=time_step, **_model_keywords(model, scenario))
-    if getattr(g, "reduction", None) is not None:
-        g.reduction.bind(model, instance)
-    population = Population(model, table, plants, ds, instance, read_by_initiators, name=name)
+    wiring = wiring(mtg) if callable(wiring) else wiring
+    data_structure = MPGDataStructure(mtg, from_scale=scale, nodes=nodes, wiring=wiring)
+    data_structure.soil_surface = soil_surface
+    data_structure.simulation_time_step = time_step               # the model's components run in it (the Scene's step)
+    instance = model(data_structure=data_structure, time_step=time_step, **_model_keywords(model, scenario))
+    if getattr(mtg, "reduction", None) is not None:
+        mtg.reduction.bind(model, instance)
+    population = Population(model, table, plants, data_structure, instance, read_by_initiators, name=name)
     _apply_model_scenario(model, instance, scenario, read_by_initiators)
-    _apply_plant_scenarios(ds, population.components, table, plants)
+    _apply_plant_scenarios(data_structure, population.components, table, plants)
     return population
 
 
@@ -270,7 +270,7 @@ def _build_population(table: pd.DataFrame, initiators=(), read_by_initiators: se
     """
     A new MPG with one Plant-scale vertex per row of *table* (Plant properties x, y, rotation and z, the soil
     surface's height *soil_surface* minus the row's depth), each plant's
-    initial structure built by every StructuralComponent class of *initiators*, in order. Returns (g, plant vids in
+    initial structure built by every StructuralComponent class of *initiators*, in order. Returns (mtg, plant vids in
     table order). The scenario keys the initiators read are added to *read_by_initiators* when given. *reduction*
     (the model's, solve.reduction): the MPG's, before the initiators build (they ask it for the reduced templates).
     *translator* (the model's class attribute): its links between initiators applied before each initiator builds a
@@ -278,32 +278,32 @@ def _build_population(table: pd.DataFrame, initiators=(), read_by_initiators: se
     """
     from openalea.metafspm.coupling.initiation import apply_link, initiation_links
     links = initiation_links(translator, initiators)
-    g = MPG()
-    g.soil_surface = float(soil_surface)          # the soil surface's height, for initiators placing below it
+    mtg = MPG()
+    mtg.soil_surface = float(soil_surface)          # the soil surface's height, for initiators placing below it
     if reduction is not None:
-        g.reduction = reduction.for_population(g)
+        mtg.reduction = reduction.for_population(mtg)
     plants = []
     for row in table.itertuples(index=False):
-        plant = g.add_component(g.root, **PropsConfig(scale=g.scales.Plant, edge_type='/'))
+        plant = mtg.add_component(mtg.root, **PropsConfig(scale=mtg.scales.Plant, edge_type='/'))
         for name in ("x", "y", "rotation"):
-            g.set_values(name, [plant], [float(getattr(row, name))])
-        g.set_values("z", [plant], [float(soil_surface) - float(row.depth)])
+            mtg.set_values(name, [plant], [float(getattr(row, name))])
+        mtg.set_values("z", [plant], [float(soil_surface) - float(row.depth)])
         plants.append(plant)
     from openalea.metafspm.data_structure.mpg import AnchorError
     for k, initiator in enumerate(initiators):
         for plant, row in zip(plants, table.itertuples(index=False)):
             scenario = _ReadScenario(_flat_scenario(row.scenario))
             for link, provider in links.get(k, ()):     # its inputs linked from earlier initiators
-                apply_link(g, plant, link, initiator, provider)
+                apply_link(mtg, plant, link, initiator, provider)
             try:
-                initiator.initiate_plant(g, plant, scenario)
+                initiator.initiate_plant(mtg, plant, scenario)
             except AnchorError as error:            # the anchors' contract: an earlier initiator builds the anchor
                 order = [getattr(i, "__name__", str(i)) for i in initiators]
                 raise AnchorError(f"{order[k]}: {error}. The initiators build in order, {order}: its anchor must be "
                                   f"built by one before it ({order[:k] or 'none'})") from None
             if read_by_initiators is not None:
                 read_by_initiators |= scenario.read
-    return g, plants
+    return mtg, plants
 
 
 class _ReadScenario(dict):
@@ -326,13 +326,13 @@ class _ReadScenario(dict):
         return super().__contains__(key)
 
 
-def _apply_plant_scenarios(ds, components, table: pd.DataFrame, plants: list) -> None:
+def _apply_plant_scenarios(data_structure, components, table: pd.DataFrame, plants: list) -> None:
     """
     Fill the per-plant parameters of *components* (stored at the "Plant" location) from each plant's scenario; a
     parameter a scenario does not give keeps the component's value.
     """
     by_plant = {int(plant): _flat_scenario(row.scenario) for plant, row in zip(plants, table.itertuples(index=False))}
-    entities = ds.entity_ids("Plant")
+    entities = data_structure.entity_ids("Plant")
     missing = set(int(e) for e in entities) - set(by_plant)
     if missing:
         raise ValueError(f"Plant vertices {sorted(missing)[:5]} have no row in the planting table")
@@ -346,18 +346,18 @@ def _apply_plant_scenarios(ds, components, table: pd.DataFrame, plants: list) ->
         for name, spec in getattr(component, "_variable_specs", {}).items():
             if spec.role != "parameter":
                 continue
-            if ds.location(name) != "Plant":
+            if data_structure.location(name) != "Plant":
                 if name in given and not _same_for_all([by_plant[p].get(name) for p in by_plant]):
                     raise ValueError(f"{type(component).__name__}.{name} differs between the plants' scenarios but "
-                                     f"is stored at '{ds.location(name)}', not per plant: give every plant the same "
+                                     f"is stored at '{data_structure.location(name)}', not per plant: give every plant the same "
                                      "value")
                 continue
-            stored = np.asarray(ds.get(name))
+            stored = np.asarray(data_structure.get(name))
             current = stored if stored.dtype == object else stored.astype(float)
             values = np.empty(len(entities), dtype=object) if stored.dtype == object else [None] * len(entities)
             for i, e in enumerate(entities):             # a record per plant (dtype object) taken as it is
                 values[i] = by_plant[int(e)].get(name, current[i])
-            ds.set(name, values)
+            data_structure.set(name, values)
 
 
 def _apply_model_scenario(model, instance, scenario: dict, read_by_initiators=(), per_plant: bool = True) -> None:
@@ -387,10 +387,10 @@ def _apply_model_scenario(model, instance, scenario: dict, read_by_initiators=()
                 unknown.append(name)
             continue
         for component in owners:
-            ds = getattr(component, "data_structure", None)
-            if ds is not None and ds.has(name) and ds.location(name) == "Plant":
+            data_structure = getattr(component, "data_structure", None)
+            if data_structure is not None and data_structure.has(name) and data_structure.location(name) == "Plant":
                 if not per_plant:                           # every plant the environment's value
-                    ds.set(name, np.full(np.shape(ds.get(name)), value, dtype=np.asarray(ds.get(name)).dtype))
+                    data_structure.set(name, np.full(np.shape(data_structure.get(name)), value, dtype=np.asarray(data_structure.get(name)).dtype))
                 continue                                    # per plant: _apply_plant_scenarios
             setattr(component, name, value)
     for component in components:                          # a setting's choices, checked as at construction

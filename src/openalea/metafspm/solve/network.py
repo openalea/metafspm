@@ -1,7 +1,7 @@
 """
 Linear algebra on a DataStructure's graph, for the upscaled variables a model declares (state_variable(upscaling=)):
 
-  conductance, inflow = equivalent_conductance(ds.to_graph_view(), edge_conductance, sources=soil_interface,
+  conductance, inflow = equivalent_conductance(data_structure.to_graph_view(), edge_conductance, sources=soil_interface,
                                                sinks=collar, source_conductance=soil_conductance)
 
 No physics: the model assembles its network's conductances and chooses the protocol (which nodes are held at which
@@ -141,25 +141,25 @@ def condensed_solve(matrix, rhs, groups, kept=None, cache: dict = None, system=N
     reduced_values = []
     b_K = b[kept_nodes].copy()
     pending = {}                                          # archetype -> [(group, factor)]
-    for g, (block_s, coupling_s, back_s) in enumerate(plan["structures"]):
+    for group, (block_s, coupling_s, back_s) in enumerate(plan["structures"]):
         block, coupling, back = (csr_matrix((data[where], indices, indptr), shape=shape)
                                  for where, indices, indptr, shape in (block_s, coupling_s, back_s))
         factor = float(block.data[0]) if block.nnz and block.data[0] != 0 else 1.
         pending.setdefault(_condensation_archetype(block, coupling, back, factor, archetypes, solver, symmetric),
-                           []).append((g, factor))
+                           []).append((group, factor))
     starts, ends, columns = plan["starts"], plan["ends"], plan["columns"]
     solutions = {}
     reduction_order = []
     for archetype, members in pending.items():
         entry = archetypes[archetype]
-        Z = entry["lu"].solve(np.stack([b[interior[starts[g]:ends[g]]] for g, _ in members], axis=1))
-        for j, (g, factor) in enumerate(members):
-            reduction_order.append(g)
+        Z = entry["lu"].solve(np.stack([b[interior[starts[group]:ends[group]]] for group, _ in members], axis=1))
+        for j, (group, factor) in enumerate(members):
+            reduction_order.append(group)
             reduced_values.append(-(factor * entry["S"]).ravel())    # minus A_KI A_II⁻¹ A_IK, scaled
-            b_K[position[kept_nodes[columns[g]]]] -= entry["back"] @ Z[:, j]   # (c A_KI_ref) (A_ref⁻¹ b_I / c)
+            b_K[position[kept_nodes[columns[group]]]] -= entry["back"] @ Z[:, j]   # (c A_KI_ref) (A_ref⁻¹ b_I / c)
         solutions[archetype] = (members, Z)
-    rows = np.concatenate([plan["reduced_rows"][g] for g in reduction_order])
-    cols = np.concatenate([plan["reduced_cols"][g] for g in reduction_order])
+    rows = np.concatenate([plan["reduced_rows"][group] for group in reduction_order])
+    cols = np.concatenate([plan["reduced_cols"][group] for group in reduction_order])
     where_KK, indices_KK, indptr_KK, shape_KK = plan["A_KK"]
     A_KK = csr_matrix((data[where_KK], indices_KK, indptr_KK), shape=shape_KK)
     reduced = (A_KK + coo_matrix((np.concatenate(reduced_values), (rows, cols)), shape=shape_KK).tocsr()).tocsr()
@@ -175,8 +175,8 @@ def condensed_solve(matrix, rhs, groups, kept=None, cache: dict = None, system=N
     x[kept_nodes] = x_K
     for archetype, (members, Z) in solutions.items():
         X = archetypes[archetype]["X"]
-        for j, (g, factor) in enumerate(members):
-            x[interior[starts[g]:ends[g]]] = Z[:, j] / factor - X @ x_K[position[kept_nodes[columns[g]]]]
+        for j, (group, factor) in enumerate(members):
+            x[interior[starts[group]:ends[group]]] = Z[:, j] / factor - X @ x_K[position[kept_nodes[columns[group]]]]
     return x
 
 

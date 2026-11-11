@@ -103,6 +103,6 @@ def test_classes_defined_in_a_function_are_scheduled():
         def _level(self, level):
             return level + 5.
 
-    ds = _grid()
-    Local(data_structure=ds)()
-    np.testing.assert_array_equal(ds.get("level"), 5.)
+    data_structure = _grid()
+    Local(data_structure=data_structure)()
+    np.testing.assert_array_equal(data_structure.get("level"), 5.)

@@ -24,12 +24,12 @@ DT = 3600.
 SEED, STEM, ROOT = 0.5, 2., 1.
 
 
-def _complexes(g, plant, axis, organ):
-    s, labels = g.scales, g.labels
+def _complexes(mtg, plant, axis, organ):
+    s, labels = mtg.scales, mtg.labels
     parent = plant
     for scale, label in ((s.Axis, getattr(labels.Axis, axis)), (s.GrowthUnit, getattr(labels.GrowthUnit, axis)),
                          (s.Phytomer, getattr(labels.Phytomer, axis)), (s.Organ, getattr(labels.Organ, organ))):
-        parent = g.add_component(parent, **PropsConfig(scale=scale, edge_type='/', label=label))
+        parent = mtg.add_component(parent, **PropsConfig(scale=scale, edge_type='/', label=label))
     return parent
 
 
@@ -44,20 +44,20 @@ class Shoot(StructuralComponent):
     rank: float = state_variable(**DOC, default=0., scale=scales.SubOrgan, kind="descriptor")
 
     @classmethod
-    def initiate_plant(cls, g, plant, scenario):
-        s, labels = g.scales, g.labels
-        parent = g.add_component(_complexes(g, plant, "Shoot", "StemInternode"),
+    def initiate_plant(cls, mtg, plant, scenario):
+        s, labels = mtg.scales, mtg.labels
+        parent = mtg.add_component(_complexes(mtg, plant, "Shoot", "StemInternode"),
                                  **PropsConfig(scale=s.SubOrgan, edge_type='/', label=labels.SubOrgan.Seed))
-        g.set_values("length", [parent], [SEED])
+        mtg.set_values("length", [parent], [SEED])
         for _ in range(2):
-            parent = g.add_child(parent, **PropsConfig(scale=s.SubOrgan, edge_type='<',
+            parent = mtg.add_child(parent, **PropsConfig(scale=s.SubOrgan, edge_type='<',
                                                        label=labels.SubOrgan.StemElement))
-            g.set_values("length", [parent], [STEM])
+            mtg.set_values("length", [parent], [STEM])
 
     @rate
     def _exchange(self, length):
-        ds = self.data_structure
-        stem, owner = np.asarray(ds.labels()) == "StemElement", np.asarray(ds.owner("Plant"))
+        data_structure = self.data_structure
+        stem, owner = np.asarray(data_structure.labels()) == "StemElement", np.asarray(data_structure.owner("Plant"))
         rank = np.zeros(len(length))
         for plant in np.unique(owner):                                     # each plant's stem elements: 1, 2
             rank[stem & (owner == plant)] = np.arange(1., np.sum(stem & (owner == plant)) + 1.)
@@ -74,17 +74,17 @@ class Roots(StructuralComponent):
     radius: float = state_variable(**DOC, default=0., scale=scales.SubOrgan, kind="intensive")
 
     @classmethod
-    def initiate_plant(cls, g, plant, scenario):
-        s, labels = g.scales, g.labels
-        seed = g.find_anchor(plant, "Seed")
-        organ = _complexes(g, plant, "Root", "RootInternode")
-        roots = [g.add_component_with_topo(organ, seed, **PropsConfig(scale=s.SubOrgan, edge_type='+',
+    def initiate_plant(cls, mtg, plant, scenario):
+        s, labels = mtg.scales, mtg.labels
+        seed = mtg.find_anchor(plant, "Seed")
+        organ = _complexes(mtg, plant, "Root", "RootInternode")
+        roots = [mtg.add_component_with_topo(organ, seed, **PropsConfig(scale=s.SubOrgan, edge_type='+',
                                                                       label=labels.SubOrgan.RootSegment))]
-        roots.append(g.add_child(roots[-1], **PropsConfig(scale=s.SubOrgan, edge_type='<',
+        roots.append(mtg.add_child(roots[-1], **PropsConfig(scale=s.SubOrgan, edge_type='<',
                                                           label=labels.SubOrgan.RootApex)))
         for k, vid in enumerate(roots):
-            g.set_values("length", [vid], [ROOT])
-            g.set_values("radius", [vid], [0.1 * (k + 1)])
+            mtg.set_values("length", [vid], [ROOT])
+            mtg.set_values("radius", [vid], [0.1 * (k + 1)])
 
 
 @dataclass
@@ -121,10 +121,10 @@ def test_the_summaries_hold_every_component_and_its_views():
     np.testing.assert_allclose(last["green_area"], 0.1 + 0.2)
     np.testing.assert_allclose(last["gs"], (1. * 0.1 + 2. * 0.2) / 0.3)         # weighted; the seed's NaN left out
     np.testing.assert_allclose(last["radius"], 0.15)                           # plain
-    ds = scene.populations[0].data_structure
-    owner = np.asarray(ds.owner("Plant"))
+    data_structure = scene.populations[0].data_structure
+    owner = np.asarray(data_structure.owner("Plant"))
     for k in range(2):
-        volume, psi = ds.get("volume")[owner == k], ds.get("psi")[owner == k]
+        volume, psi = data_structure.get("volume")[owner == k], data_structure.get("psi")[owner == k]
         assert last["psi"][k] == pytest.approx(np.sum(volume * psi) / np.sum(volume))
         assert last["volume"][k] == pytest.approx(np.sum(volume))
 
@@ -138,11 +138,11 @@ def test_a_declared_summary_table():
     with pytest.warns(UserWarning):
         scene.simulate(1)
     stems = scene.recorder.table("stems")
-    ds = scene.populations[0].data_structure
-    stem = np.asarray(ds.labels()) == "StemElement"
+    data_structure = scene.populations[0].data_structure
+    stem = np.asarray(data_structure.labels()) == "StemElement"
     np.testing.assert_allclose(stems["green_area"].iloc[-1], 2 * 0.3)
     np.testing.assert_allclose(stems["gs"].iloc[-1], 2 * (1. * 0.1 + 2. * 0.2))   # gs integrated over the area
-    volume, psi = ds.get("volume")[stem], ds.get("psi")[stem]
+    volume, psi = data_structure.get("volume")[stem], data_structure.get("psi")[stem]
     np.testing.assert_allclose(stems["psi"].iloc[-1], np.sum(volume * psi) / np.sum(volume))   # its declared weight
     assert stems["gs_max"].iloc[-1] == 2.
     by_plant = scene.recorder.table("stems by plant")
@@ -202,14 +202,14 @@ def test_the_summary_plan_is_kept_for_the_step():
     scene = _scene()
     with pytest.warns(UserWarning):
         scene.simulate(1)
-    recorder, ds = scene.recorder, scene.populations[0].data_structure
-    plan = recorder.summary_plan(scene, ds)
-    assert recorder.summary_plan(scene, ds) is plan
-    ds.register("extra", np.zeros(ds.n_nodes()), location="node")         # a new variable: its version
-    assert recorder.summary_plan(scene, ds) is not plan
-    plan = recorder.summary_plan(scene, ds)
+    recorder, data_structure = scene.recorder, scene.populations[0].data_structure
+    plan = recorder.summary_plan(scene, data_structure)
+    assert recorder.summary_plan(scene, data_structure) is plan
+    data_structure.register("extra", np.zeros(data_structure.n_nodes()), location="node")         # a new variable: its version
+    assert recorder.summary_plan(scene, data_structure) is not plan
+    plan = recorder.summary_plan(scene, data_structure)
     scene.simulate(1)
-    assert recorder.summary_plan(scene, ds) is not plan
+    assert recorder.summary_plan(scene, data_structure) is not plan
 
 
 def test_a_grids_intensive_variables_are_weighted_by_its_cells_volumes():

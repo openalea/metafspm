@@ -130,8 +130,8 @@ class RootCarbon(FunctionalComponent):
     def _hexose(self, hexose, exudation, struct_mass):
         return hexose - self.step_duration * exudation / struct_mass
 
-ds = MPGDataStructure(g, from_scale=g.scales.SubOrgan)   # g: an MPG holding one or several plants
-carbon = RootCarbon(data_structure=ds, time_step=3600.)
+data_structure = MPGDataStructure(mtg, from_scale=mtg.scales.SubOrgan)   # mtg: an MPG holding one or several plants
+carbon = RootCarbon(data_structure=data_structure, time_step=3600.)
 carbon()                                                 # one time step, steps in the scheduled order
 ```
 

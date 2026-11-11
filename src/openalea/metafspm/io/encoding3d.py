@@ -2,7 +2,7 @@
 metafspm's DataStructures as encoding3d frames (the cross-platform scene format, https://github.com/openalea/encoding3d),
 and back::
 
-    frame = to_frame({"plants": ds, "soil": grid}, components={"plants": [growth, carbon]},
+    frame = to_frame({"plants": data_structure, "soil": grid}, components={"plants": [growth, carbon]},
                      mappings={"roots_in_soil": (cross_mapping, "plants", "soil")})
     frame = scene_to_frame(scene)                  every population's and environment model's DataStructure, and the
                                                    scene's mappings
@@ -154,8 +154,8 @@ class Excluding:
         return f"Excluding({sorted(self.names)})"
 
 
-def unrecorded(ds, components) -> set:
-    """The variables of *ds* its frames leave out under a variables filter "recorded": those whose declarations by
+def unrecorded(data_structure, components) -> set:
+    """The variables of *data_structure* its frames leave out under a variables filter "recorded": those whose declarations by
     *components* (record=, coupling.component's declarations) do not record them: a declaration's explicit record=
     (True wins), else the DataStructure's own (a grid's geometric descriptors: record=False), else a state variable
     or an input recorded, a parameter or a setting not. A variable nothing declares is recorded."""
@@ -170,7 +170,7 @@ def unrecorded(ds, components) -> set:
             roles.setdefault(item.name, set()).add(role)
             if item.metadata.get("record") is not None:
                 explicit[item.name] = explicit.get(item.name, False) or bool(item.metadata["record"])
-    meta = ds._variable_meta() if hasattr(ds, "_variable_meta") else {}
+    meta = data_structure._variable_meta() if hasattr(data_structure, "_variable_meta") else {}
     out = set()
     for name in set(roles) | {name for name, info in meta.items() if info.get("record") is not None}:
         if name in explicit:
@@ -184,15 +184,15 @@ def unrecorded(ds, components) -> set:
     return out
 
 
-def resolved_variables(variables, ds, components):
-    """A variables filter's value for *ds* with "recorded" (as a whole, or as a table's value) resolved into
-    Excluding(unrecorded(ds, components))."""
+def resolved_variables(variables, data_structure, components):
+    """A variables filter's value for *data_structure* with "recorded" (as a whole, or as a table's value) resolved into
+    Excluding(unrecorded(data_structure, components))."""
     if variables is None:
         return None
     if isinstance(variables, str) and variables == RECORDED:
-        return Excluding(unrecorded(ds, components))
+        return Excluding(unrecorded(data_structure, components))
     if isinstance(variables, dict):
-        return {table: (Excluding(unrecorded(ds, components)) if isinstance(names, str) and names == RECORDED
+        return {table: (Excluding(unrecorded(data_structure, components)) if isinstance(names, str) and names == RECORDED
                         else names) for table, names in variables.items()}
     return variables
 
@@ -396,23 +396,23 @@ class _InstancedProperty:
     """An MPG property read with its instanced vertices' template values (MPG._property_at): a stand-in for the
     property in _lookup, ArrayDict-like when its values are numbers."""
 
-    def __init__(self, g, name: str):
-        self.g, self.name = g, name
-        prop = g.properties().get(name)
+    def __init__(self, mtg, name: str):
+        self.mtg, self.name = mtg, name
+        prop = mtg.properties().get(name)
         if prop is not None and len(prop):
             self.numeric = isinstance(prop, ArrayDict) and prop.dtype.kind == "f"
         else:
             self.numeric = all(template.properties[name][1].dtype != object
-                               for template in g.instances.templates.values() if name in template.properties)
+                               for template in mtg.instances.templates.values() if name in template.properties)
 
     def lookup(self, vids: np.ndarray, plan: tuple = None) -> tuple:
-        """(present, values) at sorted unique *vids*, as _lookup gives them. *plan*: g.instances.plan(vids), the
+        """(present, values) at sorted unique *vids*, as _lookup gives them. *plan*: mtg.instances.plan(vids), the
         instanced vertices located once for every property (else located here): the same present and values as
         MPG._property_at's, merged in the vids' order without sorting them again."""
         if plan is None:
-            plan = self.g.instances.plan(vids)
-        explicit, values = self.g._explicit_property_mask(self.name, vids)
-        has, template_values = self.g.instances.values(self.name, vids, plan)
+            plan = self.mtg.instances.plan(vids)
+        explicit, values = self.mtg._explicit_property_mask(self.name, vids)
+        has, template_values = self.mtg.instances.values(self.name, vids, plan)
         has &= ~explicit                                 # an entry of its own first (MPG._property_at_instanced)
         if not has.any():
             present, merged = explicit, values
@@ -445,14 +445,14 @@ def _by_vid(mapping: dict, size: int) -> np.ndarray:
     return out
 
 
-def _mpg_properties(g) -> dict:
-    """{name: property} of *g*, with the template-only properties of its instances, each read with the instanced
-    vertices' values (_InstancedProperty) when *g* has instances."""
-    if not g._instanced():
-        return dict(g.properties())
-    names = list(g.properties()) + sorted({name for template in g.instances.templates.values()
-                                           for name in template.properties} - set(g.properties()))
-    return {name: _InstancedProperty(g, name) for name in names}
+def _mpg_properties(mtg) -> dict:
+    """{name: property} of *mtg*, with the template-only properties of its instances, each read with the instanced
+    vertices' values (_InstancedProperty) when *mtg* has instances."""
+    if not mtg._instanced():
+        return dict(mtg.properties())
+    names = list(mtg.properties()) + sorted({name for template in mtg.instances.templates.values()
+                                           for name in template.properties} - set(mtg.properties()))
+    return {name: _InstancedProperty(mtg, name) for name in names}
 
 
 def _arraydict(keys: np.ndarray, values: np.ndarray) -> ArrayDict:
@@ -468,56 +468,56 @@ def _arraydict(keys: np.ndarray, values: np.ndarray) -> ArrayDict:
 
 # ── MPGDataStructure → data structure ───────────────────────────────────────
 
-def _scale_names(g) -> dict:
+def _scale_names(mtg) -> dict:
     from openalea.metafspm.coupling.declaration import scale_names
-    return scale_names(g)
+    return scale_names(mtg)
 
 
-def _location_scales(ds) -> dict:
+def _location_scales(data_structure) -> dict:
     """{DataStructure location: MPG scale} of a graph DataStructure's locations other than scalar."""
-    g = ds.structure
-    scales = {"node": g.scales.Compartment if ds._anatomy else ds._from_scale, "edge": g.scales.Connection}
-    for name in ds._coarse_scale_names():
-        scales[name] = getattr(g.scales, name)
+    mtg = data_structure.structure
+    scales = {"node": mtg.scales.Compartment if data_structure._anatomy else data_structure._from_scale, "edge": mtg.scales.Connection}
+    for name in data_structure._coarse_scale_names():
+        scales[name] = getattr(mtg.scales, name)
     return scales
 
 
-def _mpg_data_structure(identifier: str, ds, metadata: dict, standard_names: dict, geometry: bool, components=(),
+def _mpg_data_structure(identifier: str, data_structure, metadata: dict, standard_names: dict, geometry: bool, components=(),
                         display_meshes: bool = True, display_plants=None, display: str = "instances",
                         variables=None):
     encoding3d = _encoding3d()
-    ds.flush_mtg()                     # the MPG holds the variables' current values, as ds.mtg gives it
-    g = ds.structure
-    names = _scale_names(g)
-    arrays = g.topology_arrays()
-    anchors = set(np.flatnonzero(arrays["is_anchor"]).tolist()) | {g.root}
+    data_structure.flush_mtg()                     # the MPG holds the variables' current values, as data_structure.mtg gives it
+    mtg = data_structure.structure
+    names = _scale_names(mtg)
+    arrays = mtg.topology_arrays()
+    anchors = set(np.flatnonzero(arrays["is_anchor"]).tolist()) | {mtg.root}
     # the MTG's own scale, complex and parent of each vertex, by vid (-1: none), read from its dicts in bulk
-    size = max(arrays["scale"].size, *(max(mapping, default=-1) + 1 for mapping in (g._scale, g._complex, g._parent)))
-    own_scale, own_complex, own_parent = (_by_vid(mapping, size) for mapping in (g._scale, g._complex, g._parent))
+    size = max(arrays["scale"].size, *(max(mapping, default=-1) + 1 for mapping in (mtg._scale, mtg._complex, mtg._parent)))
+    own_scale, own_complex, own_parent = (_by_vid(mapping, size) for mapping in (mtg._scale, mtg._complex, mtg._parent))
     explicit = np.flatnonzero(own_scale >= 0)
     explicit = explicit[~np.isin(explicit, list(anchors))]
     by_scale = {scale: explicit[own_scale[explicit] == scale] for scale in np.unique(own_scale[explicit]).tolist()}
-    instanced = g._instanced()
+    instanced = mtg._instanced()
     if instanced:                                  # the instanced vertices, as their copies would be listed
         blocks = [np.arange(f, f + n, dtype=np.int64)
-                  for f, n in zip(g.instances.first.tolist(), g.instances.size.tolist())]
+                  for f, n in zip(mtg.instances.first.tolist(), mtg.instances.size.tolist())]
         virtual = np.concatenate(blocks)
         for scale in np.unique(arrays["scale"][virtual]).tolist():
             here = virtual[arrays["scale"][virtual] == scale]
             by_scale[scale] = np.union1d(by_scale.get(scale, np.zeros(0, dtype=np.int64)), here)
-        _, virtual_complex, virtual_parent = g.instances.structure(virtual)
+        _, virtual_complex, virtual_parent = mtg.instances.structure(virtual)
         anchored = virtual_complex <= -2
-        virtual_complex[anchored] = [g.scales.anchors[int(-2 - c)] for c in virtual_complex[anchored].tolist()]
+        virtual_complex[anchored] = [mtg.scales.anchors[int(-2 - c)] for c in virtual_complex[anchored].tolist()]
         own_complex[virtual], own_parent[virtual] = virtual_complex, virtual_parent     # an instance's links first
-    connection = g.scales.Connection
-    translator = dict(g.labels.translator)
-    properties = _mpg_properties(g)                # the columns (g.property() builds a mapping)
+    connection = mtg.scales.Connection
+    translator = dict(mtg.labels.translator)
+    properties = _mpg_properties(mtg)                # the columns (mtg.property() builds a mapping)
     label_property, edge_property = properties.get("label", {}), properties.get("edge_type", {})
-    extras = {"class": "MPGDataStructure", "construction": ds._construction(), "last_id": int(g._id),
+    extras = {"class": "MPGDataStructure", "construction": data_structure._construction(), "last_id": int(mtg._id),
               "anchors": sorted(int(v) for v in anchors), "scales": {}, "label_codes": {}, "properties": {},
               "absent_rows": {}, "none_rows": {}, "variables": {},
-              "tracked": sorted(ds.__dict__.get("_mtg_tracked", {})),
-              "aliases": ds.aliases()}
+              "tracked": sorted(data_structure.__dict__.get("_mtg_tracked", {})),
+              "aliases": data_structure.aliases()}
     tables = {}
 
     for scale, vids in sorted(by_scale.items()):
@@ -526,7 +526,7 @@ def _mpg_data_structure(identifier: str, ds, metadata: dict, standard_names: dic
         # ids (columns._positions_shared), and the instanced vertices are located once for every property (plan)
         read = vids.view()
         read.flags.writeable = False
-        plan = g.instances.plan(read) if instanced else None
+        plan = mtg.instances.plan(read) if instanced else None
         name = names[scale]
         relation = scale == connection
         reserved = _RELATION_RESERVED if relation else _GRAPH_RESERVED
@@ -623,21 +623,21 @@ def _mpg_data_structure(identifier: str, ds, metadata: dict, standard_names: dic
         extras["scales"][name] = scale
 
     # The DataStructure's variables, at the scale of their location
-    scale_of = _location_scales(ds)
-    for location, store in ds._var_stores().items():
+    scale_of = _location_scales(data_structure)
+    for location, store in data_structure._var_stores().items():
         if location == "scalar" or not store:
             continue
         scale = scale_of[location]
         if scale not in tables:
             raise ValueError(f"{identifier}: variables at {location} but no MPG vertex at its scale")
         columns = tables[scale]
-        ids = np.asarray(ds.entity_ids(location), dtype=np.int64)
+        ids = np.asarray(data_structure.entity_ids(location), dtype=np.int64)
         rows = _edge_rows(columns, ids) if location == "edge" else _rows_of(columns["id"], ids)
         reserved = _RELATION_RESERVED if scale == connection else _GRAPH_RESERVED
         # the instanced vertices (a reduced or instanced anatomy's): their values are the DataStructure's only, the
         # MPG giving their template's
-        explicit = (~np.asarray(ds._instanced_at(location), dtype=bool)
-                    if instanced and location in ("node", "edge") and hasattr(ds, "_instanced_at") else None)
+        explicit = (~np.asarray(data_structure._instanced_at(location), dtype=bool)
+                    if instanced and location in ("node", "edge") and hasattr(data_structure, "_instanced_at") else None)
         for name, values in store.items():
             column = f"metafspm_{name}" if name in reserved or name in LINK_COLUMNS else name
             try:
@@ -649,24 +649,24 @@ def _mpg_data_structure(identifier: str, ds, metadata: dict, standard_names: dic
                     explicit is not None and _holds(columns[column], rows[explicit], values[explicit])):
                 column = f"metafspm_{name}"         # an MPG property of that name holds other values or text
             _place(columns, column, rows, values, columns["id"].size)
-            extras["variables"][name] = dict(_json_meta(ds._variable_meta().get(name, {})), location=location,
+            extras["variables"][name] = dict(_json_meta(data_structure._variable_meta().get(name, {})), location=location,
                                              **({"column": column} if column != name else {}),
                                              **({"encoding": encoding} if encoding else {}))
     drawing = geometry and display_meshes
-    instanced_by = _instancing_components(ds, components) if drawing and display == "instances" else []
+    instanced_by = _instancing_components(data_structure, components) if drawing and display == "instances" else []
     if drawing and (display == "full" or (display == "instances" and not instanced_by)) and \
             any(callable(getattr(c, "display_triangles", None)) for c in components):
-        _display_interiors(ds, tables, extras, names, translator, display_plants)   # the reduced sections' interiors
-    scalars = _scalar_table(ds, extras)
+        _display_interiors(data_structure, tables, extras, names, translator, display_plants)   # the reduced sections' interiors
+    scalars = _scalar_table(data_structure, extras)
     extras["tracked"] = [name for name in extras["tracked"] if name in extras["variables"]]
-    extras.update(_anchor_and_empty_properties(g, anchors))
+    extras.update(_anchor_and_empty_properties(mtg, anchors))
 
     entity_sets, relations = [], []
     for scale, columns in sorted(tables.items()):
         if scale == connection:
             ends = np.concatenate([columns["source"], columns["target"]])
             endpoints = set(arrays["scale"][ends[(ends >= 0) & (ends < arrays["scale"].size)]].tolist())
-            endpoint = names[endpoints.pop()] if len(endpoints) == 1 else names[g.scales.Compartment]
+            endpoint = names[endpoints.pop()] if len(endpoints) == 1 else names[mtg.scales.Compartment]
             relations.append(encoding3d.Relation(names[scale], columns=columns, source_set=endpoint,
                                               target_set=endpoint))
         else:
@@ -674,7 +674,7 @@ def _mpg_data_structure(identifier: str, ds, metadata: dict, standard_names: dic
             declared = names[scale] if names[scale] in base_scales and base_scales.index(names[scale]) + 1 == int(scale) \
                 else None
             entity_sets.append(encoding3d.EntitySet(names[scale], columns=columns, rank=int(scale), scale=declared))
-    derived = set(ds.derived())
+    derived = set(data_structure.derived())
     for table in entity_sets + relations + ([scalars] if scalars is not None else []):
         _declare(table, metadata, standard_names, derived)
         for column in ("isanchor", "scale"):
@@ -696,10 +696,10 @@ def _mpg_data_structure(identifier: str, ds, metadata: dict, standard_names: dic
                                                     "(-1: none)",
                                  "metafspm_edge_type": "metafspm: the MPG's edge type (0 none, 1 '/', 2 '<', "
                                                        "3 '+')"}[column])
-    reduced_nodes = _reduced_nodes(ds) if instanced_by or (drawing and display is None) else None
-    meshes = _meshes(ds, entity_sets, scale_of, names, components, display_meshes, display_plants,
+    reduced_nodes = _reduced_nodes(data_structure) if instanced_by or (drawing and display is None) else None
+    meshes = _meshes(data_structure, entity_sets, scale_of, names, components, display_meshes, display_plants,
                      reduced_nodes) if geometry else []
-    instance_sets = _instance_sets(ds, instanced_by, entity_sets, scale_of, names, translator, extras, metadata,
+    instance_sets = _instance_sets(data_structure, instanced_by, entity_sets, scale_of, names, translator, extras, metadata,
                                    standard_names, display_plants, variables) if instanced_by else []
     if instance_sets:
         extras["instances"] = {instance_set.name: {"owners": instance_set.owners,
@@ -710,14 +710,14 @@ def _mpg_data_structure(identifier: str, ds, metadata: dict, standard_names: dic
                                  extras={EXTRAS: extras}, instance_sets=instance_sets)
 
 
-def _plants_mask(ds, plants, location: str = "node") -> np.ndarray:
-    """Whether each entity at *location* of *ds* belongs to one of the Plant vids *plants*."""
-    plant_ids = np.asarray(ds.entity_ids("Plant"), dtype=np.int64)
-    owner = np.asarray(ds.owner("Plant") if location == "node" else ds.owner("Plant", of=location), dtype=np.int64)
+def _plants_mask(data_structure, plants, location: str = "node") -> np.ndarray:
+    """Whether each entity at *location* of *data_structure* belongs to one of the Plant vids *plants*."""
+    plant_ids = np.asarray(data_structure.entity_ids("Plant"), dtype=np.int64)
+    owner = np.asarray(data_structure.owner("Plant") if location == "node" else data_structure.owner("Plant", of=location), dtype=np.int64)
     return (owner >= 0) & np.isin(plant_ids[np.maximum(owner, 0)], np.asarray(list(plants), dtype=np.int64))
 
 
-def _display_interiors(ds, tables: dict, extras: dict, names: dict, translator: dict, plants=None) -> None:
+def _display_interiors(data_structure, tables: dict, extras: dict, names: dict, translator: dict, plants=None) -> None:
     """
     The reduced sections' interiors as display rows (the frame's display meshes draw the sections whole): each reduced
     group's full template vertices its reduced template does not hold (its eliminated Compartments, and the Cells and
@@ -730,26 +730,26 @@ def _display_interiors(ds, tables: dict, extras: dict, names: dict, translator: 
     """
     from openalea.metafspm.data_structure.instances import ANCHOR, OWNER
     from openalea.metafspm.solve.reduction import display_ids
-    g = ds.structure
-    reduction = getattr(g, "reduction", None)
-    if reduction is None or not g._instanced():
+    mtg = data_structure.structure
+    reduction = getattr(mtg, "reduction", None)
+    if reduction is None or not mtg._instanced():
         return
-    groups = reduction.reduced_groups(ds)
+    groups = reduction.reduced_groups(data_structure)
     if plants is not None and groups:
-        drawn = _plants_mask(ds, plants, reduction.location)
+        drawn = _plants_mask(data_structure, plants, reduction.location)
         groups = {i: group for i, group in groups.items() if drawn[i]}
     if not groups:
         return
     if reduction.systems and reduction.instance is not None and not reduction.library:
-        recovered, unknown = reduction.recover_interiors(ds, groups=list(groups)), reduction.unknown()
+        recovered, unknown = reduction.recover_interiors(data_structure, groups=list(groups)), reduction.unknown()
     else:                                           # no system bound: the interiors' structure, their values NaN
         recovered, unknown = {i: (owner, key, reduction.full_template(key), np.zeros(0, dtype=np.int64),
                                   np.zeros(0)) for i, (owner, key) in groups.items()}, None
     unknown_column = extras["variables"].get(unknown, {}).get("column", unknown) if unknown else None
-    connection = g.scales.Connection
+    connection = mtg.scales.Connection
     parts = {}                                      # {scale: [(ids, scale, complex, parent, template, rows, values)]}
     for owner, key, full, interior_rows, values in recovered.values():
-        first, _ = g.instances.block(owner)
+        first, _ = mtg.instances.block(owner)
         held = reduction.full_rows(key)
         index_in_reduced = np.full(full.size, -1, dtype=np.int64)
         index_in_reduced[held] = np.arange(held.size)
@@ -763,7 +763,7 @@ def _display_interiors(ds, tables: dict, extras: dict, names: dict, translator: 
             codes = codes[rows]
             out = np.where(codes >= 0, ids_of_row[np.maximum(codes, 0)], NO_ID)
             out = np.where(codes == OWNER, owner, out)
-            anchors = np.array([g.scales.anchors[int(scale)] for scale in full.scale[rows]], dtype=np.int64) \
+            anchors = np.array([mtg.scales.anchors[int(scale)] for scale in full.scale[rows]], dtype=np.int64) \
                 if rows.size else np.zeros(0, dtype=np.int64)
             return np.where(codes == ANCHOR, anchors, out)
 
@@ -771,7 +771,7 @@ def _display_interiors(ds, tables: dict, extras: dict, names: dict, translator: 
             rows = added[full.scale[added] == scale]
             parts.setdefault(scale, []).append((ids_of_row[rows], resolved(full.complex, rows),
                                                 resolved(full.parent, rows), full, rows, unknown_at[rows]))
-    arrays = g.topology_arrays()
+    arrays = mtg.topology_arrays()
     display_id_list = [item[0] for items in parts.values() for item in items]
     display_scale_list = [np.full(item[0].size, scale, dtype=np.int64) for scale, items in parts.items()
                           for item in items]
@@ -802,7 +802,7 @@ def _display_interiors(ds, tables: dict, extras: dict, names: dict, translator: 
 
         parent_scale = scale_at(raw_parent)
         same_scale = (raw_parent >= 0) & (parent_scale == scale)
-        anchored = np.isin(raw_complex, list(g.scales.anchors.values()))
+        anchored = np.isin(raw_complex, list(mtg.scales.anchors.values()))
         complex_ = np.where(~anchored & (raw_complex >= 0), raw_complex,
                             np.where((raw_parent >= 0) & ~same_scale, raw_parent, NO_ID))
         n = ids.size
@@ -870,38 +870,38 @@ def _display_interiors(ds, tables: dict, extras: dict, names: dict, translator: 
         extras["display_only"] = {"rows": counts, "column": DISPLAY_ONLY, "values": unknown}
 
 
-def _reduction_of(ds):
-    """The Reduction of *ds*'s MPG with reduced groups (None: none)."""
-    g = ds.structure
-    reduction = getattr(g, "reduction", None)
-    if reduction is None or not g._instanced() or reduction.group_table(ds) is None:
+def _reduction_of(data_structure):
+    """The Reduction of *data_structure*'s MPG with reduced groups (None: none)."""
+    mtg = data_structure.structure
+    reduction = getattr(mtg, "reduction", None)
+    if reduction is None or not mtg._instanced() or reduction.group_table(data_structure) is None:
         return None
     return reduction
 
 
-def _instancing_components(ds, components) -> list:
-    """The *components* drawing *ds*'s reduced groups as instances (display_instances), [] without a reduced group."""
-    if _reduction_of(ds) is None:
+def _instancing_components(data_structure, components) -> list:
+    """The *components* drawing *data_structure*'s reduced groups as instances (display_instances), [] without a reduced group."""
+    if _reduction_of(data_structure) is None:
         return []
     return [component for component in components if callable(getattr(component, "display_instances", None))]
 
 
-def _reduced_nodes(ds):
-    """The node mask of *ds*'s reduced groups (None without a reduction): their kept nodes."""
-    reduction = _reduction_of(ds)
+def _reduced_nodes(data_structure):
+    """The node mask of *data_structure*'s reduced groups (None without a reduction): their kept nodes."""
+    reduction = _reduction_of(data_structure)
     if reduction is None:
         return None
-    table = reduction.group_table(ds)
-    owner = np.asarray(ds.owner(reduction.location), dtype=np.int64)
-    reduced = np.zeros(len(ds.entity_ids(reduction.location)), dtype=bool)
+    table = reduction.group_table(data_structure)
+    owner = np.asarray(data_structure.owner(reduction.location), dtype=np.int64)
+    reduced = np.zeros(len(data_structure.entity_ids(reduction.location)), dtype=bool)
     reduced[table.index] = True
     return (owner >= 0) & reduced[np.maximum(owner, 0)]
 
 
-def _instance_sets(ds, components, entity_sets: list, scale_of: dict, names: dict, translator: dict, extras: dict,
+def _instance_sets(data_structure, components, entity_sets: list, scale_of: dict, names: dict, translator: dict, extras: dict,
                    metadata: dict, standard_names: dict, plants=None, variables=None) -> list:
     """
-    The reduced groups of *ds* as encoding3d instance sets (specification §12), one per component drawing them
+    The reduced groups of *data_structure* as encoding3d instance sets (specification §12), one per component drawing them
     (display_instances: a TemplateShapes), named after it: each group an instance of its template (a shared part:
     the component's shape in template coordinates, on the full template's nodes, with their constant properties),
     placed by its transform, owned by its group's vertex (an entity of the reduction's location); its vector the kept
@@ -913,20 +913,20 @@ def _instance_sets(ds, components, entity_sets: list, scale_of: dict, names: dic
     templates' node columns kept by it as the node set's (their id and label always).
     """
     encoding3d = _encoding3d()
-    reduction = _reduction_of(ds)
-    g = ds.structure
-    groups = reduction.reduced_groups(ds)
+    reduction = _reduction_of(data_structure)
+    mtg = data_structure.structure
+    groups = reduction.reduced_groups(data_structure)
     if plants is not None and groups:
-        drawn = _plants_mask(ds, plants, reduction.location)
+        drawn = _plants_mask(data_structure, plants, reduction.location)
         groups = {i: group for i, group in groups.items() if drawn[i]}
     if not groups:
         return []
-    owner_scale = names[int(g.topology_arrays()["scale"][next(iter(groups.values()))[0]])]   # the location's set
+    owner_scale = names[int(mtg.topology_arrays()["scale"][next(iter(groups.values()))[0]])]   # the location's set
     node_set = names[scale_of["node"]]                     # the reduced system's nodes: the templates' rows
     kept = _table_variables(variables, node_set) if variables is not None else None
     kept = None if kept is None or isinstance(kept, Excluding) else frozenset(kept)
     bound = bool(reduction.systems) and reduction.instance is not None and not reduction.library
-    terms = [reduction.recovery_terms(ds, groups=list(groups), system=system) for system in reduction.systems] \
+    terms = [reduction.recovery_terms(data_structure, groups=list(groups), system=system) for system in reduction.systems] \
         if bound else []
     terms = [item for item in terms if item is not None]
     full_of = {int(owner): reduction.full_template(key) for owner, key in groups.values()}
@@ -958,7 +958,7 @@ def _instance_sets(ds, components, entity_sets: list, scale_of: dict, names: dic
             full = full_of[owner]
             template_index[position] = part_of(
                 ("template", component_name, shape_key, full.key, kept),
-                lambda: _template_part(full, shapes.shapes[shape_key], node_set, component_name, translator, g,
+                lambda: _template_part(full, shapes.shapes[shape_key], node_set, component_name, translator, mtg,
                                        metadata, standard_names, kept))
         columns = {"id": shapes.owners.copy(), "owner": shapes.owners.copy(), "template": template_index,
                    "transform": encoding3d.column_major(shapes.transforms)}
@@ -987,7 +987,7 @@ def _instance_sets(ds, components, entity_sets: list, scale_of: dict, names: dic
     return out
 
 
-def _template_part(full, shape, node_set: str, mesh_name: str, translator: dict, g, metadata: dict = None,
+def _template_part(full, shape, node_set: str, mesh_name: str, translator: dict, mtg, metadata: dict = None,
                    standard_names: dict = None, kept=None):
     """The encoding3d Template of a reduced group's full template *full* drawn by *shape* (Triangles in template
     coordinates, each triangle's owner a full template row): its entity set *node_set*, the template's nodes (its
@@ -995,7 +995,7 @@ def _template_part(full, shape, node_set: str, mesh_name: str, translator: dict,
     (label names, numbers, text; *kept*: those named only, None: all); its mesh *mesh_name*, the vertices shared by
     its triangles."""
     encoding3d = _encoding3d()
-    rows = np.flatnonzero(full.scale == g.scales.Compartment)
+    rows = np.flatnonzero(full.scale == mtg.scales.Compartment)
     position = np.searchsorted(rows, shape.owner).clip(0, max(rows.size - 1, 0))
     if not rows.size or (rows[position] != shape.owner).any():
         raise ValueError(f"mesh '{mesh_name}': a template shape's triangle on a template row that is not one of its "
@@ -1063,26 +1063,26 @@ def _holds(column: np.ndarray, rows: np.ndarray, values: np.ndarray) -> bool:
     return np.ascontiguousarray(column[rows]).tobytes() == np.ascontiguousarray(values).tobytes()
 
 
-def _scalar_table(ds, extras: dict):
+def _scalar_table(data_structure, extras: dict):
     columns = {}
-    for name, values in ds._var_stores().get("scalar", {}).items():
+    for name, values in data_structure._var_stores().get("scalar", {}).items():
         try:
             values, encoding = _object_values(values)
         except TypeError as error:
             warnings.warn(f"variable '{name}' is not exchanged: {error}")
             continue
         columns[name] = np.asarray(values).reshape((1,) + np.shape(values))
-        extras["variables"][name] = dict(_json_meta(ds._variable_meta().get(name, {})), location="scalar",
+        extras["variables"][name] = dict(_json_meta(data_structure._variable_meta().get(name, {})), location="scalar",
                                          **({"encoding": encoding} if encoding else {}))
     return _encoding3d().Table("scalars", columns=columns) if columns else None
 
 
-def _anchor_and_empty_properties(g, anchors: set) -> dict:
+def _anchor_and_empty_properties(mtg, anchors: set) -> dict:
     """What the tables cannot hold: the property values of the scale anchors that differ from a new MPG's, the
     properties without any value, and those of a new MPG that this one lacks."""
     fresh = MPG()
     anchor_values, empty = {}, {}
-    for name, prop in g.properties().items():
+    for name, prop in mtg.properties().items():
         container = "ArrayDict" if isinstance(prop, ArrayDict) and prop.dtype.kind == "f" else "dict"   # an object column
         if len(prop) == 0:
             empty[name] = container
@@ -1097,7 +1097,7 @@ def _anchor_and_empty_properties(g, anchors: set) -> dict:
                 changed[str(vid)] = None
         if changed:
             anchor_values[name] = {"container": container, "values": changed}
-    missing = sorted(set(fresh.properties()) - set(g.properties()))
+    missing = sorted(set(fresh.properties()) - set(mtg.properties()))
     return {"anchor_properties": anchor_values, "empty_properties": empty, "missing_properties": missing}
 
 
@@ -1117,7 +1117,7 @@ def _edge_rows(columns: dict, ids: np.ndarray) -> np.ndarray:
         return _rows_of(columns["target"], ids)
 
 
-def _meshes(ds, entity_sets: list, scale_of: dict, names: dict, components=(), display_meshes: bool = True,
+def _meshes(data_structure, entity_sets: list, scale_of: dict, names: dict, components=(), display_meshes: bool = True,
             display_plants=None, reduced_nodes=None) -> list:
     """The DataStructure's triangles (its geometry provider's, those light models get), and with *display_meshes*
     each component's display_triangles() (shapes drawn for display only, e.g. GRANAP's sections; those of the Plant
@@ -1127,12 +1127,12 @@ def _meshes(ds, entity_sets: list, scale_of: dict, names: dict, components=(), d
     drawn = []
     # the plants' triangles (those light models get): on an anatomy-mode DataStructure its SubOrgans' (the view at
     # its from_scale, where the architectures draw them), their owners SubOrgans; the Compartments are not drawn
-    drawn_on = ds.at(ds._scale_name(ds.from_scale)) if getattr(ds, "_anatomy", False) and hasattr(ds, "at") else ds
+    drawn_on = data_structure.at(data_structure._scale_name(data_structure.from_scale)) if getattr(data_structure, "_anatomy", False) and hasattr(data_structure, "at") else data_structure
     try:
         drawn.append(("triangles", drawn_on, drawn_on.triangles(), False))
     except (ValueError, NotImplementedError):
         pass
-    where = None if display_plants is None else _plants_mask(ds, display_plants)
+    where = None if display_plants is None else _plants_mask(data_structure, display_plants)
     if reduced_nodes is not None:
         where = ~reduced_nodes if where is None else where & ~reduced_nodes
     for component in components if display_meshes else ():
@@ -1142,38 +1142,38 @@ def _meshes(ds, entity_sets: list, scale_of: dict, names: dict, components=(), d
             if reduced_nodes is not None and len(triangles):           # whatever the component drew of them
                 owner = triangles.owner
                 triangles = triangles.select(np.flatnonzero((owner >= 0) & ~reduced_nodes[np.maximum(owner, 0)]))
-            drawn.append((type(component).__name__, ds, triangles, True))
+            drawn.append((type(component).__name__, data_structure, triangles, True))
     return [_mesh_of(on, entity_sets, scale_of, names, name, triangles, shared=shared)
             for name, on, triangles, shared in drawn if len(triangles)]
 
 
-def _mesh_of(ds, entity_sets: list, scale_of: dict, names: dict, name: str, triangles, shared: bool = False):
-    """The mesh of *triangles*, owned by the nodes of *ds* (a DataStructure, or a view of it at a coarse location:
+def _mesh_of(data_structure, entity_sets: list, scale_of: dict, names: dict, name: str, triangles, shared: bool = False):
+    """The mesh of *triangles*, owned by the nodes of *data_structure* (a DataStructure, or a view of it at a coarse location:
     an anatomy-mode plant's SubOrgans), each vertex with the rows of its owner and of its owner's containing
     entities; *shared*: the vertices of equal position and rows written once, the triangles by their indices (a
     display shape's polygons: about a third of the vertices)."""
     encoding3d = _encoding3d()
     sets = {entity_set.name: entity_set for entity_set in entity_sets}
-    node_ids = np.asarray(ds.entity_ids("node"), dtype=np.int64)
+    node_ids = np.asarray(data_structure.entity_ids("node"), dtype=np.int64)
     owners = np.repeat(triangles.owner, 3)
     shown = owners < 0                                      # display rows' triangles (a reduced section's interior)
     if shown.any() and triangles.owner_ids is None:
         raise ValueError(f"mesh '{name}': triangles without owner (-1) and no owner_ids")
     feature_rows = {}
-    at = ds.__dict__.get("_at")                             # a view: its nodes the entities of that location
+    at = data_structure.__dict__.get("_at")                             # a view: its nodes the entities of that location
     node_set = sets[names[scale_of[at if at is not None else "node"]]]
     rows = np.full(owners.size, NO_ID, dtype=np.int64)
     rows[~shown] = _rows_of(node_set.columns["id"], node_ids[owners[~shown]])
     feature_rows[node_set.name] = rows
     coarse = []
-    for location in ds._coarse_scale_names():
+    for location in data_structure._coarse_scale_names():
         set_name = names[scale_of[location]]
         if set_name not in sets or set_name == node_set.name:
             continue
         coarse.append(set_name)
         entity = np.full(owners.size, -1, dtype=np.int64)
-        entity[~shown] = ds.owner(location)[owners[~shown]]
-        entity_ids = np.asarray(ds.entity_ids(location), dtype=np.int64)
+        entity[~shown] = data_structure.owner(location)[owners[~shown]]
+        entity_ids = np.asarray(data_structure.entity_ids(location), dtype=np.int64)
         rows = np.full(owners.size, NO_ID, dtype=np.int64)
         known = entity >= 0
         rows[known] = _rows_of(sets[set_name].columns["id"], entity_ids[entity[known]])
@@ -1238,47 +1238,47 @@ def _rows_up(sets: dict, ids: np.ndarray, set_names: list) -> dict:
 
 # ── Grids → data structures ────────────────────────────────────────────────
 
-def _grid_data_structure(identifier: str, ds, metadata: dict, standard_names: dict):
+def _grid_data_structure(identifier: str, data_structure, metadata: dict, standard_names: dict):
     encoding3d = _encoding3d()
-    adaptive = isinstance(ds, AdaptiveGridDataStructure)
-    extras = {"class": type(ds).__name__, "construction": ds._construction(), "variables": {},
-              "aliases": ds.aliases()}
-    count = ds.n_nodes()
-    cells = {"id": np.asarray(ds.entity_ids("cell"), dtype=np.int64)}        # a regular grid's: the C-order index
+    adaptive = isinstance(data_structure, AdaptiveGridDataStructure)
+    extras = {"class": type(data_structure).__name__, "construction": data_structure._construction(), "variables": {},
+              "aliases": data_structure.aliases()}
+    count = data_structure.n_nodes()
+    cells = {"id": np.asarray(data_structure.entity_ids("cell"), dtype=np.int64)}        # a regular grid's: the C-order index
     if adaptive:
-        cells["level"] = np.asarray(ds._level, dtype=np.int64)
-        cells["index"] = np.asarray(ds._index, dtype=np.int64)
+        cells["level"] = np.asarray(data_structure._level, dtype=np.int64)
+        cells["index"] = np.asarray(data_structure._index, dtype=np.int64)
     faces = {}
-    edges = np.asarray(ds.edges(), dtype=np.int64).reshape(-1, 2)
-    cell_ids = np.asarray(ds.entity_ids("cell"), dtype=np.int64)
+    edges = np.asarray(data_structure.edges(), dtype=np.int64).reshape(-1, 2)
+    cell_ids = np.asarray(data_structure.entity_ids("cell"), dtype=np.int64)
     faces["source"], faces["target"] = cell_ids[edges[:, 0]], cell_ids[edges[:, 1]]
     scalars = {}
-    for location, store in ds._var_stores().items():
+    for location, store in data_structure._var_stores().items():
         for name, values in store.items():
             values = np.asarray(values)
             target = {"cell": cells, "edge": faces, "scalar": scalars}[location]
             if location == "cell" and not adaptive:
-                values = values.reshape((count,) + values.shape[len(ds.shape):])
+                values = values.reshape((count,) + values.shape[len(data_structure.shape):])
             if location == "scalar":
                 values = values.reshape((1,) + values.shape)
             column = f"metafspm_{name}" if name in ("id", "level", "index", "source", "target") else name
             target[column] = values
-            extras["variables"][name] = dict(_json_meta(ds._variable_meta().get(name, {})), location=location,
+            extras["variables"][name] = dict(_json_meta(data_structure._variable_meta().get(name, {})), location=location,
                                              **({"column": column} if column != name else {}))
     cell_set = encoding3d.EntitySet("cell", columns=cells)
     face_relation = encoding3d.Relation("face", columns=faces, source_set="cell", target_set="cell")
     scalar_table = encoding3d.Table("scalars", columns=scalars) if scalars else None
-    derived = set(ds.derived())
+    derived = set(data_structure.derived())
     for table in [cell_set, face_relation] + ([scalar_table] if scalar_table is not None else []):
         _declare(table, metadata, standard_names, derived)
-    construction = ds._construction()
+    construction = data_structure._construction()
     grid = encoding3d.Grid(kind="adaptive" if adaptive else "regular", shape=tuple(construction["shape"]),
                         origin=tuple(construction["origin"]), spacing=tuple(construction["spacing"]),
-                        axes=tuple(ds.axes), periodic=tuple(bool(p) for p in construction["periodic"]),
+                        axes=tuple(data_structure.axes), periodic=tuple(bool(p) for p in construction["periodic"]),
                         z_up=False, max_level=int(construction.get("max_level", 0)), cells="cell")
     return encoding3d.DataStructure(identifier, kind="adaptive_grid" if adaptive else "regular_grid",
                                  entity_sets=[cell_set], relations=[face_relation] if edges.size else [],
-                                 scalars=scalar_table, grid=grid, platform=PLATFORM, model=type(ds).__name__,
+                                 scalars=scalar_table, grid=grid, platform=PLATFORM, model=type(data_structure).__name__,
                                  extras={EXTRAS: extras})
 
 
@@ -1327,20 +1327,20 @@ def to_frame(data_structures: dict, components: dict = None, mappings: dict = No
     frame = encoding3d.Frame(time=float(time), time_unit=label(duration(time_unit, "time_unit")), step=int(step),
                           writer={"platform": PLATFORM}, vocabulary_version=vocabulary.version())
     if variables is not None:
-        variables = {identifier: resolved_variables(_for(variables, identifier), ds,
+        variables = {identifier: resolved_variables(_for(variables, identifier), data_structure,
                                                     (components or {}).get(identifier, ()))
-                     for identifier, ds in data_structures.items()}
-    for identifier, ds in data_structures.items():
+                     for identifier, data_structure in data_structures.items()}
+    for identifier, data_structure in data_structures.items():
         metadata = _declarations((components or {}).get(identifier, ()))
-        if isinstance(ds, MPGDataStructure):
+        if isinstance(data_structure, MPGDataStructure):
             drawn = _display_plants_of(display_plants, identifier, (plant_names or {}).get(identifier, {}))
-            frame.data_structures.append(_mpg_data_structure(identifier, ds, metadata, names, geometry,
+            frame.data_structures.append(_mpg_data_structure(identifier, data_structure, metadata, names, geometry,
                                                              (components or {}).get(identifier, ()), display_meshes,
                                                              drawn, display, _for(variables, identifier)))
-        elif isinstance(ds, (ArrayDataStructure, AdaptiveGridDataStructure)):
-            frame.data_structures.append(_grid_data_structure(identifier, ds, metadata, names))
+        elif isinstance(data_structure, (ArrayDataStructure, AdaptiveGridDataStructure)):
+            frame.data_structures.append(_grid_data_structure(identifier, data_structure, metadata, names))
         else:
-            raise TypeError(f"'{identifier}': a {type(ds).__name__} cannot be exchanged (MPGDataStructure, "
+            raise TypeError(f"'{identifier}': a {type(data_structure).__name__} cannot be exchanged (MPGDataStructure, "
                             "ArrayDataStructure and AdaptiveGridDataStructure can)")
     for name, (mapping, source, target) in (mappings or {}).items():
         rows, cells, weights = mapping.incidence()
@@ -1354,8 +1354,8 @@ def to_frame(data_structures: dict, components: dict = None, mappings: dict = No
                      "target": np.asarray(target_ds.entity_ids("cell"), dtype=np.int64)[cells],
                      "weight": np.asarray(weights, dtype=np.float64)}))
     if fold is not None:
-        fold_frame(frame, fold, [identifier for identifier, ds in data_structures.items()
-                                 if isinstance(ds, MPGDataStructure)])
+        fold_frame(frame, fold, [identifier for identifier, data_structure in data_structures.items()
+                                 if isinstance(data_structure, MPGDataStructure)])
     if scales is not None or entities is not None or variables is not None:
         filter_frame(frame, scales=scales, entities=entities, variables=variables, plant_names=plant_names)
     return frame
@@ -1448,7 +1448,7 @@ def scene_to_frame(scene, geometry: bool = True, standard_names: dict = None, da
     found = scene.data_structures()
     written = {identifier: entry[0] for identifier, entry in found.items()}
     components = {identifier: entry[2] for identifier, entry in found.items()}
-    identifier_of = {id(ds): identifier for identifier, ds in written.items()}
+    identifier_of = {id(data_structure): identifier for identifier, data_structure in written.items()}
     mappings = {}
     for mapping in getattr(scene, "mappings", ()):
         if not hasattr(mapping, "incidence"):
@@ -1463,7 +1463,7 @@ def scene_to_frame(scene, geometry: bool = True, standard_names: dict = None, da
         unknown = set(data_structures) - set(written)
         if unknown:
             raise ValueError(f"no data structure {sorted(unknown)} in the scene ({sorted(written)})")
-        written = {identifier: ds for identifier, ds in written.items() if identifier in data_structures}
+        written = {identifier: data_structure for identifier, data_structure in written.items() if identifier in data_structures}
         mappings = {name: entry for name, entry in mappings.items() if entry[1] in written and entry[2] in written}
     plant_names = {population.name: {name: vid for vid, name in population.plant_names().items()}
                    for population in scene.populations if hasattr(population, "plant_names")}
@@ -1526,15 +1526,15 @@ def _shown_variable(declared: dict, entity_set, scale: str = None, location: str
     return None
 
 
-def _draws_triangles(ds) -> bool:
+def _draws_triangles(data_structure) -> bool:
     try:
-        ds.triangles()
+        data_structure.triangles()
     except (ValueError, NotImplementedError, AttributeError):
         return False
     return True
 
 
-def _plant_layers(data_structure, ds, declared: dict) -> list:
+def _plant_layers(data_structure, metafspm_data_structure, declared: dict) -> list:
     """A population's default layers: its shoot mesh coloured by an Organ variable, its root segments as tubes on
     radius coloured by a SubOrgan variable, each component's display mesh (e.g. sections) hidden."""
     from openalea.encoding3d import views
@@ -1548,7 +1548,7 @@ def _plant_layers(data_structure, ds, declared: dict) -> list:
     shoots = _labels_for(data_structure, SHOOT_LABELS, [label for label in present if label not in roots])
     layers = []
     meshes = {mesh.name: mesh for mesh in data_structure.meshes}
-    drawn = "triangles" in meshes or (ds is not None and _draws_triangles(ds))
+    drawn = "triangles" in meshes or (metafspm_data_structure is not None and _draws_triangles(metafspm_data_structure))
     if drawn and (set(present) - set(roots) or not present):          # shoot elements, or no element yet
         organs = sets.get("Organ")
         variable = _shown_variable(declared, organs, scale="Organ") if organs is not None else None
@@ -1613,10 +1613,10 @@ def default_views(scene, frame=None) -> dict:
     populations = {population.name for population in scene.populations}
     layers = []
     for data_structure in frame.data_structures:
-        ds, _, components = found.get(data_structure.id, (None, None, ()))
+        metafspm_data_structure, _, components = found.get(data_structure.id, (None, None, ()))
         declared = _declarations(components)
         if data_structure.id in populations and data_structure.kind == "graph":
-            layers += _plant_layers(data_structure, ds, declared)
+            layers += _plant_layers(data_structure, metafspm_data_structure, declared)
         elif data_structure.grid is not None and data_structure.id not in populations:
             cells = data_structure.entity_set(data_structure.grid.cells)
             variable = _shown_variable(declared, cells, location="cell")
@@ -1987,8 +1987,8 @@ def import_frame(path: str) -> dict:
 
 
 def _mpg_from(data_structure, extras: dict):
-    g = MPG()
-    if sorted(set(_anchor_vids(g))) != extras["anchors"]:
+    mtg = MPG()
+    if sorted(set(_anchor_vids(mtg))) != extras["anchors"]:
         raise ValueError(f"'{data_structure.id}': the MPG's scale anchors differ from the written ones")
     scales = extras["scales"]
     tables = {table.name: _without_display_rows(table) for table in data_structure.entity_sets + data_structure.relations}
@@ -2000,14 +2000,14 @@ def _mpg_from(data_structure, extras: dict):
         links += [(int(v), scale, int(c), int(p)) for v, c, p in
                   zip(columns["id"], columns["metafspm_complex"], columns["metafspm_parent"])]
     for vid, scale, complex_, parent in sorted(links):
-        g._scale[vid] = scale
+        mtg._scale[vid] = scale
         if complex_ >= 0:
-            g._complex[vid] = complex_
-            g._components.setdefault(complex_, []).append(vid)
+            mtg._complex[vid] = complex_
+            mtg._components.setdefault(complex_, []).append(vid)
         if parent >= 0:
-            g._parent[vid] = parent
-            g._children.setdefault(parent, []).append(vid)
-    g._id = extras["last_id"]
+            mtg._parent[vid] = parent
+            mtg._children.setdefault(parent, []).append(vid)
+    mtg._id = extras["last_id"]
     # The properties
     labels, edge_types = [], {}
     for name, table in tables.items():
@@ -2020,8 +2020,8 @@ def _mpg_from(data_structure, extras: dict):
         edges = table.columns["metafspm_edge_type"]
         edge_types.update(zip(table.columns["id"][edges > 0].tolist(),
                               [EDGE_CODES[int(code)] for code in edges[edges > 0]]))
-    _merge_arrays(g, "label", labels)
-    _merge(g, "edge_type", "dict", edge_types)
+    _merge_arrays(mtg, "label", labels)
+    _merge(mtg, "edge_type", "dict", edge_types)
     for property_name, entry in extras["properties"].items():
         arrays, values = [], {}
         for name, kind in entry["dtypes"].items():
@@ -2040,17 +2040,17 @@ def _mpg_from(data_structure, extras: dict):
                 if here:
                     values[vid] = None if missing or column is None else convert(value)
         if entry["container"] == "ArrayDict":
-            _merge_arrays(g, property_name, arrays)
+            _merge_arrays(mtg, property_name, arrays)
         else:
-            _merge(g, property_name, "dict", values)
+            _merge(mtg, property_name, "dict", values)
     for name, table in tables.items():
         if isinstance(table, _encoding3d().Relation):
-            _merge_arrays(g, "n_id_a", [(table.columns["id"], table.columns["source"].astype(np.float64))])
-            _merge_arrays(g, "n_id_b", [(table.columns["id"], table.columns["target"].astype(np.float64))])
+            _merge_arrays(mtg, "n_id_a", [(table.columns["id"], table.columns["source"].astype(np.float64))])
+            _merge_arrays(mtg, "n_id_b", [(table.columns["id"], table.columns["target"].astype(np.float64))])
     for property_name, entry in extras.get("anchor_properties", {}).items():
-        prop = g._properties.get(property_name)
+        prop = mtg._properties.get(property_name)
         if prop is None:
-            prop = g._properties[property_name] = ArrayDict(dtype=np.float64 if entry["container"] == "ArrayDict"
+            prop = mtg._properties[property_name] = ArrayDict(dtype=np.float64 if entry["container"] == "ArrayDict"
                                                             else object)
         for vid, text in entry["values"].items():
             if text is None:
@@ -2058,20 +2058,20 @@ def _mpg_from(data_structure, extras: dict):
             else:
                 prop[int(vid)] = _decoded(text)
     for property_name, container in extras.get("empty_properties", {}).items():
-        g._properties.setdefault(property_name, ArrayDict() if container == "ArrayDict" else {})
+        mtg._properties.setdefault(property_name, ArrayDict() if container == "ArrayDict" else {})
     for property_name in extras.get("missing_properties", ()):
-        g._properties.pop(property_name, None)
-    ds = MPGDataStructure._from_construction(dict(extras["construction"]), {"mtg": g, "state": {"_wiring": None}})
-    _restore_variables(ds, data_structure, extras, tables)
+        mtg._properties.pop(property_name, None)
+    metafspm_data_structure = MPGDataStructure._from_construction(dict(extras["construction"]), {"mtg": mtg, "state": {"_wiring": None}})
+    _restore_variables(metafspm_data_structure, data_structure, extras, tables)
     for name in extras["tracked"]:
-        meta = ds._variable_meta()[name]
-        ds._track_mtg(VariableSpec(name=name, location=extras["variables"][name]["location"], scale=meta.get("scale"),
+        meta = metafspm_data_structure._variable_meta()[name]
+        metafspm_data_structure._track_mtg(VariableSpec(name=name, location=extras["variables"][name]["location"], scale=meta.get("scale"),
                                   aggregation=meta.get("aggregation"), weight=meta.get("weight"), kind=meta.get("kind"),
                                   role=meta.get("role"), default=meta.get("default", 0.),
                                   on_grow=meta.get("on_grow", "default"), dtype=meta.get("dtype", float),
                                   shape=tuple(meta.get("shape", ()))))
-        ds._mark_mtg_synced(name)
-    return ds
+        metafspm_data_structure._mark_mtg_synced(name)
+    return metafspm_data_structure
 
 
 class _Rows:
@@ -2089,60 +2089,60 @@ def _without_display_rows(table):
     return _Rows(table, ~np.asarray(table.columns[DISPLAY_ONLY], dtype=bool))
 
 
-def _anchor_vids(g) -> list:
-    return [g.root] + [int(v) for v in np.flatnonzero(g.topology_arrays()["is_anchor"])]
+def _anchor_vids(mtg) -> list:
+    return [mtg.root] + [int(v) for v in np.flatnonzero(mtg.topology_arrays()["is_anchor"])]
 
 
-def _merge_arrays(g, name: str, parts: list) -> None:
+def _merge_arrays(mtg, name: str, parts: list) -> None:
     """Add [(vids, values)] to the MPG's ArrayDict property *name* (created when missing), at once."""
-    existing = g._properties.get(name)
+    existing = mtg._properties.get(name)
     keys, values = [], []
     if existing is not None and len(existing):       # a new MPG's column (its anchors' values), or none
         existing_keys, existing_values = existing.items_arrays()
         keys, values = [np.asarray(existing_keys)], [np.asarray(existing_values, dtype=np.float64)]
     keys += [np.asarray(vids, dtype=np.int64) for vids, _ in parts]
     values += [np.asarray(part, dtype=np.float64) for _, part in parts]
-    g._properties[name] = _arraydict(np.concatenate(keys) if keys else np.zeros(0, dtype=np.int64),
+    mtg._properties[name] = _arraydict(np.concatenate(keys) if keys else np.zeros(0, dtype=np.int64),
                                      np.concatenate(values) if values else np.zeros(0))
 
 
-def _merge(g, name: str, container: str, values: dict) -> None:
+def _merge(mtg, name: str, container: str, values: dict) -> None:
     """Add *values* ({vid: value}) to the MPG's property *name* (created as a float column, "ArrayDict", or an object
     column, "dict")."""
-    existing = g._properties.get(name)
+    existing = mtg._properties.get(name)
     if container == "ArrayDict":
         keys = list(existing.keys()) if existing is not None else []
         old = [existing[k] for k in keys] if existing is not None else []
         new_keys = [k for k in values if values[k] is not None]
-        g._properties[name] = ArrayDict.from_items(np.asarray(keys + new_keys, dtype=np.int64),
+        mtg._properties[name] = ArrayDict.from_items(np.asarray(keys + new_keys, dtype=np.int64),
                                                    np.asarray(old + [values[k] for k in new_keys], dtype=np.float64))
     else:
         merged = dict(zip(*(existing.items_arrays()[0].tolist(), existing.items_arrays()[1].tolist()))) \
             if existing is not None else {}
         merged.update(values)
-        g._properties[name] = ArrayDict.from_items(list(merged), list(merged.values()), dtype=object)
+        mtg._properties[name] = ArrayDict.from_items(list(merged), list(merged.values()), dtype=object)
 
 
-def _restore_variables(ds, data_structure, extras: dict, tables: dict) -> None:
-    stores = ds._var_stores()
+def _restore_variables(metafspm_data_structure, data_structure, extras: dict, tables: dict) -> None:
+    stores = metafspm_data_structure._var_stores()
     for store in stores.values():
         store.clear()
     scale_names = {scale: name for name, scale in extras.get("scales", {}).items()}
-    scale_of = _location_scales(ds) if isinstance(ds, MPGDataStructure) else {}
+    scale_of = _location_scales(metafspm_data_structure) if isinstance(metafspm_data_structure, MPGDataStructure) else {}
     for name, meta in extras["variables"].items():
         location, column = meta["location"], meta.get("column", name)
         if location == "scalar":
             values = data_structure.scalars.columns[column][0]
-        elif isinstance(ds, MPGDataStructure):
+        elif isinstance(metafspm_data_structure, MPGDataStructure):
             table = tables[scale_names[scale_of[location]]]
-            ids = np.asarray(ds.entity_ids(location), dtype=np.int64)
+            ids = np.asarray(metafspm_data_structure.entity_ids(location), dtype=np.int64)
             rows = _edge_rows(table.columns, ids) if location == "edge" else _rows_of(table.columns["id"], ids)
             values = table.columns[column][rows]
         else:
             table = data_structure.entity_sets[0] if location == "cell" else data_structure.relations[0]
             values = table.columns[column]
-            if location == "cell" and isinstance(ds, ArrayDataStructure):
-                values = values.reshape(tuple(ds.shape) + values.shape[1:])
+            if location == "cell" and isinstance(metafspm_data_structure, ArrayDataStructure):
+                values = values.reshape(tuple(metafspm_data_structure.shape) + values.shape[1:])
         restored = _restored_meta(meta)
         dtype = restored.get("dtype", float)
         if dtype is object:
@@ -2153,18 +2153,18 @@ def _restore_variables(ds, data_structure, extras: dict, tables: dict) -> None:
         else:
             array = np.array(values, dtype=np.int64 if dtype is int else np.float64)
         stores[location][name] = array
-        ds._variable_meta()[name] = restored
+        metafspm_data_structure._variable_meta()[name] = restored
     if extras.get("aliases"):
-        ds.__dict__["_aliases"] = dict(extras["aliases"])
+        metafspm_data_structure.__dict__["_aliases"] = dict(extras["aliases"])
 
 
 def _grid_from(data_structure, extras: dict):
     construction = dict(extras["construction"])
     if extras["class"] == "AdaptiveGridDataStructure":
         cells = data_structure.entity_sets[0].columns
-        ds = AdaptiveGridDataStructure._from_construction(construction, {"state": {"_level": cells["level"],
-                                                                                   "_index": cells["index"]}})
+        grid = AdaptiveGridDataStructure._from_construction(construction, {"state": {"_level": cells["level"],
+                                                                         "_index": cells["index"]}})
     else:
-        ds = ArrayDataStructure._from_construction(construction, {})
-    _restore_variables(ds, data_structure, extras, {})
-    return ds
+        grid = ArrayDataStructure._from_construction(construction, {})
+    _restore_variables(grid, data_structure, extras, {})
+    return grid

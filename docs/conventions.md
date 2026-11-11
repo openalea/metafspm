@@ -6,13 +6,13 @@ These are the conventions that every component, translator and DataStructure fol
 
 - **Nodes and edges are the entities of the graph built by the MPG traversal** (`MPG.populate_graph(from_scale)`): one node per vertex of `from_scale` (e.g. SubOrgan), one edge per parent–child link. Model declarations anchored on biological scales are resolved against that graph, never the reverse.
 - **Incidence sign.** `B[parent, e] = +1` and `B[child, e] = -1`, so `(Bᵀ c)_e = c_parent − c_child`.
-- **Local order.** Arrays follow the order in which the population's Compartments were created (by the traversal of the MPG, then appended as the plants grow). It is **not** sorted by vertex id, nor a pre- or post-order: `ds.order("pre" | "post")` gives those. Use `ds.entity_ids(location)` to know which entity a position holds, and `ds.index_of(ids, location)` for the reverse. Never compute a position by hand.
+- **Local order.** Arrays follow the order in which the population's Compartments were created (by the traversal of the MPG, then appended as the plants grow). It is **not** sorted by vertex id, nor a pre- or post-order: `data_structure.order("pre" | "post")` gives those. Use `data_structure.entity_ids(location)` to know which entity a position holds, and `data_structure.index_of(ids, location)` for the reverse. Never compute a position by hand.
 - **Traversal, in local indices** (derived from the Connections, cached per topology):
-  - `ds.parents()`: −1 at a root;
-  - `ds.children()`: CSR `(indptr, indices)`;
-  - `ds.roots()`, `ds.tips()`;
-  - `ds.order("pre")`: parents first; `ds.order("post")`: children first;
-  - `ds.owner("Organ")`: each node's entity at a coarse location.
+  - `data_structure.parents()`: −1 at a root;
+  - `data_structure.children()`: CSR `(indptr, indices)`;
+  - `data_structure.roots()`, `data_structure.tips()`;
+  - `data_structure.order("pre")`: parents first; `data_structure.order("post")`: children first;
+  - `data_structure.owner("Organ")`: each node's entity at a coarse location.
 - **Edge identity.** Edge `e` is identified by its child vertex (`entity_ids("edge")`).
 
 ## Grids
@@ -90,7 +90,7 @@ its child node (an axial junction at its child segment), with the defaults above
 
 **One storage.** A variable held at its own scale (its location's entities are the MTG vertices of its `scale`, with no mapping) is not copied to the MTG: the MTG's property is a view of the DataStructure's column (`DataStructureColumn`), read with its current values at any time. Values written through the MTG (an MPG-style step's, a vertex the DataStructure does not hold yet) are kept apart until the DataStructure reads them back. New entities have no MTG entry until the next synchronisation, as when the MTG held copies.
 
-**Write-back.** The other state variables with a `scale` are written to the MTG at the vertices of their scale, through the inverse mapping, when the MTG is read (lazily: `ds.mtg`, an MPG-style step, `ds.flush_mtg()`; `mtg_sync = "after_call"` writes them after every component call, `"never"` not at all):
+**Write-back.** The other state variables with a `scale` are written to the MTG at the vertices of their scale, through the inverse mapping, when the MTG is read (lazily: `data_structure.mtg`, an MPG-style step, `data_structure.flush_mtg()`; `mtg_sync = "after_call"` writes them after every component call, `"never"` not at all):
 - a broadcast variable is written as the (weighted) mean of its nodes;
 - an averaged variable is broadcast back to its nodes;
 - an edge variable is written at its child or parent end.
@@ -101,7 +101,7 @@ Declarations that cannot be written back raise when the component is created: a 
 
 **Translator links:**
 - `scale=` / `source_scale=` on a link only check the declared locations;
-- `target="mask"` restricts a mapped link to the mask's entities (`ds.derive(where="mask")` underneath), the others getting the receiver's default.
+- `target="mask"` restricts a mapped link to the mask's entities (`data_structure.derive(where="mask")` underneath), the others getting the receiver's default.
 
 **Types.**
 - Variables are floats by default.
@@ -121,19 +121,19 @@ Declarations that cannot be written back raise when the component is created: a 
 **MTG synchronisation.**
 - **`mtg_sync = "lazy"`** (the default): the DataStructure is the reference, and the MTG a view of it. A state variable held at its own scale is read from its column (one storage). A mapped one changed since its last synchronisation is written to the MTG:
   - before an MPG-style step;
-  - when the MTG is read through `ds.mtg` (or `component.mtg`);
-  - by `ds.flush_mtg()`.
+  - when the MTG is read through `data_structure.mtg` (or `component.mtg`);
+  - by `data_structure.flush_mtg()`.
 
-  An MPG-style step sees the variables its component declares (states, inputs, parameters); it must declare the properties it reads. Code holding the MTG object itself (e.g. a Logger given `g`) calls `ds.flush_mtg()` first for the mapped ones.
-- **MTG properties are columns** (`g.properties()`: typed columns, an object column for any value), read and written in bulk:
-  - `g.values_at(name, vids)`: (the sorted *vids* having a value, their values);
-  - `g.set_values(name, vids, values)`: existing and new vertices, a value each or one for all;
-  - `g.column(name)`: (values, present), two arrays over the vid index, to index with numpy (on an MPG with instances: each template's values gathered at its instances, the explicit entries over them, no vid located);
-  - `g.compartments_csr(from_scale)`: the Compartments of each owner as one CSR (`owners`, `indptr`, `compartments`; `has`, `compartments_of`), kept until the next structural edit; `g.compartments_by_owner` is its dict, for code reading it owner by owner;
-  - `g.view(name)`: a property read vertex by vertex (its column, with the instanced vertices' template values);
-  - `g.property(name)` is openalea.mtg's read API: a read-only mapping built on demand (slow; a write raises).
-- **Checkpoints:** `ds.checkpoint(path)` and `Class.restore(path)`. Derivation formulas and mask rules are module-level functions or picklable objects, not lambdas.
-- **No process-wide state:** what a run builds belongs to its DataStructures or its components, never to a module or a class: objects shared by content in `ds.objects(name, saved=)` (saved with the DataStructure, freed with it), caches in `component.caches()` (`cached()`, `keep(saved=False)`: dropped when a checkpoint is loaded), the simulation step in `ds.simulation_time_step`. A module-level memo is only for constants (a preset's defaults).
+  An MPG-style step sees the variables its component declares (states, inputs, parameters); it must declare the properties it reads. Code holding the MTG object itself (e.g. a Logger given `g`) calls `data_structure.flush_mtg()` first for the mapped ones.
+- **MTG properties are columns** (`mtg.properties()`: typed columns, an object column for any value), read and written in bulk:
+  - `mtg.values_at(name, vids)`: (the sorted *vids* having a value, their values);
+  - `mtg.set_values(name, vids, values)`: existing and new vertices, a value each or one for all;
+  - `mtg.column(name)`: (values, present), two arrays over the vid index, to index with numpy (on an MPG with instances: each template's values gathered at its instances, the explicit entries over them, no vid located);
+  - `mtg.compartments_csr(from_scale)`: the Compartments of each owner as one CSR (`owners`, `indptr`, `compartments`; `has`, `compartments_of`), kept until the next structural edit; `mtg.compartments_by_owner` is its dict, for code reading it owner by owner;
+  - `mtg.view(name)`: a property read vertex by vertex (its column, with the instanced vertices' template values);
+  - `mtg.property(name)` is openalea.mtg's read API: a read-only mapping built on demand (slow; a write raises).
+- **Checkpoints:** `data_structure.checkpoint(path)` and `Class.restore(path)`. Derivation formulas and mask rules are module-level functions or picklable objects, not lambdas.
+- **No process-wide state:** what a run builds belongs to its DataStructures or its components, never to a module or a class: objects shared by content in `data_structure.objects(name, saved=)` (saved with the DataStructure, freed with it), caches in `component.caches()` (`cached()`, `keep(saved=False)`: dropped when a checkpoint is loaded), the simulation step in `data_structure.simulation_time_step`. A module-level memo is only for constants (a preset's defaults).
 - **`mtg_sync = "after_call"`** writes the state variables after every call (the former default); **`"never"`** leaves the MTG untouched.
 - MTG-backed parameters are re-read at the start of every call.
 - In graph systems, parameters and inputs are read-only.
@@ -144,25 +144,25 @@ Models never write traversals: they call the DataStructure's kernels, which run 
 
 | Kernel | For |
 |---|---|
-| `ds.chain_scan(length, reverse=True)` | distance from tip (rhizodep) |
-| `ds.chain_scan(length, reverse=True, cut=apex)` | the same, each chain cut after its apices (ArchiSimple's tips and nodules) |
-| `ds.preorder(branches_first=True, defer=pairs)` | a depth-first visit in the MPG's children order, branches first, some vertices visited after others (Adel's turtle) |
-| `ds.local_gather(owner, owner_key, tables)` | per entity, its owner's table at its local row (MECHA's per-node geometry of each section's template) |
+| `data_structure.chain_scan(length, reverse=True)` | distance from tip (rhizodep) |
+| `data_structure.chain_scan(length, reverse=True, cut=apex)` | the same, each chain cut after its apices (ArchiSimple's tips and nodules) |
+| `data_structure.preorder(branches_first=True, defer=pairs)` | a depth-first visit in the MPG's children order, branches first, some vertices visited after others (Adel's turtle) |
+| `data_structure.local_gather(owner, owner_key, tables)` | per entity, its owner's table at its local row (MECHA's per-node geometry of each section's template) |
 | `self.graph_view.laplacian(w)` | B diag(w) Bᵀ in a graph system's Jacobian, into a pattern kept per view (scipy's product, bit for bit) |
-| `ds.chain_scan(height, chain="phytomers", op="max", exclusive=True)` | the maximum over lower ranks (cnwgrass pseudostem) |
-| `ds.accumulate(x)` | subtree totals |
-| `ds.accumulate(dx, direction="down")` | positions from the base |
-| `ds.path_window(budget, volume, values, where=apex)` | supply windows towards the base |
-| `ds.chain_shift` / `ds.chain_write` | neighbours on a chain, and forward writes |
-| `ds.path_compose` | frames |
-| `ds.order("pre")`, `ds.levels()`, `ds.fold(update, values)` | traversal orders, depths and level-by-level folds (`kernels.depth_first_orders`, `tree_levels`) |
+| `data_structure.chain_scan(height, chain="phytomers", op="max", exclusive=True)` | the maximum over lower ranks (cnwgrass pseudostem) |
+| `data_structure.accumulate(x)` | subtree totals |
+| `data_structure.accumulate(dx, direction="down")` | positions from the base |
+| `data_structure.path_window(budget, volume, values, where=apex)` | supply windows towards the base |
+| `data_structure.chain_shift` / `data_structure.chain_write` | neighbours on a chain, and forward writes |
+| `data_structure.path_compose` | frames |
+| `data_structure.order("pre")`, `data_structure.levels()`, `data_structure.fold(update, values)` | traversal orders, depths and level-by-level folds (`kernels.depth_first_orders`, `tree_levels`) |
 
 Chains are `"axis"` ('<' successors) by default, or declared with `define_chain(name, group=, rank=)`.
 
 ## Performance rules
 
 For metafspm and every port: no Python loop over groups, nodes or entities in a step. A loop over owners or vertices
-in a functor is one of the platform's primitives (the tree kernels above, `ds.local_gather`, `ds.preorder`,
+in a functor is one of the platform's primitives (the tree kernels above, `data_structure.local_gather`, `data_structure.preorder`,
 `graph_view.laplacian`): the ports declare what they compute, metafspm owns the kernels.
 
 1. **numpy first.** Per-group quantities by `np.unique(owner, return_index=True)`, `np.bincount`/`np.add.at`,
@@ -175,17 +175,17 @@ in a functor is one of the platform's primitives (the tree kernels above, `ds.lo
    removed and added (`MPG.structure_epoch`, `MPG.structure_delta(since)`, from its topology arrays), and the
    structure-derived arrays (`compartment_owners`, `owned_compartments`, `connection_vids`, `structural_links`,
    the nodes' owners at each coarse scale) drop the removed ids and append the added ones (larger ids: arrays
-   sorted by id stay sorted). A port edits the MPG as before and calls `ds.update_topology()`, nothing else; a cache
+   sorted by id stay sorted). A port edits the MPG as before and calls `data_structure.update_topology()`, nothing else; a cache
    of its own derived from the structure can use `MPG._derived(name, build, patch)`. A change no delta describes (a
    kept vertex moved, ids given again) rebuilds. `METAFSPM_CHECK_TOPOLOGY=1` checks every patch against a build;
    `METAFSPM_CHECK_ARCHETYPES=1` checks every archetype of a reduction's batches against its evaluation alone.
    `update_topology` carries a location's float and int variables over as one block per dtype, each a row taken
    from its old array through the location's match in one gather, without copying the old arrays first.
-   Read edges as arrays: `ds.edge_endpoints()` ((edges, 2), read-only), not `ds.edges()` (Python tuples).
-   Read every vertex's linked parent at a scale at once, `g.linked_parents(scale)` (a dict, cached per structure),
-   not `g.linked_parent(v, scale)` vertex by vertex; `g.components_at_scale` lists each scale in one loop, in
+   Read edges as arrays: `data_structure.edge_endpoints()` ((edges, 2), read-only), not `data_structure.edges()` (Python tuples).
+   Read every vertex's linked parent at a scale at once, `mtg.linked_parents(scale)` (a dict, cached per structure),
+   not `mtg.linked_parent(v, scale)` vertex by vertex; `mtg.components_at_scale` lists each scale in one loop, in
    openalea.mtg's order (an order a port's creation of vertices may depend on). A traversal whose order does not
-   matter reads the topology arrays or the scale column instead (`g._vertices_at_scale(scale)`).
+   matter reads the topology arrays or the scale column instead (`mtg._vertices_at_scale(scale)`).
    Read the same vids at many variables of a location in bulk, through the location's shared arrays: a view's
    `at()` keeps the positions of read-only vids in the location's sorted ids for the next variable (the states an
    MPG-style step leaves are read back so, with the instanced vertices known before the step found once per
@@ -212,7 +212,7 @@ in a functor is one of the platform's primitives (the tree kernels above, `ds.lo
 - **Derived variables:** translator links with a factor, a sum, a formula or a scale change.
   - They are **recomputed when read**, if a source was written since their last computation.
   - They are **read-only**: write their sources.
-- **Write through the DataStructure:** use `ds.set(name, values)`. Writing into a view (`ds.get(name)[...] = v`) is invisible to the variables derived from `name`; call `ds.mark_written(name)` after such a write. `ds.validate(strict=True)` detects forgotten ones.
+- **Write through the DataStructure:** use `data_structure.set(name, values)`. Writing into a view (`data_structure.get(name)[...] = v`) is invisible to the variables derived from `name`; call `data_structure.mark_written(name)` after such a write. `data_structure.validate(strict=True)` detects forgotten ones.
 
 ## Time and growth
 
@@ -223,18 +223,18 @@ in a functor is one of the platform's primitives (the tree kernels above, `ds.lo
 
 ## Anatomy mode
 
-- **Construction.** `MPGDataStructure(g, from_scale=scales.SubOrgan, nodes="Compartment", wiring=rules)` solves on the anatomies.
+- **Construction.** `MPGDataStructure(mtg, from_scale=scales.SubOrgan, nodes="Compartment", wiring=rules)` solves on the anatomies.
   - Nodes are the Compartments of each SubOrgan's anatomy, created in either of two ways:
     - under a Cell, as true MTG components: SubOrgan → Layer → Cell → Compartment, e.g. a cell's protoplast;
     - anchored to the SubOrgan (`add_component_with_topo(compartment_anchor, suborgan)`), e.g. a wall or wall junction shared by several cells, or every Compartment when there are no Layers or Cells.
   - A Compartment's owner is its Cell, or the SubOrgan it is anchored to. Its entity at a coarser scale is the one above its owner.
   - Edges are the anatomy Connections plus the junctions that `wiring` creates between linked SubOrgans.
-  - **Wiring rules** are declared dicts, each evaluated once over every (linked parent, child) pair being wired, never per pair (`MPG.wire_junctions`): the platform's `{"node_label", "edge_label", "ordering", "match"}`, or `{"pairs": f, "edge_label": E, "properties": p}` with `f(g, section_pairs) -> (pair, tails, heads)` and `p(g, section_pairs, pair, tails, heads) -> {name: values}` (`wiring.SectionPairs`: the pairs and each side's Compartments as one CSR). Junctions are created pair by pair, then rule by rule, in the order each rule gives them.
+  - **Wiring rules** are declared dicts, each evaluated once over every (linked parent, child) pair being wired, never per pair (`MPG.wire_junctions`): the platform's `{"node_label", "edge_label", "ordering", "match"}`, or `{"pairs": f, "edge_label": E, "properties": p}` with `f(mtg, section_pairs) -> (pair, tails, heads)` and `p(mtg, section_pairs, pair, tails, heads) -> {name: values}` (`wiring.SectionPairs`: the pairs and each side's Compartments as one CSR). Junctions are created pair by pair, then rule by rule, in the order each rule gives them.
   - Both are keyed by their own vids.
   - `add_components_bulk` creates many components in one call, taking one complex, or one per component (e.g. the protoplasts of many Cells).
 - **Locations.** `"SubOrgan"` and coarser scales are coarse locations, and so are `"Layer"` and `"Cell"` when they own Compartments. `scale=scales.Compartment` declarations read the Compartments' properties, and `scale=scales.Cell` declarations the Cells'.
-- **Inheritance at growth** (`on_grow="inherit"`): a new Compartment takes the value of the first same-label Compartment upstream, unless `ds.inheritance` gives another rule, a callable `(ds, new_vids, is_known) -> source vids` (−1: the default value).
-- **Nodes without a Layer or a Cell** (walls, junctions) have owner −1 there (`ds.owner("Cell")`). Sums and means over the scale skip them, and broadcasts from it (parameters, masks) give them the variable's default.
+- **Inheritance at growth** (`on_grow="inherit"`): a new Compartment takes the value of the first same-label Compartment upstream, unless `data_structure.inheritance` gives another rule, a callable `(data_structure, new_vids, is_known) -> source vids` (−1: the default value).
+- **Nodes without a Layer or a Cell** (walls, junctions) have owner −1 there (`data_structure.owner("Cell")`). Sums and means over the scale skip them, and broadcasts from it (parameters, masks) give them the variable's default.
 - **Growth.** Only the junctions of changed SubOrgans are rewired. In segment mode too, growth only adds or removes the Compartments and Connections of new or pruned segments (prune with `remove_tree`, which also removes the segment's Compartment). A new Compartment inherits from the same-label Compartment upstream.
 
 ## Boundary sets
@@ -295,7 +295,7 @@ the residuals' and the steps' history and the floor estimate, so a tolerance set
 
 ## Random draws
 
-- **Reproducible draws per entity:** `self.random(stream, distribution="uniform", ids=None, **parameters)` in a component, or `ds.random(...)` with an explicit `step`. A draw depends on (seed, stream, step, entity id) only, not on the visiting order.
+- **Reproducible draws per entity:** `self.random(stream, distribution="uniform", ids=None, **parameters)` in a component, or `data_structure.random(...)` with an explicit `step`. A draw depends on (seed, stream, step, entity id) only, not on the visiting order.
 - **Advancing:** each call of a stream is a new step. Step counters are kept by checkpoints. `random_seed` (a component attribute) chooses the seed.
 - **MPG-style steps** that create vertices one after the other (a chain of segments, each from the one just created) are plain Python, and draw for the new vertices with `self.random(stream, ids=new_vids)`.
 
@@ -316,8 +316,8 @@ the residuals' and the steps' history and the floor estimate, so a tolerance set
 
 ## Masks
 
-- **Defining.** `ds.define_mask(name, rule)` takes a `{variable: condition}` rule (a comparison such as `">0"` or `"<=0.03"`, a value, a list of values, label names; a variable at a coarser scale is read at each entity's entity of that scale) or a callable; `ds.define_mask(name, entities="GranapAnatomy.soil_nodes")` a named entity set.
-- **Named entity sets.** A component publishes the sets assemblies select, `entity_sets = {"soil_nodes": {"kind": 4.}}` (a class attribute, `{variable: condition}` rules); assemblies name them, `"Class.set"`: `define_mask(entities=)`, a `Reduction`'s `where=`, `ports=`, `keep=` (evaluated on a section template's properties too). A port's internal codes (a node kind, a label used as a code) never appear in an assembly, its tests or its examples. The decorators' `where=` take the same rules, or a mask name. `ds.mask(name)` is recomputed when its variables were written; `ds.mask_version(name)` changes with its values.
+- **Defining.** `data_structure.define_mask(name, rule)` takes a `{variable: condition}` rule (a comparison such as `">0"` or `"<=0.03"`, a value, a list of values, label names; a variable at a coarser scale is read at each entity's entity of that scale) or a callable; `data_structure.define_mask(name, entities="GranapAnatomy.soil_nodes")` a named entity set.
+- **Named entity sets.** A component publishes the sets assemblies select, `entity_sets = {"soil_nodes": {"kind": 4.}}` (a class attribute, `{variable: condition}` rules); assemblies name them, `"Class.set"`: `define_mask(entities=)`, a `Reduction`'s `where=`, `ports=`, `keep=` (evaluated on a section template's properties too). A port's internal codes (a node kind, a label used as a code) never appear in an assembly, its tests or its examples. The decorators' `where=` take the same rules, or a mask name. `data_structure.mask(name)` is recomputed when its variables were written; `data_structure.mask_version(name)` changes with its values.
 - **The active mask.** A structural component's `active = {...}` defines the mask `"active"`.
 - **Vectorised steps** compute on the entities of the `"active"` mask when the DataStructure defines it: arguments at its location are restricted, and outputs are written on them only. `@rate(include_inactive=True)` lifts it; `where=` restricts a step further. MPG-style steps always see every entity.
 - **Graph systems** solve on the whole graph unless `@graph_system(where=...)`, e.g. `where="active"`. With it, they solve on the selected nodes and the edges between them:
@@ -334,4 +334,4 @@ These raise; none of them is silently ignored:
 - a declaration that does not resolve;
 - a write to a derived variable.
 
-`ds.validate()` lists every inconsistency of a DataStructure at once.
+`data_structure.validate()` lists every inconsistency of a DataStructure at once.

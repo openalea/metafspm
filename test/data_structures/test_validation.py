@@ -21,44 +21,44 @@ DOC = dict(unit="adim", unit_comment="", description="", min_value=0., max_value
 
 
 @pytest.fixture
-def ds():
-    g, _ = generate_simple_mpg_seedling()
-    g.populate_graph(g.scales.SubOrgan)
-    g.convert_properties_to_arraydict()
-    return MPGDataStructure(g, from_scale=g.scales.SubOrgan)
+def data_structure():
+    mtg, _ = generate_simple_mpg_seedling()
+    mtg.populate_graph(mtg.scales.SubOrgan)
+    mtg.convert_properties_to_arraydict()
+    return MPGDataStructure(mtg, from_scale=mtg.scales.SubOrgan)
 
 
 def _grid():
-    ds = ArrayDataStructure(shape=(2, 2, 1))
-    ds.register("a", 1., location="cell")
-    ds.register("b", 2., location="cell")
-    return ds
+    data_structure = ArrayDataStructure(shape=(2, 2, 1))
+    data_structure.register("a", 1., location="cell")
+    data_structure.register("b", 2., location="cell")
+    return data_structure
 
 
 # ---------------------------------------------------------------- validate()
 
-def test_a_consistent_data_structure_validates(ds):
-    ds.register("x", 1., location="node")
-    ds.derive("y", {"x": 2.})
-    ds.alias("x_alias", "x")
-    ds.derive("organ_x", {"x": 1.}, location="Organ", aggregation="sum")
-    ds.validate()
-    ds.validate(strict=True)
+def test_a_consistent_data_structure_validates(data_structure):
+    data_structure.register("x", 1., location="node")
+    data_structure.derive("y", {"x": 2.})
+    data_structure.alias("x_alias", "x")
+    data_structure.derive("organ_x", {"x": 1.}, location="Organ", aggregation="sum")
+    data_structure.validate()
+    data_structure.validate(strict=True)
     _grid().validate(strict=True)
 
 
-def test_validate_reports_every_inconsistency_at_once(ds):
-    ds.register("x", 1., location="node")
-    ds.register("moved", 1., location="node")
-    ds.derive("y", {"x": 2.})
-    ds.derive("from_moved", {"moved": 1.})
-    ds.alias("dangling", "x")
-    ds._node_data["stale"] = np.zeros(ds.n_nodes() + 2)          # e.g. not carried over a topology change
-    ds._node_data.pop("x")                                       # removed behind the store's back
-    ds.register("moved", 1., location="edge")                    # a source moved to another location
+def test_validate_reports_every_inconsistency_at_once(data_structure):
+    data_structure.register("x", 1., location="node")
+    data_structure.register("moved", 1., location="node")
+    data_structure.derive("y", {"x": 2.})
+    data_structure.derive("from_moved", {"moved": 1.})
+    data_structure.alias("dangling", "x")
+    data_structure._node_data["stale"] = np.zeros(data_structure.n_nodes() + 2)          # e.g. not carried over a topology change
+    data_structure._node_data.pop("x")                                       # removed behind the store's back
+    data_structure.register("moved", 1., location="edge")                    # a source moved to another location
 
     with pytest.raises(ValueError) as error:
-        ds.validate()
+        data_structure.validate()
     message = str(error.value)
     for expected in ("'stale' has shape (16,), its location 'node' has (14,)", "alias 'dangling'", "'y': source 'x' is not registered",
                      "'from_moved': source 'moved' is at edge, expected node"):
@@ -66,22 +66,22 @@ def test_validate_reports_every_inconsistency_at_once(ds):
 
 
 def test_strict_validation_detects_writes_through_views():
-    ds = _grid()
-    ds.derive("c", {"a": 1., "b": 1.})
-    ds.validate(strict=True)
-    ds.get("a")[...] = 10.                                       # invisible to the write counters
+    data_structure = _grid()
+    data_structure.derive("c", {"a": 1., "b": 1.})
+    data_structure.validate(strict=True)
+    data_structure.get("a")[...] = 10.                                       # invisible to the write counters
     with pytest.raises(ValueError, match="'c' differs from its sources: .* written through a view"):
-        ds.validate(strict=True)
-    ds.validate()                                                # the structure itself is fine
-    ds.mark_written("a")
-    ds.validate(strict=True)                                     # stale now: recomputed at the next get
+        data_structure.validate(strict=True)
+    data_structure.validate()                                                # the structure itself is fine
+    data_structure.mark_written("a")
+    data_structure.validate(strict=True)                                     # stale now: recomputed at the next get
 
 
 # ---------------------------------------------------------------- missing variables raise
 
-def test_a_missing_graph_variable_raises_instead_of_reading_zeros(ds):
+def test_a_missing_graph_variable_raises_instead_of_reading_zeros(data_structure):
     with pytest.raises(KeyError, match="Probe: 'K_axail' is used by a graph system but is not registered"):
-        _read_array(ds, "K_axail", "edge", ds.n_edges(), owner="Probe")
+        _read_array(data_structure, "K_axail", "edge", data_structure.n_edges(), owner="Probe")
 
 
 def test_a_missing_filter_variable_raises_instead_of_selecting_everything(seedling_ds_for_filters):
@@ -122,7 +122,7 @@ class BadDeclaration(FunctionalComponent):
                                  kind="extensive")
 
 
-def test_couplability_reports_declarations_that_do_not_resolve(ds):
-    problems = couplability_problems(BadDeclaration, Translator(), data_structure=ds)
+def test_couplability_reports_declarations_that_do_not_resolve(data_structure):
+    problems = couplability_problems(BadDeclaration, Translator(), data_structure=data_structure)
     assert len(problems) == 1 and "BadDeclaration.pool" in problems[0] and "could not be written back" in problems[0]
     assert couplability_problems(BadDeclaration, Translator()) == []   # without a DataStructure: names only

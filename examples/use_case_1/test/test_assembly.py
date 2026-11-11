@@ -76,13 +76,13 @@ def stepped(tmp_path_factory):
     daily.checkpoint(checkpoint)
     scene = _scene(HOUR)
     scene.load_checkpoint(checkpoint)
-    ds = scene.populations[0].data_structure
+    data_structure = scene.populations[0].data_structure
     soil = _soil(scene)
     history = [{}]
     for _ in range(STEPS):
-        history[-1]["compartments"] = np.asarray(ds.entity_ids("node")).copy()   # before the next step
+        history[-1]["compartments"] = np.asarray(data_structure.entity_ids("node")).copy()   # before the next step
         scene.run()
-        history.append({"root_uptake": float(np.sum(ds.get("root_uptake"))),
+        history.append({"root_uptake": float(np.sum(data_structure.get("root_uptake"))),
                         "soil_uptake": float(np.sum(soil.grid.get("plant_uptake")))})
     scene.finish()
     return scene, history
@@ -126,12 +126,12 @@ def test_the_gas_exchange_reads_the_green_area_above_the_soil(stepped):
     element drawn wholly below the soil exchanges nothing (0, its height NaN), one wholly above over its whole green
     area; the light and the gas exchange cut the elements at the same surface."""
     scene, _ = stepped
-    ds = scene.populations[0].data_structure
-    elements = ds.at("SubOrgan")
+    data_structure = scene.populations[0].data_structure
+    elements = data_structure.at("SubOrgan")
     gas_exchange = scene.populations[0].instance.gas_exchange
-    assert ds.soil_surface == 0. and _light(scene).light.soil_surface == 0.
+    assert data_structure.soil_surface == 0. and _light(scene).light.soil_surface == 0.
     whole, read = np.asarray(elements.get("green_area")), gas_exchange.read("green_area")
-    np.testing.assert_array_equal(read, ds.get("green_area_in_air"))
+    np.testing.assert_array_equal(read, data_structure.get("green_area_in_air"))
     triangles = elements.triangles()
     drawn = np.bincount(triangles.owner, minlength=elements.n_nodes()) > 0
     lowest, highest = np.full(elements.n_nodes(), np.inf), np.full(elements.n_nodes(), -np.inf)
@@ -167,7 +167,7 @@ def test_each_model_works_on_its_own_entities(stepped):
     the optics and the gas exchange work on every SubOrgan, GRANAP and MECHA on the Compartments."""
     scene, _ = stepped
     instance = scene.populations[0].instance
-    ds = scene.populations[0].data_structure
+    data_structure = scene.populations[0].data_structure
     shoot, rule, roots = (component.data_structure for component in (instance.shoot.architecture, instance.rule,
                                                                       instance.roots))
     assert all(isinstance(view, EntityView) for view in (shoot, rule, roots))
@@ -175,29 +175,29 @@ def test_each_model_works_on_its_own_entities(stepped):
     assert set(np.asarray(roots.labels()).tolist()) <= {"RootSegment", "RootApex"}
     assert np.array_equal(rule.entity_ids("node"), shoot.entity_ids("node"))
     assert not set(shoot.entity_ids("node").tolist()) & set(roots.entity_ids("node").tolist())
-    crown = set(np.asarray(ds.entity_ids("SubOrgan"))[np.isin(ds.at("SubOrgan").labels(), ["Seed"])].tolist())
+    crown = set(np.asarray(data_structure.entity_ids("SubOrgan"))[np.isin(data_structure.at("SubOrgan").labels(), ["Seed"])].tolist())
     assert crown and not crown & (set(shoot.entity_ids("node").tolist()) | set(roots.entity_ids("node").tolist()))
     own = instance.crown.data_structure                                 # the crown's: the seed, the subcrown internode
     assert isinstance(own, EntityView) and crown <= set(own.entity_ids("node").tolist())
     assert set(np.asarray(own.labels()).tolist()) == {"Seed", "StemElement"}
-    elements = ds.at("SubOrgan")                                        # drawn with the shoot and the roots
+    elements = data_structure.at("SubOrgan")                                        # drawn with the shoot and the roots
     drawn = set(np.asarray(elements.entity_ids("node"))[np.unique(elements.triangles().owner)].tolist())
     assert set(own.entity_ids("node").tolist()) <= drawn
     for component in (instance.optics, instance.gas_exchange):
         assert isinstance(component.data_structure, LocatedView)
-        assert np.array_equal(component.data_structure.entity_ids("node"), ds.entity_ids("SubOrgan"))
-    assert instance.anatomy.data_structure is ds and instance.hydraulics.data_structure is ds
+        assert np.array_equal(component.data_structure.entity_ids("node"), data_structure.entity_ids("SubOrgan"))
+    assert instance.anatomy.data_structure is data_structure and instance.hydraulics.data_structure is data_structure
 
 
 def test_the_transpiration_reaches_mecha_in_its_units(stepped):
     """Each organ's leaf transpiration (cm3 d-1) is its elements' (mmol s-1) times 18e-3 × 86400, and leaves
     MECHA's plant at its leaf surface."""
     scene, _ = stepped
-    ds = scene.populations[0].data_structure
-    per_organ = ds.map_to(np.asarray(ds.get("transpiration")), "SubOrgan", "Organ", "sum")
-    np.testing.assert_allclose(ds.get("leaf_transpiration"), 1555.2 * per_organ, rtol=1e-12, atol=0.)
-    assert float(np.sum(ds.get("leaf_transpiration"))) > 0.
-    np.testing.assert_allclose(np.sum(ds.get("evaporation")), np.sum(ds.get("leaf_transpiration")), rtol=1e-9)
+    data_structure = scene.populations[0].data_structure
+    per_organ = data_structure.map_to(np.asarray(data_structure.get("transpiration")), "SubOrgan", "Organ", "sum")
+    np.testing.assert_allclose(data_structure.get("leaf_transpiration"), 1555.2 * per_organ, rtol=1e-12, atol=0.)
+    assert float(np.sum(data_structure.get("leaf_transpiration"))) > 0.
+    np.testing.assert_allclose(np.sum(data_structure.get("evaporation")), np.sum(data_structure.get("leaf_transpiration")), rtol=1e-9)
 
 
 def test_the_stomata_read_mechas_leaf_water_potential(stepped):
@@ -207,19 +207,19 @@ def test_the_stomata_read_mechas_leaf_water_potential(stepped):
     decision U-6); read now, MECHA's last."""
     scene, _ = stepped
     instance = scene.populations[0].instance
-    ds = scene.populations[0].data_structure
+    data_structure = scene.populations[0].data_structure
     assert instance.gas_exchange.stomatal_model == "Tuzet"
-    assert ds.location("leaf_water_potential") == "SubOrgan"
-    owner = np.asarray(ds.owner("SubOrgan"))
-    water, liquid = np.asarray(ds.get("water_potential")), np.asarray(ds.get("liquid_volume"))
-    total = np.bincount(owner[owner >= 0], weights=liquid[owner >= 0], minlength=ds.entity_ids("SubOrgan").size)
+    assert data_structure.location("leaf_water_potential") == "SubOrgan"
+    owner = np.asarray(data_structure.owner("SubOrgan"))
+    water, liquid = np.asarray(data_structure.get("water_potential")), np.asarray(data_structure.get("liquid_volume"))
+    total = np.bincount(owner[owner >= 0], weights=liquid[owner >= 0], minlength=data_structure.entity_ids("SubOrgan").size)
     expected = np.bincount(owner[owner >= 0], weights=(water * liquid)[owner >= 0],
                            minlength=total.size) / np.where(total > 0., total, 1.) * 1e-4
-    values = np.asarray(ds.get("leaf_water_potential"))
+    values = np.asarray(data_structure.get("leaf_water_potential"))
     assert np.isfinite(values).all()
     np.testing.assert_allclose(values[total > 0.], expected[total > 0.], rtol=1e-12)
     np.testing.assert_array_equal(values[total == 0.], GasExchange.leaf_water_potential)      # its default
-    leaves = np.asarray(ds.at("SubOrgan").labels()) == "LeafElement"
+    leaves = np.asarray(data_structure.at("SubOrgan").labels()) == "LeafElement"
     assert (values[leaves & (total > 0.)] < 0.).all()
 
 
@@ -228,20 +228,20 @@ def test_the_blades_leaf_water_potential_is_mechas(stepped):
     volume: its leaf water potential is MECHA's, not the gas exchange's default (a blade element of no length yet has
     no section)."""
     scene, _ = stepped
-    ds = scene.populations[0].data_structure
-    owner = np.asarray(ds.owner("SubOrgan"))
-    liquid = np.asarray(ds.get("liquid_volume"))
-    elements = ds.at("SubOrgan")
+    data_structure = scene.populations[0].data_structure
+    owner = np.asarray(data_structure.owner("SubOrgan"))
+    liquid = np.asarray(data_structure.get("liquid_volume"))
+    elements = data_structure.at("SubOrgan")
     blades = np.flatnonzero((np.asarray(elements.labels()) == "LeafElement") & (np.asarray(elements.get("length")) > 0.))
     assert blades.size
     assert all(liquid[owner == blade].sum() > 0. for blade in blades)
-    assert (np.asarray(ds.get("leaf_water_potential"))[blades] != GasExchange.leaf_water_potential).all()
+    assert (np.asarray(data_structure.get("leaf_water_potential"))[blades] != GasExchange.leaf_water_potential).all()
 
 
 def test_the_plant_is_steady(stepped):
     """What the roots take up is what the leaves transpire (MECHA's steady plant), at every step: the plant's
     declared conservation (MechaHydraulics' PLANT_WATER, conservation.csv) closes, its uptake (plant_water) is its
-    organs' transpiration (leaf_water); the largest change of its ψ since the step before (ds.previous)."""
+    organs' transpiration (leaf_water); the largest change of its ψ since the step before (data_structure.previous)."""
     scene, _ = stepped
     balances = scene.recorder.table("conservation")
     plant = balances[balances["component"] == "MechaHydraulics"]
@@ -269,12 +269,12 @@ def test_the_soil_potential_reaches_the_roots(stepped):
     in, and no other Compartment receives it. The exchange precedes the plant's step (decision U-6): the soil nodes
     of the sections grown at the last step hold the default (0) until the next."""
     scene, history = stepped
-    ds = scene.populations[0].data_structure
+    data_structure = scene.populations[0].data_structure
     soil = _soil(scene)
-    soil_nodes = ds.mask("root_surface")                    # GRANAP's entity set soil_nodes
-    soil_psi = np.asarray(ds.get("soil_psi"))
+    soil_nodes = data_structure.mask("root_surface")                    # GRANAP's entity set soil_nodes
+    soil_psi = np.asarray(data_structure.get("soil_psi"))
     potentials = np.asarray(soil.grid.get("water_potential")) * 1e4
-    exchanged = np.isin(np.asarray(ds.entity_ids("node")), history[-2]["compartments"])
+    exchanged = np.isin(np.asarray(data_structure.entity_ids("node")), history[-2]["compartments"])
     assert soil_nodes.any()
     on_roots = soil_psi[soil_nodes & exchanged]
     assert (on_roots < 0.).all()
@@ -286,8 +286,8 @@ def test_the_light_reaches_the_gas_exchange(stepped):
     """Each element's PARa (µmol m-2 s-1) is the light's, and the lit blades assimilate. The light runs before the
     plant's step: the elements grown at the last step are not lit yet (no PARa)."""
     scene, _ = stepped
-    ds = scene.populations[0].data_structure
-    elements = ds.at("SubOrgan")
+    data_structure = scene.populations[0].data_structure
+    elements = data_structure.at("SubOrgan")
     light = _light(scene).light.data_structure
     position = {int(v): i for i, v in enumerate(np.asarray(elements.entity_ids("node")).tolist())}
     lit_by_light = np.array([position[int(v)] for v in light.source_ids()])

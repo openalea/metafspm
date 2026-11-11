@@ -129,8 +129,8 @@ def _geometry_stamp(components):
         return None
     stamp = ()
     for component in components:
-        ds = component.data_structure
-        parts = getattr(ds, "parts", None) or [ds]
+        data_structure = component.data_structure
+        parts = getattr(data_structure, "parts", None) or [data_structure]
         stamp += tuple((getattr(part, "topology_version", None), part.n_nodes()) for part in parts)
         if "geometry" in relights:
             from openalea.metafspm.solve.memo import content_key

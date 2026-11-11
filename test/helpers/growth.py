@@ -25,25 +25,25 @@ DOC = dict(unit="adim", unit_comment="", description="", min_value=0., max_value
 
 
 def make_chain(n_segments=3, apex_length=0.5):
-    """MPG chain of root segments, the last one an apex; returns (g, ds, vids from the base)."""
-    g = MPG()
-    scale = g.scales.SubOrgan
-    anchor = g.scales.anchors[scale]
-    props = dict(label=g.labels.SubOrgan.RootSegment)
-    vids = [g._add_system_root_at_scale(scale, **props)]
+    """MPG chain of root segments, the last one an apex; returns (mtg, data_structure, vids from the base)."""
+    mtg = MPG()
+    scale = mtg.scales.SubOrgan
+    anchor = mtg.scales.anchors[scale]
+    props = dict(label=mtg.labels.SubOrgan.RootSegment)
+    vids = [mtg._add_system_root_at_scale(scale, **props)]
     for _ in range(n_segments - 1):
-        vids.append(g.add_component_with_topo(anchor, vids[-1], **PropsConfig(scale=scale, edge_type='<', **props)))
-    g.populate_graph(scale)
-    g.convert_properties_to_arraydict()
-    ds = MPGDataStructure(g, from_scale=scale)
+        vids.append(mtg.add_component_with_topo(anchor, vids[-1], **PropsConfig(scale=scale, edge_type='<', **props)))
+    mtg.populate_graph(scale)
+    mtg.convert_properties_to_arraydict()
+    data_structure = MPGDataStructure(mtg, from_scale=scale)
     lengths = {v: SEGMENT_LENGTH for v in vids}
     lengths[vids[-1]] = apex_length
     for name, values in (("length", lengths), ("is_apex", {v: float(v == vids[-1]) for v in vids}),
                          ("struct_mass", {v: DENSITY * lengths[v] for v in vids}),
                          ("radius", {v: 1. for v in vids}), ("potential_elongation", {v: 0. for v in vids}),
                          ("distance_from_tip", {v: 0. for v in vids})):
-        g.properties()[name] = dict(values)
-    return g, ds, vids
+        mtg.properties()[name] = dict(values)
+    return mtg, data_structure, vids
 
 
 @dataclass
@@ -67,21 +67,21 @@ class RootGrowthProbe(StructuralComponent):
         return [v for v, flag in self._prop("is_apex").items() if flag and v in active]
 
     @classmethod
-    def initiate_plant(cls, g, plant, parameters):
+    def initiate_plant(cls, mtg, plant, parameters):
         """One plant's root chain under its Plant vertex: n_segments (default 3), the last an apex."""
-        s = g.scales
+        s = mtg.scales
         n_segments = int(parameters.get("n_segments", 3))
         apex_length = float(parameters.get("apex_length", 0.5))
-        axis = g.add_component(plant, **PropsConfig(scale=s.Axis, edge_type='/', label=g.labels.Axis.Root))
-        gu = g.add_component(axis, **PropsConfig(scale=s.GrowthUnit, edge_type='/', label=g.labels.GrowthUnit.Root))
-        phytomer = g.add_component(gu, **PropsConfig(scale=s.Phytomer, edge_type='/', label=g.labels.Phytomer.Root))
-        organ = g.add_component(phytomer, **PropsConfig(scale=s.Organ, edge_type='/', label=g.labels.Organ.RootInternode))
-        segments = [g.add_component(organ, **PropsConfig(scale=s.SubOrgan, edge_type='/',
-                                                         label=g.labels.SubOrgan.RootSegment))]
+        axis = mtg.add_component(plant, **PropsConfig(scale=s.Axis, edge_type='/', label=mtg.labels.Axis.Root))
+        gu = mtg.add_component(axis, **PropsConfig(scale=s.GrowthUnit, edge_type='/', label=mtg.labels.GrowthUnit.Root))
+        phytomer = mtg.add_component(gu, **PropsConfig(scale=s.Phytomer, edge_type='/', label=mtg.labels.Phytomer.Root))
+        organ = mtg.add_component(phytomer, **PropsConfig(scale=s.Organ, edge_type='/', label=mtg.labels.Organ.RootInternode))
+        segments = [mtg.add_component(organ, **PropsConfig(scale=s.SubOrgan, edge_type='/',
+                                                         label=mtg.labels.SubOrgan.RootSegment))]
         for _ in range(n_segments - 1):
-            segments.append(g.add_child(segments[-1], **PropsConfig(scale=s.SubOrgan, edge_type='<',
-                                                                    label=g.labels.SubOrgan.RootSegment)))
-        x, y, z = (g.property(name)[plant] for name in ("x", "y", "z"))
+            segments.append(mtg.add_child(segments[-1], **PropsConfig(scale=s.SubOrgan, edge_type='<',
+                                                                    label=mtg.labels.SubOrgan.RootSegment)))
+        x, y, z = (mtg.property(name)[plant] for name in ("x", "y", "z"))
         top = z
         for rank, v in enumerate(segments):
             length = apex_length if v == segments[-1] else SEGMENT_LENGTH
@@ -89,7 +89,7 @@ class RootGrowthProbe(StructuralComponent):
                                 ("struct_mass", DENSITY * length), ("radius", 1.), ("potential_elongation", 0.),
                                 ("distance_from_tip", 0.), ("x1", x), ("x2", x), ("y1", y), ("y2", y),
                                 ("z1", top), ("z2", top - length)):
-                g.set_values(name, [v], [value])
+                mtg.set_values(name, [v], [value])
             top -= length
 
     @potential
@@ -116,24 +116,24 @@ class RootGrowthProbe(StructuralComponent):
 
     @segmentation
     def _segmentation(self):
-        g = self.mtg
+        mtg = self.mtg
         length, mass, is_apex = self._prop("length"), self._prop("struct_mass"), self._prop("is_apex")
         for apex in self._apices():
             if length[apex] <= SEGMENT_LENGTH:
                 continue
             rest = length[apex] - SEGMENT_LENGTH
             length[apex], mass[apex], is_apex[apex] = SEGMENT_LENGTH, DENSITY * SEGMENT_LENGTH, 0.
-            g.add_child(apex, **PropsConfig(scale=g.scales.SubOrgan, edge_type='<', label=g.labels.SubOrgan.RootSegment,
+            mtg.add_child(apex, **PropsConfig(scale=mtg.scales.SubOrgan, edge_type='<', label=mtg.labels.SubOrgan.RootSegment,
                                             length=rest, struct_mass=DENSITY * rest, is_apex=1.,
                                             radius=self._prop("radius")[apex], potential_elongation=0.,
                                             distance_from_tip=0.))
 
     @postsegmentation
     def _distance_from_tip(self):
-        g, length, distance = self.mtg, self._prop("length"), self._prop("distance_from_tip")
+        mtg, length, distance = self.mtg, self._prop("length"), self._prop("distance_from_tip")
 
         def below(v):
-            return sum(length[c] + below(c) for c in g.children(v))
+            return sum(length[c] + below(c) for c in mtg.children(v))
 
         for v in list(length.keys()):
             distance[v] = below(v)

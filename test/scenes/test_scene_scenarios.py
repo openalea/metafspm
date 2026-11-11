@@ -60,21 +60,21 @@ def _scene(plant_scenarios, soil_scenario=None):
 
 def test_numeric_parameters_are_per_plant_and_a_missing_entry_keeps_the_default():
     scene = _scene([{"rate_per_plant": 3.}, {}])
-    ds = scene.populations[0].data_structure
-    np.testing.assert_allclose(ds.get("rate_per_plant"), [3., 1.])
+    data_structure = scene.populations[0].data_structure
+    np.testing.assert_allclose(data_structure.get("rate_per_plant"), [3., 1.])
 
 
 def test_other_parameters_are_set_as_constructor_keywords_would():
     scenario = {"rate_per_segment": 5., "method": "exponential"}
     scene = _scene([scenario, scenario])
-    settings, ds = scene.populations[0].instance.settings, scene.populations[0].data_structure
+    settings, data_structure = scene.populations[0].instance.settings, scene.populations[0].data_structure
     assert settings.method == "exponential"                                      # the dataclass field
-    np.testing.assert_allclose(ds.get("rate_per_segment"), 5.)                    # the DataStructure variable
+    np.testing.assert_allclose(data_structure.get("rate_per_segment"), 5.)                    # the DataStructure variable
 
-    g, _ = _build_population(doubles_planting([Plants], [{}]), initiators=Plants.initiators)
-    g.populate_graph(g.scales.SubOrgan)
-    g.convert_properties_to_arraydict()
-    other = MPGDataStructure(g, from_scale=g.scales.SubOrgan)
+    mtg, _ = _build_population(doubles_planting([Plants], [{}]), initiators=Plants.initiators)
+    mtg.populate_graph(mtg.scales.SubOrgan)
+    mtg.convert_properties_to_arraydict()
+    other = MPGDataStructure(mtg, from_scale=mtg.scales.SubOrgan)
     direct = Settings(data_structure=other, rate_per_segment=5., method="exponential")             # by hand
     assert (direct.method, direct.rate_per_segment) == (settings.method, settings.rate_per_segment)
     np.testing.assert_allclose(other.get("rate_per_segment"), 5.)
@@ -126,9 +126,9 @@ class LayoutProbe(RootGrowthProbe):
     scenario_keys = ("layout",)
 
     @classmethod
-    def initiate_plant(cls, g, plant, parameters):
-        super().initiate_plant(g, plant, parameters)
-        g.properties().setdefault("layout", {})[plant] = parameters.get("layout")
+    def initiate_plant(cls, mtg, plant, parameters):
+        super().initiate_plant(mtg, plant, parameters)
+        mtg.properties().setdefault("layout", {})[plant] = parameters.get("layout")
 
 
 class LaidOutPlants(Plants):

@@ -66,53 +66,53 @@ class Soil(FunctionalComponent):
 def _plant():
     """Three vertical root segments, from the surface down, each with its anatomy (four Compartments, its epidermis
     the soil node: compartment_type SURFACE)."""
-    g, segments, anatomies = make_rooted_anatomy(n_segments=N_SEGMENTS)
-    ds = MPGDataStructure(g, from_scale=g.scales.SubOrgan, nodes="Compartment", wiring=wiring(g))
-    ends, cells = RootEnds(data_structure=ds), Cells(data_structure=ds)
+    mtg, segments, anatomies = make_rooted_anatomy(n_segments=N_SEGMENTS)
+    data_structure = MPGDataStructure(mtg, from_scale=mtg.scales.SubOrgan, nodes="Compartment", wiring=wiring(mtg))
+    ends, cells = RootEnds(data_structure=data_structure), Cells(data_structure=data_structure)
     depth = CELL * np.arange(N_SEGMENTS)
     values = dict(x1=0.2, x2=0.2, y1=0.2, y2=0.2, z1=-depth, z2=-(depth + CELL))
     for name, value in values.items():
-        ds.set(name, np.broadcast_to(value, (N_SEGMENTS,)).astype(float))
-    compartment_type = np.zeros(ds.n_nodes())
-    compartment_type[ds.index_of([anatomy["epidermis"] for anatomy in anatomies.values()])] = SURFACE
-    ds.set("compartment_type", compartment_type)
-    ds.define_mask("soil_nodes", {"compartment_type": SURFACE})
-    return ds, ends, cells, segments
+        data_structure.set(name, np.broadcast_to(value, (N_SEGMENTS,)).astype(float))
+    compartment_type = np.zeros(data_structure.n_nodes())
+    compartment_type[data_structure.index_of([anatomy["epidermis"] for anatomy in anatomies.values()])] = SURFACE
+    data_structure.set("compartment_type", compartment_type)
+    data_structure.define_mask("soil_nodes", {"compartment_type": SURFACE})
+    return data_structure, ends, cells, segments
 
 
 def test_a_union_s_values_reach_a_suborgan_component_of_an_anatomy_mode_plant():
-    ds, ends, _, _ = _plant()
+    data_structure, ends, _, _ = _plant()
     assert isinstance(ends.data_structure, LocatedView)
-    union = UnionDataStructure([ds.at("SubOrgan")])
+    union = UnionDataStructure([data_structure.at("SubOrgan")])
     lamp = Lamp(data_structure=union)
     exchanges = Exchanges(Translator().link("RootEnds", "intercepted", "Lamp", {"intercepted": 1.}),
                           (ends, lamp), (UnionMapping(union),))
     lamp()
-    exchanges.exchange(into=ds)                   # into the plant's DataStructure, as the Scene's
+    exchanges.exchange(into=data_structure)                   # into the plant's DataStructure, as the Scene's
     np.testing.assert_allclose(ends.data_structure.get("intercepted"), [1., 2., 3.])
 
 
 def test_a_soil_mapping_maps_the_suborgans_and_their_masked_compartments():
-    ds, ends, cells, segments = _plant()
+    data_structure, ends, cells, segments = _plant()
     soil_grid = ArrayDataStructure(shape=(1, 1, N_SEGMENTS + 1), spacing=CELL)
     soil = Soil(data_structure=soil_grid)
-    mapping = CrossMapping(ds, soil_grid, method="overlap", mask="soil_nodes")
+    mapping = CrossMapping(data_structure, soil_grid, method="overlap", mask="soil_nodes")
     assert mapping.location == "SubOrgan"
     rows, columns, weights = mapping.incidence()
     assert rows.tolist() == [0, 1, 2] and columns.tolist() == [0, 1, 2]
     np.testing.assert_allclose(weights, 1.)
-    soil_nodes = np.flatnonzero(np.asarray(ds.get("compartment_type")) == SURFACE)
-    uptake = np.zeros(ds.n_nodes())
+    soil_nodes = np.flatnonzero(np.asarray(data_structure.get("compartment_type")) == SURFACE)
+    uptake = np.zeros(data_structure.n_nodes())
     uptake[soil_nodes] = [1., 2., 4.]
     uptake[soil_nodes[0] + 1] = 100.              # a Compartment other than the soil nodes: not exchanged
-    ds.set("uptake", uptake)
+    data_structure.set("uptake", uptake)
     soil_grid.set("potential", np.reshape([-1., -2., -3., -4.], soil_grid.get("potential").shape))
     translator = (Translator().link("Soil", "uptake", "Cells", {"uptake": 1.})
                   .link("Cells", "soil_potential", "Soil", {"potential": 1.}))
     exchanges = Exchanges(translator, (cells, soil), (mapping,))
     exchanges.exchange(into=soil_grid)
     np.testing.assert_allclose(np.ravel(soil_grid.get("uptake")), [1., 2., 4., 0.])
-    exchanges.exchange(into=ds)
-    potential = np.asarray(ds.get("soil_potential"))
+    exchanges.exchange(into=data_structure)
+    potential = np.asarray(data_structure.get("soil_potential"))
     np.testing.assert_allclose(potential[soil_nodes], [-1., -2., -3.])
     np.testing.assert_array_equal(np.delete(potential, soil_nodes), 0.)

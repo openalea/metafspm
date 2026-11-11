@@ -21,14 +21,14 @@ from growth import DOC, CarbonProbe, RootGrowthProbe
 def _population():
     table = pd.DataFrame([dict(plant=f"p{i}", model=None, x=0.1 * i, y=0., depth=0., rotation=0.,
                                scenario={"n_segments": 2 + i}) for i in range(3)])
-    g, _ = _build_population(table, initiators=(RootGrowthProbe,))
-    g.populate_graph(g.scales.SubOrgan)
-    g.convert_properties_to_arraydict()
-    return MPGDataStructure(g, from_scale=g.scales.SubOrgan)
+    mtg, _ = _build_population(table, initiators=(RootGrowthProbe,))
+    mtg.populate_graph(mtg.scales.SubOrgan)
+    mtg.convert_properties_to_arraydict()
+    return MPGDataStructure(mtg, from_scale=mtg.scales.SubOrgan)
 
 
-def _models(ds):
-    return RootGrowthProbe(data_structure=ds), CarbonProbe(data_structure=ds)
+def _models(data_structure):
+    return RootGrowthProbe(data_structure=data_structure), CarbonProbe(data_structure=data_structure)
 
 
 def _steps(models, n):
@@ -41,9 +41,9 @@ def _hexose_ratio(hexose, length):           # a module-level formula: kept by r
     return hexose / length
 
 
-def _state(ds):
+def _state(data_structure):
     return {location: {name: np.array(values) for name, values in store.items()}
-            for location, store in ds._var_stores().items()}
+            for location, store in data_structure._var_stores().items()}
 
 
 def _assert_same(a, b):
@@ -55,29 +55,29 @@ def _assert_same(a, b):
 
 
 def test_a_restored_population_continues_bit_for_bit(tmp_path):
-    ds = _population()
-    models = _models(ds)
-    ds.derive("hexose_per_length", ("C_hexose_root", "length"), formula=_hexose_ratio)
-    ds.define_mask("apices", {"is_apex": ">0"})
+    data_structure = _population()
+    models = _models(data_structure)
+    data_structure.derive("hexose_per_length", ("C_hexose_root", "length"), formula=_hexose_ratio)
+    data_structure.define_mask("apices", {"is_apex": ">0"})
     _steps(models, 2)
-    ds.checkpoint(str(tmp_path / "checkpoint"))
+    data_structure.checkpoint(str(tmp_path / "checkpoint"))
     _steps(models, 2)                                         # uninterrupted
-    expected = _state(ds)
+    expected = _state(data_structure)
 
     restored = MPGDataStructure.restore(str(tmp_path / "checkpoint"))
-    assert restored.mtg is not ds.mtg and restored.has("hexose_per_length") and restored.has_mask("apices")
+    assert restored.mtg is not data_structure.mtg and restored.has("hexose_per_length") and restored.has_mask("apices")
     _steps(_models(restored), 2)                              # restarted
     _assert_same(_state(restored), expected)
-    np.testing.assert_array_equal(restored.get("hexose_per_length"), ds.get("hexose_per_length"))
-    np.testing.assert_array_equal(restored.mask("apices"), ds.mask("apices"))
-    assert restored.topology_version == ds.topology_version
+    np.testing.assert_array_equal(restored.get("hexose_per_length"), data_structure.get("hexose_per_length"))
+    np.testing.assert_array_equal(restored.mask("apices"), data_structure.mask("apices"))
+    assert restored.topology_version == data_structure.topology_version
 
 
 def test_the_checkpoint_layout(tmp_path):
-    ds = _population()
-    _models(ds)
-    ds.register("tags", [["a"]] * ds.n_nodes(), location="node", dtype=object)
-    ds.checkpoint(str(tmp_path / "c"))
+    data_structure = _population()
+    _models(data_structure)
+    data_structure.register("tags", [["a"]] * data_structure.n_nodes(), location="node", dtype=object)
+    data_structure.checkpoint(str(tmp_path / "c"))
     assert sorted(os.listdir(tmp_path / "c")) == ["arrays.npz", "manifest.json", "state.pkl"]
     manifest = json.loads((tmp_path / "c" / "manifest.json").read_text())
     assert manifest["class"] == "MPGDataStructure" and manifest["variables"]["length"] == {"location": "node",
@@ -86,25 +86,25 @@ def test_the_checkpoint_layout(tmp_path):
     with np.load(tmp_path / "c" / "arrays.npz") as npz:
         assert "node::length" in npz.files and "node::tags" not in npz.files       # objects are pickled
     restored = MPGDataStructure.restore(str(tmp_path / "c"))
-    assert list(restored.get("tags")) == [["a"]] * ds.n_nodes()
+    assert list(restored.get("tags")) == [["a"]] * data_structure.n_nodes()
 
 
 def test_the_mtg_can_be_given_back(tmp_path):
-    ds = _population()
-    _models(ds)
-    ds.checkpoint(str(tmp_path / "c"), include_mtg=False)
+    data_structure = _population()
+    _models(data_structure)
+    data_structure.checkpoint(str(tmp_path / "c"), include_mtg=False)
     with pytest.raises(ValueError, match="holds no MTG"):
         MPGDataStructure.restore(str(tmp_path / "c"))
-    restored = MPGDataStructure.restore(str(tmp_path / "c"), mtg=ds.mtg)
-    np.testing.assert_array_equal(restored.get("length"), ds.get("length"))
+    restored = MPGDataStructure.restore(str(tmp_path / "c"), mtg=data_structure.mtg)
+    np.testing.assert_array_equal(restored.get("length"), data_structure.get("length"))
     with pytest.raises(ValueError, match="differ from the checkpointed ones"):
-        MPGDataStructure.restore(str(tmp_path / "c"), mtg=_grown(ds))
+        MPGDataStructure.restore(str(tmp_path / "c"), mtg=_grown(data_structure))
 
 
-def _grown(ds):
+def _grown(data_structure):
     import pickle
-    g = pickle.loads(pickle.dumps(ds.mtg))
-    other = MPGDataStructure(g, from_scale=g.scales.SubOrgan)
+    mtg = pickle.loads(pickle.dumps(data_structure.mtg))
+    other = MPGDataStructure(mtg, from_scale=mtg.scales.SubOrgan)
     growth = RootGrowthProbe(data_structure=other)
     for _ in range(4):
         growth()
@@ -112,12 +112,12 @@ def _grown(ds):
 
 
 def test_lambdas_are_refused_with_a_hint(tmp_path):
-    ds = _population()
-    _models(ds)
-    ds.derive("twice", {"length": 2.})
-    ds.define_mask("long", lambda d: d.get("length") > 0.5)
+    data_structure = _population()
+    _models(data_structure)
+    data_structure.derive("twice", {"length": 2.})
+    data_structure.define_mask("long", lambda d: d.get("length") > 0.5)
     with pytest.raises(TypeError, match="module-level functions"):
-        ds.checkpoint(str(tmp_path / "c"))
+        data_structure.checkpoint(str(tmp_path / "c"))
 
 
 @dataclass
@@ -147,17 +147,17 @@ def test_a_restored_grid_continues_bit_for_bit(tmp_path):
 
 def test_a_restored_anatomy_keeps_rewiring_incrementally(tmp_path):
     from anatomy import grow_segment, make_rooted_anatomy, wiring
-    g, segments, _ = make_rooted_anatomy(3)
-    ds = MPGDataStructure(g, from_scale=g.scales.SubOrgan, nodes="Compartment", wiring=wiring(g))
-    ds.register("water", np.arange(ds.n_nodes(), dtype=float), location="node", on_grow="inherit")
-    ds.register("flux", np.arange(ds.n_edges(), dtype=float), location="edge")
-    ds.checkpoint(str(tmp_path / "anatomy"))
+    mtg, segments, _ = make_rooted_anatomy(3)
+    data_structure = MPGDataStructure(mtg, from_scale=mtg.scales.SubOrgan, nodes="Compartment", wiring=wiring(mtg))
+    data_structure.register("water", np.arange(data_structure.n_nodes(), dtype=float), location="node", on_grow="inherit")
+    data_structure.register("flux", np.arange(data_structure.n_edges(), dtype=float), location="edge")
+    data_structure.checkpoint(str(tmp_path / "anatomy"))
     restored = MPGDataStructure.restore(str(tmp_path / "anatomy"))
-    np.testing.assert_array_equal(restored.entity_ids("edge"), ds.entity_ids("edge"))
-    for original in (ds, restored):              # the same growth on both MTGs
+    np.testing.assert_array_equal(restored.entity_ids("edge"), data_structure.entity_ids("edge"))
+    for original in (data_structure, restored):              # the same growth on both MTGs
         grow_segment(original._mtg, max(original._mtg.vertices(scale=original._mtg.scales.SubOrgan)))
         original.update_topology()
-    assert restored.rewired == ds.rewired
-    np.testing.assert_array_equal(restored.entity_ids("edge"), ds.entity_ids("edge"))
+    assert restored.rewired == data_structure.rewired
+    np.testing.assert_array_equal(restored.entity_ids("edge"), data_structure.entity_ids("edge"))
     for name in ("water", "flux"):
-        np.testing.assert_array_equal(restored.get(name), ds.get(name))
+        np.testing.assert_array_equal(restored.get(name), data_structure.get(name))

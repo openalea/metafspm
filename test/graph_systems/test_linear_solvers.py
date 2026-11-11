@@ -188,7 +188,7 @@ def test_an_optional_solver_itself_keeps_its_analysis_the_same_whatever_the_thre
                 if values is A:
                     analysed = factors
                 else:
-                    assert all(f is g for f, g in zip(factors, analysed))          # the analysis kept
+                    assert all(f is mtg for f, mtg in zip(factors, analysed))          # the analysis kept
             solutions.append(x)
     np.testing.assert_array_equal(solutions[0], solutions[1])
 
@@ -377,8 +377,8 @@ def _run(component_class):
         from_scale, nodes, initiators = "SubOrgan", "Compartment", (LengthSegments,)
 
         @staticmethod
-        def wiring(g):
-            return wiring(g)
+        def wiring(mtg):
+            return wiring(mtg)
 
         parts = {"hydraulics": component_class}
     population = population_data_structure(planting([Planting()], ChainPlant, {}), ChainPlant)

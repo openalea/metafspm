@@ -35,14 +35,14 @@ def test_plant_scenarios_set_object_and_boolean_parameters_per_plant():
     table = pd.DataFrame([dict(plant=f"p{i}", model=Model, x=float(i), y=0., depth=0., rotation=0., scenario=s)
                           for i, s in enumerate(scenarios)])
     population = population_data_structure(table, Model)
-    ds = population.data_structure
-    assert ds.location("anatomy") == "Plant" and ds.location("with_soil") == "Plant"
-    assert list(ds.get("anatomy")) == [{"cortex": {"n_layers": 3}}, None, {"seed": 4}]
-    np.testing.assert_array_equal(np.asarray(ds.get("with_soil"), dtype=bool), [True, False, False])
-    records = np.empty(len(ds.entity_ids("Organ")), dtype=object)
+    data_structure = population.data_structure
+    assert data_structure.location("anatomy") == "Plant" and data_structure.location("with_soil") == "Plant"
+    assert list(data_structure.get("anatomy")) == [{"cortex": {"n_layers": 3}}, None, {"seed": 4}]
+    np.testing.assert_array_equal(np.asarray(data_structure.get("with_soil"), dtype=bool), [True, False, False])
+    records = np.empty(len(data_structure.entity_ids("Organ")), dtype=object)
     records[:] = [(2., 0.5)] * records.size                         # e.g. an organ's class key
-    ds.set("record", records)
-    assert ds.location("record") == "Organ" and ds.get("record")[0] == (2., 0.5)
+    data_structure.set("record", records)
+    assert data_structure.location("record") == "Organ" and data_structure.get("record")[0] == (2., 0.5)
 
 
 def test_a_scene_takes_them_per_plant_too():

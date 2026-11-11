@@ -20,11 +20,11 @@ DOC = dict(unit="adim", unit_comment="", description="", min_value=0., max_value
 
 
 @pytest.fixture
-def ds():
-    g, _ = generate_simple_mpg_seedling()
-    g.populate_graph(g.scales.SubOrgan)
-    g.convert_properties_to_arraydict()
-    return MPGDataStructure(g, from_scale=g.scales.SubOrgan)
+def data_structure():
+    mtg, _ = generate_simple_mpg_seedling()
+    mtg.populate_graph(mtg.scales.SubOrgan)
+    mtg.convert_properties_to_arraydict()
+    return MPGDataStructure(mtg, from_scale=mtg.scales.SubOrgan)
 
 
 # ---------------------------------------------------------------- undeclared outputs
@@ -55,13 +55,13 @@ class Steps(FunctionalComponent):
         return np.sum(level)
 
 
-def test_step_outputs_take_the_locations_given_to_the_decorator(ds):
-    model = Steps(data_structure=ds)
+def test_step_outputs_take_the_locations_given_to_the_decorator(data_structure):
+    model = Steps(data_structure=data_structure)
     model()
-    assert ds.location("edge_value") == "edge"
-    assert ds.location("organ_count") == "Organ"     # a scale name, resolved against the graph
-    assert ds.location("total_level") == "scalar"
-    assert float(ds.get("total_level")) == ds.n_nodes()
+    assert data_structure.location("edge_value") == "edge"
+    assert data_structure.location("organ_count") == "Organ"     # a scale name, resolved against the graph
+    assert data_structure.location("total_level") == "scalar"
+    assert float(data_structure.get("total_level")) == data_structure.n_nodes()
 
 
 @dataclass
@@ -74,12 +74,12 @@ class Declared(FunctionalComponent):
         return 2. * level
 
 
-def test_declared_outputs_need_no_location(ds):
-    model = Declared(data_structure=ds)
+def test_declared_outputs_need_no_location(data_structure):
+    model = Declared(data_structure=data_structure)
     with warnings.catch_warnings():
         warnings.simplefilter("error", DeprecationWarning)
         model()
-    np.testing.assert_array_equal(ds.get("doubled"), 2.)
+    np.testing.assert_array_equal(data_structure.get("doubled"), 2.)
 
 
 @dataclass
@@ -91,9 +91,9 @@ class GridSteps(FunctionalComponent):
         return 0.5 * water
 
 def test_an_undeclared_grid_output_raises():
-    ds = ArrayDataStructure(shape=(2, 2, 2))
+    data_structure = ArrayDataStructure(shape=(2, 2, 2))
     with pytest.raises(ValueError, match="GridSteps.drained: output 'drained' has no declared location"):
-        GridSteps(data_structure=ds)()
+        GridSteps(data_structure=data_structure)()
 
 
 @dataclass
@@ -107,8 +107,8 @@ class MiscountedOutputs(FunctionalComponent):
         return level, "other", level, "third", level        # two supplementary outputs, one declared
 
 
-def test_a_step_returning_more_outputs_than_its_annotation_declares_raises(ds):
+def test_a_step_returning_more_outputs_than_its_annotation_declares_raises(data_structure):
     """A step's supplementary outputs are counted by its annotation: a return that does not match it raises,
     instead of the extra outputs being dropped."""
     with pytest.raises(ValueError, match="returns 5 items, its annotation declares 3"):
-        MiscountedOutputs(data_structure=ds)()
+        MiscountedOutputs(data_structure=data_structure)()

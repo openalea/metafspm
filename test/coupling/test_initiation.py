@@ -28,18 +28,18 @@ class Organs(StructuralComponent):
     element_area: float = state_variable(**DOC, default=0., scale=scales.SubOrgan, kind="extensive")
 
     @classmethod
-    def initiate_plant(cls, g, plant, parameters):
-        s, L = g.scales, g.labels
+    def initiate_plant(cls, mtg, plant, parameters):
+        s, L = mtg.scales, mtg.labels
         complex_ = plant
         for scale, label in ((s.Axis, L.Axis.Shoot), (s.GrowthUnit, L.GrowthUnit.Shoot), (s.Phytomer, L.Phytomer.Shoot)):
-            complex_ = g.add_component(complex_, **PropsConfig(scale=scale, edge_type='/', label=label))
+            complex_ = mtg.add_component(complex_, **PropsConfig(scale=scale, edge_type='/', label=label))
         for diameter, areas in zip(DIAMETERS, AREAS):
-            organ = g.add_component(complex_, **PropsConfig(scale=s.Organ, edge_type='/', label=L.Organ.StemInternode))
-            g.set_values("diameter", [organ], [diameter])
+            organ = mtg.add_component(complex_, **PropsConfig(scale=s.Organ, edge_type='/', label=L.Organ.StemInternode))
+            mtg.set_values("diameter", [organ], [diameter])
             for area in areas:
-                element = g.add_component(organ, **PropsConfig(scale=s.SubOrgan, edge_type='/',
+                element = mtg.add_component(organ, **PropsConfig(scale=s.SubOrgan, edge_type='/',
                                                                label=L.SubOrgan.StemElement))
-                g.set_values("element_area", [element], [area])
+                mtg.set_values("element_area", [element], [area])
 
 
 @dataclass
@@ -51,11 +51,11 @@ class Reader(StructuralComponent):
     seen = {}
 
     @classmethod
-    def initiate_plant(cls, g, plant, parameters):
-        for name, scale in (("stem_radius", g.scales.SubOrgan), ("organ_area", g.scales.Organ),
-                            ("inverse_diameter", g.scales.Organ)):
-            prop = g.properties().get(name, {})
-            cls.seen[(plant, name)] = [prop.get(int(v)) for v in g.components_at_scale(plant, scale=scale)]
+    def initiate_plant(cls, mtg, plant, parameters):
+        for name, scale in (("stem_radius", mtg.scales.SubOrgan), ("organ_area", mtg.scales.Organ),
+                            ("inverse_diameter", mtg.scales.Organ)):
+            prop = mtg.properties().get(name, {})
+            cls.seen[(plant, name)] = [prop.get(int(v)) for v in mtg.components_at_scale(plant, scale=scale)]
 
 
 TRANSLATOR = (Translator()
@@ -73,7 +73,7 @@ def _table(n_plants=2):
 
 def test_a_later_initiator_sees_its_linked_inputs_when_it_builds():
     Reader.seen.clear()
-    g, plants = _build_population(_table(), initiators=(Organs, Reader), translator=TRANSLATOR)
+    mtg, plants = _build_population(_table(), initiators=(Organs, Reader), translator=TRANSLATOR)
     for plant in plants:
         assert Reader.seen[(plant, "stem_radius")] == [0.5 * d for d in DIAMETERS for _ in range(2)]   # broadcast
         assert Reader.seen[(plant, "organ_area")] == [sum(a) for a in AREAS]                            # sum up

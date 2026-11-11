@@ -35,10 +35,10 @@ def scene(folder=None, tolerance=1e-6, root_radial_k=(0.4, 0.5, 0.6), soil_scena
 
 def per_plant(built):
     """Transpiration and root radial conductance of each plant."""
-    ds = built.populations[0].data_structure
-    plant = np.asarray(ds.owner("Plant"))
-    evaporation = np.bincount(plant, weights=np.asarray(ds.get("evaporation")), minlength=len(ds.entity_ids("Plant")))
-    for name, k, e in zip(built.populations[0].table["plant"], np.asarray(ds.get("root_radial_k")), evaporation):
+    data_structure = built.populations[0].data_structure
+    plant = np.asarray(data_structure.owner("Plant"))
+    evaporation = np.bincount(plant, weights=np.asarray(data_structure.get("evaporation")), minlength=len(data_structure.entity_ids("Plant")))
+    for name, k, e in zip(built.populations[0].table["plant"], np.asarray(data_structure.get("root_radial_k")), evaporation):
         print(f"  {name}: root radial k {k:.2f}, transpiration {e:.4f} mm3 s-1")
 
 

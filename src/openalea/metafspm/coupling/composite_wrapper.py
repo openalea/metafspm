@@ -7,8 +7,8 @@ from openalea.metafspm.coupling.translator import Translator, matches
 
 def _live_data_structure(component):
     """The component's DataStructure when it supports live reading (get/set/register), else None."""
-    ds = getattr(component, "data_structure", None)
-    return ds if (ds is not None and hasattr(ds, "register") and hasattr(ds, "get")) else None
+    data_structure = getattr(component, "data_structure", None)
+    return data_structure if (data_structure is not None and hasattr(data_structure, "register") and hasattr(data_structure, "get")) else None
 
 
 _NESTED = ContextVar("metafspm_nested_model", default=False)     # a model built as another's part
@@ -120,10 +120,10 @@ class CompositeModel:
         self._couple_on_data_structures(self.translator)
         checked = []
         for component in self.components:
-            ds = component.data_structure
-            if hasattr(ds, "validate_variables") and not any(ds is other for other in checked):
-                ds.validate_variables()
-                checked.append(ds)
+            data_structure = component.data_structure
+            if hasattr(data_structure, "validate_variables") and not any(data_structure is other for other in checked):
+                data_structure.validate_variables()
+                checked.append(data_structure)
 
     def steps(self) -> list:
         """The model's schedule bound (coupling.schedule.ScheduledStep: name, form, components, stages, cadence,
@@ -242,77 +242,77 @@ class CompositeModel:
             receiver, provider = by_name[link.receiver], by_name[link.provider]
             # views of one DataStructure at the components' scales (LocatedView) are that DataStructure: linked on it,
             # their locations named as there
-            ds = _base_of(receiver.data_structure)
-            if _base_of(provider.data_structure) is not ds:
+            data_structure = _base_of(receiver.data_structure)
+            if _base_of(provider.data_structure) is not data_structure:
                 raise NotImplementedError(f"{link.receiver}.{link.variable} <- {link.provider}: coupling across "
                                           "DataStructures goes through the Scene (coupling.cross.Exchanges)")
             link = check_link(link, receiver, provider)
-            link = self._geometric_sources(link, receiver, ds)
-            self._check_link_scales(link, ds)
+            link = self._geometric_sources(link, receiver, data_structure)
+            self._check_link_scales(link, data_structure)
             detail = link.mapped_detail
             if link.names:                          # a receiver-private name: always the link's own variable
-                self._derive_private(link, receiver, ds)
+                self._derive_private(link, receiver, data_structure)
                 continue
             if detail == "identity":
                 continue
-            crosses_locations = (detail == "alias" and ds.has(link.variable)
-                                 and ds.location(link.variable) != ds.location(next(iter(link.sources))))
+            crosses_locations = (detail == "alias" and data_structure.has(link.variable)
+                                 and data_structure.location(link.variable) != data_structure.location(next(iter(link.sources))))
             if detail == "alias" and not crosses_locations:
                 (source,) = link.sources
-                if ds.has(link.variable) and link.variable not in ds.aliases():
-                    ds.unregister(link.variable)
-                ds.alias(link.variable, source)
+                if data_structure.has(link.variable) and link.variable not in data_structure.aliases():
+                    data_structure.unregister(link.variable)
+                data_structure.alias(link.variable, source)
                 continue
             if detail == "same_name_factor":
                 raise ValueError(f"{link.receiver}.{link.variable} is linked to {link.provider}.{link.variable} with "
                                  f"factor {link.sources[link.variable]}: a same-name link within one data structure "
                                  "must have a factor of 1, rename the receiving variable")
-            location = ds.location(link.variable) if ds.has(link.variable) else self._receiving_location(link,
-                                                                                                         receiver, ds)
+            location = data_structure.location(link.variable) if data_structure.has(link.variable) else self._receiving_location(link,
+                                                                                                         receiver, data_structure)
             aggregation, weight = link.aggregation, link.weight
             if location is not None and (aggregation is None or (weight is None and aggregation in
                                                                  ("weighted_mean", "split"))):
-                default, weight = self._default_link_mapping(ds, link, location)
+                default, weight = self._default_link_mapping(data_structure, link, location)
                 aggregation = aggregation or default
             options = dict(location=location, aggregation=aggregation, weight=weight, where=link.target,
-                           missing=link.missing, default=self._receiving_default(link, receiver, ds))
+                           missing=link.missing, default=self._receiving_default(link, receiver, data_structure))
             if link.formula is not None:
-                ds.derive(link.variable, link.sources, formula=link.formula, **options)
+                data_structure.derive(link.variable, link.sources, formula=link.formula, **options)
             else:
-                ds.derive(link.variable, dict(link.sources), **options)
+                data_structure.derive(link.variable, dict(link.sources), **options)
             derived_inputs = receiver.__dict__.setdefault("_derived_inputs", [])
             if link.variable not in derived_inputs:
                 derived_inputs.append(link.variable)
 
-    def _geometric_sources(self, link, receiver, ds):
+    def _geometric_sources(self, link, receiver, data_structure):
         """The link with its geometric sources (coupling.geometry.FractionIn, CentreIn) replaced by the geometric
-        variables *ds* derives for them (DataStructure.derive_geometry), at the receiving location."""
+        variables *data_structure* derives for them (DataStructure.derive_geometry), at the receiving location."""
         from dataclasses import replace
         from openalea.metafspm.coupling.geometry import GEOMETRIC_SOURCES
         if not any(isinstance(source, GEOMETRIC_SOURCES) for source in link.sources):
             return link
-        location = ds.location(link.variable) if ds.has(link.variable) else self._receiving_location(link, receiver,
-                                                                                                    ds)
+        location = data_structure.location(link.variable) if data_structure.has(link.variable) else self._receiving_location(link, receiver,
+                                                                                                    data_structure)
         renamed = {}
         for source in link.sources:
             if isinstance(source, GEOMETRIC_SOURCES):
-                if not ds.has(source.name):
-                    ds.derive_geometry(source.name, source, location=location)
+                if not data_structure.has(source.name):
+                    data_structure.derive_geometry(source.name, source, location=location)
                 renamed[source] = source.name
         if link.formula is not None:
             return replace(link, sources=tuple(renamed.get(source, source) for source in link.sources))
         return replace(link, sources={renamed.get(source, source): factor for source, factor in link.raw_factors.items()})
 
-    def _derive_private(self, link, receiver, ds) -> None:
+    def _derive_private(self, link, receiver, data_structure) -> None:
         """A link with a receiver-private name (Link.names): its values derived under that name, which the receiver
         reads as its variable (DataStructure.private_names around its calls), with the variable's declared metadata;
         the variable of that name the other components share untouched."""
         private = link.private_name
-        if ds.has(private) and private not in ds.derived():
+        if data_structure.has(private) and private not in data_structure.derived():
             raise ValueError(f"{link.receiver}.{link.variable} <- {link.provider}: its private name '{private}' is "
                              "already a variable of the DataStructure")
-        location = ds.location(link.variable) if ds.has(link.variable) else self._receiving_location(link, receiver,
-                                                                                                    ds)
+        location = data_structure.location(link.variable) if data_structure.has(link.variable) else self._receiving_location(link, receiver,
+                                                                                                    data_structure)
         renamed = type(link)(link.receiver, private, link.provider, link.sources if link.formula is not None
                              else link.raw_factors, scale=link.scale, source_scale=link.source_scale,
                              aggregation=link.aggregation, weight=link.weight, target=link.target,
@@ -320,16 +320,16 @@ class CompositeModel:
         aggregation, weight = link.aggregation, link.weight
         if location is not None and (aggregation is None or (weight is None and aggregation in
                                                              ("weighted_mean", "split"))):
-            default, weight = self._default_link_mapping(ds, renamed, location)
+            default, weight = self._default_link_mapping(data_structure, renamed, location)
             aggregation = aggregation or default
         options = dict(location=location, aggregation=aggregation, weight=weight, where=link.target,
-                       missing=link.missing, default=self._receiving_default(link, receiver, ds))
+                       missing=link.missing, default=self._receiving_default(link, receiver, data_structure))
         if link.formula is not None:
-            ds.derive(private, link.sources, formula=link.formula, **options)
+            data_structure.derive(private, link.sources, formula=link.formula, **options)
         else:
-            ds.derive(private, dict(link.sources), **options)
-        meta = ds._variable_meta()
-        declared = meta.get(ds._resolve(link.variable), {}) if ds.has(link.variable) else {}
+            data_structure.derive(private, dict(link.sources), **options)
+        meta = data_structure._variable_meta()
+        declared = meta.get(data_structure._resolve(link.variable), {}) if data_structure.has(link.variable) else {}
         meta.setdefault(private, {}).update({key: value for key, value in declared.items() if key != "derived"})
         names = receiver.__dict__.setdefault("_private_names", {})
         names[link.variable] = private
@@ -338,19 +338,19 @@ class CompositeModel:
             derived_inputs.append(private)
 
     @staticmethod
-    def _receiving_location(link, receiver, ds) -> Optional[str]:
+    def _receiving_location(link, receiver, data_structure) -> Optional[str]:
         """
-        Where a link derives its receiving variable not yet on *ds* (an optional input nothing registered): the
-        link's scale, else the receiver's declaration (on the view it works on, named as on *ds*); both given, they
+        Where a link derives its receiving variable not yet on *data_structure* (an optional input nothing registered): the
+        link's scale, else the receiver's declaration (on the view it works on, named as on *data_structure*); both given, they
         must agree. None when neither says (the sources' location).
         """
         from openalea.metafspm.coupling.declaration import location_of_scale
-        stated = location_of_scale(ds, link.scale) if link.scale is not None else None
+        stated = location_of_scale(data_structure, link.scale) if link.scale is not None else None
         spec = receiver.variable_specs.get(link.variable)
         declared = None
         if spec is not None:
             declared, at = spec.location, receiver.data_structure.__dict__.get("_at")
-            if receiver.data_structure is not ds and at is not None and declared in (None, "node"):
+            if receiver.data_structure is not data_structure and at is not None and declared in (None, "node"):
                 declared = at                           # a view's nodes: the entities of its location (LocatedView)
         if stated is not None and declared is not None and stated != declared:
             raise ValueError(f"{link.receiver}.{link.variable} <- {link.provider}: the link states scale "
@@ -358,13 +358,13 @@ class CompositeModel:
         return stated or declared
 
     @staticmethod
-    def _receiving_default(link, receiver, ds) -> float:
+    def _receiving_default(link, receiver, data_structure) -> float:
         """The receiving variable's default (its value without a provider): the receiver's declaration's, else what
-        *ds* holds of it, else 0."""
+        *data_structure* holds of it, else 0."""
         spec = receiver.variable_specs.get(link.variable)
         default = spec.default if spec is not None else None
         if default is None:
-            default = ds._variable_meta().get(ds._resolve(link.variable) if ds.has(link.variable) else link.variable,
+            default = data_structure._variable_meta().get(data_structure._resolve(link.variable) if data_structure.has(link.variable) else link.variable,
                                               {}).get("default")
         try:
             return 0. if default is None else float(default)
@@ -372,20 +372,20 @@ class CompositeModel:
             return 0.
 
     @staticmethod
-    def _check_link_scales(link, ds) -> None:
+    def _check_link_scales(link, data_structure) -> None:
         """A link stating its scales must agree with the declared locations (the declarations rule)."""
         from openalea.metafspm.coupling.declaration import location_of_scale
         checks = [(link.variable, link.scale)] + [(source, link.source_scale) for source in link.sources]
         for name, scale in checks:
-            if scale is None or not ds.has(name):
+            if scale is None or not data_structure.has(name):
                 continue
-            expected, actual = location_of_scale(ds, scale), ds.location(name)
+            expected, actual = location_of_scale(data_structure, scale), data_structure.location(name)
             if expected != actual:
                 raise ValueError(f"{link.receiver}.{link.variable} <- {link.provider}: the link states that '{name}' "
                                  f"is at scale {scale} ({expected}), but it is declared at {actual}")
 
     @staticmethod
-    def _default_link_mapping(ds, link, location):
+    def _default_link_mapping(data_structure, link, location):
         """
         (mapping, weight) of a link between two locations that gives no aggregation (or a weighted one without its
         weight), from its sources' kind; the weight is the link's, else the one declared on the
@@ -393,24 +393,24 @@ class CompositeModel:
         (None, the link's weight) when the locations are the same.
         """
         from openalea.metafspm.coupling.declaration import DeclarationError, default_aggregation, link_direction
-        source_locations = {ds.location(source) for source in link.sources}
+        source_locations = {data_structure.location(source) for source in link.sources}
         if len(source_locations) != 1 or location in source_locations:
             return None, link.weight
         (source_location,) = source_locations
         name = f"{link.receiver}.{link.variable} <- {link.provider}"
-        direction = link_direction(ds, source_location, location)
+        direction = link_direction(data_structure, source_location, location)
         if direction is None:
             raise DeclarationError(f"{name}: from {source_location} to {location} has no default mapping, give "
                                    "aggregation=")
-        kinds = {ds._variable_meta().get(ds._resolve(source), {}).get("kind") for source in link.sources}
+        kinds = {data_structure._variable_meta().get(data_structure._resolve(source), {}).get("kind") for source in link.sources}
         if len(kinds) != 1:
             raise DeclarationError(f"{name}: its sources have different kinds {sorted(map(str, kinds))}, give "
                                    "aggregation=")
         (kind,) = kinds
         weight = link.weight
         if weight is None:
-            meta = ds._variable_meta()
-            weighed = [ds._resolve(source) for source in link.sources] if direction == "up" else [link.variable]
+            meta = data_structure._variable_meta()
+            weighed = [data_structure._resolve(source) for source in link.sources] if direction == "up" else [link.variable]
             declared = {meta.get(name_, {}).get("weight") for name_ in weighed}
             weight = declared.pop() if len(declared) == 1 else None
         try:

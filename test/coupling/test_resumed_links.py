@@ -29,16 +29,16 @@ class Elements(StructuralComponent):
     element_area: float = state_variable(**DOC, default=0., scale=scales.SubOrgan, kind="extensive")
 
     @classmethod
-    def initiate_plant(cls, g, plant, parameters):
-        s, L = g.scales, g.labels
+    def initiate_plant(cls, mtg, plant, parameters):
+        s, L = mtg.scales, mtg.labels
         complex_ = plant
         for scale, label in ((s.Axis, L.Axis.Shoot), (s.GrowthUnit, L.GrowthUnit.Shoot), (s.Phytomer, L.Phytomer.Shoot),
                              (s.Organ, L.Organ.StemInternode)):
-            complex_ = g.add_component(complex_, **PropsConfig(scale=scale, edge_type='/', label=label))
+            complex_ = mtg.add_component(complex_, **PropsConfig(scale=scale, edge_type='/', label=label))
         for area in AREAS:
-            element = g.add_component(complex_, **PropsConfig(scale=s.SubOrgan, edge_type='/',
+            element = mtg.add_component(complex_, **PropsConfig(scale=s.SubOrgan, edge_type='/',
                                                               label=L.SubOrgan.StemElement))
-            g.set_values("element_area", [element], [area])
+            mtg.set_values("element_area", [element], [area])
 
 
 @dataclass
@@ -102,24 +102,24 @@ def test_a_resumed_run_uses_its_translator_s_changed_formula(tmp_path):
     np.testing.assert_allclose(saved.data_structure.get("flux"), np.asarray(AREAS))      # 2 × half the area
     resumed = _population(_link(quarter))
     resumed.data_structure.load_checkpoint(path)
-    ds = resumed.data_structure
-    assert ds.derived()["exchanging_area"]["formula"] is quarter
-    np.testing.assert_allclose(ds.get("flux"), np.asarray(AREAS))             # the saved state, as it was
-    np.testing.assert_allclose(ds.get("exchanging_area"), 0.25 * np.asarray(AREAS))      # recomputed when read
+    data_structure = resumed.data_structure
+    assert data_structure.derived()["exchanging_area"]["formula"] is quarter
+    np.testing.assert_allclose(data_structure.get("flux"), np.asarray(AREAS))             # the saved state, as it was
+    np.testing.assert_allclose(data_structure.get("exchanging_area"), 0.25 * np.asarray(AREAS))      # recomputed when read
     resumed.instance.run()
-    np.testing.assert_allclose(ds.get("flux"), 0.5 * np.asarray(AREAS))
+    np.testing.assert_allclose(data_structure.get("flux"), 0.5 * np.asarray(AREAS))
 
 
 def test_an_unchanged_link_is_kept_as_saved(tmp_path):
     saved, path = _checkpointed(tmp_path, _link(half))
     resumed = _population(_link(half))
     resumed.data_structure.load_checkpoint(path)
-    ds = resumed.data_structure
-    assert not ds.is_stale("exchanging_area")                 # its saved values up to date with the loaded sources
-    np.testing.assert_array_equal(ds.get("exchanging_area"), saved.data_structure.get("exchanging_area"))
+    data_structure = resumed.data_structure
+    assert not data_structure.is_stale("exchanging_area")                 # its saved values up to date with the loaded sources
+    np.testing.assert_array_equal(data_structure.get("exchanging_area"), saved.data_structure.get("exchanging_area"))
     resumed.instance.run()
     saved.instance.run()
-    np.testing.assert_array_equal(ds.get("flux"), saved.data_structure.get("flux"))
+    np.testing.assert_array_equal(data_structure.get("flux"), saved.data_structure.get("flux"))
 
 
 def test_a_new_link_and_a_dropped_one(tmp_path):
@@ -129,11 +129,11 @@ def test_a_new_link_and_a_dropped_one(tmp_path):
     translator = Translator().link("Exchange", "emerged_area", "Elements", ("element_area",), formula=tenth)
     resumed = _population(translator)
     resumed.data_structure.load_checkpoint(path)
-    ds = resumed.data_structure
-    assert set(ds.derived()) == {"emerged_area"}
-    np.testing.assert_allclose(ds.get("emerged_area"), 0.1 * np.asarray(AREAS))
-    np.testing.assert_allclose(ds.get("exchanging_area"), 0.5 * np.asarray(AREAS))        # as saved
-    ds.validate_variables(strict=True)
+    data_structure = resumed.data_structure
+    assert set(data_structure.derived()) == {"emerged_area"}
+    np.testing.assert_allclose(data_structure.get("emerged_area"), 0.1 * np.asarray(AREAS))
+    np.testing.assert_allclose(data_structure.get("exchanging_area"), 0.5 * np.asarray(AREAS))        # as saved
+    data_structure.validate_variables(strict=True)
 
 
 def test_a_changed_alias_is_refused(tmp_path):

@@ -66,39 +66,39 @@ def _scene(model=WheatPlant, time_step=DAY, scenarios=None, sowing_depths=SOWING
                  forcings={"air_temperature": 15.})
 
 
-def _vertices(g, label, scale="SubOrgan"):
-    code = getattr(getattr(g.labels, scale), label)
-    return sorted(v for v in g.vertices(scale=getattr(g.scales, scale)) if g.label(v) == code)
+def _vertices(mtg, label, scale="SubOrgan"):
+    code = getattr(getattr(mtg.labels, scale), label)
+    return sorted(v for v in mtg.vertices(scale=getattr(mtg.scales, scale)) if mtg.label(v) == code)
 
 
-def _nodal_roots(g, bearer):
+def _nodal_roots(mtg, bearer):
     """The root axes '+' on *bearer* (their first elements)."""
-    roots = {getattr(g.labels.SubOrgan, label) for label in ROOT_LABELS}
-    return sorted(v for v in g.children(bearer) if g.edge_type(v) == '+' and g.label(v) in roots)
+    roots = {getattr(mtg.labels.SubOrgan, label) for label in ROOT_LABELS}
+    return sorted(v for v in mtg.children(bearer) if mtg.edge_type(v) == '+' and mtg.label(v) in roots)
 
 
-def _phytomers(ds):
+def _phytomers(data_structure):
     """{(plant index, axis row, rank): phytomer id} of the shoot's phytomers."""
-    ids = np.asarray(ds.entity_ids("Phytomer"))
-    axis = np.asarray(ds.owner("Axis", of="Phytomer"))
-    row = np.asarray(ds.get("axis_row"))[axis]
-    plant = np.asarray(ds.owner("Plant", of="Phytomer"))
-    rank = np.asarray(ds.get("phytomer_rank"))
+    ids = np.asarray(data_structure.entity_ids("Phytomer"))
+    axis = np.asarray(data_structure.owner("Axis", of="Phytomer"))
+    row = np.asarray(data_structure.get("axis_row"))[axis]
+    plant = np.asarray(data_structure.owner("Plant", of="Phytomer"))
+    rank = np.asarray(data_structure.get("phytomer_rank"))
     return {(int(plant[k]), int(row[k]), int(rank[k])): int(ids[k]) for k in np.flatnonzero(row >= 0)}
 
 
 def _record(scene):
     """After each step: the plants' thermal time, and per shoot phytomer its leaf's appearance, the nodal roots asked
     for on it and those grown on its bearer."""
-    ds = scene.populations[0].data_structure
-    g = ds.structure
-    phytomers = _phytomers(ds)
-    index = ds.index_of(list(phytomers.values()), location="Phytomer")
-    bearers = ds.bearer("Phytomer", list(phytomers.values()))
-    values = {name: np.asarray(ds.get(name))[index] for name in ("leaf_appearance_time", "nodal_axes_requested",
+    data_structure = scene.populations[0].data_structure
+    mtg = data_structure.structure
+    phytomers = _phytomers(data_structure)
+    index = data_structure.index_of(list(phytomers.values()), location="Phytomer")
+    bearers = data_structure.bearer("Phytomer", list(phytomers.values()))
+    values = {name: np.asarray(data_structure.get(name))[index] for name in ("leaf_appearance_time", "nodal_axes_requested",
                                                                    "nodal_axes_emerged")}
-    return {"thermal_time": np.asarray(ds.get("thermal_time")).copy(),
-            "phytomers": {key: dict(id=vid, bearer=int(bearer), roots=_nodal_roots(g, int(bearer)),
+    return {"thermal_time": np.asarray(data_structure.get("thermal_time")).copy(),
+            "phytomers": {key: dict(id=vid, bearer=int(bearer), roots=_nodal_roots(mtg, int(bearer)),
                                     **{name: float(values[name][k]) for name in values})
                           for k, ((key, vid), bearer) in enumerate(zip(phytomers.items(), bearers))}}
 
@@ -113,14 +113,14 @@ def grown():
     return scene, history
 
 
-def _crown(g, plant):
+def _crown(mtg, plant):
     """(the seed, the subcrown internode's StemElements from the seed up) of *plant*."""
-    (seed,) = [v for v in _vertices(g, "Seed") if g.complex_at_scale(v, g.scales.Plant) == plant]
+    (seed,) = [v for v in _vertices(mtg, "Seed") if mtg.complex_at_scale(v, mtg.scales.Plant) == plant]
     elements = []
     while True:
-        following = [v for v in g.children(seed if not elements else elements[-1])
-                     if g.edge_type(v) == '<' and g.label(v) == g.labels.SubOrgan.StemElement
-                     and g.complex_at_scale(v, g.scales.Organ) == g.complex_at_scale(seed, g.scales.Organ)]
+        following = [v for v in mtg.children(seed if not elements else elements[-1])
+                     if mtg.edge_type(v) == '<' and mtg.label(v) == mtg.labels.SubOrgan.StemElement
+                     and mtg.complex_at_scale(v, mtg.scales.Organ) == mtg.complex_at_scale(seed, mtg.scales.Organ)]
         if not following:
             return seed, elements
         elements.append(following[0])
@@ -128,56 +128,56 @@ def _crown(g, plant):
 
 def test_the_seed_and_the_subcrown_internode(grown):
     scene, _ = grown
-    ds = scene.populations[0].data_structure
-    g = ds.structure
-    plants = ds.entity_ids("Plant").tolist()
+    data_structure = scene.populations[0].data_structure
+    mtg = data_structure.structure
+    plants = data_structure.entity_ids("Plant").tolist()
     for plant, sowing_depth in zip(plants, SOWING_DEPTHS):
-        seed, elements = _crown(g, plant)
+        seed, elements = _crown(mtg, plant)
         assert len(elements) == SUBCROWN_ELEMENTS
-        organ = g.complex_at_scale(seed, g.scales.Organ)
-        assert g.label(organ) == g.labels.Organ.StemInternode and g.edge_type(elements[0]) == '<'
-        axis = g.complex_at_scale(seed, g.scales.Axis)
-        assert g.label(axis) == g.labels.Axis.Shoot
-        assert np.asarray(ds.get("axis_row"))[ds.index_of([axis], location="Axis")][0] == -1   # not Adel's axis
-        index = ds.index_of([seed] + elements)
-        z1, z2 = (np.asarray(ds.get(name))[index] for name in ("z1", "z2"))
+        organ = mtg.complex_at_scale(seed, mtg.scales.Organ)
+        assert mtg.label(organ) == mtg.labels.Organ.StemInternode and mtg.edge_type(elements[0]) == '<'
+        axis = mtg.complex_at_scale(seed, mtg.scales.Axis)
+        assert mtg.label(axis) == mtg.labels.Axis.Shoot
+        assert np.asarray(data_structure.get("axis_row"))[data_structure.index_of([axis], location="Axis")][0] == -1   # not Adel's axis
+        index = data_structure.index_of([seed] + elements)
+        z1, z2 = (np.asarray(data_structure.get(name))[index] for name in ("z1", "z2"))
         np.testing.assert_allclose([z1[0], z2[0]], -sowing_depth, rtol=0., atol=1e-15)        # the seed: a point
         rise = (sowing_depth - CROWN_DEPTH) / SUBCROWN_ELEMENTS
         np.testing.assert_allclose(z1[1:], -sowing_depth + rise * np.arange(SUBCROWN_ELEMENTS), atol=1e-15)
         np.testing.assert_allclose(z2[1:], -sowing_depth + rise * np.arange(1, SUBCROWN_ELEMENTS + 1), atol=1e-15)
-        np.testing.assert_allclose(np.asarray(ds.get("length"))[index],
+        np.testing.assert_allclose(np.asarray(data_structure.get("length"))[index],
                                    [WheatCrown.seed_length] + [rise] * SUBCROWN_ELEMENTS, atol=1e-15)
-        np.testing.assert_allclose(np.asarray(ds.get("radius"))[index], [WheatCrown.seed_radius]
+        np.testing.assert_allclose(np.asarray(data_structure.get("radius"))[index], [WheatCrown.seed_radius]
                                    + [WheatCrown.subcrown_radius] * SUBCROWN_ELEMENTS)
-        x = g.property("x")[plant]
-        np.testing.assert_allclose(np.asarray(ds.get("x1"))[index], x)
-        np.testing.assert_allclose(np.asarray(ds.get("x2"))[index], x)
-    np.testing.assert_allclose(ds.get("crown_depth"), CROWN_DEPTH)          # its parameters, per plant
+        x = mtg.property("x")[plant]
+        np.testing.assert_allclose(np.asarray(data_structure.get("x1"))[index], x)
+        np.testing.assert_allclose(np.asarray(data_structure.get("x2"))[index], x)
+    np.testing.assert_allclose(data_structure.get("crown_depth"), CROWN_DEPTH)          # its parameters, per plant
 
 
 def test_the_main_stem_on_the_crown_and_the_seminal_roots_on_the_seed(grown):
     scene, _ = grown
-    ds = scene.populations[0].data_structure
-    g = ds.structure
-    roots = {getattr(g.labels.SubOrgan, label) for label in ROOT_LABELS}
-    for plant in ds.entity_ids("Plant").tolist():
-        seed, elements = _crown(g, plant)
-        base = g.property("shoot_base")[plant]
-        assert g.parent(base) == elements[-1] and g.edge_type(base) == '<'
-        assert g.label(base) == g.labels.SubOrgan.HiddenElement                  # Adel's first internode's
-        np.testing.assert_allclose(np.asarray(ds.get("z1"))[ds.index_of(base)], -CROWN_DEPTH, atol=1e-15)
-        seminal = [v for v in g.children(seed) if g.edge_type(v) == '+']
-        assert len(seminal) == 6 and all(g.label(v) in roots for v in seminal)
-        start = [np.asarray(ds.get(name))[ds.index_of(seminal)] for name in ("x1", "y1", "z1")]
-        end = [np.asarray(ds.get(name))[ds.index_of(seed)] for name in ("x2", "y2", "z2")]
+    data_structure = scene.populations[0].data_structure
+    mtg = data_structure.structure
+    roots = {getattr(mtg.labels.SubOrgan, label) for label in ROOT_LABELS}
+    for plant in data_structure.entity_ids("Plant").tolist():
+        seed, elements = _crown(mtg, plant)
+        base = mtg.property("shoot_base")[plant]
+        assert mtg.parent(base) == elements[-1] and mtg.edge_type(base) == '<'
+        assert mtg.label(base) == mtg.labels.SubOrgan.HiddenElement                  # Adel's first internode's
+        np.testing.assert_allclose(np.asarray(data_structure.get("z1"))[data_structure.index_of(base)], -CROWN_DEPTH, atol=1e-15)
+        seminal = [v for v in mtg.children(seed) if mtg.edge_type(v) == '+']
+        assert len(seminal) == 6 and all(mtg.label(v) in roots for v in seminal)
+        start = [np.asarray(data_structure.get(name))[data_structure.index_of(seminal)] for name in ("x1", "y1", "z1")]
+        end = [np.asarray(data_structure.get(name))[data_structure.index_of(seed)] for name in ("x2", "y2", "z2")]
         np.testing.assert_allclose(np.column_stack(start), np.tile(end, (6, 1)), atol=1e-15)   # from the seed
-        assert all(g.complex_at_scale(v, g.scales.Axis) != g.complex_at_scale(seed, g.scales.Axis) for v in seminal)
+        assert all(mtg.complex_at_scale(v, mtg.scales.Axis) != mtg.complex_at_scale(seed, mtg.scales.Axis) for v in seminal)
 
 
 def test_each_model_sees_its_own_entities(grown):
     scene, _ = grown
     instance = scene.populations[0].instance
-    ds = scene.populations[0].data_structure
+    data_structure = scene.populations[0].data_structure
     shoot, rule, roots = (component.data_structure for component in (instance.shoot.architecture, instance.rule,
                                                                       instance.roots))
     assert all(isinstance(view, EntityView) for view in (shoot, rule, roots))
@@ -186,9 +186,9 @@ def test_each_model_sees_its_own_entities(grown):
     assert np.array_equal(rule.entity_ids("node"), shoot.entity_ids("node"))      # the rule's: Adel's elements
     shoot_ids, root_ids = set(shoot.entity_ids("node").tolist()), set(roots.entity_ids("node").tolist())
     assert not shoot_ids & root_ids
-    crown = {v for plant in ds.entity_ids("Plant").tolist()
-             for v in [_crown(ds.structure, plant)[0], *_crown(ds.structure, plant)[1]]}
-    assert shoot_ids | root_ids | crown == set(ds.entity_ids("node").tolist())   # everything is someone's
+    crown = {v for plant in data_structure.entity_ids("Plant").tolist()
+             for v in [_crown(data_structure.structure, plant)[0], *_crown(data_structure.structure, plant)[1]]}
+    assert shoot_ids | root_ids | crown == set(data_structure.entity_ids("node").tolist())   # everything is someone's
     assert not crown & (shoot_ids | root_ids)
     assert isinstance(instance.crown.data_structure, EntityView)                  # the crown's: its elements
     assert set(instance.crown.data_structure.entity_ids("node").tolist()) == crown
@@ -201,8 +201,8 @@ def test_the_leaves_appearance_times(grown):
     """The main stems' leaves appear one phyllochron apart from the first (Adel's scenario: its thermal time starts
     at the main stem's first leaf), interpolated within the steps; three leaves on each main stem."""
     scene, history = grown
-    ds = scene.populations[0].data_structure
-    phyllochron = float(np.asarray(ds.get("phyllochron"))[0])
+    data_structure = scene.populations[0].data_structure
+    phyllochron = float(np.asarray(data_structure.get("phyllochron"))[0])
     first = history[1]["thermal_time"]                                  # the first step's: the first leaf
     main = history[-1]["phytomers"]
     for plant in range(2):
@@ -212,16 +212,16 @@ def test_the_leaves_appearance_times(grown):
         assert len(appeared) == 3
         np.testing.assert_allclose([main[(plant, 0, rank)]["leaf_appearance_time"] for rank in appeared],
                                    first[plant] + phyllochron * np.arange(3), rtol=0., atol=1e-9)
-    crown_and_roots = np.asarray(ds.get("axis_row"))[ds.owner("Axis", of="Phytomer")] < 0
-    assert np.isnan(np.asarray(ds.get("leaf_appearance_time"))[crown_and_roots]).all()
+    crown_and_roots = np.asarray(data_structure.get("axis_row"))[data_structure.owner("Axis", of="Phytomer")] < 0
+    assert np.isnan(np.asarray(data_structure.get("leaf_appearance_time"))[crown_and_roots]).all()
 
 
 def test_nodal_roots_on_the_right_phytomers_at_the_right_times(grown):
     """Each leaf's nodal roots are asked for on its axis' phytomer OFFSET ranks below, at the first step DELAY °Cd
     after its appearance, and ArchiSimple grows them there in the same step, each its own axis."""
     scene, history = grown
-    ds = scene.populations[0].data_structure
-    g = ds.structure
+    data_structure = scene.populations[0].data_structure
+    mtg = data_structure.structure
     final = history[-1]["phytomers"]
     asked = 0
     for plant, row, rank in final:
@@ -243,43 +243,43 @@ def test_nodal_roots_on_the_right_phytomers_at_the_right_times(grown):
         on_crown = final[(plant, 0, 1)]
         assert len(on_crown["roots"]) == PER_LEAF
         bearer = on_crown["bearer"]                  # the element at its node: its internode's top, on the crown
-        assert g.label(bearer) == g.labels.SubOrgan.StemElement
-        assert g.label(g.complex_at_scale(bearer, g.scales.Organ)) == g.labels.Organ.StemInternode
-        assert g.parent(g.parent(bearer)) == _crown(g, int(ds.entity_ids("Plant")[plant]))[1][-1]
-        axes = {g.complex_at_scale(v, g.scales.Axis) for v in on_crown["roots"]}
-        assert len(axes) == PER_LEAF and all(g.label(a) == g.labels.Axis.Root for a in axes)
-        np.testing.assert_allclose(np.asarray(ds.get("z1"))[ds.index_of(on_crown["roots"])], -CROWN_DEPTH,
+        assert mtg.label(bearer) == mtg.labels.SubOrgan.StemElement
+        assert mtg.label(mtg.complex_at_scale(bearer, mtg.scales.Organ)) == mtg.labels.Organ.StemInternode
+        assert mtg.parent(mtg.parent(bearer)) == _crown(mtg, int(data_structure.entity_ids("Plant")[plant]))[1][-1]
+        axes = {mtg.complex_at_scale(v, mtg.scales.Axis) for v in on_crown["roots"]}
+        assert len(axes) == PER_LEAF and all(mtg.label(a) == mtg.labels.Axis.Root for a in axes)
+        np.testing.assert_allclose(np.asarray(data_structure.get("z1"))[data_structure.index_of(on_crown["roots"])], -CROWN_DEPTH,
                                    atol=1e-12)               # at the crown's depth (phytomer 1's node)
 
 
 def test_the_nodal_roots_start_on_the_crown(grown):
-    """Every nodal root starts at its phytomer's node (ds.position("Phytomer", at="end"), from the elements'
+    """Every nodal root starts at its phytomer's node (data_structure.position("Phytomer", at="end"), from the elements'
     topological ends): on the crown, the internodes below not elongated (the tillering zone), the crown's x and y;
     Adel draws the first element of a phytomer above the first on the coleoptile's top, out of the soil (its display
     ends), where the nodal roots would otherwise start. The plant's ends are topological: each element's base at its
-    parent's end (ds.check_connectivity), a nodal root's at its bearer's end, its node."""
+    parent's end (data_structure.check_connectivity), a nodal root's at its bearer's end, its node."""
     scene, history = grown
-    ds = scene.populations[0].data_structure
-    g = ds.structure
+    data_structure = scene.populations[0].data_structure
+    mtg = data_structure.structure
     final = history[-1]["phytomers"]
-    plants = ds.entity_ids("Plant").tolist()
-    nodes = ds.position("Phytomer", at="end")
+    plants = data_structure.entity_ids("Plant").tolist()
+    nodes = data_structure.position("Phytomer", at="end")
     grown_on = 0
     for (plant, row, rank), record in final.items():
         if not record["roots"]:
             continue
         grown_on += 1
-        node = nodes[ds.index_of([record["id"]], location="Phytomer")][0]
-        np.testing.assert_allclose(node, [g.property("x")[plants[plant]], g.property("y")[plants[plant]],
+        node = nodes[data_structure.index_of([record["id"]], location="Phytomer")][0]
+        np.testing.assert_allclose(node, [mtg.property("x")[plants[plant]], mtg.property("y")[plants[plant]],
                                           -CROWN_DEPTH], atol=1e-12)
-        index = ds.index_of(record["roots"])
-        start = np.column_stack([np.asarray(ds.get(name))[index] for name in ("x1", "y1", "z1")])
+        index = data_structure.index_of(record["roots"])
+        start = np.column_stack([np.asarray(data_structure.get(name))[index] for name in ("x1", "y1", "z1")])
         np.testing.assert_allclose(start, np.tile(node, (len(record["roots"]), 1)), atol=1e-12)
         if rank >= 2:                                                   # its first element drawn out of the soil
-            first = min(int(v) for v in g.components_at_scale(record["id"], scale=g.scales.SubOrgan))
-            assert np.asarray(ds.get("display_z2"))[ds.index_of(first)] > 0.
+            first = min(int(v) for v in mtg.components_at_scale(record["id"], scale=mtg.scales.SubOrgan))
+            assert np.asarray(data_structure.get("display_z2"))[data_structure.index_of(first)] > 0.
     assert grown_on >= 4                                                # ranks 1 and 2 of each main stem
-    assert ds.check_connectivity(tolerance=1e-12).empty
+    assert data_structure.check_connectivity(tolerance=1e-12).empty
 
 
 def test_the_plant_is_drawn_connected(grown):
@@ -287,14 +287,14 @@ def test_the_plant_is_drawn_connected(grown):
     seed as the grain, the subcrown internode's cylinders from the seed up to the crown), so that the seminal roots,
     on the seed, and the shoot, on the crown, are drawn joined."""
     scene, _ = grown
-    ds = scene.populations[0].data_structure
-    g = ds.structure
-    elements = ds.at("SubOrgan") if ds._anatomy else ds                # the plant model's here: its nodes
+    data_structure = scene.populations[0].data_structure
+    mtg = data_structure.structure
+    elements = data_structure.at("SubOrgan") if data_structure._anatomy else data_structure                # the plant model's here: its nodes
     triangles = elements.triangles()
     owner, vertices = np.asarray(triangles.owner), np.asarray(triangles.vertices)
     drawn = set(np.asarray(elements.entity_ids("node"))[np.unique(owner)].tolist())
-    for plant, sowing_depth in zip(ds.entity_ids("Plant").tolist(), SOWING_DEPTHS):
-        seed, subcrown = _crown(g, plant)
+    for plant, sowing_depth in zip(data_structure.entity_ids("Plant").tolist(), SOWING_DEPTHS):
+        seed, subcrown = _crown(mtg, plant)
         assert {seed, *subcrown} <= drawn
         heights = vertices[np.isin(owner, elements.index_of(subcrown))][..., 2]
         np.testing.assert_allclose([heights.min(), heights.max()], [-sowing_depth, -CROWN_DEPTH], atol=1e-12)
@@ -311,14 +311,14 @@ def test_requests_are_cumulative_and_none_is_lost():
 
     def grown(time_step):
         scene = _scene(WheatShoot, time_step, scenarios)
-        ds = scene.populations[0].data_structure
+        data_structure = scene.populations[0].data_structure
         requested = []
         steps_per_day = int(round(DAY / time_step))
         for _ in range((N_DAYS - 1) * steps_per_day + 1):       # the same final thermal time (the first call adds none)
             scene.run()
-            requested.append(dict(zip(_phytomers(ds).values(), np.asarray(ds.get("nodal_axes_requested"))[
-                ds.index_of(list(_phytomers(ds).values()), location="Phytomer")])))
-        return _phytomers(ds), ds, requested
+            requested.append(dict(zip(_phytomers(data_structure).values(), np.asarray(data_structure.get("nodal_axes_requested"))[
+                data_structure.index_of(list(_phytomers(data_structure).values()), location="Phytomer")])))
+        return _phytomers(data_structure), data_structure, requested
 
     daily, daily_ds, daily_requested = grown(DAY)
     fine, fine_ds, fine_requested = grown(DAY / 4)
@@ -346,7 +346,7 @@ def test_the_rule_s_defaults_wait_for_the_fourth_leaf():
     scene = _scene(WheatShoot, DAY, scenarios)
     for _ in range(N_DAYS):
         scene.run()
-    ds = scene.populations[0].data_structure
-    assert np.isfinite(np.asarray(ds.get("leaf_appearance_time"))).sum() >= 3
-    assert not np.asarray(ds.get("nodal_axes_requested")).any()
+    data_structure = scene.populations[0].data_structure
+    assert np.isfinite(np.asarray(data_structure.get("leaf_appearance_time"))).sum() >= 3
+    assert not np.asarray(data_structure.get("nodal_axes_requested")).any()
     assert NodalRootEmergence.nodal_root_rank_offset == 3. and NodalRootEmergence.nodal_roots_per_leaf == 2.

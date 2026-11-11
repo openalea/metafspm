@@ -24,7 +24,7 @@ and the plant's own parts, between its shoot model (Adel's) and its root model (
     NodalRootEmergence  the rule of the nodal roots (a rule component, "sites"): N nodal roots per leaf appeared, on
                         its axis' phytomer offset ranks below, D °Cd after the leaf's appearance, asked of the root
                         model as a cumulative count per phytomer (nodal_axes_requested); the root model grows them
-                        from the phytomer's node (ds.position: on the crown in the tillering zone)
+                        from the phytomer's node (data_structure.position: on the crown in the tillering zone)
 
 Coordinates: z points down from the surface (the depth), as on every metafspm soil grid. The total head is h - z,
 and gravity pulls the water towards increasing z.
@@ -185,7 +185,7 @@ def _face_fluxes(component, pressure_head, conductivity, conductivity_slope, fac
     """
     The flux through each face, from its tail cell to its head cell (towards increasing coordinates, down along z),
 
-        q = K_f A (Δh / d + g),  Δh = h_tail - h_head,
+        q = K_f A (Δh / d + mtg),  Δh = h_tail - h_head,
 
     g = 1 on the z faces (gravity), 0 on the others, and its derivatives in h: (q, dq/dh as a faces x cells matrix).
     Δh is the grid's consistent edge difference (exact for a linear h between cells of different sizes). K_f is the
@@ -303,7 +303,7 @@ class RichardsSoil(FunctionalComponent):
         (θ(h) - θ(h_prev)) V + dt (Σ_faces q + uptake - inflow_boundaries) = 0,
 
     written per cell volume (a change of water content, m3 m-3, so that Newton's tolerance is one on the water
-    contents and the balance closes to it), the face fluxes q = K_f A (Δh/d + g) (gravity along z, pointing down),
+    contents and the balance closes to it), the face fluxes q = K_f A (Δh/d + mtg) (gravity along z, pointing down),
     K_f upstream-weighted or the arithmetic mean (face_conductivity). The soil is van Genuchten-Mualem's (or
     Gardner's, retention_model) with its parameters per cell, set by layers (set_soil_layers). The top: the rainfall
     minus the potential evaporation (inputs; when forcings of their names are given, by a Scene or set_forcings, read
@@ -816,26 +816,26 @@ class WheatCrown(StructuralComponent):
     display_z2: float = display_end("z2")
 
     @classmethod
-    def initiate_plant(cls, g, plant, scenario):
+    def initiate_plant(cls, mtg, plant, scenario):
         """The seed and the subcrown internode of *plant* (the class docstring's structure), from its planting's
         position and its *scenario*'s parameters (plant_parameters): its elements placed topologically by the MPG's
-        builder (g.add_element: each one's base at its parent's end), the seed a point drawn as the grain."""
+        builder (mtg.add_element: each one's base at its parent's end), the seed a point drawn as the grain."""
         parameters = cls.plant_parameters(scenario)
-        x, y, seed_height = (float(g.view(name)[plant]) for name in ("x", "y", "z"))
-        crown_height = float(getattr(g, "soil_surface", 0.)) - float(parameters["crown_depth"])   # below the soil
+        x, y, seed_height = (float(mtg.view(name)[plant]) for name in ("x", "y", "z"))
+        crown_height = float(getattr(mtg, "soil_surface", 0.)) - float(parameters["crown_depth"])   # below the soil
         if crown_height <= seed_height + 1e-12:
             raise ValueError(f"WheatCrown: the crown ({-crown_height} m deep) must lie above the seed "
                              f"({-seed_height} m deep): crown_depth below the sowing depth")
-        organ = g.add_organ(plant, "StemInternode", complex_label="Shoot")
-        g.set_values("diameter", [organ], [2. * float(parameters["subcrown_radius"])])
+        organ = mtg.add_organ(plant, "StemInternode", complex_label="Shoot")
+        mtg.set_values("diameter", [organ], [2. * float(parameters["subcrown_radius"])])
         half_grain = 0.5 * float(parameters["seed_length"])
-        element = g.add_element("Seed", complex=organ, direction=(0., 0., 0.), length=float(parameters["seed_length"]),
+        element = mtg.add_element("Seed", complex=organ, direction=(0., 0., 0.), length=float(parameters["seed_length"]),
                                 radius=float(parameters["seed_radius"]),
                                 display=((x - half_grain, y, seed_height), (x + half_grain, y, seed_height)))
         count = int(parameters["subcrown_elements"])
         rise = (crown_height - seed_height) / count
         for _ in range(count):
-            element = g.add_element("StemElement", parent=element, direction=(0., 0., 1.), length=rise,
+            element = mtg.add_element("StemElement", parent=element, direction=(0., 0., 1.), length=rise,
                                     radius=float(parameters["subcrown_radius"]))
 
 
@@ -870,7 +870,7 @@ class NodalRootEmergence(FunctionalComponent):
     It writes, per Phytomer, the cumulative number of nodal roots asked for on it (nodal_axes_requested, the root
     model's input: it grows the difference with those it grew), each leaf's request counted once when it falls due
     (leaf_nodal_roots): no request lost or replaced, whatever the steps. Where they start is the root model's: the
-    phytomer's node (metafspm's ds.position("Phytomer", at="end"), from the elements' topological ends: on the crown
+    phytomer's node (metafspm's data_structure.position("Phytomer", at="end"), from the elements' topological ends: on the crown
     while the internodes below it have not elongated, whatever the axes' inclination). Its entities are the shoot's
     elements (its axes with a row, axis_row >= 0), the phytomers they belong to its phytomers.
     """
@@ -929,12 +929,12 @@ class NodalRootEmergence(FunctionalComponent):
         Per Phytomer: the leaves appeared since the last call (their appearance times), the requests falling due
         (thermal time >= appearance + delay) added to their sites' cumulative counts, once each.
         """
-        ds = self.data_structure
-        axis = np.asarray(ds.owner("Axis", of="Phytomer"), dtype=np.int64)
-        plant = np.asarray(ds.owner("Plant", of="Phytomer"), dtype=np.int64)
+        data_structure = self.data_structure
+        axis = np.asarray(data_structure.owner("Axis", of="Phytomer"), dtype=np.int64)
+        plant = np.asarray(data_structure.owner("Plant", of="Phytomer"), dtype=np.int64)
         rank = np.asarray(phytomer_rank, dtype=np.int64)
         own = np.zeros(rank.size, dtype=bool)
-        own[np.unique(np.asarray(ds.owner("Phytomer"), dtype=np.int64))] = True     # its elements' phytomers
+        own[np.unique(np.asarray(data_structure.owner("Phytomer"), dtype=np.int64))] = True     # its elements' phytomers
         own &= rank >= 1
         time = np.asarray(thermal_time, dtype=float)[plant]
         stage = np.asarray(haun_stage, dtype=float)[axis]
@@ -954,7 +954,7 @@ class NodalRootEmergence(FunctionalComponent):
         requested = np.array(nodal_axes_requested, dtype=float)
         due = own & np.isnan(asked) & np.isfinite(appearance) & (time >= appearance + np.asarray(nodal_root_delay))
         site_rank = rank - np.round(np.asarray(nodal_root_rank_offset, dtype=float)).astype(np.int64)
-        site = ds.chain_gather(np.arange(rank.size, dtype=float), site_rank, chain="phytomers", fill=-1.)
+        site = data_structure.chain_gather(np.arange(rank.size, dtype=float), site_rank, chain="phytomers", fill=-1.)
         site = np.where(own[np.maximum(site, 0).astype(np.int64)], site, -1.).astype(np.int64)     # the shoot's
         count = np.asarray(nodal_roots_per_leaf, dtype=float) * np.ones(rank.size)
         asked[due] = np.where(site[due] >= 0, count[due], 0.)

@@ -1,5 +1,5 @@
 """
-Declared conservation (graph_system(conserved=...), solve.conservation) and the values before a step (ds.previous):
+Declared conservation (graph_system(conserved=...), solve.conservation) and the values before a step (data_structure.previous):
 the exchanged amounts integrated over the accepted sub-steps, the change of what is held, their residual the
 solver's tolerance; conservation.csv; a Summary's max_change; the wall time per component in run.json.
 """
@@ -121,7 +121,7 @@ def test_ds_previous_is_aligned_by_id():
 # ---------------------------------------------------------------- in a Scene
 
 def test_conservation_csv_max_change_and_component_timing(tmp_path):
-    """A Scene writes each step's balances (conservation.csv), a Summary's max_change from ds.previous (NaN at the
+    """A Scene writes each step's balances (conservation.csv), a Summary's max_change from data_structure.previous (NaN at the
     first row), the wall time per component ("<Model>.<Component>") in run.json."""
 
     class SoilModel(SceneSoil):

@@ -20,11 +20,11 @@ WHEATBRIDGES_PLANT_COMPONENTS = ["RootAnatomy", "RootCNUnified", "RootGrowthMode
 
 def _coupled_plant(tmp_path, translator=None):
     path = doubles.write_translator(tmp_path / "plant_translator.yaml", translator or doubles_ds.translator())
-    ds = doubles_ds.make_plant_ds()
-    carbon, nitrogen = doubles_ds.PlantCarbon(data_structure=ds), doubles_ds.PlantNitrogen(data_structure=ds)
+    data_structure = doubles_ds.make_plant_ds()
+    carbon, nitrogen = doubles_ds.PlantCarbon(data_structure=data_structure), doubles_ds.PlantNitrogen(data_structure=data_structure)
     model = CompositeModel()
     model.couple(carbon, nitrogen, translator=path)
-    return model, carbon, nitrogen, ds
+    return model, carbon, nitrogen, data_structure
 
 
 # ---------------------------------------------------------------- translator sources
@@ -88,7 +88,7 @@ def test_recursive_reload_removed():
 # ---------------------------------------------------------------- couplings
 
 def test_couplings_list_how_each_input_is_coupled(tmp_path):
-    model, carbon, nitrogen, ds = _coupled_plant(tmp_path)
+    model, carbon, nitrogen, data_structure = _coupled_plant(tmp_path)
     table = model.couplings().set_index(["receiver", "variable"])
     assert table.loc[("PlantNitrogen", "sugar"), "coupling"] == "alias"
     assert table.loc[("PlantNitrogen", "sugar"), "sources"] == "hexose"
@@ -100,8 +100,8 @@ def test_couplings_list_how_each_input_is_coupled(tmp_path):
 def test_an_input_of_the_same_name_is_shared_without_a_link():
     """No translator: an input named as another component's variable reads it (the DataStructure is the
     coupling), and couplings() shows it."""
-    ds = doubles_ds.make_plant_ds()
-    carbon, nitrogen = doubles_ds.PlantCarbon(data_structure=ds), doubles_ds.PlantNitrogen(data_structure=ds)
+    data_structure = doubles_ds.make_plant_ds()
+    carbon, nitrogen = doubles_ds.PlantCarbon(data_structure=data_structure), doubles_ds.PlantNitrogen(data_structure=data_structure)
     model = CompositeModel()
     model.couple(carbon, nitrogen)
     table = model.couplings().set_index(["receiver", "variable"])
@@ -113,26 +113,26 @@ def test_an_input_of_the_same_name_is_shared_without_a_link():
 # ---------------------------------------------------------------- coupling semantics
 
 def test_links_become_aliases_and_derived_variables(tmp_path):
-    model, carbon, nitrogen, ds = _coupled_plant(tmp_path)
-    assert ds.aliases() == {"sugar": "hexose"}
-    assert set(ds.derived()) == {"nitrogen_status", "carbon_supply"}
-    assert ds.get("sugar") is ds.get("hexose")
+    model, carbon, nitrogen, data_structure = _coupled_plant(tmp_path)
+    assert data_structure.aliases() == {"sugar": "hexose"}
+    assert set(data_structure.derived()) == {"nitrogen_status", "carbon_supply"}
+    assert data_structure.get("sugar") is data_structure.get("hexose")
     assert model.components == [carbon, nitrogen]
 
 
 def test_link_values_seen_by_receivers(tmp_path):
-    model, carbon, nitrogen, ds = _coupled_plant(tmp_path)
+    model, carbon, nitrogen, data_structure = _coupled_plant(tmp_path)
     for name in ("soil_temperature", "C_hexose_soil"):   # the soil values of that contract, given by the scene
-        ds.set(name, 0.)
+        data_structure.set(name, 0.)
 
     carbon()
-    np.testing.assert_allclose(ds.get("nitrogen_status"), 4.)
-    np.testing.assert_allclose(ds.get("hexose"), 0.904)
+    np.testing.assert_allclose(data_structure.get("nitrogen_status"), 4.)
+    np.testing.assert_allclose(data_structure.get("hexose"), 0.904)
 
     nitrogen()
-    np.testing.assert_allclose(ds.get("carbon_supply"), 0.2)
-    np.testing.assert_allclose(ds.get("amino_acids"), 2.378)
-    assert ds.get("sugar") is ds.get("hexose")
+    np.testing.assert_allclose(data_structure.get("carbon_supply"), 0.2)
+    np.testing.assert_allclose(data_structure.get("amino_acids"), 2.378)
+    assert data_structure.get("sugar") is data_structure.get("hexose")
 
 
 def test_same_name_factor_on_one_data_structure_is_rejected(tmp_path):
@@ -146,30 +146,30 @@ def test_python_translator_module(tmp_path):
     module = tmp_path / "coupling_translator.py"
     module.write_text("from openalea.metafspm.coupling.translator import Translator\n"
                       f"translator = Translator.from_dict({doubles_ds.translator()!r})\n")
-    ds = doubles_ds.make_plant_ds()
-    carbon, nitrogen = doubles_ds.PlantCarbon(data_structure=ds), doubles_ds.PlantNitrogen(data_structure=ds)
+    data_structure = doubles_ds.make_plant_ds()
+    carbon, nitrogen = doubles_ds.PlantCarbon(data_structure=data_structure), doubles_ds.PlantNitrogen(data_structure=data_structure)
     CompositeModel().couple(carbon, nitrogen, translator=str(module))
-    assert ds.aliases() == {"sugar": "hexose"}
+    assert data_structure.aliases() == {"sugar": "hexose"}
 
 
 def test_functional_components_run_once_per_simulation_step(tmp_path):
     """A FunctionalComponent used to register a sub time step of 1: with a 3600 s step it ran 3600 times per call."""
-    ds = doubles_ds.make_plant_ds()
-    ds.simulation_time_step = 3600
-    carbon = doubles_ds.PlantCarbon(data_structure=ds)
-    ds.set("soil_temperature", 0.)
+    data_structure = doubles_ds.make_plant_ds()
+    data_structure.simulation_time_step = 3600
+    carbon = doubles_ds.PlantCarbon(data_structure=data_structure)
+    data_structure.set("soil_temperature", 0.)
     carbon()
-    np.testing.assert_allclose(ds.get("hexose"), 1. - 0.1)        # one step, not 3600
+    np.testing.assert_allclose(data_structure.get("hexose"), 1. - 0.1)        # one step, not 3600
 
 
 def test_a_translator_object_is_used_as_given():
-    ds = doubles_ds.make_plant_ds()
-    carbon, nitrogen = doubles_ds.PlantCarbon(data_structure=ds), doubles_ds.PlantNitrogen(data_structure=ds)
+    data_structure = doubles_ds.make_plant_ds()
+    carbon, nitrogen = doubles_ds.PlantCarbon(data_structure=data_structure), doubles_ds.PlantNitrogen(data_structure=data_structure)
     translator = Translator.from_dict(doubles_ds.translator())
     model = CompositeModel()
     assert Translator.load(translator) is translator
     model.couple(carbon, nitrogen, translator=translator)
-    assert ds.aliases() == {"sugar": "hexose"}
+    assert data_structure.aliases() == {"sugar": "hexose"}
 
 
 def _doubled(values):
@@ -180,22 +180,22 @@ def test_a_receiver_private_name_keeps_the_shared_variable_untouched():
     """Link(names={variable: private}): the receiver reads its variable as the link's values (a formula of the
     provider's variable of the same name), kept under the private name; the provider and everything outside the
     receiver's calls read the shared variable."""
-    ds = doubles_ds.make_plant_ds()
-    carbon, nitrogen = doubles_ds.PlantCarbon(data_structure=ds), doubles_ds.PlantNitrogen(data_structure=ds)
+    data_structure = doubles_ds.make_plant_ds()
+    carbon, nitrogen = doubles_ds.PlantCarbon(data_structure=data_structure), doubles_ds.PlantNitrogen(data_structure=data_structure)
     translator = Translator().link("PlantNitrogen", "hexose", "PlantCarbon", ("hexose",), formula=_doubled,
                                    names={"hexose": "nitrogen_hexose"})
     CompositeModel().couple(carbon, nitrogen, translator=translator)
-    shared = np.array(ds.get("hexose"))
-    np.testing.assert_array_equal(ds.get("nitrogen_hexose"), 2. * shared)
+    shared = np.array(data_structure.get("hexose"))
+    np.testing.assert_array_equal(data_structure.get("nitrogen_hexose"), 2. * shared)
     np.testing.assert_array_equal(nitrogen.read("hexose"), 2. * shared)          # the receiver's own reading
     np.testing.assert_array_equal(carbon.read("hexose"), shared)                 # the provider's: untouched
-    before = np.array(ds.get("amino_acids"))
+    before = np.array(data_structure.get("amino_acids"))
     nitrogen()
     # amino_acids - exudation + 0.5 sugar + 0.25 hexose + C_hexose_soil: the doubled hexose read
-    exudation = np.asarray(ds.get("amino_acids_exudation"))
-    np.testing.assert_allclose(ds.get("amino_acids"), before - exudation + 0.25 * 2. * shared)
-    np.testing.assert_array_equal(ds.get("hexose"), shared)
-    ds.set("hexose", 3.)                                                         # the provider writes: followed
+    exudation = np.asarray(data_structure.get("amino_acids_exudation"))
+    np.testing.assert_allclose(data_structure.get("amino_acids"), before - exudation + 0.25 * 2. * shared)
+    np.testing.assert_array_equal(data_structure.get("hexose"), shared)
+    data_structure.set("hexose", 3.)                                                         # the provider writes: followed
     np.testing.assert_array_equal(nitrogen.read("hexose"), 6.)
     with pytest.raises(ValueError, match="private name"):
         Translator().link("PlantNitrogen", "hexose", "PlantCarbon", ("hexose",), formula=_doubled,

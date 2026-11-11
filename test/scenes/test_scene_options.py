@@ -101,12 +101,12 @@ def test_mappings_given_as_a_callable_are_built_once_the_models_are():
 def test_a_cross_mapping_given_replaces_the_inferred_one():
     """An explicit CrossMapping (here mapping only the first segment of each plant) replaces the inferred one."""
     def mappings(scene):
-        ds = scene.populations[0].data_structure
-        first = np.zeros(ds.n_nodes())
-        first[ds.roots()] = 1.
-        ds.register("is_first", first, location="node")
-        ds.define_mask("first", {"is_first": ">0"})
-        return [CrossMapping(ds, scene.environment[0].grid, mask="first")]
+        data_structure = scene.populations[0].data_structure
+        first = np.zeros(data_structure.n_nodes())
+        first[data_structure.roots()] = 1.
+        data_structure.register("is_first", first, location="node")
+        data_structure.define_mask("first", {"is_first": ">0"})
+        return [CrossMapping(data_structure, scene.environment[0].grid, mask="first")]
 
     scene = Scene(doubles_planting([RootPopulation]), environment=[SceneSoil],
                   translator=soil_translator("SceneExudation"), time_step=DT, mappings=mappings)
@@ -141,11 +141,11 @@ class AnatomyInitiator(StructuralComponent):
     """Adds an anatomy to each segment of the plant built by the initiators before it."""
 
     @classmethod
-    def initiate_plant(cls, g, plant, parameters):
-        segments = list(g.components_at_scale(plant, g.scales.SubOrgan))
+    def initiate_plant(cls, mtg, plant, parameters):
+        segments = list(mtg.components_at_scale(plant, mtg.scales.SubOrgan))
         ORDER.append(("anatomy", plant, len(segments)))
         for segment in segments:
-            add_anatomy(g, segment)
+            add_anatomy(mtg, segment)
 
 
 class BareStructure(StructuralComponent):
@@ -164,10 +164,10 @@ def test_a_structural_component_without_initiate_plant_cannot_initiate_plants():
 
 def test_initiators_run_in_order_each_on_every_plant():
     ORDER.clear()
-    g, plants = _build_population(_rows(2, n_segments=4), initiators=(RootGrowthProbe, AnatomyInitiator))
+    mtg, plants = _build_population(_rows(2, n_segments=4), initiators=(RootGrowthProbe, AnatomyInitiator))
     assert ORDER == [("anatomy", plants[0], 4), ("anatomy", plants[1], 4)]     # after the roots of every plant
-    anchors = set(g.scales.anchors.values())
-    assert len([v for v in g.vertices(scale=g.scales.Compartment) if v not in anchors]) == 2 * 4 * 4
+    anchors = set(mtg.scales.anchors.values())
+    assert len([v for v in mtg.vertices(scale=mtg.scales.Compartment) if v not in anchors]) == 2 * 4 * 4
 
 
 @dataclass
@@ -184,15 +184,15 @@ class AnatomyPopulation(CompositeModel):
 
 def test_a_population_model_in_anatomy_mode_has_compartments_as_nodes():
     scene = Scene(doubles_planting([AnatomyPopulation, AnatomyPopulation]), time_step=DT)
-    ds = scene.populations[0].data_structure
-    assert len(ds.entity_ids("SubOrgan")) == 6                    # the segments are a coarse location
-    np.testing.assert_array_equal(ds.get("water"), 2.)
+    data_structure = scene.populations[0].data_structure
+    assert len(data_structure.entity_ids("SubOrgan")) == 6                    # the segments are a coarse location
+    np.testing.assert_array_equal(data_structure.get("water"), 2.)
 
 
 def test_a_population_in_anatomy_mode_has_only_the_anatomy_compartments():
     scene = Scene(doubles_planting([AnatomyPopulation, AnatomyPopulation]), time_step=DT)
-    ds = scene.populations[0].data_structure
-    assert ds.n_nodes() == 2 * 3 * 4 and ds.n_edges() == 2 * 3 * 3
+    data_structure = scene.populations[0].data_structure
+    assert data_structure.n_nodes() == 2 * 3 * 4 and data_structure.n_edges() == 2 * 3 * 3
 
 
 class WiredAnatomyPopulation(AnatomyPopulation):
@@ -201,9 +201,9 @@ class WiredAnatomyPopulation(AnatomyPopulation):
 
 def test_a_population_model_wires_the_junctions_between_its_anatomies():
     scene = Scene(doubles_planting([WiredAnatomyPopulation, WiredAnatomyPopulation]), time_step=DT)
-    ds = scene.populations[0].data_structure
+    data_structure = scene.populations[0].data_structure
     # per plant, 2 links between 3 segments: 2 xylem vessels matched by index and the 1 x 1 symplastic pair
-    assert ds.n_nodes() == 2 * 3 * 4 and ds.n_edges() == 2 * 3 * 3 + 2 * 2 * 3
+    assert data_structure.n_nodes() == 2 * 3 * 4 and data_structure.n_edges() == 2 * 3 * 3 + 2 * 2 * 3
 
 
 # ---------------------------------------------------------------- repartition rules given as callables
@@ -215,16 +215,16 @@ class Pools(FunctionalComponent):
 
 
 def _grown(partition_weight):
-    _, ds, _ = make_chain()
-    growth = RootGrowthProbe(data_structure=ds)
+    _, data_structure, _ = make_chain()
+    growth = RootGrowthProbe(data_structure=data_structure)
     growth.partition_weight = partition_weight
-    Pools(data_structure=ds)
+    Pools(data_structure=data_structure)
     growth()                                             # elongation, then a segmentation
-    return {name: np.array(ds.get(name)) for name in ("conc", "amount", "struct_mass")}
+    return {name: np.array(data_structure.get(name)) for name in ("conc", "amount", "struct_mass")}
 
 
 def test_a_callable_partition_weight_is_a_variable_name_computed():
-    by_name, by_callable = _grown("struct_mass"), _grown(lambda ds: np.asarray(ds.get("struct_mass")))
+    by_name, by_callable = _grown("struct_mass"), _grown(lambda data_structure: np.asarray(data_structure.get("struct_mass")))
     for name in by_name:
         np.testing.assert_array_equal(by_callable[name], by_name[name], err_msg=name)
     assert by_name["amount"].sum() == pytest.approx(3 * 4.)            # amounts conserved, so the rule applied
@@ -234,14 +234,14 @@ def test_a_callable_partition_weight_is_a_variable_name_computed():
 class Branching(StructuralComponent):
     struct_mass: float = state_variable(**DOC, default=0., scale=scales.SubOrgan, kind="extensive")
     partition_weight = "struct_mass"
-    active = staticmethod(lambda ds: np.asarray(ds.get("struct_mass")) > 0)
+    active = staticmethod(lambda data_structure: np.asarray(data_structure.get("struct_mass")) > 0)
 
     @segmentation
     def _form_primordium(self):
-        g = self.mtg
+        mtg = self.mtg
         if getattr(self, "primordium", None) is None:
-            self.primordium = g.add_child(self.carrier, **PropsConfig(scale=g.scales.SubOrgan, edge_type='+',
-                                                                      label=g.labels.SubOrgan.RootSegment,
+            self.primordium = mtg.add_child(self.carrier, **PropsConfig(scale=mtg.scales.SubOrgan, edge_type='+',
+                                                                      label=mtg.labels.SubOrgan.RootSegment,
                                                                       struct_mass=0.))
 
     @actual
@@ -251,18 +251,18 @@ class Branching(StructuralComponent):
 
 
 def test_an_active_rule_given_as_a_callable_defines_the_active_mask():
-    _, ds, vids = make_chain()
-    branching = Branching(data_structure=ds)
+    _, data_structure, vids = make_chain()
+    branching = Branching(data_structure=data_structure)
     branching.carrier = vids[1]
-    Pools(data_structure=ds)
+    Pools(data_structure=data_structure)
     branching()
-    primordium = ds.index_of(branching.primordium)
-    assert not ds.mask("active")[primordium]
-    assert ds.get("amount")[primordium] == 0. and ds.get("conc")[primordium] == 3.
+    primordium = data_structure.index_of(branching.primordium)
+    assert not data_structure.mask("active")[primordium]
+    assert data_structure.get("amount")[primordium] == 0. and data_structure.get("conc")[primordium] == 3.
     branching.emerge = True
     branching()
-    assert ds.mask("active")[primordium]
-    assert ds.get("amount")[primordium] > 0.                            # split from its carrier once active
+    assert data_structure.mask("active")[primordium]
+    assert data_structure.get("amount")[primordium] > 0.                            # split from its carrier once active
 
 
 # ---------------------------------------------------------------- events across a checkpoint

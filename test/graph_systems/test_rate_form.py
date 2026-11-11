@@ -21,15 +21,15 @@ DT, K = 0.5, 0.3
 
 
 def _ds():
-    _, _, ds = seedling_ds()
-    collar = np.zeros(ds.n_nodes())
-    collar[ds.roots()[0]] = 1.
-    ds.register("is_collar", collar, location="node")
-    return ds
+    _, _, data_structure = seedling_ds()
+    collar = np.zeros(data_structure.n_nodes())
+    collar[data_structure.roots()[0]] = 1.
+    data_structure.register("is_collar", collar, location="node")
+    return data_structure
 
 
-def _laplacian(ds):
-    B = ds._incidence_matrix().toarray()
+def _laplacian(data_structure):
+    B = data_structure._incidence_matrix().toarray()
     return B @ B.T
 
 
@@ -50,28 +50,28 @@ def _model(solver, **options):
 
 
 def _run(solver, **options):
-    ds = _ds()
-    model = _model(solver, **options)(data_structure=ds)
-    u0 = np.linspace(0., 1., ds.n_nodes())
-    ds.set("u", u0)
+    data_structure = _ds()
+    model = _model(solver, **options)(data_structure=data_structure)
+    u0 = np.linspace(0., 1., data_structure.n_nodes())
+    data_structure.set("u", u0)
     model()
-    return ds, u0, np.array(ds.get("u"))
+    return data_structure, u0, np.array(data_structure.get("u"))
 
 
 def test_a_rate_is_integrated_by_backward_euler_with_newton():
-    ds, u0, u = _run("newton")
-    expected = np.linalg.solve(np.eye(ds.n_nodes()) + DT * K * _laplacian(ds), u0)
+    data_structure, u0, u = _run("newton")
+    expected = np.linalg.solve(np.eye(data_structure.n_nodes()) + DT * K * _laplacian(data_structure), u0)
     np.testing.assert_allclose(u, expected, rtol=1e-10)
 
 
 def test_a_rate_is_integrated_by_forward_euler_with_explicit_euler():
-    ds, u0, u = _run("explicit_euler")
-    np.testing.assert_allclose(u, u0 - DT * K * _laplacian(ds) @ u0, rtol=1e-12)
+    data_structure, u0, u = _run("explicit_euler")
+    np.testing.assert_allclose(u, u0 - DT * K * _laplacian(data_structure) @ u0, rtol=1e-12)
 
 
 def test_a_rate_is_integrated_exactly_by_an_ivp_solver():
-    ds, u0, u = _run("scipy_ivp_bdf")
-    np.testing.assert_allclose(u, expm(-DT * K * _laplacian(ds)) @ u0, atol=1e-4)
+    data_structure, u0, u = _run("scipy_ivp_bdf")
+    np.testing.assert_allclose(u, expm(-DT * K * _laplacian(data_structure)) @ u0, atol=1e-4)
 
 
 def test_the_three_solvers_conserve_the_total():
@@ -96,11 +96,11 @@ class RateWithInflow(FunctionalComponent):
 
 
 def test_a_neumann_inflow_adds_to_the_rate():
-    ds = _ds()
-    model = RateWithInflow(data_structure=ds)
-    total = ds.get("u").sum()
+    data_structure = _ds()
+    model = RateWithInflow(data_structure=data_structure)
+    total = data_structure.get("u").sum()
     model()
-    assert ds.get("u").sum() == pytest.approx(total + 0.2 * DT)
+    assert data_structure.get("u").sum() == pytest.approx(total + 0.2 * DT)
 
 
 # ---------------------------------------------------------------- errors
@@ -165,7 +165,7 @@ def test_the_ivp_solvers_take_the_graph_systems_error_control():
     exact = None
     errors = {}
     for relative_tolerance in (1e-3, 1e-10):
-        ds, u0, u = _run("scipy_ivp_bdf", integration_relative_tolerance=relative_tolerance, integration_absolute_tolerance=relative_tolerance * 1e-3)
-        exact = expm(-DT * K * _laplacian(ds)) @ u0
+        data_structure, u0, u = _run("scipy_ivp_bdf", integration_relative_tolerance=relative_tolerance, integration_absolute_tolerance=relative_tolerance * 1e-3)
+        exact = expm(-DT * K * _laplacian(data_structure)) @ u0
         errors[relative_tolerance] = np.abs(u - exact).max()
     assert errors[1e-10] < 1e-8 < errors[1e-3]

@@ -42,25 +42,25 @@ def section_template(cells: int):
     """A section of *cells* cortical cells in a chain (each its protoplast and its wall, the walls in a chain, the
     protoplasts joined by plasmodesmata), the first three walls on the soil, two xylem vessels on the last walls."""
     from openalea.metafspm.data_structure.instances import SectionTemplate
-    g = MPG()
-    s, L = g.scales, g.labels
-    segment = g._add_system_root_at_scale(s.SubOrgan, label=L.SubOrgan.RootSegment)
-    first = g._id + 1
+    mtg = MPG()
+    s, L = mtg.scales, mtg.labels
+    segment = mtg._add_system_root_at_scale(s.SubOrgan, label=L.SubOrgan.RootSegment)
+    first = mtg._id + 1
 
     def props(scale, **values):
         out = dict(PropsConfig(scale=scale, edge_type='/'))
         out.update(values)
         return out
 
-    cortex, xylem = g.add_components_bulk(segment, 2, **props(s.Layer, label=[L.Layer.CorticalParenchyma,
+    cortex, xylem = mtg.add_components_bulk(segment, 2, **props(s.Layer, label=[L.Layer.CorticalParenchyma,
                                                                               L.Layer.MetaXylem]))
-    cortical = g.add_components_bulk(cortex, cells, **props(s.Cell, label=L.Cell.CorticalParenchyma))
-    vessels = g.add_components_bulk(xylem, 2, **props(s.Cell, label=L.Cell.MetaXylem, vessel_index=[0., 1.]))
-    protoplasts = g.add_components_bulk(cortical, cells, **props(s.Compartment, label=L.Compartment.Symplastic,
+    cortical = mtg.add_components_bulk(cortex, cells, **props(s.Cell, label=L.Cell.CorticalParenchyma))
+    vessels = mtg.add_components_bulk(xylem, 2, **props(s.Cell, label=L.Cell.MetaXylem, vessel_index=[0., 1.]))
+    protoplasts = mtg.add_components_bulk(cortical, cells, **props(s.Compartment, label=L.Compartment.Symplastic,
                                                                  compartment_type=PROTOPLAST))
-    protoplasts += g.add_components_bulk(vessels, 2, **props(s.Compartment, label=L.Cell.MetaXylem,
+    protoplasts += mtg.add_components_bulk(vessels, 2, **props(s.Compartment, label=L.Cell.MetaXylem,
                                                              vessel_index=[0., 1.], compartment_type=PROTOPLAST))
-    walls = g.add_components_bulk(s.anchors[s.Compartment], cells, topo_parents=[segment] * cells,
+    walls = mtg.add_components_bulk(s.anchors[s.Compartment], cells, topo_parents=[segment] * cells,
                                   **props(s.Compartment, label=L.Compartment.Apoplastic,
                                           compartment_type=[SOIL_WALL] * 3 + [WALL] * (cells - 3)))
     links = [(protoplasts[i], walls[i], L.Connection.Transmembrane) for i in range(cells)]
@@ -68,11 +68,11 @@ def section_template(cells: int):
     links += [(walls[i], walls[i + 1], L.Connection.Apoplastic) for i in range(cells - 1)]
     links += [(protoplasts[cells], walls[-1], L.Connection.Transmembrane),
               (protoplasts[cells + 1], walls[-2], L.Connection.Transmembrane)]
-    g.add_components_bulk(s.anchors[s.Connection], len(links), topo_parents=[segment] * len(links),
+    mtg.add_components_bulk(s.anchors[s.Connection], len(links), topo_parents=[segment] * len(links),
                           **props(s.Connection, n_id_a=[a for a, _, _ in links], n_id_b=[b for _, b, _ in links],
                                   label=[label for _, _, label in links]))
-    g.convert_properties_to_arraydict()
-    return SectionTemplate.capture(g, segment, range(first, g._id + 1), key=("bench section", cells))
+    mtg.convert_properties_to_arraydict()
+    return SectionTemplate.capture(mtg, segment, range(first, mtg._id + 1), key=("bench section", cells))
 
 
 _TEMPLATES = {}
@@ -88,24 +88,24 @@ class BenchSegments(StructuralComponent):
     """SETTINGS["groups"] root segments in a chain under each plant, each an instance of the bench section."""
 
     @classmethod
-    def initiate_plant(cls, g, plant, scenario):
-        s, L = g.scales, g.labels
+    def initiate_plant(cls, mtg, plant, scenario):
+        s, L = mtg.scales, mtg.labels
         parent = plant
         for scale, label in ((s.Axis, L.Axis.Root), (s.GrowthUnit, L.GrowthUnit.Root), (s.Phytomer, L.Phytomer.Root),
                              (s.Organ, L.Organ.RootInternode)):
-            parent = g.add_component(parent, **PropsConfig(scale=scale, edge_type='/', label=label))
+            parent = mtg.add_component(parent, **PropsConfig(scale=scale, edge_type='/', label=label))
         section = template(SETTINGS["cells"])
-        reduction = getattr(g, "reduction", None)
+        reduction = getattr(mtg, "reduction", None)
         previous = None
         for _ in range(SETTINGS["groups"]):
             props = PropsConfig(scale=s.SubOrgan, edge_type='<' if previous else '/', label=L.SubOrgan.RootSegment)
-            previous = g.add_child(previous, **props) if previous else g.add_component(parent, **props)
-            reduced = reduction is not None and reduction.reduces(g, previous)
-            g.add_instance(previous, reduction.template_for(section) if reduced else section)
+            previous = mtg.add_child(previous, **props) if previous else mtg.add_component(parent, **props)
+            reduced = reduction is not None and reduction.reduces(mtg, previous)
+            mtg.add_instance(previous, reduction.template_for(section) if reduced else section)
 
 
-def _collar(ds):
-    return (ds.get("label") == ds.mtg.labels.Cell.MetaXylem) & (ds.owner("SubOrgan") == 0)
+def _collar(data_structure):
+    return (data_structure.get("label") == data_structure.mtg.labels.Cell.MetaXylem) & (data_structure.owner("SubOrgan") == 0)
 
 
 @dataclass
@@ -148,8 +148,8 @@ def _soil_walls(section):
     return out
 
 
-def _wiring(g):
-    return [dict(node_label=g.labels.Cell.MetaXylem, edge_label=g.labels.Connection.Apoplastic,
+def _wiring(mtg):
+    return [dict(node_label=mtg.labels.Cell.MetaXylem, edge_label=mtg.labels.Connection.Apoplastic,
                  ordering="vessel_index", match="equal")]
 
 
@@ -172,12 +172,12 @@ def plant(groups: int, cells: int):
 def archetype_evaluation(archetypes: int, cells: int) -> tuple:
     """(seconds per archetype, interior cells per archetype): *archetypes* groups of distinct soil potentials, evaluated at once."""
     population, reduction = plant(archetypes, cells)
-    ds = population.data_structure
-    owner = np.asarray(ds.owner("SubOrgan"))
-    ds.set("soil_water_potential", -0.1 - 0.01 * owner.astype(float))
-    groups = reduction.reduced_groups(ds)
+    data_structure = population.data_structure
+    owner = np.asarray(data_structure.owner("SubOrgan"))
+    data_structure.set("soil_water_potential", -0.1 - 0.01 * owner.astype(float))
+    groups = reduction.reduced_groups(data_structure)
     started = time.perf_counter()
-    found = reduction.group_archetypes(ds, groups)
+    found = reduction.group_archetypes(data_structure, groups)
     seconds = time.perf_counter() - started
     archetype = next(iter(found[0].values()))
     return seconds / archetypes, len(archetype.interior_rows)
@@ -187,17 +187,17 @@ def terms(groups: int, cells: int) -> tuple:
     """(seconds of one terms() call, seconds of its first call, which evaluates the archetype, seconds of one
     assignment) on *groups* groups of one archetype."""
     population, reduction = plant(groups, cells)
-    ds = population.data_structure
+    data_structure = population.data_structure
     component, system = population.instance.hydraulics, "BenchHydraulics._hydraulics"
-    nodes = ds.entity_ids("node")
+    nodes = data_structure.entity_ids("node")
     started = time.perf_counter()
-    reduction.terms(component, system, ds, nodes)
+    reduction.terms(component, system, data_structure, nodes)
     first = time.perf_counter() - started
     started = time.perf_counter()
-    reduction.terms(component, system, ds, nodes)
+    reduction.terms(component, system, data_structure, nodes)
     seconds = time.perf_counter() - started
     started = time.perf_counter()
-    reduction.assignment(ds)
+    reduction.assignment(data_structure)
     return seconds, first, time.perf_counter() - started
 
 

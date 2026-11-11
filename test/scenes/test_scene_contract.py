@@ -27,23 +27,23 @@ class ContractSeedling:
     """Initial structure of the contract plant: a vertical chain of 3 segments of SEGMENT_LENGTH under the plant."""
 
     @classmethod
-    def initiate_plant(cls, g, plant, parameters):
-        s = g.scales
+    def initiate_plant(cls, mtg, plant, parameters):
+        s = mtg.scales
         parent = plant
-        for scale, label in ((s.Axis, g.labels.Axis.Root), (s.GrowthUnit, g.labels.GrowthUnit.Root),
-                             (s.Phytomer, g.labels.Phytomer.Root), (s.Organ, g.labels.Organ.RootInternode)):
-            parent = g.add_component(parent, **PropsConfig(scale=scale, edge_type='/', label=label))
-        segment = g.add_component(parent, **PropsConfig(scale=s.SubOrgan, edge_type='/', label=g.labels.SubOrgan.RootSegment))
+        for scale, label in ((s.Axis, mtg.labels.Axis.Root), (s.GrowthUnit, mtg.labels.GrowthUnit.Root),
+                             (s.Phytomer, mtg.labels.Phytomer.Root), (s.Organ, mtg.labels.Organ.RootInternode)):
+            parent = mtg.add_component(parent, **PropsConfig(scale=scale, edge_type='/', label=label))
+        segment = mtg.add_component(parent, **PropsConfig(scale=s.SubOrgan, edge_type='/', label=mtg.labels.SubOrgan.RootSegment))
         segments = [segment] + [None] * 2
         for i in (1, 2):
-            segments[i] = g.add_child(segments[i - 1], **PropsConfig(scale=s.SubOrgan, edge_type='<',
-                                                                     label=g.labels.SubOrgan.RootSegment))
-        x, y, z = (float(g.property(name)[plant]) for name in ("x", "y", "z"))
+            segments[i] = mtg.add_child(segments[i - 1], **PropsConfig(scale=s.SubOrgan, edge_type='<',
+                                                                     label=mtg.labels.SubOrgan.RootSegment))
+        x, y, z = (float(mtg.property(name)[plant]) for name in ("x", "y", "z"))
         for rank, v in enumerate(segments):
             top = z - doubles.SEGMENT_LENGTH * rank
             for name, value in (("x1", x), ("x2", x), ("y1", y), ("y2", y), ("z1", top),
                                 ("z2", top - doubles.SEGMENT_LENGTH)):
-                g.set_values(name, [v], [value])
+                mtg.set_values(name, [v], [value])
 
 
 class ContractPlant(CompositeModel):
@@ -51,9 +51,9 @@ class ContractPlant(CompositeModel):
     parts = {"carbon": doubles_ds.PlantCarbon, "nitrogen": doubles_ds.PlantNitrogen}
 
     def __init__(self, data_structure, time_step):
-        ds, g = data_structure, data_structure.mtg
+        mtg = data_structure.mtg
         for name in ("x1", "x2", "y1", "y2", "z1", "z2"):
-            ds.register(name, [g.view(name)[v] for v in ds.entity_ids("node")], location="node")
+            data_structure.register(name, [mtg.view(name)[v] for v in data_structure.entity_ids("node")], location="node")
         super().__init__(data_structure, time_step)
 
 

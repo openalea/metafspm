@@ -91,11 +91,11 @@ def _warn(message: str) -> None:
         warnings.warn(message, stacklevel=2)
 
 
-def base_of(ds):
-    """The DataStructure *ds* is a view of (a component's located or entity view), else *ds* itself."""
-    while ds is not None and "_base" in getattr(ds, "__dict__", {}):
-        ds = ds.__dict__["_base"]
-    return ds
+def base_of(data_structure):
+    """The DataStructure *data_structure* is a view of (a component's located or entity view), else *data_structure* itself."""
+    while data_structure is not None and "_base" in getattr(data_structure, "__dict__", {}):
+        data_structure = data_structure.__dict__["_base"]
+    return data_structure
 
 
 def grouped(values, owner, groups: int, how: str, weights=None) -> np.ndarray:
@@ -228,20 +228,20 @@ def _versions() -> dict:
     return found
 
 
-def _scene_location(ds, location: str) -> str:
-    """*location* named as *ds* stores it: "node" for the scale of its nodes (SubOrgan on a segment-mode MPG,
+def _scene_location(data_structure, location: str) -> str:
+    """*location* named as *data_structure* stores it: "node" for the scale of its nodes (SubOrgan on a segment-mode MPG,
     Compartment on an anatomy-mode one), else as given."""
-    if location in ("node", "scalar") or location in getattr(ds, "_coarse_scale_names", lambda: [])():
+    if location in ("node", "scalar") or location in getattr(data_structure, "_coarse_scale_names", lambda: [])():
         return location
     try:
-        if ds._scale_name(ds._node_scale()) == location:
+        if data_structure._scale_name(data_structure._node_scale()) == location:
             return "node"
     except (AttributeError, StopIteration, IndexError, TypeError, ValueError):
         pass
-    if location == "cell" and hasattr(ds, "cell_volume"):        # a grid's cells
+    if location == "cell" and hasattr(data_structure, "cell_volume"):        # a grid's cells
         return location
     raise ValueError(f"Summary: location '{location}' is not one of the DataStructure's ('node', the scale of its "
-                     f"nodes, or {ds._coarse_scale_names() if hasattr(ds, '_coarse_scale_names') else []})")
+                     f"nodes, or {data_structure._coarse_scale_names() if hasattr(data_structure, '_coarse_scale_names') else []})")
 
 
 _COMPARISON = re.compile(r"^\s*(<=|>=|==|!=|<|>)\s*([-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?)\s*$")
@@ -263,9 +263,9 @@ class Summary:
       mean    [names] the means weighted by their declared weight (state_variable(weight=...), else plain), or
               {name: weight}: weighted by that variable (None: plain)
       min, max  [names]: the extremes (columns <name>_min, <name>_max)
-      max_change [names]: the largest change since the step before, |value - ds.previous(value)| (column
+      max_change [names]: the largest change since the step before, |value - data_structure.previous(value)| (column
               <name>_max_change), over the entities there at both (NaN at the first row): the Scene keeps the values
-              before each step (ds.previous)
+              before each step (data_structure.previous)
 
     The entities without a value (NaN) are left out; a mean or an extreme over no entity is NaN, a sum 0.
     *population*: one population's (its model's name), by default every population holding *location*; or an
@@ -294,7 +294,7 @@ class Summary:
                 f"max={self.max}, max_change={self.max_change}, per={self.per!r})")
 
     def _data_structures(self, scene) -> list:
-        """[(population or None, ds)] the table covers: the populations (or the one named), or the environment
+        """[(population or None, data_structure)] the table covers: the populations (or the one named), or the environment
         DataStructure named."""
         found = [(population, population.data_structure) for population in scene.populations
                  if self.population is None or population.name == self.population]
@@ -307,35 +307,35 @@ class Summary:
         return found
 
     def previous_variables(self, scene) -> list:
-        """[(ds, names)] whose values before each step the Scene keeps (ds.previous) for max_change."""
+        """[(data_structure, names)] whose values before each step the Scene keeps (data_structure.previous) for max_change."""
         if not self.max_change:
             return []
-        return [(ds, list(self.max_change)) for _, ds in self._data_structures(scene)]
+        return [(data_structure, list(self.max_change)) for _, data_structure in self._data_structures(scene)]
 
-    def _selected(self, ds, location: str) -> np.ndarray:
-        """Whether each entity at *location* of *ds* is selected by *where*."""
-        n = int(np.prod(ds._location_shape(location)))
+    def _selected(self, data_structure, location: str) -> np.ndarray:
+        """Whether each entity at *location* of *data_structure* is selected by *where*."""
+        n = int(np.prod(data_structure._location_shape(location)))
         selected = np.ones(n, dtype=bool)
         for name, condition in self.where.items():
             if name == "label" or name.endswith(".label"):
                 scale = None if name == "label" else name[:-len(".label")]
                 if scale is None:
-                    values = ds.labels() if location == "node" else ds.labels(location, per_node=False)
+                    values = data_structure.labels() if location == "node" else data_structure.labels(location, per_node=False)
                 elif location == "node":
-                    values = ds.labels(scale)
+                    values = data_structure.labels(scale)
                 else:
-                    index = np.asarray(ds.owner(scale, of=location))
-                    values = np.where(index >= 0, ds.labels(scale, per_node=False)[np.maximum(index, 0)], None)
+                    index = np.asarray(data_structure.owner(scale, of=location))
+                    values = np.where(index >= 0, data_structure.labels(scale, per_node=False)[np.maximum(index, 0)], None)
                 wanted = condition if isinstance(condition, (list, tuple, set)) else [condition]
                 selected &= np.isin(np.asarray(values, dtype=object), list(wanted))
                 continue
-            if not ds.has(name):
+            if not data_structure.has(name):
                 raise KeyError(f"Summary: where's variable '{name}' is not on the DataStructure")
-            values = np.asarray(ds.get(name), dtype=float)
-            source = ds.location(name)
+            values = np.asarray(data_structure.get(name), dtype=float)
+            source = data_structure.location(name)
             if source != location:
-                values = ds._mask_values_at("Summary", name, values, location) if location == "node" else \
-                    np.asarray(ds._map(values, source, location, "broadcast"))
+                values = data_structure._mask_values_at("Summary", name, values, location) if location == "node" else \
+                    np.asarray(data_structure._map(values, source, location, "broadcast"))
             comparison = _COMPARISON.match(condition) if isinstance(condition, str) else None
             if comparison is not None:
                 selected &= _OPERATORS[comparison.group(1)](values, float(comparison.group(2)))
@@ -345,45 +345,45 @@ class Summary:
                 selected &= values == condition
         return selected
 
-    def _values(self, ds, name: str, location: str) -> np.ndarray:
-        if not ds.has(name):
+    def _values(self, data_structure, name: str, location: str) -> np.ndarray:
+        if not data_structure.has(name):
             raise KeyError(f"Summary: variable '{name}' is not on the DataStructure")
-        if ds.location(name) != location:
-            raise ValueError(f"Summary at {self.location}: '{name}' is at {ds.location(name)}")
-        return np.asarray(ds.get(name), dtype=float).reshape(-1)
+        if data_structure.location(name) != location:
+            raise ValueError(f"Summary at {self.location}: '{name}' is at {data_structure.location(name)}")
+        return np.asarray(data_structure.get(name), dtype=float).reshape(-1)
 
     def __call__(self, scene) -> pd.DataFrame:
         recorder = scene.recorder if isinstance(getattr(scene, "recorder", None), SceneRecorder) else SceneRecorder()
-        parts = []                                       # (population, ds, location, group of each entity, names)
-        for population, ds in self._data_structures(scene):
-            location = _scene_location(ds, self.location)
-            selected = self._selected(ds, location)
+        parts = []                                       # (population, data_structure, location, group of each entity, names)
+        for population, data_structure in self._data_structures(scene):
+            location = _scene_location(data_structure, self.location)
+            selected = self._selected(data_structure, location)
             if self.per == "plant":
-                owner = np.asarray(ds.owner("Plant") if location == "node" else ds.owner("Plant", of=location))
+                owner = np.asarray(data_structure.owner("Plant") if location == "node" else data_structure.owner("Plant", of=location))
             else:
                 owner = np.zeros(selected.size, dtype=np.int64)
-            parts.append((population, ds, location, np.where(selected, owner, -1)))
+            parts.append((population, data_structure, location, np.where(selected, owner, -1)))
         if not parts:
             raise ValueError(f"Summary: no population{' ' + repr(self.population) if self.population else ''} in "
                              "the scene (nor environment DataStructure of that id)")
         rows = []
         if self.per == "plant":
-            for population, ds, location, owner in parts:
+            for population, data_structure, location, owner in parts:
                 names = population.plant_names()
-                plants = np.asarray(ds.entity_ids("Plant"))
-                table = self._aggregated(recorder, scene, [(ds, location, owner)], plants.size)
+                plants = np.asarray(data_structure.entity_ids("Plant"))
+                table = self._aggregated(recorder, scene, [(data_structure, location, owner)], plants.size)
                 rows.append(pd.DataFrame({"time": float(scene.time),
                                           "plant": [names.get(int(v), str(v)) for v in plants], **table}))
             return pd.concat(rows, ignore_index=True)
         return pd.DataFrame({"time": [float(scene.time)], **self._aggregated(
-            recorder, scene, [(ds, location, owner) for _, ds, location, owner in parts], 1)})
+            recorder, scene, [(data_structure, location, owner) for _, data_structure, location, owner in parts], 1)})
 
     def _aggregated(self, recorder, scene, parts, groups: int) -> dict:
-        """{column: values per group} over the *parts* [(ds, location, group of each entity)] pooled."""
+        """{column: values per group} over the *parts* [(data_structure, location, group of each entity)] pooled."""
         def pooled(name, factor=None):
-            values = np.concatenate([self._values(ds, name, location) for ds, location, _ in parts])
+            values = np.concatenate([self._values(data_structure, name, location) for data_structure, location, _ in parts])
             if factor is not None:
-                values = values * np.concatenate([self._values(ds, factor, location) for ds, location, _ in parts])
+                values = values * np.concatenate([self._values(data_structure, factor, location) for data_structure, location, _ in parts])
             return values
         grouping = Grouping(np.concatenate([np.asarray(owner, dtype=np.int64) for _, _, owner in parts]), groups)
         out = {}
@@ -391,7 +391,7 @@ class Summary:
             out[name] = grouping.aggregate(pooled(name, factor), "sum")
         for name, weight in self.mean.items():
             if weight == "declared":
-                plans = [recorder.summary_plan(scene, ds).get(name) for ds, _, _ in parts]
+                plans = [recorder.summary_plan(scene, data_structure).get(name) for data_structure, _, _ in parts]
                 declared = {plan[2] for plan in plans if plan is not None}
                 weight = declared.pop() if len(declared) == 1 else None
             out[name] = grouping.aggregate(pooled(name), "mean", None if weight is None else pooled(weight))
@@ -400,18 +400,18 @@ class Summary:
         for name in self.max:
             out[f"{name}_max"] = grouping.aggregate(pooled(name), "max")
         for name in self.max_change:
-            change = np.concatenate([np.abs(self._values(ds, name, location) - _previous(ds, name, location))
-                                     for ds, location, _ in parts])
+            change = np.concatenate([np.abs(self._values(data_structure, name, location) - _previous(data_structure, name, location))
+                                     for data_structure, location, _ in parts])
             out[f"{name}_max_change"] = grouping.aggregate(change, "max")
         return out
 
 
-def _previous(ds, name: str, location: str) -> np.ndarray:
+def _previous(data_structure, name: str, location: str) -> np.ndarray:
     """*name*'s values before the step at *location* (NaN: new entities, or none kept yet: the first row)."""
     try:
-        return np.asarray(ds.previous(name), dtype=float).reshape(-1)
+        return np.asarray(data_structure.previous(name), dtype=float).reshape(-1)
     except KeyError:
-        return np.full(int(np.prod(ds._location_shape(location))), np.nan)
+        return np.full(int(np.prod(data_structure._location_shape(location))), np.nan)
 
 
 FRAME_WRITINGS = ("background", "synchronous")
@@ -646,48 +646,48 @@ class SceneRecorder:
     # ── summaries, segments, tables ──────────────────────────────────────────
 
     @staticmethod
-    def _components_on(scene, ds) -> list:
-        """The scene's components working on *ds* or on a view of it (an environment component on a population's MPG
+    def _components_on(scene, data_structure) -> list:
+        """The scene's components working on *data_structure* or on a view of it (an environment component on a population's MPG
         included)."""
-        return [c for c in scene.components if base_of(getattr(c, "data_structure", None)) is ds]
+        return [c for c in scene.components if base_of(getattr(c, "data_structure", None)) is data_structure]
 
-    def summary_plan(self, scene, ds) -> dict:
-        """summary_plan's plan (_summary_plan), kept for the scene's iteration while *ds*'s variables and topology
+    def summary_plan(self, scene, data_structure) -> dict:
+        """summary_plan's plan (_summary_plan), kept for the scene's iteration while *data_structure*'s variables and topology
         are the same (its version, topology_version): the summaries and the tables of one record read it once."""
-        key = (id(ds), getattr(ds, "version", None), getattr(ds, "topology_version", None))
+        key = (id(data_structure), getattr(data_structure, "version", None), getattr(data_structure, "topology_version", None))
         iteration = (id(scene), getattr(scene, "step_count", None), getattr(scene, "time", None))
         kept = self.__dict__.get("_plans")
         if kept is None or kept[0] != iteration:
             kept = self.__dict__["_plans"] = (iteration, {})
         hit = kept[1].get(key)
-        if hit is None or hit[0] is not ds:
-            hit = kept[1][key] = (ds, self._summary_plan(scene, ds))
+        if hit is None or hit[0] is not data_structure:
+            hit = kept[1][key] = (data_structure, self._summary_plan(scene, data_structure))
         return hit[1]
 
-    def _summary_plan(self, scene, ds) -> dict:
+    def _summary_plan(self, scene, data_structure) -> dict:
         """
-        {name: (location, kind, weight, holder, part, entities)} of what summaries.csv holds for *ds*: the float state
-        variables of every component on *ds* or on one of its views (each at its location on *ds*: a view's
+        {name: (location, kind, weight, holder, part, entities)} of what summaries.csv holds for *data_structure*: the float state
+        variables of every component on *data_structure* or on one of its views (each at its location on *data_structure*: a view's
         SubOrgans', the nodes', a Plant's), and of a light model's union of the plants (at the union's entities of
-        *ds*); descriptors, the relations' variables (edges, faces) and variables of no kind (below the Plant) left out.
+        *data_structure*); descriptors, the relations' variables (edges, faces) and variables of no kind (below the Plant) left out.
         *weight*: the weight of an intensive variable's mean, its declared weight (state_variable(weight=...)) when
         it is at the same location, else a grid's cell volumes (CELL_VOLUME), else None (a plain mean; a warning
         once, listing them). *holder*: the
-        DataStructure the values are read from (*ds*, or the union); *part*: the union's part of *ds* (else None);
+        DataStructure the values are read from (*data_structure*, or the union); *part*: the union's part of *data_structure* (else None);
         *entities*: the entities of the location the declaring components own (a boolean mask: the entity views' of
         the components declaring it, e.g. a root model's radius over the roots only), None for all.
         """
         plan, unweighted = {}, []
         for component in scene.components:
             on = getattr(component, "data_structure", None)
-            parts = [(on, None)] if base_of(on) is ds else [
-                (on, part) for part in getattr(on, "parts", ()) if base_of(part) is ds]
+            parts = [(on, None)] if base_of(on) is data_structure else [
+                (on, part) for part in getattr(on, "parts", ()) if base_of(part) is data_structure]
             for holder, part in parts:
                 for name, spec in getattr(component, "_variable_specs", {}).items():
                     if spec.role != "state_variable" or not holder.has(name):
                         continue
                     if part is None:
-                        location = ds.location(name)
+                        location = data_structure.location(name)
                     elif holder.location(name) != "node" or name in plan:
                         continue
                     else:                                 # a union's node: the part's entity
@@ -700,25 +700,25 @@ class SceneRecorder:
                     entities = None
                     if part is None and "_entities" in on.__dict__ and on.__dict__["_at"] == location:
                         # a variable at an entity view's entities: theirs only
-                        entities = np.zeros(int(np.prod(ds._location_shape(location))), dtype=bool)
-                        entities[np.asarray(ds.index_of(on.entity_ids("node"), location), dtype=np.int64)] = True
+                        entities = np.zeros(int(np.prod(data_structure._location_shape(location))), dtype=bool)
+                        entities[np.asarray(data_structure.index_of(on.entity_ids("node"), location), dtype=np.int64)] = True
                     if name in plan:                      # declared by several components: their entities together
                         known = plan[name]
                         merged = None if known[5] is None or entities is None else known[5] | entities
                         plan[name] = known[:5] + (merged,)
                         continue
                     weight = spec.weight if kind in INTENSIVE_KINDS + MASSIC_KINDS else None
-                    if weight is not None and not ((ds if part is None else holder).has(weight) and (
-                            ds.location(weight) if part is None else part.__dict__.get("_at", "node")) == location):
+                    if weight is not None and not ((data_structure if part is None else holder).has(weight) and (
+                            data_structure.location(weight) if part is None else part.__dict__.get("_at", "node")) == location):
                         weight = None
                     if (kind in INTENSIVE_KINDS + MASSIC_KINDS and weight is None and location == "cell"
-                            and callable(getattr(ds, "cell_volume", None))):
+                            and callable(getattr(data_structure, "cell_volume", None))):
                         weight = CELL_VOLUME                  # a grid's cells: their volumes
                     if (kind in INTENSIVE_KINDS + MASSIC_KINDS and weight is None
                             and location not in ("Plant", "scalar")):
                         unweighted.append(f"{type(component).__name__}.{name}")
                     plan[name] = (location, kind, weight, holder, part, entities)
-        key = (id(ds), tuple(sorted(unweighted)))
+        key = (id(data_structure), tuple(sorted(unweighted)))
         if unweighted and key not in self._warned:
             self._warned.add(key)
             _warn("SceneRecorder: intensive variables averaged without a declared weight (plain means; "
@@ -726,36 +726,36 @@ class SceneRecorder:
         return plan
 
     @staticmethod
-    def _columns_of(ds, name: str, values=None, location: str = None) -> dict:
+    def _columns_of(data_structure, name: str, values=None, location: str = None) -> dict:
         """{column: values per entity} of variable *name*: one column, or one per component of a vector variable."""
-        stored = np.asarray(ds.get(name) if values is None else values, dtype=float)
-        n_entities = int(np.prod(ds._location_shape(location or ds.location(name))))
+        stored = np.asarray(data_structure.get(name) if values is None else values, dtype=float)
+        n_entities = int(np.prod(data_structure._location_shape(location or data_structure.location(name))))
         flat = stored.reshape(n_entities, -1)
         if flat.shape[1] == 1:
             return {name: flat[:, 0]}
         return {f"{name}_{j}": flat[:, j] for j in range(flat.shape[1])}
 
     @staticmethod
-    def _planned_values(ds, name, holder, part, layouts: dict = None):
-        """The values of a summarised variable at its entities of *ds*: a union's at the entities of *ds*'s part it
+    def _planned_values(data_structure, name, holder, part, layouts: dict = None):
+        """The values of a summarised variable at its entities of *data_structure*: a union's at the entities of *data_structure*'s part it
         holds (by their ids: the union's layout may be a step behind the part's growth), NaN elsewhere. *layouts*: a
-        dict keeping each union part's layout (its offset in the union, which of its ids *ds* holds and where) for
+        dict keeping each union part's layout (its offset in the union, which of its ids *data_structure* holds and where) for
         the next variables of the same summaries."""
         if name == CELL_VOLUME:
-            cells = int(np.prod(ds._location_shape("cell")))
-            return np.broadcast_to(np.asarray(ds.cell_volume(), dtype=float), (cells,))
+            cells = int(np.prod(data_structure._location_shape("cell")))
+            return np.broadcast_to(np.asarray(data_structure.cell_volume(), dtype=float), (cells,))
         if part is None:                                   # a view's variable: the base's, every entity
-            return np.asarray(ds.get(name), dtype=float)
+            return np.asarray(data_structure.get(name), dtype=float)
         layout = None if layouts is None else layouts.get((id(holder), id(part)))
         if layout is None:
             k = next(j for j, other in enumerate(holder.parts) if other is part)
             offset = int(sum(len(ids) for ids in holder._ids[:k]))
             ids = np.asarray(holder._ids[k], dtype=np.int64)
             location = part.__dict__.get("_at", "node")
-            known = np.asarray(ds.entity_ids(location), dtype=np.int64)
+            known = np.asarray(data_structure.entity_ids(location), dtype=np.int64)
             present = np.isin(ids, known)
             layout = (offset, ids.size, known.size, present,
-                      np.asarray(ds.index_of(ids[present], location), dtype=np.int64))
+                      np.asarray(data_structure.index_of(ids[present], location), dtype=np.int64))
             if layouts is not None:
                 layouts[(id(holder), id(part))] = layout
         offset, size, count, present, rows = layout
@@ -768,42 +768,42 @@ class SceneRecorder:
         """One row per plant: time, plant (its planting name), its float state variables: extensive ones summed over
         its entities, intensive ones their mean weighted by their declared weight (else plain), Plant ones as is;
         the entities without a value (NaN) left out."""
-        ds = population.data_structure
-        plants = np.asarray(ds.entity_ids("Plant"))
+        data_structure = population.data_structure
+        plants = np.asarray(data_structure.entity_ids("Plant"))
         names = population.plant_names()
         table = {"time": float(scene.time), "plant": [names.get(int(v), str(v)) for v in plants]}
         owners, groupings, layouts = {}, {}, {}
-        for name, (location, kind, weight, holder, part, entities) in self.summary_plan(scene, ds).items():
-            values = self._planned_values(ds, name, holder, part, layouts)
-            weights = None if weight is None else self._planned_values(ds, weight, holder, part, layouts)
+        for name, (location, kind, weight, holder, part, entities) in self.summary_plan(scene, data_structure).items():
+            values = self._planned_values(data_structure, name, holder, part, layouts)
+            weights = None if weight is None else self._planned_values(data_structure, weight, holder, part, layouts)
             if location == "Plant":
-                table.update(self._columns_of(ds, name, values, location))
+                table.update(self._columns_of(data_structure, name, values, location))
                 continue
             if location == "scalar":
-                for column, value in self._columns_of(ds, name, values, location).items():
+                for column, value in self._columns_of(data_structure, name, values, location).items():
                     table[column] = np.full(plants.size, float(np.ravel(value)[0]))
                 continue
             if location not in owners:
-                owners[location] = np.asarray(ds.owner("Plant") if location == "node" else
-                                              ds.owner("Plant", of=location), dtype=np.int64)
+                owners[location] = np.asarray(data_structure.owner("Plant") if location == "node" else
+                                              data_structure.owner("Plant", of=location), dtype=np.int64)
             grouping = groupings.get((location, id(entities)))     # the owners sorted out once per entities
             if grouping is None or grouping[0] is not entities:
                 owner = owners[location] if entities is None else np.where(entities, owners[location], -1)
                 grouping = groupings[(location, id(entities))] = (entities, Grouping(owner, plants.size))
-            for column, column_values in self._columns_of(ds, name, values, location).items():
+            for column, column_values in self._columns_of(data_structure, name, values, location).items():
                 table[column] = grouping[1].aggregate(column_values, "sum" if kind in EXTENSIVE_KINDS else "mean",
                                                       weights)
         return pd.DataFrame(table)
 
-    def environment_summary(self, scene, ds) -> pd.DataFrame:
-        """One row: time, the float state variables of *ds* (an environment model's), extensive ones summed over
+    def environment_summary(self, scene, data_structure) -> pd.DataFrame:
+        """One row: time, the float state variables of *data_structure* (an environment model's), extensive ones summed over
         their entities, intensive ones their mean weighted by their declared weight (a grid's: its cells' volume),
         else plain; the entities without a value (NaN) left out."""
         row, layouts = {"time": float(scene.time)}, {}
-        for name, (location, kind, weight, holder, part, entities) in self.summary_plan(scene, ds).items():
-            values = self._planned_values(ds, name, holder, part, layouts)
-            weights = None if weight is None else self._planned_values(ds, weight, holder, part, layouts)
-            for column, column_values in self._columns_of(ds, name, values, location).items():
+        for name, (location, kind, weight, holder, part, entities) in self.summary_plan(scene, data_structure).items():
+            values = self._planned_values(data_structure, name, holder, part, layouts)
+            weights = None if weight is None else self._planned_values(data_structure, weight, holder, part, layouts)
+            for column, column_values in self._columns_of(data_structure, name, values, location).items():
                 if location == "scalar":
                     row[column] = float(np.ravel(column_values)[0])
                     continue
@@ -817,14 +817,14 @@ class SceneRecorder:
         """[(table, DataStructure)] of the environment models' own DataStructures (Scene.data_structures(): not the
         populations', nor their unions), each in its compartment's folder: <compartment>/<id>/summaries."""
         population_names = {population.name for population in scene.populations}
-        return [(f"{compartment(model)}/{identifier}/summaries", ds)
-                for identifier, (ds, model, _) in scene.data_structures().items() if identifier not in population_names]
+        return [(f"{compartment(model)}/{identifier}/summaries", data_structure)
+                for identifier, (data_structure, model, _) in scene.data_structures().items() if identifier not in population_names]
 
     def write_summaries(self, scene) -> None:
         for population in scene.populations:
             self._append(f"Plant/{population.name}/summaries", self.plant_summaries(scene, population))
-        for name, ds in self.environment_data_structures(scene):
-            self._append(name, self.environment_summary(scene, ds))
+        for name, data_structure in self.environment_data_structures(scene):
+            self._append(name, self.environment_summary(scene, data_structure))
 
     def write_conservation(self, scene) -> None:
         """conservation.csv: a row per conserved quantity of every graph system (graph_system(conserved=...)), its
@@ -842,19 +842,19 @@ class SceneRecorder:
 
     def selected_segments(self, scene, population) -> pd.DataFrame:
         """The node state variables of the segment_plants' nodes: time, plant, one row per node (indexed by vid)."""
-        ds = population.data_structure
+        data_structure = population.data_structure
         names = population.plant_names()
         selected = [vid for vid, name in names.items() if name in self.segment_plants]
         if not selected:
             return None
         variables = []
-        for component in self._components_on(scene, ds):
+        for component in self._components_on(scene, data_structure):
             for name, spec in getattr(component, "_variable_specs", {}).items():
-                if (spec.role == "state_variable" and name not in variables and ds.has(name)
-                        and ds.location(name) == "node" and np.asarray(ds.get(name)).dtype.kind == "f"):
+                if (spec.role == "state_variable" and name not in variables and data_structure.has(name)
+                        and data_structure.location(name) == "node" and np.asarray(data_structure.get(name)).dtype.kind == "f"):
                     variables.append(name)
-        frame = ds.to_dataframe(names=variables, location="node")
-        plant_of = np.asarray(ds.entity_ids("Plant"))[np.asarray(ds.owner("Plant"))]
+        frame = data_structure.to_dataframe(names=variables, location="node")
+        plant_of = np.asarray(data_structure.entity_ids("Plant"))[np.asarray(data_structure.owner("Plant"))]
         frame.insert(0, "plant", [names[int(v)] for v in plant_of])
         frame.insert(0, "time", float(scene.time))
         return frame[np.isin(plant_of, selected)].reset_index()
@@ -953,8 +953,8 @@ class SceneRecorder:
         if variables is None:
             return None
         found = scene.data_structures()
-        variables = {identifier: resolved_variables(_for(variables, identifier), ds, components)
-                     for identifier, (ds, _, components) in found.items()}
+        variables = {identifier: resolved_variables(_for(variables, identifier), data_structure, components)
+                     for identifier, (data_structure, _, components) in found.items()}
         return with_view_columns(variables, views, list(found)) if views else variables
 
     def _write_views(self, frame, folder: str, content: dict) -> None:

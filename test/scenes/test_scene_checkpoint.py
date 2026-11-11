@@ -60,7 +60,7 @@ def _scene(folder=None, **recorder):
 
 
 def _state(scene):
-    return [{name: np.array(ds.get(name)) for name in ds.available_vars()} for ds, _, _ in scene.data_structures().values()]
+    return [{name: np.array(data_structure.get(name)) for name in data_structure.available_vars()} for data_structure, _, _ in scene.data_structures().values()]
 
 
 def test_a_restored_scene_continues_bit_for_bit(tmp_path):
@@ -102,9 +102,9 @@ def test_a_restore_takes_the_checkpoints_or_the_current_scenario(tmp_path):
     kept = Scene.restore(str(tmp_path / "c"), **_rated_arguments(0.5))
     changed = Scene.restore(str(tmp_path / "c"), scenario="current", **_rated_arguments(0.5))
     for restored, rate in ((kept, 0.1), (changed, 0.5)):
-        ds = restored.populations[0].data_structure
-        np.testing.assert_array_equal(ds.get("exudation_rate"), rate)
-        np.testing.assert_array_equal(ds.get("struct_mass"), saved[0]["struct_mass"])       # the checkpoint's state
+        data_structure = restored.populations[0].data_structure
+        np.testing.assert_array_equal(data_structure.get("exudation_rate"), rate)
+        np.testing.assert_array_equal(data_structure.get("struct_mass"), saved[0]["struct_mass"])       # the checkpoint's state
     for restored in (kept, changed):
         restored.run()
     kept_exudation = kept.populations[0].data_structure.get("exudation")

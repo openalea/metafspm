@@ -114,8 +114,8 @@ class ToyCaribuModel(EnvironmentModel):
 def _translator():
     translator = Translator()
     for organs in ("WheatOrgans", "PeaOrgans"):
-        for g in GEOMETRY:
-            translator.link("ToyCaribu", g, organs, {g: 1.})
+        for mtg in GEOMETRY:
+            translator.link("ToyCaribu", mtg, organs, {mtg: 1.})
         translator.link(organs, "absorbed", "ToyCaribu", {"absorbed": 1.})
     return translator
 
@@ -125,11 +125,11 @@ def test_a_light_model_triangulates_the_populations_itself():
     scene = Scene(doubles_planting([Wheat, Pea, Wheat]), environment=[ToyCaribuModel], translator=_translator(),
                   time_step=DT)
     wheat, pea = (p.data_structure for p in scene.populations)
-    for ds in (wheat, pea):                                             # leaning elements: a projected area
-        ds.set("x2", ds.get("x1") + 0.3)
+    for data_structure in (wheat, pea):                                             # leaning elements: a projected area
+        data_structure.set("x2", data_structure.get("x1") + 0.3)
     scene.run()
-    geometry = {g: np.r_[wheat.get(g), pea.get(g)] for g in GEOMETRY}
-    expected = absorbed_light(triangles(*(geometry[g] for g in GEOMETRY)))
+    geometry = {column: np.r_[wheat.get(column), pea.get(column)] for column in GEOMETRY}
+    expected = absorbed_light(triangles(*(geometry[column] for column in GEOMETRY)))
     np.testing.assert_allclose(np.r_[wheat.get("absorbed"), pea.get("absorbed")], expected)
     assert (expected < 1.).any() and (expected == 1.).any()             # shading within and between populations
     pea.set("radius", 0.5)                                              # a change seen only at the next run

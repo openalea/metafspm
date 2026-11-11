@@ -143,11 +143,11 @@ def test_a_reductions_kinds_on_the_device_equal_the_cpus(fake):
 
     def archetypes(compute):
         population = length_population(ExactLengthPlant, lengths)
-        ds = population.data_structure
-        reduction = ds.structure.reduction
+        data_structure = population.data_structure
+        reduction = data_structure.structure.reduction
         with compute.limits():
             return {i: by_system[SYSTEM] for i, by_system in
-                    reduction.group_archetypes(ds, reduction.reduced_groups(ds), release=True).items()}
+                    reduction.group_archetypes(data_structure, reduction.reduced_groups(data_structure), release=True).items()}
 
     reference = archetypes(Compute())
     compute = Compute(device="cuda")

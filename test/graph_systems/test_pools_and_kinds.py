@@ -22,12 +22,12 @@ DT, K, EXCHANGE = 2., 0.3, 0.8
 def _population(sizes=(3, 5)):
     table = pd.DataFrame([dict(plant=f"p{i}", model=None, x=0.1 * i, y=0., depth=0., rotation=0.,
                                scenario={"n_segments": n}) for i, n in enumerate(sizes)])
-    g, plants = _build_population(table, initiators=(RootGrowthProbe,))
-    g.populate_graph(g.scales.SubOrgan)
-    g.convert_properties_to_arraydict()
-    ds = MPGDataStructure(g, from_scale=g.scales.SubOrgan)
-    ds.register("is_collar", (ds.parents() < 0).astype(float), location="node")
-    return ds, plants
+    mtg, plants = _build_population(table, initiators=(RootGrowthProbe,))
+    mtg.populate_graph(mtg.scales.SubOrgan)
+    mtg.convert_properties_to_arraydict()
+    data_structure = MPGDataStructure(mtg, from_scale=mtg.scales.SubOrgan)
+    data_structure.register("is_collar", (data_structure.parents() < 0).astype(float), location="node")
+    return data_structure, plants
 
 
 class _Equations:
@@ -73,19 +73,19 @@ class SplitRootWithShootPool(FunctionalComponent):
 
 
 def _start(model_class):
-    ds, plants = _population()
-    model = model_class(data_structure=ds)
-    ds.set("sugar", np.linspace(0., 1., ds.n_nodes()))
-    ds.set("shoot_sugar", [10., 0.])
-    return ds, plants, model
+    data_structure, plants = _population()
+    model = model_class(data_structure=data_structure)
+    data_structure.set("sugar", np.linspace(0., 1., data_structure.n_nodes()))
+    data_structure.set("shoot_sugar", [10., 0.])
+    return data_structure, plants, model
 
 
-def _reference(ds, sugar0, shoot0):
+def _reference(data_structure, sugar0, shoot0):
     """The same implicit step as one hand-assembled linear system."""
-    B = ds._incidence_matrix().toarray()
-    n = ds.n_nodes()
-    owner = np.asarray(ds.owner("Plant"))
-    collar = np.flatnonzero(ds.parents() < 0)
+    B = data_structure._incidence_matrix().toarray()
+    n = data_structure.n_nodes()
+    owner = np.asarray(data_structure.owner("Plant"))
+    collar = np.flatnonzero(data_structure.parents() < 0)
     P = np.zeros((n, 2))
     P[collar, owner[collar]] = 1.
     d = P.sum(axis=1)
@@ -99,16 +99,16 @@ def _reference(ds, sugar0, shoot0):
 
 
 def test_a_pool_per_plant_is_solved_with_the_graph():
-    ds, plants, model = _start(RootWithShootPool)
-    sugar0, shoot0 = ds.get("sugar").copy(), ds.get("shoot_sugar").copy()
+    data_structure, plants, model = _start(RootWithShootPool)
+    sugar0, shoot0 = data_structure.get("sugar").copy(), data_structure.get("shoot_sugar").copy()
     model()
-    sugar, shoot = _reference(ds, sugar0, shoot0)
-    np.testing.assert_allclose(ds.get("sugar"), sugar, rtol=1e-8, atol=1e-10)
-    np.testing.assert_allclose(ds.get("shoot_sugar"), shoot, rtol=1e-8, atol=1e-10)
-    assert ds.get("sugar").sum() + ds.get("shoot_sugar").sum() == pytest.approx(sugar0.sum() + shoot0.sum())
-    owner = np.asarray(ds.owner("Plant"))
-    assert ds.get("sugar")[owner == 0].sum() > sugar0[owner == 0].sum()        # fed by its own shoot only
-    assert ds.get("sugar")[owner == 1].sum() < sugar0[owner == 1].sum()
+    sugar, shoot = _reference(data_structure, sugar0, shoot0)
+    np.testing.assert_allclose(data_structure.get("sugar"), sugar, rtol=1e-8, atol=1e-10)
+    np.testing.assert_allclose(data_structure.get("shoot_sugar"), shoot, rtol=1e-8, atol=1e-10)
+    assert data_structure.get("sugar").sum() + data_structure.get("shoot_sugar").sum() == pytest.approx(sugar0.sum() + shoot0.sum())
+    owner = np.asarray(data_structure.owner("Plant"))
+    assert data_structure.get("sugar")[owner == 0].sum() > sugar0[owner == 0].sum()        # fed by its own shoot only
+    assert data_structure.get("sugar")[owner == 1].sum() < sugar0[owner == 1].sum()
 
 
 def test_pools_of_split_solves_agree_with_the_whole_solve():
@@ -138,23 +138,23 @@ class SwitchingCollar(FunctionalComponent):
 
 
 def test_boundary_conditions_are_read_per_node_at_each_solve():
-    ds, plants = _population()
-    model = SwitchingCollar(data_structure=ds)
-    collar = np.flatnonzero(ds.parents() < 0)
-    owner = np.asarray(ds.owner("Plant"))
-    conditions, values = np.zeros(ds.n_nodes(), dtype=np.int64), np.zeros(ds.n_nodes())
+    data_structure, plants = _population()
+    model = SwitchingCollar(data_structure=data_structure)
+    collar = np.flatnonzero(data_structure.parents() < 0)
+    owner = np.asarray(data_structure.owner("Plant"))
+    conditions, values = np.zeros(data_structure.n_nodes(), dtype=np.int64), np.zeros(data_structure.n_nodes())
     conditions[collar[owner[collar] == 0]], values[collar[owner[collar] == 0]] = 1, 5.        # Dirichlet: a pressure
     conditions[collar[owner[collar] == 1]], values[collar[owner[collar] == 1]] = 2, 0.25      # Neumann: an inflow
-    ds.set("collar_condition", conditions)
-    ds.set("collar_value", values)
-    total = ds.get("sugar")[owner == 1].sum()
+    data_structure.set("collar_condition", conditions)
+    data_structure.set("collar_value", values)
+    total = data_structure.get("sugar")[owner == 1].sum()
     model()
-    np.testing.assert_allclose(ds.get("sugar")[collar[owner[collar] == 0]], 5.)
-    assert ds.get("sugar")[owner == 1].sum() == pytest.approx(total + 0.25 * DT)        # the inflow, integrated
-    ds.set("collar_condition", 0)                                                           # no condition any more
-    total = ds.get("sugar").sum()
+    np.testing.assert_allclose(data_structure.get("sugar")[collar[owner[collar] == 0]], 5.)
+    assert data_structure.get("sugar")[owner == 1].sum() == pytest.approx(total + 0.25 * DT)        # the inflow, integrated
+    data_structure.set("collar_condition", 0)                                                           # no condition any more
+    total = data_structure.get("sugar").sum()
     model()
-    assert ds.get("sugar").sum() == pytest.approx(total)
+    assert data_structure.get("sugar").sum() == pytest.approx(total)
 
 
 @dataclass
@@ -173,8 +173,8 @@ class Forced(FunctionalComponent):
 
 
 def test_forcings_are_their_mean_over_each_substep():
-    ds, _ = _population()
-    model = Forced(data_structure=ds)
+    data_structure, _ = _population()
+    model = Forced(data_structure=data_structure)
     model.set_forcings({"supply": pd.Series([0., 100.], index=[0., 100.])})                      # supply(t) = t
     Forced.seen = set()
     model()
@@ -183,7 +183,7 @@ def test_forcings_are_their_mean_over_each_substep():
     np.testing.assert_allclose(times, DT * np.arange(1, 9) / 4.)                  # two calls of 4 sub-steps
     assert all(supply == pytest.approx(t - DT / 8.) for t, supply, _ in Forced.seen)   # the mean over [t - h, t]
     assert all(whole == pytest.approx(DT / 2. if t <= DT else 1.5 * DT) for t, _, whole in Forced.seen)  # over="step"
-    np.testing.assert_allclose(ds.get("sugar"), (2. * DT) ** 2 / 2.)            # the integral of t, exactly
+    np.testing.assert_allclose(data_structure.get("sugar"), (2. * DT) ** 2 / 2.)            # the integral of t, exactly
 
 
 def test_pools_need_a_newton_solver():

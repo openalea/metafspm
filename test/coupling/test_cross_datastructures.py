@@ -62,10 +62,10 @@ class Soil(FunctionalComponent):
 def _population(xs, initiator=RootGrowthProbe, z=0., **scenario):
     table = pd.DataFrame([dict(plant=f"p{i}", model=initiator, x=x, y=0.05, depth=-z, rotation=0.,
                                scenario=dict(scenario)) for i, x in enumerate(xs)])
-    g, _ = _build_population(table, initiators=(initiator,))
-    g.populate_graph(g.scales.SubOrgan)
-    g.convert_properties_to_arraydict()
-    return MPGDataStructure(g, from_scale=g.scales.SubOrgan)
+    mtg, _ = _build_population(table, initiators=(initiator,))
+    mtg.populate_graph(mtg.scales.SubOrgan)
+    mtg.convert_properties_to_arraydict()
+    return MPGDataStructure(mtg, from_scale=mtg.scales.SubOrgan)
 
 
 def _grid():
@@ -189,8 +189,8 @@ def test_populations_add_up_into_one_grid_in_one_write():
     exchanges.exchange(into=soil)                                         # no zeroing needed between steps
     assert soil.write_count("exudation") == writes + 2
     expected = np.zeros(soil.n_nodes())
-    for ds, mapping in zip((roots, others), mappings):
-        np.add.at(expected, mapping.cells, 2. * ds.get("exudation"))
+    for data_structure, mapping in zip((roots, others), mappings):
+        np.add.at(expected, mapping.cells, 2. * data_structure.get("exudation"))
     np.testing.assert_allclose(soil.get("exudation").reshape(-1), expected)
     assert soil.get("exudation").sum() == pytest.approx(2. * (roots.n_nodes() + others.n_nodes()))
 
@@ -249,11 +249,11 @@ def test_cell_amounts_are_split_between_populations_by_weight():
     exchanges.exchange(into=others)
     covered = np.unique(np.r_[mappings[0].incidence()[1], mappings[1].incidence()[1]])
     assert roots.get("nitrate_supply").sum() + others.get("nitrate_supply").sum() == pytest.approx(covered.size)
-    shares = [_dense(m) * ds.get("length")[:, None] for m, ds in zip(mappings, (roots, others))]
+    shares = [_dense(m) * data_structure.get("length")[:, None] for m, data_structure in zip(mappings, (roots, others))]
     totals = shares[0].sum(axis=0) + shares[1].sum(axis=0)                # one cell shared by both populations
-    for share, ds in zip(shares, (roots, others)):
+    for share, data_structure in zip(shares, (roots, others)):
         expected = (np.divide(share, totals, out=np.zeros_like(share), where=totals > 0)).sum(axis=1)
-        np.testing.assert_allclose(ds.get("nitrate_supply"), expected)
+        np.testing.assert_allclose(data_structure.get("nitrate_supply"), expected)
 
 
 def test_links_are_checked():

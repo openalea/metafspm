@@ -108,14 +108,14 @@ def _units(component, quantity: str, spec: Conservation) -> dict:
     return cache[quantity]
 
 
-def _values(component, ds, term, restriction) -> np.ndarray:
+def _values(component, data_structure, term, restriction) -> np.ndarray:
     """The term's values (the product of its variables) on the solved entities: the restriction's nodes, or the
     entities at a coarse location owning them; all of them without a restriction."""
     product = None
     location = None
     for name in term:
-        values = np.asarray(ds.get(name), dtype=float)
-        here = ds.location(name)
+        values = np.asarray(data_structure.get(name), dtype=float)
+        here = data_structure.location(name)
         if location is None:
             location = here
         elif here != location:
@@ -129,11 +129,11 @@ def _values(component, ds, term, restriction) -> np.ndarray:
         return product[restriction.node_idx]
     if location == "edge":
         raise ValueError(f"{type(component).__name__}: a conserved term at the edges ({term}): give node terms")
-    owner = np.asarray(ds.owner(location)).reshape(-1)[restriction.node_idx]
+    owner = np.asarray(data_structure.owner(location)).reshape(-1)[restriction.node_idx]
     return product[np.unique(owner[owner >= 0])]
 
 
-def held(component, ds, conserved) -> dict:
+def held(component, data_structure, conserved) -> dict:
     """{quantity: the amount held} on every entity (in the quantity's unit; 0 without amount)."""
     out = {}
     for quantity, spec in conserved.items():
@@ -141,20 +141,20 @@ def held(component, ds, conserved) -> dict:
             out[quantity] = 0.
             continue
         factors, _ = _units(component, quantity, spec)
-        out[quantity] = float(np.sum(_values(component, ds, spec.amount, None))) * factors[spec.amount]
+        out[quantity] = float(np.sum(_values(component, data_structure, spec.amount, None))) * factors[spec.amount]
     return out
 
 
-def record_substep(component, ds, conserved, h: float) -> None:
+def record_substep(component, data_structure, conserved, h: float) -> None:
     """A solved (sub-)step of length *h*: its inflow and outflow (their rates now, on the solved entities, times
     h), pending until the integration accepts it (accept, reject)."""
     restriction = component.__dict__.get("_restriction")
     flows = {}
     for quantity, spec in conserved.items():
         factors, _ = _units(component, quantity, spec)
-        flows[quantity] = (sum(float(np.sum(_values(component, ds, term, restriction))) * factors[term]
+        flows[quantity] = (sum(float(np.sum(_values(component, data_structure, term, restriction))) * factors[term]
                                for term in spec.inflow) * h,
-                           sum(float(np.sum(_values(component, ds, term, restriction))) * factors[term]
+                           sum(float(np.sum(_values(component, data_structure, term, restriction))) * factors[term]
                                for term in spec.outflow) * h)
     component.__dict__.setdefault("_conservation_pending", []).append(flows)
 
@@ -171,16 +171,16 @@ def reject(component, since: int) -> None:
         del pending[since:]
 
 
-def begin_call(component, ds, method_name: str, conserved) -> None:
+def begin_call(component, data_structure, method_name: str, conserved) -> None:
     """Before a call of the system: the amounts held, the pending sub-steps emptied."""
     component.__dict__["_conservation_pending"] = []
-    component.__dict__.setdefault("_conservation_start", {}).setdefault(method_name, held(component, ds, conserved))
+    component.__dict__.setdefault("_conservation_start", {}).setdefault(method_name, held(component, data_structure, conserved))
 
 
-def end_call(component, ds, method_name: str, conserved) -> None:
+def end_call(component, data_structure, method_name: str, conserved) -> None:
     """After a call: its accepted sub-steps' flows added to the balance since the last reset."""
     pending = component.__dict__.pop("_conservation_pending", [])
-    end = held(component, ds, conserved)
+    end = held(component, data_structure, conserved)
     balances = component.__dict__.setdefault("_conservation", {})
     start = component.__dict__["_conservation_start"][method_name]
     for quantity, spec in conserved.items():

@@ -27,47 +27,47 @@ DT = 3600.
 STEM_LENGTH, SEED_LENGTH, ROOT_LENGTH = 2., 0.5, 1.
 
 
-def _complexes(g, plant, axis, organ):
+def _complexes(mtg, plant, axis, organ):
     """An Axis, GrowthUnit, Phytomer and Organ under *plant*; returns the Organ."""
-    s, labels = g.scales, g.labels
+    s, labels = mtg.scales, mtg.labels
     parent = plant
     for scale, label in ((s.Axis, getattr(labels.Axis, axis)), (s.GrowthUnit, getattr(labels.GrowthUnit, axis)),
                          (s.Phytomer, getattr(labels.Phytomer, axis)), (s.Organ, getattr(labels.Organ, organ))):
-        parent = g.add_component(parent, **PropsConfig(scale=scale, edge_type='/', label=label))
+        parent = mtg.add_component(parent, **PropsConfig(scale=scale, edge_type='/', label=label))
     return parent
 
 
-def _length(g, vid, value):
-    g.set_values("length", [vid], [value])
-    g.set_values("radius", [vid], [0.1])
+def _length(mtg, vid, value):
+    mtg.set_values("length", [vid], [value])
+    mtg.set_values("radius", [vid], [0.1])
 
 
-def _build_shoot(g, plant, n_stems=2):
+def _build_shoot(mtg, plant, n_stems=2):
     """The seed, then a chain of stem elements '<' on it; returns (seed, stem elements)."""
-    s, labels = g.scales, g.labels
-    seed = g.add_component(_complexes(g, plant, "Shoot", "StemInternode"),
+    s, labels = mtg.scales, mtg.labels
+    seed = mtg.add_component(_complexes(mtg, plant, "Shoot", "StemInternode"),
                            **PropsConfig(scale=s.SubOrgan, edge_type='/', label=labels.SubOrgan.Seed))
-    _length(g, seed, SEED_LENGTH)
+    _length(mtg, seed, SEED_LENGTH)
     stems, parent = [], seed
     for _ in range(n_stems):
-        parent = g.add_child(parent, **PropsConfig(scale=s.SubOrgan, edge_type='<', label=labels.SubOrgan.StemElement))
-        _length(g, parent, STEM_LENGTH)
+        parent = mtg.add_child(parent, **PropsConfig(scale=s.SubOrgan, edge_type='<', label=labels.SubOrgan.StemElement))
+        _length(mtg, parent, STEM_LENGTH)
         stems.append(parent)
     return seed, stems
 
 
-def _build_roots(g, plant, n_segments=2):
+def _build_roots(mtg, plant, n_segments=2):
     """A root chain branched '+' on the plant's seed, its last element an apex; returns its elements."""
-    s, labels = g.scales, g.labels
-    seed = g.find_anchor(plant, "Seed")
-    organ = _complexes(g, plant, "Root", "RootInternode")
+    s, labels = mtg.scales, mtg.labels
+    seed = mtg.find_anchor(plant, "Seed")
+    organ = _complexes(mtg, plant, "Root", "RootInternode")
     label = labels.SubOrgan.RootApex if n_segments == 1 else labels.SubOrgan.RootSegment
-    roots = [g.add_component_with_topo(organ, seed, **PropsConfig(scale=s.SubOrgan, edge_type='+', label=label))]
+    roots = [mtg.add_component_with_topo(organ, seed, **PropsConfig(scale=s.SubOrgan, edge_type='+', label=label))]
     for k in range(1, n_segments):
         label = labels.SubOrgan.RootApex if k == n_segments - 1 else labels.SubOrgan.RootSegment
-        roots.append(g.add_child(roots[-1], **PropsConfig(scale=s.SubOrgan, edge_type='<', label=label)))
+        roots.append(mtg.add_child(roots[-1], **PropsConfig(scale=s.SubOrgan, edge_type='<', label=label)))
     for vid in roots:
-        _length(g, vid, ROOT_LENGTH)
+        _length(mtg, vid, ROOT_LENGTH)
     return roots
 
 
@@ -81,8 +81,8 @@ class Shoot(StructuralComponent):
     rank: float = state_variable(**DOC, default=0., scale=scales.SubOrgan, kind="descriptor")
 
     @classmethod
-    def initiate_plant(cls, g, plant, scenario):
-        _build_shoot(g, plant)
+    def initiate_plant(cls, mtg, plant, scenario):
+        _build_shoot(mtg, plant)
 
     @rate
     def _shoot_mass(self, length):
@@ -91,21 +91,21 @@ class Shoot(StructuralComponent):
 
     @segmentation
     def _new_element(self, length) -> dict:
-        ds = self.data_structure
-        tips = ds.tips() if self.kept("grow", False) else np.zeros(0, dtype=np.int64)
-        return {"new_elements": NewNodes(parent=ds.entity_ids("node")[tips], edge="<",
-                                         label=ds.structure.labels.SubOrgan.StemElement,
+        data_structure = self.data_structure
+        tips = data_structure.tips() if self.kept("grow", False) else np.zeros(0, dtype=np.int64)
+        return {"new_elements": NewNodes(parent=data_structure.entity_ids("node")[tips], edge="<",
+                                         label=data_structure.structure.labels.SubOrgan.StemElement,
                                          values={"length": 0.25})}
 
     @postsegmentation
     def _ranks(self):
         """MPG-style: each element's rank from its seed, on the MTG."""
-        ds = self.data_structure
-        g = self.mtg
-        rank = dict(g.property("rank"))
-        for vid in ds.entity_ids("node")[ds.order("pre")].tolist():
-            rank[vid] = 0. if g.label(vid) == g.labels.SubOrgan.Seed else rank[g.parent(vid)] + 1.
-        g.set_values("rank", list(rank), list(rank.values()))
+        data_structure = self.data_structure
+        mtg = self.mtg
+        rank = dict(mtg.property("rank"))
+        for vid in data_structure.entity_ids("node")[data_structure.order("pre")].tolist():
+            rank[vid] = 0. if mtg.label(vid) == mtg.labels.SubOrgan.Seed else rank[mtg.parent(vid)] + 1.
+        mtg.set_values("rank", list(rank), list(rank.values()))
 
 
 @dataclass
@@ -117,8 +117,8 @@ class Roots(StructuralComponent):
     root_mass: float = state_variable(**DOC, default=0., scale=scales.SubOrgan, kind="extensive")
 
     @classmethod
-    def initiate_plant(cls, g, plant, scenario):
-        _build_roots(g, plant)
+    def initiate_plant(cls, mtg, plant, scenario):
+        _build_roots(mtg, plant)
 
     @rate
     def _root_mass(self, length):
@@ -127,9 +127,9 @@ class Roots(StructuralComponent):
 
     @segmentation
     def _growth(self, length) -> dict:
-        ds = self.data_structure
-        s, labels = ds.structure.scales, ds.structure.labels
-        tips = ds.entity_ids("node")[ds.tips()] if self.kept("grow", False) else np.zeros(0, dtype=np.int64)
+        data_structure = self.data_structure
+        s, labels = data_structure.structure.scales, data_structure.structure.labels
+        tips = data_structure.entity_ids("node")[data_structure.tips()] if self.kept("grow", False) else np.zeros(0, dtype=np.int64)
         bearers = np.asarray(self.kept("bearers", []), dtype=np.int64)
         new_axis = ((s.Axis, labels.Axis.Root), (s.GrowthUnit, labels.GrowthUnit.Root),
                     (s.Phytomer, labels.Phytomer.Root), (s.Organ, labels.Organ.RootInternode))
@@ -174,8 +174,8 @@ def _parent_ids(view):
 
 def _expected_parent_ids(view):
     """{node id: its MPG parent when it is in the view, else None}."""
-    g, ids = view.structure, view.entity_ids("node").tolist()
-    return {v: (g.parent(v) if g.parent(v) in set(ids) else None) for v in ids}
+    mtg, ids = view.structure, view.entity_ids("node").tolist()
+    return {v: (mtg.parent(v) if mtg.parent(v) in set(ids) else None) for v in ids}
 
 
 def _per_plant(view, values, reduce):
@@ -187,22 +187,22 @@ def _per_plant(view, values, reduce):
 
 def test_each_component_sees_its_entities_and_its_bases():
     population = _population()
-    model, ds = population.instance, population.data_structure
-    g = ds.structure
+    model, data_structure = population.instance, population.data_structure
+    mtg = data_structure.structure
     shoot, roots = model.shoot.data_structure, model.roots.data_structure
-    assert isinstance(shoot, EntityView) and isinstance(roots, EntityView) and model.carbon.data_structure is ds
+    assert isinstance(shoot, EntityView) and isinstance(roots, EntityView) and model.carbon.data_structure is data_structure
     assert set(_labels(shoot)) == {"Seed", "StemElement"} and set(_labels(roots)) == {"RootSegment", "RootApex"}
-    assert shoot.n_nodes() + roots.n_nodes() == ds.n_nodes() == 10
+    assert shoot.n_nodes() + roots.n_nodes() == data_structure.n_nodes() == 10
     # in the base's order
-    assert shoot.entity_ids("node").tolist() == [v for v in ds.entity_ids("node").tolist()
-                                                 if ds.labels()[ds.index_of(v)] in ("Seed", "StemElement")]
+    assert shoot.entity_ids("node").tolist() == [v for v in data_structure.entity_ids("node").tolist()
+                                                 if data_structure.labels()[data_structure.index_of(v)] in ("Seed", "StemElement")]
     # each plant: a seed and its two stem elements; a root chain whose base is on the seed (outside the view)
     for view in (shoot, roots):
         assert _parent_ids(view) == _expected_parent_ids(view)
     assert [_labels(shoot)[k] for k in shoot.roots()] == ["Seed"] * 2
     bases = roots.entity_ids("node")[roots.roots()]
     assert [_labels(roots)[k] for k in roots.roots()] == ["RootSegment"] * 2
-    assert {g.label(g.parent(int(v))) for v in bases} == {g.labels.SubOrgan.Seed}
+    assert {mtg.label(mtg.parent(int(v))) for v in bases} == {mtg.labels.SubOrgan.Seed}
     assert [_labels(roots)[k] for k in roots.tips()] == ["RootApex"] * 2
     assert roots.n_edges() == 2 and sorted(roots.edges()) == sorted(
         (parent, child) for child, parent in _parent_ids(roots).items() if parent is not None)
@@ -222,30 +222,30 @@ def test_each_component_sees_its_entities_and_its_bases():
 
 def test_steps_work_on_arrays_of_their_entities_and_one_variable_per_name():
     population = _population()
-    model, ds = population.instance, population.data_structure
+    model, data_structure = population.instance, population.data_structure
     model.run()
     assert model.shoot.kept("sizes") == 6 and model.roots.kept("sizes") == 4
     # length: one array of the base, each component's MTG values on its entities
     shoot, roots = model.shoot.data_structure, model.roots.data_structure
-    assert ds.location("length") == "node" and ds.get("length").size == 10
+    assert data_structure.location("length") == "node" and data_structure.get("length").size == 10
     shoot_lengths = np.where(np.asarray(_labels(shoot)) == "Seed", SEED_LENGTH, STEM_LENGTH)
     np.testing.assert_allclose(shoot.get("length"), shoot_lengths)
     np.testing.assert_allclose(roots.get("length"), ROOT_LENGTH)
     # a component's own variable: the default on the other entities
-    np.testing.assert_allclose(ds.get("shoot_mass")[np.isin(ds.labels(), ["RootSegment", "RootApex"])], 0.)
+    np.testing.assert_allclose(data_structure.get("shoot_mass")[np.isin(data_structure.labels(), ["RootSegment", "RootApex"])], 0.)
     np.testing.assert_allclose(shoot.get("shoot_mass"), 2. * shoot_lengths)
     # an MPG-style step: the MTG's values read back at the view's entities
     np.testing.assert_allclose(sorted(shoot.get("rank")), [0., 0., 1., 1., 2., 2.])
-    np.testing.assert_allclose(ds.get("rank")[ds.index_of(roots.entity_ids("node"))], 0.)
+    np.testing.assert_allclose(data_structure.get("rank")[data_structure.index_of(roots.entity_ids("node"))], 0.)
     # the MTG write-back: each component's states at its entities
-    root_mass = ds.mtg.property("root_mass")
+    root_mass = data_structure.mtg.property("root_mass")
     assert [root_mass[v] for v in roots.entity_ids("node").tolist()] == pytest.approx(3. * roots.get("length"))
     # a view's values are a copy; set() writes into the base's array
     copy = roots.get("length")
     copy[:] = 7.
     np.testing.assert_allclose(roots.get("length"), ROOT_LENGTH)
     roots.set("length", 2.)
-    np.testing.assert_allclose(ds.get("length")[ds.index_of(roots.entity_ids("node"))], 2.)
+    np.testing.assert_allclose(data_structure.get("length")[data_structure.index_of(roots.entity_ids("node"))], 2.)
     np.testing.assert_allclose(shoot.get("length"), shoot_lengths)
 
 
@@ -270,8 +270,8 @@ def test_mappings_to_the_plants_are_over_the_view_s_entities():
 
 def test_growth_with_parents_inside_and_outside_the_view():
     population = _population()
-    model, ds = population.instance, population.data_structure
-    g = ds.structure
+    model, data_structure = population.instance, population.data_structure
+    mtg = data_structure.structure
     shoot, roots = model.shoot.data_structure, model.roots.data_structure
     stems = shoot.entity_ids("node")[np.asarray(_labels(shoot)) == "StemElement"]
     tips = set(roots.entity_ids("node")[roots.tips()].tolist())
@@ -280,18 +280,18 @@ def test_growth_with_parents_inside_and_outside_the_view():
     model.roots.keep("grow", True)
     model.shoot.keep("grow", True)
     model.run()
-    assert shoot.n_nodes() == 8 and roots.n_nodes() == 4 + 2 + 1 and ds.n_nodes() == 15
+    assert shoot.n_nodes() == 8 and roots.n_nodes() == 4 + 2 + 1 and data_structure.n_nodes() == 15
     assert set(_labels(shoot)) == {"Seed", "StemElement"}
     new = sorted(set(roots.entity_ids("node").tolist()) - before)
     parents = _parent_ids(roots)
     assert parents == _expected_parent_ids(roots)
     # the nodal root: a base of the roots' view, its parent the stem element (outside it), in an axis of its own
-    (nodal,) = [v for v in new if g.parent(v) == stems[0]]
-    assert parents[nodal] is None and g.edge_type(nodal) == '+' and g.label(nodal) == g.labels.SubOrgan.RootApex
-    assert g.label(g.complex(nodal)) == g.labels.Organ.RootInternode
+    (nodal,) = [v for v in new if mtg.parent(v) == stems[0]]
+    assert parents[nodal] is None and mtg.edge_type(nodal) == '+' and mtg.label(nodal) == mtg.labels.SubOrgan.RootApex
+    assert mtg.label(mtg.complex(nodal)) == mtg.labels.Organ.RootInternode
     # the apices grown on the roots' tips (inside the view): the former tips relabelled segments
     assert {parents[v] for v in new if v != nodal} == tips
-    assert all(g.label(v) == g.labels.SubOrgan.RootSegment for v in tips)
+    assert all(mtg.label(v) == mtg.labels.SubOrgan.RootSegment for v in tips)
     assert _labels(roots).count("RootApex") == 3
     np.testing.assert_allclose(roots.get("length")[roots.index_of(new)], 0.1)
     np.testing.assert_allclose(shoot.get("length")[shoot.tips()], 0.25)
@@ -300,7 +300,7 @@ def test_growth_with_parents_inside_and_outside_the_view():
     assert sorted(roots.map_to(roots.get("length"), "node", "Plant", "sum").tolist()) == pytest.approx(
         [2 * ROOT_LENGTH + 0.1, 2 * ROOT_LENGTH + 0.2])
     assert model.shoot.kept("sizes") == 8 and model.roots.kept("sizes") == 7     # the rates, after the growth rows
-    assert ds.get("root_mass").size == 15
+    assert data_structure.get("root_mass").size == 15
     np.testing.assert_allclose(roots.get("root_mass"), 3. * roots.get("length"))
 
 
@@ -315,27 +315,27 @@ def test_new_nodes_outside_the_component_s_entities_raise():
 
 def test_a_component_without_entities_is_unchanged_and_views_are_shared():
     population = _population(1)
-    ds = population.data_structure
-    assert ds.entity_view({"label": ["RootApex", "RootSegment"]}) is ds.entity_view(
+    data_structure = population.data_structure
+    assert data_structure.entity_view({"label": ["RootApex", "RootSegment"]}) is data_structure.entity_view(
         {"label": ["RootApex", "RootSegment"]})
-    assert population.instance.carbon.data_structure is ds
-    assert ds.entity_view(lambda base: np.asarray(base.labels()) == "Seed").n_nodes() == 1
+    assert population.instance.carbon.data_structure is data_structure
+    assert data_structure.entity_view(lambda base: np.asarray(base.labels()) == "Seed").n_nodes() == 1
     with pytest.raises(TypeError, match="non-empty"):
-        ds.entity_view({})
+        data_structure.entity_view({})
 
 
 def test_the_base_s_triangles_are_each_component_s_on_its_entities():
     """Both components draw (default cylinders here): the plant's triangles are theirs together, in the base's node
     indices."""
     population = _population(1)
-    ds = population.data_structure
+    data_structure = population.data_structure
     for name, value in (("x1", 0.), ("y1", 0.), ("z1", 0.), ("x2", 0.), ("y2", 0.), ("z2", -1.), ("radius", 0.1)):
-        if ds.has(name):
-            ds.set(name, value)
+        if data_structure.has(name):
+            data_structure.set(name, value)
         else:
-            ds.register(name, value)
-    triangles = ds.triangles()
-    assert sorted(set(triangles.owner.tolist())) == list(range(ds.n_nodes()))
+            data_structure.register(name, value)
+    triangles = data_structure.triangles()
+    assert sorted(set(triangles.owner.tolist())) == list(range(data_structure.n_nodes()))
     roots = population.instance.roots.data_structure
     assert sorted(set(roots.triangles().owner.tolist())) == list(range(roots.n_nodes()))
 
@@ -345,11 +345,11 @@ def test_both_run_in_a_scene():
     model = scene.populations[0].instance
     model.roots.keep("grow", True)
     scene.simulate(2)
-    roots, ds = model.roots.data_structure, scene.populations[0].data_structure
+    roots, data_structure = model.roots.data_structure, scene.populations[0].data_structure
     assert roots.n_nodes() == 4 + 2 * 2 and _labels(roots).count("RootApex") == 2
-    assert model.shoot.data_structure.n_nodes() == 6 and ds.n_nodes() == 14
+    assert model.shoot.data_structure.n_nodes() == 6 and data_structure.n_nodes() == 14
     np.testing.assert_allclose(roots.get("root_mass"), 3. * roots.get("length"))
-    np.testing.assert_allclose(ds.get("root_mass")[np.isin(ds.labels(), ["Seed", "StemElement"])], 0.)
+    np.testing.assert_allclose(data_structure.get("root_mass")[np.isin(data_structure.labels(), ["Seed", "StemElement"])], 0.)
 
 
 @dataclass
@@ -361,11 +361,11 @@ class Tillers(StructuralComponent):
 
     @segmentation
     def _tiller(self, axis_row) -> dict:
-        ds = self.data_structure
-        g = ds.structure
-        s, labels = g.scales, g.labels
-        plant = int(ds.entity_ids("Plant")[0])
-        stem = int(ds.base.entity_ids("node")[np.asarray(ds.base.labels()) == "StemElement"][0])
+        data_structure = self.data_structure
+        mtg = data_structure.structure
+        s, labels = mtg.scales, mtg.labels
+        plant = int(data_structure.entity_ids("Plant")[0])
+        stem = int(data_structure.base.entity_ids("node")[np.asarray(data_structure.base.labels()) == "StemElement"][0])
         complexes = NewComplexes(anchor=[plant, -1, -2, -3], scale=[s.Axis, s.GrowthUnit, s.Phytomer, s.Organ],
                                  label=[labels.Axis.Shoot, labels.GrowthUnit.Shoot, labels.Phytomer.Shoot,
                                         labels.Organ.StemInternode], values={"axis_row": 1})
@@ -382,25 +382,25 @@ class TilleredPlant(CompositeModel):
 
 def test_a_declaration_on_a_coarse_variable_sees_a_new_complex_s_value():
     population = population_data_structure(planting([Planting()], TilleredPlant, {}), TilleredPlant, time_step=DT)
-    model, ds = population.instance, population.data_structure
+    model, data_structure = population.instance, population.data_structure
     view = model.tillers.data_structure
-    assert isinstance(view, EntityView) and view.base is ds and view.n_nodes() == 0
+    assert isinstance(view, EntityView) and view.base is data_structure and view.n_nodes() == 0
     model.run()
     assert view.n_nodes() == 1 and view.labels().tolist() == ["StemElement"]
     (tiller,) = view.entity_ids("node").tolist()
-    g = ds.structure
-    assert g.edge_type(tiller) == '+' and g.label(g.parent(tiller)) == g.labels.SubOrgan.StemElement
+    mtg = data_structure.structure
+    assert mtg.edge_type(tiller) == '+' and mtg.label(mtg.parent(tiller)) == mtg.labels.SubOrgan.StemElement
     assert view.parents().tolist() == [-1]                         # its bearer outside the view
-    rows = np.asarray(ds.get("axis_row"))
-    assert sorted(rows.tolist()) == [-1, 1] and rows[ds.owner("Axis")[ds.index_of(tiller)]] == 1
+    rows = np.asarray(data_structure.get("axis_row"))
+    assert sorted(rows.tolist()) == [-1, 1] and rows[data_structure.owner("Axis")[data_structure.index_of(tiller)]] == 1
 
 
 def test_the_selection_follows_a_write_of_a_variable_it_reads():
     population = population_data_structure(planting([Planting()], TilleredPlant, {}), TilleredPlant, time_step=DT)
-    ds = population.data_structure
+    data_structure = population.data_structure
     view = population.instance.tillers.data_structure
     assert view.n_nodes() == 0 and view.entity_ids("node").size == 0
-    ds.set("axis_row", 0)                                          # the shoot's axis gets a row: its elements join
+    data_structure.set("axis_row", 0)                                          # the shoot's axis gets a row: its elements join
     assert view.n_nodes() == 3 and sorted(_labels(view)) == ["Seed", "StemElement", "StemElement"]
     assert sorted(view.get("length").tolist()) == [SEED_LENGTH, STEM_LENGTH, STEM_LENGTH]
     assert _parent_ids(view) == _expected_parent_ids(view) and (view.parents() == -1).sum() == 1
@@ -411,9 +411,9 @@ def test_the_selection_follows_a_write_of_a_variable_it_reads():
     def tracked(base):
         return untracked(base)
     tracked.variables = ("axis_row",)
-    blind, seeing = ds.entity_view(untracked), ds.entity_view(tracked)
+    blind, seeing = data_structure.entity_view(untracked), data_structure.entity_view(tracked)
     assert blind.n_nodes() == seeing.n_nodes() == 0
-    ds.set("axis_row", 1)
+    data_structure.set("axis_row", 1)
     assert seeing.n_nodes() == 3                                   # it declares what it reads
     assert blind.n_nodes() == 0                                    # evaluated again on a topology change only
 
@@ -423,29 +423,29 @@ def test_the_selection_follows_a_write_of_a_variable_it_reads():
 def _anatomy_plant():
     """One plant: the seed and two stem elements without anatomies, a root chain '+' on the seed whose segments have
     one (test.helpers.anatomy)."""
-    g = MPG()
-    plant = g.add_component(g.root, **PropsConfig(scale=g.scales.Plant, edge_type='/'))
-    _build_shoot(g, plant)
-    roots = _build_roots(g, plant, n_segments=3)
+    mtg = MPG()
+    plant = mtg.add_component(mtg.root, **PropsConfig(scale=mtg.scales.Plant, edge_type='/'))
+    _build_shoot(mtg, plant)
+    roots = _build_roots(mtg, plant, n_segments=3)
     for vid in roots[:-1]:
-        add_anatomy(g, vid)
-    g.convert_properties_to_arraydict()
-    return g, MPGDataStructure(g, from_scale=g.scales.SubOrgan, nodes="Compartment", wiring=wiring(g)), roots
+        add_anatomy(mtg, vid)
+    mtg.convert_properties_to_arraydict()
+    return mtg, MPGDataStructure(mtg, from_scale=mtg.scales.SubOrgan, nodes="Compartment", wiring=wiring(mtg)), roots
 
 
 def test_in_anatomy_mode_a_component_sees_its_suborgans():
-    g, ds, root_vids = _anatomy_plant()
-    shoot, roots = Shoot(data_structure=ds, time_step=DT), Roots(data_structure=ds, time_step=DT)
+    mtg, data_structure, root_vids = _anatomy_plant()
+    shoot, roots = Shoot(data_structure=data_structure, time_step=DT), Roots(data_structure=data_structure, time_step=DT)
     assert isinstance(roots.data_structure, EntityView) and isinstance(roots.data_structure._inner, LocatedView)
     assert roots.data_structure.entity_ids("node").tolist() == root_vids
     assert roots.data_structure.parents().tolist() == [-1, 0, 1]
     assert shoot.data_structure.parents().tolist() == [-1, 0, 1]
-    assert ds.location("length") == "SubOrgan" and ds.get("length").size == 6
+    assert data_structure.location("length") == "SubOrgan" and data_structure.get("length").size == 6
     shoot(), roots()
     assert shoot.kept("sizes") == 3 and roots.kept("sizes") == 3
     np.testing.assert_allclose(roots.data_structure.map_to(roots.data_structure.get("length"), "node", "Plant", "sum"),
                                [3 * ROOT_LENGTH])
-    np.testing.assert_allclose(ds.get("root_mass")[np.isin(ds.entity_ids("SubOrgan"), root_vids)], 3. * ROOT_LENGTH)
+    np.testing.assert_allclose(data_structure.get("root_mass")[np.isin(data_structure.entity_ids("SubOrgan"), root_vids)], 3. * ROOT_LENGTH)
     # growth: an apex on the roots' tip (inside), a nodal root on a stem element (outside)
     stem = int(shoot.data_structure.entity_ids("node")[1])
     roots.keep("grow", True)
@@ -453,13 +453,13 @@ def test_in_anatomy_mode_a_component_sees_its_suborgans():
     roots()
     assert roots.data_structure.n_nodes() == 5 and shoot.data_structure.n_nodes() == 3
     assert roots.data_structure.parents().tolist() == [-1, 0, 1, 2, -1]
-    assert g.parent(int(roots.data_structure.entity_ids("node")[-1])) == stem
+    assert mtg.parent(int(roots.data_structure.entity_ids("node")[-1])) == stem
     np.testing.assert_allclose(roots.data_structure.get("length")[-2:], 0.1)
-    assert ds.get("length").size == 8
+    assert data_structure.get("length").size == 8
 
 
 def test_in_anatomy_mode_a_compartment_component_cannot_declare_entities():
-    _, ds, _ = _anatomy_plant()
+    _, data_structure, _ = _anatomy_plant()
 
     @dataclass
     class Cells(FunctionalComponent):
@@ -467,19 +467,19 @@ def test_in_anatomy_mode_a_compartment_component_cannot_declare_entities():
         water: float = state_variable(**DOC, default=0., location="node")
 
     with pytest.raises(NotImplementedError, match="SubOrgan scale or coarser"):
-        Cells(data_structure=ds, time_step=DT)
+        Cells(data_structure=data_structure, time_step=DT)
 
 
 def test_in_anatomy_mode_a_declaration_reads_a_coarse_variable_at_the_suborgans():
     """{"axis_row": ">=0"} on an anatomy-mode DataStructure: the Axis variable read at each SubOrgan's axis (not at
     the Compartments), the view the SubOrgans of the axes with a row."""
-    _, ds, root_vids = _anatomy_plant()
-    ds.register("axis_row", -1., location="Axis")
-    view = ds.entity_view({"axis_row": ">=0"})
+    _, data_structure, root_vids = _anatomy_plant()
+    data_structure.register("axis_row", -1., location="Axis")
+    view = data_structure.entity_view({"axis_row": ">=0"})
     assert view.n_nodes() == 0
-    rows = np.full(len(ds.entity_ids("Axis")), -1.)
-    rows[np.asarray(ds.at("SubOrgan").owner("Axis"))[np.isin(ds.entity_ids("SubOrgan"), root_vids)][0]] = 0.
-    ds.set("axis_row", rows)                                       # the roots' axis gets a row
+    rows = np.full(len(data_structure.entity_ids("Axis")), -1.)
+    rows[np.asarray(data_structure.at("SubOrgan").owner("Axis"))[np.isin(data_structure.entity_ids("SubOrgan"), root_vids)][0]] = 0.
+    data_structure.set("axis_row", rows)                                       # the roots' axis gets a row
     assert view.entity_ids("node").tolist() == root_vids
 
 
@@ -494,18 +494,18 @@ def test_in_anatomy_mode_a_phytomer_scale_component_sees_its_suborgans():
     """A component declared at the Phytomers with its entities: its view at the SubOrgans (the entities segment
     mode's nodes are), owner("Phytomer") indexing its Phytomer arrays; its base the DataStructure at the SubOrgans,
     where a variable is read at every element (another model's included)."""
-    g, ds, root_vids = _anatomy_plant()
-    Shoot(data_structure=ds, time_step=DT), Roots(data_structure=ds, time_step=DT)
-    rule = PhytomerRule(data_structure=ds, time_step=DT)
+    mtg, data_structure, root_vids = _anatomy_plant()
+    Shoot(data_structure=data_structure, time_step=DT), Roots(data_structure=data_structure, time_step=DT)
+    rule = PhytomerRule(data_structure=data_structure, time_step=DT)
     view = rule.data_structure
     assert isinstance(view, EntityView) and view._at == "SubOrgan"
     assert sorted(_labels(view)) == ["Seed", "StemElement", "StemElement"]
-    phytomers = ds.entity_ids("Phytomer")
+    phytomers = data_structure.entity_ids("Phytomer")
     assert np.asarray(view.get("requested")).size == phytomers.size
     owners = phytomers[view.owner("Phytomer")]
-    assert owners.tolist() == [int(g.complex_at_scale(v, g.scales.Phytomer)) for v in view.entity_ids("node")]
+    assert owners.tolist() == [int(mtg.complex_at_scale(v, mtg.scales.Phytomer)) for v in view.entity_ids("node")]
     base = view.base
-    assert isinstance(base, LocatedView) and base is ds.at("SubOrgan")
-    assert np.asarray(base.get("length")).size == len(ds.entity_ids("SubOrgan"))
+    assert isinstance(base, LocatedView) and base is data_structure.at("SubOrgan")
+    assert np.asarray(base.get("length")).size == len(data_structure.entity_ids("SubOrgan"))
     lengths = np.asarray(base.get("length"))[np.atleast_1d(base.index_of(root_vids))]
     np.testing.assert_allclose(lengths, ROOT_LENGTH)                # another model's entities, read through it

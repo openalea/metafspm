@@ -30,18 +30,18 @@ DT, K = 2., 0.3
 
 
 def _ds():
-    g, _ = generate_simple_mpg_seedling()
-    g.populate_graph(g.scales.SubOrgan)
-    g.convert_properties_to_arraydict()
-    ds = MPGDataStructure(g, from_scale=g.scales.SubOrgan)
-    collar = np.zeros(ds.n_nodes())
-    collar[ds.roots()[0]] = 1.
-    ds.register("is_collar", collar, location="node")
-    return ds
+    mtg, _ = generate_simple_mpg_seedling()
+    mtg.populate_graph(mtg.scales.SubOrgan)
+    mtg.convert_properties_to_arraydict()
+    data_structure = MPGDataStructure(mtg, from_scale=mtg.scales.SubOrgan)
+    collar = np.zeros(data_structure.n_nodes())
+    collar[data_structure.roots()[0]] = 1.
+    data_structure.register("is_collar", collar, location="node")
+    return data_structure
 
 
-def _laplacian(ds):
-    B = ds._incidence_matrix().toarray()
+def _laplacian(data_structure):
+    B = data_structure._incidence_matrix().toarray()
     return B @ B.T
 
 
@@ -50,9 +50,9 @@ def _diffusion_residual(self, u):
     return (u - self.previous("u")) / self.step_duration + K * np.asarray(B @ (B.T @ u)).reshape(-1)
 
 
-def _implicit_step(ds, u0, robin_weight=None, robin_value=None):
+def _implicit_step(data_structure, u0, robin_weight=None, robin_value=None):
     """One implicit Euler step of du/dt + K L u + w (u - v) = 0, solved by hand."""
-    A = np.eye(ds.n_nodes()) / DT + K * _laplacian(ds)
+    A = np.eye(data_structure.n_nodes()) / DT + K * _laplacian(data_structure)
     b = u0 / DT
     if robin_weight is not None:
         A += np.diag(robin_weight)
@@ -110,11 +110,11 @@ STEADY = {"newton": _steady_class("SteadyNewton", "newton"),
 
 
 def _steady(solver):
-    ds = _ds()
-    model = STEADY[solver](data_structure=ds)
-    ds.set("source", np.linspace(0., 2., ds.n_nodes()))
+    data_structure = _ds()
+    model = STEADY[solver](data_structure=data_structure)
+    data_structure.set("source", np.linspace(0., 2., data_structure.n_nodes()))
     model()
-    return ds.get("u").copy()
+    return data_structure.get("u").copy()
 
 
 @pytest.mark.parametrize("solver", ["newton_fd", "scipy_krylov", "scipy_hybr"])
@@ -141,17 +141,17 @@ class Decay(FunctionalComponent):
 
 
 def test_previous_at_solve_is_the_start_of_the_call_and_at_substep_the_start_of_each_substep():
-    ds = _ds()
-    model = Decay(data_structure=ds)
-    ds.set("u", np.linspace(1., 2., ds.n_nodes()))
-    u0 = ds.get("u").copy()
+    data_structure = _ds()
+    model = Decay(data_structure=data_structure)
+    data_structure.set("u", np.linspace(1., 2., data_structure.n_nodes()))
+    u0 = data_structure.get("u").copy()
     Decay.seen = []
     model()
     for at_solve, _ in Decay.seen:
         np.testing.assert_array_equal(at_solve, u0)
     starts = {tuple(np.round(at_substep, 12)) for _, at_substep in Decay.seen}
     assert len(starts) == 4                                                  # one start per sub-step
-    np.testing.assert_allclose(ds.get("u"), u0 / (1. + DT / 4.) ** 4)
+    np.testing.assert_allclose(data_structure.get("u"), u0 / (1. + DT / 4.) ** 4)
 
 
 # ---------------------------------------------------------------- boundary_set variants
@@ -168,11 +168,11 @@ class Neumann(FunctionalComponent):
 
 
 def test_a_neumann_set_is_an_inflow_of_its_value():
-    ds = _ds()
-    model = Neumann(data_structure=ds)
-    total = ds.get("u").sum()
+    data_structure = _ds()
+    model = Neumann(data_structure=data_structure)
+    total = data_structure.get("u").sum()
     model()
-    assert ds.get("u").sum() == pytest.approx(total + 0.25 * DT)
+    assert data_structure.get("u").sum() == pytest.approx(total + 0.25 * DT)
 
 
 @dataclass
@@ -187,13 +187,13 @@ class ConstantRobin(FunctionalComponent):
 
 
 def test_a_robin_set_with_a_constant_weight_is_an_exchange_towards_its_value():
-    ds = _ds()
-    model = ConstantRobin(data_structure=ds)
-    u0 = np.linspace(1., 2., ds.n_nodes())
-    ds.set("u", u0)
+    data_structure = _ds()
+    model = ConstantRobin(data_structure=data_structure)
+    u0 = np.linspace(1., 2., data_structure.n_nodes())
+    data_structure.set("u", u0)
     model()
-    collar = ds.get("is_collar") > 0
-    np.testing.assert_allclose(ds.get("u"), _implicit_step(ds, u0, 2. * collar, 0.5), rtol=1e-10)
+    collar = data_structure.get("is_collar") > 0
+    np.testing.assert_allclose(data_structure.get("u"), _implicit_step(data_structure, u0, 2. * collar, 0.5), rtol=1e-10)
 
 
 @dataclass
@@ -205,25 +205,25 @@ class RobinByCode(FunctionalComponent):
 
     @graph_system(node_unknowns=["u"], transient=True)
     class _solve:
-        tips = boundary_set(where=lambda ds: np.ones(ds.n_nodes(), dtype=bool), condition_variable="condition_code", value=3.,
+        tips = boundary_set(where=lambda data_structure: np.ones(data_structure.n_nodes(), dtype=bool), condition_variable="condition_code", value=3.,
                             weight="conductance")
         _balance = node_balance(field="u")(_diffusion_residual)
 
 
 def test_per_node_conditions_apply_robin_where_the_code_says_so_with_per_node_weights():
-    ds = _ds()
-    model = RobinByCode(data_structure=ds)
-    u0 = np.linspace(1., 2., ds.n_nodes())
-    ds.set("u", u0)
-    leaves = np.setdiff1d(np.arange(ds.n_nodes()), ds.parents())             # nodes no other node has as parent
-    codes = np.zeros(ds.n_nodes(), dtype=np.int64)
+    data_structure = _ds()
+    model = RobinByCode(data_structure=data_structure)
+    u0 = np.linspace(1., 2., data_structure.n_nodes())
+    data_structure.set("u", u0)
+    leaves = np.setdiff1d(np.arange(data_structure.n_nodes()), data_structure.parents())             # nodes no other node has as parent
+    codes = np.zeros(data_structure.n_nodes(), dtype=np.int64)
     codes[leaves] = boundary_set.CODES["robin"]
-    weights = np.linspace(0.5, 1.5, ds.n_nodes())
-    ds.set("condition_code", codes)
-    ds.set("conductance", weights)
+    weights = np.linspace(0.5, 1.5, data_structure.n_nodes())
+    data_structure.set("condition_code", codes)
+    data_structure.set("conductance", weights)
     model()
-    expected = _implicit_step(ds, u0, np.where(codes == 3, weights, 0.), 3.)
-    np.testing.assert_allclose(ds.get("u"), expected, rtol=1e-10)
+    expected = _implicit_step(data_structure, u0, np.where(codes == 3, weights, 0.), 3.)
+    np.testing.assert_allclose(data_structure.get("u"), expected, rtol=1e-10)
 
 
 @dataclass
@@ -260,11 +260,11 @@ class TwoUnknownsWithoutField(FunctionalComponent):
 
 
 def test_field_chooses_the_unknown_of_a_set_and_is_required_with_several_unknowns():
-    ds = _ds()
-    TwoUnknowns(data_structure=ds)()
-    collar = ds.get("is_collar") > 0
-    np.testing.assert_allclose(ds.get("w")[collar], 4.)
-    np.testing.assert_allclose(ds.get("u"), 1.)                               # uniform, no condition on u
+    data_structure = _ds()
+    TwoUnknowns(data_structure=data_structure)()
+    collar = data_structure.get("is_collar") > 0
+    np.testing.assert_allclose(data_structure.get("w")[collar], 4.)
+    np.testing.assert_allclose(data_structure.get("u"), 1.)                               # uniform, no condition on u
     with pytest.raises(ValueError, match="give field=, the system has several node unknowns"):
         TwoUnknownsWithoutField(data_structure=_ds())()
 
@@ -298,15 +298,15 @@ class CoupledInflow(FunctionalComponent):
 
 
 def test_a_neumann_condition_is_an_inflow_read_from_the_data_structure_at_each_solve():
-    ds = _ds()
-    model = CoupledInflow(data_structure=ds)
-    total = ds.get("u").sum()
+    data_structure = _ds()
+    model = CoupledInflow(data_structure=data_structure)
+    total = data_structure.get("u").sum()
     model()
-    assert ds.get("u").sum() == pytest.approx(total + 0.25 * DT)             # the same sign as a boundary_set
-    ds.set("supply", np.full(ds.n_nodes(), 0.5))                               # e.g. written by a coupled model
-    total = ds.get("u").sum()
+    assert data_structure.get("u").sum() == pytest.approx(total + 0.25 * DT)             # the same sign as a boundary_set
+    data_structure.set("supply", np.full(data_structure.n_nodes(), 0.5))                               # e.g. written by a coupled model
+    total = data_structure.get("u").sum()
     model()
-    assert ds.get("u").sum() == pytest.approx(total + 0.5 * DT)
+    assert data_structure.get("u").sum() == pytest.approx(total + 0.5 * DT)
 
 
 @dataclass
@@ -321,18 +321,18 @@ class UptakeEquation(FunctionalComponent):
     class _solve:
         _balance = node_balance(field="u")(_diffusion_residual)
 
-        @boundary_condition("node", "neumann", field="u", where=lambda ds: np.asarray(ds.get("is_collar")) > 0)
+        @boundary_condition("node", "neumann", field="u", where=lambda data_structure: np.asarray(data_structure.get("is_collar")) > 0)
         def _collar(self, u, external, exchange_rate):
             return exchange_rate * (external - u)
 
 
 def test_a_condition_equation_of_the_unknown_is_solved_with_it():
-    ds = _ds()
-    model = UptakeEquation(data_structure=ds)
-    u0 = np.array(ds.get("u"))
+    data_structure = _ds()
+    model = UptakeEquation(data_structure=data_structure)
+    u0 = np.array(data_structure.get("u"))
     model()
-    weight = 0.4 * np.asarray(ds.get("is_collar"))
-    np.testing.assert_allclose(ds.get("u"), _implicit_step(ds, u0, robin_weight=weight, robin_value=3.), rtol=1e-9)
+    weight = 0.4 * np.asarray(data_structure.get("is_collar"))
+    np.testing.assert_allclose(data_structure.get("u"), _implicit_step(data_structure, u0, robin_weight=weight, robin_value=3.), rtol=1e-9)
 
 
 @dataclass
@@ -352,15 +352,15 @@ class PrescribedCollar(FunctionalComponent):
 
 
 def test_a_dirichlet_condition_on_a_mask_follows_the_coupled_value():
-    ds = _ds()
-    ds.define_mask("collar", {"is_collar": ">0"})
-    model = PrescribedCollar(data_structure=ds)
-    collar = np.flatnonzero(np.asarray(ds.get("is_collar")) > 0)
+    data_structure = _ds()
+    data_structure.define_mask("collar", {"is_collar": ">0"})
+    model = PrescribedCollar(data_structure=data_structure)
+    collar = np.flatnonzero(np.asarray(data_structure.get("is_collar")) > 0)
     model()
-    np.testing.assert_allclose(np.asarray(ds.get("u"))[collar], -0.3)
-    ds.set("collar_value", np.full(ds.n_nodes(), -0.7))
+    np.testing.assert_allclose(np.asarray(data_structure.get("u"))[collar], -0.3)
+    data_structure.set("collar_value", np.full(data_structure.n_nodes(), -0.7))
     model()
-    np.testing.assert_allclose(np.asarray(ds.get("u"))[collar], -0.7)
+    np.testing.assert_allclose(np.asarray(data_structure.get("u"))[collar], -0.7)
 
 
 # ---------------------------------------------------------------- pools given by their location
@@ -371,10 +371,10 @@ EXCHANGE = 0.8
 def _population(sizes=(3, 4)):
     table = pd.DataFrame([dict(plant=f"p{i}", model=None, x=0.1 * i, y=0., depth=0., rotation=0.,
                                scenario={"n_segments": n}) for i, n in enumerate(sizes)])
-    g, _ = _build_population(table, initiators=(RootGrowthProbe,))
-    g.populate_graph(g.scales.SubOrgan)
-    g.convert_properties_to_arraydict()
-    return MPGDataStructure(g, from_scale=g.scales.SubOrgan)
+    mtg, _ = _build_population(table, initiators=(RootGrowthProbe,))
+    mtg.populate_graph(mtg.scales.SubOrgan)
+    mtg.convert_properties_to_arraydict()
+    return MPGDataStructure(mtg, from_scale=mtg.scales.SubOrgan)
 
 
 class _PoolEquations:
@@ -401,11 +401,11 @@ class EveryNodePool(FunctionalComponent):
 
 
 def test_a_pool_given_by_its_location_exchanges_with_every_node_of_its_plant():
-    ds = _population()
-    model = EveryNodePool(data_structure=ds)
-    ds.set("shoot", [6., 0.])
+    data_structure = _population()
+    model = EveryNodePool(data_structure=data_structure)
+    data_structure.set("shoot", [6., 0.])
     model()
-    n, owner = ds.n_nodes(), np.asarray(ds.owner("Plant"))
+    n, owner = data_structure.n_nodes(), np.asarray(data_structure.owner("Plant"))
     P = np.zeros((n, 2))
     P[np.arange(n), owner] = 1.
     A = np.zeros((n + 2, n + 2))
@@ -414,9 +414,9 @@ def test_a_pool_given_by_its_location_exchanges_with_every_node_of_its_plant():
     A[n:, :n] = -EXCHANGE * P.T
     A[n:, n:] = np.eye(2) / DT + EXCHANGE * np.diag(P.sum(axis=0))
     x = np.linalg.solve(A, np.r_[np.zeros(n), 6., 0.] / DT)
-    np.testing.assert_allclose(ds.get("sugar"), x[:n], rtol=1e-8, atol=1e-12)
-    np.testing.assert_allclose(ds.get("shoot"), x[n:], rtol=1e-8)
-    assert (ds.get("sugar")[owner == 0] > 0.).all() and (ds.get("sugar")[owner == 1] == 0.).all()
+    np.testing.assert_allclose(data_structure.get("sugar"), x[:n], rtol=1e-8, atol=1e-12)
+    np.testing.assert_allclose(data_structure.get("shoot"), x[n:], rtol=1e-8)
+    assert (data_structure.get("sugar")[owner == 0] > 0.).all() and (data_structure.get("sugar")[owner == 1] == 0.).all()
 
 
 def test_pool_exchange_names_a_pool_of_the_solve():
@@ -476,11 +476,11 @@ class Supplied(FunctionalComponent):
                                     ([0., 10.], [0., 30.])],
                          ids=["callable", "series", "times_values"])
 def test_forcings_given_as_callables_or_times_and_values(supply):
-    ds = _ds()
-    model = Supplied(data_structure=ds)
+    data_structure = _ds()
+    model = Supplied(data_structure=data_structure)
     model.set_forcings({"supply": supply})
     model()
-    np.testing.assert_allclose(ds.get("u"), DT * 1.5 * DT)                  # its mean over the step [0, DT]
+    np.testing.assert_allclose(data_structure.get("u"), DT * 1.5 * DT)                  # its mean over the step [0, DT]
 
 
 @dataclass
@@ -501,15 +501,15 @@ class Watered(FunctionalComponent):
 
 
 def _watered(time_step, steps, forcings):
-    ds = _ds()
-    ds.simulation_time_step = time_step
-    model = Watered(data_structure=ds, time_step=time_step)
+    data_structure = _ds()
+    data_structure.simulation_time_step = time_step
+    model = Watered(data_structure=data_structure, time_step=time_step)
     model.set_forcings(forcings)
     lights = []
     for _ in range(steps):
         model()
-        lights.append(float(ds.get("light")[0]))
-    return ds, lights
+        lights.append(float(data_structure.get("light")[0]))
+    return data_structure, lights
 
 
 def test_forcings_over_the_step_do_not_depend_on_it():
@@ -614,49 +614,49 @@ class ActiveOutputs(FunctionalComponent):
 
 
 def _active_ds(dead):
-    ds = _ds()
-    ds.register("u", np.linspace(1., 2., ds.n_nodes()), location="node")
-    alive = np.ones(ds.n_nodes())
+    data_structure = _ds()
+    data_structure.register("u", np.linspace(1., 2., data_structure.n_nodes()), location="node")
+    alive = np.ones(data_structure.n_nodes())
     alive[dead] = 0.
-    ds.register("alive", alive, location="node")
-    ds.define_mask("active", {"alive": ">0"})
-    return ds
+    data_structure.register("alive", alive, location="node")
+    data_structure.define_mask("active", {"alive": ">0"})
+    return data_structure
 
 
-def _dropped_edges(ds, dead):
-    vids = ds.entity_ids("node")
+def _dropped_edges(data_structure, dead):
+    vids = data_structure.entity_ids("node")
     dead_vids = set(vids[np.atleast_1d(dead)].tolist())
-    return np.array([a in dead_vids or b in dead_vids for a, b in ds.edges()])
+    return np.array([a in dead_vids or b in dead_vids for a, b in data_structure.edges()])
 
 
 def test_outputs_on_an_active_subgraph_leave_the_other_entities_alone():
     dead = np.array([5, 6])
-    ds = _active_ds(dead)
-    ActiveOutputs(data_structure=ds)()
-    active = ds.get("alive") > 0
-    np.testing.assert_allclose(ds.get("doubled")[active], 2. * ds.get("u")[active])
-    np.testing.assert_array_equal(ds.get("doubled")[~active], -1.)          # inactive nodes keep their values
-    dropped = _dropped_edges(ds, dead)
+    data_structure = _active_ds(dead)
+    ActiveOutputs(data_structure=data_structure)()
+    active = data_structure.get("alive") > 0
+    np.testing.assert_allclose(data_structure.get("doubled")[active], 2. * data_structure.get("u")[active])
+    np.testing.assert_array_equal(data_structure.get("doubled")[~active], -1.)          # inactive nodes keep their values
+    dropped = _dropped_edges(data_structure, dead)
     assert dropped.any() and not dropped.all()
-    np.testing.assert_array_equal(ds.get("edge_marker")[~dropped], 1.)
-    np.testing.assert_array_equal(ds.get("edge_marker")[dropped], 0.)       # dropped edges get no value
+    np.testing.assert_array_equal(data_structure.get("edge_marker")[~dropped], 1.)
+    np.testing.assert_array_equal(data_structure.get("edge_marker")[dropped], 0.)       # dropped edges get no value
 
 
 def test_integrated_amounts_on_an_active_subgraph_are_kept_on_dropped_edges():
-    ds = _active_ds(np.array([], dtype=np.int64))
-    model = ActiveOutputs(data_structure=ds)
+    data_structure = _active_ds(np.array([], dtype=np.int64))
+    model = ActiveOutputs(data_structure=data_structure)
     model()
-    first = ds.get("flux_amount").copy()
-    np.testing.assert_allclose(first, ds.get("flux") * DT)
+    first = data_structure.get("flux_amount").copy()
+    np.testing.assert_allclose(first, data_structure.get("flux") * DT)
     dead = np.array([5, 6])
-    alive = np.ones(ds.n_nodes())
+    alive = np.ones(data_structure.n_nodes())
     alive[dead] = 0.
-    ds.set("alive", alive)
+    data_structure.set("alive", alive)
     model()
-    dropped = _dropped_edges(ds, dead)
-    np.testing.assert_array_equal(ds.get("flux_amount")[dropped], first[dropped])
-    np.testing.assert_array_equal(ds.get("flux")[dropped], 0.)
-    np.testing.assert_allclose(ds.get("flux_amount")[~dropped], first[~dropped] + ds.get("flux")[~dropped] * DT)
+    dropped = _dropped_edges(data_structure, dead)
+    np.testing.assert_array_equal(data_structure.get("flux_amount")[dropped], first[dropped])
+    np.testing.assert_array_equal(data_structure.get("flux")[dropped], 0.)
+    np.testing.assert_allclose(data_structure.get("flux_amount")[~dropped], first[~dropped] + data_structure.get("flux")[~dropped] * DT)
 
 
 # ---------------------------------------------------------------- filtered node balances
@@ -692,15 +692,15 @@ class FilterOnMissingVariable(FunctionalComponent):
 
 
 def test_a_filtered_balance_adds_its_terms_on_the_selected_nodes_only():
-    ds = _ds()
-    zone = (np.arange(ds.n_nodes()) % 2).astype(float)
-    source = np.linspace(1., 2., ds.n_nodes())
-    model = ZonedSource(data_structure=ds)
-    ds.set("zone", zone)
-    ds.set("source", source)
+    data_structure = _ds()
+    zone = (np.arange(data_structure.n_nodes()) % 2).astype(float)
+    source = np.linspace(1., 2., data_structure.n_nodes())
+    model = ZonedSource(data_structure=data_structure)
+    data_structure.set("zone", zone)
+    data_structure.set("source", source)
     model()
-    A = np.eye(ds.n_nodes()) / DT + K * _laplacian(ds)
-    np.testing.assert_allclose(ds.get("u"), np.linalg.solve(A, np.where(zone == 1, source, 0.)), rtol=1e-10)
+    A = np.eye(data_structure.n_nodes()) / DT + K * _laplacian(data_structure)
+    np.testing.assert_allclose(data_structure.get("u"), np.linalg.solve(A, np.where(zone == 1, source, 0.)), rtol=1e-10)
     with pytest.raises(KeyError, match="variable 'nowhere' is not registered"):
         FilterOnMissingVariable(data_structure=_ds())()
 
@@ -721,12 +721,12 @@ class SelectedOutput(FunctionalComponent):
 
 
 def test_a_selected_output_is_computed_on_its_nodes_only():
-    ds = _ds()
-    model = SelectedOutput(data_structure=ds)
+    data_structure = _ds()
+    model = SelectedOutput(data_structure=data_structure)
     model()
-    collar = np.asarray(ds.get("is_collar")) > 0
-    np.testing.assert_allclose(np.asarray(ds.get("collar_u"))[collar], 2. * np.asarray(ds.get("u"))[collar])
-    np.testing.assert_array_equal(np.asarray(ds.get("collar_u"))[~collar], 0.)
+    collar = np.asarray(data_structure.get("is_collar")) > 0
+    np.testing.assert_allclose(np.asarray(data_structure.get("collar_u"))[collar], 2. * np.asarray(data_structure.get("u"))[collar])
+    np.testing.assert_array_equal(np.asarray(data_structure.get("collar_u"))[~collar], 0.)
     assert model.seen == collar.sum() == 1
 
 

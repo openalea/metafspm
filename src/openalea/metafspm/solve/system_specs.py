@@ -106,7 +106,7 @@ class EquationContext:
     node_unknowns        : dict[str, np.ndarray]
     edge_unknowns        : dict[str, np.ndarray]
     previous_node_fields : Optional[dict[str, np.ndarray]]
-    dt                   : Optional[float]
+    step_duration                   : Optional[float]
     parameters           : dict[str, Any]
     pool_unknowns        : dict = field(default_factory=dict)
 
@@ -348,7 +348,7 @@ class GraphDAESpec(BaseSystemSpec):
         return node_unknowns, edge_unknowns
 
     def make_context(self, packed: np.ndarray,
-                     previous_node_fields=None, dt=None) -> EquationContext:
+                     previous_node_fields=None, step_duration=None) -> EquationContext:
         """Build the EquationContext handed to every evaluator."""
         node_u, edge_u = self.unpack_unknowns(packed)
         return EquationContext(
@@ -359,7 +359,7 @@ class GraphDAESpec(BaseSystemSpec):
             node_unknowns        = node_u,
             edge_unknowns        = edge_u,
             previous_node_fields = previous_node_fields,
-            dt                   = dt,
+            step_duration                   = step_duration,
             parameters           = self.parameters,
             pool_unknowns        = self.unpack_pools(packed) if self.unknowns.pool_fields else {},
         )
@@ -367,7 +367,7 @@ class GraphDAESpec(BaseSystemSpec):
     # ── Evaluation ────────────────────────────────────────────────────────────
 
     def residual(self, packed: np.ndarray,
-                 previous_node_fields=None, dt=None) -> np.ndarray:
+                 previous_node_fields=None, step_duration=None) -> np.ndarray:
         """Evaluate the full residual vector R(x).
 
         Two modes:
@@ -375,28 +375,28 @@ class GraphDAESpec(BaseSystemSpec):
         2. Linear-assembly mode: R = A(x)·x - b.
         """
         if self.equation_blocks:
-            ctx = self.make_context(packed, previous_node_fields, dt)
+            context = self.make_context(packed, previous_node_fields, step_duration)
             return np.concatenate([
-                np.asarray(b.evaluator(ctx), dtype=np.float64).reshape(-1)
+                np.asarray(b.evaluator(context), dtype=np.float64).reshape(-1)
                 for b in self.equation_blocks
             ])
         if self.matrix_evaluator is not None and self.rhs_evaluator is not None:
-            mat = self._eval_matrix(packed, previous_node_fields, dt)
-            rhs = self._eval_rhs(packed, previous_node_fields, dt)
+            mat = self._eval_matrix(packed, previous_node_fields, step_duration)
+            rhs = self._eval_rhs(packed, previous_node_fields, step_duration)
             v   = np.asarray(packed, dtype=np.float64).reshape(-1)
             return self._matvec(mat, v) - rhs
         raise ValueError("No equation_blocks and no matrix/rhs evaluators.")
 
-    def _eval_matrix(self, packed, prev, dt):
-        ctx = self.make_context(packed, prev, dt)
-        return self.matrix_evaluator(ctx)
+    def _eval_matrix(self, packed, prev, step_duration):
+        context = self.make_context(packed, prev, step_duration)
+        return self.matrix_evaluator(context)
 
-    def _eval_rhs(self, packed, prev, dt) -> np.ndarray:
-        ctx = self.make_context(packed, prev, dt)
-        return np.asarray(self.rhs_evaluator(ctx), dtype=np.float64).reshape(-1)
+    def _eval_rhs(self, packed, prev, step_duration) -> np.ndarray:
+        context = self.make_context(packed, prev, step_duration)
+        return np.asarray(self.rhs_evaluator(context), dtype=np.float64).reshape(-1)
 
     def jacobian(self, packed: np.ndarray,
-                 previous_node_fields=None, dt=None):
+                 previous_node_fields=None, step_duration=None):
         """
         Return the Jacobian ∂R/∂x at the current iterate.
 
@@ -406,17 +406,17 @@ class GraphDAESpec(BaseSystemSpec):
         3. Finite-difference with graph-structured sparsity colouring.
         """
         if self.jacobian_evaluator is not None:
-            ctx = self.make_context(packed, previous_node_fields, dt)
-            J = self.jacobian_evaluator(ctx)
+            context = self.make_context(packed, previous_node_fields, step_duration)
+            J = self.jacobian_evaluator(context)
             return J if issparse(J) else np.asarray(J, dtype=np.float64)
 
         if self.matrix_evaluator is not None and self.rhs_evaluator is not None:
-            mat = self._eval_matrix(packed, previous_node_fields, dt)
+            mat = self._eval_matrix(packed, previous_node_fields, step_duration)
             if issparse(mat):
                 return mat          # keep sparse — solver uses spsolve
             return np.asarray(mat, dtype=np.float64)
 
-        return self.finite_difference_jacobian(packed, previous_node_fields, dt)
+        return self.finite_difference_jacobian(packed, previous_node_fields, step_duration)
 
     def jac_sparsity_matrix(self) -> csr_matrix:
         """
@@ -508,7 +508,7 @@ class GraphDAESpec(BaseSystemSpec):
         return sp_bmat([[block(r, c) for c in blocks] for r in blocks], format="csr").astype(bool)
 
     def finite_difference_jacobian(self, packed: np.ndarray,
-                                   previous_node_fields=None, dt=None):
+                                   previous_node_fields=None, step_duration=None):
         """
         FD Jacobian with graph-structured sparsity colouring.
 
@@ -520,7 +520,7 @@ class GraphDAESpec(BaseSystemSpec):
         packed = np.asarray(packed, dtype=np.float64).reshape(-1)
         sparsity = self.jac_sparsity_matrix()
         return approx_derivative(
-            lambda x: self.residual(x, previous_node_fields, dt),
+            lambda x: self.residual(x, previous_node_fields, step_duration),
             packed,
             method="3-point",
             abs_step=1e-8,
@@ -528,10 +528,10 @@ class GraphDAESpec(BaseSystemSpec):
         )
 
     def derive_outputs(self, packed: np.ndarray,
-                       previous_node_fields=None, dt=None) -> dict:
+                       previous_node_fields=None, step_duration=None) -> dict:
         """Evaluate all OutputBlock callables on the converged solution."""
-        ctx = self.make_context(packed, previous_node_fields, dt)
-        return {b.name: b.evaluator(ctx) for b in self.output_blocks}
+        context = self.make_context(packed, previous_node_fields, step_duration)
+        return {b.name: b.evaluator(context) for b in self.output_blocks}
 
     # ── Utilities ─────────────────────────────────────────────────────────────
 
@@ -625,44 +625,44 @@ class GraphSystem:
     def unpack_unknowns(self, packed):
         return self._as_spec().unpack_unknowns(packed)
 
-    def make_context(self, packed, previous_node_fields=None, dt=None):
-        return self._as_spec().make_context(packed, previous_node_fields, dt)
+    def make_context(self, packed, previous_node_fields=None, step_duration=None):
+        return self._as_spec().make_context(packed, previous_node_fields, step_duration)
 
-    def residual(self, packed, previous_node_fields=None, dt=None):
-        return self._as_spec().residual(packed, previous_node_fields, dt)
+    def residual(self, packed, previous_node_fields=None, step_duration=None):
+        return self._as_spec().residual(packed, previous_node_fields, step_duration)
 
-    def jacobian(self, packed, previous_node_fields=None, dt=None):
-        return self._as_spec().jacobian(packed, previous_node_fields, dt)
+    def jacobian(self, packed, previous_node_fields=None, step_duration=None):
+        return self._as_spec().jacobian(packed, previous_node_fields, step_duration)
 
     def jac_sparsity_matrix(self):
         return self._as_spec().jac_sparsity_matrix()
 
-    def finite_difference_jacobian(self, packed, previous_node_fields=None, dt=None):
-        return self._as_spec().finite_difference_jacobian(packed, previous_node_fields, dt)
+    def finite_difference_jacobian(self, packed, previous_node_fields=None, step_duration=None):
+        return self._as_spec().finite_difference_jacobian(packed, previous_node_fields, step_duration)
 
-    def derive_outputs(self, packed, previous_node_fields=None, dt=None):
-        return self._as_spec().derive_outputs(packed, previous_node_fields, dt)
+    def derive_outputs(self, packed, previous_node_fields=None, step_duration=None):
+        return self._as_spec().derive_outputs(packed, previous_node_fields, step_duration)
 
-    def solve(self, previous_node_fields=None, dt=None) -> np.ndarray:
+    def solve(self, previous_node_fields=None, step_duration=None) -> np.ndarray:
         """Run the solver and return the converged packed unknown vector."""
         return self._get_solver().step_once(
-            self._as_spec(), previous_node_fields, dt
+            self._as_spec(), previous_node_fields, step_duration
         )
 
     # ── Forward methods used only in tests ───────────────────────────────────
 
-    def matrix(self, packed=None, previous_node_fields=None, dt=None):
+    def matrix(self, packed=None, previous_node_fields=None, step_duration=None):
         spec = self._as_spec()
         if spec.matrix_evaluator is None:
             raise ValueError("no linear matrix evaluator defined")
         if packed is None:
             packed = spec.pack_unknowns()
-        return spec._eval_matrix(packed, previous_node_fields, dt)
+        return spec._eval_matrix(packed, previous_node_fields, step_duration)
 
-    def rhs(self, packed=None, previous_node_fields=None, dt=None):
+    def rhs(self, packed=None, previous_node_fields=None, step_duration=None):
         spec = self._as_spec()
         if spec.rhs_evaluator is None:
             raise ValueError("no linear rhs evaluator defined")
         if packed is None:
             packed = spec.pack_unknowns()
-        return spec._eval_rhs(packed, previous_node_fields, dt)
+        return spec._eval_rhs(packed, previous_node_fields, step_duration)

@@ -31,16 +31,16 @@ def par(**kwargs):
 
 @pytest.fixture
 def seedling():
-    g, _ = generate_simple_mpg_seedling()
-    g.populate_graph(g.scales.SubOrgan)
-    g.convert_properties_to_arraydict()
-    ds = MPGDataStructure(g, from_scale=g.scales.SubOrgan)
-    owner = {v: g.complex_at_scale(v, g.scales.Organ) for v in ds.entity_ids("node")}
-    return g, ds, owner
+    mtg, _ = generate_simple_mpg_seedling()
+    mtg.populate_graph(mtg.scales.SubOrgan)
+    mtg.convert_properties_to_arraydict()
+    data_structure = MPGDataStructure(mtg, from_scale=mtg.scales.SubOrgan)
+    owner = {v: mtg.complex_at_scale(v, mtg.scales.Organ) for v in data_structure.entity_ids("node")}
+    return mtg, data_structure, owner
 
 
-def _prop(g, name):
-    return dict(g.property(name))
+def _prop(mtg, name):
+    return dict(mtg.property(name))
 
 
 # ---------------------------------------------------------------- stored at their own scale
@@ -55,14 +55,14 @@ class OrganPool(FunctionalComponent):
 
 
 def test_a_coarse_state_is_written_at_the_vertices_of_its_scale(seedling):
-    g, ds, owner = seedling
+    mtg, data_structure, owner = seedling
     organs = sorted(set(owner.values()))
-    g.properties()["organ_pool"] = {o: 10. * o for o in organs}
-    model = OrganPool(data_structure=ds)
+    mtg.properties()["organ_pool"] = {o: 10. * o for o in organs}
+    model = OrganPool(data_structure=data_structure)
 
     model()
 
-    assert _prop(ds.mtg, "organ_pool") == {o: 10. * o + 1. for o in organs}   # no SubOrgan vertex written
+    assert _prop(data_structure.mtg, "organ_pool") == {o: 10. * o + 1. for o in organs}   # no SubOrgan vertex written
 
 
 @dataclass
@@ -76,12 +76,12 @@ class Level(FunctionalComponent):
 
 def test_a_rate_only_component_reaches_the_mtg(seedling):
     """N4: every state reaches the MTG, not only graph-solve results; written when the MTG is read."""
-    g, ds, _ = seedling
-    model = Level(data_structure=ds)
+    mtg, data_structure, _ = seedling
+    model = Level(data_structure=data_structure)
 
     model()
 
-    assert _prop(ds.mtg, "level") == {v: 2. for v in ds.entity_ids("node")}
+    assert _prop(data_structure.mtg, "level") == {v: 2. for v in data_structure.entity_ids("node")}
 
 
 # ---------------------------------------------------------------- mapped between the nodes and a coarse scale
@@ -98,18 +98,18 @@ class OrganTemperature(FunctionalComponent):
 
 
 def test_a_broadcast_state_is_written_back_as_the_mean_of_its_nodes(seedling):
-    g, ds, owner = seedling
+    mtg, data_structure, owner = seedling
     organs = sorted(set(owner.values()))
-    g.properties()["organ_temperature"] = {o: 20. for o in organs}
-    ds.register("rank", np.arange(ds.n_nodes(), dtype=float), location="node")
-    model = OrganTemperature(data_structure=ds)
-    np.testing.assert_array_equal(ds.get("organ_temperature"), 20.)   # broadcast at registration
+    mtg.properties()["organ_temperature"] = {o: 20. for o in organs}
+    data_structure.register("rank", np.arange(data_structure.n_nodes(), dtype=float), location="node")
+    model = OrganTemperature(data_structure=data_structure)
+    np.testing.assert_array_equal(data_structure.get("organ_temperature"), 20.)   # broadcast at registration
 
     model()
 
-    rank = dict(zip(ds.entity_ids("node"), np.arange(ds.n_nodes(), dtype=float)))
+    rank = dict(zip(data_structure.entity_ids("node"), np.arange(data_structure.n_nodes(), dtype=float)))
     expected = {o: 20. + np.mean([rank[v] for v in owner if owner[v] == o]) for o in organs}
-    written = _prop(ds.mtg, "organ_temperature")
+    written = _prop(data_structure.mtg, "organ_temperature")
     assert written.keys() == expected.keys()
     np.testing.assert_allclose([written[o] for o in organs], [expected[o] for o in organs])
 
@@ -125,15 +125,15 @@ class OrganMean(FunctionalComponent):
 
 
 def test_a_state_averaged_to_a_coarse_scale_is_written_back_by_broadcast(seedling):
-    g, ds, owner = seedling
-    g.properties()["concentration"] = {v: float(v) for v in ds.entity_ids("node")}
-    model = OrganMean(data_structure=ds)
+    mtg, data_structure, owner = seedling
+    mtg.properties()["concentration"] = {v: float(v) for v in data_structure.entity_ids("node")}
+    model = OrganMean(data_structure=data_structure)
 
     model()
 
     means = {o: np.mean([float(v) for v in owner if owner[v] == o]) for o in set(owner.values())}
-    written = _prop(ds.mtg, "concentration")
-    np.testing.assert_allclose([written[v] for v in ds.entity_ids("node")], [means[owner[v]] + 1. for v in ds.entity_ids("node")])
+    written = _prop(data_structure.mtg, "concentration")
+    np.testing.assert_allclose([written[v] for v in data_structure.entity_ids("node")], [means[owner[v]] + 1. for v in data_structure.entity_ids("node")])
 
 
 # ---------------------------------------------------------------- edges
@@ -148,13 +148,13 @@ class ChildFlux(FunctionalComponent):
 
 
 def test_an_edge_state_is_written_at_its_child_endpoint(seedling):
-    g, ds, _ = seedling
-    model = ChildFlux(data_structure=ds)
+    mtg, data_structure, _ = seedling
+    model = ChildFlux(data_structure=data_structure)
 
     model()
 
-    children = [int(b) for _, b in ds.edges()]
-    assert _prop(ds.mtg, "flux") == {child: 1. for child in children}
+    children = [int(b) for _, b in data_structure.edges()]
+    assert _prop(data_structure.mtg, "flux") == {child: 1. for child in children}
 
 
 @dataclass
@@ -167,11 +167,11 @@ class ParentFlux(FunctionalComponent):
 
 
 def test_a_parent_mapped_state_cannot_be_written_where_edges_share_a_parent(seedling):
-    _, ds, _ = seedling
-    model = ParentFlux(data_structure=ds)
+    _, data_structure, _ = seedling
+    model = ParentFlux(data_structure=data_structure)
     model()
     with pytest.raises(ValueError, match="several edges share a parent"):
-        ds.flush_mtg()                            # written when the MTG is read
+        data_structure.flush_mtg()                            # written when the MTG is read
 
 
 # ---------------------------------------------------------------- what is read and written
@@ -183,80 +183,80 @@ class Mixed(FunctionalComponent):
 
 
 def test_parameters_are_refreshed_from_the_mtg_and_never_written_back(seedling):
-    g, ds, owner = seedling
+    mtg, data_structure, owner = seedling
     organs = sorted(set(owner.values()))
-    g.properties()["organ_k"] = {o: 1. for o in organs}
-    model = Mixed(data_structure=ds)
+    mtg.properties()["organ_k"] = {o: 1. for o in organs}
+    model = Mixed(data_structure=data_structure)
 
-    g.properties()["organ_k"] = {o: float(o) for o in organs}   # updated on the MTG by another component
+    mtg.properties()["organ_k"] = {o: float(o) for o in organs}   # updated on the MTG by another component
     model._refresh_from_bio_scale()
-    np.testing.assert_array_equal(ds.get("organ_k"), [float(o) for o in ds.entity_ids("Organ")])
+    np.testing.assert_array_equal(data_structure.get("organ_k"), [float(o) for o in data_structure.entity_ids("Organ")])
 
-    ds.set("organ_k", 0.)
+    data_structure.set("organ_k", 0.)
     model.write_back_to_mtg()
-    assert _prop(ds.mtg, "organ_k") == {o: float(o) for o in organs}
-    assert _prop(ds.mtg, "level") == {v: 1. for v in ds.entity_ids("node")}
+    assert _prop(data_structure.mtg, "organ_k") == {o: float(o) for o in organs}
+    assert _prop(data_structure.mtg, "level") == {v: 1. for v in data_structure.entity_ids("node")}
 
 
 def test_child_and_parent_are_the_edge_aggregations(seedling):
     """child and parent only: the former proximal and distal are refused."""
-    _, ds, _ = seedling
-    ds.register("x", np.arange(ds.n_nodes(), dtype=float), location="node")
-    ds.derive("x_child", {"x": 1.}, location="edge", aggregation="child")
-    ds.derive("x_parent", {"x": 1.}, location="edge", aggregation="parent")
-    assert not np.array_equal(ds.get("x_child"), ds.get("x_parent"))
+    _, data_structure, _ = seedling
+    data_structure.register("x", np.arange(data_structure.n_nodes(), dtype=float), location="node")
+    data_structure.derive("x_child", {"x": 1.}, location="edge", aggregation="child")
+    data_structure.derive("x_parent", {"x": 1.}, location="edge", aggregation="parent")
+    assert not np.array_equal(data_structure.get("x_child"), data_structure.get("x_parent"))
     with pytest.raises(ValueError, match="cannot map node to edge"):
-        ds.derive("x_proximal", {"x": 1.}, location="edge", aggregation="proxi" + "mal")
+        data_structure.derive("x_proximal", {"x": 1.}, location="edge", aggregation="proxi" + "mal")
 
 
 # ---------------------------------------------------------------- scale-aware MTG mapping
 
 def test_mtg_mapping_from_a_coarser_scale():
     """An Organ property maps to the SubOrgan-anchored nodes through their Organ complex."""
-    g, _, ds = seedling_ds()
-    organs = [v for v in g.vertices(scale=g.scales.Organ) if not g.view("isanchor").get(v, False)]
-    g.properties()["organ_value"] = {v: 10. * v for v in organs}
+    mtg, _, data_structure = seedling_ds()
+    organs = [v for v in mtg.vertices(scale=mtg.scales.Organ) if not mtg.view("isanchor").get(v, False)]
+    mtg.properties()["organ_value"] = {v: 10. * v for v in organs}
 
-    values = ds._mtg_to_node_array("organ_value", scale=g.scales.Organ)
+    values = data_structure._mtg_to_node_array("organ_value", scale=mtg.scales.Organ)
 
-    expected = [10. * g.complex_at_scale(v, g.scales.Organ) for v in ds.entity_ids("node")]
+    expected = [10. * mtg.complex_at_scale(v, mtg.scales.Organ) for v in data_structure.entity_ids("node")]
     np.testing.assert_array_equal(values, expected)
 
 
 def test_mtg_mapping_fast_path_checks_keys_not_only_size():
     """Same number of entries but different keys used to be silently mis-mapped."""
-    g, _, ds = seedling_ds()
-    vids = sorted(ds.entity_ids("node"))
+    mtg, _, data_structure = seedling_ds()
+    vids = sorted(data_structure.entity_ids("node"))
     shifted = {v: float(v) for v in vids[1:]}
     shifted[max(vids) + 1000] = -1.
-    g.properties()["shifted"] = ArrayDict(shifted)
+    mtg.properties()["shifted"] = ArrayDict(shifted)
 
     with pytest.raises(ValueError, match="shifted"):
-        ds._mtg_to_node_array("shifted")
+        data_structure._mtg_to_node_array("shifted")
 
 
 def test_mtg_mapping_partial_coverage_raises_and_absent_returns_none():
-    g, _, ds = seedling_ds()
-    g.properties()["partial"] = {ds.entity_ids("node")[0]: 1.}
+    mtg, _, data_structure = seedling_ds()
+    mtg.properties()["partial"] = {data_structure.entity_ids("node")[0]: 1.}
     with pytest.raises(ValueError, match="partial"):
-        ds._mtg_to_node_array("partial")
+        data_structure._mtg_to_node_array("partial")
     with pytest.raises(ValueError, match="partial"):
-        ds._mtg_to_edge_array("partial", convention="proximal")
-    assert ds._mtg_to_node_array("absent_property") is None
+        data_structure._mtg_to_edge_array("partial", convention="proximal")
+    assert data_structure._mtg_to_node_array("absent_property") is None
 
 
 # ---------------------------------------------------------------- write-back errors
 
 def test_write_back_creates_missing_property():
-    g, _, ds = seedling_ds()
-    ds._write_node_to_mtg("new_state", np.arange(ds.n_nodes(), dtype=float))
-    written = g.properties()["new_state"]
-    assert [written[v] for v in ds.entity_ids("node")] == list(range(ds.n_nodes()))
+    mtg, _, data_structure = seedling_ds()
+    data_structure._write_node_to_mtg("new_state", np.arange(data_structure.n_nodes(), dtype=float))
+    written = mtg.properties()["new_state"]
+    assert [written[v] for v in data_structure.entity_ids("node")] == list(range(data_structure.n_nodes()))
 
 
 def test_write_back_errors_are_not_swallowed():
-    _, _, ds = seedling_ds()
+    _, _, data_structure = seedling_ds()
     with pytest.raises(ValueError):
-        ds._write_node_to_mtg("struct_mass", np.ones(ds.n_nodes() + 3))
+        data_structure._write_node_to_mtg("struct_mass", np.ones(data_structure.n_nodes() + 3))
     with pytest.raises(ValueError):
-        ds._write_edge_to_mtg("struct_mass", np.ones(ds.n_edges() + 3), convention="proximal")
+        data_structure._write_edge_to_mtg("struct_mass", np.ones(data_structure.n_edges() + 3), convention="proximal")

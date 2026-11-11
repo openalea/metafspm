@@ -40,18 +40,18 @@ class ArraySegmentation(RootGrowthProbe):
 
 
 def _plant(component, repartition):
-    g, ds, vids = make_chain()
-    growth = component(data_structure=ds)
+    mtg, data_structure, vids = make_chain()
+    growth = component(data_structure=data_structure)
     growth.partition_weight = "struct_mass"
     growth.repartition = repartition
-    Pools(data_structure=ds)
-    CarbonProbe(data_structure=ds)
-    ds.set("C_hexose_root", 1.5)
-    return g, ds, growth
+    Pools(data_structure=data_structure)
+    CarbonProbe(data_structure=data_structure)
+    data_structure.set("C_hexose_root", 1.5)
+    return mtg, data_structure, growth
 
 
-def _by_vid(ds, name):
-    return dict(zip(ds.entity_ids("node").tolist(), np.asarray(ds.get(name)).tolist()))
+def _by_vid(data_structure, name):
+    return dict(zip(data_structure.entity_ids("node").tolist(), np.asarray(data_structure.get(name)).tolist()))
 
 
 @pytest.mark.parametrize("repartition", ["after_mpg_steps", "end_of_call"])
@@ -81,9 +81,9 @@ class Branching(StructuralComponent):
 
     @segmentation
     def _struct_mass(self, struct_mass) -> tuple[float, str, NewNodes]:
-        ds = self.data_structure
-        labels = ds._mtg.labels
-        tips = ds.entity_ids("node")[ds.tips()]
+        data_structure = self.data_structure
+        labels = data_structure._mtg.labels
+        tips = data_structure.entity_ids("node")[data_structure.tips()]
         n = tips.size
         # Per tip: 3 nodes, -1 - index for the new parents
         parent = np.column_stack([tips, -1 - 3 * np.arange(n), -1 - 3 * np.arange(n)]).reshape(-1)
@@ -100,54 +100,54 @@ class Branching(StructuralComponent):
 def _population(sizes=(3, 5)):
     table = pd.DataFrame([dict(plant=f"p{i}", model=None, x=0.1 * i, y=0., depth=0., rotation=0.,
                                scenario={"n_segments": n}) for i, n in enumerate(sizes)])
-    g, plants = _build_population(table, initiators=(RootGrowthProbe,))
-    g.populate_graph(g.scales.SubOrgan)
-    g.convert_properties_to_arraydict()
-    ds = MPGDataStructure(g, from_scale=g.scales.SubOrgan)
-    return g, ds, plants
+    mtg, plants = _build_population(table, initiators=(RootGrowthProbe,))
+    mtg.populate_graph(mtg.scales.SubOrgan)
+    mtg.convert_properties_to_arraydict()
+    data_structure = MPGDataStructure(mtg, from_scale=mtg.scales.SubOrgan)
+    return mtg, data_structure, plants
 
 
 def test_chains_and_branches_in_one_batch():
-    g, ds, plants = _population()
-    branching = Branching(data_structure=ds)
-    owners_before = dict(zip(ds.entity_ids("node").tolist(), np.asarray(ds.entity_ids("Plant"))[ds.owner("Plant")]))
-    tips = ds.entity_ids("node")[ds.tips()].tolist()
-    n_before = ds.n_nodes()
+    mtg, data_structure, plants = _population()
+    branching = Branching(data_structure=data_structure)
+    owners_before = dict(zip(data_structure.entity_ids("node").tolist(), np.asarray(data_structure.entity_ids("Plant"))[data_structure.owner("Plant")]))
+    tips = data_structure.entity_ids("node")[data_structure.tips()].tolist()
+    n_before = data_structure.n_nodes()
     branching()
-    assert ds.n_nodes() == n_before + 3 * len(tips)
-    labels, s = g.labels, g.scales
-    rank = _by_vid(ds, "rank")
-    owner = dict(zip(ds.entity_ids("node").tolist(), np.asarray(ds.entity_ids("Plant"))[ds.owner("Plant")]))
+    assert data_structure.n_nodes() == n_before + 3 * len(tips)
+    labels, s = mtg.labels, mtg.scales
+    rank = _by_vid(data_structure, "rank")
+    owner = dict(zip(data_structure.entity_ids("node").tolist(), np.asarray(data_structure.entity_ids("Plant"))[data_structure.owner("Plant")]))
     for tip in tips:
-        assert g.label(tip) == labels.SubOrgan.RootSegment                     # relabelled
-        segment = [c for c in g.children(tip) if g.edge_type(c) == "<"]
+        assert mtg.label(tip) == labels.SubOrgan.RootSegment                     # relabelled
+        segment = [c for c in mtg.children(tip) if mtg.edge_type(c) == "<"]
         assert len(segment) == 1 and rank[segment[0]] == 0.
         segment = segment[0]
-        apex = [c for c in g.children(segment) if g.edge_type(c) == "<"][0]
-        lateral = [c for c in g.children(segment) if g.edge_type(c) == "+"][0]
+        apex = [c for c in mtg.children(segment) if mtg.edge_type(c) == "<"][0]
+        lateral = [c for c in mtg.children(segment) if mtg.edge_type(c) == "+"][0]
         assert (rank[apex], rank[lateral]) == (1., 2.)
-        assert g.label(apex) == g.label(lateral) == labels.SubOrgan.RootApex
-        assert g.complex(segment) == g.complex(apex) == g.complex(tip)          # the chain joins the tip's Organ
-        organ = g.complex(lateral)
-        assert organ != g.complex(tip) and g.label(organ) == labels.Organ.RootInternode
-        assert g.scale(organ) == s.Organ
-        assert g.complex(organ) == g.complex_at_scale(tip, s.Phytomer)         # under the bearer's Phytomer
+        assert mtg.label(apex) == mtg.label(lateral) == labels.SubOrgan.RootApex
+        assert mtg.complex(segment) == mtg.complex(apex) == mtg.complex(tip)          # the chain joins the tip's Organ
+        organ = mtg.complex(lateral)
+        assert organ != mtg.complex(tip) and mtg.label(organ) == labels.Organ.RootInternode
+        assert mtg.scale(organ) == s.Organ
+        assert mtg.complex(organ) == mtg.complex_at_scale(tip, s.Phytomer)         # under the bearer's Phytomer
         for v in (segment, apex, lateral):
             assert owner[v] == owners_before[tip]                             # the bearer's plant
-    mass = _by_vid(ds, "struct_mass")
+    mass = _by_vid(data_structure, "struct_mass")
     assert sorted(mass[v] for v in mass if rank[v] >= 0) == sorted([1., 0.5, 0.25] * len(tips))
 
 
 def test_the_extended_topology_is_a_full_rebuild():
-    g, ds, _ = _population()
-    branching = Branching(data_structure=ds)
+    mtg, data_structure, _ = _population()
+    branching = Branching(data_structure=data_structure)
     branching()
     branching()                                                               # new nodes on new nodes
-    rebuilt = MPGDataStructure(g, from_scale=g.scales.SubOrgan)
-    assert ds.entity_ids("node").tolist() == rebuilt.entity_ids("node").tolist()
-    assert ds.parents().tolist() == rebuilt.parents().tolist()
-    assert ds.owner("Plant").tolist() == rebuilt.owner("Plant").tolist()
-    assert ds.edges() == rebuilt.edges()
+    rebuilt = MPGDataStructure(mtg, from_scale=mtg.scales.SubOrgan)
+    assert data_structure.entity_ids("node").tolist() == rebuilt.entity_ids("node").tolist()
+    assert data_structure.parents().tolist() == rebuilt.parents().tolist()
+    assert data_structure.owner("Plant").tolist() == rebuilt.owner("Plant").tolist()
+    assert data_structure.edges() == rebuilt.edges()
 
 
 def test_the_batch_is_checked():
@@ -168,10 +168,10 @@ class Phytomers(StructuralComponent):
 
     @segmentation
     def _struct_mass(self, struct_mass) -> tuple[float, str, NewNodes]:
-        ds = self.data_structure
-        g, labels = ds._mtg, ds._mtg.labels
-        tips = ds.entity_ids("node")[ds.tips()]
-        units = [g.complex_at_scale(int(t), scales.GrowthUnit) for t in tips]
+        data_structure = self.data_structure
+        mtg, labels = data_structure._mtg, data_structure._mtg.labels
+        tips = data_structure.entity_ids("node")[data_structure.tips()]
+        units = [mtg.complex_at_scale(int(t), scales.GrowthUnit) for t in tips]
         anchor, scale, label, diameter = [], [], [], []
         parent, complex_of = [], []
         for k, (tip, unit) in enumerate(zip(tips.tolist(), units)):
@@ -193,24 +193,24 @@ class Phytomers(StructuralComponent):
 
 
 def test_explicit_complexes():
-    g, ds, _ = _population()
-    component = Phytomers(data_structure=ds)
-    tips = ds.entity_ids("node")[ds.tips()].tolist()
+    mtg, data_structure, _ = _population()
+    component = Phytomers(data_structure=data_structure)
+    tips = data_structure.entity_ids("node")[data_structure.tips()].tolist()
     component()
-    s = g.scales
+    s = mtg.scales
     for tip in tips:
-        first = [c for c in g.children(tip) if g.edge_type(c) == "+"][0]
-        phytomer = g.complex_at_scale(first, s.Phytomer)
-        assert g.label(phytomer) == g.labels.Phytomer.Shoot
-        assert g.complex(phytomer) == g.complex_at_scale(tip, s.GrowthUnit)
-        organs = g.components(phytomer)
-        assert [g.label(o) for o in organs] == [g.labels.Organ.StemInternode, g.labels.Organ.Leaf]
-        assert all(len(g.components(o)) == 2 for o in organs)
-    diameters = dict(zip(ds.entity_ids("Organ").tolist(), np.asarray(ds.get("diameter")).tolist()))
-    new_organs = [g.complex_at_scale(c, s.Organ) for tip in tips for c in g.children(tip) if g.edge_type(c) == "+"]
+        first = [c for c in mtg.children(tip) if mtg.edge_type(c) == "+"][0]
+        phytomer = mtg.complex_at_scale(first, s.Phytomer)
+        assert mtg.label(phytomer) == mtg.labels.Phytomer.Shoot
+        assert mtg.complex(phytomer) == mtg.complex_at_scale(tip, s.GrowthUnit)
+        organs = mtg.components(phytomer)
+        assert [mtg.label(o) for o in organs] == [mtg.labels.Organ.StemInternode, mtg.labels.Organ.Leaf]
+        assert all(len(mtg.components(o)) == 2 for o in organs)
+    diameters = dict(zip(data_structure.entity_ids("Organ").tolist(), np.asarray(data_structure.get("diameter")).tolist()))
+    new_organs = [mtg.complex_at_scale(c, s.Organ) for tip in tips for c in mtg.children(tip) if mtg.edge_type(c) == "+"]
     assert sorted(diameters[o] for o in new_organs) == pytest.approx(sorted(0.1 * (k + 1) for k in range(len(tips))))
-    rebuilt = MPGDataStructure(g, from_scale=g.scales.SubOrgan)
-    assert ds.parents().tolist() == rebuilt.parents().tolist()
+    rebuilt = MPGDataStructure(mtg, from_scale=mtg.scales.SubOrgan)
+    assert data_structure.parents().tolist() == rebuilt.parents().tolist()
 
 
 @dataclass
@@ -220,9 +220,9 @@ class NewAxis(StructuralComponent):
 
     @segmentation
     def _struct_mass(self, struct_mass) -> tuple[float, str, NewNodes]:
-        ds = self.data_structure
-        g, labels = ds._mtg, ds._mtg.labels
-        plant = int(ds.entity_ids("Plant")[0])
+        data_structure = self.data_structure
+        mtg, labels = data_structure._mtg, data_structure._mtg.labels
+        plant = int(data_structure.entity_ids("Plant")[0])
         complexes = NewComplexes(anchor=[plant, -1, -2, -3], scale=[scales.Axis, scales.GrowthUnit, scales.Phytomer,
                                                                      scales.Organ],
                                  label=[labels.Axis.Shoot, labels.GrowthUnit.Shoot, labels.Phytomer.Shoot,
@@ -233,18 +233,18 @@ class NewAxis(StructuralComponent):
 
 
 def test_a_root_node_in_a_new_axis():
-    g, ds, _ = _population()
-    n_before = ds.n_nodes()
-    NewAxis(data_structure=ds)()
-    assert ds.n_nodes() == n_before + 2
-    is_new = np.asarray(ds.get("struct_mass")) == 7.5            # (a new root rebuilds the graph: any order)
-    new = sorted(ds.entity_ids("node")[is_new].tolist())
-    assert len(new) == 2 and g.parent(new[0]) is None and g.parent(new[1]) == new[0]
-    owner = np.asarray(ds.entity_ids("Plant"))[ds.owner("Plant")]
-    assert (owner[is_new] == ds.entity_ids("Plant")[0]).all()
-    rebuilt = MPGDataStructure(g, from_scale=g.scales.SubOrgan)
-    assert ds.entity_ids("node").tolist() == rebuilt.entity_ids("node").tolist()
-    assert ds.parents().tolist() == rebuilt.parents().tolist()
+    mtg, data_structure, _ = _population()
+    n_before = data_structure.n_nodes()
+    NewAxis(data_structure=data_structure)()
+    assert data_structure.n_nodes() == n_before + 2
+    is_new = np.asarray(data_structure.get("struct_mass")) == 7.5            # (a new root rebuilds the graph: any order)
+    new = sorted(data_structure.entity_ids("node")[is_new].tolist())
+    assert len(new) == 2 and mtg.parent(new[0]) is None and mtg.parent(new[1]) == new[0]
+    owner = np.asarray(data_structure.entity_ids("Plant"))[data_structure.owner("Plant")]
+    assert (owner[is_new] == data_structure.entity_ids("Plant")[0]).all()
+    rebuilt = MPGDataStructure(mtg, from_scale=mtg.scales.SubOrgan)
+    assert data_structure.entity_ids("node").tolist() == rebuilt.entity_ids("node").tolist()
+    assert data_structure.parents().tolist() == rebuilt.parents().tolist()
 
 
 def test_the_complexes_are_checked():

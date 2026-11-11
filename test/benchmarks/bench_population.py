@@ -59,19 +59,19 @@ class BenchGrowth(StructuralComponent):
     elongation: float = parameter(**DOC, by="", default=0.3 * SEGMENT_LENGTH)
 
     @classmethod
-    def initiate_plant(cls, g, plant, parameters):
-        s = g.scales
-        x, y, z = (float(g.property(name)[plant]) for name in ("x", "y", "z"))
-        axis = g.add_component(plant, **PropsConfig(scale=s.Axis, edge_type='/', label=g.labels.Axis.Root))
-        gu = g.add_component(axis, **PropsConfig(scale=s.GrowthUnit, edge_type='/', label=g.labels.GrowthUnit.Root))
-        phytomer = g.add_component(gu, **PropsConfig(scale=s.Phytomer, edge_type='/', label=g.labels.Phytomer.Root))
-        organ = g.add_component(phytomer, **PropsConfig(scale=s.Organ, edge_type='/', label=g.labels.Organ.RootInternode))
-        props = PropsConfig(scale=s.SubOrgan, edge_type='<', label=g.labels.SubOrgan.RootSegment)
-        first = g.add_component(organ, **dict(props, edge_type='/'))
+    def initiate_plant(cls, mtg, plant, parameters):
+        s = mtg.scales
+        x, y, z = (float(mtg.property(name)[plant]) for name in ("x", "y", "z"))
+        axis = mtg.add_component(plant, **PropsConfig(scale=s.Axis, edge_type='/', label=mtg.labels.Axis.Root))
+        gu = mtg.add_component(axis, **PropsConfig(scale=s.GrowthUnit, edge_type='/', label=mtg.labels.GrowthUnit.Root))
+        phytomer = mtg.add_component(gu, **PropsConfig(scale=s.Phytomer, edge_type='/', label=mtg.labels.Phytomer.Root))
+        organ = mtg.add_component(phytomer, **PropsConfig(scale=s.Organ, edge_type='/', label=mtg.labels.Organ.RootInternode))
+        props = PropsConfig(scale=s.SubOrgan, edge_type='<', label=mtg.labels.SubOrgan.RootSegment)
+        first = mtg.add_component(organ, **dict(props, edge_type='/'))
 
         def chain(parent, count):          # vids are consecutive: each new segment's parent is the previous one
-            start = g._id + 1
-            return g.add_components_bulk(organ, count, topo_parents=[parent] + list(range(start, start + count - 1)),
+            start = mtg._id + 1
+            return mtg.add_components_bulk(organ, count, topo_parents=[parent] + list(range(start, start + count - 1)),
                                          **props)
 
         main = [first] + chain(first, MAIN - 1)
@@ -79,7 +79,7 @@ class BenchGrowth(StructuralComponent):
         for k in range(LATERALS):
             base = main[(k + 1) * MAIN // (LATERALS + 1)]
             lateral = chain(base, LATERAL)
-            g.set_values("edge_type", [lateral[0]], ['+'])
+            mtg.set_values("edge_type", [lateral[0]], ['+'])
             vids += lateral
             depth += [depth[main.index(base)]] * LATERAL
         tips = {main[-1]} | {vids[MAIN + (k + 1) * LATERAL - 1] for k in range(LATERALS)}
@@ -87,7 +87,7 @@ class BenchGrowth(StructuralComponent):
             top = z - depth[i] * SEGMENT_LENGTH
             for name, value in (("length", SEGMENT_LENGTH), ("is_apex", float(v in tips)), ("x1", x), ("x2", x),
                                 ("y1", y), ("y2", y), ("z1", top), ("z2", top - SEGMENT_LENGTH)):
-                g.set_values(name, [v], [value])
+                mtg.set_values(name, [v], [value])
 
     @actual
     def _length(self, length, is_apex, elongation):
@@ -95,22 +95,22 @@ class BenchGrowth(StructuralComponent):
 
     @segmentation
     def _segmentation(self):
-        g, ds = self.mtg, self.data_structure
-        ids = np.asarray(ds.entity_ids("node"))
-        length, apex = np.asarray(ds.get("length")), np.asarray(ds.get("is_apex")) > 0
+        mtg, data_structure = self.mtg, self.data_structure
+        ids = np.asarray(data_structure.entity_ids("node"))
+        length, apex = np.asarray(data_structure.get("length")), np.asarray(data_structure.get("is_apex")) > 0
         cut = ids[apex & (length > SEGMENT_LENGTH)]
         if cut.size == 0:
             return
-        props = {name: g.property(name) for name in ("length", "is_apex", "x2", "y2", "z2")}
+        props = {name: mtg.property(name) for name in ("length", "is_apex", "x2", "y2", "z2")}
         rest = {int(v): props["length"][v] - SEGMENT_LENGTH for v in cut}
         by_complex = {}
         for v in cut.tolist():
-            by_complex.setdefault(g.complex(v), []).append(v)
+            by_complex.setdefault(mtg.complex(v), []).append(v)
         for organ, apices in by_complex.items():
             x, y, z = ([props[name][v] for v in apices] for name in ("x2", "y2", "z2"))
-            g.add_components_bulk(organ, len(apices), topo_parents=apices,
-                                  **PropsConfig(scale=g.scales.SubOrgan, edge_type='<',
-                                                label=g.labels.SubOrgan.RootSegment),
+            mtg.add_components_bulk(organ, len(apices), topo_parents=apices,
+                                  **PropsConfig(scale=mtg.scales.SubOrgan, edge_type='<',
+                                                label=mtg.labels.SubOrgan.RootSegment),
                                   length=[rest[v] for v in apices], is_apex=1., x1=x, x2=x, y1=y, y2=y, z1=z,
                                   z2=[zi - rest[v] for zi, v in zip(z, apices)])
             for parent in apices:
@@ -216,8 +216,8 @@ def bench_segments(n_plants, steps, method):
                       mapping_method=method,
                       recorder=SceneRecorder(folder, segment_plants=["p0"], segment_period=steps))
         built = time.perf_counter() - start
-        ds = scene.populations[0].data_structure
-        n0 = ds.n_nodes()
+        data_structure = scene.populations[0].data_structure
+        n0 = data_structure.n_nodes()
         phases = {"exchanges": 0., "soil": 0., "recorder": 0.}
         exchanges, recorder = scene.exchanges.exchange, scene.recorder.record
 
@@ -239,7 +239,7 @@ def bench_segments(n_plants, steps, method):
             scene.run()
         total = (time.perf_counter() - start) / steps
     phases.update({name: scene.timing.get(key, 0.) for name, key in BenchPlant.phases.items()})
-    return dict(plants=n_plants, method=method, segments=n0, grown=ds.n_nodes() - n0, build_s=built,
+    return dict(plants=n_plants, method=method, segments=n0, grown=data_structure.n_nodes() - n0, build_s=built,
                 step_s=total, **{f"{k}_s": v / steps for k, v in phases.items()})
 
 
@@ -249,11 +249,11 @@ def bench_anatomy(n_segments, steps):
     from anatomy import make_rooted_anatomy, wiring
     from openalea.metafspm.data_structure.data_api import MPGDataStructure
     start = time.perf_counter()
-    g, _, _ = make_rooted_anatomy(n_segments)
-    ds = MPGDataStructure(g, from_scale=g.scales.SubOrgan, nodes="Compartment", wiring=wiring(g))
-    ds.simulation_time_step = DT
+    mtg, _, _ = make_rooted_anatomy(n_segments)
+    data_structure = MPGDataStructure(mtg, from_scale=mtg.scales.SubOrgan, nodes="Compartment", wiring=wiring(mtg))
+    data_structure.simulation_time_step = DT
     built = time.perf_counter() - start
-    carbon, phloem = AnatomyCarbon(data_structure=ds), AnatomyPhloem(data_structure=ds)
+    carbon, phloem = AnatomyCarbon(data_structure=data_structure), AnatomyPhloem(data_structure=data_structure)
     carbon()
     phloem()
     timings = {"rates and states": 0., "graph system": 0.}
@@ -262,7 +262,7 @@ def bench_anatomy(n_segments, steps):
             t = time.perf_counter()
             component()
             timings[name] += time.perf_counter() - t
-    return dict(segments=n_segments, compartments=ds.n_nodes(), edges=ds.n_edges(), build_s=built,
+    return dict(segments=n_segments, compartments=data_structure.n_nodes(), edges=data_structure.n_edges(), build_s=built,
                 **{f"{k}_s": v / steps for k, v in timings.items()})
 
 

@@ -133,7 +133,7 @@ def parameter(unit: str = "", description: str = "", default=None, kind=None, by
 def geometry_input(description: str = "the plants' elements' geometry (DataStructure.triangles)",
                    relight: str = "topology"):
     """
-    Declare that the component reads the plants' geometry (ds.triangles(): every structural component's), listed by
+    Declare that the component reads the plants' geometry (data_structure.triangles(): every structural component's), listed by
     declarations() and couplings() (provided by the plants' structural components). *relight*: when an environment
     model holding it runs fully besides its interval: "topology" when elements appeared or went, "geometry" when the
     triangles changed too, None never.
@@ -327,8 +327,8 @@ class Component:
         of a schedule step's cadence (coupling.cadence), its interval."""
         if "_cadence_step" in self.__dict__:
             return self.__dict__["_cadence_step"]
-        ds = getattr(self, "data_structure", None)
-        return None if ds is None else getattr(ds, "simulation_time_step", None)
+        data_structure = getattr(self, "data_structure", None)
+        return None if data_structure is None else getattr(data_structure, "simulation_time_step", None)
 
     def private_names(self, components=(), overrides=None, component_overrides=None):
         """The block in which the component's (and *components*') variables a link keeps under a private name
@@ -342,10 +342,10 @@ class Component:
             names = component.__dict__.get("_private_names")
             if extra:
                 names = {**(names or {}), **extra}
-            ds = getattr(component, "data_structure", None)
-            if names and ds is not None:
+            data_structure = getattr(component, "data_structure", None)
+            if names and data_structure is not None:
                 from openalea.metafspm.data_structure.data_api import _root_data_structure
-                stack.enter_context(_root_data_structure(ds).private_names(names))
+                stack.enter_context(_root_data_structure(data_structure).private_names(names))
         return stack
 
     def _before_call(self):
@@ -356,9 +356,9 @@ class Component:
         """A call's work after its steps (also run once by CompositeModel.run_together)."""
         # The values its next call reads as last_call(name): the variables it names in kept_from_last_call, kept with
         # their entities' ids (saved by checkpoints)
-        ds = getattr(self, "data_structure", None)
+        data_structure = getattr(self, "data_structure", None)
         for name in type(self).kept_from_last_call:
-            self.keep(f"last_call:{name}", ds.kept_values(name))
+            self.keep(f"last_call:{name}", data_structure.kept_values(name))
         # State variables reach the MTG after every call with mtg_sync = "after_call"; by default ("lazy") the
         # DataStructure writes them when the MTG is read
         if hasattr(self, "mtg_sync"):
@@ -475,7 +475,7 @@ class DataStructureComponent(Component):
     @property
     def soil_surface(self) -> float:
         """The soil surface's height (m, the plants' frame): its DataStructure's (Scene(soil_surface=), 0 by
-        default), e.g. a light model's cut, the domains "air" and "soil" of ds.geometry."""
+        default), e.g. a light model's cut, the domains "air" and "soil" of data_structure.geometry."""
         return self.data_structure.soil_surface
 
     def calendar(self, time: float = None, default=None) -> tuple:
@@ -620,13 +620,13 @@ class DataStructureComponent(Component):
     time_step: Optional[float] = None
 
     # MTG synchronisation policy: "lazy" (default) writes the state variables
-    # changed since the last synchronisation when the MTG is read (ds.mtg, MPG-style steps, ds.flush_mtg());
+    # changed since the last synchronisation when the MTG is read (data_structure.mtg, MPG-style steps, data_structure.flush_mtg());
     # "after_call" writes them after every call; "never" leaves the MTG untouched.
     mtg_sync = "lazy"
 
     # The entities the component owns, when it shares the plant with other models (the roots' and the shoot's): a
     # filters-style declaration, e.g. {"label": ("RootSegment", "RootApex")} (label names resolved), or a callable
-    # ds -> boolean array. It then works on a view of the DataStructure restricted to them
+    # data_structure -> boolean array. It then works on a view of the DataStructure restricted to them
     # (data_structure.EntityView): its nodes those entities, its topology and mappings theirs. None: every entity
     entities = None
 
@@ -644,8 +644,8 @@ class DataStructureComponent(Component):
                 f"(MPGDataStructure, ArrayDataStructure), got {type(self.data_structure).__name__}."
             )
         self.data_structure = _working_data_structure(self, self.data_structure)
-        ds = self.data_structure
-        self._auto_declare_on_ds(ds)
+        data_structure = self.data_structure
+        self._auto_declare_on_ds(data_structure)
         if not hasattr(self, "pullable_inputs"):
             self.pullable_inputs = {}
         simulation_step = self.simulation_step()
@@ -658,10 +658,10 @@ class DataStructureComponent(Component):
             from openalea.metafspm.coupling.choregrapher import sub_steps
             sub_steps(simulation_step, self.time_step, type(self).__name__)
         # Live reading: steps and solves read and write the DataStructure arrays
-        self.choregrapher.bind(self, self.time_step, ds)
+        self.choregrapher.bind(self, self.time_step, data_structure)
         # Its after_regrid methods, called by its grid after each refinement or coarsening
         for name in _after_regrid_methods(type(self)):
-            ds.add_regrid_hook(getattr(self, name))
+            data_structure.add_regrid_hook(getattr(self, name))
 
     def pull_available_inputs(self):
         """
@@ -670,9 +670,9 @@ class DataStructureComponent(Component):
         changed; it is the hook of future sub-steps.
         """
         self._refresh_from_bio_scale()
-        ds = self.data_structure
+        data_structure = self.data_structure
         for name in getattr(self, "_derived_inputs", []):
-            ds.get(name)
+            data_structure.get(name)
 
     @classmethod
     def _optional(cls, name) -> bool:
@@ -689,15 +689,15 @@ class DataStructureComponent(Component):
 
     def _read(self, name: str) -> np.ndarray:
         from openalea.metafspm.coupling.declaration import mapped_read
-        ds, spec = self.data_structure, self.variable_specs.get(name)
+        data_structure, spec = self.data_structure, self.variable_specs.get(name)
         if spec is None:
             raise KeyError(f"{type(self).__name__} declares no '{name}'")
-        if held_at_scale(spec, ds):
-            return mapped_read(ds, spec)
-        if not ds.has(name) and self._optional(name):
-            return np.full(tuple(ds._location_shape(spec.location)) + tuple(spec.shape or ()),
+        if held_at_scale(spec, data_structure):
+            return mapped_read(data_structure, spec)
+        if not data_structure.has(name) and self._optional(name):
+            return np.full(tuple(data_structure._location_shape(spec.location)) + tuple(spec.shape or ()),
                            np.nan if spec.default is None else spec.default)
-        return ds.get(name)
+        return data_structure.get(name)
 
     @property
     def variable_specs(self) -> dict:
@@ -706,35 +706,35 @@ class DataStructureComponent(Component):
         from types import MappingProxyType
         return MappingProxyType(self.__dict__.get("_variable_specs", {}))
 
-    def _auto_declare_on_ds(self, ds: DataStructure) -> None:
+    def _auto_declare_on_ds(self, data_structure: DataStructure) -> None:
         """
-        Register the declared variables that are not yet on *ds*.
+        Register the declared variables that are not yet on *data_structure*.
 
         Each field is resolved once by resolve_declaration into a VariableSpec (location, MTG scale, mapping),
         kept in self._variable_specs. A variable is registered at its location with the values of its MTG
         property when the property exists (mapped from its scale), else with its declared default.
         Pre-registered variables are never overwritten; their location must match the declaration.
         """
-        self._variable_specs = declared_specs(self, ds)
+        self._variable_specs = declared_specs(self, data_structure)
         for name, spec in self._variable_specs.items():
             pending = self.__dict__.get("_pending_parameters", {})
-            if ds.has(name):
-                registered = ds.location(name)
-                if registered != spec.location and name not in ds.aliases() and not held_at_scale(spec, ds):
+            if data_structure.has(name):
+                registered = data_structure.location(name)
+                if registered != spec.location and name not in data_structure.aliases() and not held_at_scale(spec, data_structure):
                     raise DeclarationError(f"{type(self).__name__}.{name} is declared at {spec.location} but is "
                                            f"already registered at {registered}")
                 if name in pending and pending[name] != spec.default:
-                    ds.set(name, pending[name])          # a value given to the constructor
+                    data_structure.set(name, pending[name])          # a value given to the constructor
             else:
-                values = ds._read_mtg(spec) if hasattr(ds, "_read_mtg") else None
+                values = data_structure._read_mtg(spec) if hasattr(data_structure, "_read_mtg") else None
                 if values is None and self._optional(name):
                     continue                     # an optional input nothing provides: its default, not registered
                 default = pending.get(name, spec.default) if spec.dtype is not object else spec.default
-                ds.register(name, values, location=spec.location, default=default, on_grow=spec.on_grow,
+                data_structure.register(name, values, location=spec.location, default=default, on_grow=spec.on_grow,
                             dtype=spec.dtype, shape=spec.shape)
             # Metadata precedence: the component that owns the variable (not an input) sets its default, growth
             # policy and kind; a component reading it as an input only fills what is still unknown.
-            meta = ds._variable_meta().setdefault(name, {})
+            meta = data_structure._variable_meta().setdefault(name, {})
             declared = {key: value for key, value in spec.meta().items() if value is not None}
             if spec.role == "input_variable":
                 for key, value in declared.items():
@@ -745,10 +745,10 @@ class DataStructureComponent(Component):
                                                    if name in self._variable_specs}
         self.__dict__.pop("_pending_parameters", None)
         self._check_mtg_sync()
-        if self.mtg_sync == "lazy" and hasattr(ds, "_track_mtg"):
+        if self.mtg_sync == "lazy" and hasattr(data_structure, "_track_mtg"):
             for spec in self._variable_specs.values():
                 if spec.role == "state_variable" and spec.mtg_backed:
-                    ds._track_mtg(spec)
+                    data_structure._track_mtg(spec)
 
     def _check_mtg_sync(self) -> None:
         if self.mtg_sync not in ("lazy", "after_call", "never"):
@@ -848,16 +848,16 @@ class DataStructureComponent(Component):
         The values variable *name* (one of the class' kept_from_last_call) had at the end of the component's last
         call, one per entity of its location now, aligned by id: an entity new since, and every entity before the
         first call, gets *missing*. Its schedule step's cadence makes it the last call's, not the last scene step's
-        (ds.previous: the step's start).
+        (data_structure.previous: the step's start).
         """
         if name not in type(self).kept_from_last_call:
             raise KeyError(f"{type(self).__name__}.last_call('{name}'): name it in the class' kept_from_last_call "
                            f"({list(type(self).kept_from_last_call)})")
         kept = self.kept(f"last_call:{name}")
-        ds = self.data_structure
+        data_structure = self.data_structure
         if kept is None:
-            return np.full(np.shape(ds.get(name)), missing, dtype=np.result_type(float, np.asarray(missing).dtype))
-        return ds.aligned(name, *kept, missing=missing)
+            return np.full(np.shape(data_structure.get(name)), missing, dtype=np.result_type(float, np.asarray(missing).dtype))
+        return data_structure.aligned(name, *kept, missing=missing)
 
     def checkpoint_state(self) -> dict:
         """The state checkpoints save: what keep() kept."""
@@ -908,8 +908,8 @@ class DataStructureComponent(Component):
         entities' owners found once per topology and shared, each parameter one gather from its per-plant values
         (read-only arrays, a zero-stride one when every plant has the same value).
         """
-        ds = self.data_structure
-        return {name: ds.parameter_view(name, location) for name in names}
+        data_structure = self.data_structure
+        return {name: data_structure.parameter_view(name, location) for name in names}
 
     # Seed of this component's random streams; a scenario may set it
     random_seed = 0
@@ -918,7 +918,7 @@ class DataStructureComponent(Component):
                **parameters) -> np.ndarray:
         """
         Reproducible draws per entity for stream *stream*: each call of a stream is a new step, so a model drawing in
-        the same order gets the same draws at every run, whatever the visiting order (ds.random).
+        the same order gets the same draws at every run, whatever the visiting order (data_structure.random).
         """
         name = f"{type(self).__name__}.{stream}"
         holder = self.data_structure
@@ -936,16 +936,16 @@ class DataStructureComponent(Component):
         over vertices themselves: e.g. plants before their planting time are skipped. At a coarse *location* (e.g.
         "SubOrgan", whose new entities may have no node yet), the entities of the plants planted.
         """
-        ds = self.data_structure
-        ids = np.asarray(ds.entity_ids(location))
+        data_structure = self.data_structure
+        ids = np.asarray(data_structure.entity_ids(location))
         if location == "node":
-            return ids[np.asarray(ds.mask("active"), dtype=bool)] if ds.has_mask("active") else ids
-        if not ds.has("planted"):
+            return ids[np.asarray(data_structure.mask("active"), dtype=bool)] if data_structure.has_mask("active") else ids
+        if not data_structure.has("planted"):
             return ids
-        plants = ds.map_to(np.asarray(ds.get("planted"), dtype=float), "node", "Plant", "max")
+        plants = data_structure.map_to(np.asarray(data_structure.get("planted"), dtype=float), "node", "Plant", "max")
         if location == "Plant":
             return ids[np.nan_to_num(plants) > 0]
-        planted = ds.map_to(np.nan_to_num(plants), "Plant", location, "broadcast")
+        planted = data_structure.map_to(np.nan_to_num(plants), "Plant", location, "broadcast")
         return ids[np.asarray(planted) > 0]
 
     def write_back_to_mtg(self) -> None:
@@ -958,12 +958,12 @@ class DataStructureComponent(Component):
         writing their defaults back would overwrite externally set MTG values.
         """
         self._check_mtg_sync()
-        ds = self.data_structure
-        if self.mtg_sync == "never" or not hasattr(ds, "_write_mtg"):
+        data_structure = self.data_structure
+        if self.mtg_sync == "never" or not hasattr(data_structure, "_write_mtg"):
             return
         for spec in getattr(self, "_variable_specs", {}).values():
-            if spec.role == "state_variable" and spec.mtg_backed and ds.has(spec.name):
-                ds._write_mtg(spec)
+            if spec.role == "state_variable" and spec.mtg_backed and data_structure.has(spec.name):
+                data_structure._write_mtg(spec)
 
     def _refresh_from_bio_scale(self) -> None:
         """
@@ -973,17 +973,17 @@ class DataStructureComponent(Component):
         State variables and inputs are not refreshed: their DataStructure values are set by steps and couplings.
         Parameters whose MTG property is absent keep their DataStructure values.
         """
-        ds = self.data_structure
-        if not hasattr(ds, "_read_mtg"):
+        data_structure = self.data_structure
+        if not hasattr(data_structure, "_read_mtg"):
             return
         for spec in getattr(self, "_variable_specs", {}).values():
-            if spec.role != "parameter" or not spec.mtg_backed or held_at_scale(spec, ds):
+            if spec.role != "parameter" or not spec.mtg_backed or held_at_scale(spec, data_structure):
                 continue                             # (one held at its scale by another component: its own)
-            if hasattr(ds, "flush_mtg"):
-                ds.flush_mtg([spec.name])            # a value set on the DataStructure is not lost to a stale MTG one
-            values = ds._read_mtg(spec)
+            if hasattr(data_structure, "flush_mtg"):
+                data_structure.flush_mtg([spec.name])            # a value set on the DataStructure is not lost to a stale MTG one
+            values = data_structure._read_mtg(spec)
             if values is not None:
-                ds.set(spec.name, values)
+                data_structure.set(spec.name, values)
 
 
 @dataclass
@@ -1004,17 +1004,17 @@ class FunctionalComponent(DataStructureComponent):
     value (uniform array).  This means:
 
     * In production, simply construct the model — all fields with declared
-      scale appear in ds with their default values automatically.
+      scale appear in data_structure with their default values automatically.
     * When non-default values are needed (tests, scenario setup), call
-      ds.register(name, values, location=...) BEFORE constructing the
+      data_structure.register(name, values, location=...) BEFORE constructing the
       model.  Pre-registered values are never overwritten.
 
     Usage::
 
-        ds = MPGDataStructure(g, from_scale=g.scales.SubOrgan)
-        ds.register("concentration", c_init, location="node")   # non-default — must pre-set
-        model = MyTransportModel(data_structure=ds)
-        # ds now also contains default arrays for K_axial, volumetric_capacity, etc.
+        data_structure = MPGDataStructure(mtg, from_scale=mtg.scales.SubOrgan)
+        data_structure.register("concentration", c_init, location="node")   # non-default — must pre-set
+        model = MyTransportModel(data_structure=data_structure)
+        # data_structure now also contains default arrays for K_axial, volumetric_capacity, etc.
     """
 
     @property
@@ -1026,11 +1026,11 @@ class FunctionalComponent(DataStructureComponent):
         solve_view = self.__dict__.get("_solve_view")
         if solve_view is not None:
             return solve_view
-        ds = self.data_structure
-        if not hasattr(ds, "to_graph_view"):
+        data_structure = self.data_structure
+        if not hasattr(data_structure, "to_graph_view"):
             return None
-        version = getattr(ds, "topology_version", None)
-        return self.cached("graph_view", ds.to_graph_view, key=version)
+        version = getattr(data_structure, "topology_version", None)
+        return self.cached("graph_view", data_structure.to_graph_view, key=version)
 
     @_graph_view.setter
     def _graph_view(self, view):
@@ -1074,12 +1074,12 @@ class FunctionalComponent(DataStructureComponent):
     def pull_available_inputs(self):
         super().pull_available_inputs()
         # previous(fn, at="step"): the unknowns of the component's graph systems at the start of the call
-        ds = self.data_structure
+        data_structure = self.data_structure
         unknowns = {fn: location for spec in getattr(type(self), "_graph_system_specs", {}).values()
                     for location, names in (("node", spec["node_unknowns"]), ("edge", spec["edge_unknowns"]))
                     for fn in names}
-        self.__dict__["_step_start_state"] = {fn: (location, np.array(ds.get(fn), dtype=np.float64).reshape(-1))
-                                              for fn, location in unknowns.items() if ds.has(fn)}
+        self.__dict__["_step_start_state"] = {fn: (location, np.array(data_structure.get(fn), dtype=np.float64).reshape(-1))
+                                              for fn, location in unknowns.items() if data_structure.has(fn)}
 
 
 def after_regrid(method):
@@ -1224,18 +1224,18 @@ class StructuralComponent(DataStructureComponent):
     def mtg(self):
         """The MPG: within the component's MPG-style step, as it is (its declared variables were written to it just
         before); else with every tracked variable written to it first (DataStructure.mtg)."""
-        ds = self.data_structure
-        if self.__dict__.get("_in_mpg_step") and getattr(ds, "_mtg", None) is not None:
-            return ds._mtg
-        return ds.mtg
+        data_structure = self.data_structure
+        if self.__dict__.get("_in_mpg_step") and getattr(data_structure, "_mtg", None) is not None:
+            return data_structure._mtg
+        return data_structure.mtg
 
     @classmethod
-    def initiate_plant(cls, g, plant: int, scenario: dict) -> None:
+    def initiate_plant(cls, mtg, plant: int, scenario: dict) -> None:
         """
-        Build the initial structure of one plant under its Plant-scale vertex *plant* in the population MPG *g*,
+        Build the initial structure of one plant under its Plant-scale vertex *plant* in the population MPG *mtg*,
         from that plant's *scenario* ({name: value}), before any component is constructed. Several structural components
         may each add their part, in order (e.g. roots, then anatomies). The planting writes the plant's position
-        before any initiator builds: g.values_at("x"/"y"/"z"/"rotation", [plant]), which the initiator may read to place
+        before any initiator builds: mtg.values_at("x"/"y"/"z"/"rotation", [plant]), which the initiator may read to place
         its initial elements; a step placing the elements later declares them (planting_variable) and takes them as
         arguments. An initiator's inputs linked from an earlier initiator are written before it builds (the plant
         model's translator, coupling.initiation).
@@ -1263,25 +1263,25 @@ class StructuralComponent(DataStructureComponent):
         its elements) and the writes of its segment ends (x1 … z2, radius, the display ends) when it has them. A
         component whose triangles depend on more than these between its calls overrides it."""
         from openalea.metafspm.data_structure.mpg import DISPLAY_ENDS
-        ds = self.data_structure
+        data_structure = self.data_structure
         names = ("x1", "y1", "z1", "x2", "y2", "z2", "radius") + DISPLAY_ENDS
-        return (self.__dict__.get("_clock", 0.), tuple(ds.write_count(name) for name in names if ds.has(name)))
+        return (self.__dict__.get("_clock", 0.), tuple(data_structure.write_count(name) for name in names if data_structure.has(name)))
 
     def _mpg_signature(self) -> tuple:
         """Cheap topology signature of the MPG: vertex count and last allocated vertex id (the MPG read without
         flushing the tracked variables to it: the topology does not need them)."""
-        ds = self.data_structure
-        g = getattr(ds, "_mtg", None) or self.mtg
-        return g.nb_vertices(), getattr(g, "_id", None)
+        data_structure = self.data_structure
+        mtg = getattr(data_structure, "_mtg", None) or self.mtg
+        return mtg.nb_vertices(), getattr(mtg, "_id", None)
 
-    # Repartition of the other components' variables when the structure changes. partition_weight: a node variable name, or a callable ds -> array;
+    # Repartition of the other components' variables when the structure changes. partition_weight: a node variable name, or a callable data_structure -> array;
     # active: the rule of the DataStructure's "active" mask ({variable: condition} or a callable). Without a
     # partition weight, entities created by growth only get their on_grow values.
     partition_weight = None
     active = None
     # When the repartition runs: "after_mpg_steps", after each MPG-style step, between the weights before and after
     # it; or "end_of_call", once per call after all its steps, between partition_basis (a node variable name, or a
-    # callable ds -> array, read after the call: the weight the entities of the call's start refer to, e.g. the
+    # callable data_structure -> array, read after the call: the weight the entities of the call's start refer to, e.g. the
     # initial masses a growth model keeps; default: the weights at the call's start) and the weights after the call,
     # the entities absent at the call's start being the new ones. The latter suits models whose array steps change
     # the weights too (growth, root hairs), as rhizodep's post_growth_updating does
@@ -1290,16 +1290,16 @@ class StructuralComponent(DataStructureComponent):
 
     def __post_init__(self):
         super().__post_init__()
-        self.data_structure.add_geometry_provider(self)     # ds.triangles(), for light models
+        self.data_structure.add_geometry_provider(self)     # data_structure.triangles(), for light models
         _warn_if_not_drawn(self)
         if self.active is not None and not self.data_structure.has_mask("active"):
             self.data_structure.define_mask("active", self.active)
 
     def _weights(self):
-        ds = self.data_structure
+        data_structure = self.data_structure
         if self.partition_weight is None:
             return None
-        values = self.partition_weight(ds) if callable(self.partition_weight) else ds.get(self.partition_weight)
+        values = self.partition_weight(data_structure) if callable(self.partition_weight) else data_structure.get(self.partition_weight)
         return np.array(values, dtype=float)
 
     def _before_call(self):
@@ -1315,80 +1315,80 @@ class StructuralComponent(DataStructureComponent):
         super()._after_call(context)
         if context is None:
             return
-        ds = self.data_structure
+        data_structure = self.data_structure
         start, start_weights = context
-        ids = ds.entity_ids("node").tolist()
+        ids = data_structure.entity_ids("node").tolist()
         if start_weights is not None:
             basis = dict(zip(start, start_weights.tolist()))
         else:
-            values = (self.partition_basis(ds) if callable(self.partition_basis) else ds.get(self.partition_basis))
+            values = (self.partition_basis(data_structure) if callable(self.partition_basis) else data_structure.get(self.partition_basis))
             values = dict(zip(ids, np.asarray(values, dtype=float).tolist()))
             basis = {v: values[v] for v in start if v in values}
         self._repartition(basis, {v: w > 0 for v, w in basis.items()})
 
     def _active_now(self, weights):
-        ds = self.data_structure
-        return np.array(ds.mask("active"), dtype=bool) if ds.has_mask("active") else weights > 0
+        data_structure = self.data_structure
+        return np.array(data_structure.mask("active"), dtype=bool) if data_structure.has_mask("active") else weights > 0
 
     def _run_mpg_step(self, run) -> None:
         """Run an MPG-style step with the synchronisation of the DataStructure around it, then the repartition."""
-        ds = self.data_structure
+        data_structure = self.data_structure
         declared = [spec for spec in getattr(self, "_variable_specs", {}).values()
-                    if spec.mtg_backed and ds.has(spec.name)]
-        specs = [spec for spec in declared if not held_at_scale(spec, ds)]
+                    if spec.mtg_backed and data_structure.has(spec.name)]
+        specs = [spec for spec in declared if not held_at_scale(spec, data_structure)]
         # its inputs another component holds at another location (an architecture's SubOrgan lengths read at the
         # Compartments): the MTG holds them at their holder's location, as their holder declares them
-        held = [holder_spec(spec, ds) for spec in declared if held_at_scale(spec, ds)]
-        if hasattr(ds, "flush_mtg"):
+        held = [holder_spec(spec, data_structure) for spec in declared if held_at_scale(spec, data_structure)]
+        if hasattr(data_structure, "flush_mtg"):
             # The MPG-style code reads the MTG: the variables this component declares (its states, inputs and
             # parameters) changed since their last synchronisation are written first. Others are not: a step
             # reads what its component declares
             for spec in specs + held:
-                ds._track_mtg(spec)
-            ds.flush_mtg([spec.name for spec in specs + held])
+                data_structure._track_mtg(spec)
+            data_structure.flush_mtg([spec.name for spec in specs + held])
         else:
             for spec in specs + held:
-                ds._write_mtg(spec)
+                data_structure._write_mtg(spec)
         weights = self._weights() if self.repartition == "after_mpg_steps" else None
         if weights is not None:
-            ids = ds.entity_ids("node").tolist()
+            ids = data_structure.entity_ids("node").tolist()
             weight_before = dict(zip(ids, weights.tolist()))
             active_before = dict(zip(ids, self._active_now(weights).tolist()))
         before = self._mpg_signature()
-        g = getattr(ds, "_mtg", None)
+        mtg = getattr(data_structure, "_mtg", None)
         states = [spec for spec in specs if spec.role == "state_variable"]
-        properties = g.properties() if g is not None else {}
+        properties = mtg.properties() if mtg is not None else {}
         versions = {spec.name: _property_version(properties.get(spec.name)) for spec in states}
-        instanced = g is not None and getattr(g, "_instanced", lambda: False)()
-        known = {location: ds.entity_ids(location) for location in ("node", "edge")} if instanced else {}
+        instanced = mtg is not None and getattr(mtg, "_instanced", lambda: False)()
+        known = {location: data_structure.entity_ids(location) for location in ("node", "edge")} if instanced else {}
         kept = {}                           # per location: its instanced entities known before the step
         self.__dict__["_in_mpg_step"] = True
         try:
             run()
         finally:
             self.__dict__["_in_mpg_step"] = False
-        # the MTG ahead of the DataStructure until the step's states are read back: a ds.mtg meanwhile (an
+        # the MTG ahead of the DataStructure until the step's states are read back: a data_structure.mtg meanwhile (an
         # inheritance rule's, during the topology's update) flushes nothing over the step's writes
-        with ds.mtg_ahead() if hasattr(ds, "mtg_ahead") else nullcontext():
+        with data_structure.mtg_ahead() if hasattr(data_structure, "mtg_ahead") else nullcontext():
             changed = self._mpg_signature() != before
             if changed:
-                ds.update_topology()
+                data_structure.update_topology()
                 self.topology_updates = getattr(self, "topology_updates", 0) + 1
             for spec in states:
                 version = _property_version(properties.get(spec.name))
                 if not changed and version is not None and version == versions[spec.name]:
                     continue                         # the step left its MPG property as it was: nothing to read
-                values = ds._read_mtg(spec)
+                values = data_structure._read_mtg(spec)
                 if values is None:
                     continue
                 if instanced and spec.location in known:
                     if spec.location not in kept:
-                        ids = ds.entity_ids(spec.location)
-                        kept[spec.location] = ds._instanced_at(spec.location) & np.isin(ids, known[spec.location])
+                        ids = data_structure.entity_ids(spec.location)
+                        kept[spec.location] = data_structure._instanced_at(spec.location) & np.isin(ids, known[spec.location])
                     values = self._kept_at_instances(spec, values, kept[spec.location])
-                ds.set(spec.name, values)
-                if hasattr(ds, "_mark_mtg_synced"):
-                    ds._mark_mtg_synced(spec.name)
+                data_structure.set(spec.name, values)
+                if hasattr(data_structure, "_mark_mtg_synced"):
+                    data_structure._mark_mtg_synced(spec.name)
         if weights is not None:
             self._repartition(weight_before, active_before)
 
@@ -1396,14 +1396,14 @@ class StructuralComponent(DataStructureComponent):
         """*values* read back from the MPG, except at the instanced vertices known before the step
         (*known_instanced*, over the location's entities) without an entry of their own: there the MPG holds their
         template's value, not their current one (the DataStructure's, not written back), which is kept."""
-        ds, g = self.data_structure, self.data_structure._mtg
-        ids = ds.entity_ids(spec.location)
-        prop = g.properties().get(spec.name)
+        data_structure, mtg = self.data_structure, self.data_structure._mtg
+        ids = data_structure.entity_ids(spec.location)
+        prop = mtg.properties().get(spec.name)
         own = prop.contains(ids) if prop is not None else np.zeros(len(ids), dtype=bool)
         keep = known_instanced & ~own
         if not keep.any():
             return values
-        current = ds.get(spec.name)
+        current = data_structure.get(spec.name)
         out = np.array(values, dtype=object) if np.asarray(current).dtype == object else \
             np.array(values, dtype=float, copy=True)
         out[keep] = np.asarray(current)[keep]
@@ -1424,46 +1424,46 @@ class StructuralComponent(DataStructureComponent):
         the DataStructure's topology extended, their values written; then the repartition from *before*
         (_before_new_nodes). Returns their ids.
         """
-        ds = self.data_structure
-        g = ds._mtg                          # not ds.mtg: the MPG's properties need no synchronisation here
+        data_structure = self.data_structure
+        mtg = data_structure._mtg                          # not data_structure.mtg: the MPG's properties need no synchronisation here
         n = len(new)
         if new.relabel is not None:
             ids, labels = new.relabel
             ids = np.asarray(ids, dtype=np.int64).reshape(-1)
             labels = np.broadcast_to(np.asarray(labels, dtype=object), ids.shape)
-            g.set_values("label", ids, labels.tolist())
+            mtg.set_values("label", ids, labels.tolist())
         if n == 0:
             if new.relabel is not None:
-                ds._invalidate_topology()
+                data_structure._invalidate_topology()
             return np.zeros(0, dtype=np.int64)
-        known = np.asarray(ds.entity_ids("node"), dtype=np.int64)
+        known = np.asarray(data_structure.entity_ids("node"), dtype=np.int64)
         # an entity view's new nodes may be borne by an entity outside it (a nodal root on a stem element)
-        bearers = ds._bearer_ids() if isinstance(ds, EntityView) else known
+        bearers = data_structure._bearer_ids() if isinstance(data_structure, EntityView) else known
         outer = new.parent >= 0
         root = new.parent == NewNodes.NO_PARENT
         if outer.any() and not np.isin(new.parent[outer], bearers).all():
             raise ValueError("NewNodes: a parent is not a node")
         if new.complexes is not None:
-            complex_vids = self._create_complexes(g, new.complexes)
+            complex_vids = self._create_complexes(mtg, new.complexes)
             complex_of = np.where(new.complex >= 0, new.complex, complex_vids[np.maximum(-1 - new.complex, 0)])
         else:
             complex_vids = np.zeros(0, dtype=np.int64)
-            complex_of = self._complexes_by_levels(g, new, n)
-        first = g._id + 1
+            complex_of = self._complexes_by_levels(mtg, new, n)
+        first = mtg._id + 1
         vids = np.arange(first, first + n, dtype=np.int64)
         parents = np.where(outer, new.parent, vids[np.clip(-1 - new.parent, 0, n - 1)])
-        node_scale = g.scale(int(bearers[0])) if bearers.size else g.scales.SubOrgan
+        node_scale = mtg.scale(int(bearers[0])) if bearers.size else mtg.scales.SubOrgan
         topo_parents = [None if is_root else int(p) for p, is_root in zip(parents.tolist(), root.tolist())]
-        created = g.add_components_bulk(complex_of.tolist(), n, topo_parents=topo_parents, scale=node_scale,
+        created = mtg.add_components_bulk(complex_of.tolist(), n, topo_parents=topo_parents, scale=node_scale,
                                         edge_type=new.edge.tolist(), label=new.label.tolist(), isanchor=False)
         assert created[0] == first
-        ds.update_topology()
+        data_structure.update_topology()
         self.topology_updates = getattr(self, "topology_updates", 0) + 1
         # an entity view's new nodes get their values (and their complexes' values) at the location's entities, before
         # they are selected: a declaration may read them (an axis' axis_row a NewComplexes gives)
-        holder = ds._inner if isinstance(ds, EntityView) else ds
+        holder = data_structure._inner if isinstance(data_structure, EntityView) else data_structure
         if new.complexes is not None and new.complexes.values:
-            scale_names = declared_scale_names(g)
+            scale_names = declared_scale_names(mtg)
             for name, values in new.complexes.values.items():
                 if not holder.has(name):
                     raise KeyError(f"NewComplexes: '{name}' is not a variable of the DataStructure")
@@ -1482,8 +1482,8 @@ class StructuralComponent(DataStructureComponent):
             current = np.array(holder.get(name))
             current[index] = values
             holder.set(name, current)
-        if isinstance(ds, EntityView):
-            outside = ~np.isin(vids, ds.entity_ids("node"))
+        if isinstance(data_structure, EntityView):
+            outside = ~np.isin(vids, data_structure.entity_ids("node"))
             if outside.any():
                 raise ValueError(f"NewNodes: {int(outside.sum())} new nodes (labels "
                                  f"{sorted(set(map(str, new.label[outside].tolist())))}) are not among "
@@ -1493,7 +1493,7 @@ class StructuralComponent(DataStructureComponent):
         return vids
 
     @staticmethod
-    def _create_complexes(g, complexes: NewComplexes) -> np.ndarray:
+    def _create_complexes(mtg, complexes: NewComplexes) -> np.ndarray:
         """The vids of the new complexes, created in bulk, generation by generation (an anchor before its
         components)."""
         n = len(complexes)
@@ -1504,13 +1504,13 @@ class StructuralComponent(DataStructureComponent):
             if not ready.any():
                 raise ValueError("NewComplexes: an anchor is never created")
             index = np.flatnonzero(ready)
-            vids[index] = g.add_components_bulk(anchors[index].tolist(), index.size, edge_type='/',
+            vids[index] = mtg.add_components_bulk(anchors[index].tolist(), index.size, edge_type='/',
                                                 scale=complexes.scale[index].tolist(),
                                                 label=complexes.label[index].tolist(), isanchor=False)
         return vids
 
     @staticmethod
-    def _complexes_by_levels(g, new: NewNodes, n: int) -> np.ndarray:
+    def _complexes_by_levels(mtg, new: NewNodes, n: int) -> np.ndarray:
         """Each node's complex by new_complex / complex_levels: its parent's, or a new chain of complex_levels."""
         complex_of = np.full(n, -1, dtype=np.int64)
         # A new complex is created under an anchor (the parent's complex at the scale above complex_levels' first);
@@ -1521,23 +1521,23 @@ class StructuralComponent(DataStructureComponent):
         for i in range(n):
             parent = int(new.parent[i])
             if not new.new_complex[i]:
-                complex_of[i] = g.complex(parent) if parent >= 0 else complex_of[-1 - parent]
+                complex_of[i] = mtg.complex(parent) if parent >= 0 else complex_of[-1 - parent]
                 if parent < 0 and -1 - parent in anchor_of:
                     anchor_of[i] = anchor_of[-1 - parent]
                 continue
             if parent >= 0:
-                anchor = g.complex_at_scale(parent, anchor_scale)
+                anchor = mtg.complex_at_scale(parent, anchor_scale)
             elif -1 - parent in anchor_of:
                 anchor = anchor_of[-1 - parent]
             else:
-                anchor = g.complex_at_scale(int(complex_of[-1 - parent]), anchor_scale)
+                anchor = mtg.complex_at_scale(int(complex_of[-1 - parent]), anchor_scale)
             anchor_of[i] = anchor
             complex_of[i] = -2 - len(anchors)
             anchors.append(anchor)
         if anchors:
             created = anchors
             for scale, label in new.complex_levels:
-                created = g.add_components_bulk(created, len(created), scale=scale, edge_type='/', label=label,
+                created = mtg.add_components_bulk(created, len(created), scale=scale, edge_type='/', label=label,
                                                 isanchor=False)
             created = np.asarray(created, dtype=np.int64)
             pending = complex_of <= -2
@@ -1562,20 +1562,20 @@ class StructuralComponent(DataStructureComponent):
         the step for pre-existing entities (so successive steps compose), the current weight once split. Entities
         are processed parents first, so a chain created by one segmentation splits like pairwise steps.
         """
-        ds = self.data_structure
-        if getattr(ds, "_anatomy", False):
+        data_structure = self.data_structure
+        if getattr(data_structure, "_anatomy", False):
             raise NotImplementedError("the repartition after structural steps is not available in anatomy mode yet: "
                                       "its lineage needs the owner vertices, not the Compartment graph")
         weights = self._weights()
         active = self._active_now(weights)
-        ids = ds.entity_ids("node").tolist()
+        ids = data_structure.entity_ids("node").tolist()
         known = np.array([v in weight_before for v in ids])
         basis = np.array([weight_before.get(v, 0.) for v in ids])
         was_active = np.array([bool(active_before.get(v, False)) for v in ids])
-        parents = ds.parents()
-        meta, derived, own = ds._variable_meta(), ds.derived(), set(getattr(self, "_variable_specs", {}))
+        parents = data_structure.parents()
+        meta, derived, own = data_structure._variable_meta(), data_structure.derived(), set(getattr(self, "_variable_specs", {}))
         groups = {"massic": [], "extensive": [], "intensive": [], "non_inertial_extensive": []}
-        for name in ds._node_data:
+        for name in data_structure._node_data:
             if name in own or name in derived or name == self.partition_weight:
                 continue
             kind = meta.get(name, {}).get("kind")
@@ -1585,9 +1585,9 @@ class StructuralComponent(DataStructureComponent):
                 groups[group].append(name)
         if not any(groups.values()):
             return                                           # nothing to share (e.g. a growth model on its own)
-        values = {name: np.array(ds.get(name), dtype=float) for group in groups.values() for name in group}
+        values = {name: np.array(data_structure.get(name), dtype=float) for group in groups.values() for name in group}
 
-        for v in ds.order("pre"):
+        for v in data_structure.order("pre"):
             p = parents[v]
             if p < 0 or (known[v] and (was_active[v] or not active[v])):
                 continue                                     # a root, or an existing entity not becoming active
@@ -1617,7 +1617,7 @@ class StructuralComponent(DataStructureComponent):
         for name in groups["massic"]:
             values[name][dilute] *= basis[dilute] / weights[dilute]
         for name, array in values.items():
-            ds.set(name, array)
+            data_structure.set(name, array)
 
 
 def _property_version(prop):
@@ -1632,14 +1632,14 @@ def _warn_if_not_drawn(component) -> None:
     """
     Warn when *component*'s geometry (triangles(), registered on the DataStructure it works on) is on a view of an
     anatomy-mode DataStructure at a location the frames and the light models never draw: they take the triangles of
-    the view at its from_scale (ds.at("SubOrgan"), the elements), a component working at a coarser scale (its finest
-    declaration at Organ, say: ds.at("Organ")) registering on that scale's view instead. Its triangles are owned by
+    the view at its from_scale (data_structure.at("SubOrgan"), the elements), a component working at a coarser scale (its finest
+    declaration at Organ, say: data_structure.at("Organ")) registering on that scale's view instead. Its triangles are owned by
     that scale's entities, which no element's mesh row or absorbed light can be given back to: they are not routed
     to the drawn view. The Compartments (the anatomy-mode DataStructure itself, an anatomy's component) are not
     drawn by design: no warning.
     """
-    ds = component.data_structure
-    located = ds.__dict__.get("_inner", ds) if isinstance(ds, EntityView) else ds
+    data_structure = component.data_structure
+    located = data_structure.__dict__.get("_inner", data_structure) if isinstance(data_structure, EntityView) else data_structure
     base = located.__dict__.get("_base")
     location = located.__dict__.get("_at")
     if location is None or not isinstance(base, MPGDataStructure) or not base._anatomy:
@@ -1648,14 +1648,14 @@ def _warn_if_not_drawn(component) -> None:
     if location != drawn:
         import warnings
         warnings.warn(f"{type(component).__name__} works at the {location} scale of an anatomy-mode DataStructure: "
-                      f"its geometry is registered on ds.at({location!r}), which the frames and the light models never "
-                      f"draw (they take ds.at({drawn!r}).triangles()); declare one of its variables at the {drawn} "
+                      f"its geometry is registered on data_structure.at({location!r}), which the frames and the light models never "
+                      f"draw (they take data_structure.at({drawn!r}).triangles()); declare one of its variables at the {drawn} "
                       f"scale (or its entities) for its elements to be drawn and lit", stacklevel=4)
 
 
-def _working_data_structure(component, ds):
+def _working_data_structure(component, data_structure):
     """
-    The DataStructure a component works on: *ds*, or on an anatomy-mode DataStructure (its nodes the Compartments)
+    The DataStructure a component works on: *data_structure*, or on an anatomy-mode DataStructure (its nodes the Compartments)
     the view at the component's own scale (data_structure.LocatedView) when the finest scale of its declarations is
     coarser (a SubOrgan-scale architecture, a light or gas-exchange model): its nodes then those of its scale. A
     component declaring its `entities` works on the view restricted to them (data_structure.EntityView), at the nodes
@@ -1665,7 +1665,7 @@ def _working_data_structure(component, ds):
     """
     entities = getattr(type(component), "entities", None)
     if entities is not None:
-        base = ds.__dict__.get("_base", ds)
+        base = data_structure.__dict__.get("_base", data_structure)
         if not isinstance(base, MPGDataStructure):
             raise TypeError(f"{type(component).__name__}.entities: an entity view is of a plant DataStructure "
                             f"(MPGDataStructure), not of a {type(base).__name__}")
@@ -1676,31 +1676,31 @@ def _working_data_structure(component, ds):
             raise NotImplementedError(f"{type(component).__name__}.entities on an anatomy-mode DataStructure: the "
                                       "component works on its Compartments; entities are declared by a component "
                                       "of the SubOrgan scale or coarser")
-        g = base.structure
-        if getattr(g.scales, name) < base.from_scale:
+        mtg = base.structure
+        if getattr(mtg.scales, name) < base.from_scale:
             name = base._scale_name(base.from_scale)        # its entities the from_scale's, as segment mode's nodes
         return base.entity_view(entities, at=name)
-    if not getattr(ds, "_anatomy", False) or not hasattr(ds, "at"):
-        return ds
-    name = _own_scale_name(component, ds)
-    return ds if name is None else ds.at(name)
+    if not getattr(data_structure, "_anatomy", False) or not hasattr(data_structure, "at"):
+        return data_structure
+    name = _own_scale_name(component, data_structure)
+    return data_structure if name is None else data_structure.at(name)
 
 
-def _own_scale_name(component, ds):
-    """The name of the finest scale of *component*'s declarations on an anatomy-mode *ds* when it is coarser than
+def _own_scale_name(component, data_structure):
+    """The name of the finest scale of *component*'s declarations on an anatomy-mode *data_structure* when it is coarser than
     its Compartments (and finer than the plants), else None (it works on the nodes)."""
-    g = ds.structure
+    mtg = data_structure.structure
     finest = None
     for f in fields(component):
         meta = f.metadata
         if meta.get("role") not in ("state_variable", "input_variable", "parameter"):
             continue
         scale = meta.get("scale")
-        if meta.get("location") in ("node", "edge") or (scale is not None and scale >= g.scales.Compartment):
+        if meta.get("location") in ("node", "edge") or (scale is not None and scale >= mtg.scales.Compartment):
             return None                                     # it works on the nodes (the cells)
-        if scale is not None and scale > g.scales.Plant:
+        if scale is not None and scale > mtg.scales.Plant:
             finest = scale if finest is None else max(finest, scale)
     if finest is None:
         return None
-    return next(n for n, v in vars(type(g.scales)).items() if isinstance(v, int) and not n.startswith("_")
+    return next(n for n, v in vars(type(mtg.scales)).items() if isinstance(v, int) and not n.startswith("_")
                 and v == finest)

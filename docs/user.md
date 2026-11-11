@@ -26,10 +26,10 @@ graph's nodes) and one Connection per link (its edges).
 ```python
 from openalea.metafspm.data_structure.data_api import MPGDataStructure
 
-g.populate_graph(g.scales.SubOrgan)
-g.convert_properties_to_arraydict()
-ds = MPGDataStructure(g, from_scale=g.scales.SubOrgan)          # segments as nodes
-ds = MPGDataStructure(g, from_scale=g.scales.SubOrgan, nodes="Compartment", wiring=rules)   # anatomies as nodes
+mtg.populate_graph(mtg.scales.SubOrgan)
+mtg.convert_properties_to_arraydict()
+data_structure = MPGDataStructure(mtg, from_scale=mtg.scales.SubOrgan)          # segments as nodes
+data_structure = MPGDataStructure(mtg, from_scale=mtg.scales.SubOrgan, nodes="Compartment", wiring=rules)   # anatomies as nodes
 ```
 
 - **Segment mode** (default): one node per segment. **Anatomy mode**: the Compartments inside each segment are the
@@ -39,11 +39,11 @@ ds = MPGDataStructure(g, from_scale=g.scales.SubOrgan, nodes="Compartment", wiri
   anatomy may have Layers and Cells
   (SubOrgan → Layer → Cell → Compartment), with Compartments shared by several cells (walls) anchored to the
   segment; `"Layer"` and `"Cell"` are then locations, and the walls, owned by no Cell, read the defaults there.
-- After the MTG's structure changes (growth, pruning), `ds.update_topology()` extends the graph incrementally and
+- After the MTG's structure changes (growth, pruning), `data_structure.update_topology()` extends the graph incrementally and
   carries every variable over (by id; new entities get the default or their parent's value, `on_grow="inherit"`).
   The arrays derived from the structure (node and edge ids, owners, the index maps) are patched from what changed,
-  not rebuilt (conventions.md, "Performance rules"); `ds.edge_endpoints()` gives the edges as an (edges, 2) array.
-- Each node belongs to coarser entities: `ds.owner("Plant")`, `ds.entity_ids("Plant")`, so the variables of a whole
+  not rebuilt (conventions.md, "Performance rules"); `data_structure.edge_endpoints()` gives the edges as an (edges, 2) array.
+- Each node belongs to coarser entities: `data_structure.owner("Plant")`, `data_structure.entity_ids("Plant")`, so the variables of a whole
   population are arrays, and per-plant values are coarse-scale variables.
 
 ### Grids: `ArrayDataStructure` and `AdaptiveGridDataStructure`
@@ -74,18 +74,18 @@ the volume averages do not carry, e.g. a soil's pressure head from the water car
 ### Working with variables
 
 ```python
-ds.register("hexose", 0., location="node", on_grow="inherit")
-ds.get("hexose")                       # a live view (writes through set())
-ds.set("hexose", values)               # in place, shape checked, write counted
-ds.alias("sugar", "hexose")            # a second name for the same values
-ds.derive("total", {"a": 1., "b": 2.}) # recomputed when read after a source changed
-ds.define_mask("apices", {"is_apex": ">0"})
-ds.register("pools", 0., location="cell", shape=(15,))   # a vector-valued variable, (n_cells, 15)
+data_structure.register("hexose", 0., location="node", on_grow="inherit")
+data_structure.get("hexose")                       # a live view (writes through set())
+data_structure.set("hexose", values)               # in place, shape checked, write counted
+data_structure.alias("sugar", "hexose")            # a second name for the same values
+data_structure.derive("total", {"a": 1., "b": 2.}) # recomputed when read after a source changed
+data_structure.define_mask("apices", {"is_apex": ">0"})
+data_structure.register("pools", 0., location="cell", shape=(15,))   # a vector-valued variable, (n_cells, 15)
 ```
 
 Labels and types are declared with `dtype="int"` (label names are resolved through the MTG's `LabelsConfig`); lists
-and records with `dtype="object"`. `ds.validate_variables()` reports inconsistencies; `ds.to_dataframe(location=)`
-export values (the SceneRecorder writes the summaries); `ds.checkpoint(path)` and `Class.restore(path)` (or `ds.load_checkpoint(path)`
+and records with `dtype="object"`. `data_structure.validate_variables()` reports inconsistencies; `data_structure.to_dataframe(location=)`
+export values (the SceneRecorder writes the summaries); `data_structure.checkpoint(path)` and `Class.restore(path)` (or `data_structure.load_checkpoint(path)`
 in place) save and restore everything, bit for bit.
 
 ## 2. Components
@@ -120,7 +120,7 @@ class RootCarbon(FunctionalComponent):
     def _hexose(self, hexose, exudation, struct_mass):
         return hexose - self.step_duration * exudation / struct_mass
 
-carbon = RootCarbon(data_structure=ds, time_step=3600.)
+carbon = RootCarbon(data_structure=data_structure, time_step=3600.)
 carbon()                                  # one time step: every step, in the scheduled order
 ```
 
@@ -165,7 +165,7 @@ carbon()                                  # one time step: every step, in the sc
   that must all hold: `@rate(where={"label": "RootSegment", "length": ">0.01"})`. A value is matched, a list is
   one of several values, a comparison string (`">0"`, `"<=0.03"`) is tested, and label names are resolved. A key
   may name a variable at a coarser scale (e.g. a segment's label for its anatomy Compartments). A mask name
-  (`ds.define_mask`) or a callable `ds -> boolean array` select as well, for geometry or masks shared with mappings.
+  (`data_structure.define_mask`) or a callable `data_structure -> boolean array` select as well, for geometry or masks shared with mappings.
   When the DataStructure defines an `"active"` mask (planting times, dead tissues), steps also compute on its entities
   only; `include_inactive=True` lifts it.
 - **Where a step works.** A step's arguments come at their locations, its parameters at the step's: the location of
@@ -180,8 +180,8 @@ carbon()                                  # one time step: every step, in the sc
   written again (a network's conductances, recomputed only when a barrier or a length changed). The step's
   dependencies are its arguments: a memoized step reads nothing else.
 - **Own entities.** `entities = {"label": ("RootSegment", "RootApex")}` (a class attribute, the filters' syntax,
-  label names resolved; or a callable `ds -> boolean array`): the entities the component owns when several models
-  share one plant (the roots' and the shoot's). It then works on `ds.entity_view(entities)`, a view of the
+  label names resolved; or a callable `data_structure -> boolean array`): the entities the component owns when several models
+  share one plant (the roots' and the shoot's). It then works on `data_structure.entity_view(entities)`, a view of the
   DataStructure restricted to them (section 4). `None` (the default): every entity.
 - **Inheritance.** A subclass runs its bases' steps, a redefined step replacing its base's; `steps_removed =
   ("name",)` removes inherited ones.
@@ -191,7 +191,7 @@ carbon()                                  # one time step: every step, in the sc
   per call, independent of the visiting order. Draws that must not depend on the rest of the population (an
   element's angles, whatever other plants exist) are keyed by lineage instead of entity id: `random_streams.plant_keys(
   seeds)` for a plant's first element, `child_keys(parent_keys, edge, rank)` for each new one, drawn with
-  `random_streams.normal(keys, ...)` (or `ds.random(..., ids=keys)`).
+  `random_streams.normal(keys, ...)` (or `data_structure.random(..., ids=keys)`).
 - **Settings** (`setting(unit=, description=, default=, choices=)`): values of the model, not of the plants (a
   latitude, a light model, a solver, a grid's voxel). One value for all, never stored on the DataStructure: read as
   `self.name` anywhere, passed as the value itself to a step naming it, set by constructor keywords and scenarios
@@ -201,12 +201,12 @@ carbon()                                  # one time step: every step, in the sc
   canopy, incremental meshes); `self.cached(name, build, key)` for a value derived from the structure. Both caches
   are the component's `caches()` (with its graph systems' views and solutions): never checkpointed, all dropped
   when a checkpoint is loaded (`clear_caches()`).
-- **Objects shared by content:** `ds.objects(name, saved=)` (`g.objects` on an MPG, for the initiators), a
+- **Objects shared by content:** `data_structure.objects(name, saved=)` (`mtg.objects` on an MPG, for the initiators), a
   registry of the DataStructure (`data_structure.objects.ObjectRegistry`: `get(key, build)`, `index(key)`,
   `by_index(index)`), its objects keyed by their content (`solve.memo.content_key` of what they are made from), saved
   with it by the checkpoints, each once (a shared part, in the form `saved` gives; `saved=False`: a cache, not
   saved). No module-level registry: two Scenes in one process have their own, freed with them (GRANAP's anatomy
-  templates, `g.objects("anatomy_templates")`).
+  templates, `mtg.objects("anatomy_templates")`).
 - **Reading a component:** `Component.declarations()` lists its variables as a table (kind, scale, unit, description,
   default, provider); `Component.schedule()` its steps in the order they run, grouped by stage;
   `component.variable_specs` their resolved places on its DataStructure; `component.active_ids(location)` the active
@@ -217,12 +217,12 @@ carbon()                                  # one time step: every step, in the sc
   read at its Compartments), or reading at its scale a variable another holds at the nodes as a broadcast from it
   (a segment's coordinates seen by its Compartments), reads that variable through the mapping, in its steps and with
   `component.read(name)` outside them.
-- **Owners.** `ds.owner(location)`: each node's entity at a coarse location (an index in `ds.entity_ids(location)`);
-  `ds.owner("Axis", of="Organ")`: each Organ's Axis, between two coarse locations.
-- **Public accessors** (rather than the private names behind them): `ds.from_scale`, `ds.sections_of(vids)`,
-  `ds.reduction`, `ds.structure_stamp()`, `ds.default(name)`; `MPG.values_at(name, vids)` (bulk, instances
+- **Owners.** `data_structure.owner(location)`: each node's entity at a coarse location (an index in `data_structure.entity_ids(location)`);
+  `data_structure.owner("Axis", of="Organ")`: each Organ's Axis, between two coarse locations.
+- **Public accessors** (rather than the private names behind them): `data_structure.from_scale`, `data_structure.sections_of(vids)`,
+  `data_structure.reduction`, `data_structure.structure_stamp()`, `data_structure.default(name)`; `MPG.values_at(name, vids)` (bulk, instances
   included), `MPG.anchored(vid)` (its anchored Compartments and Connections), `MPG.has_instances()`, `MPG.last_vid`,
-  `MPG.add_root_at_scale(scale)`; `self.graph_view` in graph-system terms; `ds.simulation_time_step = dt` for components
+  `MPG.add_root_at_scale(scale)`; `self.graph_view` in graph-system terms; `data_structure.simulation_time_step = dt` for components
   run without a Scene (the Scene sets its time step on each of its DataStructures: Scenes of other steps run in one
   process; none: a component runs one of its own steps per call).
 - **Outside steps** (structural code, helpers, harnesses): `self.parameter_value(name)` is a parameter's single
@@ -232,14 +232,14 @@ carbon()                                  # one time step: every step, in the sc
   per-node array read from the MTG's labels; `component.run_stage("postsegmentation")` runs the steps of one
   schedule row only (e.g. after another model wrote the inputs they read).
 - **The MTG view.** By default (`mtg_sync = "lazy"`) the DataStructure is the reference. A state variable held at
-  its own scale is not copied: the MTG reads its column. Mapped ones reach the MTG when it is read (`ds.mtg`,
-  `ds.flush_mtg()`), before an MPG-style step. `mtg_sync = "after_call"` writes them after every call, `"never"`
-  never. `ds.structure` is the MTG to read the structure only (labels, parents, complexes), without that
+  its own scale is not copied: the MTG reads its column. Mapped ones reach the MTG when it is read (`data_structure.mtg`,
+  `data_structure.flush_mtg()`), before an MPG-style step. `mtg_sync = "after_call"` writes them after every call, `"never"`
+  never. `data_structure.structure` is the MTG to read the structure only (labels, parents, complexes), without that
   synchronisation.
-- **MTG properties** are read and written in bulk: `g.values_at(name, vids)`, `g.set_values(name, vids, values)`,
-  `g.column(name)` (values and presence over the vid index), `g.view(name)` vertex by vertex. `g.property(name)` is a
-  read-only mapping built on demand (openalea.mtg's API, for tests and legacy code): `g.property(name)[v] = x` raises,
-  write `g.set_values(name, [v], [x])`.
+- **MTG properties** are read and written in bulk: `mtg.values_at(name, vids)`, `mtg.set_values(name, vids, values)`,
+  `mtg.column(name)` (values and presence over the vid index), `mtg.view(name)` vertex by vertex. `mtg.property(name)` is a
+  read-only mapping built on demand (openalea.mtg's API, for tests and legacy code): `mtg.property(name)[v] = x` raises,
+  write `mtg.set_values(name, [v], [x])`.
 
 ## 3. Graph systems
 
@@ -257,7 +257,7 @@ class SoilDiffusion(FunctionalComponent):
 
     @graph_system(node_unknowns=["solute"], edge_unknowns=["solute_flux"], transient=True, integrate="adaptive")
     class _diffusion:
-        bottom = boundary_set(where=lambda ds: ds.layer_mask(z=-1), condition="dirichlet", value=0.)
+        bottom = boundary_set(where=lambda data_structure: data_structure.layer_mask(z=-1), condition="dirichlet", value=0.)
 
         @node_balance(field="solute")
         def _balance(self, solute, solute_flux):
@@ -388,10 +388,10 @@ class SoilDiffusion(FunctionalComponent):
   declares an input) come from that one factorisation;
   an archetype keeps its term and the sparse blocks of its full interior, not their factorisation (made again for a
   recovery, `recover`), so the memory follows the plant's size, not the archetypes it went through. For outputs,
-  `reduction.recover_interiors(ds)` gives every reduced group's interior values at once (batched by archetype, one
+  `reduction.recover_interiors(data_structure)` gives every reduced group's interior values at once (batched by archetype, one
   factorisation each), `reduction.full_rows(key)` the full template's rows a reduced template holds and
   `reduction.unknown()` the reduced system's node unknown; a plant model's structural component asks
-  `reduction.reduces(g, vertex)` for each group it instances (where= on the vertex as it is: its label, its
+  `reduction.reduces(mtg, vertex)` for each group it instances (where= on the vertex as it is: its label, its
   complexes', its properties), and `reduction.is_reduced(template)` whether an instance's template is a reduced one.
   **Merged kept nodes** (`Reduction(merge=)`, an approximation chosen by the model): kept nodes lumped into one, a
   dict or a tuple of disjoint dicts `{"where": rule, "by": property names | callable, "properties": {name:
@@ -436,7 +436,7 @@ class SoilDiffusion(FunctionalComponent):
     centre and its frame, a voxel's corner and size); `TemplateShapes.placed()` gives the triangles placed, as
     `display_triangles` draws them (a test that both agree is cheap).
 
-  The rest is the reduction's: `reduction.recovery_terms(ds)` gives each group's kept values and its archetypes' weights
+  The rest is the reduction's: `reduction.recovery_terms(data_structure)` gives each group's kept values and its archetypes' weights
   (`RecoveryTerms`: a group between two classes of a `Relative` archetype variable is the weighted sum of the two class
   archetypes), and `archetype.recovery_operator()` each archetype's recovery as one linear operator M over its full template's
   Compartments, the unknown there being M · [x_kept; 1] (the identity on the kept nodes, A_II⁻¹(−A_IK x − c_I) on
@@ -455,11 +455,11 @@ A structural component edits the plant (growth, segmentation, anatomy). Its step
   lengths read by a Compartment-level anatomy model, at the SubOrgans as their holder declares them); after them,
   the DataStructure follows the new topology, reads back the states they wrote (on the vertices they created too),
   and the other components' variables are repartitioned by kind (`partition_weight`, `active`). Until their states
-  are read back the MTG is ahead of the DataStructure (`ds.mtg_ahead()`): a `ds.mtg` meanwhile (an inheritance
+  are read back the MTG is ahead of the DataStructure (`data_structure.mtg_ahead()`): a `data_structure.mtg` meanwhile (an inheritance
   rule's, during the topology's update) writes nothing over them. They loop over `self.active_ids()` to skip
   inactive plants.
 
-`StructuralComponent.initiate_plant(g, plant, parameters)` (a class method) builds one plant's initial structure in a
+`StructuralComponent.initiate_plant(mtg, plant, parameters)` (a class method) builds one plant's initial structure in a
 population MPG, from that plant's scenario.
 
 **Creating nodes from an array-style step.** An array-style step returns a `NewNodes` among its outputs: the new
@@ -489,45 +489,45 @@ planting position or its anchor's end). An element drawn elsewhere gives where i
 display_z2` (declared with `display_end("x1")` ...; NaN: at its topological place): Adel's turtle draws a hidden part
 on the visible ones, a seed point is drawn as its grain. The default cylinders and the readers of the drawing (an
 anatomy's 3D placement, an element's height for a gas exchange) take the display ends where given
-(`coupling.geometry.drawn_ends`). `ds.position(location, at="base" | "end")` gives each entity's position from its
+(`coupling.geometry.drawn_ends`). `data_structure.position(location, at="base" | "end")` gives each entity's position from its
 elements' ends: its first element's base, or the end of its last element along its axis (a Phytomer's node, where
-its nodal roots start); `ds.bearer(location)` gives that last element, where a model grows the axes an entity bears
-(a root model its nodal roots, on the node's element: their base at its end); `ds.check_connectivity(tolerance=)`
-lists the elements whose base is not at their parent's end. An initiator places its elements with the MPG's builders: `g.add_organ(plant, "StemInternode", complex_label="Shoot")`
-(the Axis, GrowthUnit, Phytomer between) and `g.add_element("StemElement", parent=element, direction=(0, 0, 1),
+its nodal roots start); `data_structure.bearer(location)` gives that last element, where a model grows the axes an entity bears
+(a root model its nodal roots, on the node's element: their base at its end); `data_structure.check_connectivity(tolerance=)`
+lists the elements whose base is not at their parent's end. An initiator places its elements with the MPG's builders: `mtg.add_organ(plant, "StemInternode", complex_label="Shoot")`
+(the Axis, GrowthUnit, Phytomer between) and `mtg.add_element("StemElement", parent=element, direction=(0, 0, 1),
 length=0.01, radius=5e-4)` (its ends from its parent's end; `direction=(0, 0, 0)` a point; `display=(start, end)`),
 reading its parameters with `cls.plant_parameters(scenario)` (the scenario over the declared defaults, checked
 against their bounds and dtype). A light model computes on the triangles and gives its results back per element
-(`Triangles.per_owner`). An environment model receives DataStructures, not components: `ds.triangles()` gives the
+(`Triangles.per_owner`). An environment model receives DataStructures, not components: `data_structure.triangles()` gives the
 triangles of the structural component built on it (the one with its own `triangles()` first; set
-`ds.geometry_provider` when several draw), and a `UnionDataStructure`'s concatenates its parts', in its node indices.
+`data_structure.geometry_provider` when several draw), and a `UnionDataStructure`'s concatenates its parts', in its node indices.
 On an anatomy-mode DataStructure, the frames and the light models take the triangles of its view at its from_scale
-(`ds.at("SubOrgan").triangles()`, the elements): a structural component working at a coarser scale (its finest
-declaration at Organ) registers its geometry on `ds.at("Organ")`, never drawn nor lit, and warns at its construction;
+(`data_structure.at("SubOrgan").triangles()`, the elements): a structural component working at a coarser scale (its finest
+declaration at Organ) registers its geometry on `data_structure.at("Organ")`, never drawn nor lit, and warns at its construction;
 declare one of its variables at the SubOrgan scale (or its `entities`) for its elements to be drawn.
-`ds.triangles(where)` takes a node mask or a mask's name (`"planted"`: plants not yet planted left out; every node
+`data_structure.triangles(where)` takes a node mask or a mask's name (`"planted"`: plants not yet planted left out; every node
 when the DataStructure has no such mask). `Triangles.mean_per_owner(values, n)` averages per element by area.
 A triangle may carry attributes (`Triangles(..., attributes={"green": shares})`: Adel's green share of each
 triangle's area, 1 by default where a part does not carry it), kept through `select`, `clip` and `concatenate`.
 
 **The soil surface and the geometry in a domain.** `Scene(soil_surface=0.)` is the one definition of the soil's
-surface (m, the plants' frame): every DataStructure's `ds.soil_surface` (a component's `self.soil_surface`), the
+surface (m, the plants' frame): every DataStructure's `data_structure.soil_surface` (a component's `self.soil_surface`), the
 cross mappings' grid top (`CrossMapping(soil_surface=)`: the grid's depth is `soil_surface - z`), and the MPG's
-`g.soil_surface` while the initiators build (a crown placed below it). `ds.geometry` answers what of the elements
+`mtg.soil_surface` while the initiators build (a crown placed below it). `data_structure.geometry` answers what of the elements
 lies in a domain, vectorised: `"air"` and `"soil"` (the half spaces of the soil surface) or a `HalfSpace(level,
 axis="z", above=True)`:
 
 ```python
-ds.geometry.clipped("air", where="planted")                 # the triangles above the soil (Caribu lights them)
-ds.geometry.fraction_in("air", location="SubOrgan", by="area", weight="green")   # each element's green share there
-ds.geometry.fraction_in("soil", by="length")                # each segment's length fraction in the soil
-ds.geometry.centre_in("air")                                # (n, 3): the centre of each element's part above it
+data_structure.geometry.clipped("air", where="planted")                 # the triangles above the soil (Caribu lights them)
+data_structure.geometry.fraction_in("air", location="SubOrgan", by="area", weight="green")   # each element's green share there
+data_structure.geometry.fraction_in("soil", by="length")                # each segment's length fraction in the soil
+data_structure.geometry.centre_in("air")                                # (n, 3): the centre of each element's part above it
 ```
 
 `Triangles.clip(domain)` cuts the triangles at the plane (one or two triangles each, exact),
 `Triangles.fraction_in(domain)` gives each one's area fraction inside, without a loop. A translator link takes such
 quantities as sources: `FractionIn(domain, by=, weight=, empty=)` and `CentreIn(domain, axis=, by=, weight=)`
-(`coupling.geometry`) are geometric variables the DataStructure derives (`ds.derive_geometry(name, query,
+(`coupling.geometry`) are geometric variables the DataStructure derives (`data_structure.derive_geometry(name, query,
 location=)`) and recomputes when the geometry changes (`Geometry.stamp`: the topology, the providers'
 `geometry_stamp()`, by default their calls and their segment ends' writes):
 
@@ -537,8 +537,8 @@ Translator().link("GasExchange", "green_area", "ShootArchitecture",
                   names={"green_area": "green_area_in_air"})        # CNW-Grass's emerged_links
 ```
 
-**Labels.** `ds.labels()` gives each node's MTG label name (`"LeafElement"`, `"RootSegment"`, ...), and
-`ds.labels(location="Organ")` the label of its entity at a coarser scale; a `UnionDataStructure` gives its parts'. They are
+**Labels.** `data_structure.labels()` gives each node's MTG label name (`"LeafElement"`, `"RootSegment"`, ...), and
+`data_structure.labels(location="Organ")` the label of its entity at a coarser scale; a `UnionDataStructure` gives its parts'. They are
 read once per topology, for steps that treat leaves and stems, or root orders, differently. `openalea.metafspm.display.draw(axes, triangles, colors=...)` draws them with matplotlib.
 
 **Several architecture models on one plant: `entities`.** When two structural components grow one plant (the roots
@@ -561,13 +561,13 @@ class Roots(StructuralComponent):
   `NewComplexes` creates with its `axis_row` is seen with it, the new nodes' and complexes' values being written
   before the new nodes are checked against the declaration). A callable is evaluated again on a topology or label
   change only, unless it lists the variables it reads in its attribute `variables` (`shoot.variables =
-  ("axis_row",)`); it may read MPG properties (`ds.structure`), which are not tracked. The selection, its index
+  ("axis_row",)`); it may read MPG properties (`data_structure.structure`), which are not tracked. The selection, its index
   maps and the view's stores are cached on these: a step costs about what it costs on the base.
 - Its topology is theirs: a node's parent is its parent when that one is in the view, else -1 (a base: a seminal root
   on the seed another model owns). `children()`, `roots()`, `tips()`, `order()`, `levels()`, the folds, chains and
   `to_graph_view()` follow from these parents.
 - A name is one variable of the base for every entity of the location (the roots' and the shoot's `length`):
-  `get(name)` gives the view's entities' values, **a copy** (steps write through their outputs, or `ds.set`);
+  `get(name)` gives the view's entities' values, **a copy** (steps write through their outputs, or `data_structure.set`);
   `set` writes them into the base's array; a variable it creates gets the default (or the MTG's values) on the other
   entities. Coarse locations (`"Plant"`, `"Axis"`, …) and scalars are the base's.
 - `map_to` between its nodes and a coarse location, `owner()` and `labels()` are over its entities only (a plant's
@@ -576,13 +576,13 @@ class Roots(StructuralComponent):
   location; the new nodes must match its declaration. Its masks (and `active`) are its own; the base's triangles are
   those of every component drawing its entities, together.
 - `view.base` is the DataStructure the view is of, at the view's location: the MPGDataStructure in segment mode;
-  in anatomy mode, whose nodes are the Compartments, its view at the SubOrgans (`ds.at("SubOrgan")`). Its
+  in anatomy mode, whose nodes are the Compartments, its view at the SubOrgans (`data_structure.at("SubOrgan")`). Its
   `get(name)` gives a variable at every entity of the location, `index_of` their indices. A component reads through it what lies outside its
   entities and its steps' arguments cannot give: the end (`x2`, `y2`, `z2`) of the stem element a nodal root is borne
   by, its bearers' values. It does not write there: another model's entities are that model's.
 - `couplings()` and `declarations()` are unchanged: the components still share one DataStructure.
 - **Anchors.** An initiator builds onto another's vertex (a root model on the seed a shoot model created) through
-  `g.find_anchor(plant, label, scale=None, where=None, first=False, last=False)`: the plant's vertex of that label
+  `mtg.find_anchor(plant, label, scale=None, where=None, first=False, last=False)`: the plant's vertex of that label
   (at that scale: found from the label when only one scale has it) whose MPG properties equal `where`'s. Several
   match: an `AnchorError`, unless `first=True` (the topologically first: the bottom of a chain of them) or
   `last=True` (the topologically last: its top, a crown's top stem element). None: an `AnchorError` naming what the
@@ -605,8 +605,8 @@ Whole-population computations along the topology are DataStructure methods, vect
 | `path_compose(transforms)` | composed 4 × 4 transforms from the root |
 | `parents()`, `children()`, `order("pre" \| "post", traversal=None \| "openalea")`, `depth()`, `levels()` | traversal arrays |
 
-Chains are declared with `ds.define_chain(name, edge_type="<")` or by a group and a rank variable, of the nodes
-or of the entities of a coarse location: `ds.define_chain("phytomers", location="Phytomer", group="Axis",
+Chains are declared with `data_structure.define_chain(name, edge_type="<")` or by a group and a rank variable, of the nodes
+or of the entities of a coarse location: `data_structure.define_chain("phytomers", location="Phytomer", group="Axis",
 rank="phytomer_rank")` chains each axis' phytomers by their rank (the group an owner at a coarser location, or a
 variable), and the kernels then take and give one value per phytomer; `chain_gather(values, rank, chain=)` without
 a `source` reads along each entity's own chain (use case 1's nodal root rule: the phytomer three ranks below a
@@ -615,7 +615,7 @@ leaf's, on its axis).
 A component that reads values of its own last call (a rule interpolating between its calls) names them,
 `kept_from_last_call = ("thermal_time", "haun_stage")`, and reads `self.last_call(name)`: the values at the end of its
 last call, aligned by id (NaN before its first call and for entities new since), kept with its state (checkpoints).
-With a schedule step's cadence, the last call is the cadence's, not the last scene step's (`ds.previous`: the step's
+With a schedule step's cadence, the last call is the cadence's, not the last scene step's (`data_structure.previous`: the step's
 start).
 
 ## 5. Coupling components
@@ -846,7 +846,7 @@ time (an event's, a planting time) is a duration since time 0 or a date (`"2026-
   fixture): the steady water flow in a coarse fixed grid (5 cm cells), its conductivity by layer, the water table at
   the bottom, the surface evaporating; a plant model takes up water from it through scene links.
 - **The time step is the Scene's.** `Scene(time_step="1 h")` sets it on every DataStructure of the scene
-  (`ds.simulation_time_step`, also `population_data_structure(time_step=)`'s), from which each component runs
+  (`data_structure.simulation_time_step`, also `population_data_structure(time_step=)`'s), from which each component runs
   `simulation_time_step / time_step` sub-steps per call (`component.simulation_step()`); a component built without a
   time step runs one of the scene's steps. Nothing is process-wide: Scenes of other time steps run in one process,
   and the Choregrapher (the steps' schedule) holds no run state.
@@ -889,7 +889,7 @@ time (an event's, a planting time) is a duration since time 0 or a date (`"2026-
     `"<Scale>.label"`, their owner's at a scale), the sums (of name × factor: an integral), the means (by their
     declared weight with a list), the extremes (`<name>_min`, `<name>_max`), the largest change since the step
     before (`max_change=[...]`, `<name>_max_change`: over the entities there at both, from the values the Scene
-    keeps before each step, `ds.previous(name)`, aligned by id; `scene.keep_previous(ds, *names)` keeps others);
+    keeps before each step, `data_structure.previous(name)`, aligned by id; `scene.keep_previous(data_structure, *names)` keeps others);
     `population=` a population's model name, or an environment model's DataStructure (its `scene.data_structures()`
     id: a soil grid's cells);
   - `conservation.csv`: the balances of the quantities the graph systems conserve (`graph_system(conserved=
@@ -909,7 +909,7 @@ time (an event's, a planting time) is a duration since time 0 or a date (`"2026-
   ends with `scene.finish()` (a recording scene dropped without it warns).
 - **Restarts.** `scene.checkpoint(path)` and `Scene.restore(path, **arguments)` continue a run bit for bit; models
   keep non-variable state through `checkpoint_state()` / `restore_state(state)` (an external solver's state; the
-  objects the components share by content are the DataStructures' `ds.objects`, saved with them).
+  objects the components share by content are the DataStructures' `data_structure.objects`, saved with them).
   `Scene.load_checkpoint(path, scenario="checkpoint" | "current")` (and `Scene.restore(path, scenario=...,
   **arguments)`): with `"checkpoint"` (the default) the run goes on with the checkpoint's parameters and settings,
   whatever the scene was built with; with `"current"` the scene's own scenarios (its planting table's, its
@@ -940,7 +940,7 @@ time (an event's, a planting time) is a duration since time 0 or a date (`"2026-
   type), the variables and MPG properties as columns with their declared units, kinds and standard names, the soil
   grids, the mappings and the geometry: the DataStructure's triangles, and the shapes a component draws for display
   only (`display_triangles(where=None)`, e.g. GRANAP's sections), which light models never receive.
-  `export_scene(path, scene)` or `export_frame(path, {id: ds},
+  `export_scene(path, scene)` or `export_frame(path, {id: data_structure},
   components={id: [...]})` writes a frame. `import_frame(path)` rebuilds the DataStructures: the same MPG, the
   same variables, bit for bit, from which a simulation continues as from the original. `SceneRecorder(folder,
   frame_period="1 d")` records a frame at the start and every day, in `folder/frames` with its index
@@ -974,7 +974,7 @@ time (an event's, a planting time) is a duration since time 0 or a date (`"2026-
     writes each reduced group's interior (its full template's Compartments, Cells and Layers the reduced one does not
     hold; not its Connections) as display rows of their entity sets, marked by the column `metafspm_display_only`,
     linked to their Cells, Layers and section (a selection by entity brings a section's interior with it), with the
-    reduced system's unknown recovered (`Reduction.recover_interiors(ds)`, one factorisation per archetype for all its
+    reduced system's unknown recovered (`Reduction.recover_interiors(data_structure)`, one factorisation per archetype for all its
     groups, freed after), their template's properties, NaN otherwise. Every display frame then holds every value, as
     large as the full anatomy's.
   - `None`: the reduced groups not drawn (the other groups' shapes are).
@@ -1129,7 +1129,7 @@ Its README describes each file and shows the figures.
   group; `kept_outputs`, a value per kept node) and recoveries batched by template and archetype, the terms' sparse
   pattern cached per topology (80k groups: 0.03 s per solve's terms).
 - The DataStructure's topology arrays (`entity_ids`, `owner`) are cached until the topology changes and read-only:
-  copy one (`np.array(ds.owner("SubOrgan"))`) before writing into it.
+  copy one (`np.array(data_structure.owner("SubOrgan"))`) before writing into it.
 - Growth bookkeeping is incremental: only new vertices are read from the MTG.
 - An MPG-style step sees only the MTG properties its component declares; keep MTG reads in such steps to those.
 - `split="components"` solves its pieces one after the other; a whole system made of independent blocks (the

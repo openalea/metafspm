@@ -102,8 +102,8 @@ def _linear_mms_system(N, alpha=1.0, method="newton", linesearch=False):
     A      = L + alpha * np.eye(N)
     f_star = A @ u_star
 
-    def ev(ctx, _A=A, _f=f_star):
-        return _A @ ctx.node_unknowns["u"] - _f
+    def ev(context, _A=A, _f=f_star):
+        return _A @ context.node_unknowns["u"] - _f
 
     system = GraphSystem(
         graph=gv,
@@ -128,8 +128,8 @@ def _nonlinear_mms_system(N, alpha=1.0, Vmax=0.5, Km=2.0, method="newton", lines
     u_star = np.cos(2 * np.pi * np.arange(N) / N) + 3.0
     f_star = L @ u_star + alpha * u_star + Vmax * u_star / (Km + u_star)
 
-    def ev(ctx, _L=L, _f=f_star):
-        u = ctx.node_unknowns["u"]
+    def ev(context, _L=L, _f=f_star):
+        u = context.node_unknowns["u"]
         return _L @ u + alpha * u + Vmax * u / (Km + u) - _f
 
     system = GraphSystem(
@@ -215,8 +215,8 @@ def test_p1_sparse_jacobian_newton_step():
         unknowns=UnknownLayout(node_fields=("u",), edge_fields=()),
         solver=SolverConfig(method="newton", absolute_tolerance=1e-10),
         equation_blocks=(),
-        matrix_evaluator=lambda ctx, _A=A_sp: _A,
-        rhs_evaluator=lambda ctx, _f=f_star: _f,
+        matrix_evaluator=lambda context, _A=A_sp: _A,
+        rhs_evaluator=lambda context, _f=f_star: _f,
         parameters={},
     )
     x = system.solve()
@@ -288,8 +288,8 @@ def test_p1_mms_graph_refinement_convergence():
         f_pde   = (1 + alpha) * np.cos(theta)
         A       = L + alpha * np.eye(N)
 
-        def ev(ctx, _A=A, _f=f_pde):
-            return _A @ ctx.node_unknowns["u"] - _f
+        def ev(context, _A=A, _f=f_pde):
+            return _A @ context.node_unknowns["u"] - _f
 
         system = GraphSystem(
             graph=gv,
@@ -380,10 +380,10 @@ def test_p1_scipy_hybr_uses_analytic_jacobian():
     A      = L + alpha * np.eye(N)
     f_star = A @ u_star
 
-    def ev(ctx, _A=A, _f=f_star):
-        return _A @ ctx.node_unknowns["u"] - _f
+    def ev(context, _A=A, _f=f_star):
+        return _A @ context.node_unknowns["u"] - _f
 
-    def jac_ev(ctx, _A=A):
+    def jac_ev(context, _A=A):
         return _A
 
     system = GraphSystem(

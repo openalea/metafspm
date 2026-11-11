@@ -244,14 +244,14 @@ def dict_of_vertices(sizer: Sizer, values: dict, key_ids: set) -> dict:
             "keys": int(28 * own_keys * count / len(keys))}
 
 
-def mpg_report(sizer: Sizer, g) -> dict:
+def mpg_report(sizer: Sizer, mtg) -> dict:
     """The MPG's properties and topology dicts (entries, bytes) and its arrays."""
     out = {}
-    scale = g.__dict__.get("_scale", {})
+    scale = mtg.__dict__.get("_scale", {})
     key_ids = set(map(id, scale))
     topology = {"entries": 0, "bytes": 0}
     for name in ("_scale", "_parent", "_children", "_complex", "_components"):
-        table = g.__dict__.get(name)
+        table = mtg.__dict__.get(name)
         if not isinstance(table, dict):
             continue
         found = dict_of_vertices(sizer, table, key_ids)
@@ -263,9 +263,9 @@ def mpg_report(sizer: Sizer, g) -> dict:
         topology["bytes"] += bytes_
         sizer.seen.add(id(table))
     out["mpg_topology_dicts"] = topology
-    properties = {"entries": 0, "bytes": 0, "properties": len(g._properties), "by_property": {}}
+    properties = {"entries": 0, "bytes": 0, "properties": len(mtg._properties), "by_property": {}}
     properties["array_backed"] = 0
-    for name, values in g._properties.items():
+    for name, values in mtg._properties.items():
         if not isinstance(values, dict):           # an ArrayDict: its arrays
             bytes_ = sizer.size(values)
             properties["by_property"][name] = (len(values), bytes_)
@@ -279,7 +279,7 @@ def mpg_report(sizer: Sizer, g) -> dict:
         properties["entries"] += found["entries"]
         properties["bytes"] += bytes_
         sizer.seen.add(id(values))
-    sizer.seen.add(id(g._properties))
+    sizer.seen.add(id(mtg._properties))
     properties["bytes_per_entry"] = properties["bytes"] / max(properties["entries"], 1)
     top = sorted(properties["by_property"].items(), key=lambda item: -item[1][1])
     properties["by_property"] = dict(top[:40])
@@ -287,14 +287,14 @@ def mpg_report(sizer: Sizer, g) -> dict:
     arrays = 0
     for name in ("_topology_arrays", "_derived_cache", "_structure_log", "_owner_maps", "_valid_vids",
                  "derived_counts", "_graph_properties"):
-        arrays += sizer.size(g.__dict__.get(name))
+        arrays += sizer.size(mtg.__dict__.get(name))
     out["mpg_topology_arrays"] = {"bytes": arrays}
-    out["instances"] = {"bytes": sizer.size(g.__dict__.get("_instances"))}
+    out["instances"] = {"bytes": sizer.size(mtg.__dict__.get("_instances"))}
     registries = {}
-    for name, registry in g.__dict__.get("_objects", {}).items():
+    for name, registry in mtg.__dict__.get("_objects", {}).items():
         registries[name] = {"objects": len(registry), "bytes": sizer.size(registry)}
     out["object_registries"] = registries
-    out["mpg_rest"] = {"bytes": sum(sizer.size(value) for key, value in g.__dict__.items()
+    out["mpg_rest"] = {"bytes": sum(sizer.size(value) for key, value in mtg.__dict__.items()
                                     if key not in ("reduction",))}
     out["vertices"] = len(scale)
     return out
@@ -305,21 +305,21 @@ DS_METADATA = ("_var_meta", "_parameter_views", "_read_plans", "_writes", "_mtg_
                "_entity_views", "_located_views", "_masks", "_label_names")
 
 
-def ds_report(sizer: Sizer, ds) -> dict:
+def ds_report(sizer: Sizer, data_structure) -> dict:
     """A DataStructure's variable columns (by location), its last_call values, its other arrays, its metadata."""
     out = {}
     columns = {}
     for name in DS_COLUMNS:
-        store = ds.__dict__.get(name)
+        store = data_structure.__dict__.get(name)
         if store is None:
             continue
         columns[name] = {"variables": len(store), "bytes": sizer.size(store)}
     out["ds_columns"] = columns
-    out["ds_last_call"] = {"bytes": sizer.size(ds.__dict__.get("_previous_values"))}
-    out["ds_metadata"] = {"bytes": sum(sizer.size(ds.__dict__.get(name)) for name in DS_METADATA)}
-    sizer.stop(ds.__dict__.get("_mtg"), ds.__dict__.get("inheritance"))
+    out["ds_last_call"] = {"bytes": sizer.size(data_structure.__dict__.get("_previous_values"))}
+    out["ds_metadata"] = {"bytes": sum(sizer.size(data_structure.__dict__.get(name)) for name in DS_METADATA)}
+    sizer.stop(data_structure.__dict__.get("_mtg"), data_structure.__dict__.get("inheritance"))
     rest = {}
-    for key, value in ds.__dict__.items():
+    for key, value in data_structure.__dict__.items():
         if key in DS_COLUMNS + DS_METADATA + ("_previous_values", "_mtg", "inheritance"):
             continue
         bytes_ = sizer.size(value)
@@ -381,18 +381,18 @@ def report(scene) -> dict:
     out = {"process_before_trim": before_trim, "process_after_trim": after_trim, "populations": {}}
     populations = list(scene.populations)
     data_structures = [population.data_structure for population in populations]
-    sizer.stop(scene, *data_structures, *[ds.__dict__.get("_mtg") for ds in data_structures])
-    for population, ds in zip(populations, data_structures):
-        g = ds.__dict__.get("_mtg")
-        found = {"nodes": int(ds.n_nodes())}
-        found.update(ds_report(sizer, ds))
-        if g is not None:
-            reduction = g.__dict__.get("reduction")
+    sizer.stop(scene, *data_structures, *[data_structure.__dict__.get("_mtg") for data_structure in data_structures])
+    for population, data_structure in zip(populations, data_structures):
+        mtg = data_structure.__dict__.get("_mtg")
+        found = {"nodes": int(data_structure.n_nodes())}
+        found.update(ds_report(sizer, data_structure))
+        if mtg is not None:
+            reduction = mtg.__dict__.get("reduction")
             sizer.stop(reduction)
-            found.update(mpg_report(sizer, g))
+            found.update(mpg_report(sizer, mtg))
             sizer.stopped.discard(id(reduction))
             found.update(reduction_report(sizer, reduction))
-        found["granap_inheritance"] = {"bytes": sizer.size(ds.__dict__.get("inheritance"))}
+        found["granap_inheritance"] = {"bytes": sizer.size(data_structure.__dict__.get("inheritance"))}
         out["populations"][population.name] = found
     components = defaultdict(int)
     for component in scene.components:
@@ -406,8 +406,8 @@ def report(scene) -> dict:
                             "bytes": sum(sizer.size(solver) for solver in linear.values())}
     environment = {}
     for model in scene.environment:
-        ds = getattr(model, "data_structure", None)
-        environment[type(model).__name__] = {"data_structure": sizer.size(ds), "model": sizer.size(model)}
+        data_structure = getattr(model, "data_structure", None)
+        environment[type(model).__name__] = {"data_structure": sizer.size(data_structure), "model": sizer.size(model)}
     out["environment"] = environment
     out["recorder"] = {"bytes": sizer.size(scene.recorder)}
     sizer.stopped.discard(id(scene))
@@ -448,7 +448,7 @@ def summary(found: dict) -> str:
         for key, value in entries.items():
             if key == "ds_columns":
                 for store, item in value.items():
-                    line(f"ds columns {store} ({item['variables']})", item["bytes"])
+                    line(f"data_structure columns {store} ({item['variables']})", item["bytes"])
             elif key == "object_registries":
                 for name, item in value.items():
                     line(f"registry {name} ({item['objects']})", item["bytes"])

@@ -129,7 +129,7 @@ class AbstractSolver(ABC):
 
     @abstractmethod
     def step_once(self, spec, previous_node_fields=None,
-                  dt=None) -> np.ndarray:
+                  step_duration=None) -> np.ndarray:
         """
         One Choregrapher tick → converged packed unknown vector.
 
@@ -142,9 +142,9 @@ class AbstractSolver(ABC):
         ...
 
     def derive_outputs(self, spec, packed: np.ndarray,
-                       previous_node_fields=None, dt=None) -> dict:
+                       previous_node_fields=None, step_duration=None) -> dict:
         """Evaluate output blocks on the converged solution."""
-        return spec.derive_outputs(packed, previous_node_fields, dt)
+        return spec.derive_outputs(packed, previous_node_fields, step_duration)
 
     def solve(self, spec, t_span=None):
         """Full time integration. Override in subclasses that own a time loop."""
@@ -202,7 +202,7 @@ class AbstractSolver(ABC):
 
     def _armijo_linesearch(self, spec, packed: np.ndarray,
                             delta: np.ndarray, r_norm: float,
-                            prev_fields, dt,
+                            prev_fields, step_duration,
                             c: float = 0.5, rho: float = 0.5,
                             max_back: int = 10) -> np.ndarray:
         """Armijo sufficient-decrease backtracking."""
@@ -210,7 +210,7 @@ class AbstractSolver(ABC):
             step  = rho ** k
             trial = packed + step * delta
             r_new = np.linalg.norm(
-                spec.residual(trial, prev_fields, dt), ord=np.inf
+                spec.residual(trial, prev_fields, step_duration), ord=np.inf
             )
             if r_new <= (1.0 - c * step) * r_norm:
                 return trial
@@ -301,7 +301,7 @@ class ODESolver(AbstractSolver):
             n_steps=n_steps, n_rejected=n_rejected,
         )
 
-    def step_once(self, spec, previous_node_fields=None, dt=None) -> np.ndarray:
+    def step_once(self, spec, previous_node_fields=None, step_duration=None) -> np.ndarray:
         """
         Per-tick fallback: one step of size dt (or heuristic h₀).
         Lets ODESolver subclasses work in the Choregrapher loop.
@@ -310,7 +310,7 @@ class ODESolver(AbstractSolver):
         x = (spec.x0.copy() if isinstance(spec, ODESystemSpec)
              else spec.pack_unknowns())
         p = self._current_p(spec, 0.0)
-        h = dt if dt is not None else self._initial_step(spec, p, x)
+        h = step_duration if step_duration is not None else self._initial_step(spec, p, x)
         x_new, _ = self._integrate_step(spec, 0.0, x, h, p)
         return x_new
 
@@ -459,7 +459,7 @@ class DAESolver(ODESolver):
         Return spec.parameters merged with BoundaryConditions.update(t).
 
         This is the ONLY place where t enters the equation system.
-        All evaluators (f, g, node_balance, edge_law) receive p, not t.
+        All evaluators (f, mtg, node_balance, edge_law) receive p, not t.
         """
         p  = spec.parameters.copy()
         bc = getattr(spec, "boundary_conditions", None)
@@ -470,7 +470,7 @@ class DAESolver(ODESolver):
     # ── Per-tick interface ────────────────────────────────────────────────────
 
     def step_once(self, spec, previous_node_fields=None,
-                  dt=None) -> np.ndarray:
+                  step_duration=None) -> np.ndarray:
         """
         One Choregrapher tick → converged packed unknown vector.
 
@@ -479,7 +479,7 @@ class DAESolver(ODESolver):
         """
         p     = self._update_p(spec, 0.0)
         x     = spec.pack_unknowns()
-        h     = dt if dt is not None else self._initial_step(spec, p, x)
+        h     = step_duration if step_duration is not None else self._initial_step(spec, p, x)
         x_new, _ = self._integrate_step(spec, 0.0, x, h, p, previous_node_fields)
         return x_new
 
@@ -682,9 +682,9 @@ class ExplicitEulerSolver(DAESolver):
 
         if spec.rhs_evaluator is not None:
             # User supplied explicit ODE form ẋ = f(x, p)
-            ctx      = spec.make_context(x, prev_fields, None)
+            context      = spec.make_context(x, prev_fields, None)
             rhs_node = np.asarray(
-                spec.rhs_evaluator(ctx), dtype=np.float64
+                spec.rhs_evaluator(context), dtype=np.float64
             ).reshape(-1)[:n_node_dof]
         else:
             # ẋ = −R(x, y(x)): the edge unknowns are recovered at the current node state first (forward Euler

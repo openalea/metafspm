@@ -64,10 +64,10 @@ class AllMasks:
     def __init__(self, *names):
         self.names = names
 
-    def __call__(self, ds) -> np.ndarray:
-        selected = ds.mask(self.names[0])
+    def __call__(self, data_structure) -> np.ndarray:
+        selected = data_structure.mask(self.names[0])
         for name in self.names[1:]:
-            selected = selected & ds.mask(name)
+            selected = selected & data_structure.mask(name)
         return selected
 
 
@@ -132,9 +132,9 @@ class Scene:
                                inferred ones follow the links: a link's mapping= (Link.mapping: its mask, e.g. the
                                roots' soil nodes, and method) gives its own (Scene._infer_mappings).
         soil_surface:          the soil surface's height (m, the plants' frame; 0 by default), the one definition:
-                               every DataStructure's ds.soil_surface (the geometry's "air" and "soil", a light
+                               every DataStructure's data_structure.soil_surface (the geometry's "air" and "soil", a light
                                model's cut), the cross mappings' grid top (CrossMapping(soil_surface=)), the
-                               initiators' g.soil_surface.
+                               initiators' mtg.soil_surface.
         start:                 the date of the scene's time 0, "2026-05-10 00:00" (ISO 8601, UTC; or a datetime):
                                every component's calendar() (e.g. a light model's sun), the forcings of origin
                                "calendar", the dates given as times (events, planting times).
@@ -249,7 +249,7 @@ class Scene:
                                         # and the recording
         self.calls = {}                 # the calls that ran per component ("Model.Component"; a cadence's,
                                         # fewer than the steps)
-        self._previous = {}             # {id(ds): (ds, names)} whose values before each step are kept (ds.previous)
+        self._previous = {}             # {id(data_structure): (data_structure, names)} whose values before each step are kept (data_structure.previous)
         self._previous_asked = False    # the recorder's tables asked theirs (at the first step)
         for component in self.components:                       # the construction's calls: not the run's
             if hasattr(component, "wall_time"):
@@ -403,29 +403,29 @@ class Scene:
 
     def _setup_planting_times(self, population: Population) -> None:
         from openalea.metafspm.coupling.durations import instant
-        ds = population.data_structure
+        data_structure = population.data_structure
         population.table["planting_time"] = [instant(time, self.start, "planting_time")
                                              for time in population.table["planting_time"]]
         by_vid = dict(zip(map(int, population.plants), population.table["planting_time"].astype(float)))
-        ds.register("planting_time", [by_vid[int(v)] for v in ds.entity_ids("Plant")], location="Plant")
-        ds.register("planted", 0., location="node", on_grow="inherit")
-        ds.define_mask("planted", {"planted": ">0"})
-        if ds.has_mask("active"):        # a component's own rule (e.g. living segments), and the planting time
-            masks = ds.__dict__["_masks"]
+        data_structure.register("planting_time", [by_vid[int(v)] for v in data_structure.entity_ids("Plant")], location="Plant")
+        data_structure.register("planted", 0., location="node", on_grow="inherit")
+        data_structure.define_mask("planted", {"planted": ">0"})
+        if data_structure.has_mask("active"):        # a component's own rule (e.g. living segments), and the planting time
+            masks = data_structure.__dict__["_masks"]
             masks["_model_active"] = masks.pop("active")
-            ds.define_mask("active", AllMasks("_model_active", "planted"))
+            data_structure.define_mask("active", AllMasks("_model_active", "planted"))
         else:
-            ds.define_mask("active", {"planted": ">0"})
+            data_structure.define_mask("active", {"planted": ">0"})
 
     def _update_planted(self) -> None:
         for population in self.populations:
             if not population.planted_later:
                 continue
-            ds = population.data_structure
-            planted = (np.asarray(ds.get("planting_time")) <= self.time).astype(float)
-            values = ds._broadcast_to_entities(planted, "Plant", "node")
-            if not np.array_equal(values, ds.get("planted")):
-                ds.set("planted", values)
+            data_structure = population.data_structure
+            planted = (np.asarray(data_structure.get("planting_time")) <= self.time).astype(float)
+            values = data_structure._broadcast_to_entities(planted, "Plant", "node")
+            if not np.array_equal(values, data_structure.get("planted")):
+                data_structure.set("planted", values)
 
     def _infer_mappings(self) -> list:
         """
@@ -506,9 +506,9 @@ class Scene:
             if not free:
                 unused.append(f"'{name}'" + (" (coupled)" if declaring else ""))
             for component in free:
-                ds = component.data_structure
-                if not any(ds is other and name == known for known, other in targets):
-                    targets.append((name, ds))
+                data_structure = component.data_structure
+                if not any(data_structure is other and name == known for known, other in targets):
+                    targets.append((name, data_structure))
         if unused:
             raise ValueError(f"forcings {', '.join(unused)}: no component reads them (forcing_variable) nor has an "
                              "input or parameter of that name to be written")
@@ -519,14 +519,14 @@ class Scene:
         forcing_mean; for a forcing of the time and the entity ids, each entity's, spatial_mean), the same for every
         entity of their location, or each entity's."""
         start, end = self.time, self.time + self.time_step
-        for name, ds in self._forced:
+        for name, data_structure in self._forced:
             forcing = self.forcings[name]
             if is_spatial(forcing):
-                values = spatial_mean(forcing, ds.entity_ids(ds.location(name)), start, end)
-                ds.set(name, np.broadcast_to(values, np.shape(ds.get(name))).copy())
+                values = spatial_mean(forcing, data_structure.entity_ids(data_structure.location(name)), start, end)
+                data_structure.set(name, np.broadcast_to(values, np.shape(data_structure.get(name))).copy())
                 continue
             value = forcing_mean(forcing, start, end)
-            ds.set(name, np.full(np.shape(ds.get(name)), value, dtype=float))
+            data_structure.set(name, np.full(np.shape(data_structure.get(name)), value, dtype=float))
 
     # ── running ───────────────────────────────────────────────────────────────
 
@@ -575,8 +575,8 @@ class Scene:
             if not self._due(model):
                 continue
             started = perf_counter()
-            for ds in _own_data_structures(model):
-                self.exchanges.exchange(into=ds)
+            for data_structure in _own_data_structures(model):
+                self.exchanges.exchange(into=data_structure)
             exchanged = perf_counter()
             model.run()
             self._time("exchanges", exchanged - started)
@@ -617,8 +617,8 @@ class Scene:
         for _ in range(coupling.max_iterations):
             for name, model, step in bound:
                 restore(step, snapshots[id(step)], name)
-                for ds in _own_data_structures(model):
-                    self.exchanges.exchange(into=ds)
+                for data_structure in _own_data_structures(model):
+                    self.exchanges.exchange(into=data_structure)
                 step.run()
             done += 1
             after = values(bound)
@@ -655,8 +655,8 @@ class Scene:
         for population in self.populations:
             owners[id(_root_data_structure(population.data_structure))] = population.name
         for model in self.environment:
-            for ds in _own_data_structures(model):
-                for root in _roots(ds):
+            for data_structure in _own_data_structures(model):
+                for root in _roots(data_structure):
                     owners.setdefault(id(root), type(model).__name__)
 
         def named(accesses) -> list:
@@ -666,7 +666,7 @@ class Scene:
         models = [(type(model).__name__, model) for model in self.environment]
         models += [(population.name, population.instance) for population in self.populations]
         for owner, model in models:
-            receivers = {id(root) for ds in _own_data_structures(model) for root in _roots(ds)}
+            receivers = {id(root) for data_structure in _own_data_structures(model) for root in _roots(data_structure)}
             reads, writes = set(), set()
             for link in self.translator.links:
                 for receiver, provider in link_pairs(link, self.components):
@@ -702,20 +702,20 @@ class Scene:
                 self.calls[key] = self.calls.get(key, 0) + component.calls(reset=True)
 
     def keep_previous(self, data_structure, *names) -> None:
-        """Keep the values of *names* of *data_structure* (a population's, a grid) before each step: ds.previous(name)
+        """Keep the values of *names* of *data_structure* (a population's, a grid) before each step: data_structure.previous(name)
         gives them after it, aligned by id (a Summary's max_change asks for its own)."""
         known = self._previous.setdefault(id(data_structure), (data_structure, []))[1]
         known.extend(name for name in names if name not in known)
 
     def _remember_previous(self) -> None:
-        """At the start of a step: the values ds.previous gives after it (keep_previous's, the recorder's tables')."""
+        """At the start of a step: the values data_structure.previous gives after it (keep_previous's, the recorder's tables')."""
         if not self._previous_asked:
             self._previous_asked = True
             for table in getattr(self.recorder, "tables", {}).values():
-                for ds, names in getattr(table, "previous_variables", lambda scene: [])(self):
-                    self.keep_previous(ds, *names)
-        for ds, names in self._previous.values():
-            ds.remember_previous(names)
+                for data_structure, names in getattr(table, "previous_variables", lambda scene: [])(self):
+                    self.keep_previous(data_structure, *names)
+        for data_structure, names in self._previous.values():
+            data_structure.remember_previous(names)
 
     def _due(self, model) -> bool:
         """Whether *model* runs at this step: an internal hook, _run_when(scene) -> bool (a step's cadence is its
@@ -754,22 +754,22 @@ class Scene:
             found[population.name] = (population.data_structure, population.instance, list(population.components))
         for model in self.environment:
             own = []
-            for ds in _own_data_structures(model):
-                on_ds = [c for c in model.components if getattr(c, "data_structure", None) is ds]
-                shared = next((key for key, entry in found.items() if entry[0] is ds), None)
+            for data_structure in _own_data_structures(model):
+                on_ds = [c for c in model.components if getattr(c, "data_structure", None) is data_structure]
+                shared = next((key for key, entry in found.items() if entry[0] is data_structure), None)
                 if shared is not None:
                     found[shared][2].extend(on_ds)
-                elif not isinstance(ds, UnionDataStructure):
-                    own.append((ds, on_ds))
-            for k, (ds, on_ds) in enumerate(own):
-                found[type(model).__name__ + (f"_{k}" if k else "")] = (ds, model, on_ds)
+                elif not isinstance(data_structure, UnionDataStructure):
+                    own.append((data_structure, on_ds))
+            for k, (data_structure, on_ds) in enumerate(own):
+                found[type(model).__name__ + (f"_{k}" if k else "")] = (data_structure, model, on_ds)
         return found
 
     def _all_data_structures(self) -> list:
         """Every DataStructure the checkpoints save: data_structures(), then the unions."""
         found = [entry[0] for entry in self.data_structures().values()]
         for model in self.environment:
-            found += [ds for ds in _own_data_structures(model) if not any(ds is other for other in found)]
+            found += [data_structure for data_structure in _own_data_structures(model) if not any(data_structure is other for other in found)]
         return found
 
     def _stateful(self) -> dict:
@@ -781,7 +781,7 @@ class Scene:
 
     def checkpoint(self, path: str, shared: str = None) -> None:
         """
-        Save the scene to folder *path*: every DataStructure (ds.checkpoint), the checkpoint_state() of the models
+        Save the scene to folder *path*: every DataStructure (data_structure.checkpoint), the checkpoint_state() of the models
         and components defining it (e.g. an external solver's state), and the scene's time and step count. The parts
         saved once (scene.shared: a component's Shared values, the sections' templates) go to folder *shared* (by
         default path/shared; SceneRecorder's checkpoints share checkpoints/shared), each written when it is not there
@@ -796,8 +796,8 @@ class Scene:
         stores = self.__dict__.setdefault("_shared_stores", {})
         store = stores.setdefault(folder, SharedStore(folder))      # the values written already: not pickled again
         store.referenced = set()
-        for i, ds in enumerate(self._all_data_structures()):
-            ds.checkpoint(os.path.join(path, f"data_structure_{i}"), shared=store)
+        for i, data_structure in enumerate(self._all_data_structures()):
+            data_structure.checkpoint(os.path.join(path, f"data_structure_{i}"), shared=store)
         states = {key: obj.checkpoint_state() for key, obj in self._stateful().items()
                   if hasattr(obj, "checkpoint_state")}
         with open(os.path.join(path, "states.pkl"), "wb") as f:
@@ -838,8 +838,8 @@ class Scene:
         if saved["data_structures"] != len(data_structures):
             raise ValueError(f"{path} holds {saved['data_structures']} DataStructures, the scene has "
                              f"{len(data_structures)}: build it with the same arguments")
-        for i, ds in enumerate(data_structures):
-            ds.load_checkpoint(os.path.join(path, f"data_structure_{i}"), shared=store)
+        for i, data_structure in enumerate(data_structures):
+            data_structure.load_checkpoint(os.path.join(path, f"data_structure_{i}"), shared=store)
         for component in self.components:          # views, restrictions, solutions built on the old topology
             if hasattr(component, "clear_caches"):
                 component.clear_caches()
@@ -926,9 +926,9 @@ def _own_data_structures(model) -> list:
     """The DataStructures of *model*'s components, in their order, each once."""
     found = []
     for component in model.components:
-        ds = getattr(component, "data_structure", None)
-        if ds is not None and not any(ds is other for other in found):
-            found.append(ds)
+        data_structure = getattr(component, "data_structure", None)
+        if data_structure is not None and not any(data_structure is other for other in found):
+            found.append(data_structure)
     return found
 
 

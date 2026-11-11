@@ -115,10 +115,10 @@ def largest_change(tolerance=1e-4):
 
     def condition(scene):
         change = 0.
-        for key, (ds, _, _) in scene.data_structures().items():
-            if not ds.has("water_potential"):
+        for key, (data_structure, _, _) in scene.data_structures().items():
+            if not data_structure.has("water_potential"):
                 continue
-            values = np.array(ds.get("water_potential"), dtype=float).reshape(-1)
+            values = np.array(data_structure.get("water_potential"), dtype=float).reshape(-1)
             if key in previous and previous[key].shape == values.shape:
                 change = max(change, float(np.abs(values - previous[key]).max()))
             else:

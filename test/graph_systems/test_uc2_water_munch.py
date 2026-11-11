@@ -32,16 +32,16 @@ from openalea.metafspm.solve.decorator import graph_system, node_balance, graph_
 
 def _segment_chain(n_segments=3) -> MPGDataStructure:
     """MPGDataStructure of a chain of root segments (n nodes, n-1 edges), as the former 3-cell chain."""
-    g = MPG()
-    scale = g.scales.SubOrgan
-    anchor = g.scales.anchors[scale]
-    vid = g._add_system_root_at_scale(scale, label=g.labels.SubOrgan.RootSegment)
+    mtg = MPG()
+    scale = mtg.scales.SubOrgan
+    anchor = mtg.scales.anchors[scale]
+    vid = mtg._add_system_root_at_scale(scale, label=mtg.labels.SubOrgan.RootSegment)
     for _ in range(n_segments - 1):
-        vid = g.add_component_with_topo(anchor, vid, **PropsConfig(scale=scale, edge_type="<",
-                                                                 label=g.labels.SubOrgan.RootSegment))
-    g.populate_graph(scale)
-    g.convert_properties_to_arraydict()
-    return MPGDataStructure(g, from_scale=scale)
+        vid = mtg.add_component_with_topo(anchor, vid, **PropsConfig(scale=scale, edge_type="<",
+                                                                 label=mtg.labels.SubOrgan.RootSegment))
+    mtg.populate_graph(scale)
+    mtg.convert_properties_to_arraydict()
+    return MPGDataStructure(mtg, from_scale=scale)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -180,7 +180,7 @@ class WaterMunchOneStep(WaterMunchTransport):
 # ══════════════════════════════════════════════════════════════════════════════
 
 def _setup_water_model(
-    ds, xylem_pressure, phloem_pressure,
+    data_structure, xylem_pressure, phloem_pressure,
     sigma_xph, sigma_soil, soil_water_potential,
     phloem_assimilate_loading, K_xylem, K_phloem, component_class=None,
 ):
@@ -189,15 +189,15 @@ def _setup_water_model(
                          ("sigma_xph", sigma_xph), ("sigma_soil", sigma_soil),
                          ("soil_water_potential", soil_water_potential),
                          ("phloem_assimilate_loading", phloem_assimilate_loading)):
-        ds.register(name, values, location="node")
-    ds.register("K_xylem", K_xylem, location="edge")
-    ds.register("K_phloem", K_phloem, location="edge")
-    return (component_class or WaterMunchTransport)(data_structure=ds)
+        data_structure.register(name, values, location="node")
+    data_structure.register("K_xylem", K_xylem, location="edge")
+    data_structure.register("K_phloem", K_phloem, location="edge")
+    return (component_class or WaterMunchTransport)(data_structure=data_structure)
 
 
-def _default_water_model(ds, component_class=None):
+def _default_water_model(data_structure, component_class=None):
     return _setup_water_model(
-        ds, component_class=component_class,
+        data_structure, component_class=component_class,
         xylem_pressure=np.array([-0.45, -0.32, -0.24]),
         phloem_pressure=np.array([0.04, 0.07, 0.10]),
         sigma_xph=np.array([0.12, 0.09, 0.07]),
@@ -213,10 +213,10 @@ def _default_water_model(ds, component_class=None):
 # Tests
 # ══════════════════════════════════════════════════════════════════════════════
 
-def _residuals(ds):
+def _residuals(data_structure):
     """The xylem and phloem balances at the DataStructure's values, written by hand."""
-    B = ds._incidence_matrix().toarray()
-    get = lambda name: np.asarray(ds.get(name))
+    B = data_structure._incidence_matrix().toarray()
+    get = lambda name: np.asarray(data_structure.get(name))
     p_x, p_ph = get("xylem_pressure"), get("phloem_pressure")
     r_x = B @ (get("K_xylem") * (B.T @ p_x)) + get("sigma_xph") * (p_x - p_ph) \
         - get("sigma_soil") * (get("soil_water_potential") - p_x)
@@ -226,12 +226,12 @@ def _residuals(ds):
 
 def test_uc2_residual_and_munch_pressure_sign():
     """The coupled balances hold after the solve; xylem pressure is below phloem pressure."""
-    ds = _segment_chain()
-    assert (ds.n_nodes(), ds.n_edges()) == (3, 2)
-    _default_water_model(ds)()
-    for residual in _residuals(ds):
+    data_structure = _segment_chain()
+    assert (data_structure.n_nodes(), data_structure.n_edges()) == (3, 2)
+    _default_water_model(data_structure)()
+    for residual in _residuals(data_structure):
         np.testing.assert_allclose(residual, 0., atol=1e-10)
-    assert (np.asarray(ds.get("xylem_pressure")) < np.asarray(ds.get("phloem_pressure"))).all()
+    assert (np.asarray(data_structure.get("xylem_pressure")) < np.asarray(data_structure.get("phloem_pressure"))).all()
 
 
 def test_uc2_analytic_jacobian_gives_the_finite_difference_solution():
@@ -253,11 +253,11 @@ def test_uc2_analytical_limit_zero_coupling():
     Xylem decouples to (L_x + σ_s I) p_x = σ_s p0 · 1 whose unique solution
     is p_x = p0 (uniform, equal to soil potential).
     """
-    ds      = _segment_chain()
-    n       = ds.n_nodes()
+    data_structure      = _segment_chain()
+    n       = data_structure.n_nodes()
     p0      = -0.05
     model = _setup_water_model(
-        ds,
+        data_structure,
         xylem_pressure=np.full(n, p0 * 0.9),
         phloem_pressure=np.full(n, p0 * 0.9),
         sigma_xph=np.full(n, 1e-6),                       # near-zero coupling
@@ -268,4 +268,4 @@ def test_uc2_analytical_limit_zero_coupling():
         K_phloem=np.array([0.32, 0.22]),
     )
     model()
-    np.testing.assert_allclose(ds.get("xylem_pressure"), np.full(n, p0), atol=1e-4)
+    np.testing.assert_allclose(data_structure.get("xylem_pressure"), np.full(n, p0), atol=1e-4)

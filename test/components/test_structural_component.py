@@ -18,86 +18,86 @@ from growth import DOC, SEGMENT_LENGTH, CarbonProbe, RootGrowthProbe, make_chain
 
 @pytest.fixture
 def plant():
-    g, ds, vids = make_chain()
-    growth = RootGrowthProbe(data_structure=ds)
-    carbon = CarbonProbe(data_structure=ds)
-    return g, ds, vids, growth, carbon
+    mtg, data_structure, vids = make_chain()
+    growth = RootGrowthProbe(data_structure=data_structure)
+    carbon = CarbonProbe(data_structure=data_structure)
+    return mtg, data_structure, vids, growth, carbon
 
 
-def _by_vid(ds, name):
-    return dict(zip(ds.entity_ids("node").tolist(), ds.get(name).tolist()))
+def _by_vid(data_structure, name):
+    return dict(zip(data_structure.entity_ids("node").tolist(), data_structure.get(name).tolist()))
 
 
 def test_structural_steps_run_in_the_growth_rows():
-    _, ds, _ = make_chain()
-    model = RootGrowthProbe(data_structure=ds)
+    _, data_structure, _ = make_chain()
+    model = RootGrowthProbe(data_structure=data_structure)
     rows = [[f.func.name for f in group] for group in model.__dict__["_choregraphy"][1].values()]
     assert rows == [["potential_growth"], ["actual_growth", "radius"], ["segmentation"], ["distance_from_tip"]]
 
 
 def test_the_mtg_is_the_data_structure_mtg(plant):
-    g, _, _, growth, _ = plant
-    assert growth.mtg is g
+    mtg, _, _, growth, _ = plant
+    assert growth.mtg is mtg
 
 
 def test_inputs_are_flushed_to_the_mtg_before_an_mpg_style_step(plant):
-    _, ds, vids, growth, _ = plant
-    ds.set("C_hexose_root", 0.25)            # e.g. written by the carbon model, not yet on the MTG
+    _, data_structure, vids, growth, _ = plant
+    data_structure.set("C_hexose_root", 0.25)            # e.g. written by the carbon model, not yet on the MTG
     growth()
     assert growth.read_hexose == {vids[-1]: 0.25}
 
 
 def test_structural_outputs_are_re_read_after_mpg_style_steps(plant):
-    g, ds, vids, growth, _ = plant
+    mtg, data_structure, vids, growth, _ = plant
     growth()
     apex = vids[-1]
-    assert _by_vid(ds, "length")[apex] == pytest.approx(0.5 + 0.4 * 1.)       # elongated on the MTG
-    assert _by_vid(ds, "struct_mass")[apex] == pytest.approx(2. * 0.9)
-    assert _by_vid(ds, "length") == pytest.approx(dict(g.property("length")))
+    assert _by_vid(data_structure, "length")[apex] == pytest.approx(0.5 + 0.4 * 1.)       # elongated on the MTG
+    assert _by_vid(data_structure, "struct_mass")[apex] == pytest.approx(2. * 0.9)
+    assert _by_vid(data_structure, "length") == pytest.approx(dict(mtg.property("length")))
 
 
 def test_array_style_outputs_reach_the_mtg_at_the_end_of_the_call(plant):
-    g, ds, _, growth, _ = plant
+    mtg, data_structure, _, growth, _ = plant
     growth()
-    np.testing.assert_allclose(ds.get("radius"), 1.1)
-    np.testing.assert_allclose(list(dict(g.property("radius")).values()), 1.1)
+    np.testing.assert_allclose(data_structure.get("radius"), 1.1)
+    np.testing.assert_allclose(list(dict(mtg.property("radius")).values()), 1.1)
 
 
 def test_the_topology_is_updated_only_when_the_mtg_changed(plant):
-    _, ds, vids, growth, carbon = plant
+    _, data_structure, vids, growth, carbon = plant
     growth()                                   # apex 0.9: no segmentation
-    assert getattr(growth, "topology_updates", 0) == 0 and ds.n_nodes() == 3
+    assert getattr(growth, "topology_updates", 0) == 0 and data_structure.n_nodes() == 3
     carbon()                                   # C_hexose_root 1 -> 0.5
     growth()                                   # apex 0.9 + 0.2 = 1.1: segmented
-    assert growth.topology_updates == 1 and ds.n_nodes() == 4
-    new_apex = int(ds.entity_ids("node")[ds.tips()[0]])
+    assert growth.topology_updates == 1 and data_structure.n_nodes() == 4
+    new_apex = int(data_structure.entity_ids("node")[data_structure.tips()[0]])
     assert new_apex not in vids
-    lengths = _by_vid(ds, "length")
+    lengths = _by_vid(data_structure, "length")
     assert lengths[vids[-1]] == pytest.approx(SEGMENT_LENGTH) and lengths[new_apex] == pytest.approx(0.1)
 
 
 def test_functional_components_follow_the_new_topology(plant):
-    _, ds, vids, growth, carbon = plant
+    _, data_structure, vids, growth, carbon = plant
     growth(); carbon(); growth()
     assert carbon._graph_view.n_nodes == 4
-    new_apex = int(ds.entity_ids("node")[ds.tips()[0]])
-    assert _by_vid(ds, "C_hexose_root")[new_apex] == pytest.approx(0.5)   # owner's on_grow="inherit"
+    new_apex = int(data_structure.entity_ids("node")[data_structure.tips()[0]])
+    assert _by_vid(data_structure, "C_hexose_root")[new_apex] == pytest.approx(0.5)   # owner's on_grow="inherit"
     carbon()
-    np.testing.assert_allclose(ds.get("C_hexose_root"), 0.25)
+    np.testing.assert_allclose(data_structure.get("C_hexose_root"), 0.25)
 
 
 def test_post_segmentation_sees_the_new_structure(plant):
-    _, ds, vids, growth, carbon = plant
+    _, data_structure, vids, growth, carbon = plant
     growth(); carbon(); growth()
-    distance = _by_vid(ds, "distance_from_tip")
+    distance = _by_vid(data_structure, "distance_from_tip")
     assert distance[vids[0]] == pytest.approx(2. + 0.1)                 # two segments and the new apex below
-    assert distance[int(ds.entity_ids("node")[ds.tips()[0]])] == 0.
+    assert distance[int(data_structure.entity_ids("node")[data_structure.tips()[0]])] == 0.
 
 
 def test_the_owner_of_a_variable_sets_its_growth_policy(plant):
     """RootGrowthProbe reads C_hexose_root first; CarbonProbe owns it with on_grow="inherit"."""
-    _, ds, _, _, _ = plant
-    meta = ds._variable_meta()["C_hexose_root"]
+    _, data_structure, _, _, _ = plant
+    meta = data_structure._variable_meta()["C_hexose_root"]
     assert (meta["role"], meta["on_grow"], meta["kind"]) == ("state_variable", "inherit",
                                                                       "massic_concentration")
 
@@ -113,13 +113,13 @@ class _SegmentsProbe(RootGrowthProbe):
 
 
 def test_default_triangles_are_the_segments_cylinders():
-    _, ds, _ = make_chain()
+    _, data_structure, _ = make_chain()
     with pytest.raises(NotImplementedError):
-        RootGrowthProbe(data_structure=ds).triangles()
-    _, ds, _ = make_chain()
-    model = _SegmentsProbe(data_structure=ds)
-    ds.set("z1", np.array([0., -1., -2.]))
-    ds.set("z2", np.array([-1., -2., -2.]))                     # the last one of zero length: no triangles
+        RootGrowthProbe(data_structure=data_structure).triangles()
+    _, data_structure, _ = make_chain()
+    model = _SegmentsProbe(data_structure=data_structure)
+    data_structure.set("z1", np.array([0., -1., -2.]))
+    data_structure.set("z2", np.array([-1., -2., -2.]))                     # the last one of zero length: no triangles
     triangles = model.triangles()
     assert triangles.owner.tolist() == [0] * 8 + [1] * 8
     assert triangles.vertices[:8, :, 2].max() == pytest.approx(0.)
@@ -138,27 +138,27 @@ class _DrawnProbe(_SegmentsProbe):
 
 
 def _segments(probe=None):
-    _, ds, _ = make_chain()
-    model = (probe or _SegmentsProbe)(data_structure=ds)
-    ds.set("z1", np.array([0., -1., -2.]))
-    ds.set("z2", np.array([-1., -2., -2.]))
-    return ds, model
+    _, data_structure, _ = make_chain()
+    model = (probe or _SegmentsProbe)(data_structure=data_structure)
+    data_structure.set("z1", np.array([0., -1., -2.]))
+    data_structure.set("z2", np.array([-1., -2., -2.]))
+    return data_structure, model
 
 
 def test_a_data_structure_gives_its_structural_components_triangles():
-    """ds.triangles(), for light models given DataStructures: its structural component's, the one drawing its
+    """data_structure.triangles(), for light models given DataStructures: its structural component's, the one drawing its
     elements itself before the segments' default, the one set explicitly first."""
-    ds, model = _segments()
-    assert ds.geometry_provider is model
-    np.testing.assert_array_equal(ds.triangles().vertices, model.triangles().vertices)
-    assert ds.triangles(where=np.array([False, True, True])).owner.tolist() == [1] * 8
-    drawn = _DrawnProbe(data_structure=ds)
-    assert ds.geometry_provider is drawn and ds.triangles().owner.tolist() == [0, 1, 2]
-    _DrawnProbe(data_structure=ds)
+    data_structure, model = _segments()
+    assert data_structure.geometry_provider is model
+    np.testing.assert_array_equal(data_structure.triangles().vertices, model.triangles().vertices)
+    assert data_structure.triangles(where=np.array([False, True, True])).owner.tolist() == [1] * 8
+    drawn = _DrawnProbe(data_structure=data_structure)
+    assert data_structure.geometry_provider is drawn and data_structure.triangles().owner.tolist() == [0, 1, 2]
+    _DrawnProbe(data_structure=data_structure)
     with pytest.raises(ValueError):                             # two drawings: which one is ambiguous
-        ds.triangles()
-    ds.geometry_provider = model
-    assert len(ds.triangles()) == 16
+        data_structure.triangles()
+    data_structure.geometry_provider = model
+    assert len(data_structure.triangles()) == 16
     _, bare, _ = make_chain()
     with pytest.raises(ValueError):
         bare.triangles()
@@ -176,22 +176,22 @@ def test_a_union_gives_its_parts_triangles_with_its_node_indices():
 
 
 def test_labels_and_triangles_of_a_mask():
-    """ds.labels(): each node's MTG label name (or its complex's); a union's in its order. ds.triangles("name"):
+    """data_structure.labels(): each node's MTG label name (or its complex's); a union's in its order. data_structure.triangles("name"):
     those of a mask, every node's when the DataStructure has no such mask."""
     from openalea.metafspm.coupling.cross import UnionDataStructure
-    ds, _ = _segments()
-    assert ds.labels().tolist() == ["RootSegment"] * 3
-    assert len(ds.triangles("planted")) == 16                          # no such mask: all
-    ds.define_mask("deep", {"z1": "<0"})
-    assert ds.triangles("deep").owner.tolist() == [1] * 8
+    data_structure, _ = _segments()
+    assert data_structure.labels().tolist() == ["RootSegment"] * 3
+    assert len(data_structure.triangles("planted")) == 16                          # no such mask: all
+    data_structure.define_mask("deep", {"z1": "<0"})
+    assert data_structure.triangles("deep").owner.tolist() == [1] * 8
     other, _ = _segments()
-    union = UnionDataStructure([ds, other])
+    union = UnionDataStructure([data_structure, other])
     assert union.labels().tolist() == ["RootSegment"] * 6
     assert union.triangles("deep").owner.tolist() == [1] * 8 + [3] * 8 + [4] * 8     # the other part: no mask
 
 
 def test_labels_of_a_coarse_scale():
-    """ds.labels(location=scale): each node's entity's label, or one per entity (per_node=False)."""
+    """data_structure.labels(location=scale): each node's entity's label, or one per entity (per_node=False)."""
     from growth import RootGrowthProbe
     from scene_doubles import doubles_planting
     from openalea.metafspm.scene.scene import Scene
@@ -201,16 +201,16 @@ def test_labels_of_a_coarse_scale():
 
         parts = {"growth": RootGrowthProbe}
         schedule = ()
-    ds = Scene(doubles_planting([Roots]), time_step=3600.).populations[0].data_structure
-    assert ds.labels(location="Organ").tolist() == ["RootInternode"] * ds.n_nodes()
-    assert ds.labels(location="Organ", per_node=False).tolist() == ["RootInternode"]
-    assert ds.labels(location="Axis", per_node=False).tolist() == ["Root"]
+    data_structure = Scene(doubles_planting([Roots]), time_step=3600.).populations[0].data_structure
+    assert data_structure.labels(location="Organ").tolist() == ["RootInternode"] * data_structure.n_nodes()
+    assert data_structure.labels(location="Organ", per_node=False).tolist() == ["RootInternode"]
+    assert data_structure.labels(location="Axis", per_node=False).tolist() == ["Root"]
 
 
 def test_a_component_whose_geometry_is_never_drawn_warns():
     """On an anatomy-mode DataStructure, the frames and the light models draw the view at its from_scale
-    (ds.at("SubOrgan").triangles()): a StructuralComponent working at a coarser scale (its finest declaration at
-    Organ) registers its geometry on ds.at("Organ"), never drawn, and warns, naming itself and that view; one working
+    (data_structure.at("SubOrgan").triangles()): a StructuralComponent working at a coarser scale (its finest declaration at
+    Organ) registers its geometry on data_structure.at("Organ"), never drawn, and warns, naming itself and that view; one working
     at the SubOrgans, or at the Compartments (an anatomy's: not drawn by design), does not."""
     import warnings
     from openalea.metafspm.coupling.component import StructuralComponent
@@ -229,48 +229,48 @@ def test_a_component_whose_geometry_is_never_drawn_warns():
     class AtCompartments(StructuralComponent):
         water: float = state_variable(**DOC, default=0., scale=scales.Compartment, location="node")
 
-    g, _, _ = make_rooted_anatomy(n_segments=3)
-    ds = MPGDataStructure(g, from_scale=g.scales.SubOrgan, nodes="Compartment", wiring=wiring(g))
-    ds.simulation_time_step = 1
-    with pytest.warns(UserWarning, match=r"AtOrgans works at the Organ scale .* ds\.at\('Organ'\), which the frames"):
-        AtOrgans(data_structure=ds, time_step=1)
+    mtg, _, _ = make_rooted_anatomy(n_segments=3)
+    data_structure = MPGDataStructure(mtg, from_scale=mtg.scales.SubOrgan, nodes="Compartment", wiring=wiring(mtg))
+    data_structure.simulation_time_step = 1
+    with pytest.warns(UserWarning, match=r"AtOrgans works at the Organ scale .* data_structure\.at\('Organ'\), which the frames"):
+        AtOrgans(data_structure=data_structure, time_step=1)
     with warnings.catch_warnings():
         warnings.simplefilter("error")
-        AtElements(data_structure=ds, time_step=1)
-        AtCompartments(data_structure=ds, time_step=1)
+        AtElements(data_structure=data_structure, time_step=1)
+        AtCompartments(data_structure=data_structure, time_step=1)
 
 
 def test_the_geometry_of_a_data_structure_in_a_domain():
-    """ds.geometry: each element's area fraction and length fraction above the soil surface (ds.soil_surface, the
+    """data_structure.geometry: each element's area fraction and length fraction above the soil surface (data_structure.soil_surface, the
     Scene's), the centre of its part there, and a geometric variable (derive_geometry) recomputed when the geometry
     changes (the segment ends written, or the provider called)."""
     from openalea.metafspm.coupling.geometry import CentreIn, FractionIn
-    ds, model = _segments()                                      # z from 0 to -1, -1 to -2, the last of no length
-    ds.set("z1", np.array([0.5, -1., -2.]))                      # the first one half above 0
-    np.testing.assert_allclose(ds.geometry.fraction_in("air", by="length"), [1. / 3., 0., 0.])
-    np.testing.assert_allclose(ds.geometry.fraction_in("soil", by="length"), [2. / 3., 1., 1.])
-    by_area = ds.geometry.fraction_in("air")
+    data_structure, model = _segments()                                      # z from 0 to -1, -1 to -2, the last of no length
+    data_structure.set("z1", np.array([0.5, -1., -2.]))                      # the first one half above 0
+    np.testing.assert_allclose(data_structure.geometry.fraction_in("air", by="length"), [1. / 3., 0., 0.])
+    np.testing.assert_allclose(data_structure.geometry.fraction_in("soil", by="length"), [2. / 3., 1., 1.])
+    by_area = data_structure.geometry.fraction_in("air")
     # (a slim cylinder: its sides and its caps, the cap above the soil)
     triangles = model.triangles()
     first = triangles.owner == 0
-    expected = (triangles.areas()[first] * triangles.fraction_in(ds.geometry.domain("air"))[first]).sum() / \
+    expected = (triangles.areas()[first] * triangles.fraction_in(data_structure.geometry.domain("air"))[first]).sum() / \
         triangles.areas()[first].sum()
     assert 1. / 3. < by_area[0] == pytest.approx(expected, rel=1e-12) and by_area[1] == 0. and np.isnan(by_area[2])
-    assert ds.geometry.fraction_in("air", empty=0.)[2] == 0.
-    np.testing.assert_allclose(ds.geometry.centre_in("air", by="length")[0, 2], 0.25)
-    assert 0.25 < ds.geometry.centre_in("air")[0, 2] < 0.5                  # the cap at the top
-    assert np.isnan(ds.geometry.centre_in("air")[1]).all()
-    ds.soil_surface = -1.5                                       # the soil lower: the second one half in the air
-    np.testing.assert_allclose(ds.geometry.fraction_in("air", by="length"), [1., 0.5, 0.])
-    ds.soil_surface = 0.
+    assert data_structure.geometry.fraction_in("air", empty=0.)[2] == 0.
+    np.testing.assert_allclose(data_structure.geometry.centre_in("air", by="length")[0, 2], 0.25)
+    assert 0.25 < data_structure.geometry.centre_in("air")[0, 2] < 0.5                  # the cap at the top
+    assert np.isnan(data_structure.geometry.centre_in("air")[1]).all()
+    data_structure.soil_surface = -1.5                                       # the soil lower: the second one half in the air
+    np.testing.assert_allclose(data_structure.geometry.fraction_in("air", by="length"), [1., 0.5, 0.])
+    data_structure.soil_surface = 0.
     with pytest.raises(KeyError):                                # the segments' cylinders carry no attribute
-        ds.geometry.fraction_in("air", weight="green")
-    values = ds.derive_geometry("emerged", FractionIn("air", by="length"))
+        data_structure.geometry.fraction_in("air", weight="green")
+    values = data_structure.derive_geometry("emerged", FractionIn("air", by="length"))
     np.testing.assert_allclose(values, [1. / 3., 0., 0.])
-    centre = ds.derive_geometry("height", CentreIn("air", by="length"))
+    centre = data_structure.derive_geometry("height", CentreIn("air", by="length"))
     assert centre[0] == pytest.approx(0.25, rel=1e-9) and np.isnan(centre[1])
-    ds.set("z1", np.array([1., -1., -2.]))                       # the ends written: recomputed when read
-    np.testing.assert_allclose(ds.get("emerged"), [0.5, 0., 0.])
-    assert ds.get("height")[0] == pytest.approx(0.5, rel=1e-9)
+    data_structure.set("z1", np.array([1., -1., -2.]))                       # the ends written: recomputed when read
+    np.testing.assert_allclose(data_structure.get("emerged"), [0.5, 0., 0.])
+    assert data_structure.get("height")[0] == pytest.approx(0.5, rel=1e-9)
     with pytest.raises(ValueError):
-        ds.set("emerged", 0.)                                    # derived: not written
+        data_structure.set("emerged", 0.)                                    # derived: not written

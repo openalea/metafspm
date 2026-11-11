@@ -34,15 +34,15 @@ class Stem(StructuralComponent):
     display_z2: float = display_end("z2")
 
     @classmethod
-    def initiate_plant(cls, g, plant, scenario):
+    def initiate_plant(cls, mtg, plant, scenario):
         p = cls.plant_parameters(scenario)
-        x, y, z = (float(g.property(name)[plant]) for name in ("x", "y", "z"))
+        x, y, z = (float(mtg.property(name)[plant]) for name in ("x", "y", "z"))
         half = p["grain_length"] / 2
-        element = g.add_element("Seed", complex=g.add_organ(plant, "StemInternode"), direction=(0., 0., 0.),
+        element = mtg.add_element("Seed", complex=mtg.add_organ(plant, "StemInternode"), direction=(0., 0., 0.),
                                 length=p["grain_length"], radius=0.001,
                                 display=((x - half, y, z), (x + half, y, z)))
         for _ in range(p["elements"]):
-            element = g.add_element("StemElement", parent=element, direction=(0., 0., 1.),
+            element = mtg.add_element("StemElement", parent=element, direction=(0., 0., 1.),
                                     length=p["element_length"], radius=0.0005)
 
 
@@ -70,10 +70,10 @@ class Ends(FunctionalComponent):
 
 def _data_structure(scenario=None, depth=0.03):
     table = planting([Planting(x=0.1, y=0.2, depth=depth)], Stem, scenario or {})
-    g, _ = _build_population(table, initiators=(Stem,), soil_surface=0.)
-    g.populate_graph(g.scales.SubOrgan)
-    g.convert_properties_to_arraydict()
-    return MPGDataStructure(g, from_scale=g.scales.SubOrgan)
+    mtg, _ = _build_population(table, initiators=(Stem,), soil_surface=0.)
+    mtg.populate_graph(mtg.scales.SubOrgan)
+    mtg.convert_properties_to_arraydict()
+    return MPGDataStructure(mtg, from_scale=mtg.scales.SubOrgan)
 
 
 def test_the_plant_parameters_are_the_scenario_over_the_defaults_within_their_bounds():
@@ -88,76 +88,76 @@ def test_the_plant_parameters_are_the_scenario_over_the_defaults_within_their_bo
 
 
 def test_the_builders_place_the_elements_topologically_from_the_planting():
-    ds = _data_structure({"elements": 3})
-    Ends(data_structure=ds)
-    g = ds.structure
-    seed = [v for v in g.vertices(scale=g.scales.SubOrgan) if g.label(v) == g.labels.SubOrgan.Seed]
-    assert len(seed) == 1 and g.label(g.complex(seed[0])) == g.labels.Organ.StemInternode
-    assert g.label(g.complex_at_scale(seed[0], g.scales.Axis)) == g.labels.Axis.Shoot
-    order = np.argsort(np.asarray(ds.get("z2")) + np.where(np.asarray(ds.labels()) == "Seed", -1., 0.))
-    start = np.column_stack([ds.get(name) for name in ("x1", "y1", "z1")])[order]       # the seed, then upwards
-    end = np.column_stack([ds.get(name) for name in ("x2", "y2", "z2")])[order]
+    data_structure = _data_structure({"elements": 3})
+    Ends(data_structure=data_structure)
+    mtg = data_structure.structure
+    seed = [v for v in mtg.vertices(scale=mtg.scales.SubOrgan) if mtg.label(v) == mtg.labels.SubOrgan.Seed]
+    assert len(seed) == 1 and mtg.label(mtg.complex(seed[0])) == mtg.labels.Organ.StemInternode
+    assert mtg.label(mtg.complex_at_scale(seed[0], mtg.scales.Axis)) == mtg.labels.Axis.Shoot
+    order = np.argsort(np.asarray(data_structure.get("z2")) + np.where(np.asarray(data_structure.labels()) == "Seed", -1., 0.))
+    start = np.column_stack([data_structure.get(name) for name in ("x1", "y1", "z1")])[order]       # the seed, then upwards
+    end = np.column_stack([data_structure.get(name) for name in ("x2", "y2", "z2")])[order]
     np.testing.assert_allclose(start[0], [0.1, 0.2, -0.03])
     np.testing.assert_allclose(end[0], start[0])                      # the seed: a point
     np.testing.assert_allclose(end[1:, 2], -0.03 + 0.01 * np.arange(1, 4), atol=1e-15)
     np.testing.assert_allclose(start[1:], end[:-1])                  # each base at its parent's end
-    drawn_start, drawn_end = (ends[order] for ends in drawn_ends(ds))
+    drawn_start, drawn_end = (ends[order] for ends in drawn_ends(data_structure))
     np.testing.assert_allclose(drawn_start[0], [0.097, 0.2, -0.03])
     np.testing.assert_allclose(drawn_end[0], [0.103, 0.2, -0.03])
     np.testing.assert_allclose(drawn_start[1:], start[1:])           # NaN display ends: at their topological place
 
 
 def test_the_default_cylinders_draw_the_display_ends_without_a_provider():
-    ds = _data_structure()
-    Ends(data_structure=ds)
-    triangles = ds.triangles()                                       # no structural component: the DataStructure's
+    data_structure = _data_structure()
+    Ends(data_structure=data_structure)
+    triangles = data_structure.triangles()                                       # no structural component: the DataStructure's
     assert set(triangles.owner.tolist()) == {0, 1, 2}
-    seed = int(np.flatnonzero(np.asarray(ds.labels()) == "Seed")[0])
+    seed = int(np.flatnonzero(np.asarray(data_structure.labels()) == "Seed")[0])
     grain = triangles.vertices[triangles.owner == seed].reshape(-1, 3)
     np.testing.assert_allclose([grain[:, 0].min(), grain[:, 0].max()], [0.097, 0.103], atol=1e-12)
-    assert Stem(data_structure=ds).triangles().vertices.shape == triangles.vertices.shape
+    assert Stem(data_structure=data_structure).triangles().vertices.shape == triangles.vertices.shape
 
 
 @dataclass
 class NodeAndRoot(StructuralComponent):
     """A seed, then a phytomer: its internode (a HiddenElement, then a StemElement '<', both vertical), its sheath '+'
-    on the internode's top, and a nodal root '+' on the phytomer's bearer (ds.bearer), heading down."""
+    on the internode's top, and a nodal root '+' on the phytomer's bearer (data_structure.bearer), heading down."""
 
     @classmethod
-    def initiate_plant(cls, g, plant, scenario):
-        seed = g.add_element("Seed", complex=g.add_organ(plant, "StemInternode"), direction=(0., 0., 0.))
-        internode = g.add_organ(g.complex_at_scale(seed, g.scales.GrowthUnit), "StemInternode")
-        hidden = g.add_element("HiddenElement", complex=internode, parent=seed, edge="<", direction=(0., 0., 1.),
+    def initiate_plant(cls, mtg, plant, scenario):
+        seed = mtg.add_element("Seed", complex=mtg.add_organ(plant, "StemInternode"), direction=(0., 0., 0.))
+        internode = mtg.add_organ(mtg.complex_at_scale(seed, mtg.scales.GrowthUnit), "StemInternode")
+        hidden = mtg.add_element("HiddenElement", complex=internode, parent=seed, edge="<", direction=(0., 0., 1.),
                                length=0.01)
-        top = g.add_element("StemElement", parent=hidden, direction=(0., 0., 1.), length=0.02)
-        g.add_element("StemElement", complex=g.add_organ(g.complex(internode), "Sheath"), parent=top,
+        top = mtg.add_element("StemElement", parent=hidden, direction=(0., 0., 1.), length=0.02)
+        mtg.add_element("StemElement", complex=mtg.add_organ(mtg.complex(internode), "Sheath"), parent=top,
                       direction=(0., 0., 1.), length=0.03)
 
 
 def test_a_phytomer_bears_on_its_node_s_element():
-    """ds.bearer: a phytomer's element at its node, the last along its axis from its first (its internode's top, not
-    its sheath '+' on it), whose end is ds.position(Phytomer, at="end"); a root grown on it starts at that node, the
-    plant's elements connected (ds.check_connectivity)."""
+    """data_structure.bearer: a phytomer's element at its node, the last along its axis from its first (its internode's top, not
+    its sheath '+' on it), whose end is data_structure.position(Phytomer, at="end"); a root grown on it starts at that node, the
+    plant's elements connected (data_structure.check_connectivity)."""
     table = planting([Planting(x=0.1, y=0.2, depth=0.03)], NodeAndRoot, {})
-    g, _ = _build_population(table, initiators=(NodeAndRoot,), soil_surface=0.)
-    labels = g.labels.SubOrgan
-    (hidden,) = [v for v in g.vertices(scale=g.scales.SubOrgan) if g.label(v) == labels.HiddenElement]
-    top = next(v for v in g.children(hidden) if g.edge_type(v) == "<")
-    phytomer = g.complex_at_scale(hidden, g.scales.Phytomer)
-    g.add_element("RootSegment", complex=g.add_organ(g.complex_at_scale(hidden, g.scales.Plant), "RootInternode",
+    mtg, _ = _build_population(table, initiators=(NodeAndRoot,), soil_surface=0.)
+    labels = mtg.labels.SubOrgan
+    (hidden,) = [v for v in mtg.vertices(scale=mtg.scales.SubOrgan) if mtg.label(v) == labels.HiddenElement]
+    top = next(v for v in mtg.children(hidden) if mtg.edge_type(v) == "<")
+    phytomer = mtg.complex_at_scale(hidden, mtg.scales.Phytomer)
+    mtg.add_element("RootSegment", complex=mtg.add_organ(mtg.complex_at_scale(hidden, mtg.scales.Plant), "RootInternode",
                                                      complex_label="Root"),
                   parent=int(top), direction=(0., 0., -1.), length=0.01)
-    g.populate_graph(g.scales.SubOrgan)
-    g.convert_properties_to_arraydict()
-    ds = MPGDataStructure(g, from_scale=g.scales.SubOrgan)
-    Ends(data_structure=ds)
-    assert ds.bearer("Phytomer", [phytomer]).tolist() == [top]
-    node = ds.position("Phytomer", at="end")[ds.index_of([phytomer], location="Phytomer")][0]
+    mtg.populate_graph(mtg.scales.SubOrgan)
+    mtg.convert_properties_to_arraydict()
+    data_structure = MPGDataStructure(mtg, from_scale=mtg.scales.SubOrgan)
+    Ends(data_structure=data_structure)
+    assert data_structure.bearer("Phytomer", [phytomer]).tolist() == [top]
+    node = data_structure.position("Phytomer", at="end")[data_structure.index_of([phytomer], location="Phytomer")][0]
     np.testing.assert_allclose(node, [0.1, 0.2, -0.03 + 0.03], atol=1e-15)    # the internode's top
-    np.testing.assert_allclose(ds.position("Phytomer", at="base")[ds.index_of([phytomer], location="Phytomer")][0],
+    np.testing.assert_allclose(data_structure.position("Phytomer", at="base")[data_structure.index_of([phytomer], location="Phytomer")][0],
                                [0.1, 0.2, -0.03], atol=1e-15)                   # on the seed
-    (root,) = [v for v in g.vertices(scale=g.scales.SubOrgan) if g.label(v) == labels.RootSegment]
-    assert g.parent(root) == top and g.edge_type(root) == "+"
-    start = [float(np.asarray(ds.get(name))[ds.index_of(root)]) for name in ("x1", "y1", "z1")]
+    (root,) = [v for v in mtg.vertices(scale=mtg.scales.SubOrgan) if mtg.label(v) == labels.RootSegment]
+    assert mtg.parent(root) == top and mtg.edge_type(root) == "+"
+    start = [float(np.asarray(data_structure.get(name))[data_structure.index_of(root)]) for name in ("x1", "y1", "z1")]
     np.testing.assert_allclose(start, node, atol=1e-15)
-    assert ds.check_connectivity(tolerance=1e-15).empty
+    assert data_structure.check_connectivity(tolerance=1e-15).empty

@@ -28,17 +28,17 @@ def _table(scenarios):
 def _run(scenarios, steps=3):
     """Grow and feed a population; returns {plant index: (sorted lengths, sorted C_hexose_root)}."""
     table = _table(scenarios)
-    g, plants = _build_population(table, initiators=(RootGrowthProbe,))
-    g.populate_graph(g.scales.SubOrgan)
-    g.convert_properties_to_arraydict()
-    ds = MPGDataStructure(g, from_scale=g.scales.SubOrgan)
-    growth, carbon = RootGrowthProbe(data_structure=ds), CarbonProbe(data_structure=ds)
-    _apply_plant_scenarios(ds, (growth, carbon), table, plants)
+    mtg, plants = _build_population(table, initiators=(RootGrowthProbe,))
+    mtg.populate_graph(mtg.scales.SubOrgan)
+    mtg.convert_properties_to_arraydict()
+    data_structure = MPGDataStructure(mtg, from_scale=mtg.scales.SubOrgan)
+    growth, carbon = RootGrowthProbe(data_structure=data_structure), CarbonProbe(data_structure=data_structure)
+    _apply_plant_scenarios(data_structure, (growth, carbon), table, plants)
     for _ in range(steps):
         growth()
         carbon()
-    owner = ds.entity_ids("Plant")[ds.owner("Plant")]
-    return {i: (sorted(ds.get("length")[owner == plant].tolist()), sorted(ds.get("C_hexose_root")[owner == plant].tolist()))
+    owner = data_structure.entity_ids("Plant")[data_structure.owner("Plant")]
+    return {i: (sorted(data_structure.get("length")[owner == plant].tolist()), sorted(data_structure.get("C_hexose_root")[owner == plant].tolist()))
             for i, plant in enumerate(plants)}
 
 
@@ -59,13 +59,13 @@ def test_per_plant_scenarios_give_each_plant_its_own_parameters():
 
 
 def test_initial_structures_follow_the_plant_scenarios():
-    g, plants = _build_population(_table([{"n_segments": 2}, {"n_segments": 5}]),
+    mtg, plants = _build_population(_table([{"n_segments": 2}, {"n_segments": 5}]),
                                  initiators=(RootGrowthProbe,))
-    counts = [sum(1 for v in g.vertices(scale=g.scales.SubOrgan) if g.complex_at_scale(v, g.scales.Plant) == p)
+    counts = [sum(1 for v in mtg.vertices(scale=mtg.scales.SubOrgan) if mtg.complex_at_scale(v, mtg.scales.Plant) == p)
               for p in plants]
     assert counts == [2, 5]
-    assert g.property("x1")[min(v for v in g.vertices(scale=g.scales.SubOrgan)
-                                if g.complex_at_scale(v, g.scales.Plant) == plants[1])] == pytest.approx(0.1)
+    assert mtg.property("x1")[min(v for v in mtg.vertices(scale=mtg.scales.SubOrgan)
+                                if mtg.complex_at_scale(v, mtg.scales.Plant) == plants[1])] == pytest.approx(0.1)
 
 
 def test_a_sown_stand():
@@ -139,40 +139,40 @@ class ReadsSelf(FunctionalComponent):
 
 def _two_plants():
     table = _table([{}, {}])
-    g, plants = _build_population(table, initiators=(RootGrowthProbe,))
-    g.populate_graph(g.scales.SubOrgan)
-    g.convert_properties_to_arraydict()
-    return MPGDataStructure(g, from_scale=g.scales.SubOrgan), plants
+    mtg, plants = _build_population(table, initiators=(RootGrowthProbe,))
+    mtg.populate_graph(mtg.scales.SubOrgan)
+    mtg.convert_properties_to_arraydict()
+    return MPGDataStructure(mtg, from_scale=mtg.scales.SubOrgan), plants
 
 
 def test_parameters_are_stored_per_plant_and_passed_as_arguments():
-    ds, plants = _two_plants()
-    model = Exudation(data_structure=ds)
-    assert ds.location("k") == "Plant"
+    data_structure, plants = _two_plants()
+    model = Exudation(data_structure=data_structure)
+    assert data_structure.location("k") == "Plant"
     assert model.k == 0.1                                                     # homogeneous: one value
     model()
-    np.testing.assert_allclose(ds.get("exudation"), 0.1)
-    ds.set("k", [0.1, 0.3])                                                   # heterogeneous
+    np.testing.assert_allclose(data_structure.get("exudation"), 0.1)
+    data_structure.set("k", [0.1, 0.3])                                                   # heterogeneous
     model()
-    owner = ds.entity_ids("Plant")[ds.owner("Plant")]
-    np.testing.assert_allclose(ds.get("exudation"), np.where(owner == plants[0], 0.1, 0.3))
+    owner = data_structure.entity_ids("Plant")[data_structure.owner("Plant")]
+    np.testing.assert_allclose(data_structure.get("exudation"), np.where(owner == plants[0], 0.1, 0.3))
     np.testing.assert_allclose(model.k, [0.1, 0.3])                          # outside equations: per-plant values
     model.k = 0.2                                                             # setting: every plant
-    np.testing.assert_array_equal(ds.get("k"), 0.2)
+    np.testing.assert_array_equal(data_structure.get("k"), 0.2)
 
 
 def test_reading_a_parameter_through_self_inside_a_step_is_refused():
-    ds, _ = _two_plants()
-    model = ReadsSelf(data_structure=ds)
+    data_structure, _ = _two_plants()
+    model = ReadsSelf(data_structure=data_structure)
     with pytest.raises(AttributeError, match="take it as an argument of the step or equation \\(k\\)"):
         model()
 
 
 def test_homogeneous_parameters_are_zero_stride_read_only_views():
-    ds, _ = _two_plants()
-    Exudation(data_structure=ds)
-    view = ds.parameter_view("k", "node")
-    assert view.shape == (ds.n_nodes(),) and view.strides == (0,) and not view.flags.writeable
+    data_structure, _ = _two_plants()
+    Exudation(data_structure=data_structure)
+    view = data_structure.parameter_view("k", "node")
+    assert view.shape == (data_structure.n_nodes(),) and view.strides == (0,) and not view.flags.writeable
 
 
 @njit(cache=True)
@@ -191,14 +191,14 @@ class CompiledExudation(Exudation):
 
 
 def test_numba_steps_take_homogeneous_and_heterogeneous_parameters():
-    ds, plants = _two_plants()
-    model = CompiledExudation(data_structure=ds)
+    data_structure, plants = _two_plants()
+    model = CompiledExudation(data_structure=data_structure)
     model()
-    np.testing.assert_allclose(ds.get("exudation"), 0.1)
-    ds.set("k", [0.1, 0.3])
+    np.testing.assert_allclose(data_structure.get("exudation"), 0.1)
+    data_structure.set("k", [0.1, 0.3])
     model()
-    owner = ds.entity_ids("Plant")[ds.owner("Plant")]
-    np.testing.assert_allclose(ds.get("exudation"), np.where(owner == plants[0], 0.1, 0.3))
+    owner = data_structure.entity_ids("Plant")[data_structure.owner("Plant")]
+    np.testing.assert_allclose(data_structure.get("exudation"), np.where(owner == plants[0], 0.1, 0.3))
 
 
 @dataclass

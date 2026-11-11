@@ -29,7 +29,7 @@ def _tissue_label(labels, tissue):
             STOMATAL_CAVITY: labels.Layer.StomatalCavity}[tissue]
 
 
-def build_seedling(g, plant, parameters):
+def build_seedling(mtg, plant, parameters):
     """
     The seedling of *plant*: a shoot of n_phytomers (a stem element and a leaf of n_leaf_elements each) and
     n_root_axes first-order roots from the collar: a nearly vertical pivot with two laterals (on its segments
@@ -43,9 +43,9 @@ def build_seedling(g, plant, parameters):
              pivot_emergence_angle=80., pivot_gravitropism=0.8, n_pivot_segments=8,
              pivot_lateral_ranks=(2, 5))
     p.update({key: value for key, value in parameters.items() if key in p})
-    s, labels = g.scales, g.labels
-    x0, y0, z0 = (float(g.view(name)[plant]) for name in ("x", "y", "z"))
-    rotation = float(g.view("rotation").get(plant, 0.))
+    s, labels = mtg.scales, mtg.labels
+    x0, y0, z0 = (float(mtg.view(name)[plant]) for name in ("x", "y", "z"))
+    rotation = float(mtg.view("rotation").get(plant, 0.))
     segments = {}                                                # vid -> (organ, length, start, end)
 
     def segment(vid, organ, length, start, direction):
@@ -54,32 +54,32 @@ def build_seedling(g, plant, parameters):
         return end
 
     # shoot
-    shoot = g.add_component(plant, **PropsConfig(scale=s.Axis, edge_type='/', label=labels.Axis.Shoot))
-    unit = g.add_component(shoot, **PropsConfig(scale=s.GrowthUnit, edge_type='/', label=labels.GrowthUnit.Shoot))
+    shoot = mtg.add_component(plant, **PropsConfig(scale=s.Axis, edge_type='/', label=labels.Axis.Shoot))
+    unit = mtg.add_component(shoot, **PropsConfig(scale=s.GrowthUnit, edge_type='/', label=labels.GrowthUnit.Shoot))
     top, phytomer, stem_element, collar = (x0, y0, z0), None, None, None
     for rank in range(int(p["n_phytomers"])):
         if phytomer is None:
-            phytomer = g.add_component(unit, **PropsConfig(scale=s.Phytomer, edge_type='/',
+            phytomer = mtg.add_component(unit, **PropsConfig(scale=s.Phytomer, edge_type='/',
                                                            label=labels.Phytomer.Shoot))
         else:
-            phytomer = g.add_child(phytomer, **PropsConfig(scale=s.Phytomer, edge_type='<',
+            phytomer = mtg.add_child(phytomer, **PropsConfig(scale=s.Phytomer, edge_type='<',
                                                            label=labels.Phytomer.Shoot))
-        internode = g.add_component(phytomer, **PropsConfig(scale=s.Organ, edge_type='/',
+        internode = mtg.add_component(phytomer, **PropsConfig(scale=s.Organ, edge_type='/',
                                                              label=labels.Organ.StemInternode))
         props = PropsConfig(scale=s.SubOrgan, edge_type='<' if stem_element else '/',
                             label=labels.SubOrgan.StemElement)
-        stem_element = (g.add_component_with_topo(internode, stem_element, **props) if stem_element
-                        else g.add_component(internode, **props))
+        stem_element = (mtg.add_component_with_topo(internode, stem_element, **props) if stem_element
+                        else mtg.add_component(internode, **props))
         collar = collar or stem_element
         top = segment(stem_element, STEM, p["stem_length"], top, (0., 0., 1.))
-        leaf = g.add_child(internode, **PropsConfig(scale=s.Organ, edge_type='+', label=labels.Organ.Leaf))
+        leaf = mtg.add_child(internode, **PropsConfig(scale=s.Organ, edge_type='+', label=labels.Organ.Leaf))
         azimuth = rotation + rank * 2. * np.pi / 3.
         start, parent = top, stem_element
         for element in range(int(p["n_leaf_elements"])):
             props = PropsConfig(scale=s.SubOrgan, edge_type='+' if element == 0 else '<',
                                 label=labels.SubOrgan.LeafElement)
-            vid = (g.add_component_with_topo(leaf, parent, **props) if element == 0
-                   else g.add_child(parent, **props))
+            vid = (mtg.add_component_with_topo(leaf, parent, **props) if element == 0
+                   else mtg.add_child(parent, **props))
             start = segment(vid, LEAF, p["leaf_length"], start,
                             (np.cos(azimuth), np.sin(azimuth), 0.6 - 0.4 * element))
             parent = vid
@@ -95,12 +95,12 @@ def build_seedling(g, plant, parameters):
         return bent / np.linalg.norm(bent)
 
     for axis_rank in range(int(p["n_root_axes"])):
-        axis = g.add_child(shoot, **PropsConfig(scale=s.Axis, edge_type='+', label=labels.Axis.Root))
-        unit_r = g.add_component(axis, **PropsConfig(scale=s.GrowthUnit, edge_type='/',
+        axis = mtg.add_child(shoot, **PropsConfig(scale=s.Axis, edge_type='+', label=labels.Axis.Root))
+        unit_r = mtg.add_component(axis, **PropsConfig(scale=s.GrowthUnit, edge_type='/',
                                                      label=labels.GrowthUnit.Root))
-        phytomer_r = g.add_component(unit_r, **PropsConfig(scale=s.Phytomer, edge_type='/',
+        phytomer_r = mtg.add_component(unit_r, **PropsConfig(scale=s.Phytomer, edge_type='/',
                                                            label=labels.Phytomer.Root))
-        organ = g.add_component(phytomer_r, **PropsConfig(scale=s.Organ, edge_type='/',
+        organ = mtg.add_component(phytomer_r, **PropsConfig(scale=s.Organ, edge_type='/',
                                                           label=labels.Organ.RootInternode))
         pivot = axis_rank == 0
         others = max(int(p["n_root_axes"]) - 1, 1)
@@ -112,7 +112,7 @@ def build_seedling(g, plant, parameters):
         for rank in range(int(p["n_pivot_segments"] if pivot else p["n_root_segments"])):
             props = PropsConfig(scale=s.SubOrgan, edge_type='+' if rank == 0 else '<',
                                 label=labels.SubOrgan.RootSegment)
-            vid = (g.add_component_with_topo(organ, parent, **props) if rank == 0 else g.add_child(parent, **props))
+            vid = (mtg.add_component_with_topo(organ, parent, **props) if rank == 0 else mtg.add_child(parent, **props))
             start = segment(vid, ROOT, p["root_length"], start, direction)
             direction = tropism(direction, gravitropism)
             parent = vid
@@ -120,7 +120,7 @@ def build_seedling(g, plant, parameters):
         bearers = p["pivot_lateral_ranks"] if pivot else (2,)
         for number, bearer_rank in enumerate(bearers):              # laterals on alternate sides
             bearer = axis_segments[min(int(bearer_rank), len(axis_segments) - 1)]
-            lateral = g.add_child(organ, **PropsConfig(scale=s.Organ, edge_type='+',
+            lateral = mtg.add_child(organ, **PropsConfig(scale=s.Organ, edge_type='+',
                                                        label=labels.Organ.RootInternode))
             side = azimuth + np.pi / 2. + number * np.pi + rng.normal(0., 0.3)
             direction = np.array([np.cos(side), np.sin(side), -0.2])
@@ -129,47 +129,47 @@ def build_seedling(g, plant, parameters):
             for rank in range(int(p["n_lateral_segments"])):
                 props = PropsConfig(scale=s.SubOrgan, edge_type='+' if rank == 0 else '<',
                                     label=labels.SubOrgan.RootSegment)
-                vid = (g.add_component_with_topo(lateral, parent, **props) if rank == 0
-                       else g.add_child(parent, **props))
+                vid = (mtg.add_component_with_topo(lateral, parent, **props) if rank == 0
+                       else mtg.add_child(parent, **props))
                 start = segment(vid, ROOT, p["lateral_length"], start, direction)
                 direction = tropism(direction, p["lateral_gravitropism"])
                 parent = vid
 
     # segment properties, anatomies and axial junctions
     for name in ("length", "x1", "x2", "y1", "y2", "z1", "z2"):
-        g.properties().setdefault(name, {})
+        mtg.properties().setdefault(name, {})
     xylem = {}
     for vid, (organ, length, start, end) in segments.items():
         for name, value in (("length", length), ("x1", start[0]), ("x2", end[0]), ("y1", start[1]),
                             ("y2", end[1]), ("z1", start[2]), ("z2", end[2])):
-            g.set_values(name, [vid], [float(value)])
-        xylem[vid] = _anatomy(g, vid, organ, length, p["leaf_width"])
+            mtg.set_values(name, [vid], [float(value)])
+        xylem[vid] = _anatomy(mtg, vid, organ, length, p["leaf_width"])
     for vid in segments:
-        parent = g.parent(vid)
+        parent = mtg.parent(vid)
         if parent in xylem:
-            _connect(g, vid, xylem[parent], xylem[vid], AXIAL,
+            _connect(mtg, vid, xylem[parent], xylem[vid], AXIAL,
                          (segments[parent][1] + segments[vid][1]) / 2., junction=True)
 
-def _anatomy(g, segment, organ, length, leaf_width):
+def _anatomy(mtg, segment, organ, length, leaf_width):
     """The Compartments of *segment* and the radial Connections between them; returns its xylem."""
-    node_anchor = g.scales.anchors[g.scales.Compartment]
+    node_anchor = mtg.scales.anchors[mtg.scales.Compartment]
     tissues = ANATOMY[organ]
     compartments = []
     for tissue in tissues:
         evaporating = organ == LEAF and tissue == STOMATAL_CAVITY
         contact = organ == ROOT and tissue == EPIDERMIS
-        compartments.append(g.add_component_with_topo(node_anchor, segment, **PropsConfig(
-            scale=g.scales.Compartment, edge_type='/', label=_tissue_label(g.labels, tissue),
+        compartments.append(mtg.add_component_with_topo(node_anchor, segment, **PropsConfig(
+            scale=mtg.scales.Compartment, edge_type='/', label=_tissue_label(mtg.labels, tissue),
             tissue=float(tissue), organ=float(organ), is_evaporating=float(evaporating),
             evaporating_area=leaf_width * length if evaporating else 0., is_soil_contact=float(contact),
             contact_length=length if contact else 0.)))
     for outer, inner in zip(compartments[:-1], compartments[1:]):
-        _connect(g, segment, outer, inner, RADIAL_TYPE[organ], length)
+        _connect(mtg, segment, outer, inner, RADIAL_TYPE[organ], length)
     return compartments[tissues.index(XYLEM)]
 
-def _connect(g, segment, a, b, hydraulic_type, conductance_length, junction=False):
-    g.add_component_with_topo(g.scales.anchors[g.scales.Connection], segment, **PropsConfig(
-        scale=g.scales.Connection, edge_type='/',
-        label=g.labels.Connection.Apoplastic if junction else g.labels.Connection.Transmembrane,
+def _connect(mtg, segment, a, b, hydraulic_type, conductance_length, junction=False):
+    mtg.add_component_with_topo(mtg.scales.anchors[mtg.scales.Connection], segment, **PropsConfig(
+        scale=mtg.scales.Connection, edge_type='/',
+        label=mtg.labels.Connection.Apoplastic if junction else mtg.labels.Connection.Transmembrane,
         n_id_a=a, n_id_b=b, is_junction=int(junction), hydraulic_type=float(hydraulic_type),
         conductance_length=float(conductance_length)))

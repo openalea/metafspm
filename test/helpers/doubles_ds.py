@@ -45,10 +45,10 @@ def _deliberate(sources: dict) -> dict:
 
 
 def make_plant_ds():
-    g, _ = generate_simple_mpg_seedling()
-    g.populate_graph(g.scales.SubOrgan)
-    g.convert_properties_to_arraydict()
-    return MPGDataStructure(g, from_scale=g.scales.SubOrgan)
+    mtg, _ = generate_simple_mpg_seedling()
+    mtg.populate_graph(mtg.scales.SubOrgan)
+    mtg.convert_properties_to_arraydict()
+    return MPGDataStructure(mtg, from_scale=mtg.scales.SubOrgan)
 
 
 @dataclass
@@ -97,22 +97,22 @@ SOIL = "GridSoil"
 
 def make_chain_plant_ds(coordinates=(0.025, 0.025, -0.01), n_segments=3):
     """Plant MPG DataStructure: a vertical chain of segments below *coordinates*, with their segment ends."""
-    g = MPG()
-    scale = g.scales.SubOrgan
-    anchor = g.scales.anchors[scale]
-    vids = [g._add_system_root_at_scale(scale, label=g.labels.SubOrgan.RootSegment)]
+    mtg = MPG()
+    scale = mtg.scales.SubOrgan
+    anchor = mtg.scales.anchors[scale]
+    vids = [mtg._add_system_root_at_scale(scale, label=mtg.labels.SubOrgan.RootSegment)]
     for _ in range(n_segments - 1):
-        vids.append(g.add_component_with_topo(anchor, vids[-1], **PropsConfig(scale=scale, edge_type='<',
-                                                                            label=g.labels.SubOrgan.RootSegment)))
-    g.populate_graph(scale)
-    g.convert_properties_to_arraydict()
-    ds = MPGDataStructure(g, from_scale=scale)
+        vids.append(mtg.add_component_with_topo(anchor, vids[-1], **PropsConfig(scale=scale, edge_type='<',
+                                                                            label=mtg.labels.SubOrgan.RootSegment)))
+    mtg.populate_graph(scale)
+    mtg.convert_properties_to_arraydict()
+    data_structure = MPGDataStructure(mtg, from_scale=scale)
     rank = {v: i for i, v in enumerate(vids)}
     x, y, z = coordinates
-    top = np.array([z - doubles.SEGMENT_LENGTH * rank[v] for v in ds.entity_ids("node")])
+    top = np.array([z - doubles.SEGMENT_LENGTH * rank[v] for v in data_structure.entity_ids("node")])
     for name, values in (("x1", x), ("x2", x), ("y1", y), ("y2", y), ("z1", top), ("z2", top - doubles.SEGMENT_LENGTH)):
-        ds.register(name, values, location="node", on_grow="inherit")
-    return ds
+        data_structure.register(name, values, location="node", on_grow="inherit")
+    return data_structure
 
 
 def _var_cell(role, default=0.):

@@ -2,7 +2,7 @@
 Checks for downstream packages: run them in a package's own tests to make sure its components
 stay couplable with the translators it ships::
 
-  assert_component_couplable(RootCarbon, translator, data_structure=ds)
+  assert_component_couplable(RootCarbon, translator, data_structure=data_structure)
 
 The comparison tooling of the ports with their legacy (run_in_env, worktree, assert_arrays_equal, ...) is in
 testing.comparison; the radiosity corrections Caribu compares with, in testing.corrections.
@@ -45,19 +45,18 @@ def couplability_problems(component_cls, translator, name: str = None, data_stru
             problems.append(str(error))
             specs = {}
         # Links into this component whose providers are already on the DataStructure: kinds and scale mappings
-        ds = data_structure
         for link in translator.links:
             spec = specs.get(link.variable)
-            if link.receiver != name or spec is None or not all(ds.has(source) for source in link.sources):
+            if link.receiver != name or spec is None or not all(data_structure.has(source) for source in link.sources):
                 continue
             for source in link.sources:
-                provided = ds._variable_meta().get(ds._resolve(source), {}).get("kind")
+                provided = data_structure._variable_meta().get(data_structure._resolve(source), {}).get("kind")
                 if not kinds_agree(spec.kind, provided):
                     problems.append(f"{name}.{link.variable} ({spec.kind}) <- {link.provider}.{source} ({provided}): "
                                     "the kinds do not agree")
             if link.aggregation is None:
                 try:
-                    CompositeModel._default_link_mapping(ds, link, spec.location)
+                    CompositeModel._default_link_mapping(data_structure, link, spec.location)
                 except DeclarationError as error:
                     problems.append(str(error))
         if hasattr(data_structure, "validate"):

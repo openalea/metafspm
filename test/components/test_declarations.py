@@ -33,14 +33,14 @@ def inp(**kwargs):
 
 @pytest.fixture
 def seedling():
-    g, s = generate_simple_mpg_seedling()
-    g.populate_graph(g.scales.SubOrgan)
-    g.convert_properties_to_arraydict()
-    return g, s, MPGDataStructure(g, from_scale=g.scales.SubOrgan)
+    mtg, s = generate_simple_mpg_seedling()
+    mtg.populate_graph(mtg.scales.SubOrgan)
+    mtg.convert_properties_to_arraydict()
+    return mtg, s, MPGDataStructure(mtg, from_scale=mtg.scales.SubOrgan)
 
 
-def _spec(cls, name, ds):
-    return resolve_declaration(next(f for f in fields(cls) if f.name == name), ds)
+def _spec(cls, name, data_structure):
+    return resolve_declaration(next(f for f in fields(cls) if f.name == name), data_structure)
 
 
 # ---------------------------------------------------------------- legacy forms and the new keys
@@ -60,20 +60,20 @@ class Places:
 
 
 def test_places_and_their_locations(seedling):
-    _, _, ds = seedling
+    _, _, data_structure = seedling
     expected = {"node_string": ("node", None, None), "edge_string": ("edge", None, None),
                 "scalar_string": ("scalar", None, None), "at_nodes": ("node", scales.SubOrgan, None),
                 "at_compartment": ("node", None, None), "at_connection": ("edge", None, None)}
     for name, (location, scale, mapping) in expected.items():
-        spec = _spec(Places, name, ds)
+        spec = _spec(Places, name, data_structure)
         assert (spec.location, spec.scale, spec.aggregation) == (location, scale, mapping), name
-    assert _spec(Places, "undeclared_scale", ds) is None
+    assert _spec(Places, "undeclared_scale", data_structure) is None
 
 
 def test_the_former_declaration_forms_raise(seedling):
     """scale="node" (a location) and the edge aggregations "proximal" / "distal" are gone; initialize=,
     state_variable_type= and mapping= (now default=, kind= and aggregation=) raise."""
-    _, _, ds = seedling
+    _, _, data_structure = seedling
     former = {"scale": "no" + "de"}                          # spelled out of reach of the converters
 
     @dataclass
@@ -81,7 +81,7 @@ def test_the_former_declaration_forms_raise(seedling):
         location_as_scale: float = sv(default=0., **former)
 
     with pytest.raises(DeclarationError, match="is a location"):
-        _spec(Former, "location_as_scale", ds)
+        _spec(Former, "location_as_scale", data_structure)
     with pytest.raises(ValueError, match="'child' or 'parent'"):
         sv(default=0., scale=scales.SubOrgan, aggregation="proxi" + "mal")
     for old, value in (("initia" + "lize", 2.), ("state_variable" + "_type", "extensive"), ("map" + "ping", "child")):
@@ -93,8 +93,8 @@ def test_the_former_declaration_forms_raise(seedling):
 
 def test_a_coarser_scale_is_stored_at_that_scale(seedling):
     """N1: no broadcast to the nodes unless asked for."""
-    _, _, ds = seedling
-    spec = _spec(Places, "at_organ", ds)
+    _, _, data_structure = seedling
+    spec = _spec(Places, "at_organ", data_structure)
     assert (spec.location, spec.scale, spec.aggregation) == ("Organ", scales.Organ, None)
 
 
@@ -107,8 +107,8 @@ class ScaleNames:
 
 def test_scale_names_are_locations_resolved_against_the_graph(seedling):
     """N5: the node scale's name is the nodes, Connection the edges, a coarser name its own location."""
-    _, _, ds = seedling
-    assert [_spec(ScaleNames, name, ds).location for name in ("by_node_scale_name", "by_connection_name",
+    _, _, data_structure = seedling
+    assert [_spec(ScaleNames, name, data_structure).location for name in ("by_node_scale_name", "by_connection_name",
                                                               "by_coarse_name")] == ["node", "edge", "Organ"]
 
 
@@ -139,8 +139,8 @@ class Defaults:
 
 
 def test_default_mappings_follow_the_state_variable_type(seedling):
-    _, _, ds = seedling
-    mappings = {name: _spec(Defaults, name, ds).aggregation
+    _, _, data_structure = seedling
+    mappings = {name: _spec(Defaults, name, data_structure).aggregation
                 for name in ("down_intensive", "down_massic", "down_explicit", "down_extensive_split", "up_extensive",
                              "up_intensive_weighted", "up_intensive_plain", "up_massic_weighted")}
     assert mappings == {"down_intensive": "broadcast", "down_massic": "broadcast", "down_explicit": "broadcast",
@@ -156,9 +156,9 @@ def test_default_mappings_follow_the_state_variable_type(seedling):
     ("up_intensive", "give the weight of its mean"),
 ])
 def test_ambiguous_scale_changes_need_an_explicit_mapping(seedling, name, message):
-    _, _, ds = seedling
+    _, _, data_structure = seedling
     with pytest.raises(DeclarationError, match=message):
-        _spec(Defaults, name, ds)
+        _spec(Defaults, name, data_structure)
 
 
 # ---------------------------------------------------------------- declaration errors
@@ -200,15 +200,15 @@ class Errors:
     ("coarse_edge_state", "several edges would write the same vertex"),
 ])
 def test_declaration_errors(seedling, name, message):
-    _, _, ds = seedling
+    _, _, data_structure = seedling
     with pytest.raises(DeclarationError, match=message):
-        _spec(Errors, name, ds)
+        _spec(Errors, name, data_structure)
 
 
 def test_errors_name_the_component_and_field(seedling):
-    _, _, ds = seedling
+    _, _, data_structure = seedling
     with pytest.raises(DeclarationError, match=r"Errors\.unknown_location"):
-        declared_specs(Errors, ds)
+        declared_specs(Errors, data_structure)
 
 
 # ---------------------------------------------------------------- registration on the DataStructure
@@ -222,50 +222,50 @@ class OrganProbe(FunctionalComponent):
     total: float = sv(default=3., location="scalar")
 
 
-def _organ_of(g, ds):
-    return {v: g.complex_at_scale(v, g.scales.Organ) for v in ds.entity_ids("node")}
+def _organ_of(mtg, data_structure):
+    return {v: mtg.complex_at_scale(v, mtg.scales.Organ) for v in data_structure.entity_ids("node")}
 
 
 def test_variables_are_registered_at_their_location_with_their_mtg_values(seedling):
-    g, _, ds = seedling
-    organs = sorted(set(_organ_of(g, ds).values()))
-    g.properties()["organ_pool"] = {o: 10. * o for o in organs}
-    g.properties()["organ_temperature"] = {o: float(o) for o in organs}
-    g.properties()["organ_length"] = {v: 0.5 for v in ds.entity_ids("node")}   # at SubOrgan, summed per Organ
+    mtg, _, data_structure = seedling
+    organs = sorted(set(_organ_of(mtg, data_structure).values()))
+    mtg.properties()["organ_pool"] = {o: 10. * o for o in organs}
+    mtg.properties()["organ_temperature"] = {o: float(o) for o in organs}
+    mtg.properties()["organ_length"] = {v: 0.5 for v in data_structure.entity_ids("node")}   # at SubOrgan, summed per Organ
 
-    OrganProbe(data_structure=ds)
+    OrganProbe(data_structure=data_structure)
 
-    assert ds.location("organ_pool") == "Organ"
-    assert dict(zip(ds.entity_ids("Organ"), ds.get("organ_pool"))) == {o: 10. * o for o in organs}
-    owner = _organ_of(g, ds)
-    assert dict(zip(ds.entity_ids("node"), ds.get("organ_temperature"))) == {v: float(owner[v]) for v in ds.entity_ids("node")}
+    assert data_structure.location("organ_pool") == "Organ"
+    assert dict(zip(data_structure.entity_ids("Organ"), data_structure.get("organ_pool"))) == {o: 10. * o for o in organs}
+    owner = _organ_of(mtg, data_structure)
+    assert dict(zip(data_structure.entity_ids("node"), data_structure.get("organ_temperature"))) == {v: float(owner[v]) for v in data_structure.entity_ids("node")}
     counts = {o: sum(1 for v in owner if owner[v] == o) for o in organs}
-    assert dict(zip(ds.entity_ids("Organ"), ds.get("organ_length"))) == {o: 0.5 * counts[o] for o in organs}
-    assert ds.location("total") == "scalar" and float(ds.get("total")) == 3.
+    assert dict(zip(data_structure.entity_ids("Organ"), data_structure.get("organ_length"))) == {o: 0.5 * counts[o] for o in organs}
+    assert data_structure.location("total") == "scalar" and float(data_structure.get("total")) == 3.
 
 
 def test_variables_without_an_mtg_property_take_their_default(seedling):
-    _, _, ds = seedling
-    OrganProbe(data_structure=ds)
-    assert np.all(ds.get("organ_pool") == -1.) and ds.get("organ_pool").shape == (len(ds.entity_ids("Organ")),)
-    assert np.all(ds.get("organ_temperature") == -1.)
+    _, _, data_structure = seedling
+    OrganProbe(data_structure=data_structure)
+    assert np.all(data_structure.get("organ_pool") == -1.) and data_structure.get("organ_pool").shape == (len(data_structure.entity_ids("Organ")),)
+    assert np.all(data_structure.get("organ_temperature") == -1.)
 
 
 def test_declaration_metadata_is_recorded_and_survives_growth(seedling):
-    _, _, ds = seedling
-    OrganProbe(data_structure=ds)
-    meta = ds._variable_meta()["organ_length"]
+    _, _, data_structure = seedling
+    OrganProbe(data_structure=data_structure)
+    meta = data_structure._variable_meta()["organ_length"]
     assert (meta["scale"], meta["aggregation"], meta["kind"], meta["role"]) == (
         scales.SubOrgan, "sum", "extensive", "parameter")
-    ds.update_topology()
-    assert ds._variable_meta()["organ_length"]["aggregation"] == "sum"
+    data_structure.update_topology()
+    assert data_structure._variable_meta()["organ_length"]["aggregation"] == "sum"
 
 
 def test_a_pre_registered_variable_at_another_location_is_rejected(seedling):
-    _, _, ds = seedling
-    ds.register("organ_pool", location="node")
+    _, _, data_structure = seedling
+    data_structure.register("organ_pool", location="node")
     with pytest.raises(DeclarationError, match="declared at Organ but is already registered at node"):
-        OrganProbe(data_structure=ds)
+        OrganProbe(data_structure=data_structure)
 
 
 @dataclass
@@ -276,22 +276,22 @@ class GridProbe(FunctionalComponent):
 
 
 def test_grids_register_their_own_locations_only():
-    ds = ArrayDataStructure(shape=(2, 2, 2))
-    GridProbe(data_structure=ds)
-    assert ds.location("water") == "cell" and np.all(ds.get("water") == 0.2)
-    assert ds.location("rain") == "scalar"
-    assert not ds.has("plant_only")
+    data_structure = ArrayDataStructure(shape=(2, 2, 2))
+    GridProbe(data_structure=data_structure)
+    assert data_structure.location("water") == "cell" and np.all(data_structure.get("water") == 0.2)
+    assert data_structure.location("rain") == "scalar"
+    assert not data_structure.has("plant_only")
 
 
 def test_graph_equations_reject_coarse_located_variables_with_a_hint(seedling):
     from openalea.metafspm.solve.decorator import _declared_locations, _snapshot
-    _, _, ds = seedling
-    probe = OrganProbe(data_structure=ds)
+    _, _, data_structure = seedling
+    probe = OrganProbe(data_structure=data_structure)
     with pytest.raises(ValueError, match="location='node' and aggregation='broadcast'"):
-        _snapshot(probe, {"organ_pool"}, ds.entity_ids("node"), [], [], [], _declared_locations(probe))
-    node_snap, _ = _snapshot(probe, {"organ_temperature", "total"}, ds.entity_ids("node"), [], [], [],
+        _snapshot(probe, {"organ_pool"}, data_structure.entity_ids("node"), [], [], [], _declared_locations(probe))
+    node_snap, _ = _snapshot(probe, {"organ_temperature", "total"}, data_structure.entity_ids("node"), [], [], [],
                              _declared_locations(probe))
-    assert node_snap["total"].shape == (ds.n_nodes(),)   # scalars are broadcast, as before
+    assert node_snap["total"].shape == (data_structure.n_nodes(),)   # scalars are broadcast, as before
 
 
 @dataclass
@@ -302,14 +302,14 @@ class NodesAndEdges(FunctionalComponent):
 
 def test_one_component_declared_on_nodes_runs_on_a_plant_graph_and_on_a_grid():
     """"node" is a grid's cells (the nodes of its graph), so the same declarations hold on both."""
-    g, _ = generate_simple_mpg_seedling()
-    g.populate_graph(g.scales.SubOrgan)
-    g.convert_properties_to_arraydict()
-    plant, grid = MPGDataStructure(g, from_scale=g.scales.SubOrgan), ArrayDataStructure(shape=(2, 2, 3), spacing=0.1)
-    for ds, node_location in ((plant, "node"), (grid, "cell")):
-        NodesAndEdges(data_structure=ds)
-        assert ds.location("potential") == node_location and ds.location("conductance") == "edge"
-        assert ds.get("potential").size == ds.n_nodes() and ds.get("conductance").size == ds.n_edges()
+    mtg, _ = generate_simple_mpg_seedling()
+    mtg.populate_graph(mtg.scales.SubOrgan)
+    mtg.convert_properties_to_arraydict()
+    plant, grid = MPGDataStructure(mtg, from_scale=mtg.scales.SubOrgan), ArrayDataStructure(shape=(2, 2, 3), spacing=0.1)
+    for data_structure, node_location in ((plant, "node"), (grid, "cell")):
+        NodesAndEdges(data_structure=data_structure)
+        assert data_structure.location("potential") == node_location and data_structure.location("conductance") == "edge"
+        assert data_structure.get("potential").size == data_structure.n_nodes() and data_structure.get("conductance").size == data_structure.n_edges()
 
 
 @dataclass

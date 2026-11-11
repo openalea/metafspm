@@ -202,18 +202,18 @@ class Receiver(FunctionalComponent):
 
 
 def test_a_same_name_link_stating_its_scale_is_an_identity():
-    g, _ = generate_simple_mpg_seedling()
-    g.populate_graph(g.scales.SubOrgan)
-    g.convert_properties_to_arraydict()
-    ds = MPGDataStructure(g, from_scale=g.scales.SubOrgan)
+    mtg, _ = generate_simple_mpg_seedling()
+    mtg.populate_graph(mtg.scales.SubOrgan)
+    mtg.convert_properties_to_arraydict()
+    data_structure = MPGDataStructure(mtg, from_scale=mtg.scales.SubOrgan)
     model = CompositeModel()
-    model.components = [Provider(data_structure=ds), Receiver(data_structure=ds)]
+    model.components = [Provider(data_structure=data_structure), Receiver(data_structure=data_structure)]
     translator = Translator().link("Receiver", "uptake", "Provider", {"uptake": 1.}, scale=scales.SubOrgan,
                                    source_scale=scales.SubOrgan)
     model._couple_on_data_structures(translator)
-    assert "uptake" not in ds.__dict__.get("_derived", {})
-    ds.set("uptake", 3.)
-    np.testing.assert_allclose(ds.get("uptake"), 3.)
+    assert "uptake" not in data_structure.__dict__.get("_derived", {})
+    data_structure.set("uptake", 3.)
+    np.testing.assert_allclose(data_structure.get("uptake"), 3.)
 
 
 def test_the_soil_surface_is_the_grid_top_and_the_parts_outside_are_counted():

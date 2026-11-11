@@ -1,7 +1,7 @@
 """
 The objects a DataStructure's components share, by content (survey 8: no module-level registry)::
 
-  templates = ds.objects("anatomy_templates", saved=saved_copy)    # or g.objects(...) on its MPG, while it builds
+  templates = data_structure.objects("anatomy_templates", saved=saved_copy)    # or mtg.objects(...) on its MPG, while it builds
   template = templates.get(content_key(parameters), build)          # built at its first request, then the same
   index = templates.index(key)                                      # its number in the registry (a variable holds it)
   templates.by_index(index)
@@ -69,7 +69,7 @@ class ObjectRegistry:
         """The object of number *index* (index())."""
         index = int(index)
         if not 0 <= index < len(self._keys):
-            raise KeyError(f"ds.objects('{self.name}'): no object of index {index} (it holds {len(self._keys)})")
+            raise KeyError(f"data_structure.objects('{self.name}'): no object of index {index} (it holds {len(self._keys)})")
         return self._values[self._keys[index]]
 
     def next_index(self) -> int:

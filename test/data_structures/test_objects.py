@@ -1,5 +1,5 @@
 """
-The objects a DataStructure's components share by content (ds.objects: data_structure.objects.ObjectRegistry): one
+The objects a DataStructure's components share by content (data_structure.objects: data_structure.objects.ObjectRegistry): one
 registry per DataStructure (an MPG-backed one's on its MPG), keyed by content, checkpointed once per object (Shared).
 """
 import os
@@ -36,15 +36,15 @@ def _plant():
 
 
 def test_objects_are_built_once_per_content_and_numbered():
-    ds = _plant()
-    sections = ds.objects("sections", saved=saved_section)
+    data_structure = _plant()
+    sections = data_structure.objects("sections", saved=saved_section)
     built = Section.built
     first = sections.get(content_key({"layers": 3}), lambda: Section({"layers": 3}))
     again = sections.get(content_key({"layers": 3}), lambda: Section({"layers": 3}))
     other = sections.get(content_key({"layers": 4}), lambda: Section({"layers": 4}))
     assert first is again and other is not first and Section.built == built + 2
     assert sections.index(content_key({"layers": 4})) == 1 and sections.by_index(1) is other
-    assert ds.objects("sections") is sections is ds.structure.objects("sections")     # the MPG's
+    assert data_structure.objects("sections") is sections is data_structure.structure.objects("sections")     # the MPG's
     with pytest.raises(KeyError):
         sections.by_index(2)
 
@@ -57,13 +57,13 @@ def test_each_data_structure_has_its_own_registry():
 
 
 def test_a_checkpoint_saves_each_object_once_in_its_saved_form(tmp_path):
-    ds = _plant()
-    sections = ds.objects("sections", saved=saved_section)
+    data_structure = _plant()
+    sections = data_structure.objects("sections", saved=saved_section)
     sections.get("a", lambda: Section({"layers": 3}))
     sections.get("b", lambda: Section({"layers": 4}))
     store = SharedStore(str(tmp_path / "shared"))
-    ds.checkpoint(str(tmp_path / "c1"), shared=store)
-    ds.checkpoint(str(tmp_path / "c2"), shared=store)
+    data_structure.checkpoint(str(tmp_path / "c1"), shared=store)
+    data_structure.checkpoint(str(tmp_path / "c2"), shared=store)
     assert len([name for name in os.listdir(tmp_path / "shared") if name.startswith("sections-")]) == 2
     restored = MPGDataStructure.restore(str(tmp_path / "c2"))
     loaded = restored.objects("sections")

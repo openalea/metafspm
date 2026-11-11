@@ -147,7 +147,7 @@ def test_a_structural_component_reads_the_calendar_and_forcings_and_an_unplaced_
     scene = Scene(doubles_planting([ClockedPlants]), time_step=DT, start="2026-04-10 08:00",
                   forcings={"air_temperature": lambda time: 15. + time / DT, "PARi": lambda time: 7.})
     scene.run()
-    ds = scene.populations[0].data_structure
-    assert ds.location("air_temperature") == "Plant"
-    np.testing.assert_allclose(ds.get("warmth"), 15.5)                # written at the step's start: its mean
+    data_structure = scene.populations[0].data_structure
+    assert data_structure.location("air_temperature") == "Plant"
+    np.testing.assert_allclose(data_structure.get("warmth"), 15.5)                # written at the step's start: its mean
     assert seen["calendar"] == (100., 9.) and seen["PARi"] == 7.

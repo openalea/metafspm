@@ -59,8 +59,8 @@ def _scene(model=SlowRoots, planting_scenario=None, **options):
 
 
 def _values(scene, name) -> dict:
-    ds = scene.populations[0].data_structure
-    return dict(zip(np.asarray(ds.entity_ids("node")).tolist(), np.asarray(ds.get(name), dtype=float).tolist()))
+    data_structure = scene.populations[0].data_structure
+    return dict(zip(np.asarray(data_structure.entity_ids("node")).tolist(), np.asarray(data_structure.get(name), dtype=float).tolist()))
 
 
 def test_a_component_every_four_hours_reads_the_means_over_its_interval():
@@ -74,10 +74,10 @@ def test_a_component_every_four_hours_reads_the_means_over_its_interval():
             assert np.all(seen == -1.)                # not run yet: its outputs their initial values
         elif step < 7:
             np.testing.assert_allclose(seen, 2.)      # held since its call at the 4th step: the mean of 0.5 ... 3.5
-    ds = scene.populations[0].data_structure
-    np.testing.assert_allclose(ds.get("seen_hour"), 6.)                  # the second interval's: 4.5 ... 7.5
-    np.testing.assert_allclose(ds.get("seen_light"), 6.)                 # the forcing over [4 h, 8 h]
-    np.testing.assert_allclose(ds.get("integrated"), (2. + 6.) * INTERVAL)   # its integral, as hour by hour
+    data_structure = scene.populations[0].data_structure
+    np.testing.assert_allclose(data_structure.get("seen_hour"), 6.)                  # the second interval's: 4.5 ... 7.5
+    np.testing.assert_allclose(data_structure.get("seen_light"), 6.)                 # the forcing over [4 h, 8 h]
+    np.testing.assert_allclose(data_structure.get("integrated"), (2. + 6.) * INTERVAL)   # its integral, as hour by hour
     # each entity's mean over the steps it existed in the second interval (the roots grew: entities appeared)
     expected = {vid: np.mean([step[vid] for step in masses[4:] if vid in step]) for vid in masses[-1]}
     seen = _values(scene, "seen_mass")
@@ -94,12 +94,12 @@ class EarlyRoots(SlowRoots):
 def test_at_the_start_of_its_interval_it_reads_its_inputs_then():
     scene = _scene(EarlyRoots)
     scene.run()
-    ds = scene.populations[0].data_structure
-    np.testing.assert_allclose(ds.get("seen_hour"), 0.5)                 # the first step's, at its call
-    np.testing.assert_allclose(ds.get("seen_light"), 2.)                 # the forcing over [0, 4 h]
+    data_structure = scene.populations[0].data_structure
+    np.testing.assert_allclose(data_structure.get("seen_hour"), 0.5)                 # the first step's, at its call
+    np.testing.assert_allclose(data_structure.get("seen_light"), 2.)                 # the forcing over [0, 4 h]
     for _ in range(4):
         scene.run()
-    np.testing.assert_allclose(ds.get("seen_hour"), 4.5)                 # called again at the 5th step
+    np.testing.assert_allclose(data_structure.get("seen_hour"), 4.5)                 # called again at the 5th step
     assert scene.calls["EarlyRoots.Slow"] == 2
 
 
@@ -117,8 +117,8 @@ def test_its_own_sub_step_sub_steps_its_interval():
     scene = _scene(SubSteppedRoots)
     for _ in range(4):
         scene.run()
-    ds = scene.populations[0].data_structure
-    np.testing.assert_allclose(ds.get("integrated"), 2. * INTERVAL)       # 8 half-hours at the mean
+    data_structure = scene.populations[0].data_structure
+    np.testing.assert_allclose(data_structure.get("integrated"), 2. * INTERVAL)       # 8 half-hours at the mean
     assert scene.calls["SubSteppedRoots.HalfHourSlow"] == 1
 
 
@@ -218,13 +218,13 @@ def test_a_components_values_at_its_last_call(tmp_path):
     """last_call(name): the values at the component's last call, aligned by id (NaN before its first call and for
     the entities new since), kept with its state (checkpoints)."""
     scene = Scene(doubles_planting([RememberingRoots]), time_step=DT, forcings={"hour": lambda t: t / DT})
-    ds = scene.population().data_structure
+    data_structure = scene.population().data_structure
     scene.run()
-    assert np.isnan(np.asarray(ds.get("hour_before"))).all()                   # its first call
+    assert np.isnan(np.asarray(data_structure.get("hour_before"))).all()                   # its first call
     for _ in range(3):
-        before = dict(zip(ds.entity_ids("node").tolist(), np.asarray(ds.get("hour")).tolist()))
+        before = dict(zip(data_structure.entity_ids("node").tolist(), np.asarray(data_structure.get("hour")).tolist()))
         scene.run()
-        seen = dict(zip(ds.entity_ids("node").tolist(), np.asarray(ds.get("hour_before")).tolist()))
+        seen = dict(zip(data_structure.entity_ids("node").tolist(), np.asarray(data_structure.get("hour_before")).tolist()))
         for vid, value in seen.items():
             assert value == before[vid] if vid in before else np.isnan(value)
     component = scene.population().instance.remembering

@@ -39,7 +39,7 @@ def test_refinement_keeps_the_balance_and_closes_every_cell():
     corner = np.zeros(grid.n_nodes(), dtype=bool)
     corner[0] = True
     grid.refine(corner)
-    grid.refine(lambda g: (g.refinement_level() == 1) & (g.cell_centers()[:, 2] < 0.03))
+    grid.refine(lambda mtg: (mtg.refinement_level() == 1) & (mtg.cell_centers()[:, 2] < 0.03))
     levels = grid.refinement_level()
     assert levels.max() == 2 and grid.n_nodes() > 12
     tail, head = grid._face_tail, grid._face_head
@@ -65,7 +65,7 @@ def test_refine_and_coarsen_carry_values_conservatively():
     assert grid.n_nodes() == 12 + 4 * 7
     assert grid.get("mass").sum() == pytest.approx(total)                                      # split by volume
     assert (grid.get("concentration") * grid.cell_volume()).sum() == pytest.approx(mean)      # copied
-    grid.coarsen(lambda g: g.refinement_level() > 0)
+    grid.coarsen(lambda mtg: mtg.refinement_level() > 0)
     assert grid.n_nodes() == 12
     np.testing.assert_allclose(grid.get("mass"), np.arange(12.) + 1.)                         # summed back
     np.testing.assert_allclose(grid.get("concentration"), np.arange(12.) + 1.)                # averaged back
@@ -116,13 +116,13 @@ def test_a_uniformly_refined_grid_solves_as_the_fine_regular_grid():
 def test_diffusion_on_a_locally_refined_grid_conserves_the_solute():
     grid = _grid()
     model = AdaptiveDiffusion(data_structure=grid)
-    grid.refine(lambda g: np.linalg.norm(g.cell_centers() - [0.1, 0.1, 0.07], axis=1) < 0.06)
+    grid.refine(lambda mtg: np.linalg.norm(mtg.cell_centers() - [0.1, 0.1, 0.07], axis=1) < 0.06)
     grid.set("solute", _initial(grid.cell_centers()))
     total = (grid.get("solute") * grid.cell_volume()).sum()
     for _ in range(3):
         model()
     assert (grid.get("solute") * grid.cell_volume()).sum() == pytest.approx(total, rel=1e-9)
-    grid.refine(lambda g: g.get("solute") > 0.5 * g.get("solute").max())         # follow the solute, between steps
+    grid.refine(lambda mtg: mtg.get("solute") > 0.5 * mtg.get("solute").max())         # follow the solute, between steps
     assert (grid.get("solute") * grid.cell_volume()).sum() == pytest.approx(total, rel=1e-9)
     model()
     assert (grid.get("solute") * grid.cell_volume()).sum() == pytest.approx(total, rel=1e-9)
@@ -134,15 +134,15 @@ def test_plants_map_onto_refined_cells():
     from openalea.metafspm.scene.population import _build_population
     table = pd.DataFrame([dict(plant="p0", model=None, x=0.05, y=0.05, depth=0., rotation=0.,
                                scenario={"n_segments": 3})])
-    g, _ = _build_population(table, initiators=(RootGrowthProbe,))
-    g.populate_graph(g.scales.SubOrgan)
-    g.convert_properties_to_arraydict()
-    plants = MPGDataStructure(g, from_scale=g.scales.SubOrgan)
+    mtg, _ = _build_population(table, initiators=(RootGrowthProbe,))
+    mtg.populate_graph(mtg.scales.SubOrgan)
+    mtg.convert_properties_to_arraydict()
+    plants = MPGDataStructure(mtg, from_scale=mtg.scales.SubOrgan)
     for name in ("x1", "x2", "y1", "y2", "z1", "z2"):
-        plants.register(name, [0.01 * g.property(name)[v] if name[0] == "z" else g.property(name)[v]
+        plants.register(name, [0.01 * mtg.property(name)[v] if name[0] == "z" else mtg.property(name)[v]
                                for v in plants.entity_ids("node")], location="node")
     grid = _grid()
-    grid.refine(lambda ds: ds.cell_centers()[:, 0] < 0.1)
+    grid.refine(lambda data_structure: data_structure.cell_centers()[:, 0] < 0.1)
     for method in ("barycentre", "overlap"):
         rows, columns, weights = CrossMapping(plants, grid, method=method).incidence()
         np.testing.assert_allclose(np.bincount(rows, weights=weights), 1.)
@@ -167,17 +167,17 @@ def test_a_mapping_follows_the_refinement_of_its_grid():
     from openalea.metafspm.scene.population import _build_population
     table = pd.DataFrame([dict(plant="p0", model=None, x=0.05, y=0.05, depth=0., rotation=0.,
                                scenario={"n_segments": 3})])
-    g, _ = _build_population(table, initiators=(RootGrowthProbe,))
-    g.populate_graph(g.scales.SubOrgan)
-    g.convert_properties_to_arraydict()
-    plants = MPGDataStructure(g, from_scale=g.scales.SubOrgan)
+    mtg, _ = _build_population(table, initiators=(RootGrowthProbe,))
+    mtg.populate_graph(mtg.scales.SubOrgan)
+    mtg.convert_properties_to_arraydict()
+    plants = MPGDataStructure(mtg, from_scale=mtg.scales.SubOrgan)
     for name in ("x1", "x2", "y1", "y2", "z1", "z2"):
-        plants.register(name, [0.01 * g.property(name)[v] if name[0] == "z" else g.property(name)[v]
+        plants.register(name, [0.01 * mtg.property(name)[v] if name[0] == "z" else mtg.property(name)[v]
                                for v in plants.entity_ids("node")], location="node")
     grid = _grid()
     mapping = CrossMapping(plants, grid, method="overlap")
     before = mapping.incidence()[1].max()
-    grid.refine(lambda ds: ds.cell_centers()[:, 0] < 0.1)
+    grid.refine(lambda data_structure: data_structure.cell_centers()[:, 0] < 0.1)
     rows, columns, weights = mapping.incidence()
     assert columns.max() < grid.n_nodes() and columns.max() != before
     np.testing.assert_array_equal(columns, grid.locate(grid.cell_centers()[columns]))
@@ -187,7 +187,7 @@ def test_a_mapping_follows_the_refinement_of_its_grid():
 def test_the_edge_difference_is_exact_for_linear_fields_across_refinement_levels():
     grid = AdaptiveGridDataStructure(shape=(4, 4, 6), spacing=0.02, max_level=2, periodic=False)
     for radius in (0.03, 0.015):                                                 # two levels of refinement
-        grid.refine(lambda g: np.linalg.norm(g.cell_centers() - [0.03, 0.05, 0.04], axis=1) < radius)
+        grid.refine(lambda mtg: np.linalg.norm(mtg.cell_centers() - [0.03, 0.05, 0.04], axis=1) < radius)
     assert len(np.unique(grid.refinement_level())) == 3
     slope = np.array([0.7, -1.3, 3.5])
     u = grid.cell_centers() @ slope

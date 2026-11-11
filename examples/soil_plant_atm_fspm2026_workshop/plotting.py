@@ -33,37 +33,37 @@ TISSUE_NAMES = {1: "epidermis", 2: "cortex", 3: "endodermis", 4: "xylem", 5: "me
 ORGAN_NAMES = {ROOT: "root", STEM: "stem", LEAF: "leaf"}
 
 
-def _segments(ds):
+def _segments(data_structure):
     """Per SubOrgan entity: its ends (x, y, z) from its Compartments' broadcast geometry, and its node indices."""
-    owner = np.asarray(ds.owner("SubOrgan"))
-    ends = {name: np.asarray(ds.get(name)) for name in ("x1", "x2", "y1", "y2", "z1", "z2")}
-    first = np.array([np.flatnonzero(owner == k)[0] for k in range(len(ds.entity_ids("SubOrgan")))])
+    owner = np.asarray(data_structure.owner("SubOrgan"))
+    ends = {name: np.asarray(data_structure.get(name)) for name in ("x1", "x2", "y1", "y2", "z1", "z2")}
+    first = np.array([np.flatnonzero(owner == k)[0] for k in range(len(data_structure.entity_ids("SubOrgan")))])
     start = np.c_[ends["x1"][first], ends["y1"][first], ends["z1"][first]]
     end = np.c_[ends["x2"][first], ends["y2"][first], ends["z2"][first]]
     return start, end, owner
 
 
-def _xylem_values(ds, name="water_potential"):
+def _xylem_values(data_structure, name="water_potential"):
     """Per SubOrgan entity: the value at its xylem Compartment."""
-    owner, tissue, values = np.asarray(ds.owner("SubOrgan")), np.asarray(ds.get("tissue")), np.asarray(ds.get(name))
-    out = np.empty(len(ds.entity_ids("SubOrgan")))
+    owner, tissue, values = np.asarray(data_structure.owner("SubOrgan")), np.asarray(data_structure.get("tissue")), np.asarray(data_structure.get(name))
+    out = np.empty(len(data_structure.entity_ids("SubOrgan")))
     xylem = np.flatnonzero(tissue == XYLEM)
     out[owner[xylem]] = values[xylem]
     return out
 
 
-def _row(ds, row):
+def _row(data_structure, row):
     """
     Per SubOrgan entity, whether it belongs to the planting row *row* (the plants of the row-th collar x, rows running
     along y), and the horizontal axis of the side view: x for every plant (row None), y along a row.
     """
-    n_segments = len(ds.entity_ids("SubOrgan"))
+    n_segments = len(data_structure.entity_ids("SubOrgan"))
     if row is None:
         return np.ones(n_segments, dtype=bool), 0
-    plant_of_node, segment_of_node = np.asarray(ds.owner("Plant")), np.asarray(ds.owner("SubOrgan"))
+    plant_of_node, segment_of_node = np.asarray(data_structure.owner("Plant")), np.asarray(data_structure.owner("SubOrgan"))
     plant_of_segment = np.empty(n_segments, dtype=int)
     plant_of_segment[segment_of_node] = plant_of_node
-    collar_x = np.round([ds.mtg.view("x")[int(p)] for p in ds.entity_ids("Plant")], 6)
+    collar_x = np.round([data_structure.mtg.view("x")[int(p)] for p in data_structure.entity_ids("Plant")], 6)
     rows = np.unique(collar_x)
     return collar_x[plant_of_segment] == rows[row], 1
 
@@ -83,11 +83,11 @@ def plant_segments(data_structures, path, row=None, soil=None, soil_quantity="an
     fig, ax = plt.subplots(figsize=(7, 6.6 if soil is not None else 6))
     if soil is not None:
         _soil_colorbar(fig, ax, _soil_background(ax, soil, data_structures[0], row, soil_quantity), soil_quantity)
-    selections = [_row(ds, row) for ds in data_structures]
-    values = [_xylem_values(ds)[kept] for ds, (kept, _) in zip(data_structures, selections)]
+    selections = [_row(data_structure, row) for data_structure in data_structures]
+    values = [_xylem_values(data_structure)[kept] for data_structure, (kept, _) in zip(data_structures, selections)]
     norm = _norm(*values)
-    for ds, value, (kept, h) in zip(data_structures, values, selections):
-        start, end, _ = _segments(ds)
+    for data_structure, value, (kept, h) in zip(data_structures, values, selections):
+        start, end, _ = _segments(data_structure)
         lines = LineCollection(np.stack([start[kept][:, [h, 2]], end[kept][:, [h, 2]]], axis=1), cmap="viridis",
                                norm=norm, linewidths=3, zorder=2)
         lines.set_array(value)
@@ -103,34 +103,34 @@ def plant_segments(data_structures, path, row=None, soil=None, soil_quantity="an
     plt.close(fig)
 
 
-def _compartment_positions(ds, h=0, spread=0.004):
+def _compartment_positions(data_structure, h=0, spread=0.004):
     """Side-view positions (axis h, z) of the Compartments: at their segment's middle, offset by tissue from the axis."""
-    start, end, owner = _segments(ds)
+    start, end, owner = _segments(data_structure)
     middle = (start + end) / 2.
     axis = end - start
     normal = np.c_[-axis[:, 2], axis[:, h]]                                # perpendicular in the side-view plane
     normal /= np.maximum(np.linalg.norm(normal, axis=1, keepdims=True), 1e-12)
-    tissue, organ = np.asarray(ds.get("tissue")).astype(int), np.asarray(ds.get("organ")).astype(int)
+    tissue, organ = np.asarray(data_structure.get("tissue")).astype(int), np.asarray(data_structure.get("organ")).astype(int)
     depth = np.array([len(ANATOMY[o]) - 1 - ANATOMY[o].index(t) if o != LEAF else ANATOMY[o].index(t)
                       for o, t in zip(organ, tissue)], dtype=float)            # 0 at the xylem
     return middle[owner][:, [h, 2]] + spread * depth[:, None] * normal[owner]
 
 
-def plant_anatomy(ds, path, row=None, soil=None, soil_quantity="anomaly", title="Ψ of every Compartment"):
+def plant_anatomy(data_structure, path, row=None, soil=None, soil_quantity="anomaly", title="Ψ of every Compartment"):
     """
     Every Compartment (side view, of planting row *row* when given) with its edges, coloured by Ψ; with the *soil*
     grid, its ΔΨ (or its Ψ, soil_quantity="psi") behind them (as in plant_segments).
     """
-    kept_segments, h = _row(ds, row)
-    kept = kept_segments[np.asarray(ds.owner("SubOrgan"))]
-    position = _compartment_positions(ds, h)
-    index = {int(v): i for i, v in enumerate(ds.entity_ids("node"))}
-    edges = np.array([[index[int(a)], index[int(b)]] for a, b in ds.edges()])
+    kept_segments, h = _row(data_structure, row)
+    kept = kept_segments[np.asarray(data_structure.owner("SubOrgan"))]
+    position = _compartment_positions(data_structure, h)
+    index = {int(v): i for i, v in enumerate(data_structure.entity_ids("node"))}
+    edges = np.array([[index[int(a)], index[int(b)]] for a, b in data_structure.edges()])
     edges = edges[kept[edges[:, 0]] & kept[edges[:, 1]]]
-    psi = np.asarray(ds.get("water_potential"))
+    psi = np.asarray(data_structure.get("water_potential"))
     fig, ax = plt.subplots(figsize=(8, 7.6 if soil is not None else 7))
     if soil is not None:
-        _soil_colorbar(fig, ax, _soil_background(ax, soil, ds, row, soil_quantity), soil_quantity)
+        _soil_colorbar(fig, ax, _soil_background(ax, soil, data_structure, row, soil_quantity), soil_quantity)
     ax.add_collection(LineCollection(position[edges], colors="0.4" if soil is not None else "0.6", linewidths=0.6,
                                      zorder=2))
     points = ax.scatter(position[kept, 0], position[kept, 1], c=psi[kept], s=10, cmap="viridis", zorder=3)
@@ -144,17 +144,17 @@ def plant_anatomy(ds, path, row=None, soil=None, soil_quantity="anomaly", title=
     plt.close(fig)
 
 
-def anatomy_types(ds, path, title="One anatomy per organ type"):
+def anatomy_types(data_structure, path, title="One anatomy per organ type"):
     """
     For the segment of each organ type nearest the collar: its tissues in their radial order, coloured by Ψ, and the
     radial fluxes between them (mm3 s-1).
     """
-    owner, tissue = np.asarray(ds.owner("SubOrgan")), np.asarray(ds.get("tissue")).astype(int)
-    organ, psi = np.asarray(ds.get("organ")).astype(int), np.asarray(ds.get("water_potential"))
-    start, end, _ = _segments(ds)
-    index = {int(v): i for i, v in enumerate(ds.entity_ids("node"))}
-    pairs = {(index[int(a)], index[int(b)]): k for k, (a, b) in enumerate(ds.edges())}
-    flux = np.asarray(ds.get("water_flux"))
+    owner, tissue = np.asarray(data_structure.owner("SubOrgan")), np.asarray(data_structure.get("tissue")).astype(int)
+    organ, psi = np.asarray(data_structure.get("organ")).astype(int), np.asarray(data_structure.get("water_potential"))
+    start, end, _ = _segments(data_structure)
+    index = {int(v): i for i, v in enumerate(data_structure.entity_ids("node"))}
+    pairs = {(index[int(a)], index[int(b)]): k for k, (a, b) in enumerate(data_structure.edges())}
+    flux = np.asarray(data_structure.get("water_flux"))
     fig, axes = plt.subplots(1, 3, figsize=(15, 3.6))
     norm = Normalize(vmin=psi.min(), vmax=psi.max())
     for ax, kind in zip(axes, (ROOT, STEM, LEAF)):
@@ -262,9 +262,9 @@ def soil_slice(grid, plant_data_structures, path, y=None, row=None, anomaly=Fals
     image = ax.imshow(values.T, origin="upper", aspect="equal", **colours,
                       extent=(0., values.shape[0] * dx[h], -psi.shape[2] * dx[2], 0.))
     low, high = i * dx[across], (i + 1) * dx[across]
-    for ds in plant_data_structures:
-        start, end, owner = _segments(ds)
-        roots = np.array(sorted(set(owner[np.asarray(ds.get("organ")) == ROOT])), dtype=int)
+    for data_structure in plant_data_structures:
+        start, end, owner = _segments(data_structure)
+        roots = np.array(sorted(set(owner[np.asarray(data_structure.get("organ")) == ROOT])), dtype=int)
         middle = np.mod((start[roots, across] + end[roots, across]) / 2., psi.shape[across] * dx[across])
         roots = roots[(middle >= low - dx[across]) & (middle < high + dx[across])]   # the roots near the slice
         ax.add_collection(LineCollection(np.stack([start[roots][:, [h, 2]], end[roots][:, [h, 2]]], axis=1),
@@ -284,9 +284,9 @@ def top_view(grid, plant_data_structures, path, title="Top view: water taken up 
     fig, ax = plt.subplots(figsize=(6, 6))
     image = ax.imshow(uptake.T, origin="lower", cmap="Blues", extent=(0., uptake.shape[0] * dx[0], 0.,
                                                                       uptake.shape[1] * dx[1]))
-    for ds in plant_data_structures:
-        start, end, owner = _segments(ds)
-        organ = np.array([np.asarray(ds.get("organ"))[np.flatnonzero(owner == k)[0]] for k in range(len(start))])
+    for data_structure in plant_data_structures:
+        start, end, owner = _segments(data_structure)
+        organ = np.array([np.asarray(data_structure.get("organ"))[np.flatnonzero(owner == k)[0]] for k in range(len(start))])
         lines = np.stack([start[:, :2], end[:, :2]], axis=1)
         ax.add_collection(LineCollection(lines[organ == ROOT], colors="saddlebrown", linewidths=1.2))
         ax.add_collection(LineCollection(lines[organ != ROOT], colors="green", linewidths=2.4,   # the shoot,
@@ -299,22 +299,22 @@ def top_view(grid, plant_data_structures, path, title="Top view: water taken up 
     plt.close(fig)
 
 
-def _entity_of_segment(ds, scale):
+def _entity_of_segment(data_structure, scale):
     """Per SubOrgan entity, the index of the entity of *scale* it belongs to."""
-    segment_of_node, entity_of_node = np.asarray(ds.owner("SubOrgan")), np.asarray(ds.owner(scale))
-    entity_of_segment = np.empty(len(ds.entity_ids("SubOrgan")), dtype=int)
+    segment_of_node, entity_of_node = np.asarray(data_structure.owner("SubOrgan")), np.asarray(data_structure.owner(scale))
+    entity_of_segment = np.empty(len(data_structure.entity_ids("SubOrgan")), dtype=int)
     entity_of_segment[segment_of_node] = entity_of_node
     return entity_of_segment
 
 
-def _scale_graph(ds, scale, name, node_kept, h):
+def _scale_graph(data_structure, scale, name, node_kept, h):
     """
     The graph of *scale*: its entities among the kept nodes (positions: the centroid of their segments' middles, in
     the side-view plane), their edges (the pairs of entities joined by an edge of the solver graph) and values.
     """
-    start, end, segment_of_node = _segments(ds)
+    start, end, segment_of_node = _segments(data_structure)
     middle = ((start + end) / 2.)[segment_of_node][:, [h, 2]]               # per node, its segment's middle
-    entity_of_node = np.asarray(ds.owner(scale))
+    entity_of_node = np.asarray(data_structure.owner(scale))
     entities = np.unique(entity_of_node[node_kept])
     local = {int(e): i for i, e in enumerate(entities)}
     position = np.zeros((len(entities), 2))
@@ -324,17 +324,17 @@ def _scale_graph(ds, scale, name, node_kept, h):
         position[i] += middle[node]
         counts[i] += 1.
     position /= counts[:, None]
-    index = {int(v): i for i, v in enumerate(ds.entity_ids("node"))}
+    index = {int(v): i for i, v in enumerate(data_structure.entity_ids("node"))}
     pairs = set()
-    for a, b in ds.edges():
+    for a, b in data_structure.edges():
         ea, eb = entity_of_node[index[int(a)]], entity_of_node[index[int(b)]]
         if ea != eb and int(ea) in local and int(eb) in local:
             pairs.add((local[int(ea)], local[int(eb)]))
     edges = np.array(sorted(pairs), dtype=int).reshape(-1, 2)
-    return position, edges, np.asarray(ds.get(name))[entities]
+    return position, edges, np.asarray(data_structure.get(name))[entities]
 
 
-def upscaling_series(ds, path, row=None):
+def upscaling_series(data_structure, path, row=None):
     """
     The upscaling of the water potential (Compartment, SubOrgan, Organ, Phytomer, GrowthUnit, Axis, Plant) in one
     plot, each scale shifted by the same horizontal distance: the graph of each scale, its entities as nodes (at the
@@ -342,11 +342,11 @@ def upscaling_series(ds, path, row=None):
     solver graph joining two of them), coloured by the mean of their two nodes. One colour scale; side views of
     planting row *row* when given.
     """
-    names = upscale(ds)
-    kept, h = _row(ds, row)
-    node_kept = kept[np.asarray(ds.owner("SubOrgan"))]
-    norm = Normalize(vmin=float(np.min(ds.get("water_potential"))), vmax=float(np.max(ds.get("water_potential"))))
-    compartments = _compartment_positions(ds, h)[node_kept]
+    names = upscale(data_structure)
+    kept, h = _row(data_structure, row)
+    node_kept = kept[np.asarray(data_structure.owner("SubOrgan"))]
+    norm = Normalize(vmin=float(np.min(data_structure.get("water_potential"))), vmax=float(np.max(data_structure.get("water_potential"))))
+    compartments = _compartment_positions(data_structure, h)[node_kept]
     low, high = compartments[:, 0].min(), compartments[:, 0].max()
     shift = 1.25 * (high - low)                                        # the same distance between the scales
     bottom = compartments[:, 1].min()
@@ -354,16 +354,16 @@ def upscaling_series(ds, path, row=None):
     for rank, (scale, name) in enumerate(names.items()):
         offset = np.array([rank * shift, 0.])
         if scale == "Compartment":
-            index = {int(v): i for i, v in enumerate(ds.entity_ids("node"))}
-            edges = np.array([[index[int(a)], index[int(b)]] for a, b in ds.edges()])
+            index = {int(v): i for i, v in enumerate(data_structure.entity_ids("node"))}
+            edges = np.array([[index[int(a)], index[int(b)]] for a, b in data_structure.edges()])
             edges = edges[node_kept[edges[:, 0]] & node_kept[edges[:, 1]]]
-            position = _compartment_positions(ds, h)
+            position = _compartment_positions(data_structure, h)
             ax.add_collection(LineCollection(position[edges] + offset, colors="0.7", linewidths=0.4))
             ax.scatter(*(position[node_kept] + offset).T, s=4, cmap="viridis", norm=norm,
-                       c=np.asarray(ds.get(name))[node_kept], zorder=3)
+                       c=np.asarray(data_structure.get(name))[node_kept], zorder=3)
             count = int(node_kept.sum())
         else:
-            position, edges, values = _scale_graph(ds, scale, name, node_kept, h)
+            position, edges, values = _scale_graph(data_structure, scale, name, node_kept, h)
             position = position + offset
             if len(edges):
                 edge_lines = LineCollection(position[edges], cmap="viridis", norm=norm, linewidths=2., zorder=2)
@@ -433,9 +433,9 @@ def _draw_cells(ax, grid, values, y, **colours):
 
 
 def _roots_side_view(ax, plant_data_structures, colour):
-    for ds in plant_data_structures:
-        start, end, owner = _segments(ds)
-        roots = np.array(sorted(set(owner[np.asarray(ds.get("organ")) == ROOT])), dtype=int)
+    for data_structure in plant_data_structures:
+        start, end, owner = _segments(data_structure)
+        roots = np.array(sorted(set(owner[np.asarray(data_structure.get("organ")) == ROOT])), dtype=int)
         ax.add_collection(LineCollection(np.stack([start[roots][:, [0, 2]], end[roots][:, [0, 2]]], axis=1),
                                          colors=colour, linewidths=1.4, zorder=3))
 
@@ -446,9 +446,9 @@ def adaptive_slice(grid, plant_data_structures, path, quantity="size", y=None):
     own size, coloured by its size (quantity="size") or by Ψ minus the mean of its depth ("anomaly"); the roots over
     it, projected.
     """
-    ds = plant_data_structures[0]
+    data_structure = plant_data_structures[0]
     if y is None:
-        y = float(ds.mtg.view("y")[int(ds.entity_ids("Plant")[0])])
+        y = float(data_structure.mtg.view("y")[int(data_structure.entity_ids("Plant")[0])])
     fig, ax = plt.subplots(figsize=(7, 6.4))
     if quantity == "size":
         size = grid.cell_sizes()[:, 0] * 100.

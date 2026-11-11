@@ -159,8 +159,8 @@ def test_newton_ignores_prev_fields(spec_nonlinear_1node):
 
 def test_newton_ignores_dt(spec_nonlinear_1node):
     solver      = NewtonSolver()
-    x_no_dt     = solver.step_once(spec_nonlinear_1node, dt=None)
-    x_with_dt   = solver.step_once(spec_nonlinear_1node, dt=0.001)
+    x_no_dt     = solver.step_once(spec_nonlinear_1node, step_duration=None)
+    x_with_dt   = solver.step_once(spec_nonlinear_1node, step_duration=0.001)
     np.testing.assert_allclose(x_no_dt, x_with_dt, atol=1e-8)
 
 

@@ -42,7 +42,7 @@ def initiation_links(translator, initiators) -> dict:
     return out
 
 
-def apply_link(g, plant: int, link, receiver, provider) -> None:
+def apply_link(mtg, plant: int, link, receiver, provider) -> None:
     """Write *link*'s values (receiver.variable <- provider's sources) on *plant*'s vertices of the receiver's scale."""
     from openalea.metafspm.coupling.declaration import resolve_equivalences
     link = resolve_equivalences(link, receiver, provider)
@@ -56,8 +56,8 @@ def apply_link(g, plant: int, link, receiver, provider) -> None:
         if given is not None and given != declared:
             raise ValueError(f"{_name(link)}: the link's scale {given} is not the declared one ({declared})")
 
-    source_vids = _vertices(g, plant, source_scale)
-    arrays = [_values(g, source, source_vids) for source in sources]
+    source_vids = _vertices(mtg, plant, source_scale)
+    arrays = [_values(mtg, source, source_vids) for source in sources]
     if link.formula is not None:
         values = np.asarray(link.formula(*arrays), dtype=float)
     else:
@@ -66,7 +66,7 @@ def apply_link(g, plant: int, link, receiver, provider) -> None:
     if scale == source_scale:
         vids, out = source_vids, values
     else:
-        vids = _vertices(g, plant, scale)
+        vids = _vertices(mtg, plant, scale)
         direction = "down" if scale > source_scale else "up"
         kind = (_metadata(provider, sources[0]) or {}).get("kind")
         aggregation = link.aggregation or default_aggregation(kind, direction, link.variable, link.weight)
@@ -74,16 +74,16 @@ def apply_link(g, plant: int, link, receiver, provider) -> None:
         if aggregation not in allowed:
             raise ValueError(f"{_name(link)}: aggregation '{aggregation}' does not go {direction} (one of {allowed})")
         if direction == "down":
-            owner = _index_in(source_vids, _owners(g, vids, source_scale))
+            owner = _index_in(source_vids, _owners(mtg, vids, source_scale))
             out = np.where(owner >= 0, values[owner.clip(0)], np.nan)
             if aggregation == "split":
-                weight = _values(g, link.weight, vids)
+                weight = _values(mtg, link.weight, vids)
                 total = np.bincount(owner.clip(0), weights=np.where(owner >= 0, weight, 0.), minlength=values.size)
                 out = out * weight / total[owner.clip(0)]
         else:
-            owner = _index_in(vids, _owners(g, source_vids, scale))
+            owner = _index_in(vids, _owners(mtg, source_vids, scale))
             kept = (owner >= 0) & np.isfinite(values)
-            weight = _values(g, link.weight, source_vids) if aggregation == "weighted_mean" else np.ones(values.size)
+            weight = _values(mtg, link.weight, source_vids) if aggregation == "weighted_mean" else np.ones(values.size)
             total = np.bincount(owner[kept], weights=(values * weight)[kept], minlength=vids.size)
             count = np.bincount(owner[kept], weights=weight[kept], minlength=vids.size)
             out = total if aggregation == "sum" else np.where(count > 0, total / np.where(count > 0, count, 1.), np.nan)
@@ -93,7 +93,7 @@ def apply_link(g, plant: int, link, receiver, provider) -> None:
             out = np.where(np.bincount(owner[kept], minlength=vids.size) > 0, out, np.nan)
     out = np.asarray(out, dtype=float)
     written = np.isfinite(out)                       # no source value: none written (the declared default applies)
-    g.set_values(link.variable, np.asarray(vids, dtype=np.int64)[written], out[written].tolist())
+    mtg.set_values(link.variable, np.asarray(vids, dtype=np.int64)[written], out[written].tolist())
 
 
 def _metadata(component, name):
@@ -116,29 +116,29 @@ def _scale(component, name, link) -> int:
     return int(scale)
 
 
-def _vertices(g, plant: int, scale: int) -> np.ndarray:
+def _vertices(mtg, plant: int, scale: int) -> np.ndarray:
     """*plant*'s vertices at *scale* (the plant itself at its own scale), the MPG's anchors excluded."""
-    if scale == g.scales.Plant:
+    if scale == mtg.scales.Plant:
         return np.array([plant], dtype=np.int64)
-    vids = np.asarray([int(v) for v in g.components_at_scale(plant, scale=scale)], dtype=np.int64)
-    anchor = g.topology_arrays()["is_anchor"]
+    vids = np.asarray([int(v) for v in mtg.components_at_scale(plant, scale=scale)], dtype=np.int64)
+    anchor = mtg.topology_arrays()["is_anchor"]
     return vids[~anchor[vids]] if vids.size else vids
 
 
-def _values(g, name, vids) -> np.ndarray:
+def _values(mtg, name, vids) -> np.ndarray:
     unique, inverse = np.unique(np.asarray(vids, dtype=np.int64), return_inverse=True)
-    found, values = g.values_at(name, unique)
+    found, values = mtg.values_at(name, unique)
     out = np.full(unique.size, np.nan)
     known = np.array([value is not None for value in values.tolist()], dtype=bool)
     out[np.searchsorted(unique, found[known])] = np.asarray(values[known], dtype=float)
     return out[inverse]
 
 
-def _owners(g, vids, scale) -> list:
+def _owners(mtg, vids, scale) -> list:
     """Each vertex's complex at *scale* (-1: none)."""
     out = []
     for v in vids.tolist():
-        owner = g.complex_at_scale(v, scale)
+        owner = mtg.complex_at_scale(v, scale)
         out.append(-1 if owner is None else int(owner))
     return out
 

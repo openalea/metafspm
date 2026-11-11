@@ -16,20 +16,20 @@ K = 1.0
 
 
 def _diffusion_spec(c0=(1., 0.), q0=0.):
-    g = _graph_view(2, [(0, 1)])
-    B = g.incidence.toarray()
+    mtg = _graph_view(2, [(0, 1)])
+    B = mtg.incidence.toarray()
 
-    def node_block(ctx):          # spatial part of the node balance (unit capacity): dc/dt = -(B q)
-        return B @ ctx.edge_unknowns["q"]
+    def node_block(context):          # spatial part of the node balance (unit capacity): dc/dt = -(B q)
+        return B @ context.edge_unknowns["q"]
 
-    def edge_block(ctx):          # edge law: q = K (B^T c)
-        return ctx.edge_unknowns["q"] - K * (B.T @ ctx.node_unknowns["c"])
+    def edge_block(context):          # edge law: q = K (B^T c)
+        return context.edge_unknowns["q"] - K * (B.T @ context.node_unknowns["c"])
 
-    def jac(ctx):
+    def jac(context):
         return np.block([[np.zeros((2, 2)), B], [-K * B.T, np.eye(1)]])
 
     return GraphDAESpec(
-        graph=g,
+        graph=mtg,
         node_fields={"c": FieldState("c", "node", np.array(c0, dtype=float))},
         edge_fields={"q": FieldState("q", "edge", np.array([q0]))},
         boundary_ports=(), unknowns=UnknownLayout(("c",), ("q",)),
@@ -57,7 +57,7 @@ def test_explicit_euler_time_loop_with_edge_recovery():
 
 def test_scipy_ivp_step_with_edge_unknowns():
     spec = _diffusion_spec()
-    packed = ScipyIVPSolver(SolverConfig(method="scipy_ivp_bdf", integration_relative_tolerance=1e-8, integration_absolute_tolerance=1e-10)).step_once(spec, dt=0.5)
+    packed = ScipyIVPSolver(SolverConfig(method="scipy_ivp_bdf", integration_relative_tolerance=1e-8, integration_absolute_tolerance=1e-10)).step_once(spec, step_duration=0.5)
     assert packed.shape == (3,)                            # nodes and edges
     np.testing.assert_allclose(packed[:2], _exact(0.5)[:2], rtol=1e-4)
     assert packed[2] == pytest.approx(K * (packed[0] - packed[1]), abs=1e-8)

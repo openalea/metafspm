@@ -15,7 +15,7 @@ each turn; its inputs are metafspm's outputs, sent to the session. A subclass de
         C_hexose_root: float = state_variable(unit="mol.g-1", scale=scales.SubOrgan, kind="massic_concentration")
         length: float = input_variable(unit="m", scale=scales.SubOrgan)
 
-    growth, remote = RootGrowth(ds), RemoteCarbon(ds)
+    growth, remote = RootGrowth(data_structure), RemoteCarbon(data_structure)
     remote.start()                                     # join the session: the initial state exchanged
     for _ in range(steps):
         growth()
@@ -34,8 +34,8 @@ When metafspm's model works on a plant another platform builds (metafspm follows
 plant to start from: `join()` joins the session first and builds the DataStructure from the first turn's entities,
 then the components are made on it and `start()` carries on::
 
-    ds = RemoteRoots.join(endpoint)                    # metafspm's MPG and DataStructure, from the session's plant
-    uptake, remote = WaterUptake(ds), RemoteRoots(ds)
+    data_structure = RemoteRoots.join(endpoint)                    # metafspm's MPG and DataStructure, from the session's plant
+    uptake, remote = WaterUptake(data_structure), RemoteRoots(data_structure)
     remote.start()
 """
 from dataclasses import dataclass, fields
@@ -79,8 +79,8 @@ class RemoteComponent(StructuralComponent):
 
     def _set_name(self, name: str) -> str:
         """The entity set (scale name) of variable *name*'s location."""
-        ds = self.data_structure
-        return _scale_names(ds.structure)[_location_scales(ds)[ds.location(name)]]
+        data_structure = self.data_structure
+        return _scale_names(data_structure.structure)[_location_scales(data_structure)[data_structure.location(name)]]
 
     @classmethod
     def _declared_variables(cls) -> dict:
@@ -132,21 +132,21 @@ class RemoteComponent(StructuralComponent):
         turn = next(turns, None)
         if turn is None:
             raise RuntimeError(f"{cls.__name__}: the session stopped before its first turn ({session.stopped})")
-        g = MPG()
+        mtg = MPG()
         maps = dict(vid_of={}, session_of={}, echo={})
         if turn.frame.data_structures:
-            _create_entities(g, turn.frame.data_structure(cls.data_structure_id), cls.rights, maps,
+            _create_entities(mtg, turn.frame.data_structure(cls.data_structure_id), cls.rights, maps,
                              session.id_offset)
-        scale = getattr(g.scales, from_scale)
-        if not any(g._scale.get(vid) == scale for vid in maps["session_of"]):
+        scale = getattr(mtg.scales, from_scale)
+        if not any(mtg._scale.get(vid) == scale for vid in maps["session_of"]):
             raise ValueError(f"{cls.__name__}: the session's first turn holds no {from_scale} entity to build the "
                              "DataStructure on")
-        g.populate_graph(scale)
-        g.convert_properties_to_arraydict()
-        ds = MPGDataStructure(g, from_scale=scale)
-        _JOINED[id(ds)] = dict(session=session, turns=turns, turn=turn,
+        mtg.populate_graph(scale)
+        mtg.convert_properties_to_arraydict()
+        data_structure = MPGDataStructure(mtg, from_scale=scale)
+        _JOINED[id(data_structure)] = dict(session=session, turns=turns, turn=turn,
                                declared={entity_set.name for entity_set in declaration.entity_sets}, **maps)
-        return ds
+        return data_structure
 
     # ── the session ────────────────────────────────────────────────────────────────
     def start(self) -> None:
@@ -192,9 +192,9 @@ class RemoteComponent(StructuralComponent):
 
     def _send(self) -> None:
         from openalea import encoding3d as codec
-        ds = self.data_structure
+        data_structure = self.data_structure
         inputs = [name for name, (role, _) in self._variables().items() if role == "input_variable"]
-        frame = to_frame({self.data_structure_id: ds}, geometry=False, variables=inputs)
+        frame = to_frame({self.data_structure_id: data_structure}, geometry=False, variables=inputs)
         tables = {entity_set.name: entity_set for entity_set in frame.data_structures[0].entity_sets}
         declared = self._declared
         set_of, complex_of = {}, {}
@@ -255,12 +255,12 @@ class RemoteComponent(StructuralComponent):
         if not frame.data_structures:
             return
         structure = frame.data_structure(self.data_structure_id)
-        ds = self.data_structure
-        g = ds._mtg
+        data_structure = self.data_structure
+        mtg = data_structure._mtg
         before = self._before_new_nodes() if self.partition_weight is not None else None
-        changed = self._remove(frame) | self._create(structure, g)
+        changed = self._remove(frame) | self._create(structure, mtg)
         if changed:
-            ds.update_topology()
+            data_structure.update_topology()
         for name, (role, _) in self._variables().items():
             if role != "state_variable":
                 continue
@@ -276,23 +276,23 @@ class RemoteComponent(StructuralComponent):
             known = np.array([vid is not None for vid in vids]) & ~np.isnan(values)
             if not known.any():
                 continue
-            location = ds.location(name)
-            current = np.array(ds.get(name), dtype=float, copy=True)
-            current[ds.index_of(vids[known].astype(np.int64), location=location)] = values[known]
-            ds.set(name, current)
+            location = data_structure.location(name)
+            current = np.array(data_structure.get(name), dtype=float, copy=True)
+            current[data_structure.index_of(vids[known].astype(np.int64), location=location)] = values[known]
+            data_structure.set(name, current)
         if changed and before is not None:
             self._repartition(*before)
 
     def _remove(self, frame) -> bool:
-        g = self.data_structure._mtg
+        mtg = self.data_structure._mtg
         changed = False
         for (_, name), ids in sorted(frame.update.removed.items(),
-                                     key=lambda item: -int(getattr(g.scales, item[0][1], 0))):
+                                     key=lambda item: -int(getattr(mtg.scales, item[0][1], 0))):
             for identifier in ids.tolist():
                 vid = self._vid(int(identifier))
-                if vid is None or vid not in g._scale:
+                if vid is None or vid not in mtg._scale:
                     continue
-                g.remove_vertex(vid, reparent_child=False)
+                mtg.remove_vertex(vid, reparent_child=False)
                 self._vid_of.pop(int(identifier), None), self._session_of.pop(vid, None)
                 self._echo.pop(int(identifier), None)
                 for sent in self._sent.values():
@@ -300,11 +300,11 @@ class RemoteComponent(StructuralComponent):
                 changed = True
         return changed
 
-    def _create(self, structure, g) -> bool:
+    def _create(self, structure, mtg) -> bool:
         """The vertices of the remote entities new in the scales metafspm follows or refines (another participant may
         refine them too)."""
         maps = dict(vid_of=self._vid_of, session_of=self._session_of, echo=self._echo)
-        return _create_entities(g, structure, self.rights, maps, self.session.id_offset)
+        return _create_entities(mtg, structure, self.rights, maps, self.session.id_offset)
 
     def triangles(self, where=None):
         """No geometry of its own: the remote model's is not drawn by metafspm's light models."""
@@ -312,7 +312,7 @@ class RemoteComponent(StructuralComponent):
         return Triangles(np.zeros((0, 3, 3)), np.zeros(0, dtype=np.int64))
 
 
-def _create_entities(g, structure, rights: dict, maps: dict, id_offset: int) -> bool:
+def _create_entities(mtg, structure, rights: dict, maps: dict, id_offset: int) -> bool:
     """The MPG vertices of the remote entities of *structure* new to *maps* (vid_of, session_of, echo), in the scales
     *rights* does not own: under their complex's vertex (the MPG's anchor of their scale when they have none, and
     vertices of metafspm's own for the scales skipped in between), after their parent; their labels by the MPG's label
@@ -329,7 +329,7 @@ def _create_entities(g, structure, rights: dict, maps: dict, id_offset: int) -> 
     for table in sorted(structure.entity_sets, key=lambda item: item.rank or 0):
         if rights.get(table.name, "follows") == "owns":
             continue
-        scale = getattr(g.scales, table.name, None)
+        scale = getattr(mtg.scales, table.name, None)
         if scale is None:
             raise ValueError(f"the MPG has no scale '{table.name}'")
         ids = table.columns["id"].tolist()
@@ -350,20 +350,20 @@ def _create_entities(g, structure, rights: dict, maps: dict, id_offset: int) -> 
                 edge_type = str(table.columns["edge_type"][row]) if "edge_type" in table.columns else "none"
                 label = str(table.columns["label"][row]) if "label" in table.columns else table.name
                 properties = dict(scale=scale)            # the MPG's scale property, which its index reads
-                group = getattr(g.labels, table.name, None)       # the label's code: by its value, or its name
-                code = g.labels.filters.get(label, getattr(group, label, None) if group is not None else None)
+                group = getattr(mtg.labels, table.name, None)       # the label's code: by its value, or its name
+                code = mtg.labels.filters.get(label, getattr(group, label, None) if group is not None else None)
                 if isinstance(code, (int, np.integer)):
                     properties["label"] = int(code)
                 parent_vid = vid(parent) if parent != _NO_ID else None
                 # its container one scale up: its complex's vertex (the MPG's anchor of its scale when it has none),
                 # through vertices of metafspm's own for the scales between (another platform may skip some: an
                 # organ right under its plant), which the session never sees
-                container = complex_vid if complex_vid is not None else g.scales.anchors[scale]
-                while g.scale(container) < scale - 1:
-                    container = g.add_components_bulk(container, 1, scale=g.scale(container) + 1, edge_type="/",
+                container = complex_vid if complex_vid is not None else mtg.scales.anchors[scale]
+                while mtg.scale(container) < scale - 1:
+                    container = mtg.add_components_bulk(container, 1, scale=mtg.scale(container) + 1, edge_type="/",
                                                       isanchor=False)[0]
                 edge = _EDGE_SYMBOLS.get(edge_type, "<") if parent_vid is not None else "/"
-                new = g.add_components_bulk(container, 1, topo_parents=[parent_vid], edge_type=edge, isanchor=False,
+                new = mtg.add_components_bulk(container, 1, topo_parents=[parent_vid], edge_type=edge, isanchor=False,
                                             **properties)[0]
                 vid_of[identifier], session_of[new] = new, identifier
                 echo[identifier] = (label, complex_, parent, edge_type)

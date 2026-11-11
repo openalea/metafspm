@@ -3,15 +3,15 @@ Instanced sections: the vertices of a section (e.g. an anatomy's Layers, Cells, 
 once in a SectionTemplate, and each segment carrying it an instance: a block of vertex ids reserved under its owner,
 with no MTG vertex of its own.
 
-    template = SectionTemplate.capture(g, owner, vids)      once per section archetype, from one copy of it
-    vids = g.add_instance(segment, template)                 the segment's block of ids (as a copy would get)
-    g.remove_instance(segment)
+    template = SectionTemplate.capture(mtg, owner, vids)      once per section archetype, from one copy of it
+    vids = mtg.add_instance(segment, template)                 the segment's block of ids (as a copy would get)
+    mtg.remove_instance(segment)
 
 An instance's vertices answer the MPG's array queries (topology_arrays, _property_at, array_filtering, the vertices
 of a scale) as the copy they were captured from: their scale, complex, parent and properties are the template's,
 their links (n_id_a, n_id_b) shifted to the block. A property written at an instanced vertex (an explicit MTG entry)
 overrides the template's value there. The vertices are not in the MTG's dicts (_scale, _complex, _parent, ...): the
-openalea methods on one vertex (g.scale(v), g.complex(v), g.label(v)) do not know them; the array queries do.
+openalea methods on one vertex (mtg.scale(v), mtg.complex(v), mtg.label(v)) do not know them; the array queries do.
 """
 from dataclasses import dataclass, field
 
@@ -148,9 +148,9 @@ class SectionTemplate:
                                parent=np.r_[self.parent, parent], properties=out, links=self.links)
 
     @classmethod
-    def capture(cls, g, owner: int, vids, key, links=LINKS) -> "SectionTemplate":
+    def capture(cls, mtg, owner: int, vids, key, links=LINKS) -> "SectionTemplate":
         """
-        The template of the vertices *vids* of *g* (a consecutive block, e.g. one copy of a section under *owner*):
+        The template of the vertices *vids* of *mtg* (a consecutive block, e.g. one copy of a section under *owner*):
         their structure relative to the block, *owner* and the anchors, and every property they carry.
         """
         vids = np.asarray(vids, dtype=np.int64)
@@ -159,7 +159,7 @@ class SectionTemplate:
         first = int(vids[0])
         if not np.array_equal(vids, np.arange(first, first + vids.size)):
             raise ValueError("SectionTemplate.capture: the vertices must be a consecutive block of ids")
-        anchors = {int(a) for a in g.scales.anchors.values()}
+        anchors = {int(a) for a in mtg.scales.anchors.values()}
 
         def local(target, none_code, anchor_ok):
             out = np.empty(vids.size, dtype=np.int64)
@@ -174,7 +174,7 @@ class SectionTemplate:
                 elif t == owner:
                     out[i] = OWNER
                 elif anchor_ok and t in anchors:
-                    if t != g.scales.anchors[g._scale[v]]:
+                    if t != mtg.scales.anchors[mtg._scale[v]]:
                         raise ValueError(f"SectionTemplate.capture: vertex {v} is under another scale's anchor")
                     out[i] = ANCHOR
                 else:
@@ -182,12 +182,12 @@ class SectionTemplate:
                                      f"owner and its anchor")
             return out
 
-        scale = np.array([g._scale[v] for v in vids.tolist()], dtype=np.int64)
-        complex_ = local(g._complex, None, True)
-        parent = local(g._parent, NONE, False)
+        scale = np.array([mtg._scale[v] for v in vids.tolist()], dtype=np.int64)
+        complex_ = local(mtg._complex, None, True)
+        parent = local(mtg._parent, NONE, False)
         properties = {}
-        for name, prop in g.properties().items():
-            found, values = g._property_at(name, vids)
+        for name, prop in mtg.properties().items():
+            found, values = mtg._property_at(name, vids)
             if not found.size:
                 continue
             if prop.dtype != object:                     # a float column; an object column's values kept as they are
@@ -494,9 +494,9 @@ class InstancedView:
     else their template's), for code reading a property vertex by vertex (MPG.view). get, [], in; values_at for bulk.
     """
 
-    def __init__(self, g, name: str):
-        self.g, self.name = g, name
-        self.explicit = g.properties().get(name, {})
+    def __init__(self, mtg, name: str):
+        self.mtg, self.name = mtg, name
+        self.explicit = mtg.properties().get(name, {})
 
     def _one(self, vid):
         try:
@@ -505,7 +505,7 @@ class InstancedView:
             return False, None
         if key in self.explicit:
             return True, self.explicit[key]
-        has, values = self.g.instances.values(self.name, np.array([key], dtype=np.int64))
+        has, values = self.mtg.instances.values(self.name, np.array([key], dtype=np.int64))
         return bool(has[0]), (values[0].item() if has[0] and hasattr(values[0], "item") else values[0])
 
     def get(self, vid, default=None):
@@ -523,4 +523,4 @@ class InstancedView:
 
     def values_at(self, vids) -> dict:
         """{vid: value} of the *vids* having one, in bulk."""
-        return self.g.values_of(self.name, vids)
+        return self.mtg.values_of(self.name, vids)

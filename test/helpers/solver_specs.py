@@ -58,18 +58,18 @@ def _graph_view(n_nodes: int, edges=None) -> GraphView:
 
 def build_spec_nonlinear_1node(x_init: float = 3.0) -> GraphDAESpec:
     """R(x) = x² − 4 = 0,  solution x = +2.0."""
-    g = _graph_view(1)
+    mtg = _graph_view(1)
 
-    def eq(ctx):
-        x = ctx.node_unknowns['x']
+    def eq(context):
+        x = context.node_unknowns['x']
         return x ** 2 - 4.0
 
-    def jac(ctx):
-        x = ctx.node_unknowns['x']
+    def jac(context):
+        x = context.node_unknowns['x']
         return np.array([[2.0 * float(x[0])]])
 
     return GraphDAESpec(
-        graph=g,
+        graph=mtg,
         node_fields={'x': FieldState('x', 'node', np.array([x_init]))},
         edge_fields={}, boundary_ports=(),
         unknowns=UnknownLayout(('x',), ()),
@@ -85,16 +85,16 @@ def build_spec_decay_1node(x_init: float = 1.0) -> GraphDAESpec:
     R_spatial(x) = x (quasi-static: x → 0).
     Transient interpretation: ẋ = −x,  x(t) = x_init · exp(−t).
     """
-    g = _graph_view(1)
+    mtg = _graph_view(1)
 
-    def eq(ctx):
-        return ctx.node_unknowns['x']
+    def eq(context):
+        return context.node_unknowns['x']
 
-    def jac(ctx):
+    def jac(context):
         return np.array([[1.0]])
 
     return GraphDAESpec(
-        graph=g,
+        graph=mtg,
         node_fields={'x': FieldState('x', 'node', np.array([x_init]))},
         edge_fields={}, boundary_ports=(),
         unknowns=UnknownLayout(('x',), ()),
@@ -115,25 +115,25 @@ def build_spec_linear_2node(x_init=None) -> GraphDAESpec:
     Both equation_blocks (residual) and matrix/rhs evaluators are set so
     this single spec can drive Newton, LinearDirect, and ScipyRoot tests.
     """
-    g = _graph_view(2, [(0, 1)])
+    mtg = _graph_view(2, [(0, 1)])
     x0 = np.zeros(2) if x_init is None else np.asarray(x_init, dtype=float)
     A  = np.array([[2.0, 1.0], [1.0, 3.0]])
     b  = np.array([5.0, 7.0])
 
-    def eq(ctx):
-        return A @ ctx.node_unknowns['x'] - b
+    def eq(context):
+        return A @ context.node_unknowns['x'] - b
 
-    def jac(ctx):
+    def jac(context):
         return A
 
-    def mat(ctx):
+    def mat(context):
         return A
 
-    def rhs(ctx):
+    def rhs(context):
         return b
 
     return GraphDAESpec(
-        graph=g,
+        graph=mtg,
         node_fields={'x': FieldState('x', 'node', x0)},
         edge_fields={}, boundary_ports=(),
         unknowns=UnknownLayout(('x',), ()),

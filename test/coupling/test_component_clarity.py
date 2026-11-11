@@ -1,5 +1,5 @@
 """The plain forms of devplan_porting §16: named step outputs (a dict), declarations documented by keywords,
-parameter_value, cached, run_stage, ds.structure, planting; and display.draw."""
+parameter_value, cached, run_stage, data_structure.structure, planting; and display.draw."""
 from dataclasses import dataclass
 
 import numpy as np
@@ -54,19 +54,19 @@ class Wrong(FunctionalComponent):
 
 
 def graph():
-    g, _ = generate_simple_mpg_seedling()
-    g.populate_graph(g.scales.SubOrgan)
-    g.convert_properties_to_arraydict()
-    return MPGDataStructure(g, from_scale=g.scales.SubOrgan)
+    mtg, _ = generate_simple_mpg_seedling()
+    mtg.populate_graph(mtg.scales.SubOrgan)
+    mtg.convert_properties_to_arraydict()
+    return MPGDataStructure(mtg, from_scale=mtg.scales.SubOrgan)
 
 
 def test_named_outputs():
-    ds = graph()
-    component = Named(data_structure=ds, time_step=1.)
+    data_structure = graph()
+    component = Named(data_structure=data_structure, time_step=1.)
     component()
-    np.testing.assert_array_equal(ds.get("double"), 4.)
-    np.testing.assert_array_equal(ds.get("square"), 4.)
-    assert not ds.has("measures")                      # the method's name only names the step
+    np.testing.assert_array_equal(data_structure.get("double"), 4.)
+    np.testing.assert_array_equal(data_structure.get("square"), 4.)
+    assert not data_structure.has("measures")                      # the method's name only names the step
     scalar_ds = graph()
     Scalar(data_structure=scalar_ds, time_step=1.)()
     np.testing.assert_array_equal(scalar_ds.get("double"), 4.)
@@ -80,17 +80,17 @@ def test_documentation_by_keywords():
 
 
 def test_parameter_value_cached_and_run_stage():
-    ds = graph()
-    component = Named(data_structure=ds, time_step=1.)
+    data_structure = graph()
+    component = Named(data_structure=data_structure, time_step=1.)
     assert component.parameter_value("factor") == 3.
     builds = []
     assert component.cached("thing", lambda: builds.append(1) or 7) == 7
     assert component.cached("thing", lambda: builds.append(1) or 8) == 7 and len(builds) == 1
     assert component.cached("thing", lambda: 9, key="another") == 9
-    assert ds.structure is ds._mtg                                  # the MTG, unsynchronised
+    assert data_structure.structure is data_structure._mtg                                  # the MTG, unsynchronised
     component.run_stage("postsegmentation")
-    np.testing.assert_array_equal(ds.get("later"), 6.)
-    np.testing.assert_array_equal(ds.get("double"), 0.)            # the rate step did not run
+    np.testing.assert_array_equal(data_structure.get("later"), 6.)
+    np.testing.assert_array_equal(data_structure.get("double"), 0.)            # the rate step did not run
     with pytest.raises(ValueError, match="no schedule row"):
         component.run_stage("nothing")
 

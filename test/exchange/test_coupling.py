@@ -95,8 +95,8 @@ def run_carbon(endpoint, log):
 
 def run_metafspm(endpoint_of, start_carbon, tmp_path, removal=True):
     """The growth model and the remote carbon model coupled for STEPS steps; checks what metafspm receives."""
-    ds = _population()
-    growth, remote = RootGrowthProbe(data_structure=ds), RemoteCarbon(data_structure=ds)
+    data_structure = _population()
+    growth, remote = RootGrowthProbe(data_structure=data_structure), RemoteCarbon(data_structure=data_structure)
     coordinator = Coordinator(endpoint_of(tmp_path), steps=STEPS, interval=1., expect=["metafspm"],
                               links=[Link("carbon", "struct_mass", "metafspm", "struct_mass", aggregation="copy")],
                               record=str(tmp_path / "record"), timeout=300)
@@ -114,30 +114,30 @@ def run_metafspm(endpoint_of, start_carbon, tmp_path, removal=True):
         return values
 
     remote.start()
-    assert np.allclose(ds.get("C_hexose_root"), 1.5)
-    g = ds._mtg
+    assert np.allclose(data_structure.get("C_hexose_root"), 1.5)
+    mtg = data_structure._mtg
 
     def layers():                                                   # the Layer vertices under segments (not anchors)
-        nodes = set(ds.entity_ids("node").tolist())
-        return [v for v in g.vertices(scale=g.scales.Layer) if g.complex(v) in nodes]
+        nodes = set(data_structure.entity_ids("node").tolist())
+        return [v for v in mtg.vertices(scale=mtg.scales.Layer) if mtg.complex(v) in nodes]
 
-    assert len(layers()) == 2 * ds.n_nodes()                        # followed: created in metafspm's MPG
-    assert {g.complex(v) for v in layers()} == set(ds.entity_ids("node").tolist())
-    nodes = ds.n_nodes()
+    assert len(layers()) == 2 * data_structure.n_nodes()                        # followed: created in metafspm's MPG
+    assert {mtg.complex(v) for v in layers()} == set(data_structure.entity_ids("node").tolist())
+    nodes = data_structure.n_nodes()
     for step in range(1, STEPS + 1):
-        before = set(ds.entity_ids("node").tolist())
+        before = set(data_structure.entity_ids("node").tolist())
         growth()
-        masses = np.array(ds.get("struct_mass"), dtype=float)
-        new = np.array([vid not in before for vid in ds.entity_ids("node").tolist()])
+        masses = np.array(data_structure.get("struct_mass"), dtype=float)
+        new = np.array([vid not in before for vid in data_structure.entity_ids("node").tolist()])
         remote()
-        values = np.asarray(ds.get("C_hexose_root"))
+        values = np.asarray(data_structure.get("C_hexose_root"))
         if step == 3 and removal:        # the segment that lost its first layer: the mean of its other, 2 / (1 + m)
             differs = ~np.isclose(values, expected(masses, new))
             assert differs.sum() == 1 and np.isclose(values[differs], 2. / (1. + masses[differs])).all()
         elif step < STEPS:
             assert np.allclose(values, expected(masses, new)), step
     assert remote.stopped == "end of the session"
-    assert ds.n_nodes() > nodes                                     # the roots grew new segments, sent each step
+    assert data_structure.n_nodes() > nodes                                     # the roots grew new segments, sent each step
     # the layers of the segments before the last step (those of the last step's new segments come with a turn the
     # session no longer sends: they are in its record), one removed by the carbon model at step 3
     assert len(layers()) == 2 * len(before) - (1 if removal else 0)
@@ -223,8 +223,8 @@ def run_grower(endpoint, log):
 def test_metafspm_shares_its_amounts_over_remote_segments(tmp_path):
     """C-5: the remote model's new segments among metafspm's nodes; metafspm splits its own extensive amount between
     each new segment and its parent by their lengths (StructuralComponent's repartition), the total kept."""
-    ds = _population()
-    pool, remote = Pool(data_structure=ds), RemoteGrower(data_structure=ds)
+    data_structure = _population()
+    pool, remote = Pool(data_structure=data_structure), RemoteGrower(data_structure=data_structure)
     coordinator = Coordinator("tcp://127.0.0.1:*", steps=3, interval=1., expect=["metafspm", "grower"], timeout=120)
     remote.endpoint = coordinator.endpoint
     log = {}
@@ -233,26 +233,26 @@ def test_metafspm_shares_its_amounts_over_remote_segments(tmp_path):
     for thread in threads:
         thread.start()
     remote.start()
-    total = float(np.sum(ds.get("amount")))
-    nodes = ds.n_nodes()
+    total = float(np.sum(data_structure.get("amount")))
+    nodes = data_structure.n_nodes()
     for _ in range(3):
-        before = dict(zip(ds.entity_ids("node").tolist(), np.asarray(ds.get("amount")).tolist()))
-        lengths = dict(zip(ds.entity_ids("node").tolist(), np.asarray(ds.get("length")).tolist()))
+        before = dict(zip(data_structure.entity_ids("node").tolist(), np.asarray(data_structure.get("amount")).tolist()))
+        lengths = dict(zip(data_structure.entity_ids("node").tolist(), np.asarray(data_structure.get("length")).tolist()))
         remote()
         if remote.stopped is not None:
             break
-        ids = ds.entity_ids("node").tolist()
-        amount = dict(zip(ids, np.asarray(ds.get("amount")).tolist()))
-        assert np.sum(ds.get("amount")) == pytest.approx(total)          # the amount kept
-        g = ds._mtg
+        ids = data_structure.entity_ids("node").tolist()
+        amount = dict(zip(ids, np.asarray(data_structure.get("amount")).tolist()))
+        assert np.sum(data_structure.get("amount")) == pytest.approx(total)          # the amount kept
+        mtg = data_structure._mtg
         for vid in ids:
             if vid in before:
                 continue                                              # a new segment: its parent's share
-            parent = g.parent(vid)
+            parent = mtg.parent(vid)
             share = 0.5 / (0.5 + lengths[parent])
             assert amount[vid] == pytest.approx(share * before[parent])
             assert amount[parent] == pytest.approx((1. - share) * before[parent])
-    assert ds.n_nodes() > nodes
+    assert data_structure.n_nodes() > nodes
     for thread in threads:
         thread.join(60)
 
@@ -322,22 +322,22 @@ def test_metafspm_joins_a_plant_another_platform_builds():
                threading.Thread(target=run_roots, args=(coordinator.endpoint, log), daemon=True)]
     for thread in threads:
         thread.start()
-    ds = RemoteRoots.join(coordinator.endpoint)
-    assert ds.n_nodes() == 2
-    g = ds._mtg
-    anchors = set(g.scales.anchors.values())
-    assert len([v for v in g.vertices(scale=g.scales.Plant) if v not in anchors]) == 1      # the remote plant
-    uptake, remote = WaterUptake(data_structure=ds), RemoteRoots(data_structure=ds)
+    data_structure = RemoteRoots.join(coordinator.endpoint)
+    assert data_structure.n_nodes() == 2
+    mtg = data_structure._mtg
+    anchors = set(mtg.scales.anchors.values())
+    assert len([v for v in mtg.vertices(scale=mtg.scales.Plant) if v not in anchors]) == 1      # the remote plant
+    uptake, remote = WaterUptake(data_structure=data_structure), RemoteRoots(data_structure=data_structure)
     remote.start()
-    assert np.allclose(ds.get("length"), 0.01)                          # cm converted to m
+    assert np.allclose(data_structure.get("length"), 0.01)                          # cm converted to m
     for _ in range(3):
         uptake()
-        expected = 1e-6 * 2 * np.pi * np.asarray(ds.get("radius")) * np.asarray(ds.get("length"))
-        assert np.allclose(ds.get("water_uptake"), expected)
+        expected = 1e-6 * 2 * np.pi * np.asarray(data_structure.get("radius")) * np.asarray(data_structure.get("length"))
+        assert np.allclose(data_structure.get("water_uptake"), expected)
         remote()
     for thread in threads:
         thread.join(60)
     assert remote.stopped == "end of the session"
-    assert ds.n_nodes() == 5                                             # one more segment at steps 1, 2 and 3
+    assert data_structure.n_nodes() == 5                                             # one more segment at steps 1, 2 and 3
     assert log[2] and all(value == pytest.approx(1e-6 * 2 * np.pi * 0.0005 * 0.01) for value in log[2].values()
                           if value == value)

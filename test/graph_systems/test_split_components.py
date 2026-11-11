@@ -67,16 +67,16 @@ class ActiveSplitDiffusion(FunctionalComponent):
 def _population(n_segments, conductances):
     table = pd.DataFrame([dict(plant=f"p{i}", model=None, x=0.1 * i, y=0., depth=0., rotation=0.,
                                scenario={"n_segments": n}) for i, n in enumerate(n_segments)])
-    g, plants = _build_population(table, initiators=(RootGrowthProbe,))
-    g.populate_graph(g.scales.SubOrgan)
-    g.convert_properties_to_arraydict()
-    ds = MPGDataStructure(g, from_scale=g.scales.SubOrgan)
-    return ds, plants
+    mtg, plants = _build_population(table, initiators=(RootGrowthProbe,))
+    mtg.populate_graph(mtg.scales.SubOrgan)
+    mtg.convert_properties_to_arraydict()
+    data_structure = MPGDataStructure(mtg, from_scale=mtg.scales.SubOrgan)
+    return data_structure, plants
 
 
-def _initial_sugar(ds):
+def _initial_sugar(data_structure):
     """By rank within each plant (vids differ between a plant alone and in a population)."""
-    owner, ids = ds.entity_ids("Plant")[ds.owner("Plant")], ds.entity_ids("node")
+    owner, ids = data_structure.entity_ids("Plant")[data_structure.owner("Plant")], data_structure.entity_ids("node")
     rank = np.empty(ids.size, dtype=np.int64)
     for plant in np.unique(owner):
         members = np.flatnonzero(owner == plant)
@@ -85,21 +85,21 @@ def _initial_sugar(ds):
 
 
 def _run(model_class, n_segments, conductances, steps=3):
-    ds, plants = _population(n_segments, conductances)
-    model = model_class(data_structure=ds)
-    ds.set("conductance", conductances)
-    ds.set("sugar", _initial_sugar(ds))
+    data_structure, plants = _population(n_segments, conductances)
+    model = model_class(data_structure=data_structure)
+    data_structure.set("conductance", conductances)
+    data_structure.set("sugar", _initial_sugar(data_structure))
     for _ in range(steps):
         model()
-    return ds, plants, model
+    return data_structure, plants, model
 
 
-def _of_plant(ds, plant, name, location="node"):
-    owner = ds.entity_ids("Plant")[ds.owner("Plant")]
+def _of_plant(data_structure, plant, name, location="node"):
+    owner = data_structure.entity_ids("Plant")[data_structure.owner("Plant")]
     if location == "node":
-        return ds.get(name)[owner == plant]
-    child_owner = owner[ds.index_of(np.array([b for _, b in ds.edges()]))]
-    return ds.get(name)[child_owner == plant]
+        return data_structure.get(name)[owner == plant]
+    child_owner = owner[data_structure.index_of(np.array([b for _, b in data_structure.edges()]))]
+    return data_structure.get(name)[child_owner == plant]
 
 
 def test_each_piece_is_solved_as_if_its_plant_were_alone():
@@ -123,16 +123,16 @@ def test_split_and_whole_solves_agree():
 
 
 def test_pieces_of_an_active_subgraph():
-    ds, plants = _population([4, 6], [0.1, 0.1])
-    model = ActiveSplitDiffusion(data_structure=ds)
-    owner = ds.entity_ids("Plant")[ds.owner("Plant")]
-    ds.register("growing", (owner == plants[1]).astype(float) * (ds.entity_ids("node") % 2 + 1.), location="node")
-    ds.define_mask("active", {"growing": ">0"})
-    ds.set("sugar", _initial_sugar(ds))
-    before = ds.get("sugar").copy()
+    data_structure, plants = _population([4, 6], [0.1, 0.1])
+    model = ActiveSplitDiffusion(data_structure=data_structure)
+    owner = data_structure.entity_ids("Plant")[data_structure.owner("Plant")]
+    data_structure.register("growing", (owner == plants[1]).astype(float) * (data_structure.entity_ids("node") % 2 + 1.), location="node")
+    data_structure.define_mask("active", {"growing": ">0"})
+    data_structure.set("sugar", _initial_sugar(data_structure))
+    before = data_structure.get("sugar").copy()
     model()
-    np.testing.assert_array_equal(ds.get("sugar")[owner == plants[0]], before[owner == plants[0]])   # frozen
-    assert not np.array_equal(ds.get("sugar")[owner == plants[1]], before[owner == plants[1]])
+    np.testing.assert_array_equal(data_structure.get("sugar")[owner == plants[0]], before[owner == plants[0]])   # frozen
+    assert not np.array_equal(data_structure.get("sugar")[owner == plants[1]], before[owner == plants[1]])
     assert len(model.caches()["graph_pieces"][1]) == 1
 
 

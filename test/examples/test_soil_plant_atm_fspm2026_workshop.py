@@ -32,8 +32,8 @@ def _soil(scene):
 def _check_balances(scene):
     plants = [p.data_structure for p in scene.populations]
     soil = _soil(scene).grid
-    uptake = sum(float(ds.get("root_uptake").sum()) for ds in plants)
-    transpiration = sum(float(ds.get("evaporation").sum()) for ds in plants)
+    uptake = sum(float(data_structure.get("root_uptake").sum()) for data_structure in plants)
+    transpiration = sum(float(data_structure.get("evaporation").sum()) for data_structure in plants)
     assert uptake > 0 and uptake == pytest.approx(transpiration, rel=1e-8)          # the plants: in = out
     assert float(soil.get("plant_uptake").sum()) == pytest.approx(uptake, rel=1e-8)  # the soil gives what they take
     # the soil: the water table feeds the plants' uptake and the soil evaporation
@@ -43,20 +43,20 @@ def _check_balances(scene):
     assert from_the_water_table == pytest.approx(uptake + evaporation, rel=1e-6)
 
 
-def _check_upscaling(ds):
+def _check_upscaling(data_structure):
     """Each scale is the mean of the scale below it, down to one value per plant."""
     from upscaling import upscale
-    names = upscale(ds)
+    names = upscale(data_structure)
     below = "Compartment"
     for scale in ("SubOrgan", "Organ", "Phytomer", "GrowthUnit", "Axis", "Plant"):
-        owner = np.asarray(ds.owner(scale)) if below == "Compartment" else None
-        values, lower = np.asarray(ds.get(names[scale])), np.asarray(ds.get(names[below]))
+        owner = np.asarray(data_structure.owner(scale)) if below == "Compartment" else None
+        values, lower = np.asarray(data_structure.get(names[scale])), np.asarray(data_structure.get(names[below]))
         if owner is not None:
             expected = np.bincount(owner, weights=lower) / np.bincount(owner)
             np.testing.assert_allclose(values, expected, rtol=1e-12)
-        assert values.size == len(ds.entity_ids(scale))
+        assert values.size == len(data_structure.entity_ids(scale))
         below = scale
-    assert np.asarray(ds.get(names["Plant"])).size == len(ds.entity_ids("Plant"))
+    assert np.asarray(data_structure.get(names["Plant"])).size == len(data_structure.entity_ids("Plant"))
 
 
 @pytest.mark.parametrize("example", [one_plant, population], ids=["one_plant", "population"])
@@ -113,8 +113,8 @@ def test_a_scene_from_the_tables_column_is_the_tutorials_scene(tmp_path):
                                 y_range=0.2, translator=SCENE_TRANSLATOR, time_step=3600)
     built.simulate(3)
     explicit = scenario_to_outputs.run(scenario, str(tmp_path), hours=3)
-    for (name, (ds, _, _)), (other_name, (other, _, _)) in zip(built.data_structures().items(),
+    for (name, (data_structure, _, _)), (other_name, (other, _, _)) in zip(built.data_structures().items(),
                                                                explicit.data_structures().items()):
         assert name == other_name
-        for variable in ds.available_vars():
-            np.testing.assert_array_equal(ds.get(variable), other.get(variable))
+        for variable in data_structure.available_vars():
+            np.testing.assert_array_equal(data_structure.get(variable), other.get(variable))

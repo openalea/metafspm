@@ -64,11 +64,11 @@ def _scene(**options):
 
 def test_components_read_the_scene_forcings():
     scene = _scene()
-    ds = scene.populations[0].data_structure
+    data_structure = scene.populations[0].data_structure
     scene.run()
-    np.testing.assert_allclose(ds.get("light"), DT / 2)             # its mean over the first step
+    np.testing.assert_allclose(data_structure.get("light"), DT / 2)             # its mean over the first step
     scene.run()
-    np.testing.assert_allclose(ds.get("light"), 1.5 * DT)
+    np.testing.assert_allclose(data_structure.get("light"), 1.5 * DT)
 
 
 def test_declared_forcings():
@@ -98,12 +98,12 @@ def test_a_model_runs_when_its_condition_holds():
     scene = _scene()
     population = scene.populations[0].instance
     population._run_when = lambda s: s.time >= 2 * DT                  # e.g. only when there is light
-    ds = scene.populations[0].data_structure
+    data_structure = scene.populations[0].data_structure
     scene.run()
     scene.run()
-    np.testing.assert_array_equal(ds.get("light"), 0.)              # not run: its outputs kept
+    np.testing.assert_array_equal(data_structure.get("light"), 0.)              # not run: its outputs kept
     scene.run()
-    np.testing.assert_allclose(ds.get("light"), 2.5 * DT)
+    np.testing.assert_allclose(data_structure.get("light"), 2.5 * DT)
 
 
 def test_events_and_stop_conditions():

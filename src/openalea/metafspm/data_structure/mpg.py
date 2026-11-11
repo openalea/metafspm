@@ -52,7 +52,7 @@ class MPG(MTG):
 
     def objects(self, name: str, saved=None):
         """The registry *name* of the objects the plants' components share by content (data_structure.objects
-        .ObjectRegistry: e.g. GRANAP's anatomy templates): the MPG's, its DataStructure's (ds.objects), saved with it."""
+        .ObjectRegistry: e.g. GRANAP's anatomy templates): the MPG's, its DataStructure's (data_structure.objects), saved with it."""
         from openalea.metafspm.data_structure.objects import objects_of
         return objects_of(self, name, saved)
 
@@ -179,7 +179,7 @@ class MPG(MTG):
         Parameters
         ----------
         from_scale : int
-            Scale whose vertices provide topology (e.g. g.scales.SubOrgan).
+            Scale whose vertices provide topology (e.g. mtg.scales.SubOrgan).
         filter_in, filter_out : dict, optional
             ``{property_name: value}`` — include / exclude from_scale vertices.
             Excluded vertices remain topologically transparent (the parent-chain
@@ -338,7 +338,7 @@ class MPG(MTG):
 
     def column(self, name) -> tuple:
         """
-        (values, present) of property *name* over the vid index: two arrays of g._id + 1 entries, values[v] the value
+        (values, present) of property *name* over the vid index: two arrays of mtg._id + 1 entries, values[v] the value
         of vertex v where present[v] (NaN, or None for an object property, elsewhere), built from the column in one
         pass. Read it once and index it in bulk (values[vids][present[vids]]). A missing property gives no value
         present. An instanced vertex without an entry of its own has its template's value.
@@ -692,7 +692,7 @@ class MPG(MTG):
         Parameters
         ----------
         from_scale : int
-            Source scale for repopulation (e.g. g.scales.SubOrgan).
+            Source scale for repopulation (e.g. mtg.scales.SubOrgan).
         filter_in, filter_out : dict, optional
             Passed verbatim to populate_graph().
         """
@@ -1076,10 +1076,10 @@ class MPG(MTG):
               without ordering), "nearest" greedily matches the closest values of *ordering* (the default with
               it), "equal" matches equal values of *ordering*;
           {"pairs": f, "edge_label": E}
-              f(g, section_pairs) -> (pair, tails, heads): one entry per junction, the index of its pair and its
+              f(mtg, section_pairs) -> (pair, tails, heads): one entry per junction, the index of its pair and its
               Compartments on the parent's and the child's side.
 
-        A rule may also give "properties": properties(g, section_pairs, pair, tails, heads) -> {name: [one value per
+        A rule may also give "properties": properties(mtg, section_pairs, pair, tails, heads) -> {name: [one value per
         junction]}, written on the junctions it creates (e.g. their geometry), so that they carry them from their
         creation. The junctions are created pair by pair (children ascending), rule by rule, in the order each rule
         gives them.

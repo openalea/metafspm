@@ -105,8 +105,8 @@ def test_the_scene_lists_its_data_structures_once():
                   time_step=DT, forcings={"temperature": 1.})
     found = scene.data_structures()
     assert list(found) == ["Roots", "SceneSoil"]
-    ds, model, components = found["SceneSoil"]
-    assert ds is scene.environment[0].grid and model is scene.environment[0] and components == [model.nitrate]
+    data_structure, model, components = found["SceneSoil"]
+    assert data_structure is scene.environment[0].grid and model is scene.environment[0] and components == [model.nitrate]
 
 
 def test_a_population_without_a_scene():
@@ -120,11 +120,11 @@ def test_a_population_without_a_scene():
 def test_a_forcing_varying_in_space():
     """A forcing (time, ids) -> one value per entity: the Scene writes each entity's mean over the step."""
     scene = Scene(_roots_table(), time_step=DT, forcings={"temperature": lambda time, ids: time + np.asarray(ids)})
-    ds = scene.populations[0].data_structure
+    data_structure = scene.populations[0].data_structure
     scene.run()
-    np.testing.assert_allclose(ds.get("temperature"), DT / 2 + np.asarray(ds.entity_ids("node")))
+    np.testing.assert_allclose(data_structure.get("temperature"), DT / 2 + np.asarray(data_structure.entity_ids("node")))
     scene.run()
-    np.testing.assert_allclose(ds.get("temperature"), 1.5 * DT + np.asarray(ds.entity_ids("node")))
+    np.testing.assert_allclose(data_structure.get("temperature"), 1.5 * DT + np.asarray(data_structure.entity_ids("node")))
 
 
 def test_the_scenario_entries_are_set_once():
@@ -175,15 +175,15 @@ def test_the_cross_mappings_follow_the_links_options_and_the_soil_surface():
     crosses = [m for m in scene.mappings if isinstance(m, CrossMapping)]
     assert len(crosses) == 1 and (crosses[0].mask, crosses[0].method) == ("deep", "overlap")
     assert crosses[0].soil_surface == 0.01 and crosses[0].link_options == (("mask", "deep"), ("method", "overlap"))
-    ds = scene.populations[0].data_structure
-    assert ds.soil_surface == 0.01 and scene.environment[0].grid.soil_surface == 0.01
-    assert ds.structure.soil_surface == 0.01
+    data_structure = scene.populations[0].data_structure
+    assert data_structure.soil_surface == 0.01 and scene.environment[0].grid.soil_surface == 0.01
+    assert data_structure.structure.soil_surface == 0.01
     with pytest.warns(UserWarning, match="outside the grid"):          # the deepest below its bottom: warned once
         scene.run()
     assert crosses[0].outside().size == 2
     scene.run()                                     # the soil receives the plants' exudation of the step before
     exudation = scene.environment[0].grid.get("exudation")
-    assert exudation.sum() == pytest.approx(ds.mask("deep").sum()) and 0 < ds.mask("deep").sum() < ds.n_nodes()
+    assert exudation.sum() == pytest.approx(data_structure.mask("deep").sum()) and 0 < data_structure.mask("deep").sum() < data_structure.n_nodes()
     scene = Scene(doubles_planting([DeepSeedlings]), environment=[SceneSoil], translator=_soil_links(deep, None),
                   time_step=DT)
     crosses = [m for m in scene.mappings if isinstance(m, CrossMapping)]

@@ -158,7 +158,7 @@ class WheatPlant(CompositeModel):
 
 # The water diagnostics after each step (decision U-6: the plant and the soil exchange once per step, the lag
 # accepted): the plants' uptake (cm3 d-1) and the largest change of MECHA's ψ (hPa) since the step before, over the
-# nodes there at both (NaN at the first row: ds.previous); their organs' transpiration (cm3 d-1); the soil's water
+# nodes there at both (NaN at the first row: data_structure.previous); their organs' transpiration (cm3 d-1); the soil's water
 # given to the roots (m3 s-1) and the largest change of its water potential (MPa). Their balances are the solves'
 # (graph_system(conserved=...): MECHA's PLANT_WATER, the soil's WATER), in conservation.csv: residual the plant's
 # imbalance (cm3 per step), the soil's closure (m3)

@@ -10,9 +10,9 @@ else the DataStructure's (at its explicit entities only on an MPG with instances
 overlay and the tombstones at its entities where it wrote its values over them before (flush_mtg, after a step's
 writes were read back: _mark_mtg_synced).
 
-    column = g.properties()["radius"]       # the view
+    column = mtg.properties()["radius"]       # the view
     column.at(vids)                         # (found, values), in bulk
-    g.values_at("radius", vids)             # the MPG's bulk read, the same values
+    mtg.values_at("radius", vids)             # the MPG's bulk read, the same values
 """
 import numpy as np
 
@@ -23,7 +23,7 @@ _ABSENT = object()
 
 class ColumnStore(dict):
     """
-    The MPG's properties, {name: column}: a dict assigned (g.properties()[name] = {vid: value}, setdefault(name, {}))
+    The MPG's properties, {name: column}: a dict assigned (mtg.properties()[name] = {vid: value}, setdefault(name, {}))
     is stored as an object column of its values as they are (convert_properties_to_arraydict types a numeric one),
     so that every property is a column (an ArrayDict, or a DataStructureColumn) and setdefault's result is the
     stored column.
@@ -61,14 +61,14 @@ class ColumnStore(dict):
 
 class DataStructureColumn(ArrayDict):
     """
-    MPG property *name* read from DataStructure *ds*'s array of the variable at *location*: no values of its own
+    MPG property *name* read from DataStructure *data_structure*'s array of the variable at *location*: no values of its own
     but the overlay of the writes made through the MPG. The bulk interface is ArrayDict's: at(), keys_array(),
     values_array(), extend(), insert_many(), update(), delete_many(); position-based writes (assign_at) have no
     meaning on a view and raise.
     """
 
-    def __init__(self, ds, name: str, location: str, dtype=np.float64, scale=None):
-        self._ds, self.name, self.location = ds, name, location
+    def __init__(self, data_structure, name: str, location: str, dtype=np.float64, scale=None):
+        self._ds, self.name, self.location = data_structure, name, location
         self.scale = scale                  # the MTG scale of its entities (None: unknown)
         self.overlay = ArrayDict(dtype=dtype)
         # Until the next synchronisation, the MPG has entries at the DataStructure's entities of its last one only:
@@ -90,29 +90,29 @@ class DataStructureColumn(ArrayDict):
     def dtype(self) -> np.dtype:
         return self._dtype(self._source_index()[2])
 
-    def bound_to(self, ds) -> bool:
-        return self._ds is ds
+    def bound_to(self, data_structure) -> bool:
+        return self._ds is data_structure
 
-    def bind(self, ds) -> None:
-        """Read from *ds* (after a checkpoint's load)."""
-        self._ds = ds
+    def bind(self, data_structure) -> None:
+        """Read from *data_structure* (after a checkpoint's load)."""
+        self._ds = data_structure
 
     def _source(self) -> tuple:
         """(sorted keys, the values at them) of the DataStructure, read-only and not copied when possible: the
         sorted keys shared by the location's variables, the values a gather of the variable's array. Empty when the
         DataStructure does not hold the variable (anymore)."""
-        ds = self._ds
-        if ds is None:
+        data_structure = self._ds
+        if data_structure is None:
             return np.empty(0, dtype=np.int64), self.overlay.arr[:0]
-        return ds._column_source(self.name, self.location)
+        return data_structure._column_source(self.name, self.location)
 
     def _source_index(self) -> tuple:
         """(sorted keys, positions in the variable's array, the array): no gather."""
-        ds = self._ds
-        if ds is None:
+        data_structure = self._ds
+        if data_structure is None:
             empty = np.empty(0, dtype=np.int64)
             return empty, empty, self.overlay.arr[:0]
-        return ds._column_index(self.name, self.location)
+        return data_structure._column_index(self.name, self.location)
 
     def drop_at_entities(self) -> None:
         """The DataStructure holds the values of its entities (it wrote them over the MPG's before): the overlay's
@@ -375,14 +375,14 @@ class DataStructureColumn(ArrayDict):
     # ── pickling: without the DataStructure inside a checkpoint (its arrays are the checkpoint's) ──
 
     def __getstate__(self) -> dict:
-        ds = self._ds
-        detached = ds is None or ds.__dict__.get("_columns_detached", False)
-        return {"ds": None if detached else ds, "name": self.name, "location": self.location, "scale": self.scale,
+        data_structure = self._ds
+        detached = data_structure is None or data_structure.__dict__.get("_columns_detached", False)
+        return {"data_structure": None if detached else data_structure, "name": self.name, "location": self.location, "scale": self.scale,
                 "overlay": self.overlay, "synced": self._synced, "hidden": self._hidden_keys(),
                 "version": self.version}
 
     def __setstate__(self, state: dict) -> None:
-        self._ds, self.name, self.location = state["ds"], state["name"], state["location"]
+        self._ds, self.name, self.location = state["data_structure"], state["name"], state["location"]
         self.scale = state.get("scale")
         self.overlay, self._synced, self._hidden, self._pending = state["overlay"], state["synced"], state["hidden"], []
         self.version = state["version"]

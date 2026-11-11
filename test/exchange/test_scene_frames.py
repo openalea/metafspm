@@ -121,13 +121,13 @@ def test_a_frames_snapshot_shares_nothing_with_the_scene(tmp_path):
                 yield from arrays(item, seen)
 
     scene_arrays = []
-    for ds, _, _ in scene.data_structures().values():
-        for store in ds._var_stores().values():
+    for data_structure, _, _ in scene.data_structures().values():
+        for store in data_structure._var_stores().values():
             scene_arrays += [array for array in store.values() if isinstance(array, np.ndarray)]
-        g = getattr(ds, "structure", None)
-        if g is not None and hasattr(g, "topology_arrays"):
-            scene_arrays += list(g.topology_arrays().values())
-            for column in g.properties().values():
+        mtg = getattr(data_structure, "structure", None)
+        if mtg is not None and hasattr(mtg, "topology_arrays"):
+            scene_arrays += list(mtg.topology_arrays().values())
+            for column in mtg.properties().values():
                 scene_arrays += [column.arr, column.order]
     framed = list(arrays(frame, set()))
     snapped = list(arrays(snapshot, set()))
@@ -136,8 +136,8 @@ def test_a_frames_snapshot_shares_nothing_with_the_scene(tmp_path):
         assert not any(np.shares_memory(array, other) for other in scene_arrays if array.size and other.size)
         assert not any(np.shares_memory(array, other) for other in framed if array.size and other.size)
     before = encoding3d.to_bytes(snapshot)
-    for ds, _, _ in scene.data_structures().values():           # the next steps change the scene's arrays
-        for store in ds._var_stores().values():
+    for data_structure, _, _ in scene.data_structures().values():           # the next steps change the scene's arrays
+        for store in data_structure._var_stores().values():
             for array in store.values():
                 if isinstance(array, np.ndarray) and array.dtype.kind == "f" and array.flags.writeable:
                     array += 1.

@@ -182,9 +182,9 @@ class SeedlingStructure(StructuralComponent):
                                      by="SeedlingStructure", default=VAPOUR_FACTOR)
 
     @classmethod
-    def initiate_plant(cls, g, plant, parameters):
+    def initiate_plant(cls, mtg, plant, parameters):
         """Build the seedling of *plant* (its architecture, anatomies and junctions, see seedling.py)."""
-        build_seedling(g, plant, parameters)
+        build_seedling(mtg, plant, parameters)
 
     # ── conductances ─────────────────────────────────────────────────────────
 

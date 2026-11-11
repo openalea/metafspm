@@ -220,9 +220,9 @@ def dense_blocks(scene) -> int:
     """The nonzeros of the reduced groups' dense blocks (each group's kept nodes squared), over the populations."""
     total = 0
     for population in scene.populations:
-        ds = population.data_structure
-        reduction = getattr(ds.structure, "reduction", None)
-        table = reduction.group_table(ds) if reduction is not None else None
+        data_structure = population.data_structure
+        reduction = getattr(data_structure.structure, "reduction", None)
+        table = reduction.group_table(data_structure) if reduction is not None else None
         if table is not None:
             total += sum(int(vids.shape[0]) * int(vids.shape[1]) ** 2 for vids in table.kept_vids)
     return total

@@ -48,7 +48,7 @@ Declared on the plant model, before its structure is built (as nodes= and wiring
                      (NaN: the archetype's)}}, acting through the graph system's @input_jacobian(variable)
   systems            the graph systems reduced, "Component._system"
   outputs            the group variables an archetype gives its groups (their values on its library's full group, e.g. a
-                     section's kr): Reduction.outputs(ds, name)
+                     section's kr): Reduction.outputs(data_structure, name)
 
 The archetypes of classes are kept once evaluated while their family (template, exact values, parameters) is in use: they
 saturate; an exact archetype no group has any more is released. The missing archetypes are evaluated in batches of at most
@@ -386,13 +386,13 @@ class Reduction:
         self.output_names = tuple(outputs)
         self._reduced, self._full, self._kept, self._rows, self._merged = {}, {}, {}, {}, {}
         self._archetypes, self._blends, self._libraries = {}, {}, {}
-        self.model, self.instance, self.g = None, None, None
+        self.model, self.instance, self.mtg = None, None, None
         self.library = False                     # a library's: its groups' archetypes are not evaluated (no library of
                                                  # its own)
 
     def __getstate__(self):
         state = dict(self.__dict__)        # a checkpoint: the declaration, the templates and the archetypes (shared parts)
-        state.update(_blends={}, _libraries={}, _pickles={}, model=None, instance=None, g=None)
+        state.update(_blends={}, _libraries={}, _pickles={}, model=None, instance=None, mtg=None)
         state.pop("_display_parts", None)  # the frames' parts built from it (io.encoding3d): made again
         state.pop("_table", None)          # the groups' arrays: per DataStructure and topology
         state.pop("_assigned", None)
@@ -406,11 +406,11 @@ class Reduction:
 
     # ── The population's own (Scene, population_data_structure) ──
 
-    def for_population(self, g) -> "Reduction":
-        """A copy for one population's MPG *g*: its templates (full and reduced) and archetypes its own, nothing kept on
+    def for_population(self, mtg) -> "Reduction":
+        """A copy for one population's MPG *mtg*: its templates (full and reduced) and archetypes its own, nothing kept on
         the model's Reduction (two Scenes of the model in one process share none: each freed with its population)."""
         out = copy.copy(self)
-        out._archetypes, out._blends, out._libraries, out._pickles, out.g = {}, {}, {}, {}, g
+        out._archetypes, out._blends, out._libraries, out._pickles, out.mtg = {}, {}, {}, {}, mtg
         out._reduced, out._full, out._kept, out._rows, out._merged = {}, {}, {}, {}, {}
         out.__dict__.pop("_table", None)
         out.__dict__.pop("_assigned", None)
@@ -424,19 +424,19 @@ class Reduction:
 
     # ── Structure ──
 
-    def reduces(self, g, vertex) -> bool:
-        """Whether the group *vertex* of the MPG *g* is reduced: where= holds for it (its label, its complexes'
+    def reduces(self, mtg, vertex) -> bool:
+        """Whether the group *vertex* of the MPG *mtg* is reduced: where= holds for it (its label, its complexes'
         labels, its properties)."""
         if self.where is None:
             return True
         from openalea.metafspm.coupling.declaration import entity_set, rule_holds
         rule = entity_set(self.where) if isinstance(self.where, str) else self.where
-        values, scales = self._vertex_values(g, int(vertex), rule)
+        values, scales = self._vertex_values(mtg, int(vertex), rule)
 
         def codes(key, condition):                  # label names -> the codes of their scale
             if key not in scales:
                 return condition
-            names = vars(getattr(g.labels, scales[key]))
+            names = vars(getattr(mtg.labels, scales[key]))
             named = list(condition) if isinstance(condition, (list, tuple, set)) else [condition]
             unknown = [name for name in named if isinstance(name, str) and name not in names]
             if unknown:
@@ -447,25 +447,25 @@ class Reduction:
         return bool(rule_holds(rule, values, codes)[0])
 
     @staticmethod
-    def _vertex_values(g, vertex: int, rule: dict) -> tuple:
+    def _vertex_values(mtg, vertex: int, rule: dict) -> tuple:
         """({key: [the vertex's value]}, {label key: its scale's name}) for the keys of *rule*: "label" its label
         code, "<Scale>.label" its complex's at that scale, another its property's (NaN without one)."""
         from openalea.metafspm.coupling.declaration import scale_names
-        names = scale_names(g)
+        names = scale_names(mtg)
         values, scales = {}, {}
         for key in rule:
             if key == "label" or key.endswith(".label"):
                 at = vertex
                 if key != "label":
-                    scale = getattr(g.scales, key[:-len(".label")], None)
+                    scale = getattr(mtg.scales, key[:-len(".label")], None)
                     if scale is None:
                         raise KeyError(f"Reduction where: no scale '{key[:-len('.label')]}'")
-                    at = g.complex_at_scale(vertex, scale)
-                scales[key] = names[g.scale(at)]
-                found, label = g.values_at("label", [at])
+                    at = mtg.complex_at_scale(vertex, scale)
+                scales[key] = names[mtg.scale(at)]
+                found, label = mtg.values_at("label", [at])
                 values[key] = np.array([float(label[0]) if found.size else np.nan])
             else:
-                found, value = g.values_at(key, [vertex])
+                found, value = mtg.values_at(key, [vertex])
                 values[key] = np.array([value[0] if found.size else np.nan], dtype=float)
         return values, scales
 
@@ -593,33 +593,33 @@ class Reduction:
         not give)."""
         return self._full[key]
 
-    def group_table(self, ds):
+    def group_table(self, data_structure):
         """The DataStructure's reduced groups as arrays (_GroupTable: their entity indices, vertices, templates, first
         nodes, plants, kept nodes), None without any; cached per topology (read-only arrays)."""
-        stamp = ds._topology_stamp() if hasattr(ds, "_topology_stamp") else ds.topology_version
+        stamp = data_structure._topology_stamp() if hasattr(data_structure, "_topology_stamp") else data_structure.topology_version
         cached = self.__dict__.get("_table")
-        if cached is not None and cached[0] == stamp and cached[1] == id(ds):
+        if cached is not None and cached[0] == stamp and cached[1] == id(data_structure):
             return cached[2]
-        table = _GroupTable.build(self, ds)
-        self.__dict__["_table"] = (stamp, id(ds), table)
+        table = _GroupTable.build(self, data_structure)
+        self.__dict__["_table"] = (stamp, id(data_structure), table)
         return table
 
-    def reduced_groups(self, ds) -> dict:
+    def reduced_groups(self, data_structure) -> dict:
         """{group entity index: (its vertex, its reduced template key)} of the DataStructure's reduced groups."""
-        table = self.group_table(ds)
+        table = self.group_table(data_structure)
         if table is None:
             return {}
         return dict(zip(table.index.tolist(), zip(table.owner.tolist(), table.template)))
 
     # ── The terms of a graph system's solve ──
 
-    def terms(self, component, system: str, ds, node_ids) -> tuple:
+    def terms(self, component, system: str, data_structure, node_ids) -> tuple:
         """(D, e) on the solved nodes *node_ids*: the reduced groups' interiors' terms (sparse, nodes × nodes, and a
         vector), or None when no solved group is reduced. Batched by template and archetype: the sparse pattern is cached
         per topology and node set, only its values (each group's archetypes' weighted D) filled at each call."""
         if self.library:
             return None
-        assignment = self.assignment(ds, release=True)
+        assignment = self.assignment(data_structure, release=True)
         if assignment is None:
             return None
         pattern = assignment.table.pattern(node_ids)
@@ -635,27 +635,27 @@ class Reduction:
                 kernels.scatter_weighted_blocks(data, slots, assignment.archetype[rows], assignment.weights[rows], blocks,
                                                 chunks)
             vector = assignment.combine(rows, lambda archetype: archetype[system].e)
-            vector = vector + self._input_terms(ds, assignment, system, rows)
+            vector = vector + self._input_terms(data_structure, assignment, system, rows)
             e[local.reshape(-1)] += vector.reshape(-1)
         return csr_matrix((data, pattern.indices, pattern.indptr), shape=(n, n)), e
 
-    def term_values(self, component, system: str, ds, values) -> np.ndarray:
+    def term_values(self, component, system: str, data_structure, values) -> np.ndarray:
         """D x + e of *system*'s reduced groups for the node values *values* (DataStructure order): the interiors'
         part of each kept node's balance (e.g. a soil node's uptake), 0 elsewhere."""
-        out = np.zeros(ds.n_nodes())
+        out = np.zeros(data_structure.n_nodes())
         if self.library:
             return out
-        terms = self.terms(component, system, ds, ds.entity_ids("node"))
+        terms = self.terms(component, system, data_structure, data_structure.entity_ids("node"))
         if terms is not None:
             D, e = terms
             out = np.asarray(D @ np.asarray(values, dtype=float)).reshape(-1) + e
         return out
 
-    def outputs(self, ds, name: str) -> np.ndarray:
+    def outputs(self, data_structure, name: str) -> np.ndarray:
         """Group variable *name* of each group of the location: its archetype's (its library full group's value; a blend's
         its parts' weighted) for a reduced group, NaN elsewhere."""
-        out = np.full(len(ds.entity_ids(self.location)), np.nan)
-        assignment = None if self.library else self.assignment(ds)
+        out = np.full(len(data_structure.entity_ids(self.location)), np.nan)
+        assignment = None if self.library else self.assignment(data_structure)
         if assignment is None:
             return out
         rows = np.arange(assignment.table.index.size)
@@ -669,11 +669,11 @@ class Reduction:
         out[assignment.table.index] = assignment.combine(rows, value)
         return out
 
-    def kept_outputs(self, ds, name: str, system: str = None) -> list:
+    def kept_outputs(self, data_structure, name: str, system: str = None) -> list:
         """[(kept nodes, values), ...] per reduced template: an archetype's output *name* of one value per kept node (a
         @archetype_derived vector, e.g. the condensed volumes) on each reduced group's kept nodes (DataStructure indices,
         groups × kept), its archetypes' weighted; [] without a reduced group."""
-        assignment = None if self.library else self.assignment(ds)
+        assignment = None if self.library else self.assignment(data_structure)
         if assignment is None:
             return []
         system = system or self.systems[0]
@@ -684,7 +684,7 @@ class Reduction:
     def _reduced_scale(self, key):
         return self._reduced[self._full[key].key].scale
 
-    def _input_terms(self, ds, assignment, system: str, rows) -> np.ndarray:
+    def _input_terms(self, data_structure, assignment, system: str, rows) -> np.ndarray:
         """The change of the groups *rows* (table rows of one template)'s kept sources for their own inputs, their
         archetypes' weighted (groups × kept): the kept nodes' (kept input, NaN: the archetype's) and their categories'
         ({category: value} group input, read per group: a record each)."""
@@ -698,22 +698,22 @@ class Reduction:
             for k in np.unique(chosen[chosen >= 0]).tolist():
                 at = np.flatnonzero(chosen == k)
                 weight = assignment.weights[rows[at], corner][:, None]
-                out[at] += weight * self._part_input_terms(ds, assignment.archetypes[k][system], table.index[rows[at]],
+                out[at] += weight * self._part_input_terms(data_structure, assignment.archetypes[k][system], table.index[rows[at]],
                                                            kept[at])
         return out
 
-    def _part_input_terms(self, ds, archetype, groups, kept) -> np.ndarray:
+    def _part_input_terms(self, data_structure, archetype, groups, kept) -> np.ndarray:
         """One (not blended) archetype's input terms for its *groups* (entity indices) of *kept* nodes (DataStructure
         indices, groups × kept)."""
         out = np.zeros(kept.shape)
         for name, response in archetype.inputs.items():
             declared = self.inputs[name]
-            if declared.get("kept") and ds.has(declared["kept"]):
-                values = np.asarray(ds.get(declared["kept"]), dtype=float)[kept]
+            if declared.get("kept") and data_structure.has(declared["kept"]):
+                values = np.asarray(data_structure.get(declared["kept"]), dtype=float)[kept]
                 delta = np.where(np.isfinite(values), values - response["base_kept"], 0.)
                 out += delta @ np.asarray(response["kept"]).T
-            if declared.get("group") and ds.has(declared["group"]):
-                given = np.asarray(ds.get(declared["group"]), dtype=object).reshape(-1)
+            if declared.get("group") and data_structure.has(declared["group"]):
+                given = np.asarray(data_structure.get(declared["group"]), dtype=object).reshape(-1)
                 for row, group in enumerate(groups.tolist()):
                     chosen = given[group] if group < given.size else None
                     for category, value in (chosen or {}).items():
@@ -724,7 +724,7 @@ class Reduction:
 
     # ── Archetypes ──
 
-    def _corners(self, ds, table) -> tuple:
+    def _corners(self, data_structure, table) -> tuple:
         """(weights, values): each group's corners (groups × corners) and their archetype variables' values or classes
         (groups × corners × variables): one archetype's values, or the corners of the classes it lies between
         (Relative(interpolate=True): two per such variable, their weights' products; a corner of weight 0 pads a
@@ -732,8 +732,8 @@ class Reduction:
         size = table.index.size
         weights, values = np.ones((size, 1)), np.zeros((size, 1, 0))
         for name, classes in self.archetype_variables.items():
-            raw = np.asarray(ds.get(name))
-            picked = np.asarray(raw[table.first_node] if ds.location(name) == "node" else raw[table.index],
+            raw = np.asarray(data_structure.get(name))
+            picked = np.asarray(raw[table.first_node] if data_structure.location(name) == "node" else raw[table.index],
                                 dtype=float)
             options = ((np.ones(size), picked),) if classes is None else classes.corner_arrays(picked)
             option_weights = np.stack([weight for weight, _ in options], axis=1)
@@ -744,53 +744,53 @@ class Reduction:
                                      np.tile(option_values, (1, corners))[:, :, None]], axis=2)
         return weights, values
 
-    def _parameters(self, ds, plant_index) -> dict:
+    def _parameters(self, data_structure, plant_index) -> dict:
         """The plant's parameters and the components' settings ({name: value}), for its archetypes' key and library."""
-        return self._plant_parameters(ds)[plant_index]
+        return self._plant_parameters(data_structure)[plant_index]
 
-    def _plant_parameters(self, ds) -> dict:
-        """{plant index: its parameters and the components' settings}, for every plant of *ds*: the fields read once
+    def _plant_parameters(self, data_structure) -> dict:
+        """{plant index: its parameters and the components' settings}, for every plant of *data_structure*: the fields read once
         per component class, each parameter's values once for all the plants. Those of the components the library
         runs only (_library_components): another component's (a root architecture's random draws, a shoot's
         development) changes no archetype, so plants differing in them only share their archetypes. Kept while the parameters
         are (_parameters_stamp: their write counts where the DataStructure stores them, the components' values
         else), with their signatures (_plant_signatures)."""
-        stamp = self._parameters_stamp(ds)
+        stamp = self._parameters_stamp(data_structure)
         cached = self.__dict__.get("_parameters_kept")
         if cached is not None and cached[0] == stamp:
             return cached[1]
-        out = self._read_plant_parameters(ds)
+        out = self._read_plant_parameters(data_structure)
         self.__dict__["_parameters_kept"] = (stamp, out, {})
         return out
 
-    def _plant_signatures(self, ds, plants) -> dict:
+    def _plant_signatures(self, data_structure, plants) -> dict:
         """{plant index: _signature of its parameters} of *plants*, kept with _plant_parameters' values."""
-        parameters = self._plant_parameters(ds)
+        parameters = self._plant_parameters(data_structure)
         signatures = self.__dict__["_parameters_kept"][2]
         for p in plants:
             if p not in signatures:
                 signatures[p] = _signature(self, parameters[p])
         return {p: signatures[p] for p in plants}
 
-    def _parameters_stamp(self, ds) -> tuple:
+    def _parameters_stamp(self, data_structure) -> tuple:
         """What _plant_parameters' values depend on: the DataStructure and its plants, each library component's
         settings and parameters (a stored one's write count, else its value: an object by identity)."""
-        out = [id(ds), len(ds.entity_ids("Plant"))]
+        out = [id(data_structure), len(data_structure.entity_ids("Plant"))]
         for component in _library_components(self.instance, self.systems):
             settings, numeric, located, records = _parameter_fields(type(component))
             out.append(id(component))
             for name in (*settings, *numeric, *records):
-                if ds.has(name):
-                    out.append(("written", name, ds.write_count(name)))
+                if data_structure.has(name):
+                    out.append(("written", name, data_structure.write_count(name)))
                 else:
                     value = getattr(component, name, None)
                     out.append((name, value) if isinstance(value, (int, float, str, bool, type(None))) else
                                (name, id(value)))
         return tuple(out)
 
-    def _read_plant_parameters(self, ds) -> dict:
+    def _read_plant_parameters(self, data_structure) -> dict:
         """_plant_parameters' values, read."""
-        plants = len(ds.entity_ids("Plant"))
+        plants = len(data_structure.entity_ids("Plant"))
         out = {p: {} for p in range(plants)}
         for component in _library_components(self.instance, self.systems):
             settings, numeric, located, records = _parameter_fields(type(component))
@@ -808,9 +808,9 @@ class Reduction:
                 for p in out:
                     out[p][name] = float(values[p] if values.size > p else values[0])
             for name in records:             # its Plant-scale parameters, any value (a dict, a boolean)
-                if not (ds.has(name) and ds.location(name) == "Plant"):
+                if not (data_structure.has(name) and data_structure.location(name) == "Plant"):
                     continue
-                values = ds.get(name)
+                values = data_structure.get(name)
                 for p in out:
                     if name in out[p]:
                         continue
@@ -818,7 +818,7 @@ class Reduction:
                     out[p][name] = value.item() if isinstance(value, np.generic) else value
         return out
 
-    def assignment(self, ds, release: bool = False):
+    def assignment(self, data_structure, release: bool = False):
         """
         The archetypes of the DataStructure's reduced groups (_Assignment: each group's corners, their weights and archetypes),
         None without a reduced group; the missing archetypes evaluated (per plant's parameters, in batches:
@@ -828,19 +828,19 @@ class Reduction:
         former classes: kept, a bounded set, so that the archetypes saturate). Without classes the archetypes kept are those of
         the plant's current groups only.
         """
-        table = self.group_table(ds)
+        table = self.group_table(data_structure)
         if table is None:
             return None
-        parameters = self._plant_parameters(ds)
-        signatures = self._plant_signatures(ds, np.unique(table.plant).tolist())
-        stamp = (id(table), tuple(ds.write_count(name) for name in self.archetype_variables), tuple(sorted(signatures.items())))
+        parameters = self._plant_parameters(data_structure)
+        signatures = self._plant_signatures(data_structure, np.unique(table.plant).tolist())
+        stamp = (id(table), tuple(data_structure.write_count(name) for name in self.archetype_variables), tuple(sorted(signatures.items())))
         cached = self.__dict__.get("_assigned")
         if (cached is not None and cached[0] == stamp
                 and all(self._archetypes.get(key) is archetype for key, archetype in zip(cached[1].keys, cached[1].archetypes))):
             if release:                    # the same groups, values and parameters as the last call: its archetypes
                 self._release(set(cached[1].keys))
             return cached[1]
-        weights, values = self._corners(ds, table)
+        weights, values = self._corners(data_structure, table)
         signature_names = sorted(set(signatures.values()))
         lookup = np.zeros(int(table.plant.max()) + 1 if table.plant.size else 0, dtype=np.int64)
         for p, signature in signatures.items():
@@ -854,17 +854,17 @@ class Reduction:
         missing = {}
         for u in np.argsort(first, kind="stable").tolist():                 # in order of first appearance
             at = int(first[u])
-            g = int(group[at])
+            row = int(group[at])
             archetype_values = tuple(float(value) for value in chosen[at])
-            signature = signature_names[int(signature_code[g])]
-            key = (table.keys[int(table.code[g])], archetype_values, signature)
+            signature = signature_names[int(signature_code[row])]
+            key = (table.keys[int(table.code[row])], archetype_values, signature)
             if key not in position:                      # -0. and 0.: one key
                 position[key] = len(keys)
                 keys.append(key)
                 if key not in self._archetypes:
-                    plant = int(table.plant[g])
+                    plant = int(table.plant[row])
                     missing.setdefault(signature, (parameters[plant], {}))[1].setdefault(
-                        key, (int(table.owner[g]), key[0], archetype_values))
+                        key, (int(table.owner[row]), key[0], archetype_values))
             local[u] = position[key]
         if missing:
             self._evaluate_requests(missing)
@@ -889,14 +889,14 @@ class Reduction:
                 archetype.release()
         self.__dict__["_blends"] = {}
 
-    def group_archetypes(self, ds, groups, release: bool = False) -> dict:
+    def group_archetypes(self, data_structure, groups, release: bool = False) -> dict:
         """
         {group: {system: Archetype}}: the archetypes of *groups* (entity indices, e.g. reduced_groups' keys), the missing ones
         evaluated (assignment's); a group between two classes of a Relative variable gets their blend (_blend, kept
         until the next release). *release*: as assignment's (*groups* all the DataStructure's reduced groups). For
         a group's own archetype; the solve's terms, the outputs and the recoveries use assignment's arrays.
         """
-        assignment = self.assignment(ds, release=release)
+        assignment = self.assignment(data_structure, release=release)
         if assignment is None:
             return {}
         table = assignment.table
@@ -931,7 +931,7 @@ class Reduction:
         (deterministic, the same archetypes at any thread count). With METAFSPM_CHECK_ARCHETYPES=1, every archetype evaluated is
         evaluated again alone, in a freshly built library, and compared bit for bit (check_archetypes).
         """
-        described = {signature: (parameters, {archetype_key: (_describe(self.g, vertex), key, values)
+        described = {signature: (parameters, {archetype_key: (_describe(self.mtg, vertex), key, values)
                                               for archetype_key, (vertex, key, values) in requests.items()})
                      for signature, (parameters, requests) in missing.items()}
         self._evaluate_missing(described)
@@ -963,15 +963,15 @@ class Reduction:
         component = next(c for c in self.instance.components if declared_system(c, attr, (system,)) is not None)
         return type(component)._graph_system_specs[attr]["node_unknowns"][0]
 
-    def recover_interiors(self, ds, groups=None, system: str = None) -> dict:
+    def recover_interiors(self, data_structure, groups=None, system: str = None) -> dict:
         """
         {group: (its vertex, its reduced template key, its full template, its interior's Compartment rows in it, the
         unknown of *system* there)} of the reduced *groups* (entity indices of the location; default: all), from their
-        kept nodes' values in *ds* (recover's, the same values): batched by archetype, one factorisation of each archetype's
+        kept nodes' values in *data_structure* (recover's, the same values): batched by archetype, one factorisation of each archetype's
         interior for all its groups (its columns at once), freed after. For outputs (a frame's sections drawn whole):
         the DataStructure stays reduced.
         """
-        assignment = None if self.library else self.assignment(ds)
+        assignment = None if self.library else self.assignment(data_structure)
         if assignment is None:
             return {}
         table = assignment.table
@@ -985,7 +985,7 @@ class Reduction:
             rows = row_of[asked[(asked >= 0) & (asked < row_of.size)]]
             rows = np.unique(rows[rows >= 0])
         system = system or self.systems[0]
-        values = np.asarray(ds.get(self.unknown(system)), dtype=float)
+        values = np.asarray(data_structure.get(self.unknown(system)), dtype=float)
         out = {}
         for code_rows in table.by_template:
             at = code_rows[np.isin(code_rows, rows)]
@@ -1015,16 +1015,16 @@ class Reduction:
                 del interior
         return dict(sorted(out.items()))
 
-    def recovery_terms(self, ds, groups=None, system: str = None):
+    def recovery_terms(self, data_structure, groups=None, system: str = None):
         """
         The reduced *groups* (entity indices of the location; default: all) as linear recoveries of their kept values,
         for outputs drawing them as instances of their full templates (an encoding3d frame's display instances):
         RecoveryTerms, the groups in their table's order. Group i's unknown of *system* on its full template's
         Compartments is Σ_c weights[i, c] · M_archetypes[archetype[i, c]] · inputs[i] (archetype −1: no term), M an archetype's
-        recovery_operator, inputs[i] its kept nodes' values in *ds* then 1: recover_interiors' values on the
+        recovery_operator, inputs[i] its kept nodes' values in *data_structure* then 1: recover_interiors' values on the
         interior, the kept nodes' own on them. None without a reduced group (or without its archetypes: a library's).
         """
-        assignment = None if self.library else self.assignment(ds)
+        assignment = None if self.library else self.assignment(data_structure)
         if assignment is None:
             return None
         table = assignment.table
@@ -1032,7 +1032,7 @@ class Reduction:
         if groups is not None:
             rows = rows[np.isin(table.index, np.asarray([int(i) for i in groups], dtype=np.int64))]
         system = system or self.systems[0]
-        values = np.asarray(ds.get(self.unknown(system)), dtype=float)
+        values = np.asarray(data_structure.get(self.unknown(system)), dtype=float)
         inputs = [None] * rows.size
         position = np.empty(table.index.size, dtype=np.int64)
         position[rows] = np.arange(rows.size)
@@ -1055,10 +1055,10 @@ class Reduction:
                              archetypes=[assignment.archetypes[k][system] for k in used.tolist()],
                              archetype_keys=[assignment.keys[k] for k in used.tolist()])
 
-    def recover(self, ds, group: int, values, system: str = None) -> tuple:
+    def recover(self, data_structure, group: int, values, system: str = None) -> tuple:
         """A reduced group's interior: (its full template's local rows, the values of the system's unknown there),
         from its archetype and its kept nodes' *values* (the unknown on them, DataStructure order)."""
-        archetype = self.group_archetypes(ds, (group,))[group][system or self.systems[0]]
+        archetype = self.group_archetypes(data_structure, (group,))[group][system or self.systems[0]]
         return archetype.interior_rows, archetype.recover(values)
 
 
@@ -1097,8 +1097,8 @@ class _GroupTable:
     rows × kept). Every array read-only.
     """
 
-    def __init__(self, ds, index, owner, template, keys, code, first, first_node, plant, offsets):
-        self.ds_id = id(ds)
+    def __init__(self, data_structure, index, owner, template, keys, code, first, first_node, plant, offsets):
+        self.ds_id = id(data_structure)
         self.index, self.owner, self.template, self.keys, self.code = index, owner, template, keys, code
         self.first, self.first_node, self.plant = first, first_node, plant
         self.by_template = [np.flatnonzero(code == c) for c in range(len(keys))]
@@ -1107,21 +1107,21 @@ class _GroupTable:
             self.within[rows] = np.arange(rows.size)
         self.kept_vids = [first[rows][:, None] + offsets[c][None, :] for c, rows in enumerate(self.by_template)]
         self._kept_nodes = [None] * len(keys)
-        self._index_of = ds.index_of
+        self._index_of = data_structure.index_of
         self._patterns = {}
         for array in (index, owner, code, first, first_node, plant, self.within, *self.by_template, *self.kept_vids):
             array.setflags(write=False)
 
     @classmethod
-    def build(cls, reduction, ds):
-        g = ds.structure
-        if not g._instanced():
+    def build(cls, reduction, data_structure):
+        mtg = data_structure.structure
+        if not mtg._instanced():
             return None
-        instances = g.instances
+        instances = mtg.instances
         code_of = {code: key for key, code in instances.codes.items()}
         reduced = np.array([code for key, code in instances.codes.items() if key in reduction._full], dtype=np.int64)
         rows = np.flatnonzero(np.isin(instances.code, reduced))
-        ids = np.asarray(ds.entity_ids(reduction.location), dtype=np.int64)
+        ids = np.asarray(data_structure.entity_ids(reduction.location), dtype=np.int64)
         owner = instances.owner[rows]
         position = np.searchsorted(ids, owner).clip(0, max(ids.size - 1, 0))
         located = (ids.size > 0) & (ids[position] == owner) if ids.size else np.zeros(owner.size, dtype=bool)
@@ -1134,14 +1134,14 @@ class _GroupTable:
         template = [keys[c] for c in code.tolist()]
         from openalea.metafspm.data_structure.configs import ScalesConfig
         offsets = [np.flatnonzero(reduction._reduced_scale(key) == ScalesConfig.Compartment) for key in keys]
-        location_owner = np.asarray(ds.owner(reduction.location))
+        location_owner = np.asarray(data_structure.owner(reduction.location))
         first_node = _first_nodes(location_owner)
         first_node = np.where(index < first_node.size, first_node[np.minimum(index, max(first_node.size - 1, 0))],
                               -1) if first_node.size else np.full(index.size, -1, dtype=np.int64)
-        plant_of = np.asarray(ds.owner("Plant"))
+        plant_of = np.asarray(data_structure.owner("Plant"))
         plant = np.where(first_node >= 0, plant_of[np.maximum(first_node, 0)], -1) if plant_of.size else \
             np.full(index.size, -1, dtype=np.int64)
-        return cls(ds, index.astype(np.int64), owner.astype(np.int64), template, keys,
+        return cls(data_structure, index.astype(np.int64), owner.astype(np.int64), template, keys,
                    np.asarray(code, dtype=np.int64).reshape(-1), instances.first[rows].astype(np.int64),
                    first_node.astype(np.int64), plant.astype(np.int64), offsets)
 
@@ -1350,8 +1350,8 @@ class _Library:
         self.parameters = {}             # {signature: its plants' parameters and the components' settings}
         self.placed = []                 # the last batch's vertices (each group's complexes, then the group)
 
-    def place(self, g, items) -> dict:
-        """{group vertex: (k, "full" | "reduced")}: the groups of the archetypes *items* placed in the library's MPG *g*
+    def place(self, mtg, items) -> dict:
+        """{group vertex: (k, "full" | "reduced")}: the groups of the archetypes *items* placed in the library's MPG *mtg*
         under their signature's plant, each as its representative's description (_describe: its complexes, label
         and properties)."""
         from openalea.metafspm.data_structure.configs import PropsConfig
@@ -1364,23 +1364,23 @@ class _Library:
                                     ("reduced", reduction._reduced[reduction._full[key].key])):
                 parent, vertices = plant, []
                 for complex_scale, complex_label in chain:
-                    parent = g.add_component(parent, **PropsConfig(scale=complex_scale, edge_type='/',
+                    parent = mtg.add_component(parent, **PropsConfig(scale=complex_scale, edge_type='/',
                                                                    label=complex_label))
                     vertices.append(parent)
-                group = g.add_component(parent, **PropsConfig(scale=scale, edge_type='/', label=label))
+                group = mtg.add_component(parent, **PropsConfig(scale=scale, edge_type='/', label=label))
                 for name, value in properties.items():
-                    g.set_values(name, [group], [value])
-                g.add_instance(group, template)
+                    mtg.set_values(name, [group], [value])
+                mtg.add_instance(group, template)
                 made[group] = (k, which)
                 self.placed.append(vertices + [group])
         return made
 
-    def remove(self, g) -> None:
-        """The last batch's groups and their complexes removed from the library's MPG *g* (the DataStructure follows
+    def remove(self, mtg) -> None:
+        """The last batch's groups and their complexes removed from the library's MPG *mtg* (the DataStructure follows
         at its next update)."""
         for vertices in self.placed:
             for vertex in reversed(vertices):
-                g.remove_vertex(vertex)
+                mtg.remove_vertex(vertex)
         self.placed = []
 
     @staticmethod
@@ -1395,19 +1395,19 @@ class _Library:
         signatures = self.signatures(items)
         self.parameters.update({signature: parameters[signature] for signature in signatures})
         if self.population is not None:
-            ds = self.population.data_structure
-            g = ds.structure
-            self.remove(g)
+            data_structure = self.population.data_structure
+            mtg = data_structure.structure
+            self.remove(mtg)
             for signature in [signature for signature in self.plants if signature not in signatures]:
-                g.remove_vertex(self.plants.pop(signature))
+                mtg.remove_vertex(self.plants.pop(signature))
                 self.parameters.pop(signature, None)
             for signature in signatures:
                 if signature not in self.plants:
-                    self.plants[signature] = _add_plant(g)
-            ds.forget_ids_above(g.reuse_ids())   # the removed groups' ids given to the new ones, as new entities:
-            made = self.place(g, items)           # the library's ids stay bounded (no growth with the batches)
+                    self.plants[signature] = _add_plant(mtg)
+            data_structure.forget_ids_above(mtg.reuse_ids())   # the removed groups' ids given to the new ones, as new entities:
+            made = self.place(mtg, items)           # the library's ids stay bounded (no growth with the batches)
             self._reset_components()
-            ds.update_topology()
+            data_structure.update_topology()
             self._read_structure()
             self._apply_parameters()
             return made
@@ -1423,12 +1423,12 @@ class _Library:
             building = None
 
             @classmethod
-            def initiate_plant(cls, g, plant, scenario):
+            def initiate_plant(cls, mtg, plant, scenario):
                 library, batch, placed, left = cls.building
-                g.share_objects(library.reduction.g)  # the plants' registries (their templates: ds.objects)
+                mtg.share_objects(library.reduction.mtg)  # the plants' registries (their templates: data_structure.objects)
                 library.plants[left.pop(0)] = plant
                 if not left:                          # every plant built: the batch's groups placed under them
-                    placed.update(library.place(g, batch))
+                    placed.update(library.place(mtg, batch))
 
         self.model = model = type(f"Library{reduction.model.__name__}", (reduction.model,),
                                   dict(initiators=(LibraryStructure,), wiring=(), reduction=None))
@@ -1438,14 +1438,14 @@ class _Library:
                                                    time_step=self.time_step)       # the scene's step (_library)
         finally:
             LibraryStructure.building = None
-        ds, instance = population.data_structure, population.instance
-        own = reduction.for_population(ds.structure)         # the library knows its reduced groups, evaluates none
+        data_structure, instance = population.data_structure, population.instance
+        own = reduction.for_population(data_structure.structure)         # the library knows its reduced groups, evaluates none
         own._reduced, own._full, own._kept, own._rows = reduction._reduced, reduction._full, reduction._kept, \
             reduction._rows                                   # the plants' templates, which its groups are
         own._merged = reduction.__dict__.setdefault("_merged", {})
         own.library = True
         own.bind(model, instance)
-        ds.structure.reduction = own
+        data_structure.structure.reduction = own
         self.population = population
         self._apply_parameters()
         self.built = {id(component): dict(component.__dict__) for component in instance.components}
@@ -1471,26 +1471,26 @@ class _Library:
     def _read_structure(self) -> None:
         """The variables its MPG holds (its groups' templates' and properties' values) read again, as a library built
         anew reads them (the components' MTG-backed variables): the groups placed since have their own."""
-        ds = self.population.data_structure
-        aliases, derived = ds.aliases(), ds.derived()
+        data_structure = self.population.data_structure
+        aliases, derived = data_structure.aliases(), data_structure.derived()
         for component in self.population.instance.components:
             for spec in getattr(component, "_variable_specs", {}).values():
-                if (not spec.mtg_backed or not ds.has(spec.name) or spec.name in aliases or spec.name in derived
-                        or ds.location(spec.name) != spec.location):    # held at another location by another
+                if (not spec.mtg_backed or not data_structure.has(spec.name) or spec.name in aliases or spec.name in derived
+                        or data_structure.location(spec.name) != spec.location):    # held at another location by another
                     continue                                            # component (its source, not this one)
                 try:
-                    values = ds._read_mtg(spec)
+                    values = data_structure._read_mtg(spec)
                 except (TypeError, ValueError):         # a property of another type of the same name: not its
                     continue                            # source (the variable registered by another component)
-                if values is not None and np.shape(values) == np.shape(ds.get(spec.name)):
-                    ds.set(spec.name, values)
+                if values is not None and np.shape(values) == np.shape(data_structure.get(spec.name)):
+                    data_structure.set(spec.name, values)
 
     def _apply_parameters(self) -> None:
         """Each plant's parameters given to it (a parameter stored per plant) and the components' settings (and the
         parameters they hold, the same for every plant of the population) to the library's components."""
         from dataclasses import fields
-        ds, instance = self.population.data_structure, self.population.instance
-        plant_index = {int(v): i for i, v in enumerate(ds.entity_ids("Plant").tolist())}
+        data_structure, instance = self.population.data_structure, self.population.instance
+        plant_index = {int(v): i for i, v in enumerate(data_structure.entity_ids("Plant").tolist())}
         by_index = {plant_index[int(vertex)]: self.parameters[signature] for signature, vertex in self.plants.items()}
         first = self.parameters[next(iter(self.plants))]
         for component in instance.components:
@@ -1498,23 +1498,23 @@ class _Library:
             for name, value in first.items():
                 if name not in names:
                     continue
-                if ds.has(name) and ds.location(name) == "Plant":   # each plant's value there
-                    stored = np.asarray(ds.get(name))
+                if data_structure.has(name) and data_structure.location(name) == "Plant":   # each plant's value there
+                    stored = np.asarray(data_structure.get(name))
                     values = np.empty(stored.shape, dtype=object) if stored.dtype == object else stored.copy()
                     for i in range(len(values)):
                         values[i] = by_index[i][name] if i in by_index else value  # a record as it is (a dict)
-                    ds.set(name, values)
+                    data_structure.set(name, values)
                 else:
                     setattr(component, name, value)
 
 
-def _add_plant(g) -> int:
-    """A library plant added to its MPG *g* (as a planting's, at the origin and the soil surface): its vertex."""
+def _add_plant(mtg) -> int:
+    """A library plant added to its MPG *mtg* (as a planting's, at the origin and the soil surface): its vertex."""
     from openalea.metafspm.data_structure.configs import PropsConfig
-    plant = g.add_component(g.root, **PropsConfig(scale=g.scales.Plant, edge_type='/'))
+    plant = mtg.add_component(mtg.root, **PropsConfig(scale=mtg.scales.Plant, edge_type='/'))
     for name in ("x", "y", "rotation"):
-        g.set_values(name, [plant], [0.])
-    g.set_values("z", [plant], [float(getattr(g, "soil_surface", 0.))])
+        mtg.set_values(name, [plant], [0.])
+    mtg.set_values("z", [plant], [float(getattr(mtg, "soil_surface", 0.))])
     return plant
 
 
@@ -1692,22 +1692,22 @@ def _evaluate_in(reduction: Reduction, library: _Library, items: list, parameter
                                                    linear_system)
     from openalea.metafspm.data_structure.configs import ScalesConfig
     groups_made = library.groups(items, parameters)
-    ds = library.population.data_structure
+    data_structure = library.population.data_structure
     instance = library.population.instance
-    ids = ds.entity_ids(reduction.location).tolist()
+    ids = data_structure.entity_ids(reduction.location).tolist()
     entity = {int(v): i for i, v in enumerate(ids)}
     group_of = {(k, which): entity[int(vertex)] for vertex, (k, which) in groups_made.items()}
-    owner = np.asarray(ds.owner(reduction.location))
+    owner = np.asarray(data_structure.owner(reduction.location))
     for position, (name, classes) in enumerate(reduction.archetype_variables.items()):        # the archetypes' values (their classes)
-        values = np.array(ds.get(name), dtype=float, copy=True)
-        location = ds.location(name)
+        values = np.array(data_structure.get(name), dtype=float, copy=True)
+        location = data_structure.location(name)
         for (k, which), i in group_of.items():
             value = items[k][1][2][position]
             if location == "node":
                 values[owner == i] = value
             else:
                 values[i] = value
-        ds.set(name, values)
+        data_structure.set(name, values)
     from openalea.metafspm.solve import decorator
     reducing = _library_components(instance, reduction.systems)
     decorator._SKIPPED.update(reduction.systems)                 # the reduced systems: read, not solved
@@ -1717,7 +1717,7 @@ def _evaluate_in(reduction: Reduction, library: _Library, items: list, parameter
     finally:
         decorator._SKIPPED.difference_update(reduction.systems)
     out = {archetype_key: {} for archetype_key, _ in items}
-    node_ids = np.asarray(ds.entity_ids("node"))
+    node_ids = np.asarray(data_structure.entity_ids("node"))
     for system in reduction.systems:
         component_name, attr = system.split(".")
         component = next(c for c in instance.components if declared_system(c, attr, (system,)) is not None)
@@ -1736,10 +1736,10 @@ def _evaluate_in(reduction: Reduction, library: _Library, items: list, parameter
                        input_jacobians=input_jacobians, owner=owner, group_of=group_of,
                        node_of={int(v): j for j, v in enumerate(spec.graph.node_ids.tolist())}, node_ids=node_ids,
                        derived=_archetype_derived_methods(component),
-                       inputs={name: np.asarray(ds.get(name), dtype=float) for name in input_jacobians
+                       inputs={name: np.asarray(data_structure.get(name), dtype=float) for name in input_jacobians
                                if name in reduction.inputs},
-                       outputs={name: (np.asarray(ds.get(name), dtype=float), ds.location(name) == reduction.location)
-                                for name in reduction.output_names if ds.has(name)})
+                       outputs={name: (np.asarray(data_structure.get(name), dtype=float), data_structure.location(name) == reduction.location)
+                                for name in reduction.output_names if data_structure.has(name)})
         for k, archetype in enumerate(_archetypes_of_batch(reduction, batch, items)):
             out[items[k][0]][system] = archetype
     return out

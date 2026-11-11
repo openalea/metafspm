@@ -25,15 +25,15 @@ class SectionDrawer:
     """A display component drawing one triangle per Compartment of every section, a reduced one's whole (its kept
     nodes by node index, its interior by display id)."""
 
-    def __init__(self, ds):
-        self.ds = ds
+    def __init__(self, data_structure):
+        self.data_structure = data_structure
 
     def display_triangles(self, where=None):
-        ds = self.ds
-        g = ds.structure
-        owners, ids = list(range(ds.n_nodes())), list(ds.entity_ids("node"))
-        reduction = g.reduction
-        for owner, key in (reduction.reduced_groups(ds).values() if reduction is not None else ()):
+        data_structure = self.data_structure
+        mtg = data_structure.structure
+        owners, ids = list(range(data_structure.n_nodes())), list(data_structure.entity_ids("node"))
+        reduction = mtg.reduction
+        for owner, key in (reduction.reduced_groups(data_structure).values() if reduction is not None else ()):
             full = reduction.full_template(key)
             held = set(reduction.full_rows(key).tolist())
             interior = [row for row in np.flatnonzero(full.scale == scales.Compartment).tolist() if row not in held]

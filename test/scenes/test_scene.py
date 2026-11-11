@@ -142,12 +142,12 @@ def test_population_names_are_unique_and_without_a_dot():
 
 def test_plants_are_frozen_until_their_emergence():
     scene = _scene(models=(RootPopulation, RootPopulation), planting=dict(planting_time=[0., 2 * DT]))
-    ds = scene.populations[0].data_structure
+    data_structure = scene.populations[0].data_structure
     early, late = scene.populations[0].plants
 
     def of(plant, name):
-        owner = ds.entity_ids("Plant")[ds.owner("Plant")]
-        return ds.get(name)[owner == plant]
+        owner = data_structure.entity_ids("Plant")[data_structure.owner("Plant")]
+        return data_structure.get(name)[owner == plant]
 
     length = of(late, "length").sum()
     scene.run()
@@ -155,12 +155,12 @@ def test_plants_are_frozen_until_their_emergence():
     assert of(late, "length").sum() == length and (of(late, "exudation") == 0.).all()     # frozen
     assert of(early, "length").sum() > length
     rows, _, _ = scene.mappings[0].incidence()
-    owner = ds.entity_ids("Plant")[ds.owner("Plant")]
+    owner = data_structure.entity_ids("Plant")[data_structure.owner("Plant")]
     assert (owner[rows] == early).all()                                                    # not exchanged
     assert (of(late, "soil_nitrate") == 0.).all()
     scene.run()
     assert of(late, "length").sum() > length and (of(late, "exudation") > 0.).all()
-    owner = ds.entity_ids("Plant")[ds.owner("Plant")]
+    owner = data_structure.entity_ids("Plant")[data_structure.owner("Plant")]
     assert set(owner[scene.mappings[0].incidence()[0]].tolist()) == {early, late}                  # exchanged
 
 
@@ -236,8 +236,8 @@ def test_a_light_model_on_the_union_of_the_populations():
     assert len(scene.mappings) == 1 and isinstance(scene.mappings[0], UnionMapping)
     scene.run()
     for population in scene.populations:
-        ds = population.data_structure
-        np.testing.assert_allclose(ds.get("intercepted"), np.exp(ds.get("z1")))
+        data_structure = population.data_structure
+        np.testing.assert_allclose(data_structure.get("intercepted"), np.exp(data_structure.get("z1")))
 
 
 def test_planting_keeps_the_stand_and_the_planting_times():
@@ -263,13 +263,13 @@ class ApexOnlyLeaves(LeafPopulation):
 
 def test_emergence_combines_with_a_model_active_mask():
     scene = Scene(doubles_planting([ApexOnlyLeaves, ApexOnlyLeaves], planting_time=[0., DT]), time_step=DT)
-    ds = scene.populations[0].data_structure
+    data_structure = scene.populations[0].data_structure
     early, late = scene.populations[0].plants
-    owner = ds.entity_ids("Plant")[ds.owner("Plant")]
-    np.testing.assert_array_equal(ds.mask("active"), (ds.get("is_apex") > 0) & (owner == early))
+    owner = data_structure.entity_ids("Plant")[data_structure.owner("Plant")]
+    np.testing.assert_array_equal(data_structure.mask("active"), (data_structure.get("is_apex") > 0) & (owner == early))
     scene.run()                                   # the step starting at t = 0
     scene.run()                                   # the step starting at t = DT: the late plant emerged
-    np.testing.assert_array_equal(ds.mask("active"), ds.get("is_apex") > 0)
+    np.testing.assert_array_equal(data_structure.mask("active"), data_structure.get("is_apex") > 0)
 
 
 def test_an_intercropped_scene_resumes_from_its_checkpoint(tmp_path):

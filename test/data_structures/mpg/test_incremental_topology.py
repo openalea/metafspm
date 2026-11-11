@@ -79,67 +79,67 @@ def checked(monkeypatch):
     monkeypatch.setattr(mpg_module, "_CHECK_TOPOLOGY", True)
 
 
-def _topology(ds):
+def _topology(data_structure):
     """What a DataStructure derives from the structure, as plain values."""
-    out = {"nodes": ds.entity_ids("node").tolist(), "edges": ds.entity_ids("edge").tolist(),
-           "endpoints": ds.edge_endpoints().tolist()}
+    out = {"nodes": data_structure.entity_ids("node").tolist(), "edges": data_structure.entity_ids("edge").tolist(),
+           "endpoints": data_structure.edge_endpoints().tolist()}
     for scale in ("Plant", "SubOrgan", "Layer", "Cell"):
-        out[scale] = (ds.entity_ids(scale).tolist(), ds.owner(scale).tolist())
+        out[scale] = (data_structure.entity_ids(scale).tolist(), data_structure.owner(scale).tolist())
     return out
 
 
-def _fresh(ds):
+def _fresh(data_structure):
     """A DataStructure built anew on the same MPG (every array built, none patched)."""
-    g = ds.mtg
-    return MPGDataStructure(g, from_scale=g.scales.SubOrgan, nodes="Compartment", wiring=wiring(g))
+    mtg = data_structure.mtg
+    return MPGDataStructure(mtg, from_scale=mtg.scales.SubOrgan, nodes="Compartment", wiring=wiring(mtg))
 
 
 @pytest.mark.parametrize("make, grow", [(make_instanced_anatomy, grow_instanced_segment),
                                         (make_layered_anatomy, grow_layered_segment)])
 def test_the_topology_patched_after_growth_and_pruning_is_the_rebuilt_one(checked, make, grow):
-    g, segments, sections = make(3)
-    ds = MPGDataStructure(g, from_scale=g.scales.SubOrgan, nodes="Compartment", wiring=wiring(g))
-    ds.register("water", np.arange(ds.n_nodes(), dtype=float), location="node")
-    _topology(ds)
-    before = dict(g.__dict__.get("derived_counts", {"patched": 0}))
+    mtg, segments, sections = make(3)
+    data_structure = MPGDataStructure(mtg, from_scale=mtg.scales.SubOrgan, nodes="Compartment", wiring=wiring(mtg))
+    data_structure.register("water", np.arange(data_structure.n_nodes(), dtype=float), location="node")
+    _topology(data_structure)
+    before = dict(mtg.__dict__.get("derived_counts", {"patched": 0}))
     for _ in range(3):                                          # growth: new sections (instances or copies)
-        segment, section = grow(g, segments[-1])
+        segment, section = grow(mtg, segments[-1])
         segments.append(segment)
         sections[segment] = section
-        ds.update_topology()
-        assert _topology(ds) == _topology(_fresh(ds))
-    g.remove_vertex(segments.pop())                              # pruning: a section and its anatomy removed
-    ds.update_topology()
-    assert _topology(ds) == _topology(_fresh(ds))
-    assert g.__dict__["derived_counts"]["patched"] > before.get("patched", 0)
-    assert ds.n_nodes() == len(ds.get("water"))
+        data_structure.update_topology()
+        assert _topology(data_structure) == _topology(_fresh(data_structure))
+    mtg.remove_vertex(segments.pop())                              # pruning: a section and its anatomy removed
+    data_structure.update_topology()
+    assert _topology(data_structure) == _topology(_fresh(data_structure))
+    assert mtg.__dict__["derived_counts"]["patched"] > before.get("patched", 0)
+    assert data_structure.n_nodes() == len(data_structure.get("water"))
 
 
 def test_a_structure_delta_lists_the_vertices_removed_and_added():
-    g, segments, sections = make_instanced_anatomy(2)
-    since, last = g.structure_epoch, g.last_vid
-    segment, _ = grow_instanced_segment(g, segments[-1])
-    removed, added = g.structure_delta(since)
+    mtg, segments, sections = make_instanced_anatomy(2)
+    since, last = mtg.structure_epoch, mtg.last_vid
+    segment, _ = grow_instanced_segment(mtg, segments[-1])
+    removed, added = mtg.structure_delta(since)
     assert removed.size == 0 and added.min() > last and segment in added.tolist()
-    assert set(range(*np.add(g.instances.block(segment), (0, g.instances.block(segment)[0])))) <= set(added.tolist())
-    since = g.structure_epoch
-    block = g.instances.block(segment)
-    g.remove_vertex(segment)
-    removed, added = g.structure_delta(since)
+    assert set(range(*np.add(mtg.instances.block(segment), (0, mtg.instances.block(segment)[0])))) <= set(added.tolist())
+    since = mtg.structure_epoch
+    block = mtg.instances.block(segment)
+    mtg.remove_vertex(segment)
+    removed, added = mtg.structure_delta(since)
     assert added.size == 0 and set(range(block[0], block[0] + block[1])) | {segment} <= set(removed.tolist())
-    assert g.structure_delta(g.structure_epoch) is not None                       # no change: an empty delta
+    assert mtg.structure_delta(mtg.structure_epoch) is not None                       # no change: an empty delta
 
 
 def test_a_moved_vertex_or_ids_given_again_give_no_delta():
-    g, segments, sections = make_instanced_anatomy(3)
-    since = g.structure_epoch
-    g.insert_parent(segments[2], label=g.labels.SubOrgan.RootSegment, edge_type="<")   # a kept vertex re-parented
-    assert g.structure_delta(since) is None
-    g, segments, sections = make_instanced_anatomy(2)
-    since = g.structure_epoch
-    child = g.add_child(segments[-1], label=g.labels.SubOrgan.RootSegment, edge_type="<")
-    g.structure_epoch
-    g.remove_vertex(child)
-    g.reuse_ids()                                                # the ids freed at the end given again
-    assert g.structure_delta(since) is None
-    assert g.structure_delta(-5) is None                         # older than the log
+    mtg, segments, sections = make_instanced_anatomy(3)
+    since = mtg.structure_epoch
+    mtg.insert_parent(segments[2], label=mtg.labels.SubOrgan.RootSegment, edge_type="<")   # a kept vertex re-parented
+    assert mtg.structure_delta(since) is None
+    mtg, segments, sections = make_instanced_anatomy(2)
+    since = mtg.structure_epoch
+    child = mtg.add_child(segments[-1], label=mtg.labels.SubOrgan.RootSegment, edge_type="<")
+    mtg.structure_epoch
+    mtg.remove_vertex(child)
+    mtg.reuse_ids()                                                # the ids freed at the end given again
+    assert mtg.structure_delta(since) is None
+    assert mtg.structure_delta(-5) is None                         # older than the log

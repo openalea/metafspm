@@ -86,8 +86,8 @@ def test_a_step_whose_data_structure_changed_after_it_ran_is_refused():
     (step,) = [step for step in scene.population().instance.steps() if step.name == "carbon"]
     kept = snapshot(step)
     restore(step, kept, "RootPopulation.carbon")                # unchanged: restored
-    ds = scene.population().data_structure
-    ds.__dict__["_topology_version"] = ds.topology_version + 1  # as a growth after it would
+    data_structure = scene.population().data_structure
+    data_structure.__dict__["_topology_version"] = data_structure.topology_version + 1  # as a growth after it would
     with pytest.raises(ValueError, match="topology"):
         restore(step, kept, "RootPopulation.carbon")
 

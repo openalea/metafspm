@@ -9,8 +9,8 @@ Between cells of different sizes, the two centres are also offset across the fac
 view's edge_difference (D @ u, consistent, exact for linear u) are accurate there, incidence.T @ u is not.
 
     grid = AdaptiveGridDataStructure(shape=(10, 10, 20), spacing=0.02, max_level=2, periodic=(True, True, False))
-    grid.refine(lambda g: g.get("root_length_density") > 1e3)      # between steps
-    grid.coarsen(lambda g: g.get("root_length_density") < 1e2)
+    grid.refine(lambda g: mtg.get("root_length_density") > 1e3)      # between steps
+    grid.coarsen(lambda g: mtg.get("root_length_density") < 1e2)
 
 Refining or coarsening is a topology change: registered variables are carried over by volume overlaps, extensive
 values split or summed, the others volume-averaged (copied into children), edge variables reset to their default;

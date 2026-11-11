@@ -19,10 +19,10 @@ DOC = dict(unit="adim", unit_comment="", description="", min_value=0., max_value
 def test_the_face_graph_reproduces_the_finite_difference_laplacian(shape, dx):
     grid = ArrayDataStructure(shape=shape, spacing=dx)
     B = grid._incidence_matrix().toarray()
-    g = grid.get("face_area") / grid.get("face_distance") / grid.cell_volume()
+    mtg = grid.get("face_area") / grid.get("face_distance") / grid.cell_volume()
     L = grid.laplacian()
     L = L.toarray() if hasattr(L, "toarray") else np.asarray(L)
-    np.testing.assert_allclose(B @ np.diag(g) @ B.T, -L, rtol=1e-12, atol=1e-9)
+    np.testing.assert_allclose(B @ np.diag(mtg) @ B.T, -L, rtol=1e-12, atol=1e-9)
 
 
 def test_faces_are_oriented_towards_increasing_coordinates():

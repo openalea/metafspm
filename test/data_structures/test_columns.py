@@ -1,7 +1,7 @@
 """
 The MPG's properties as columns: a tracked variable's property is a view of the DataStructure's column (one storage,
 data_structure.columns.DataStructureColumn), the others typed columns (ArrayDict, an object column for any value),
-read and written in bulk (values_at, set_values, column), g.property() a read-only mapping built on demand.
+read and written in bulk (values_at, set_values, column), mtg.property() a read-only mapping built on demand.
 """
 import pickle
 
@@ -18,115 +18,115 @@ from simple_seedling import generate_simple_mpg_seedling
 
 
 def _seedling():
-    g, seedling = generate_simple_mpg_seedling()
-    g.populate_graph(g.scales.SubOrgan)
-    g.convert_properties_to_arraydict()
-    return g, seedling, MPGDataStructure(g, from_scale=g.scales.SubOrgan)
+    mtg, seedling = generate_simple_mpg_seedling()
+    mtg.populate_graph(mtg.scales.SubOrgan)
+    mtg.convert_properties_to_arraydict()
+    return mtg, seedling, MPGDataStructure(mtg, from_scale=mtg.scales.SubOrgan)
 
 
-def _tracked(g, ds, name="water"):
-    spec = VariableSpec(name=name, location="node", scale=g.scales.SubOrgan)
-    ds.register(name, np.arange(1., ds.n_nodes() + 1.), location="node")
-    ds._track_mtg(spec)
-    ds.flush_mtg()
+def _tracked(mtg, data_structure, name="water"):
+    spec = VariableSpec(name=name, location="node", scale=mtg.scales.SubOrgan)
+    data_structure.register(name, np.arange(1., data_structure.n_nodes() + 1.), location="node")
+    data_structure._track_mtg(spec)
+    data_structure.flush_mtg()
     return spec
 
 
 def test_a_tracked_variable_is_a_view_of_its_column_not_a_copy():
-    g, _, ds = _seedling()
-    _tracked(g, ds)
-    column = g.properties()["water"]
+    mtg, _, data_structure = _seedling()
+    _tracked(mtg, data_structure)
+    column = mtg.properties()["water"]
     assert isinstance(column, DataStructureColumn) and column.pure()
-    ids = np.sort(ds.entity_ids("node"))
-    ds.set("water", 7.)                                   # no flush: the MPG reads the DataStructure's array
-    found, values = g.values_at("water", ids)
+    ids = np.sort(data_structure.entity_ids("node"))
+    data_structure.set("water", 7.)                                   # no flush: the MPG reads the DataStructure's array
+    found, values = mtg.values_at("water", ids)
     assert found.tolist() == ids.tolist() and np.all(values == 7.)
-    assert column.overlay.size == 0 and column.size == ds.n_nodes()
+    assert column.overlay.size == 0 and column.size == data_structure.n_nodes()
 
 
 def test_writes_through_the_mpg_are_read_back_then_dropped_at_the_next_synchronisation():
-    g, _, ds = _seedling()
-    spec = _tracked(g, ds)
-    vid = int(ds.entity_ids("node")[2])
-    g.set_values("water", [vid], [42.])                  # an MPG-style step's write
-    assert g.values_at("water", [vid])[1].tolist() == [42.]
-    assert ds._read_mtg(spec)[2] == 42.                 # read back by the DataStructure
-    ds.set("water", ds._read_mtg(spec))
-    ds._mark_mtg_synced("water")
-    assert g.properties()["water"].pure()                # the DataStructure holds it: the overlay dropped
-    assert g.values_at("water", [vid])[1].tolist() == [42.]
+    mtg, _, data_structure = _seedling()
+    spec = _tracked(mtg, data_structure)
+    vid = int(data_structure.entity_ids("node")[2])
+    mtg.set_values("water", [vid], [42.])                  # an MPG-style step's write
+    assert mtg.values_at("water", [vid])[1].tolist() == [42.]
+    assert data_structure._read_mtg(spec)[2] == 42.                 # read back by the DataStructure
+    data_structure.set("water", data_structure._read_mtg(spec))
+    data_structure._mark_mtg_synced("water")
+    assert mtg.properties()["water"].pure()                # the DataStructure holds it: the overlay dropped
+    assert mtg.values_at("water", [vid])[1].tolist() == [42.]
 
 
 def test_new_entities_are_absent_from_the_view_until_the_next_synchronisation():
-    g, seedling, ds = _seedling()
-    spec = _tracked(g, ds)
-    new = g.add_child(seedling.root_segment6, **PropsConfig(scale=g.scales.SubOrgan, edge_type='<',
-                                                            label=g.labels.SubOrgan.RootSegment))
-    ds.update_topology()
-    assert new in ds.entity_ids("node").tolist()
-    assert g.values_at("water", [new])[0].size == 0       # the MPG had no entry for it: absent, as before
-    ds.flush_mtg(["water"])
-    ds.set("water", 1.)
-    ds.flush_mtg(["water"])
-    assert g.values_at("water", [new])[1].tolist() == [1.]
+    mtg, seedling, data_structure = _seedling()
+    spec = _tracked(mtg, data_structure)
+    new = mtg.add_child(seedling.root_segment6, **PropsConfig(scale=mtg.scales.SubOrgan, edge_type='<',
+                                                            label=mtg.labels.SubOrgan.RootSegment))
+    data_structure.update_topology()
+    assert new in data_structure.entity_ids("node").tolist()
+    assert mtg.values_at("water", [new])[0].size == 0       # the MPG had no entry for it: absent, as before
+    data_structure.flush_mtg(["water"])
+    data_structure.set("water", 1.)
+    data_structure.flush_mtg(["water"])
+    assert mtg.values_at("water", [new])[1].tolist() == [1.]
 
 
 def test_a_removed_vertex_is_gone_from_the_view():
-    g, _, ds = _seedling()
-    _tracked(g, ds)
-    vid = int(ds.entity_ids("node")[-1])
-    g._delete_properties([vid])
-    assert g.values_at("water", [vid])[0].size == 0 and vid not in g.properties()["water"]
+    mtg, _, data_structure = _seedling()
+    _tracked(mtg, data_structure)
+    vid = int(data_structure.entity_ids("node")[-1])
+    mtg._delete_properties([vid])
+    assert mtg.values_at("water", [vid])[0].size == 0 and vid not in mtg.properties()["water"]
 
 
 def test_a_checkpoint_holds_the_columns_once_and_its_views_read_them_again(tmp_path):
-    g, _, ds = _seedling()
-    _tracked(g, ds)
-    ds.checkpoint(str(tmp_path / "ds"))
-    restored = MPGDataStructure.restore(str(tmp_path / "ds"))
+    mtg, _, data_structure = _seedling()
+    _tracked(mtg, data_structure)
+    data_structure.checkpoint(str(tmp_path / "data_structure"))
+    restored = MPGDataStructure.restore(str(tmp_path / "data_structure"))
     view = restored._mtg.properties()["water"]
     assert isinstance(view, DataStructureColumn) and view.bound_to(restored)
     ids = np.sort(restored.entity_ids("node"))
-    np.testing.assert_array_equal(restored._mtg.values_at("water", ids)[1], g.values_at("water", ids)[1])
-    with open(tmp_path / "ds" / "state.pkl", "rb") as saved:
+    np.testing.assert_array_equal(restored._mtg.values_at("water", ids)[1], mtg.values_at("water", ids)[1])
+    with open(tmp_path / "data_structure" / "state.pkl", "rb") as saved:
         pickled = pickle.load(saved)["mtg"].properties()["water"]
     assert isinstance(pickled, DataStructureColumn) and pickled._ds is None     # its values are arrays.npz's
 
 
 def test_g_property_is_a_read_only_mapping_built_on_demand():
-    g, _, ds = _seedling()
-    _tracked(g, ds)
-    water = g.property("water")
-    assert dict(water) == dict(zip(g.properties()["water"].keys_array().tolist(),
-                                   g.properties()["water"].values_array().tolist()))
+    mtg, _, data_structure = _seedling()
+    _tracked(mtg, data_structure)
+    water = mtg.property("water")
+    assert dict(water) == dict(zip(mtg.properties()["water"].keys_array().tolist(),
+                                   mtg.properties()["water"].values_array().tolist()))
     with pytest.raises(TypeError):
-        water[int(ds.entity_ids("node")[0])] = 0.
-    assert len(g.property("absent")) == 0 and "absent" not in g.properties()
+        water[int(data_structure.entity_ids("node")[0])] = 0.
+    assert len(mtg.property("absent")) == 0 and "absent" not in mtg.properties()
 
 
 def test_column_gives_the_values_over_the_vid_index():
-    g, _, ds = _seedling()
-    _tracked(g, ds)
-    values, present = g.column("water")
-    assert values.shape == present.shape == (g._id + 1,)
-    ids = ds.entity_ids("node")
+    mtg, _, data_structure = _seedling()
+    _tracked(mtg, data_structure)
+    values, present = mtg.column("water")
+    assert values.shape == present.shape == (mtg._id + 1,)
+    ids = data_structure.entity_ids("node")
     assert present[ids].all() and present.sum() == ids.size
-    np.testing.assert_array_equal(values[ids], ds.get("water"))
-    labels, has_label = g.column("label")
+    np.testing.assert_array_equal(values[ids], data_structure.get("water"))
+    labels, has_label = mtg.column("label")
     assert has_label[ids].all() and labels.dtype == np.float64
 
 
 def test_any_property_is_a_typed_column():
-    g = MPG()
-    plant = g.add_component(g.root, **PropsConfig(scale=g.scales.Plant, edge_type='/'))
-    assert all(isinstance(prop, ArrayDict) for prop in g.properties().values())
-    g.set_values("record", [plant], [{"a": (1, 2)}])     # an object column: the value kept as it is
-    assert g.properties()["record"].dtype == object and g.property("record")[plant] == {"a": (1, 2)}
-    g.properties()["rank"] = {plant: 3}                  # a dict assigned: stored as an object column
-    assert isinstance(g.properties()["rank"], ArrayDict) and g.values_at("rank", [plant])[1].tolist() == [3]
-    g.properties().setdefault("tags", {})[plant] = "x"   # setdefault gives the stored column
-    assert g.property("tags")[plant] == "x"
-    assert g.label(plant) == g.property("label")[plant] and g.edge_type(plant) == "/"
+    mtg = MPG()
+    plant = mtg.add_component(mtg.root, **PropsConfig(scale=mtg.scales.Plant, edge_type='/'))
+    assert all(isinstance(prop, ArrayDict) for prop in mtg.properties().values())
+    mtg.set_values("record", [plant], [{"a": (1, 2)}])     # an object column: the value kept as it is
+    assert mtg.properties()["record"].dtype == object and mtg.property("record")[plant] == {"a": (1, 2)}
+    mtg.properties()["rank"] = {plant: 3}                  # a dict assigned: stored as an object column
+    assert isinstance(mtg.properties()["rank"], ArrayDict) and mtg.values_at("rank", [plant])[1].tolist() == [3]
+    mtg.properties().setdefault("tags", {})[plant] = "x"   # setdefault gives the stored column
+    assert mtg.property("tags")[plant] == "x"
+    assert mtg.label(plant) == mtg.property("label")[plant] and mtg.edge_type(plant) == "/"
 
 
 def test_a_views_bulk_reads_equal_the_reference_lookups_with_an_overlay_hidden_entities_and_shared_positions():
@@ -134,15 +134,15 @@ def test_a_views_bulk_reads_equal_the_reference_lookups_with_an_overlay_hidden_e
     lookups in its merged keys, whether the positions are shared (read-only arrays) or not, and whether the overlay's
     keys are looked up in the vids (ascending) or the vids in the overlay."""
     from openalea.metafspm.data_structure import columns
-    g, seedling, ds = _seedling()
-    _tracked(g, ds)
-    new = g.add_child(seedling.root_segment6, **PropsConfig(scale=g.scales.SubOrgan, edge_type='<',
-                                                            label=g.labels.SubOrgan.RootSegment))
-    ds.update_topology()
-    view = g.properties()["water"]
-    ids = np.sort(ds.entity_ids("node"))
-    g.set_values("water", [int(ids[1]), new], [42., 43.])          # an overlay
-    g._delete_properties([int(ids[3])])                             # a hidden entity
+    mtg, seedling, data_structure = _seedling()
+    _tracked(mtg, data_structure)
+    new = mtg.add_child(seedling.root_segment6, **PropsConfig(scale=mtg.scales.SubOrgan, edge_type='<',
+                                                            label=mtg.labels.SubOrgan.RootSegment))
+    data_structure.update_topology()
+    view = mtg.properties()["water"]
+    ids = np.sort(data_structure.entity_ids("node"))
+    mtg.set_values("water", [int(ids[1]), new], [42., 43.])          # an overlay
+    mtg._delete_properties([int(ids[3])])                             # a hidden entity
     keys, values = view.items_arrays()
     for vids in (ids, ids[::-1].copy(), np.concatenate((ids, ids)), np.append(ids, ids.max() + 100)):
         for shared in (False, True):

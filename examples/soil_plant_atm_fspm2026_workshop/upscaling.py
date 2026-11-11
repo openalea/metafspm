@@ -9,15 +9,15 @@ potentials change, e.g. at each scene step).
 SCALES = ("SubOrgan", "Organ", "Phytomer", "GrowthUnit", "Axis", "Plant")
 
 
-def upscale(ds, name="water_potential", scales=SCALES) -> dict:
+def upscale(data_structure, name="water_potential", scales=SCALES) -> dict:
     """
-    Derive *name* at each of *scales* in turn, each the mean of the previous one, on DataStructure *ds*. Returns
+    Derive *name* at each of *scales* in turn, each the mean of the previous one, on DataStructure *data_structure*. Returns
     {scale: derived variable name}, "Compartment" for the solved one.
     """
     names, source = {"Compartment": name}, name
     for scale in scales:
         target = f"{name}_{scale}"
-        if not ds.has(target):
-            ds.derive(target, {source: 1.}, location=scale, aggregation="mean")
+        if not data_structure.has(target):
+            data_structure.derive(target, {source: 1.}, location=scale, aggregation="mean")
         names[scale], source = target, target
     return names

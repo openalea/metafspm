@@ -271,8 +271,8 @@ class DataStructure(ABC):
         """
         kept = _root_data_structure(self).__dict__.get("_previous_values", {})
         if name not in kept:
-            raise KeyError(f"ds.previous('{name}'): its values before the step were not kept (Scene.keep_previous("
-                           f"ds, '{name}'), a Summary's max_change=; kept: {sorted(kept)})")
+            raise KeyError(f"data_structure.previous('{name}'): its values before the step were not kept (Scene.keep_previous("
+                           f"data_structure, '{name}'), a Summary's max_change=; kept: {sorted(kept)})")
         ids, values = kept[name]
         return self.aligned(name, ids, values, missing)
 
@@ -350,7 +350,7 @@ class DataStructure(ABC):
                if type(getattr(provider, "_drawn_by", provider)).triangles is not StructuralComponent.triangles]
         if len(own) > 1:
             raise ValueError(f"several components draw the elements ({', '.join(type(p).__name__ for p in own)}): "
-                             "set ds.geometry_provider to the one giving the triangles")
+                             "set data_structure.geometry_provider to the one giving the triangles")
         return own[0] if own else (providers[0] if providers else None)
 
     @geometry_provider.setter
@@ -375,19 +375,19 @@ class DataStructure(ABC):
             drawn = segment_cylinders(self, where)          # the elements' default cylinders from their ends
             if drawn is None:
                 raise ValueError(f"{type(self).__name__} has no geometry provider (no StructuralComponent drawing its "
-                                 "elements was built on it, or set ds.geometry_provider) nor segment ends (x1 ... "
+                                 "elements was built on it, or set data_structure.geometry_provider) nor segment ends (x1 ... "
                                  "z2, radius)")
             return drawn
         return provider.triangles(where)
 
 
-def _root_data_structure(ds):
-    """The DataStructure holding the store a view (LocatedView, EntityView) is of, or *ds* itself."""
+def _root_data_structure(data_structure):
+    """The DataStructure holding the store a view (LocatedView, EntityView) is of, or *data_structure* itself."""
     while True:
-        inner = ds.__dict__.get("_base", ds.__dict__.get("_inner"))
-        if inner is None or inner is ds:
-            return ds
-        ds = inner
+        inner = data_structure.__dict__.get("_base", data_structure.__dict__.get("_inner"))
+        if inner is None or inner is data_structure:
+            return data_structure
+        data_structure = inner
 
 
 def _split(totals, owner, weights, owners_name: str) -> np.ndarray:
@@ -555,7 +555,7 @@ class VariableStoreMixin:
 
     def mark_written(self, name: str) -> None:
         """
-        Record a write of *name*. set() does it; call it only after writing through a view (ds.get(x)[...] = v),
+        Record a write of *name*. set() does it; call it only after writing through a view (data_structure.get(x)[...] = v),
         which is otherwise invisible to the variables derived from *name*.
         """
         writes = self.__dict__.setdefault("_writes", {})
@@ -915,7 +915,7 @@ class VariableStoreMixin:
         """
         Define mask *name* at *location* (default: the nodes or cells) from *rule*:
           {variable: condition}, every condition holding: ">0" (or "<0", ">=0", "<=0"), a value, or a list of values;
-          a callable ds -> boolean array (recomputed at every mask() call, its sources being unknown);
+          a callable data_structure -> boolean array (recomputed at every mask() call, its sources being unknown);
         or from *entities*, a named entity set a component publishes (Component.entity_sets), "Class.set" (e.g.
         "GranapAnatomy.soil_nodes": the roots' soil nodes), or a tuple of them (their union).
         """
@@ -1302,9 +1302,9 @@ class VariableStoreMixin:
         """The DataStructure checkpointed in folder *path* (see checkpoint(); *construction* overrides, e.g. mtg=;
         *shared*: the SharedStore its shared parts are read from, by default the manifest's folder)."""
         manifest, saved, arrays = cls._read_checkpoint(path, cls.__name__, shared)
-        ds = cls._from_construction(dict(manifest["construction"], **construction), saved)
-        ds._apply_checkpoint(path, manifest, saved, arrays)
-        return ds
+        data_structure = cls._from_construction(dict(manifest["construction"], **construction), saved)
+        data_structure._apply_checkpoint(path, manifest, saved, arrays)
+        return data_structure
 
     def load_checkpoint(self, path: str, shared=None, **construction) -> None:
         """
@@ -1552,7 +1552,7 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
 
     Variables are stored per location: "node", "edge", "scalar" and the coarser MTG scales ("Plant", "Axis", ...),
     whose entities own nodes (owner(), entity_ids()). After the MTG's structure changed, update_topology() extends
-    the graph and carries the variables over; ds.mtg and flush_mtg() write the state variables back to the MTG's
+    the graph and carries the variables over; data_structure.mtg and flush_mtg() write the state variables back to the MTG's
     properties.
     """
 
@@ -1568,7 +1568,7 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
             update_topology() call.
         from_scale : int, optional
             Biological scale whose vertices drive the Compartment/Connection
-            topology (e.g. g.scales.SubOrgan). Inferred from the populated
+            topology (e.g. mtg.scales.SubOrgan). Inferred from the populated
             graph when omitted; required for an unpopulated graph, whose
             update_topology() would otherwise not know what to populate.
         nodes : "Compartment", optional
@@ -1840,22 +1840,22 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
         """
         The bearer of each entity of a coarse *location* (*ids*: some of them, default all): its vertex at the scale
         *at* at its end, the last along its axis from its topologically first one (that one's successors '<' within
-        the entity), whose end is ds.position(location, at="end"): where a model grows the axes the entity bears (a
+        the entity), whose end is data_structure.position(location, at="end"): where a model grows the axes the entity bears (a
         site, e.g. the nodal roots on a Phytomer's node: its internode's top element); -1 for an entity without one.
         """
-        g = self._mtg
+        mtg = self._mtg
         ids = np.asarray(self.entity_ids(location) if ids is None else ids, dtype=np.int64)
-        scale = getattr(g.scales, at)
+        scale = getattr(mtg.scales, at)
         out = np.full(ids.size, -1, dtype=np.int64)
         for k, entity in enumerate(ids.tolist()):
-            vertices = [int(v) for v in g.components_at_scale(entity, scale=scale)]
+            vertices = [int(v) for v in mtg.components_at_scale(entity, scale=scale)]
             if not vertices:
                 continue
             inside = set(vertices)
-            first = [v for v in vertices if g.parent(v) not in inside]
+            first = [v for v in vertices if mtg.parent(v) not in inside]
             last = min(first or vertices)
             while True:
-                following = [int(v) for v in g.children(last) if int(v) in inside and g.edge_type(v) == "<"]
+                following = [int(v) for v in mtg.children(last) if int(v) in inside and mtg.edge_type(v) == "<"]
                 if not following:
                     break
                 last = following[0]
@@ -1879,7 +1879,7 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
         Where each entity of *location* (a coarse scale, "Phytomer", "Organ", ..., or the elements' own) is, (n, 3),
         from its elements' topological ends (x1 ... z2, each element's base at its parent's end): *at* "base", its
         first element's base (the element whose parent is outside it, the earliest); "end", the end of its last
-        element along its axis (from the first, its successors '<' within it: ds.bearer's). A Phytomer's node, where
+        element along its axis (from the first, its successors '<' within it: data_structure.bearer's). A Phytomer's node, where
         its leaf and its nodal roots are, is its end (its internode's top: an axis inclined or not). NaN for an entity
         without elements.
         """
@@ -1966,13 +1966,13 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
         if cache is not None and cache[0] == key:
             return cache[1]
         from openalea.metafspm.kernels import depth_first_orders
-        g = self._mtg
+        mtg = self._mtg
         vids = np.asarray(self.entity_ids("node"), dtype=np.int64)
         n = vids.size
-        arrays = g.topology_arrays()
+        arrays = mtg.topology_arrays()
         lookup = np.full(arrays["parent"].size, -1, dtype=np.int64)
         lookup[vids] = np.arange(n, dtype=np.int64)
-        children = g._children
+        children = mtg._children
         lists = [children.get(v, ()) for v in vids.tolist()]
         counts = np.fromiter((len(c) for c in lists), count=n, dtype=np.int64)
         flat = np.fromiter((c for these in lists for c in these), count=int(counts.sum()), dtype=np.int64)
@@ -1980,7 +1980,7 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
         child = np.where(flat < lookup.size, lookup[np.minimum(flat, lookup.size - 1)], -1)
         among = child >= 0
         owner, child, flat = owner[among], child[among], flat[among]
-        group = np.where(arrays["edge_type"][flat] == g._EDGE_TYPE_CODES["<"], 2, 0) if branches_first else \
+        group = np.where(arrays["edge_type"][flat] == mtg._EDGE_TYPE_CODES["<"], 2, 0) if branches_first else \
             np.zeros(child.size, dtype=np.int64)
         sequence = np.arange(child.size, dtype=np.int64)
         if deferred.size:
@@ -2011,15 +2011,15 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
         cache = self.__dict__.get("_openalea_post")
         if cache is not None and cache[0] == key:
             return cache[1]
-        g = self._mtg
+        mtg = self._mtg
         vids = self.entity_ids("node").tolist()
         local = {v: i for i, v in enumerate(vids)}
-        edge_type = g._column("edge_type")
+        edge_type = mtg._column("edge_type")
         parents = self.parents()
 
         def visiting(v):
             plus, successor = [], []
-            for c in g._children.get(v, ()):
+            for c in mtg._children.get(v, ()):
                 if c in local and parents[local[c]] == local[v]:
                     (successor if edge_type.get(c) == '<' else plus).append(c)
             return list(reversed(plus + successor))
@@ -2254,10 +2254,10 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
         if location not in self._coarse_scale_names():
             raise ValueError(f"'{location}' is not a coarse location ({self._coarse_scale_names()})")
         if of != "node":
-            g = self._mtg
+            mtg = self._mtg
             coarse = np.asarray(self.entity_ids(location), dtype=np.int64)
-            owners = np.asarray(g.complex_at_scale_array(np.asarray(self.entity_ids(of), dtype=np.int64),
-                                                         getattr(g.scales, location)), dtype=np.int64)
+            owners = np.asarray(mtg.complex_at_scale_array(np.asarray(self.entity_ids(of), dtype=np.int64),
+                                                         getattr(mtg.scales, location)), dtype=np.int64)
             position = np.searchsorted(coarse, owners).clip(0, max(coarse.size - 1, 0))
             return np.where((coarse.size > 0) & (coarse[position] == owners), position, -1)
         return self._membership(location)[1]
@@ -2269,15 +2269,15 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
         cache = self.__dict__.setdefault("_label_names", {})
         kept = cache.get(location)
         if kept is None or kept[0] != self.topology_version:
-            g = self.structure
-            names = g.labels.translator                   # the MPG's label codes → names
+            mtg = self.structure
+            names = mtg.labels.translator                   # the MPG's label codes → names
             ids = self.entity_ids("node" if location is None else location)
-            if getattr(g, "_instanced", lambda: False)():
-                found, codes = g._property_at("label", ids)
+            if getattr(mtg, "_instanced", lambda: False)():
+                found, codes = mtg._property_at("label", ids)
                 by_vid = dict(zip(found.tolist(), codes.tolist()))
                 labels = [by_vid.get(v) for v in ids.tolist()]
             else:
-                labels = [g.label(v) for v in ids.tolist()]
+                labels = [mtg.label(v) for v in ids.tolist()]
             kept = cache[location] = (self.topology_version,
                                       np.array([_label_name(label, names) for label in labels], dtype=object))
         values = kept[1]
@@ -2290,8 +2290,8 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
         if self.n_nodes() == 0:
             raise ValueError(
                 "No Compartment nodes found. "
-                "Call g.populate_graph(from_scale) and "
-                "g.convert_properties_to_arraydict() before wrapping."
+                "Call mtg.populate_graph(from_scale) and "
+                "mtg.convert_properties_to_arraydict() before wrapping."
             )
         self.validate_variables(strict=strict)
 
@@ -2354,13 +2354,13 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
         the whole computation.
         """
         from openalea.metafspm.data_structure import mpg as mpg_module
-        g, nodes = self._mtg, self._idx_to_vid
+        mtg, nodes = self._mtg, self._idx_to_vid
         bases = self.__dict__.setdefault("_node_patch_bases", {})
-        epoch = g.structure_epoch if hasattr(g, "structure_epoch") else None
+        epoch = mtg.structure_epoch if hasattr(mtg, "structure_epoch") else None
         base = bases.get(name)
         result = None
         if base is not None and epoch is not None:
-            delta = g.structure_delta(base[0])
+            delta = mtg.structure_delta(base[0])
             if delta is not None:
                 old_nodes, old_values = base[1], base[2]
                 keep = mpg_module._kept(old_nodes, delta[0])
@@ -2397,7 +2397,7 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
             raise ValueError("the checkpoint and this DataStructure differ in anatomy mode")
         bound, loaded = getattr(self._mtg, "reduction", None), getattr(mtg, "reduction", None)
         if bound is not None and loaded is not None:           # the checkpointed reduction (its templates, the
-            loaded.g = mtg                                     # loaded MTG's) bound to this one's model
+            loaded.mtg = mtg                                     # loaded MTG's) bound to this one's model
             loaded.bind(bound.model, bound.instance)
         self._mtg, self._from_scale = mtg, construction["from_scale"]
         self._B_cached = None
@@ -2412,8 +2412,8 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
         wiring = saved["state"].get("_wiring")
         if mtg.junction_vids() or not wiring:
             wiring = None                         # junctions already wired in the MTG
-        ds = cls(mtg, from_scale=construction["from_scale"], nodes=construction["nodes"], wiring=wiring)
-        return ds
+        data_structure = cls(mtg, from_scale=construction["from_scale"], nodes=construction["nodes"], wiring=wiring)
+        return data_structure
 
     def _var_stores(self) -> dict:
         stores = {"node": self._node_data, "edge": self._edge_data, "scalar": self._scalar_data}
@@ -2468,19 +2468,19 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
     def _scale_vertices_in_plants(self, scale: int) -> np.ndarray:
         """Anatomy mode: the vertices of *scale* (anchors aside) in the plants the nodes are in, ascending; patched
         from the MPG's structural delta while those plants are the same (O-14)."""
-        g = self._mtg
+        mtg = self._mtg
         plants = self._membership("Plant")[0]
 
         def in_plants(candidates):
-            return candidates[np.isin(g.owners_at_scale(candidates, g.scales.Plant), plants)]
+            return candidates[np.isin(mtg.owners_at_scale(candidates, mtg.scales.Plant), plants)]
 
-        arrays = g.topology_arrays()
-        epoch = g.structure_epoch
+        arrays = mtg.topology_arrays()
+        epoch = mtg.structure_epoch
         bases = self.__dict__.setdefault("_node_patch_bases", {})
         base = bases.get(("in_plants", scale))
         result = None
         if base is not None and np.array_equal(base[1], plants):
-            delta = g.structure_delta(base[0])
+            delta = mtg.structure_delta(base[0])
             if delta is not None:
                 from openalea.metafspm.data_structure.mpg import _kept, _check_same, _CHECK_TOPOLOGY
                 removed, added = delta
@@ -2518,12 +2518,12 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
         return vids
 
     def _connection_vids_uncached(self) -> np.ndarray:
-        g = self._mtg
-        if hasattr(g, "connection_vids"):
-            return np.array(g.connection_vids())          # kept and patched by the MPG (O-14)
-        scale_keys, scale_values = g._column("scale").items_arrays()
-        connections = scale_keys[scale_values == g.scales.Connection]
-        keys = g._column("n_id_a").keys_array()
+        mtg = self._mtg
+        if hasattr(mtg, "connection_vids"):
+            return np.array(mtg.connection_vids())          # kept and patched by the MPG (O-14)
+        scale_keys, scale_values = mtg._column("scale").items_arrays()
+        connections = scale_keys[scale_values == mtg.scales.Connection]
+        keys = mtg._column("n_id_a").keys_array()
         return np.intersect1d(np.asarray(connections, dtype=np.int64), np.asarray(keys, dtype=np.int64))
 
     def entity_ids(self, location: str) -> np.ndarray:
@@ -2722,9 +2722,9 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
 
     def _instanced_mtg_values(self, name: str, vids, scale=None, fill=None):
         """_mtg_values on an MPG with instances: each vertex's own entry, else its template's value."""
-        g = self._mtg
-        prop = g.properties().get(name)
-        if not prop and not g.instances.vids_having(name).size:
+        mtg = self._mtg
+        prop = mtg.properties().get(name)
+        if not prop and not mtg.instances.vids_having(name).size:
             return None
         unique, inverse, plan = self._read_plan(vids, scale)
         known = np.zeros(unique.size, dtype=bool)
@@ -2737,7 +2737,7 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
                 else:
                     known = np.array([int(v) in prop for v in unique.tolist()], dtype=bool)
                     out[known] = [float(prop[int(v)]) for v in unique[known].tolist()]
-            has, values = g.instances.values(name, unique, plan)      # else their templates' values
+            has, values = mtg.instances.values(name, unique, plan)      # else their templates' values
             fresh = has & ~known
             out[fresh] = np.asarray(values[fresh], dtype=np.float64)
         except (TypeError, ValueError) as e:
@@ -2991,7 +2991,7 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
         """
         A context in which the MTG is ahead of the DataStructure: an MPG-style step's writes (the values of the
         vertices it created, say) not read back yet, or the DataStructure's arrays being carried over to a new
-        topology. ds.mtg and flush_mtg() write nothing meanwhile (the DataStructure's values would overwrite the
+        topology. data_structure.mtg and flush_mtg() write nothing meanwhile (the DataStructure's values would overwrite the
         step's).
         """
         self.__dict__["_mtg_ahead"] = self.__dict__.get("_mtg_ahead", 0) + 1
@@ -3125,9 +3125,9 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
         """(the ids *keys* sorted, their positions in *keys*), without the instanced ones at the nodes and edges,
         cached while *keys* is the same array (an entity location's ids, until the topology changes)."""
         cache = self.__dict__.setdefault("_sorted_ids_cache", {})
-        g = self._mtg
-        instanced = getattr(g, "_instanced", lambda: False)()
-        stamp = (g._instance_edits() if instanced else 0)
+        mtg = self._mtg
+        instanced = getattr(mtg, "_instanced", lambda: False)()
+        stamp = (mtg._instance_edits() if instanced else 0)
         hit = cache.get(tag)
         if hit is not None and hit[0] is keys and hit[1] == stamp:
             return hit[2], hit[3]
@@ -3135,7 +3135,7 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
         sorted_keys = keys[positions]
         location = tag[1] if isinstance(tag, tuple) else tag
         if instanced and location in ("node", "edge") and sorted_keys.size:
-            explicit = ~g._instanced_mask(sorted_keys)
+            explicit = ~mtg._instanced_mask(sorted_keys)
             sorted_keys, positions = sorted_keys[explicit], positions[explicit]
         sorted_keys.flags.writeable = False
         cache[tag] = (keys, stamp, sorted_keys, positions)
@@ -3240,7 +3240,7 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
         """
         Extend the graph after the MTG's structure changed (growth, pruning) and carry the registered variables
         over to the new topology (_update_topology). Meanwhile the MTG is ahead of the DataStructure (mtg_ahead):
-        ds.mtg, read by an inheritance rule say, flushes nothing.
+        data_structure.mtg, read by an inheritance rule say, flushes nothing.
         """
         with self.mtg_ahead():
             self._update_topology()
@@ -3287,7 +3287,7 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
             raise AttributeError(
                 f"{type(self).__name__}.update_topology() requires from_scale "
                 "to be set at construction.  "
-                "Pass MPGDataStructure(g, from_scale=g.scales.SubOrgan) when the graph is not populated yet."
+                "Pass MPGDataStructure(mtg, from_scale=mtg.scales.SubOrgan) when the graph is not populated yet."
             )
         old = {}
         stored_ids = self.__dict__.setdefault("_stored_ids", {})
@@ -3409,14 +3409,14 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
         """The write-back of a node or edge variable on an MPG with instances: at the vertices of its scale that
         are not instanced (junctions, a leaf's surface, ...), not at the instanced ones (held by the DataStructure
         only). Variables mapped to a coarse scale are written there as without instances."""
-        g = self._mtg
+        mtg = self._mtg
         if spec.location == "node" and spec.aggregation is not None:
             coarse = self._scale_name(spec.scale)
             weights = self.get(spec.weight) if spec.weight else None
             means = self._map(values, "node", coarse, "weighted_mean" if weights is not None else "mean", weights)
             self._write_at(spec.name, self.entity_ids(coarse), means)
             return
-        if spec.location == "edge" and not (self._anatomy and spec.scale == g.scales.Connection):
+        if spec.location == "edge" and not (self._anatomy and spec.scale == mtg.scales.Connection):
             self._write_edge_to_mtg(spec.name, values, convention=spec.aggregation)
             return
         vids = np.asarray(self._idx_to_vid if spec.location == "node" else self.entity_ids("edge"), dtype=np.int64)
@@ -3445,18 +3445,18 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
         The anatomy of every from_scale vertex, to find what a topology update changed: each one's linked parent
         ("parents"), and the table of the Compartments owned (ascending vids, their owner and rule properties).
         """
-        g, from_scale = self._mtg, self._from_scale
+        mtg, from_scale = self._mtg, self._from_scale
         names = ["label"] + sorted({rule["ordering"] for rule in self._wiring
                                     if isinstance(rule, dict) and rule.get("ordering")})
-        compartments, owners = g.compartment_owners()               # owned_compartments' arrays, with their owners
-        owners = g.owners_at_scale(owners, from_scale)
+        compartments, owners = mtg.compartment_owners()               # owned_compartments' arrays, with their owners
+        owners = mtg.owners_at_scale(owners, from_scale)
         vids, owner_of = compartments[owners >= 0], owners[owners >= 0]
         columns = []
         for name in names:
-            prop = g.properties().get(name, {})
+            prop = mtg.properties().get(name, {})
             column = np.empty(vids.size, dtype=object)
-            if getattr(g, "_instanced", lambda: False)():
-                found, values = g._property_at(name, vids)
+            if getattr(mtg, "_instanced", lambda: False)():
+                found, values = mtg._property_at(name, vids)
                 column[np.searchsorted(vids, found)] = values.tolist()
             elif isinstance(prop, ArrayDict) and prop.size:                  # in bulk: None where there is no value
                 found, values = prop.at(vids)
@@ -3464,7 +3464,7 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
             else:
                 column[:] = [prop.get(nv) for nv in vids.tolist()]
             columns.append(column)
-        vertices, parents = g.linked_parent_arrays(from_scale)
+        vertices, parents = mtg.linked_parent_arrays(from_scale)
         return {"vertices": vertices, "parents": parents, "vids": vids, "owners": owner_of, "columns": columns}
 
     @staticmethod
@@ -3495,13 +3495,13 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
 
     def _sections_of(self, vids) -> np.ndarray:
         """Anatomy mode: the from_scale vertex (e.g. SubOrgan) of each Compartment vid, -1 for none or -1 vids."""
-        g = self._mtg
+        mtg = self._mtg
         vids = np.asarray(vids, dtype=np.int64)
-        compartments, owners = g.compartment_owners()
+        compartments, owners = mtg.compartment_owners()
         out = np.full(vids.size, -1, dtype=np.int64)
         position = np.searchsorted(compartments, vids).clip(0, max(compartments.size - 1, 0))
         known = (vids >= 0) & (compartments.size > 0) & (compartments[position] == vids)
-        out[known] = g.owners_at_scale(owners[position[known]], self._from_scale)
+        out[known] = mtg.owners_at_scale(owners[position[known]], self._from_scale)
         return out
 
     def _rewire_junctions(self) -> None:
@@ -3509,8 +3509,8 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
         Rewire only the junctions that changed: those of a vertex that is new, has another linked parent, or whose
         anatomy (or its parent's) changed. Every other Connection, with its vid and values, is kept.
         """
-        g, old = self._mtg, self._anatomy_signature
-        if not self._wiring and not g.properties().get("is_junction"):
+        mtg, old = self._mtg, self._anatomy_signature
+        if not self._wiring and not mtg.properties().get("is_junction"):
             self.rewired = []           # no rule and no junction (a reduction's library): nothing to rewire
             return
         if old is None:
@@ -3525,19 +3525,19 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
         parent_known = np.isin(parents, old_vertices)
         rewire = vertices[~known | moved | np.isin(vertices, changed)
                           | ((parents >= 0) & (~parent_known | np.isin(parents, changed)))]
-        alive = g.owned_compartments(self._from_scale)
-        n_id_a, n_id_b = g._column("n_id_a"), g._column("n_id_b")
-        junctions = np.asarray(g.junction_vids(), dtype=np.int64)
+        alive = mtg.owned_compartments(self._from_scale)
+        n_id_a, n_id_b = mtg._column("n_id_a"), mtg._column("n_id_b")
+        junctions = np.asarray(mtg.junction_vids(), dtype=np.int64)
         tails, heads = _values_at(n_id_a, junctions), _values_at(n_id_b, junctions)
         head_alive = np.isin(heads, alive)
         sections = self._sections_of(np.where(head_alive, heads, -1))
         stale = junctions[~np.isin(tails, alive) | ~head_alive | np.isin(sections, rewire)]
-        g.remove_connections(stale.tolist())
-        g.wire_junctions(self._from_scale, self._wiring, children=rewire.tolist())
+        mtg.remove_connections(stale.tolist())
+        mtg.wire_junctions(self._from_scale, self._wiring, children=rewire.tolist())
         self._anatomy_signature = new
         self.rewired = rewire.tolist()  # introspection: the vertices whose junctions were rebuilt
 
-    # Anatomy mode: the rule giving new Compartments their source, a callable (ds, new_vids, is_known) -> source vids
+    # Anatomy mode: the rule giving new Compartments their source, a callable (data_structure, new_vids, is_known) -> source vids
     # (-1: none), where is_known(vids) tells which vids had values before the update. None: _inherited_compartment
     # (the first same-label Compartment upstream). A model with its own anatomies sets it (e.g. GRANAP: the same
     # cell of the same template upstream).
@@ -3564,23 +3564,23 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
         Anatomy mode: the Compartment a new Compartment inherits from, the first one with the same label in the
         anatomy of its owner's linked ancestors; None when there is none (edges, or no such Compartment).
         """
-        g = self._mtg
-        scales = g.topology_arrays()["scale"]
-        if key >= scales.size or scales[key] != g.scales.Compartment:
+        mtg = self._mtg
+        scales = mtg.topology_arrays()["scale"]
+        if key >= scales.size or scales[key] != mtg.scales.Compartment:
             return None
-        label = g.values_of("label", [key]).get(key)
-        owners = g.compartments_by_owner(self._from_scale)
+        label = mtg.values_of("label", [key]).get(key)
+        owners = mtg.compartments_by_owner(self._from_scale)
         section = int(self._sections_of([key])[0])
         if section < 0:
             return None
-        vertex = g.linked_parent(section, self._from_scale)
+        vertex = mtg.linked_parent(section, self._from_scale)
         while vertex is not None:
             candidates = owners.get(vertex, [])
-            labels = g.values_of("label", candidates)
+            labels = mtg.values_of("label", candidates)
             for nv in candidates:
                 if nv in values_by_key and labels.get(nv) == label:
                     return nv
-            vertex = g.linked_parent(vertex, self._from_scale)
+            vertex = mtg.linked_parent(vertex, self._from_scale)
         return None
 
     def _carry_over(self, values_by_key, keys, policy: dict) -> np.ndarray:
@@ -3650,10 +3650,10 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
 
     def _topology_stamp(self) -> tuple:
         """Changes with the topology version and any structural edit of the MPG (vertices, complexes, instances)."""
-        g = self._mtg
-        structure = g._structure_signature() if hasattr(g, "_structure_signature") else \
-            (g.nb_vertices(), getattr(g, "_id", None))
-        n_id = g.properties()
+        mtg = self._mtg
+        structure = mtg._structure_signature() if hasattr(mtg, "_structure_signature") else \
+            (mtg.nb_vertices(), getattr(mtg, "_id", None))
+        n_id = mtg.properties()
         return (self.topology_version, structure, len(n_id.get("n_id_a", ())), len(n_id.get("n_id_b", ())))
 
     def _graph_topology(self) -> tuple:
@@ -4265,9 +4265,9 @@ class LocatedView(DataStructure):
             return np.arange(self.n_nodes(), dtype=np.int64)
         if of != "node":
             return self._base.owner(location, of=of)
-        g = self._base.structure
+        mtg = self._base.structure
         coarse = np.asarray(self._base.entity_ids(location), dtype=np.int64)
-        owners = g.complex_at_scale_array(self.entity_ids("node"), getattr(g.scales, location))
+        owners = mtg.complex_at_scale_array(self.entity_ids("node"), getattr(mtg.scales, location))
         position = np.searchsorted(coarse, owners).clip(0, max(coarse.size - 1, 0))
         return np.where((coarse.size > 0) & (coarse[position] == owners), position, -1)
 
@@ -4452,7 +4452,7 @@ def _check_entities(entities) -> None:
         return
     if not isinstance(entities, dict) or not entities:
         raise TypeError(f"entities must be a non-empty {{variable: condition}} dict (e.g. {{'label': ('RootSegment', "
-                        f"'RootApex')}}) or a callable ds -> boolean array, got {entities!r}")
+                        f"'RootApex')}}) or a callable data_structure -> boolean array, got {entities!r}")
 
 
 def _entities_key(entities):
@@ -4547,7 +4547,7 @@ class EntityView(DataStructure):
     @property
     def base(self):
         """The DataStructure the view is of, at the view's location: the MPGDataStructure in segment mode, its
-        LocatedView at the view's location in anatomy mode (ds.at("SubOrgan"), the MPGDataStructure's own nodes being
+        LocatedView at the view's location in anatomy mode (data_structure.at("SubOrgan"), the MPGDataStructure's own nodes being
         the Compartments): a variable at every entity of the location (get), their indices (index_of). A component
         reads through it what lies outside its entities (the bearer of a root it creates, its end); it does not write
         there, another model's entities being that model's."""
@@ -4567,15 +4567,15 @@ class EntityView(DataStructure):
     def _with_labels(self, wanted: set) -> np.ndarray:
         """Whether each entity of the location has one of the label names *wanted*: from the MPG's label codes at
         once (an ArrayDict of codes), else from labels()."""
-        inner, g = self._inner, self._base.structure
-        if not isinstance(g.properties().get("label"), ArrayDict):
+        inner, mtg = self._inner, self._base.structure
+        if not isinstance(mtg.properties().get("label"), ArrayDict):
             return np.array([name in wanted for name in inner.labels().tolist()], dtype=bool)
         ids = np.asarray(inner.entity_ids("node"), dtype=np.int64)
         order = np.argsort(ids, kind="stable")
-        found, codes = g._property_at("label", ids[order])
+        found, codes = mtg._property_at("label", ids[order])
         if codes.dtype == object:
             return np.array([name in wanted for name in inner.labels().tolist()], dtype=bool)
-        translator = g.labels.translator
+        translator = mtg.labels.translator
         wanted_codes = np.array([code for code, name in translator.items() if name in wanted]
                                 + [code for code in wanted if isinstance(code, (int, np.integer))], dtype=float)
         has = np.zeros(ids.size, dtype=bool)
@@ -5075,7 +5075,7 @@ class EntityView(DataStructure):
 def _entity_view(self, entities, at: str = None) -> "EntityView":
     """
     The view of this DataStructure restricted to *entities* (an entities declaration: {"label": (...)}, filters'
-    syntax, or a callable ds -> boolean array), at *at*: "node" (the nodes, segment mode's default) or a coarse location
+    syntax, or a callable data_structure -> boolean array), at *at*: "node" (the nodes, segment mode's default) or a coarse location
     of an anatomy-mode one (default its from_scale's, e.g. "SubOrgan"). Views of one declaration are shared.
     """
     if at is None:

@@ -53,34 +53,34 @@ class Emergence(FunctionalComponent):
 
 
 def _ds():
-    g, _ = generate_simple_mpg_seedling()
-    g.populate_graph(g.scales.SubOrgan)
-    g.convert_properties_to_arraydict()
-    return MPGDataStructure(g, from_scale=g.scales.SubOrgan)
+    mtg, _ = generate_simple_mpg_seedling()
+    mtg.populate_graph(mtg.scales.SubOrgan)
+    mtg.convert_properties_to_arraydict()
+    return MPGDataStructure(mtg, from_scale=mtg.scales.SubOrgan)
 
 
 def test_component_streams_advance_and_are_reproducible():
-    ds = _ds()
-    model = Emergence(data_structure=ds)
+    data_structure = _ds()
+    model = Emergence(data_structure=data_structure)
     model()
-    first = ds.get("draw").copy()
+    first = data_structure.get("draw").copy()
     model()
-    assert not np.any(ds.get("draw") == first)                 # a new step at each call
+    assert not np.any(data_structure.get("draw") == first)                 # a new step at each call
     again = _ds()
     replay = Emergence(data_structure=again)
     replay()
     np.testing.assert_array_equal(again.get("draw"), first)    # the same run gives the same draws
-    np.testing.assert_array_equal(ds.random(ids=[ds.entity_ids("node")[0]], stream="Emergence.emergence"),
+    np.testing.assert_array_equal(data_structure.random(ids=[data_structure.entity_ids("node")[0]], stream="Emergence.emergence"),
                                   first[:1])
 
 
 def test_streams_continue_across_a_checkpoint(tmp_path):
-    ds = _ds()
-    model = Emergence(data_structure=ds)
+    data_structure = _ds()
+    model = Emergence(data_structure=data_structure)
     model()
-    ds.checkpoint(str(tmp_path / "c"))
+    data_structure.checkpoint(str(tmp_path / "c"))
     model()
-    expected = ds.get("draw").copy()
+    expected = data_structure.get("draw").copy()
     restored = MPGDataStructure.restore(str(tmp_path / "c"))
     Emergence(data_structure=restored)()
     np.testing.assert_array_equal(restored.get("draw"), expected)

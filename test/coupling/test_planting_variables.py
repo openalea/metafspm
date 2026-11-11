@@ -42,10 +42,10 @@ def test_a_component_reads_its_plants_planting_as_step_arguments():
                           for i in range(3)])
     population = population_data_structure(table, Model)
     population.instance.run()
-    ds = population.data_structure
-    plant = np.asarray(ds.owner("Plant"))
-    np.testing.assert_allclose(ds.get("element_x"), 0.1 * plant)
-    np.testing.assert_allclose(ds.get("element_rotation"), 30. * plant)
+    data_structure = population.data_structure
+    plant = np.asarray(data_structure.owner("Plant"))
+    np.testing.assert_allclose(data_structure.get("element_x"), 0.1 * plant)
+    np.testing.assert_allclose(data_structure.get("element_rotation"), 30. * plant)
     rows = population.instance.couplings().set_index("variable")
     assert rows.loc["x", "provider"] == "Planting" and rows.loc["x", "coupling"] == "planting"
 

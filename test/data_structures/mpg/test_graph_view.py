@@ -172,10 +172,10 @@ def test_graph_view_from_mpg_after_populate_graph():
     from simple_seedling import generate_simple_mpg_seedling
     from openalea.metafspm.data_structure.data_api import MPGDataStructure
 
-    g, _ = generate_simple_mpg_seedling()
-    g.populate_graph(g.scales.SubOrgan)
-    g.convert_properties_to_arraydict()
-    gv = MPGDataStructure(g, from_scale=g.scales.SubOrgan).to_graph_view()
+    mtg, _ = generate_simple_mpg_seedling()
+    mtg.populate_graph(mtg.scales.SubOrgan)
+    mtg.convert_properties_to_arraydict()
+    gv = MPGDataStructure(mtg, from_scale=mtg.scales.SubOrgan).to_graph_view()
 
     assert gv.n_nodes == 14 and gv.n_edges == 13
     B = gv.incidence.toarray()
@@ -191,8 +191,8 @@ def test_graph_view_from_mpg_after_populate_graph():
 
 def test_incidence_matrix_matches_graph_view_convention():
     """One sign convention everywhere: B[parent, e] = +1, B[child, e] = -1 (the solver's GraphView)."""
-    _, _, ds = seedling_ds()
-    np.testing.assert_array_equal(ds._incidence_matrix().toarray(), ds.to_graph_view().incidence.toarray())
-    parent, child = ds.edges()[0]
-    B = ds._incidence_matrix().toarray()
-    assert B[ds.index_of(parent), 0] == 1. and B[ds.index_of(child), 0] == -1.
+    _, _, data_structure = seedling_ds()
+    np.testing.assert_array_equal(data_structure._incidence_matrix().toarray(), data_structure.to_graph_view().incidence.toarray())
+    parent, child = data_structure.edges()[0]
+    B = data_structure._incidence_matrix().toarray()
+    assert B[data_structure.index_of(parent), 0] == 1. and B[data_structure.index_of(child), 0] == -1.

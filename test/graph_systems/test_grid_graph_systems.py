@@ -39,7 +39,7 @@ def _diffusion(groundwater=False, **options):
                             transient=True, **options)
     if groundwater:
         class _diffusion(_DiffusionEquations):
-            bottom = boundary_set(where=lambda ds: ds.layer_mask(z=-1), condition="dirichlet", value=0.9)
+            bottom = boundary_set(where=lambda data_structure: data_structure.layer_mask(z=-1), condition="dirichlet", value=0.9)
     else:
         class _diffusion(_DiffusionEquations):
             pass
@@ -118,7 +118,7 @@ def test_a_pot_has_no_flux_through_its_outer_faces():
 
 def test_a_frozen_layer_is_left_out_by_an_active_subgraph_of_cells():
     grid = _grid()
-    grid.define_mask("active", lambda ds: ~ds.layer_mask(z=0), location="cell")
+    grid.define_mask("active", lambda data_structure: ~data_structure.layer_mask(z=0), location="cell")
     before = np.array(grid.get("solute"))
     FrozenTopSoil(data_structure=grid)()
     top = grid.layer_mask(z=0)
