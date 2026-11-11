@@ -160,19 +160,19 @@ def test_set_field_updates():
 # ── ArrayDataStructure: coordinates ──────────────────────────────────────────
 
 def test_coordinates_1d_shape():
-    ds = ArrayDataStructure(shape=(5,), dx=0.1)
+    ds = ArrayDataStructure(shape=(5,), spacing=0.1)
     coords = ds.coordinates()
     assert coords.shape == (5, 1)
 
 
 def test_coordinates_1d_values():
-    ds = ArrayDataStructure(shape=(4,), dx=2.0)
+    ds = ArrayDataStructure(shape=(4,), spacing=2.0)
     coords = ds.coordinates()
     np.testing.assert_allclose(coords[:, 0], [0.0, 2.0, 4.0, 6.0])
 
 
 def test_coordinates_1d_with_origin():
-    ds = ArrayDataStructure(shape=(3,), dx=1.0, origin=np.array([10.0]))
+    ds = ArrayDataStructure(shape=(3,), spacing=1.0, origin=np.array([10.0]))
     coords = ds.coordinates()
     np.testing.assert_allclose(coords[:, 0], [10.0, 11.0, 12.0])
 
@@ -186,20 +186,20 @@ def test_coordinates_3d_shape():
 # ── ArrayDataStructure: Laplacian ─────────────────────────────────────────────
 
 def test_laplacian_1d_is_sparse():
-    ds = ArrayDataStructure(shape=(5,), dx=1.0)
+    ds = ArrayDataStructure(shape=(5,), spacing=1.0)
     L = ds.laplacian()
     assert issparse(L)
 
 
 def test_laplacian_1d_shape():
-    ds = ArrayDataStructure(shape=(5,), dx=1.0)
+    ds = ArrayDataStructure(shape=(5,), spacing=1.0)
     L = ds.laplacian()
     assert L.shape == (5, 5)
 
 
 def test_laplacian_1d_row_sums_zero():
     """Neumann BC: all row sums are zero — null space contains constants."""
-    ds = ArrayDataStructure(shape=(6,), dx=1.0)
+    ds = ArrayDataStructure(shape=(6,), spacing=1.0)
     L = ds.laplacian()
     row_sums = np.asarray(L.sum(axis=1)).ravel()
     np.testing.assert_allclose(row_sums, np.zeros(6), atol=1e-12)
@@ -208,7 +208,7 @@ def test_laplacian_1d_row_sums_zero():
 def test_laplacian_1d_interior_diagonal():
     """Interior diagonal entries = -2 / h²."""
     h = 0.5
-    ds = ArrayDataStructure(shape=(5,), dx=h)
+    ds = ArrayDataStructure(shape=(5,), spacing=h)
     L = ds.laplacian().toarray()
     for i in [1, 2, 3]:
         assert L[i, i] == pytest.approx(-2.0 / h**2)
@@ -217,7 +217,7 @@ def test_laplacian_1d_interior_diagonal():
 def test_laplacian_1d_boundary_diagonal():
     """Neumann boundary diagonal entries = -1 / h² (one-sided stencil)."""
     h = 1.0
-    ds = ArrayDataStructure(shape=(4,), dx=h)
+    ds = ArrayDataStructure(shape=(4,), spacing=h)
     L = ds.laplacian().toarray()
     assert L[0, 0] == pytest.approx(-1.0 / h**2)
     assert L[-1, -1] == pytest.approx(-1.0 / h**2)
@@ -225,7 +225,7 @@ def test_laplacian_1d_boundary_diagonal():
 
 def test_laplacian_1d_is_cached():
     """Second call returns the same object."""
-    ds = ArrayDataStructure(shape=(5,), dx=1.0)
+    ds = ArrayDataStructure(shape=(5,), spacing=1.0)
     L1 = ds.laplacian()
     L2 = ds.laplacian()
     assert L1 is L2

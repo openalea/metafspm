@@ -15,7 +15,7 @@ import plotting
 
 
 def scene(folder=None, tolerance=1e-6, soil_scenario=None):
-    table = planting([Planting(x=0.1, y=0.1)], SeedlingWater, xrange=0.2, yrange=0.2)   # a 0.2 m x 0.2 m soil column
+    table = planting([Planting(x=0.1, y=0.1)], SeedlingWater, x_range=0.2, y_range=0.2)   # a 0.2 m x 0.2 m soil column
     stop = largest_change(tolerance)
     built = Scene(table, environment=[Soil], environment_scenarios=[soil_scenario or {}],
                   translator=SCENE_TRANSLATOR, time_step="1 h", stop_when=stop,
@@ -42,7 +42,7 @@ def plots(built, folder, row=None):
 def summary(built, stop):
     plant = built.populations[0].data_structure
     soil = built.model(Soil).grid
-    print(f"converged in {built.iteration} steps; largest change of Ψ per step (MPa): "
+    print(f"converged in {built.step_count} steps; largest change of Ψ per step (MPa): "
           + ", ".join(f"{change:.1e}" for change in stop.history))
     print(f"transpiration {plant.get('evaporation').sum():.4f} mm3 s-1, root uptake "
           f"{plant.get('root_uptake').sum():.4f} mm3 s-1, soil evaporation {soil.get('evaporation').sum():.4f} "

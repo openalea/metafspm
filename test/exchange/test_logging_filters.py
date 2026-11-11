@@ -108,7 +108,7 @@ def test_scales_and_variables():
 
 def test_per_data_structure_and_grids():
     ds, components = _plants()
-    soil = ArrayDataStructure(shape=(2, 2, 2), dx=0.1)
+    soil = ArrayDataStructure(shape=(2, 2, 2), spacing=0.1)
     soil.register("water_content", 0.2, location="cell")
     soil.register("temperature", 285., location="cell")
     frame = to_frame({"plants": ds, "soil": soil}, components={"plants": components},

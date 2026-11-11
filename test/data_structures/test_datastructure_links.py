@@ -173,7 +173,7 @@ def test_links_survive_growth():
 # ---------------------------------------------------------------- grids
 
 def test_grid_scalar_store_and_aggregation():
-    grid = ArrayDataStructure(shape=(2, 2, 2), dx=0.5)
+    grid = ArrayDataStructure(shape=(2, 2, 2), spacing=0.5)
     grid.register("water", np.arange(8.).reshape(2, 2, 2))
     grid.register("volume_share", 1.)
     grid.derive("total_water", {"water": 1.}, location="scalar", aggregation="sum")

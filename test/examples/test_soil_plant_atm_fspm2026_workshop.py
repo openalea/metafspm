@@ -63,7 +63,7 @@ def _check_upscaling(ds):
 def test_the_example_converges_with_closed_water_balances(example, tmp_path):
     scene, stop = example.scene(folder=str(tmp_path / "records"))
     scene.simulate(50)
-    assert scene.stopped and stop.history[-1] < 1e-6 and scene.iteration < 50
+    assert scene.stopped and stop.history[-1] < 1e-6 and scene.step_count < 50
     _check_balances(scene)
     _check_upscaling(scene.populations[0].data_structure)
     leaves = scene.populations[0].data_structure
@@ -109,8 +109,8 @@ def test_a_scene_from_the_tables_column_is_the_tutorials_scene(tmp_path):
     from openalea.metafspm.scene.scene import Scene
     from models import SCENE_TRANSLATOR, SeedlingWater
     scenario = read_scenarios(os.path.join(EXAMPLE, "scenarios", "scenarios.csv"))["dry"]
-    built = Scene.from_scenario(scenario, [Planting(x=0.1, y=0.1)], SeedlingWater, environment=[Soil], xrange=0.2,
-                                yrange=0.2, translator=SCENE_TRANSLATOR, time_step=3600)
+    built = Scene.from_scenario(scenario, [Planting(x=0.1, y=0.1)], SeedlingWater, environment=[Soil], x_range=0.2,
+                                y_range=0.2, translator=SCENE_TRANSLATOR, time_step=3600)
     built.simulate(3)
     explicit = scenario_to_outputs.run(scenario, str(tmp_path), hours=3)
     for (name, (ds, _, _)), (other_name, (other, _, _)) in zip(built.data_structures().items(),

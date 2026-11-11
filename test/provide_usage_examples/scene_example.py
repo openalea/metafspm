@@ -3,7 +3,7 @@ Target usage of the population scene, replacing play_Orchestra. The downstream
 models (GrassBRIDGES, RhizoSoil, the light model) must first follow the population contracts:
 
   plant model        Model(data_structure, time_step, <its own arguments>), class attribute initiators
-  environment model  Model(plant_data_structures, xrange, yrange, time_step, <its own arguments>)
+  environment model  Model(plant_data_structures, x_range, y_range, time_step, <its own arguments>)
 
 Not runnable here: the imported packages live outside metafspm.
 """
@@ -23,7 +23,7 @@ if __name__ == "__main__":
     # forcing row (a CSV of time and its variables)
     scenarios = read_scenarios("inputs/Scenarios_26-08-04.csv", which=["GB_soil_1.0"])
     output_folder = "outputs"
-    n_iterations = 2500
+    steps = 2500
 
     for scenario_name, scenario in scenarios.items():
         forcings = scenario.pop("forcings", {})
@@ -35,4 +35,4 @@ if __name__ == "__main__":
                       time_step=3600, mapping_method="barycentre", forcings=forcings,
                       recorder=SceneRecorder(os.path.join(output_folder, scenario_name), segment_plants=["p0"],
                                              segment_period="48 h", frame_period="24 h", checkpoint_period="240 h"))
-        scene.simulate(n_iterations)            # run.json, scenario.json, Plant/, Soil/, frames/, checkpoints/
+        scene.simulate(steps)            # run.json, scenario.json, Plant/, Soil/, frames/, checkpoints/

@@ -107,7 +107,7 @@ def test_a_neumann_inflow_adds_to_the_rate():
 
 def _residual_balance(self, u):
     B = self.graph_view.incidence
-    return (u - self.previous("u")) / self.dt + K * np.asarray(B @ (B.T @ u)).reshape(-1)
+    return (u - self.previous("u")) / self.step_duration + K * np.asarray(B @ (B.T @ u)).reshape(-1)
 
 
 @dataclass

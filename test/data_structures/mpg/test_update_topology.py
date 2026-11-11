@@ -194,7 +194,7 @@ def test_array_update_topology_clears_laplacian_cache():
     update_topology() the next laplacian() call returns a new object,
     confirming the cache was cleared.
     """
-    ds = ArrayDataStructure((5,), dx=1.0)
+    ds = ArrayDataStructure((5,), spacing=1.0)
     L1 = ds.laplacian()
     L2 = ds.laplacian()
     assert L1 is L2, "second call must return cached object"
@@ -206,7 +206,7 @@ def test_array_update_topology_clears_laplacian_cache():
 
 def test_array_update_topology_recomputes_correctly():
     """Laplacian built after update_topology() is numerically correct."""
-    ds = ArrayDataStructure((4,), dx=1.0)
+    ds = ArrayDataStructure((4,), spacing=1.0)
     _ = ds.laplacian()  # build once
     ds.update_topology()
     L = ds.laplacian()
@@ -218,7 +218,7 @@ def test_array_update_topology_recomputes_correctly():
 
 def test_array_update_topology_multiple_calls():
     """Calling update_topology() twice clears the cache each time."""
-    ds = ArrayDataStructure((5,), dx=1.0)
+    ds = ArrayDataStructure((5,), spacing=1.0)
     _ = ds.laplacian()
 
     ds.update_topology()

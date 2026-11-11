@@ -60,10 +60,10 @@ class ContractPlant(CompositeModel):
 class ContractSoil(EnvironmentModel):
     compartment = "Soil"
 
-    def __init__(self, plant_data_structures, xrange, yrange, time_step):
-        super().__init__(plant_data_structures, xrange, yrange, time_step)
-        self.grid = ArrayDataStructure(shape=(int(round(xrange / SIDE)), int(round(yrange / SIDE)), 2),
-                                       dx=SIDE)
+    def __init__(self, plant_data_structures, x_range, y_range, time_step):
+        super().__init__(plant_data_structures, x_range, y_range, time_step)
+        self.grid = ArrayDataStructure(shape=(int(round(x_range / SIDE)), int(round(y_range / SIDE)), 2),
+                                       spacing=SIDE)
         self.soil = doubles_ds.GridSoil(data_structure=self.grid)
         self.components = [self.soil]
 
@@ -88,7 +88,7 @@ def scene(tmp_path):
     table = pd.DataFrame([dict(plant=f"p{i}", model=ContractPlant, x=0.025 + 0.05 * i, y=0.025, depth=0.01, rotation=0.,
                                scenario={}) for i in range(3)])
     return Scene(table, environment=[ContractSoil], translator=_soil_links(nested), time_step=doubles.TIME_STEP,
-                 xrange=0.15, yrange=0.05)
+                 x_range=0.15, y_range=0.05)
 
 
 def test_the_contract_models_run_in_a_scene(scene):
@@ -131,8 +131,8 @@ def test_two_components_reading_one_soil_variable_receive_it_once(tmp_path):
                aggregation="broadcast")
     table = pd.DataFrame([dict(plant="p0", model=TwoReadersPlant, x=0.025, y=0.025, depth=0.01, rotation=0.,
                                scenario={})])
-    scene = Scene(table, environment=[ContractSoil], translator=links, time_step=doubles.TIME_STEP, xrange=0.05,
-                  yrange=0.05)
+    scene = Scene(table, environment=[ContractSoil], translator=links, time_step=doubles.TIME_STEP, x_range=0.05,
+                  y_range=0.05)
     scene.run()
     plants = scene.populations[0].data_structure
     np.testing.assert_allclose(plants.get("soil_temperature"), 10.)

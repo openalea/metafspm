@@ -59,7 +59,7 @@ are named `p0`, `p1`, …
 ```python
 from openalea.metafspm.scene.population import Planting, planting
 
-table = planting([Planting(x=0.1, y=0.1)], SeedlingWater, scenario["SeedlingWater"], xrange=0.2, yrange=0.2)
+table = planting([Planting(x=0.1, y=0.1)], SeedlingWater, scenario["SeedlingWater"], x_range=0.2, y_range=0.2)
 ```
 
 `plant_scenarios=[...]` gives each plant its own values on top of the shared scenario. Numeric parameters may
@@ -96,7 +96,7 @@ scene.simulate(48)
 - **`simulate(n)`** runs *n* steps, or fewer if `stop_when=` holds. It then records the last state and the run's
   status: finished, stopped, or failed with its error. A loop of `scene.run()` ends with `scene.finish()`.
 - **In one call.** `Scene.from_scenario(scenarios["dry"], [Planting(x=0.1, y=0.1)], SeedlingWater, environment=[Soil],
-  xrange=0.2, yrange=0.2, translator=SCENE_TRANSLATOR, time_step=3600, recorder=recorder)` does steps 2 and 3 from the table's column: each model's entries go to it, the forcings to
+  x_range=0.2, y_range=0.2, translator=SCENE_TRANSLATOR, time_step=3600, recorder=recorder)` does steps 2 and 3 from the table's column: each model's entries go to it, the forcings to
   the scene.
 
 The folder then holds:

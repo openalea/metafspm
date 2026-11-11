@@ -70,7 +70,7 @@ def _population(xs, initiator=RootGrowthProbe, z=0., **scenario):
 
 def _grid():
     """2 x 1 x 4 cells of 0.4: x in [0, 0.8), y in [0, 0.4), depth in [0, 1.6)."""
-    return ArrayDataStructure(shape=(2, 1, 4), dx=0.4)
+    return ArrayDataStructure(shape=(2, 1, 4), spacing=0.4)
 
 
 def _dense(mapping):

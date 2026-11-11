@@ -17,7 +17,7 @@ DOC = dict(unit="adim", unit_comment="", description="", min_value=0., max_value
 @pytest.mark.parametrize("shape, dx", [((5,), 0.1), ((4, 3), (0.1, 0.2)), ((4, 3, 2), (0.1, 0.2, 0.3)),
                                        ((6, 1, 1), 0.1), ((1, 4, 3), (0.1, 0.2, 0.3))])
 def test_the_face_graph_reproduces_the_finite_difference_laplacian(shape, dx):
-    grid = ArrayDataStructure(shape=shape, dx=dx)
+    grid = ArrayDataStructure(shape=shape, spacing=dx)
     B = grid._incidence_matrix().toarray()
     g = grid.get("face_area") / grid.get("face_distance") / grid.cell_volume()
     L = grid.laplacian()
@@ -51,7 +51,7 @@ def test_periodic_axes_add_wrap_faces():
 
 
 def test_face_geometry_and_layer_masks():
-    grid = ArrayDataStructure(shape=(2, 2, 3), dx=(0.1, 0.2, 0.5))
+    grid = ArrayDataStructure(shape=(2, 2, 3), spacing=(0.1, 0.2, 0.5))
     axis = grid.face_axis()
     np.testing.assert_allclose(grid.get("face_distance"), np.array([0.1, 0.2, 0.5])[axis])
     np.testing.assert_allclose(grid.get("face_area"), np.array([0.1, 0.05, 0.02])[axis])
@@ -64,9 +64,9 @@ def test_face_geometry_and_layer_masks():
 
 
 def test_locate_wraps_along_the_grid_periodic_axes_by_default():
-    grid = ArrayDataStructure(shape=(4, 4, 2), dx=1., periodic=(True, True, False))
+    grid = ArrayDataStructure(shape=(4, 4, 2), spacing=1., periodic=(True, True, False))
     assert grid.locate([[4.5, 0.5, 0.5]])[0] == grid.locate([[0.5, 0.5, 0.5]])[0]
-    flat = ArrayDataStructure(shape=(4, 4, 2), dx=1.)
+    flat = ArrayDataStructure(shape=(4, 4, 2), spacing=1.)
     assert flat.locate([[4.5, 0.5, 0.5]])[0] == flat.locate([[3.5, 0.5, 0.5]])[0]   # clipped, not wrapped
 
 
@@ -87,7 +87,7 @@ def test_edge_declarations_register_on_the_faces():
 # ---------------------------------------------------------------- grid geometry, (x, y, z)
 
 def test_grid_axes_and_cell_geometry():
-    grid = ArrayDataStructure(shape=(4, 3, 2), dx=(0.1, 0.2, 0.5), origin=(1., 0., 0.))
+    grid = ArrayDataStructure(shape=(4, 3, 2), spacing=(0.1, 0.2, 0.5), origin=(1., 0., 0.))
     assert grid.axes == ("x", "y", "z")
     assert grid.cell_volume() == pytest.approx(0.01)
     centers = grid.cell_centers()
@@ -98,7 +98,7 @@ def test_grid_axes_and_cell_geometry():
 
 
 def test_grid_locate_points():
-    grid = ArrayDataStructure(shape=(4, 3, 2), dx=(0.1, 0.2, 0.5))
+    grid = ArrayDataStructure(shape=(4, 3, 2), spacing=(0.1, 0.2, 0.5))
     field = np.arange(24.).reshape(4, 3, 2)
     points = np.array([[0.05, 0.1, 0.25], [0.35, 0.45, 0.9], [0.45, 0.1, 0.1], [-0.05, 0.1, 0.1]])
 

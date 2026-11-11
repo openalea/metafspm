@@ -567,10 +567,10 @@ class SceneRecorder:
             if self.resume:
                 self._run["wall_time_before"] = previous.get("wall_time", 0.)
                 self._run["resumed"] = previous.get("resumed", []) + [
-                    {"at": self._started.isoformat(), "iteration": int(scene.iteration), "time": float(scene.time)}]
+                    {"at": self._started.isoformat(), "step_count": int(scene.step_count), "time": float(scene.time)}]
             self._write_run(scene)
             self._write_scenario(scene)
-        if scene.iteration == 0 and not self.resume:
+        if scene.step_count == 0 and not self.resume:
             self._record(scene, initial=True)
 
     def record(self, scene) -> None:
@@ -617,7 +617,7 @@ class SceneRecorder:
                                  f"multiple of frame_period ({frames:g} s)")
 
     def _record(self, scene, initial: bool = False, final: bool = False) -> None:
-        iteration, time = scene.iteration, scene.time
+        iteration, time = scene.step_count, scene.time
         if self.frame_period and (_on(self.frame_period, time) or final) and self._due("frames", iteration):
             self._write_frame(scene, display=bool(self.display_period)
                               and (_on(self.display_period, time) or final))
@@ -655,7 +655,7 @@ class SceneRecorder:
         """summary_plan's plan (_summary_plan), kept for the scene's iteration while *ds*'s variables and topology
         are the same (its version, topology_version): the summaries and the tables of one record read it once."""
         key = (id(ds), getattr(ds, "version", None), getattr(ds, "topology_version", None))
-        iteration = (id(scene), getattr(scene, "iteration", None), getattr(scene, "time", None))
+        iteration = (id(scene), getattr(scene, "step_count", None), getattr(scene, "time", None))
         kept = self.__dict__.get("_plans")
         if kept is None or kept[0] != iteration:
             kept = self.__dict__["_plans"] = (iteration, {})
@@ -983,14 +983,14 @@ class SceneRecorder:
             self._frames, self._parts = [], set()
             if self.resume and os.path.exists(index_path):       # a restored run: the frames up to its step
                 index = encoding3d.read_index(index_path)
-                self._frames = [entry for entry in index["frames"] if entry["step"] <= scene.iteration]
+                self._frames = [entry for entry in index["frames"] if entry["step"] <= scene.step_count]
                 for entry in self._frames:
                     entry.pop("path", None)
                 self._parts = set(index.get("parts", {}))
             elif os.path.exists(index_path):    # an earlier run's frames in this folder: removed (its parts below)
                 for entry in encoding3d.read_index(index_path)["frames"]:
                     _remove_file(os.path.join(folder, entry["file"]))
-        name = f"frame_{scene.iteration:06d}.glb"
+        name = f"frame_{scene.step_count:06d}.glb"
         if self._frame_variables is None:              # a filter keeps what the views show: the views first
             filtered = self.frame_options.get("variables") is not None
             self._views = self._views_content(scene, folder, display) if filtered else None
@@ -1002,7 +1002,7 @@ class SceneRecorder:
             if self._views is None:
                 self._views = self._views_content(scene, folder, display, unfiltered=frame)
             self._write_views(frame, folder, self._views)
-        entry = {"time": float(scene.time), "step": int(scene.iteration), "file": name}
+        entry = {"time": float(scene.time), "step": int(scene.step_count), "file": name}
         if self.frame_writing == "synchronous":
             self._store_frame(frame, folder, entry, first)
         else:                          # a snapshot written by the writer thread, once the frame before is
@@ -1077,7 +1077,7 @@ class SceneRecorder:
         ones beyond keep_checkpoints removed, and the shared parts none of those kept refers to."""
         from openalea.metafspm.scene.shared import prune
         folder = os.path.join(self.folder, "checkpoints")
-        path = os.path.join(folder, f"step_{scene.iteration:06d}")
+        path = os.path.join(folder, f"step_{scene.step_count:06d}")
         shared = os.path.join(folder, "shared")
         scene.checkpoint(path, shared=shared)
         if self.keep_checkpoints is not None:
@@ -1097,7 +1097,7 @@ class SceneRecorder:
         self.wait_for_frames()
         self.resume = True
         self._columns, self._frames = {}, None
-        self._called = {output: scene.iteration for output in ("frames", "summaries", "segments", "conservation",
+        self._called = {output: scene.step_count for output in ("frames", "summaries", "segments", "conservation",
                                                               *(f"table {name}" for name in self.tables))}
         if self.folder is None:
             self._memory = {}
@@ -1115,9 +1115,9 @@ class SceneRecorder:
             from openalea.metafspm.io.encoding3d import _encoding3d
             encoding3d = _encoding3d()
             index = encoding3d.read_index(index_path)
-            frames = [entry for entry in index["frames"] if entry["step"] <= scene.iteration]
+            frames = [entry for entry in index["frames"] if entry["step"] <= scene.step_count]
             for entry in index["frames"]:          # the interrupted run's later frames removed
-                if entry["step"] > scene.iteration:
+                if entry["step"] > scene.step_count:
                     _remove_file(entry["path"])
             for entry in frames:
                 entry.pop("path", None)
@@ -1135,7 +1135,7 @@ class SceneRecorder:
 
     def _write_run(self, scene, ended: bool = False) -> None:
         now = datetime.now()
-        self._run.update(iterations=int(scene.iteration), time=float(scene.time),
+        self._run.update(iterations=int(scene.step_count), time=float(scene.time),
                          wall_time=(now - self._started).total_seconds() + self._run.get("wall_time_before", 0.),
                          timing={key: round(value, 6) for key, value in scene.timing.items()},
                          calls=dict(getattr(scene, "calls", {})))
@@ -1179,8 +1179,8 @@ class SceneRecorder:
                     os.path.join(self.folder, "forcings", f"{name}.csv"), index=False)
                 forcings[name] = {"table": f"forcings/{name}.csv"}
         content = {
-            "time_step": float(scene.time_step), "xrange": _described(scene.xrange),
-            "yrange": _described(scene.yrange), "populations": populations,
+            "time_step": float(scene.time_step), "x_range": _described(scene.x_range),
+            "y_range": _described(scene.y_range), "populations": populations,
             "environment": [{"model": _described(type(model)), "compartment": compartment(model),
                              "scenario": _described(scenario)}
                             for model, scenario in zip(scene.environment, scene.environment_scenarios)],

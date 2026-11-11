@@ -156,7 +156,7 @@ class BenchPhloem(FunctionalComponent):
     class _phloem:
         @node_balance(field="sucrose")
         def _balance(self, sucrose, sucrose_flux):
-            return (sucrose - self.previous("sucrose")) / self.dt \
+            return (sucrose - self.previous("sucrose")) / self.step_duration \
                 + np.asarray(self.graph_view.incidence @ sucrose_flux).reshape(-1)
 
         @edge_law(field="sucrose_flux")
@@ -189,9 +189,9 @@ class BenchSoilNitrate(FunctionalComponent):
 class BenchSoil(EnvironmentModel):
     compartment = "Soil"
 
-    def __init__(self, plant_data_structures, xrange, yrange, time_step):
-        super().__init__(plant_data_structures, xrange, yrange, time_step)
-        self.grid = ArrayDataStructure(shape=(20, 20, 50), dx=(xrange / 20, yrange / 20, 0.02))
+    def __init__(self, plant_data_structures, x_range, y_range, time_step):
+        super().__init__(plant_data_structures, x_range, y_range, time_step)
+        self.grid = ArrayDataStructure(shape=(20, 20, 50), spacing=(x_range / 20, y_range / 20, 0.02))
         self.nitrate = BenchSoilNitrate(data_structure=self.grid)
         self.components = [self.nitrate]
 
@@ -206,7 +206,7 @@ def _planting(n_plants, side):
     per_row = int(np.ceil(np.sqrt(n_plants)))
     plants = [Planting(x=(i % per_row + 0.5) * side / per_row, y=(i // per_row + 0.5) * side / per_row)
               for i in range(n_plants)]
-    return planting(plants, BenchPlant, xrange=side, yrange=side)
+    return planting(plants, BenchPlant, x_range=side, y_range=side)
 
 
 def bench_segments(n_plants, steps, method):

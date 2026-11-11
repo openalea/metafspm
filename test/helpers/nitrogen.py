@@ -37,7 +37,7 @@ def incidence(ds):
 
 def balance(self, concentration, axial_flux, radial_solute_input):
     B = self.graph_view.incidence
-    return ((concentration - self.previous("concentration")) / self.dt
+    return ((concentration - self.previous("concentration")) / self.step_duration
             + np.asarray(B @ axial_flux).reshape(-1) - radial_solute_input)
 
 

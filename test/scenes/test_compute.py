@@ -267,9 +267,9 @@ class Projector(FunctionalComponent):
 class Light(EnvironmentModel):
     compartment = "Atmosphere"
 
-    def __init__(self, plant_data_structures, xrange, yrange, time_step):
-        super().__init__(plant_data_structures, xrange, yrange, time_step)
-        self.grid = ArrayDataStructure(shape=(1, 1, 1), dx=0.4)
+    def __init__(self, plant_data_structures, x_range, y_range, time_step):
+        super().__init__(plant_data_structures, x_range, y_range, time_step)
+        self.grid = ArrayDataStructure(shape=(1, 1, 1), spacing=0.4)
         self.projector = Projector(data_structure=self.grid)
         self.components = [self.projector]
 

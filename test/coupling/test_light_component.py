@@ -104,8 +104,8 @@ class ToyCaribuModel(EnvironmentModel):
     """Runs every 4 steps (e.g. every 4 h, its schedule's cadence); its outputs are kept in between."""
     schedule = (Step("light", cadence=Cadence(4 * DT, at="start")),)
 
-    def __init__(self, plant_data_structures, xrange, yrange, time_step):
-        super().__init__(plant_data_structures, xrange, yrange, time_step)
+    def __init__(self, plant_data_structures, x_range, y_range, time_step):
+        super().__init__(plant_data_structures, x_range, y_range, time_step)
         self.scene = self.plant_data_structure()                          # the union of the two populations
         self.light = ToyCaribu(data_structure=self.scene)
         self.components = [self.light]

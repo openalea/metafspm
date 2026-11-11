@@ -37,14 +37,14 @@ class _Equations:
     def _balance(self, sugar, shoot_sugar):
         B, P = self.graph_view.incidence, self.pool_exchange("shoot_sugar")
         exchange = P @ shoot_sugar - np.asarray(P.sum(axis=1)).reshape(-1) * sugar
-        return (sugar - self.previous("sugar")) / self.dt + K * np.asarray(B @ (B.T @ sugar)).reshape(-1) \
+        return (sugar - self.previous("sugar")) / self.step_duration + K * np.asarray(B @ (B.T @ sugar)).reshape(-1) \
             - EXCHANGE * exchange
 
     @pool_balance(field="shoot_sugar")
     def _shoot(self, sugar, shoot_sugar):
         P = self.pool_exchange("shoot_sugar")
         exchange = P @ shoot_sugar - np.asarray(P.sum(axis=1)).reshape(-1) * sugar
-        return (shoot_sugar - self.previous("shoot_sugar")) / self.dt + EXCHANGE * np.asarray(P.T @ exchange).reshape(-1)
+        return (shoot_sugar - self.previous("shoot_sugar")) / self.step_duration + EXCHANGE * np.asarray(P.T @ exchange).reshape(-1)
 
 
 def _fields():
@@ -134,7 +134,7 @@ class SwitchingCollar(FunctionalComponent):
         @node_balance(field="sugar")
         def _balance(self, sugar):
             B = self.graph_view.incidence
-            return (sugar - self.previous("sugar")) / self.dt + K * np.asarray(B @ (B.T @ sugar)).reshape(-1)
+            return (sugar - self.previous("sugar")) / self.step_duration + K * np.asarray(B @ (B.T @ sugar)).reshape(-1)
 
 
 def test_boundary_conditions_are_read_per_node_at_each_solve():
@@ -169,7 +169,7 @@ class Forced(FunctionalComponent):
         def _balance(self, sugar):
             supply = self.forcing("supply")
             type(self).seen.add((self.forcing_time(), supply, self.forcing("supply", over="step")))
-            return (sugar - self.previous("sugar")) / self.dt - supply
+            return (sugar - self.previous("sugar")) / self.step_duration - supply
 
 
 def test_forcings_are_their_mean_over_each_substep():

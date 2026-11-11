@@ -31,8 +31,8 @@ class ExternalSolverSoil(SceneSoil):
     """A soil model wrapping an opaque solver whose state is not a DataStructure variable (e.g. a cmf project)."""
     schedule = ("nitrate", "solve")
 
-    def __init__(self, plant_data_structures, xrange, yrange, time_step):
-        super().__init__(plant_data_structures, xrange, yrange, time_step)
+    def __init__(self, plant_data_structures, x_range, y_range, time_step):
+        super().__init__(plant_data_structures, x_range, y_range, time_step)
         self.solver = {"steps": 0, "storage": 1.}
 
     def solve(self):
@@ -73,7 +73,7 @@ def test_a_restored_scene_continues_bit_for_bit(tmp_path):
     expected, expected_solver = _state(scene), dict(scene.environment[0].solver)
 
     restored = Scene.restore(str(tmp_path / "checkpoint"), **_scene_arguments())
-    assert restored.time == 2 * DT and restored.iteration == 2
+    assert restored.time == 2 * DT and restored.step_count == 2
     assert restored.environment[0].solver["steps"] == 2
     restored.run()
     restored.run()
@@ -164,7 +164,7 @@ def test_checkpoints_every_period_the_last_ones_kept(tmp_path):
     with open(out / "run.json") as file:
         assert json.load(file)["last_checkpoint"] == os.path.join("checkpoints", "step_000006")
     restored = Scene.restore(str(out / "checkpoints" / "step_000006"), **_scene_arguments())
-    assert restored.iteration == 6
+    assert restored.step_count == 6
 
 
 def test_a_packed_run_resumes_from_its_one_checkpoint(tmp_path):
@@ -237,9 +237,9 @@ class Mimics(FunctionalComponent):
 class MimicsSoil(EnvironmentModel):
     compartment = "Soil"
 
-    def __init__(self, plant_data_structures, xrange, yrange, time_step):
-        super().__init__(plant_data_structures, xrange, yrange, time_step)
-        self.grid = ArrayDataStructure(shape=(2, 1, 4), dx=0.4)
+    def __init__(self, plant_data_structures, x_range, y_range, time_step):
+        super().__init__(plant_data_structures, x_range, y_range, time_step)
+        self.grid = ArrayDataStructure(shape=(2, 1, 4), spacing=0.4)
         self.mimics = Mimics(data_structure=self.grid)
         self.components = [self.mimics]
 
@@ -291,8 +291,8 @@ def test_kept_state_is_checkpointed_and_caches_are_not():
 class SharedSolverSoil(ExternalSolverSoil):
     """A soil whose solver holds a large table that changes rarely: a shared part of the checkpoints."""
 
-    def __init__(self, plant_data_structures, xrange, yrange, time_step):
-        super().__init__(plant_data_structures, xrange, yrange, time_step)
+    def __init__(self, plant_data_structures, x_range, y_range, time_step):
+        super().__init__(plant_data_structures, x_range, y_range, time_step)
         self.table = np.arange(1000.)
 
     def checkpoint_state(self):

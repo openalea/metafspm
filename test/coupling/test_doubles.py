@@ -37,7 +37,7 @@ def test_plant_components_build_and_run_standalone():
 
 
 def test_grid_soil_layout():
-    grid = ArrayDataStructure(shape=(2, 2, 2), dx=doubles.SOIL_VOXEL_SIDE)
+    grid = ArrayDataStructure(shape=(2, 2, 2), spacing=doubles.SOIL_VOXEL_SIDE)
     doubles_ds.GridSoil(data_structure=grid)
     assert grid.axes == ("x", "y", "z") and grid.get("DOC").shape == (2, 2, 2)
     assert (grid.get("soil_temperature") == 10.).all()

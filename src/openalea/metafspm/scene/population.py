@@ -42,16 +42,16 @@ class Planting:
 
 
 class Stand(list):
-    """Plantings laid out by stand(): the list, with the stand's pattern (xrange, yrange, m: repeated by periodic
+    """Plantings laid out by stand(): the list, with the stand's pattern (x_range, y_range, m: repeated by periodic
     models) and, when several models were drawn, the model of each position (models)."""
 
-    def __init__(self, plantings, xrange: float, yrange: float, models: list = None):
+    def __init__(self, plantings, x_range: float, y_range: float, models: list = None):
         super().__init__(plantings)
-        self.xrange, self.yrange, self.models = xrange, yrange, models
+        self.x_range, self.y_range, self.models = x_range, y_range, models
 
 
 def planting(plants, model, scenario: dict = None, plant_scenarios: list = None, planting_times: list = None,
-             xrange: float = None, yrange: float = None, population=None) -> pd.DataFrame:
+             x_range: float = None, y_range: float = None, population=None) -> pd.DataFrame:
     """
     The planting table of *plants* ([Planting], or a Stand), named p0, p1, ... in their order. *model*: the plant
     model of every plant, or one per plant (a list, e.g. a Stand's models). *population*: the name of every plant's
@@ -62,7 +62,7 @@ def planting(plants, model, scenario: dict = None, plant_scenarios: list = None,
     *planting_times*: one scene time per plant ("2 d", a date with the Scene's start, or s), when it enters the
     scene (its components run on it from then: the mask "planted"), the planting_time column read by the Scene. The
     stand's size
-    (table.attrs xrange, yrange) is the Stand's, else the plants' extent (at least 0.1 m), unless given.
+    (table.attrs x_range, y_range) is the Stand's, else the plants' extent (at least 0.1 m), unless given.
     """
     plants = list(plants) if not isinstance(plants, Stand) else plants
     models = list(model) if isinstance(model, (list, tuple)) else [model] * len(plants)
@@ -92,11 +92,11 @@ def planting(plants, model, scenario: dict = None, plant_scenarios: list = None,
         times = [time if is_date(time) else duration(time, "planting_times") for time in planting_times]
         table["planting_time"] = pd.Series(times, dtype=object if any(map(is_date, times)) else float)
     xs, ys = table["x"].to_numpy(), table["y"].to_numpy()
-    if xrange is None:
-        xrange = plants.xrange if isinstance(plants, Stand) else max(float(np.ptp(xs)) if len(xs) else 0., 0.1)
-    if yrange is None:
-        yrange = plants.yrange if isinstance(plants, Stand) else max(float(np.ptp(ys)) if len(ys) else 0., 0.1)
-    table.attrs.update(xrange=xrange, yrange=yrange)
+    if x_range is None:
+        x_range = plants.x_range if isinstance(plants, Stand) else max(float(np.ptp(xs)) if len(xs) else 0., 0.1)
+    if y_range is None:
+        y_range = plants.y_range if isinstance(plants, Stand) else max(float(np.ptp(ys)) if len(ys) else 0., 0.1)
+    table.attrs.update(x_range=x_range, y_range=y_range)
     return table
 
 
@@ -107,7 +107,7 @@ def stand(plants: int = None, rows: int = 1, row_spacing: float = 0.15, plant_sp
     A sown stand of *plants* in *rows* (metafspm's one stand builder and its axis convention): the rows along x,
     *row_spacing* apart in y, the plants *plant_spacing* apart along their row (m; or, from *sowing_density*,
     plants m-2: 1 / (sowing_density × row_spacing)), filled row by row: plant k of row r at
-    x = (k + 1/2) plant_spacing, y = (r + 1/2) row_spacing, the stand's pattern (xrange, yrange) the rows' extent
+    x = (k + 1/2) plant_spacing, y = (r + 1/2) row_spacing, the stand's pattern (x_range, y_range) the rows' extent
     (the plants per row × plant_spacing, rows × row_spacing). Each plant at *depth* (m below the soil surface; one per
     model with several), moved off its spot by *jitter* (m: a normal offset in x and in y, of that standard
     deviation), its *rotation* "random" (uniform over a turn), or a number (°: each plant turned by it from the one

@@ -492,14 +492,14 @@ class RichardsSoil(FunctionalComponent):
             flux, _ = _face_fluxes(self, pressure_head, conductivity, conductivity_slope, face_area, face_distance,
                                    face_normal_z)
             outflow = np.asarray(self.graph_view.incidence @ flux).reshape(-1)
-            return water_content - previous_content + self.dt / cell_volume * (outflow + plant_uptake)
+            return water_content - previous_content + self.step_duration / cell_volume * (outflow + plant_uptake)
 
         @boundary_condition("node", "neumann", field="pressure_head", where={"boundary_low_z": ">0"})
         def _soil_surface(self, pressure_head, residual_water_content, saturated_water_content, van_genuchten_alpha,
                           van_genuchten_n, saturated_conductivity, pore_connectivity, cell_section_z, cell_size_z,
                           rainfall, potential_evaporation, surface_minimum_head, cell_volume):
             """The rain minus the evaporation entering through the surface, over the sub-step per cell volume."""
-            return self.dt / cell_volume * _surface(self, pressure_head, residual_water_content,
+            return self.step_duration / cell_volume * _surface(self, pressure_head, residual_water_content,
                                                     saturated_water_content, van_genuchten_alpha, van_genuchten_n,
                                                     saturated_conductivity, pore_connectivity, cell_section_z,
                                                     cell_size_z, rainfall, potential_evaporation,
@@ -511,7 +511,7 @@ class RichardsSoil(FunctionalComponent):
                          water_table_head, cell_volume):
             """Free drainage, the water table or no flux, over the sub-step per cell volume (an inflow: minus the
             outflow)."""
-            return -self.dt / cell_volume * _bottom(self, pressure_head, residual_water_content,
+            return -self.step_duration / cell_volume * _bottom(self, pressure_head, residual_water_content,
                                                     saturated_water_content, van_genuchten_alpha, van_genuchten_n,
                                                     saturated_conductivity, pore_connectivity, cell_section_z,
                                                     cell_size_z, water_table_head)[0]
@@ -534,9 +534,9 @@ class RichardsSoil(FunctionalComponent):
             inflow_slope = _surface(self, *arguments, rainfall, potential_evaporation, surface_minimum_head)[1]
             outflow_slope = _bottom(self, *arguments, water_table_head)[1]
             exchange_slope = (boundary_low_z > 0) * inflow_slope - (boundary_high_z > 0) * outflow_slope
-            scale = diags(self.dt / cell_volume)
+            scale = diags(self.step_duration / cell_volume)
             return (diags(capacity) + scale @ self.graph_view.incidence @ flux_derivative
-                    - diags(self.dt / cell_volume * exchange_slope)).tocsr()
+                    - diags(self.step_duration / cell_volume * exchange_slope)).tocsr()
 
         @graph_output("water_content", location="node")
         def _water_content(self, pressure_head, residual_water_content, saturated_water_content,
@@ -645,10 +645,10 @@ class RichardsSoilModel(EnvironmentModel):
     compartment = "Soil"
     schedule = ("soil", "adapt")                             # an adaptive grid adapted after each solve
 
-    def __init__(self, plant_data_structures, xrange, yrange, time_step, depth=1., voxel=0.05, adaptive=True,
+    def __init__(self, plant_data_structures, x_range, y_range, time_step, depth=1., voxel=0.05, adaptive=True,
                  max_level=2, layers=((np.inf, LOAM),), initial_pressure_head=-1., refine_uptake_fraction=0.05,
                  coarsen_uptake_fraction=0.005, refine_gradient=5., coarsen_gradient=2., uptake_floor=1e-15):
-        super().__init__(plant_data_structures, xrange, yrange, time_step)
+        super().__init__(plant_data_structures, x_range, y_range, time_step)
         self.grid = self.build_grid(voxel, depth, adaptive=adaptive, max_level=max_level)
         self.soil = RichardsSoil(data_structure=self.grid, time_step=time_step)
         self.components = [self.soil]

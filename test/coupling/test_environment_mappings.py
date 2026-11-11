@@ -126,8 +126,8 @@ class SoilWater(FunctionalComponent):
 
 
 def _layers():
-    column = ArrayDataStructure(shape=(4,), dx=0.25)                 # layers of 0.25 m
-    grid = ArrayDataStructure(shape=(2, 3, 5), dx=(0.1, 0.1, 0.2))    # layers of 0.2 m
+    column = ArrayDataStructure(shape=(4,), spacing=0.25)                 # layers of 0.25 m
+    grid = ArrayDataStructure(shape=(2, 3, 5), spacing=(0.1, 0.1, 0.2))    # layers of 0.2 m
     col, soil = SoilTemperatureColumn(data_structure=column), SoilWater(data_structure=grid)
     translator = (Translator()
                   .link("SoilTemperatureColumn", "moisture", "SoilWater", {"moisture": 1.})

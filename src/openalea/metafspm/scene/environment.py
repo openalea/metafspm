@@ -4,8 +4,8 @@ The base of a scene's environment models (light, soil, atmosphere)::
     class Soil(EnvironmentModel):
         compartment = "Soil"                                        # the folder of its outputs
         schedule = ("transport", "adapt")                           # its steps: a component, then a method
-        def __init__(self, plant_data_structures, xrange, yrange, time_step, depth=0.4, voxel=0.025):
-            super().__init__(plant_data_structures, xrange, yrange, time_step)
+        def __init__(self, plant_data_structures, x_range, y_range, time_step, depth=0.4, voxel=0.025):
+            super().__init__(plant_data_structures, x_range, y_range, time_step)
             self.grid = self.build_grid(voxel, depth, adaptive=True)  # a grid over the scene's pattern, z down
             self.transport = SoilWaterTransport(data_structure=self.grid, time_step=time_step)
             self.components = [self.transport]
@@ -16,8 +16,8 @@ The base of a scene's environment models (light, soil, atmosphere)::
         compartment = "Atmosphere"
         schedule = (Step("light", stages="rate", cadence=Cadence("4 h", at="start")),    # lit every 4 hours
                     Step("light", stages="state", name="absorbed_light"))               # its PARa every step
-        def __init__(self, plant_data_structures, xrange, yrange, time_step):
-            super().__init__(plant_data_structures, xrange, yrange, time_step)
+        def __init__(self, plant_data_structures, x_range, y_range, time_step):
+            super().__init__(plant_data_structures, x_range, y_range, time_step)
             self.light = CaribuLight(data_structure=self.plant_data_structure(), time_step=time_step)
             self.components = [self.light]
 
@@ -25,7 +25,7 @@ The Scene builds it with its populations' DataStructures, the scene's ranges and
 its __init__ names), then calls run() at every step: its schedule (coupling.schedule: its components, by their
 attribute names, and its methods; default: its components in order), each step at its cadence (a Step's cadence=,
 the scenario's "cadence" {step name: duration}). A plain class with the same contract (plant_data_structures,
-xrange, yrange, time_step; components; run) is still accepted by the Scene.
+x_range, y_range, time_step; components; run) is still accepted by the Scene.
 """
 from openalea.metafspm.coupling.composite_wrapper import CompositeModel
 from openalea.metafspm.coupling.cross import UnionDataStructure
@@ -42,11 +42,11 @@ class EnvironmentModel(CompositeModel):
     # The folder of its outputs (SceneRecorder): "Soil" or "Atmosphere", required
     compartment = None
 
-    def __init__(self, plant_data_structures, xrange, yrange, time_step):
+    def __init__(self, plant_data_structures, x_range, y_range, time_step):
         self.plant_data_structures = list(plant_data_structures)
-        self.xrange, self.yrange, self.time_step = xrange, yrange, time_step
+        self.x_range, self.y_range, self.time_step = x_range, y_range, time_step
         # the scene's pattern (x1, y1, x2, y2), repeated in x and y by periodic models
-        self.pattern = (0., 0., float(xrange), float(yrange)) if xrange is not None else None
+        self.pattern = (0., 0., float(x_range), float(y_range)) if x_range is not None else None
         self.components = []
         self._plants = None
 
@@ -69,12 +69,12 @@ class EnvironmentModel(CompositeModel):
         refinable *max_level* times with *adaptive*."""
         from openalea.metafspm.data_structure.adaptive_grid import AdaptiveGridDataStructure
         from openalea.metafspm.data_structure.data_api import ArrayDataStructure
-        x_range, y_range = float(self.xrange), float(self.yrange)
+        x_range, y_range = float(self.x_range), float(self.y_range)
         shape = (max(1, round(x_range / voxel)), max(1, round(y_range / voxel)), max(1, round(depth / voxel)))
-        dx = (x_range / shape[0], y_range / shape[1], depth / shape[2])
+        spacing = (x_range / shape[0], y_range / shape[1], depth / shape[2])
         if adaptive:
-            return AdaptiveGridDataStructure(shape=shape, dx=dx, periodic=periodic, max_level=max_level)
-        return ArrayDataStructure(shape=shape, dx=dx, periodic=periodic)
+            return AdaptiveGridDataStructure(shape=shape, spacing=spacing, periodic=periodic, max_level=max_level)
+        return ArrayDataStructure(shape=shape, spacing=spacing, periodic=periodic)
 
     # ── its time ─────────────────────────────────────────────────────────────
 

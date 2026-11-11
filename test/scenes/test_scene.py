@@ -35,7 +35,7 @@ def test_one_population_per_model_and_inferred_mappings():
     assert [len(p.plants) for p in scene.populations] == [2, 2]
     assert [p.plant_names() for p in scene.populations][1] == dict(zip(scene.populations[1].plants, ["p1", "p3"]))
     assert len(scene.mappings) == 2 and all(isinstance(m, CrossMapping) for m in scene.mappings)
-    assert scene.xrange == 0.8
+    assert scene.x_range == 0.8
 
 
 def test_a_step_runs_the_environment_then_the_populations_at_fixed_points():
@@ -52,7 +52,7 @@ def test_a_step_runs_the_environment_then_the_populations_at_fixed_points():
     np.testing.assert_allclose(grid.get("soil_nitrate"), 0.9 * nitrate_before + 0.01 * grid.get("exudation"))
     seedling_mapping = next(m for m in scene.mappings if m.source is seedlings)
     np.testing.assert_allclose(seedlings.get("soil_nitrate"), grid.get("soil_nitrate").reshape(-1)[seedling_mapping.cells])
-    assert scene.time == 2 * DT and scene.iteration == 2
+    assert scene.time == 2 * DT and scene.step_count == 2
 
 
 def test_per_plant_numeric_parameters_and_shared_other_entries():
@@ -219,8 +219,8 @@ class SeedlingLeafPopulation(LeafPopulation):
 class SceneLightModel(EnvironmentModel):
     """A CARIBU-like environment model on the union of the populations."""
 
-    def __init__(self, plant_data_structures, xrange, yrange, time_step):
-        super().__init__(plant_data_structures, xrange, yrange, time_step)
+    def __init__(self, plant_data_structures, x_range, y_range, time_step):
+        super().__init__(plant_data_structures, x_range, y_range, time_step)
         self.scene = UnionDataStructure(plant_data_structures)
         self.light = SceneLight(data_structure=self.scene)
         self.components = [self.light]
@@ -243,7 +243,7 @@ def test_a_light_model_on_the_union_of_the_populations():
 def test_planting_keeps_the_stand_and_the_planting_times():
     table = planting(stand(16, rows=4, row_spacing=0.15, plant_spacing=0.15, seed=1), RootPopulation,
                      planting_times=[0.] * 16)
-    assert table.attrs["xrange"] == pytest.approx(0.6) and (table["planting_time"] == 0.).all()
+    assert table.attrs["x_range"] == pytest.approx(0.6) and (table["planting_time"] == 0.).all()
 
 
 @dataclass

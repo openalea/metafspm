@@ -19,13 +19,13 @@ class RhizoSoil(EnvironmentModel):
     """The soil of the stand on a regular grid, periodic in x and y."""
     compartment = "Soil"
 
-    def __init__(self, plant_data_structures, xrange: float, yrange: float, time_step: int = 3600,
+    def __init__(self, plant_data_structures, x_range: float, y_range: float, time_step: int = 3600,
                  voxel_width: float = 0.01, voxel_height: float = 0.01, max_depth: float = 0.5, **parameters):
-        super().__init__(plant_data_structures, xrange, yrange, time_step)
+        super().__init__(plant_data_structures, x_range, y_range, time_step)
         voxel_width, voxel_height, depth = voxel_width, voxel_height, max_depth
-        shape = (max(1, round(xrange / voxel_width)), max(1, round(yrange / voxel_width)),
+        shape = (max(1, round(x_range / voxel_width)), max(1, round(y_range / voxel_width)),
                  max(1, round(depth / voxel_height)))
-        self.grid = ArrayDataStructure(shape=shape, dx=(xrange / shape[0], yrange / shape[1], voxel_height),
+        self.grid = ArrayDataStructure(shape=shape, spacing=(x_range / shape[0], y_range / shape[1], voxel_height),
                                        periodic=(True, True, False))
         # transport (a graph system on the grid), then the cells' states; the time-varying inputs (rain,
         # temperature) are the Scene's forcings

@@ -117,11 +117,11 @@ class GrassBRIDGES(CompositeModel):
 
 ## 4. Environment models and the scene (RhizoSoil, the light model)
 
-- **Soil component:** `SoilModel` becomes a `FunctionalComponent` on `ArrayDataStructure(shape=(nx, ny, nz), dx=side)`.
+- **Soil component:** `SoilModel` becomes a `FunctionalComponent` on `ArrayDataStructure(shape=(nx, ny, nz), spacing=side)`.
   - Axes are `(x, y, z)`. Legacy `(ny, nz, nx)` voxel arrays convert with `legacy.transpose(2, 0, 1)`.
   - Fields are declared with `location="cell"`, or `"scalar"` for uniform drivers such as rain.
   - The grid gives `cell_centers()`, `cell_volume()` and `locate(points, periodic=, clip=)`.
-- **Environment model:** `Model(plant_data_structures, xrange, yrange, time_step, <its own arguments>)` builds its DataStructures and exposes `components` and `run()`, its `compartment` ("Soil" or "Atmosphere") naming its outputs' folder; its time-varying inputs are the scene's forcings. Its DataStructure can be:
+- **Environment model:** `Model(plant_data_structures, x_range, y_range, time_step, <its own arguments>)` builds its DataStructures and exposes `components` and `run()`, its `compartment` ("Soil" or "Atmosphere") naming its outputs' folder; its time-varying inputs are the scene's forcings. Its DataStructure can be:
   - a grid (soil, RATP-like light);
   - a `UnionDataStructure(populations)` for a model that must see every population (CARIBU-like light);
   - a population's MPG.

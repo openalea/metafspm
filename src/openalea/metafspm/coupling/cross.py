@@ -168,7 +168,7 @@ class CrossMapping:
         """Whether each point lies outside the grid along a non-periodic axis."""
         grid = self.target
         shape = np.asarray(getattr(grid, "_fine_shape", None) or getattr(grid, "_shape"), dtype=np.int64)
-        index = np.floor((np.asarray(points, dtype=float) - grid._origin) / grid._dx)
+        index = np.floor((np.asarray(points, dtype=float) - grid._origin) / grid._spacing)
         periodic = np.broadcast_to(np.asarray(self.periodic, dtype=bool), (shape.size,))
         out = (index < 0) | (index >= shape)
         return (out & ~periodic).any(axis=1)
@@ -200,12 +200,12 @@ class CrossMapping:
             columns = self.target.locate(middles, periodic=self.periodic, clip=True)
             return (np.arange(n, dtype=np.int64), np.asarray(columns, dtype=np.int64), np.ones(n),
                     self._outside_points(middles))
-        origin, dx = self.target._origin, self.target._dx
-        counts = _count_pieces(p1, p2, origin, dx)
+        origin, spacing = self.target._origin, self.target._spacing
+        counts = _count_pieces(p1, p2, origin, spacing)
         offsets = np.zeros(n, dtype=np.int64)
         np.cumsum(counts[:-1], out=offsets[1:])
         middles, fractions = np.empty((int(counts.sum()), p1.shape[1])), np.empty(int(counts.sum()))
-        _pieces(p1, p2, origin, dx, counts, offsets, middles, fractions)
+        _pieces(p1, p2, origin, spacing, counts, offsets, middles, fractions)
         rows = np.repeat(np.arange(n, dtype=np.int64), counts)
         kept = fractions > 0.
         rows, middles, fractions = rows[kept], middles[kept], fractions[kept]
@@ -334,8 +334,8 @@ class LayerMapping:
             raise ValueError("LayerMapping: the column must be a 1-D grid")
         self.column, self.grid, self.axis = column, grid, grid.axes.index(axis)
         a = self.axis
-        column_edges = column._origin[0] + column._dx[0] * np.arange(column.shape[0] + 1)
-        grid_edges = grid._origin[a] + grid._dx[a] * np.arange(grid.shape[a] + 1)
+        column_edges = column._origin[0] + column._spacing[0] * np.arange(column.shape[0] + 1)
+        grid_edges = grid._origin[a] + grid._spacing[a] * np.arange(grid.shape[a] + 1)
         low = np.maximum(column_edges[:-1, None], grid_edges[None, :-1])
         high = np.minimum(column_edges[1:, None], grid_edges[None, 1:])
         self.overlap = np.clip(high - low, 0., None)        # (column layers, grid layers)
@@ -354,14 +354,14 @@ class LayerMapping:
             if aggregation == "mean":
                 covered = w.sum(axis=1)
                 return np.divide(w @ layers, covered, out=np.zeros(w.shape[0]), where=covered > 0)
-            thickness = self.grid._dx[self.axis]
+            thickness = self.grid._spacing[self.axis]
             return (w / thickness) @ layers
         column = np.asarray(values, dtype=float).reshape(-1)
         if aggregation == "mean":
             covered = w.sum(axis=0)
             per_layer = np.divide(w.T @ column, covered, out=np.zeros(w.shape[1]), where=covered > 0)
         else:
-            per_layer = (w / self.column._dx[0]).T @ column
+            per_layer = (w / self.column._spacing[0]).T @ column
             per_layer = per_layer / (self.grid.n_nodes() / self.grid.shape[self.axis])   # shared over the layer's cells
         shape = [1] * len(self.grid.shape)
         shape[self.axis] = self.grid.shape[self.axis]

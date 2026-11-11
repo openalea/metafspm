@@ -52,8 +52,8 @@ ds = MPGDataStructure(g, from_scale=g.scales.SubOrgan, nodes="Compartment", wiri
 from openalea.metafspm.data_structure.data_api import ArrayDataStructure
 from openalea.metafspm.data_structure.adaptive_grid import AdaptiveGridDataStructure
 
-soil = ArrayDataStructure(shape=(20, 20, 50), dx=(0.01, 0.01, 0.02), periodic=(True, True, False))
-adaptive = AdaptiveGridDataStructure(shape=(10, 10, 25), dx=0.02, max_level=2, periodic=(True, True, False))
+soil = ArrayDataStructure(shape=(20, 20, 50), spacing=(0.01, 0.01, 0.02), periodic=(True, True, False))
+adaptive = AdaptiveGridDataStructure(shape=(10, 10, 25), spacing=0.02, max_level=2, periodic=(True, True, False))
 adaptive.refine(lambda grid: grid.get("root_length_density") > 1e3)      # between steps
 adaptive.coarsen(lambda grid: grid.get("root_length_density") < 1e2)
 ```
@@ -118,7 +118,7 @@ class RootCarbon(FunctionalComponent):
 
     @state
     def _hexose(self, hexose, exudation, struct_mass):
-        return hexose - self.dt * exudation / struct_mass
+        return hexose - self.step_duration * exudation / struct_mass
 
 carbon = RootCarbon(data_structure=ds, time_step=3600.)
 carbon()                                  # one time step: every step, in the scheduled order
@@ -126,7 +126,7 @@ carbon()                                  # one time step: every step, in the sc
 
 - **Time step.** `time_step=` (s) at construction is the `dt` of the component's equations. Its default is the
   class's `time_step` attribute when set, else the scene's (`Scene(time_step=)`). Alone, a component runs one step
-  of its own time step per call; without any, its equations may not read `self.dt` (it raises). Pass it
+  of its own time step per call; without any, its equations may not read `self.step_duration` (it raises). Pass it
   explicitly, even for a component that solves a steady state. A time step shorter than the simulation step makes the component
   run once per time step within it (900 s in a 3600 s scene: four runs per scene step, forcings read at the end
   of each). It must divide the simulation step a whole number of times.
@@ -171,7 +171,7 @@ carbon()                                  # one time step: every step, in the sc
 - **Where a step works.** A step's arguments come at their locations, its parameters at the step's: the location of
   its per-node arguments, or, without any, that of its declared outputs (a plant's step taking a per-plant parameter
   and returning one value per plant). Its outputs are floats, or records (`dtype="object"`: a tuple, a string per
-  entity) for a variable of that type. `self.dt` is the time step in every component's steps.
+  entity) for a variable of that type. `self.step_duration` is the time step in every component's steps.
 - **Optional inputs.** `input_variable(..., optional=True)`: when nothing provides it (no other component, no MTG
   property), it is not registered on the DataStructure (coordinates read for a display only, which a geometry
   provider would take for its own), and a step naming it gets its default: the component runs on its own.
@@ -262,7 +262,7 @@ class SoilDiffusion(FunctionalComponent):
         @node_balance(field="solute")
         def _balance(self, solute, solute_flux):
             B = self.graph_view.incidence
-            return (solute - self.previous("solute")) / self.dt \
+            return (solute - self.previous("solute")) / self.step_duration \
                 + (B @ solute_flux) / self.data_structure.cell_volume()
 
         @edge_law(field="solute_flux")
@@ -272,7 +272,7 @@ class SoilDiffusion(FunctionalComponent):
 ```
 
 - **Two forms of a node balance.** The *residual form*, `@node_balance`, returns the residual at the end of the
-  (sub-)step, time term included (`(u - self.previous("u")) / self.dt + ...`): it is solved by the Newton family,
+  (sub-)step, time term included (`(u - self.previous("u")) / self.step_duration + ...`): it is solved by the Newton family,
   `solver="newton"` (default), `"newton_fd"`, `"scipy_krylov"`, `"scipy_hybr"`, … The *rate form*, `@node_rate`,
   returns du/dt without time term (`J - B q`); the framework writes the time term for the solver chosen: backward
   Euler with the Newton family, `u += dt * rate` with `"explicit_euler"`, an IVP integration with `"scipy_ivp_bdf"`
@@ -711,7 +711,7 @@ runs, through a mapping:
   through its segment's cells; a Compartment variable (MECHA's root uptake, the soil's potential it receives)
   through its SubOrgan's cells, at its masked Compartments only (`mask="root_surface"`, a node mask: the roots'
   soil nodes; the others neither give nor receive): summed (or each one in a mean) up, broadcast or split by weight
-  down. A plant in a stand: the grid is the stand's pattern (the scene's `xrange` and `yrange`, its sides periodic),
+  down. A plant in a stand: the grid is the stand's pattern (the scene's `x_range` and `y_range`, its sides periodic),
   and `periodic=(True, True, False)` (the default) folds the pieces of a segment outside the grid's x and y into the
   cells of their periodic images, so that a root leaving the pattern takes up water where a neighbour's would come
   in, nothing dropped nor clamped into the side cells; z is clipped (a root below the grid in its bottom cells). The
@@ -740,7 +740,7 @@ table = planting(stand(20, rows=2, row_spacing=0.15, sowing_density=250, seed=1)
 scene = Scene(table, environment=[RhizoSoil, LightModel], environment_scenarios=[soil_scenario, light_scenario],
               translator="scene_translator.py", time_step="1 h", start="2026-05-10 00:00", forcings=meteo,
               recorder=SceneRecorder("outputs", segment_plants=["p0"], frame_period="1 d", checkpoint_period="10 d"))
-scene.simulate(n_iterations=2500)
+scene.simulate(steps=2500)
 
 scenario = read_scenarios("scenarios.csv")["dry"]          # a scenario table's column, by model, with its forcings
 scene = Scene.from_scenario(scenario, stand(...), Wheat, environment=[RhizoSoil, LightModel],
@@ -791,7 +791,7 @@ time (an event's, a planting time) is a duration since time 0 or a date (`"2026-
   none: the only one), raising when none or several match. Checkpoints, timing (`"deep.RootGrowth"`), conservation
   rows and the recorder's folders use the population names. `examples/intercrop/`: wheat and pea roots
   (ArchiSimple's, two parameter sets) in one soil.
-- **Environment models** are built as `Model(plant_data_structures, xrange, yrange, time_step, <its own arguments>)` and
+- **Environment models** are built as `Model(plant_data_structures, x_range, y_range, time_step, <its own arguments>)` and
   create their own DataStructures (a grid, a union of the populations). `scene.environment.EnvironmentModel` is
   their base: `self.plant_data_structure()` (the populations' union, of one population too; an anatomy-mode
   population's elements its sections' owners; its variables reach the plant models through the scene translator,
@@ -1024,7 +1024,7 @@ time (an event's, a planting time) is a duration since time 0 or a date (`"2026-
   (`io.encoding3d.unrecorded`). A filtered frame is a smaller, valid encoding3d file, for outputs only:
   `import_frame` refuses to rebuild it.
   **Folded for display:** `frame_options={"fold": True}` (`scene_to_frame(fold=True)`, `io.encoding3d.fold_frame`)
-  draws the plants folded into the scene's periodic pattern (`(0, xrange) × (0, yrange)`, where its light and its
+  draws the plants folded into the scene's periodic pattern (`(0, x_range) × (0, y_range)`, where its light and its
   soil repeat): each mesh triangle, segment (the roots' tubes) and instance moved by the whole periods that bring its
   centre into the pattern, so that a leaf or a root beyond the stand is drawn where the periodic scene has it. A
   folded frame is for display only (its ends are no longer the plants'): `import_frame` refuses it. It uses `openalea.encoding3d`, a

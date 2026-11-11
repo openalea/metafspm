@@ -128,7 +128,7 @@ class RootCarbon(FunctionalComponent):
 
     @state
     def _hexose(self, hexose, exudation, struct_mass):
-        return hexose - self.dt * exudation / struct_mass
+        return hexose - self.step_duration * exudation / struct_mass
 
 ds = MPGDataStructure(g, from_scale=g.scales.SubOrgan)   # g: an MPG holding one or several plants
 carbon = RootCarbon(data_structure=ds, time_step=3600.)

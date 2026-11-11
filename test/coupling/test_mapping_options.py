@@ -43,7 +43,7 @@ def _deepest(plants):
 
 def _plant_and_soil(mask=None):
     plants = doubles_ds.make_chain_plant_ds()                    # 3 segments, depths 0.02, 0.04, 0.06
-    soil = ArrayDataStructure(shape=(1, 1, 2), dx=0.05)
+    soil = ArrayDataStructure(shape=(1, 1, 2), spacing=0.05)
     plant, grid = PlantSide(data_structure=plants), SoilSide(data_structure=soil)
     translator = (Translator()
                   .link("SoilSide", "exudation", "PlantSide", {"exudation": 1.})
@@ -121,8 +121,8 @@ class Grid(FunctionalComponent):
 
 
 def test_a_column_grid_link_needs_a_kind_or_an_aggregation():
-    column = ArrayDataStructure(shape=(4,), dx=0.25)
-    grid = ArrayDataStructure(shape=(2, 3, 5), dx=(0.1, 0.1, 0.2))
+    column = ArrayDataStructure(shape=(4,), spacing=0.25)
+    grid = ArrayDataStructure(shape=(2, 3, 5), spacing=(0.1, 0.1, 0.2))
     components = (Column(data_structure=column), Grid(data_structure=grid))
     mapping = LayerMapping(column, grid, axis="z")
     translator = Translator().link("Grid", "temperature", "Column", {"temperature": 1.})
@@ -221,7 +221,7 @@ def test_the_soil_surface_is_the_grid_top_and_the_parts_outside_are_counted():
     grid along its non-periodic axes are counted (outside()), warned once."""
     import warnings
     plants = doubles_ds.make_chain_plant_ds()                    # middles 0.02, 0.04, 0.06 below 0
-    soil = ArrayDataStructure(shape=(1, 1, 2), dx=0.05)
+    soil = ArrayDataStructure(shape=(1, 1, 2), spacing=0.05)
     by_depth = np.argsort(-(plants.get("z1") + plants.get("z2")))
     level = CrossMapping(plants, soil, periodic=(True, True, False))
     rows, columns, _ = level.incidence()

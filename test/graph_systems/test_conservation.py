@@ -31,7 +31,7 @@ class _Equations:
     @node_balance(field="solute")
     def _balance(self, solute, solute_flux, inflow, is_bottom, volume):
         outflow = DECAY * is_bottom * solute ** 2 * volume
-        return (solute - self.previous("solute")) * volume / self.dt \
+        return (solute - self.previous("solute")) * volume / self.step_duration \
             + np.asarray(self.graph_view.incidence @ solute_flux).reshape(-1) - inflow + outflow
 
     @edge_law(field="solute_flux")
@@ -61,7 +61,7 @@ class Soil(FunctionalComponent):
 
 
 def _soil():
-    grid = ArrayDataStructure(shape=SHAPE, dx=DX)
+    grid = ArrayDataStructure(shape=SHAPE, spacing=DX)
     soil = Soil(data_structure=grid)
     grid.set("solute", np.linspace(1., 2., grid.n_nodes()).reshape(SHAPE))
     grid.set("volume", np.full(SHAPE, np.prod(DX)))
@@ -125,8 +125,8 @@ def test_conservation_csv_max_change_and_component_timing(tmp_path):
     first row), the wall time per component ("<Model>.<Component>") in run.json."""
 
     class SoilModel(SceneSoil):
-        def __init__(self, plant_data_structures, xrange, yrange, time_step):
-            super().__init__(plant_data_structures, xrange, yrange, time_step)
+        def __init__(self, plant_data_structures, x_range, y_range, time_step):
+            super().__init__(plant_data_structures, x_range, y_range, time_step)
             self.water_grid, self.water = _soil()
             self.components = [self.nitrate, self.water]
 

@@ -189,7 +189,7 @@ def _soil_plane(grid, plant_ds, psi, y=None, row=None):
     The vertical soil slice of *psi* through the plants: along planting row *row* ((y, z), the row's x cell), else
     the (x, z) slice at *y* (default: the middle). Returns (values (horizontal, depth), h, across, cell, label).
     """
-    dx = grid.dx
+    dx = grid.spacing
     if row is not None:
         rows = np.unique(np.round([plant_ds.mtg.view("x")[int(p)] for p in plant_ds.entity_ids("Plant")], 6))
         i = int(min(max(rows[row] // dx[0], 0), psi.shape[0] - 1))
@@ -232,7 +232,7 @@ def _soil_background(ax, grid, plant_ds, row=None, quantity="anomaly"):
         image.set_linewidth(0.15)
         return image
     return ax.imshow(shown.T, origin="upper", aspect="equal", zorder=0, **colours,
-                     extent=(0., shown.shape[0] * grid.dx[h], -psi.shape[2] * grid.dx[2], 0.))
+                     extent=(0., shown.shape[0] * grid.spacing[h], -psi.shape[2] * grid.spacing[2], 0.))
 
 
 def _soil_colorbar(fig, ax, image, quantity="anomaly"):
@@ -251,7 +251,7 @@ def soil_slice(grid, plant_data_structures, path, y=None, row=None, anomaly=Fals
     psi = soil_anomaly(grid) if anomaly else np.asarray(grid.get("water_potential"))
     if anomaly:
         title = "Soil Ψ minus its layer mean"
-    dx = grid.dx
+    dx = grid.spacing
     values, h, across, i, label = _soil_plane(grid, plant_data_structures[0], psi, y=y, row=row)
     fig, ax = plt.subplots(figsize=(7, 5))
     if anomaly:
@@ -280,7 +280,7 @@ def soil_slice(grid, plant_data_structures, path, y=None, row=None, anomaly=Fals
 def top_view(grid, plant_data_structures, path, title="Top view: water taken up per soil column"):
     """The water the plants take up from each soil column (summed over depth), the segments drawn over it."""
     uptake = np.asarray(grid.get("plant_uptake")).sum(axis=2)
-    dx = grid.dx
+    dx = grid.spacing
     fig, ax = plt.subplots(figsize=(6, 6))
     image = ax.imshow(uptake.T, origin="lower", cmap="Blues", extent=(0., uptake.shape[0] * dx[0], 0.,
                                                                       uptake.shape[1] * dx[1]))

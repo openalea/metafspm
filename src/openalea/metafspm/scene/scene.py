@@ -5,7 +5,7 @@ A scene of plant populations and environment models in one process::
                 environment_scenarios=[{}, {}], translator="scene_translator.py", time_step="1 h",
                 start="2026-05-10 00:00", forcings={"air_temperature": series},
                 recorder=SceneRecorder("outputs", segment_plants=["p0"]))
-  scene.simulate(n_iterations=2500)
+  scene.simulate(steps=2500)
   scene = Scene.from_scenario(read_scenarios("scenarios.csv")["dry"], [Planting()], Model, environment=[SoilModel],
                               translator=..., time_step="1 h", recorder="outputs")    one column of a scenario table
 
@@ -25,7 +25,7 @@ Contracts::
                      set by the Scene after the model is built (as constructor keywords would), per plant for the
                      numeric ones of plant models. Keys the model names in __init__ are its own arguments; the keys
                      initiators read are theirs. Any other key raises (a typo, a parameter no component declares).
-  environment model  Model(plant_data_structures, xrange, yrange, time_step, <its own arguments>): builds its
+  environment model  Model(plant_data_structures, x_range, y_range, time_step, <its own arguments>): builds its
                      DataStructures (a grid, a UnionDataStructure of the populations, or works on a population's
                      MPG) and exposes components and run(); its time-varying inputs are the scene's forcings. Its
                      compartment class attribute ("Soil" or "Atmosphere", required) names its outputs' folder.
@@ -108,7 +108,7 @@ class Scene:
                                model and a population by name or class.
         mapping_method:        "barycentre" or "overlap", for every population <-> grid mapping; periodic, flip_z as
                                in CrossMapping.
-        xrange, yrange:        the stand's size (default: the planting table's, from planting).
+        x_range, y_range:        the stand's size (default: the planting table's, from planting).
         recorder:              the outputs, a SceneRecorder (or a folder: a SceneRecorder with its defaults; None:
                                no outputs). It begins at the first step and ends with finish() (simulate() calls
                                it).
@@ -158,7 +158,7 @@ class Scene:
 
     def __init__(self, planting: pd.DataFrame, environment=(), environment_scenarios=None, translator=None,
                  time_step="1 h", mapping_method: str = "barycentre", periodic=(True, True, False),
-                 flip_z: bool = True, xrange: float = None, yrange: float = None, forcings=None,
+                 flip_z: bool = True, x_range: float = None, y_range: float = None, forcings=None,
                  events=(), stop_when=None, mappings=(), recorder=None, start=None, compute: Compute = None,
                  soil_surface: float = 0., coupling="explicit"):
         self.compute = Compute() if compute is None else compute
@@ -167,19 +167,19 @@ class Scene:
         self.compute.check()                        # its optional packages, its device: now, with the install line
         with self.compute.limits():
             self._build(planting, environment, environment_scenarios, translator, time_step, mapping_method,
-                        periodic, flip_z, xrange, yrange, forcings, events, stop_when, mappings, recorder, start,
+                        periodic, flip_z, x_range, y_range, forcings, events, stop_when, mappings, recorder, start,
                         soil_surface)
             self._bind_coupling(coupling)
 
     def _build(self, planting, environment, environment_scenarios, translator, time_step, mapping_method, periodic,
-               flip_z, xrange, yrange, forcings, events, stop_when, mappings, recorder, start, soil_surface) -> None:
+               flip_z, x_range, y_range, forcings, events, stop_when, mappings, recorder, start, soil_surface) -> None:
         from openalea.metafspm.coupling.durations import instant, positive_duration, start_date
         self.soil_surface = float(soil_surface)
         time_step = positive_duration(time_step, "Scene(time_step=)")
         self.start = None if start is None else start_date(start, "Scene(start=)")
-        self.time_step, self.time, self.iteration = time_step, 0., 0
-        self.xrange = xrange if xrange is not None else planting.attrs.get("xrange")
-        self.yrange = yrange if yrange is not None else planting.attrs.get("yrange")
+        self.time_step, self.time, self.step_count = time_step, 0., 0
+        self.x_range = x_range if x_range is not None else planting.attrs.get("x_range")
+        self.y_range = y_range if y_range is not None else planting.attrs.get("y_range")
 
         self.planting = planting
         names = planting["population"] if "population" in planting.columns else \
@@ -193,7 +193,7 @@ class Scene:
         if len(environment_scenarios) != len(environment):
             raise ValueError("environment_scenarios must give one scenario per environment model")
         self.environment_scenarios = environment_scenarios
-        self.environment = [model(plant_data_structures=population_ds, xrange=self.xrange, yrange=self.yrange,
+        self.environment = [model(plant_data_structures=population_ds, x_range=self.x_range, y_range=self.y_range,
                                   time_step=time_step, **_model_keywords(model, scenario))
                             for model, scenario in zip(environment, environment_scenarios)]
         for model, instance, scenario in zip(environment, self.environment, environment_scenarios):
@@ -278,12 +278,12 @@ class Scene:
 
     @classmethod
     def from_scenario(cls, scenario: dict, plants, plant_model, environment=(), plant_scenarios: list = None,
-                      planting_times: list = None, xrange: float = None, yrange: float = None, **options) -> "Scene":
+                      planting_times: list = None, x_range: float = None, y_range: float = None, **options) -> "Scene":
         """
         A scene from one scenario of a scenario table (read_scenarios with a model column): {model name or class:
         {name: value}, "forcings": {name: forcing}}. *plants*: [Planting] or a Stand, of *plant_model*;
         *environment*: the environment model classes; each model's entries go to it (none: its defaults), the
-        forcings to the Scene's. *plant_scenarios*, *planting_times*, *xrange*, *yrange*: as planting's; *options*:
+        forcings to the Scene's. *plant_scenarios*, *planting_times*, *x_range*, *y_range*: as planting's; *options*:
         the Scene's (translator, time_step, recorder, mappings, ...; forcings= are added to the scenario's).
         """
         scenario = dict(scenario or {})
@@ -304,7 +304,7 @@ class Scene:
         if twice:
             raise ValueError(f"Scene.from_scenario: forcings {twice} are in the scenario and in forcings=")
         table = _planting(plants, plant_model, by_model.get(plant_model, {}), plant_scenarios=plant_scenarios,
-                          planting_times=planting_times, xrange=xrange, yrange=yrange)
+                          planting_times=planting_times, x_range=x_range, y_range=y_range)
         return cls(table, environment=list(environment),
                    environment_scenarios=[by_model.get(model, {}) for model in environment],
                    forcings=dict(forcings, **given), **options)
@@ -595,7 +595,7 @@ class Scene:
         if iterated:
             self._iterate(snapshots)
         self.time += self.time_step
-        self.iteration += 1
+        self.step_count += 1
         if self.recorder is not None:
             started = perf_counter()
             self.recorder.record(self)
@@ -723,13 +723,13 @@ class Scene:
         when = getattr(model, "_run_when", None)
         return when is None or bool(when(self))
 
-    def simulate(self, n_iterations: int) -> None:
+    def simulate(self, steps: int) -> None:
         """
-        *n_iterations* steps, or until stop_when holds; then finish(): the recorder's run status is "finished",
+        *steps* steps, or until stop_when holds; then finish(): the recorder's run status is "finished",
         "stopped" (stop_when) or "failed" (an exception, recorded with its message, then raised again).
         """
         try:
-            for _ in range(n_iterations):
+            for _ in range(steps):
                 self.run()
                 if self.stop_when is not None and self.stop_when(self):
                     self.stopped = True
@@ -782,7 +782,7 @@ class Scene:
     def checkpoint(self, path: str, shared: str = None) -> None:
         """
         Save the scene to folder *path*: every DataStructure (ds.checkpoint), the checkpoint_state() of the models
-        and components defining it (e.g. an external solver's state), and the scene's time and iteration. The parts
+        and components defining it (e.g. an external solver's state), and the scene's time and step count. The parts
         saved once (scene.shared: a component's Shared values, the sections' templates) go to folder *shared* (by
         default path/shared; SceneRecorder's checkpoints share checkpoints/shared), each written when it is not there
         yet; shared.json lists those the checkpoint refers to.
@@ -804,7 +804,7 @@ class Scene:
             store.dump(states, f)
         store.write_references(os.path.abspath(path))
         with open(os.path.join(path, "scene.json"), "w") as f:
-            json.dump({"time": self.time, "iteration": self.iteration, "stopped": self.stopped,
+            json.dump({"time": self.time, "step_count": self.step_count, "stopped": self.stopped,
                        "events_fired": self._n_events - len(self.events),
                        "data_structures": len(self._all_data_structures())}, f)
 
@@ -855,7 +855,7 @@ class Scene:
                 obj.restore_state(states[key])
         if scenario == "current":
             self._apply_scenarios()
-        self.time, self.iteration, self.stopped = saved["time"], saved["iteration"], saved["stopped"]
+        self.time, self.step_count, self.stopped = saved["time"], saved["step_count"], saved["stopped"]
         self.events = self.events[saved["events_fired"]:]         # the ones not fired yet, whatever their time
         if self.recorder is not None:
             self.recorder.resume_at(self)              # its tables cut back to this step, appended to from here

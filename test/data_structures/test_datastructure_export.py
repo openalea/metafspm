@@ -46,7 +46,7 @@ def test_edge_and_cell_tables():
     ds = _plant()
     edges = ds.to_dataframe(["K"], location="edge")
     assert edges.index.name == "edge" and list(edges.index) == [b for _, b in ds.edges()]
-    grid = ArrayDataStructure(shape=(2, 2, 2), dx=0.5)
+    grid = ArrayDataStructure(shape=(2, 2, 2), spacing=0.5)
     grid.register("water", np.arange(8.).reshape(2, 2, 2))
     cells = grid.to_dataframe(["water"], time=0)
     assert list(cells.index.names) == ["voxel", "time"] and cells["water"].tolist() == list(range(8))

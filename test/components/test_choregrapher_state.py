@@ -45,11 +45,11 @@ def test_two_simulation_steps_in_one_process():
 
 def test_a_component_without_a_time_step_runs_once_and_has_no_dt():
     """No silent 1 s default: alone, a component runs once per call, of its own time_step; without one, reading
-    self.dt raises."""
+    self.step_duration raises."""
     probe = ReinitProbe(data_structure=ArrayDataStructure(shape=(1,)))
     assert probe.time_step is None
     with pytest.raises(AttributeError, match="no time step"):
-        probe.dt
+        probe.step_duration
     timed = ReinitProbe(data_structure=ArrayDataStructure(shape=(1,)), time_step=60.)
-    assert timed.dt == 60.
+    assert timed.step_duration == 60.
 

@@ -474,7 +474,7 @@ def test_the_recorder_lists_the_parts_packs_the_frames_and_unpacks_them_on_resum
         assert json.load(file)["frames_archive"] == "frames.fspm.zip"
     last = encoding3d.read(index["frames"][-1]["path"])
     assert [entry["step"] for entry in index["frames"]] == [0, 1, 2]
-    scene.recorder.resume_at(types.SimpleNamespace(iteration=1, time=3600.))     # the folder back from the archive
+    scene.recorder.resume_at(types.SimpleNamespace(step_count=1, time=3600.))     # the folder back from the archive
     resumed = encoding3d.read_index(os.path.join(frames, "scene.fspm.json"))
     assert [entry["step"] for entry in resumed["frames"]] == [0, 1]
     assert not os.path.exists(os.path.join(frames, "frame_000002.glb"))  # the later frame removed with its entry
@@ -486,7 +486,7 @@ def test_the_recorder_lists_the_parts_packs_the_frames_and_unpacks_them_on_resum
     stray = os.path.join(frames, "parts", "0" * 64 + ".glb")         # a part no frame kept refers to
     with open(stray, "wb") as file:
         file.write(b"")
-    scene.recorder.resume_at(types.SimpleNamespace(iteration=1, time=3600.))
+    scene.recorder.resume_at(types.SimpleNamespace(step_count=1, time=3600.))
     assert not os.path.exists(stray) and set(encoding3d.read_index(os.path.join(frames, "scene.fspm.json"))["parts"]) \
         <= used
 

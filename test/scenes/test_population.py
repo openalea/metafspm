@@ -75,7 +75,7 @@ def test_a_sown_stand():
     # the rows along x, row_spacing apart in y; the plants 1 / (density x row spacing) apart along their row
     spacing = 1. / (100 * 0.15)
     assert table["plant"].tolist() == [f"p{k}" for k in range(16)]
-    assert table.attrs["xrange"] == pytest.approx(4 * spacing) and table.attrs["yrange"] == pytest.approx(0.6)
+    assert table.attrs["x_range"] == pytest.approx(4 * spacing) and table.attrs["y_range"] == pytest.approx(0.6)
     np.testing.assert_allclose(table["x"], np.tile((np.arange(4) + 0.5) * spacing, 4))
     np.testing.assert_allclose(table["y"], np.repeat((np.arange(4) + 0.5) * 0.15, 4))
     assert (table["depth"] == 0.025).all()

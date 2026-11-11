@@ -3915,12 +3915,12 @@ class ArrayDataStructure(VariableStoreMixin, FieldDataStructure):
     _default_location = "cell"
 
     def __init__(self, shape: tuple,
-                 dx: Union[float, np.ndarray] = 1.0,
+                 spacing: Union[float, np.ndarray] = 1.0,
                  origin: Optional[np.ndarray] = None,
                  periodic=False):
         self._shape  = tuple(shape)
         n_dims       = len(shape)
-        self._dx     = np.broadcast_to(dx, (n_dims,)).copy().astype(float)
+        self._spacing     = np.broadcast_to(spacing, (n_dims,)).copy().astype(float)
         self._origin = (np.zeros(n_dims) if origin is None
                         else np.broadcast_to(np.asarray(origin, dtype=float), (n_dims,)).copy())
         self._periodic = np.broadcast_to(np.asarray(periodic, dtype=bool), (n_dims,)).copy()
@@ -3928,8 +3928,8 @@ class ArrayDataStructure(VariableStoreMixin, FieldDataStructure):
         self._L      = None
         self._build_faces()
         axis = self._face_axis
-        self.register("face_area", np.prod(self._dx) / self._dx[axis], location="edge")
-        self.register("face_distance", self._dx[axis], location="edge")
+        self.register("face_area", np.prod(self._spacing) / self._spacing[axis], location="edge")
+        self.register("face_distance", self._spacing[axis], location="edge")
         register_grid_descriptors(self)
 
     @property
@@ -3937,25 +3937,25 @@ class ArrayDataStructure(VariableStoreMixin, FieldDataStructure):
         return self._shape
 
     @property
-    def dx(self) -> np.ndarray:
+    def spacing(self) -> np.ndarray:
         """Cell sizes along each axis (a copy)."""
-        return self._dx.copy()
+        return self._spacing.copy()
 
     @property
     def axes(self) -> tuple:
         return ("x", "y", "z")[:len(self._shape)] if len(self._shape) <= 3 else tuple(f"a{d}" for d in range(len(self._shape)))
 
     def _construction(self) -> dict:
-        return {"shape": list(self._shape), "dx": self._dx.tolist(), "origin": self._origin.tolist(),
+        return {"shape": list(self._shape), "spacing": self._spacing.tolist(), "origin": self._origin.tolist(),
                 "periodic": self._periodic.tolist()}
 
     def _load_construction(self, construction: dict, saved: dict) -> None:
-        if self._construction() != {key: construction[key] for key in ("shape", "dx", "origin", "periodic")}:
+        if self._construction() != {key: construction[key] for key in ("shape", "spacing", "origin", "periodic")}:
             raise ValueError("the checkpointed grid has another shape, spacing, origin or periodicity")
 
     @classmethod
     def _from_construction(cls, construction: dict, saved: dict):
-        return cls(shape=tuple(construction["shape"]), dx=np.asarray(construction["dx"]),
+        return cls(shape=tuple(construction["shape"]), spacing=np.asarray(construction["spacing"]),
                    origin=np.asarray(construction["origin"]), periodic=construction["periodic"])
 
     def _var_stores(self) -> dict:
@@ -4054,15 +4054,15 @@ class ArrayDataStructure(VariableStoreMixin, FieldDataStructure):
         return [name for store in self._var_stores().values() for name in store]
 
     def coordinates(self) -> np.ndarray:
-        """Grid vertex positions (origin + i * dx), one row per cell in flat order. See cell_centers()."""
-        grids = [self._origin[d] + np.arange(self._shape[d]) * self._dx[d]
+        """Grid vertex positions (origin + i * spacing), one row per cell in flat order. See cell_centers()."""
+        grids = [self._origin[d] + np.arange(self._shape[d]) * self._spacing[d]
                  for d in range(len(self._shape))]
         mesh = np.meshgrid(*grids, indexing='ij')
         return np.stack([m.ravel() for m in mesh], axis=1)
 
     def cell_centers(self) -> np.ndarray:
-        """Cell centre positions (origin + (i + 0.5) * dx), one row per cell in flat order."""
-        grids = [self._origin[d] + (np.arange(self._shape[d]) + 0.5) * self._dx[d]
+        """Cell centre positions (origin + (i + 0.5) * spacing), one row per cell in flat order."""
+        grids = [self._origin[d] + (np.arange(self._shape[d]) + 0.5) * self._spacing[d]
                  for d in range(len(self._shape))]
         mesh = np.meshgrid(*grids, indexing='ij')
         return np.stack([m.ravel() for m in mesh], axis=1)
@@ -4078,11 +4078,11 @@ class ArrayDataStructure(VariableStoreMixin, FieldDataStructure):
     def cell_volume(self) -> float:
         """The volume of a cell: one number, every cell of a regular grid having it (AdaptiveGridDataStructure gives
         one per cell); it multiplies a grid variable of any shape."""
-        return float(np.prod(self._dx))
+        return float(np.prod(self._spacing))
 
     def cell_sizes(self) -> np.ndarray:
         """Size of each cell along each axis, one row per cell in flat order (as AdaptiveGridDataStructure)."""
-        return np.tile(self._dx, (self.n_dof, 1))
+        return np.tile(self._spacing, (self.n_dof, 1))
 
     def locate(self, points, periodic=None, clip: bool = True) -> np.ndarray:
         """
@@ -4097,7 +4097,7 @@ class ArrayDataStructure(VariableStoreMixin, FieldDataStructure):
         n_dims = len(self._shape)
         periodic = self._periodic if periodic is None else periodic
         periodic = np.broadcast_to(np.asarray(periodic, dtype=bool), (n_dims,))
-        idx = np.floor((points - self._origin) / self._dx).astype(np.int64)
+        idx = np.floor((points - self._origin) / self._spacing).astype(np.int64)
         for d in range(n_dims):
             n = self._shape[d]
             if periodic[d]:
@@ -4126,7 +4126,7 @@ class ArrayDataStructure(VariableStoreMixin, FieldDataStructure):
 
     def _build_laplacian(self):
         ops = [self._build_1d_laplacian(n, h)
-               for n, h in zip(self._shape, self._dx)]
+               for n, h in zip(self._shape, self._spacing)]
         if len(ops) == 1:
             return ops[0]
         if not _HAS_SCIPY:

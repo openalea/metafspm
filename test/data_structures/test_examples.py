@@ -28,7 +28,7 @@ def test_soil_column_diffusion_through_the_abstract_field_api(tmp_path):
     """A wetting front and a temperature gradient relax, conserving their totals (no-flux ends)."""
     n_z, dz, d_moisture, d_temperature = 50, 0.02, 1e-4, 5e-5
     dt = 0.4 * dz ** 2 / d_moisture                         # within the explicit stability limit
-    ds = ArrayDataStructure(shape=(n_z,), dx=dz, origin=np.array([0.0]))
+    ds = ArrayDataStructure(shape=(n_z,), spacing=dz, origin=np.array([0.0]))
     z = ds.coordinates()[:, 0]
     ds.register("moisture", 0.35 - 0.25 * (1 + np.tanh((z - 0.30) / 0.04)) / 2)
     ds.register("temperature", 22.0 - 8.0 * z)

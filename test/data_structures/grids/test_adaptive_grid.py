@@ -21,7 +21,7 @@ DT, D = 0.5, 1e-3
 
 
 def _grid(**options):
-    return AdaptiveGridDataStructure(shape=(2, 2, 3), dx=(0.1, 0.1, 0.05), max_level=2, **options)
+    return AdaptiveGridDataStructure(shape=(2, 2, 3), spacing=(0.1, 0.1, 0.05), max_level=2, **options)
 
 
 def _closure(grid):
@@ -44,14 +44,14 @@ def test_refinement_keeps_the_balance_and_closes_every_cell():
     assert levels.max() == 2 and grid.n_nodes() > 12
     tail, head = grid._face_tail, grid._face_head
     assert np.abs(levels[tail] - levels[head]).max() <= 1                       # 2:1 balance
-    side = np.prod(grid._base_dx) / grid._base_dx / (2 ** (len(grid.shape) - 1)) ** levels[:, None]
+    side = np.prod(grid._base_spacing) / grid._base_spacing / (2 ** (len(grid.shape) - 1)) ** levels[:, None]
     area = _closure(grid)
     for a in range(3):                                                          # interior sides are fully covered
-        for s, inner in ((0, grid.cell_centers()[:, a] - 0.5 * (grid._base_dx[a] / 2 ** levels) > 1e-12),
-                         (1, grid.cell_centers()[:, a] + 0.5 * (grid._base_dx[a] / 2 ** levels)
-                          < grid._origin[a] + grid.shape[a] * grid._base_dx[a] - 1e-12)):
+        for s, inner in ((0, grid.cell_centers()[:, a] - 0.5 * (grid._base_spacing[a] / 2 ** levels) > 1e-12),
+                         (1, grid.cell_centers()[:, a] + 0.5 * (grid._base_spacing[a] / 2 ** levels)
+                          < grid._origin[a] + grid.shape[a] * grid._base_spacing[a] - 1e-12)):
             np.testing.assert_allclose(area[inner, a, s], side[inner, a])
-    assert grid.cell_volume().sum() == pytest.approx(np.prod(grid._base_dx) * 12)
+    assert grid.cell_volume().sum() == pytest.approx(np.prod(grid._base_spacing) * 12)
 
 
 def test_refine_and_coarsen_carry_values_conservatively():
@@ -76,7 +76,7 @@ class _Diffusion:
     @node_balance(field="solute")
     def _balance(self, solute, solute_flux):
         volume = self.data_structure.cell_volume()
-        return (solute - self.previous("solute")) / self.dt \
+        return (solute - self.previous("solute")) / self.step_duration \
             + np.asarray(self.graph_view.incidence @ solute_flux).reshape(-1) / volume
 
     @edge_law(field="solute_flux")
@@ -100,9 +100,9 @@ def _initial(centers):
 
 
 def test_a_uniformly_refined_grid_solves_as_the_fine_regular_grid():
-    adaptive = AdaptiveGridDataStructure(shape=(2, 2, 3), dx=(0.1, 0.1, 0.05), max_level=1)
+    adaptive = AdaptiveGridDataStructure(shape=(2, 2, 3), spacing=(0.1, 0.1, 0.05), max_level=1)
     adaptive.refine(np.ones(12, dtype=bool))
-    regular = ArrayDataStructure(shape=(4, 4, 6), dx=(0.05, 0.05, 0.025))
+    regular = ArrayDataStructure(shape=(4, 4, 6), spacing=(0.05, 0.05, 0.025))
     a, r = AdaptiveDiffusion(data_structure=adaptive), AdaptiveDiffusion(data_structure=regular)
     adaptive.set("solute", _initial(adaptive.cell_centers()))
     regular.set("solute", _initial(regular.cell_centers()).reshape(regular.shape))
@@ -185,7 +185,7 @@ def test_a_mapping_follows_the_refinement_of_its_grid():
 
 
 def test_the_edge_difference_is_exact_for_linear_fields_across_refinement_levels():
-    grid = AdaptiveGridDataStructure(shape=(4, 4, 6), dx=0.02, max_level=2, periodic=False)
+    grid = AdaptiveGridDataStructure(shape=(4, 4, 6), spacing=0.02, max_level=2, periodic=False)
     for radius in (0.03, 0.015):                                                 # two levels of refinement
         grid.refine(lambda g: np.linalg.norm(g.cell_centers() - [0.03, 0.05, 0.04], axis=1) < radius)
     assert len(np.unique(grid.refinement_level())) == 3
@@ -199,6 +199,6 @@ def test_the_edge_difference_is_exact_for_linear_fields_across_refinement_levels
 
 
 def test_the_edge_difference_is_the_two_point_one_between_equal_cells():
-    grid = AdaptiveGridDataStructure(shape=(3, 3, 3), dx=0.1, max_level=1, periodic=(True, True, False))
+    grid = AdaptiveGridDataStructure(shape=(3, 3, 3), spacing=0.1, max_level=1, periodic=(True, True, False))
     view = grid.to_graph_view()
     assert abs(view.edge_difference - view.incidence.T.tocsr()).max() == 0.

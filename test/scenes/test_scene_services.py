@@ -46,13 +46,13 @@ class CountingSoil(SceneSoil):
     """Its nitrate every 2 steps (its schedule's cadence), the exudation it received each time; its spin-up."""
     schedule = (Step("nitrate", cadence=Cadence(2 * DT, at="start")),)
 
-    def __init__(self, plant_data_structures, xrange, yrange, time_step):
-        super().__init__(plant_data_structures, xrange, yrange, time_step)
+    def __init__(self, plant_data_structures, x_range, y_range, time_step):
+        super().__init__(plant_data_structures, x_range, y_range, time_step)
         self.spun_up = 0
 
     def spin_up(self, scene):
         self.spun_up += 1
-        assert scene.iteration == 0
+        assert scene.step_count == 0
 
 
 def _scene(**options):
@@ -115,7 +115,7 @@ def test_events_and_stop_conditions():
 
     scene = _scene(events=[(2 * DT, fertilise)], stop_when=lambda s: s.time >= 3 * DT)
     scene.simulate(10)
-    assert calls == [2 * DT] and scene.stopped and scene.iteration == 3
+    assert calls == [2 * DT] and scene.stopped and scene.step_count == 3
     assert scene.environment[0].grid.get("soil_nitrate").max() > 50.
 
 
@@ -141,8 +141,8 @@ class CadencedSoil(SceneSoil):
     """Its nitrate every 3 steps (its schedule's cadence), a method of its after it at every step."""
     schedule = (Step("nitrate", cadence=Cadence(3 * DT, at="start")), "after")
 
-    def __init__(self, plant_data_structures, xrange, yrange, time_step):
-        super().__init__(plant_data_structures, xrange, yrange, time_step)
+    def __init__(self, plant_data_structures, x_range, y_range, time_step):
+        super().__init__(plant_data_structures, x_range, y_range, time_step)
         self.calls = []
 
     def after(self):

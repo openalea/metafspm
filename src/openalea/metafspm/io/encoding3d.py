@@ -1273,7 +1273,7 @@ def _grid_data_structure(identifier: str, ds, metadata: dict, standard_names: di
         _declare(table, metadata, standard_names, derived)
     construction = ds._construction()
     grid = encoding3d.Grid(kind="adaptive" if adaptive else "regular", shape=tuple(construction["shape"]),
-                        origin=tuple(construction["origin"]), spacing=tuple(construction["dx"]),
+                        origin=tuple(construction["origin"]), spacing=tuple(construction["spacing"]),
                         axes=tuple(ds.axes), periodic=tuple(bool(p) for p in construction["periodic"]),
                         z_up=False, max_level=int(construction.get("max_level", 0)), cells="cell")
     return encoding3d.DataStructure(identifier, kind="adaptive_grid" if adaptive else "regular_grid",
@@ -1375,7 +1375,7 @@ def _folding(points: np.ndarray, pattern) -> np.ndarray:
 def fold_frame(frame, pattern, identifiers=None):
     """
     Fold the plants' drawing of *frame* (changed in place, and returned) into the periodic *pattern* ((x0, x1),
-    (y0, y1): the stand's, Scene.xrange and yrange), for display: the scene is periodic (its light and its soil), so a
+    (y0, y1): the stand's, Scene.x_range and y_range), for display: the scene is periodic (its light and its soil), so a
     leaf or a root beyond the pattern is drawn where the pattern has it. Each mesh triangle moves by the whole periods
     that bring its centre into the pattern (a triangle stays whole; an indexed mesh's vertices move with their
     triangles), each segment (its ends' columns, the roots' tubes) by those of its middle, each instance by those of
@@ -1442,7 +1442,7 @@ def scene_to_frame(scene, geometry: bool = True, standard_names: dict = None, da
 
     *geometry*, *display_meshes*, *display* and *display_plants* (the planting table's plant names, e.g. ("p0", "p3"),
     or a {population: names} dict): as in to_frame. *fold*: the plants' drawing folded into the scene's pattern
-    ((0, xrange), (0, yrange): the stand's, periodic), for display (to_frame's fold). For logging: *data_structures*, the ids of those to write (default:
+    ((0, x_range), (0, y_range): the stand's, periodic), for display (to_frame's fold). For logging: *data_structures*, the ids of those to write (default:
     all); *scales*, *entities* and *variables*, as in to_frame (filter_frame), *entities* also given by the planting
     table's plant names (e.g. "p0")."""
     found = scene.data_structures()
@@ -1468,17 +1468,17 @@ def scene_to_frame(scene, geometry: bool = True, standard_names: dict = None, da
     plant_names = {population.name: {name: vid for vid, name in population.plant_names().items()}
                    for population in scene.populations if hasattr(population, "plant_names")}
     return to_frame(written, components=components, mappings=mappings, time=scene.time,
-                    step=scene.iteration, time_unit="s", geometry=geometry, standard_names=standard_names,
+                    step=scene.step_count, time_unit="s", geometry=geometry, standard_names=standard_names,
                     scales=scales, entities=entities, variables=variables, plant_names=plant_names,
                     display_meshes=display_meshes, display_plants=display_plants, display=display,
                     fold=_scene_pattern(scene) if fold else None)
 
 
 def _scene_pattern(scene):
-    """The scene's periodic pattern ((0, xrange), (0, yrange)): the stand's, its soil's and its light's."""
-    if getattr(scene, "xrange", None) is None or getattr(scene, "yrange", None) is None:
-        raise ValueError("scene_to_frame(fold=True): the scene has no pattern (xrange, yrange)")
-    return (0., float(scene.xrange)), (0., float(scene.yrange))
+    """The scene's periodic pattern ((0, x_range), (0, y_range)): the stand's, its soil's and its light's."""
+    if getattr(scene, "x_range", None) is None or getattr(scene, "y_range", None) is None:
+        raise ValueError("scene_to_frame(fold=True): the scene has no pattern (x_range, y_range)")
+    return (0., float(scene.x_range)), (0., float(scene.y_range))
 
 
 def export_frame(path: str, data_structures: dict, **options) -> None:

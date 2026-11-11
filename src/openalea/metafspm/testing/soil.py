@@ -1,7 +1,7 @@
 """
 A soil for tests and examples: the steady water flow in a coarse fixed grid (not one of metafspm's models, a fixture).
 
-    Soil(plant_data_structures, xrange, yrange, time_step, depth=0.4, voxel=0.05)
+    Soil(plant_data_structures, x_range, y_range, time_step, depth=0.4, voxel=0.05)
                         the environment model: a grid over the stand, z pointing down from the surface, 5 cm cells by
                         default (coarse: fast), its conductivity by layer (a denser subsoil), the water table at the
                         bottom, the surface evaporating
@@ -199,9 +199,9 @@ class Soil(EnvironmentModel):
     """
     compartment = "Soil"
 
-    def __init__(self, plant_data_structures, xrange, yrange, time_step, depth=0.4, voxel=0.05,
+    def __init__(self, plant_data_structures, x_range, y_range, time_step, depth=0.4, voxel=0.05,
                  topsoil_K=1.5, subsoil_K=0.6, topsoil_depth=0.2):
-        super().__init__(plant_data_structures, xrange, yrange, time_step)
+        super().__init__(plant_data_structures, x_range, y_range, time_step)
         self.grid = self.build_grid(voxel, depth)
         self.structure = SoilStructure(data_structure=self.grid, time_step=time_step)
         self.transport = SoilWaterTransport(data_structure=self.grid, time_step=time_step)

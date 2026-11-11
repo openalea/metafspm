@@ -25,7 +25,7 @@ class _DiffusionEquations:
     @node_balance(field="solute")
     def _balance(self, solute, solute_flux, uptake):
         volume = self.data_structure.cell_volume()
-        return (solute - self.previous("solute")) / self.dt \
+        return (solute - self.previous("solute")) / self.step_duration \
             + np.asarray(self.graph_view.incidence @ solute_flux).reshape(-1) / volume - uptake
 
     @edge_law(field="solute_flux")
@@ -71,7 +71,7 @@ class FrozenTopSoil(SoilFields):
 
 
 def _grid(periodic=False):
-    grid = ArrayDataStructure(shape=SHAPE, dx=DX, periodic=periodic)
+    grid = ArrayDataStructure(shape=SHAPE, spacing=DX, periodic=periodic)
     rng = np.random.default_rng(3)
     grid.register("solute", rng.random(SHAPE), location="cell")
     grid.register("uptake", 0.01 * rng.random(SHAPE), location="cell")

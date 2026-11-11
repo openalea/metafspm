@@ -57,24 +57,24 @@ class CountedLight(EnvironmentModel):
     """An environment model forwarding **kwargs, as Caribu's light model did."""
     compartment = "Atmosphere"
 
-    def __init__(self, plant_data_structures, xrange, yrange, time_step, **parameters):
-        super().__init__(plant_data_structures, xrange, yrange, time_step)
-        self.grid = ArrayDataStructure(shape=(1, 1, 1), dx=0.1)
+    def __init__(self, plant_data_structures, x_range, y_range, time_step, **parameters):
+        super().__init__(plant_data_structures, x_range, y_range, time_step)
+        self.grid = ArrayDataStructure(shape=(1, 1, 1), spacing=0.1)
         self.counted = Counted(data_structure=self.grid, **parameters)
         self.components = [self.counted]
 
 
 def _roots_table():
-    return planting([Planting(x=0.1, y=0.1), Planting(x=0.3, y=0.1)], Roots, {"n_segments": 3}, xrange=0.4,
-                    yrange=0.2)
+    return planting([Planting(x=0.1, y=0.1), Planting(x=0.3, y=0.1)], Roots, {"n_segments": 3}, x_range=0.4,
+                    y_range=0.2)
 
 
 def test_a_scene_from_a_scenario_by_model():
     scenario = {"Roots": {"uptake_rate": 2., "n_segments": 3}, "SceneSoil": {},
                 "forcings": {"temperature": 5.}}
     scene = Scene.from_scenario(scenario, [Planting(x=0.1, y=0.1)], Roots, environment=[SceneSoil],
-                                time_step=DT, xrange=0.4, yrange=0.2)
-    assert (scene.xrange, scene.yrange) == (0.4, 0.2) and scene.planting["plant"].tolist() == ["p0"]
+                                time_step=DT, x_range=0.4, y_range=0.2)
+    assert (scene.x_range, scene.y_range) == (0.4, 0.2) and scene.planting["plant"].tolist() == ["p0"]
     scene.simulate(1)
     np.testing.assert_allclose(scene.populations[0].data_structure.get("uptake"), 10.)
     with pytest.raises(KeyError, match="none of the scene's models"):
@@ -136,7 +136,7 @@ def test_the_scenario_entries_are_set_once():
 
 
 def test_the_grids_default_to_their_cells():
-    grid = ArrayDataStructure(shape=(2, 1, 3), dx=0.1)
+    grid = ArrayDataStructure(shape=(2, 1, 3), spacing=0.1)
     grid.register("theta", np.arange(6.))
     assert grid.index_of(grid.entity_ids("cell")[2]) == 2
     assert grid.random(seed=1).shape == (6,)

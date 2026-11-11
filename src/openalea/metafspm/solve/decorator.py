@@ -130,7 +130,7 @@ def node_balance(field=None, where=None):
     where    : the nodes the block applies on ({variable: condition}, a mask name or a callable: conventions.md), e.g.
                {"tissue": CORTEX}; the method's node arguments are sliced to them, and it contributes 0 elsewhere.
                Values the method reads through self (self.previous(), self.data_structure) are not sliced.
-    The method returns the residual (its time term written with self.previous() and self.dt); @node_rate is the
+    The method returns the residual (its time term written with self.previous() and self.step_duration); @node_rate is the
     rate form.
     """
     def decorator(func):
@@ -1145,7 +1145,7 @@ class _GraphSystemBuilder:
                     # backward Euler: (u - previous(u)) / dt - du/dt
                     bulk_wrapped.append(
                         lambda ctx, _f=field_name, _e=inner:
-                            (ctx.node_unknowns[_f] - instance.previous(_f)) / instance.dt - _e(ctx)
+                            (ctx.node_unknowns[_f] - instance.previous(_f)) / instance.step_duration - _e(ctx)
                     )
                 elif ex:
                     bulk_wrapped.append(
@@ -1542,7 +1542,7 @@ def _solve_graph_system(self, method_name: str, spec_def: dict) -> None:
     """
     Integrate one graph system over the component's time step:
     "once" one solve of time_step; "substeps" n solves of time_step / n; "adaptive" step doubling. During each
-    (sub-)step, self.dt is its length and self.previous(fn) the state at its start.
+    (sub-)step, self.step_duration is its length and self.previous(fn) the state at its start.
     """
     ds = _live_ds(self)
     time_step = float(getattr(self, "time_step", None) or 1.0)
@@ -1830,7 +1830,7 @@ def graph_system(
         time_step / substeps; "adaptive": step doubling with integration_relative_tolerance /
         integration_absolute_tolerance, min_step / max_step, a failed solve (no
         convergence, a residual that is not finite) rejecting the sub-step and halving it down to min_step. Equations
-        write their time terms with self.dt and self.previous().
+        write their time terms with self.step_duration and self.previous().
 
     integration_relative_tolerance, integration_absolute_tolerance, max_step: the error control of "adaptive" and
         of the IVP solvers (scipy_ivp_bdf, scipy_ivp_radau). With "adaptive", both tolerances may be given per node

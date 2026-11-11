@@ -218,7 +218,7 @@ def test_a_grids_intensive_variables_are_weighted_by_its_cells_volumes():
     from types import SimpleNamespace
     from openalea.metafspm.coupling.declaration import VariableSpec
     from openalea.metafspm.data_structure.adaptive_grid import AdaptiveGridDataStructure
-    grid = AdaptiveGridDataStructure(shape=(2, 1, 1), dx=0.1)
+    grid = AdaptiveGridDataStructure(shape=(2, 1, 1), spacing=0.1)
     grid.refine(np.array([True, False]))                                    # the first cell into 8
     volume = np.asarray(grid.cell_volume())
     theta = np.where(volume < volume.max(), 0.2, 0.4)

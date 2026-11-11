@@ -100,7 +100,7 @@ def test_planting():
                      plant_scenarios=[dict(b=1), dict(b=2)])
     assert table["depth"].tolist() == [0.02, 0.] and table["rotation"].tolist() == [10., 0.]
     assert table["scenario"].tolist() == [dict(a=1, b=1), dict(a=1, b=2)] and table["plant"].tolist() == ["p0", "p1"]
-    assert table.attrs["xrange"] == pytest.approx(0.3) and table.attrs["yrange"] == pytest.approx(0.1)
+    assert table.attrs["x_range"] == pytest.approx(0.3) and table.attrs["y_range"] == pytest.approx(0.1)
     with pytest.raises(ValueError):
         planting([Planting()], model=object, plant_scenarios=[{}, {}])
 

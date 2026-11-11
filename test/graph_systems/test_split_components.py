@@ -21,7 +21,7 @@ DT = 10.
 class _Diffusion:
     @node_balance(field="sugar")
     def _balance(self, sugar, sugar_flux):
-        return (sugar - self.previous("sugar")) / self.dt + np.asarray(self.graph_view.incidence @ sugar_flux).reshape(-1)
+        return (sugar - self.previous("sugar")) / self.step_duration + np.asarray(self.graph_view.incidence @ sugar_flux).reshape(-1)
 
     @edge_law(field="sugar_flux")
     def _law(self, sugar, sugar_flux, conductance):

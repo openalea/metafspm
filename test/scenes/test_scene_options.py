@@ -48,9 +48,9 @@ class ColumnModel(EnvironmentModel):
     """A 1-D column model; its DataStructure is given by its scenario, or built. It runs nothing (its schedule)."""
     schedule = ()
 
-    def __init__(self, plant_data_structures, xrange, yrange, time_step, column=None):
-        super().__init__(plant_data_structures, xrange, yrange, time_step)
-        self.column = column if column is not None else ArrayDataStructure(shape=(4,), dx=0.4)
+    def __init__(self, plant_data_structures, x_range, y_range, time_step, column=None):
+        super().__init__(plant_data_structures, x_range, y_range, time_step)
+        self.column = column if column is not None else ArrayDataStructure(shape=(4,), spacing=0.4)
         self.heat = ColumnHeat(data_structure=self.column)
         self.column.set("temperature", [10., 12., 14., 16.])
         self.components = [self.heat]
@@ -60,9 +60,9 @@ class GridModel(EnvironmentModel):
     """A grid model, with the four 0.4 m layers of the column along z. It runs nothing (its schedule)."""
     schedule = ()
 
-    def __init__(self, plant_data_structures, xrange, yrange, time_step, grid=None):
-        super().__init__(plant_data_structures, xrange, yrange, time_step)
-        self.grid = grid if grid is not None else ArrayDataStructure(shape=(2, 1, 4), dx=0.4)
+    def __init__(self, plant_data_structures, x_range, y_range, time_step, grid=None):
+        super().__init__(plant_data_structures, x_range, y_range, time_step)
+        self.grid = grid if grid is not None else ArrayDataStructure(shape=(2, 1, 4), spacing=0.4)
         self.heat = GridHeat(data_structure=self.grid)
         self.components = [self.heat]
 
@@ -75,7 +75,7 @@ def _grid_layers(grid):
 
 
 def test_mappings_given_as_a_list_are_used_in_the_exchanges():
-    column, grid = ArrayDataStructure(shape=(4,), dx=0.4), ArrayDataStructure(shape=(2, 1, 4), dx=0.4)
+    column, grid = ArrayDataStructure(shape=(4,), spacing=0.4), ArrayDataStructure(shape=(2, 1, 4), spacing=0.4)
     scene = Scene(doubles_planting([Seedlings]), environment=[ColumnModel, GridModel],
                   environment_scenarios=[{"column": column}, {"grid": grid}], translator=LAYERS, time_step=DT,
                   mappings=[LayerMapping(column, grid, axis="z")])
@@ -126,10 +126,10 @@ def test_environment_scenarios_must_match_the_environment_models():
 
 def test_the_stand_size_defaults_to_the_planting_table_and_can_be_overridden():
     default = Scene(doubles_planting([Seedlings]), environment=[GridModel], time_step=DT)
-    assert (default.xrange, default.yrange) == (0.8, 0.4)
-    scene = Scene(doubles_planting([Seedlings]), environment=[GridModel], time_step=DT, xrange=2., yrange=3.)
-    assert (scene.xrange, scene.yrange) == (2., 3.)
-    assert (scene.environment[0].xrange, scene.environment[0].yrange) == (2., 3.)
+    assert (default.x_range, default.y_range) == (0.8, 0.4)
+    scene = Scene(doubles_planting([Seedlings]), environment=[GridModel], time_step=DT, x_range=2., y_range=3.)
+    assert (scene.x_range, scene.y_range) == (2., 3.)
+    assert (scene.environment[0].x_range, scene.environment[0].y_range) == (2., 3.)
 
 
 # ---------------------------------------------------------------- initiators and anatomy mode

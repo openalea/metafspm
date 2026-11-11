@@ -115,8 +115,8 @@ class GridWater(FunctionalComponent):
 
 
 class WaterSoil(SceneSoil):
-    def __init__(self, plant_data_structures, xrange, yrange, time_step):
-        super().__init__(plant_data_structures, xrange, yrange, time_step)
+    def __init__(self, plant_data_structures, x_range, y_range, time_step):
+        super().__init__(plant_data_structures, x_range, y_range, time_step)
         self.water = GridWater(data_structure=self.grid)
         self.components = [self.nitrate, self.water]
 

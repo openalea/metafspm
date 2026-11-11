@@ -47,7 +47,7 @@ def _laplacian(ds):
 
 def _diffusion_residual(self, u):
     B = self.graph_view.incidence
-    return (u - self.previous("u")) / self.dt + K * np.asarray(B @ (B.T @ u)).reshape(-1)
+    return (u - self.previous("u")) / self.step_duration + K * np.asarray(B @ (B.T @ u)).reshape(-1)
 
 
 def _implicit_step(ds, u0, robin_weight=None, robin_value=None):
@@ -137,7 +137,7 @@ class Decay(FunctionalComponent):
         @node_balance(field="u")
         def _balance(self, u):
             type(self).seen.append((self.previous("u", at="solve").copy(), self.previous("u").copy()))
-            return (u - self.previous("u")) / self.dt + u
+            return (u - self.previous("u")) / self.step_duration + u
 
 
 def test_previous_at_solve_is_the_start_of_the_call_and_at_substep_the_start_of_each_substep():
@@ -240,7 +240,7 @@ class TwoUnknowns(FunctionalComponent):
         @node_balance(field="w")
         def _w(self, w):
             B = self.graph_view.incidence
-            return (w - self.previous("w")) / self.dt + K * np.asarray(B @ (B.T @ w)).reshape(-1)
+            return (w - self.previous("w")) / self.step_duration + K * np.asarray(B @ (B.T @ w)).reshape(-1)
 
 
 @dataclass
@@ -382,13 +382,13 @@ class _PoolEquations:
     def _balance(self, sugar, shoot):
         P = self.pool_exchange("shoot")
         exchange = P @ shoot - np.asarray(P.sum(axis=1)).reshape(-1) * sugar
-        return (sugar - self.previous("sugar")) / self.dt - EXCHANGE * exchange
+        return (sugar - self.previous("sugar")) / self.step_duration - EXCHANGE * exchange
 
     @pool_balance(field="shoot")
     def _shoot(self, sugar, shoot):
         P = self.pool_exchange("shoot")
         exchange = P @ shoot - np.asarray(P.sum(axis=1)).reshape(-1) * sugar
-        return (shoot - self.previous("shoot")) / self.dt + EXCHANGE * np.asarray(P.T @ exchange).reshape(-1)
+        return (shoot - self.previous("shoot")) / self.step_duration + EXCHANGE * np.asarray(P.T @ exchange).reshape(-1)
 
 
 @dataclass
@@ -468,7 +468,7 @@ class Supplied(FunctionalComponent):
     class _solve:
         @node_balance(field="u")
         def _balance(self, u):
-            return (u - self.previous("u")) / self.dt - self.forcing("supply")
+            return (u - self.previous("u")) / self.step_duration - self.forcing("supply")
 
 
 @pytest.mark.parametrize("supply", [lambda t: 3. * t,
@@ -598,7 +598,7 @@ class ActiveOutputs(FunctionalComponent):
     class _solve:
         @node_balance(field="u")
         def _balance(self, u, flux):
-            return (u - self.previous("u")) / self.dt + np.asarray(self.graph_view.incidence @ flux).reshape(-1)
+            return (u - self.previous("u")) / self.step_duration + np.asarray(self.graph_view.incidence @ flux).reshape(-1)
 
         @edge_law(field="flux", integrate=True)
         def _fick(self, u, flux):

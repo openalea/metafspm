@@ -51,7 +51,7 @@ def test_a_scene_takes_them_per_plant_too():
     scenarios = [{"anatomy": {"cortex": {"n_layers": 3}}}, {"anatomy": {"seed": 4}}]
     table = pd.DataFrame([dict(plant=f"p{i}", model=Model, x=float(i), y=0., depth=0., rotation=0., scenario=s)
                           for i, s in enumerate(scenarios)])
-    table.attrs.update(xrange=2., yrange=1.)
+    table.attrs.update(x_range=2., y_range=1.)
     scene = Scene(table)
     assert list(scene.populations[0].data_structure.get("anatomy")) == [{"cortex": {"n_layers": 3}}, {"seed": 4}]
 

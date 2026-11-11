@@ -32,7 +32,7 @@ def _soil(grid, time_step, **settings):
 
 
 def _column(cells, depth=1., width=0.1):
-    return ArrayDataStructure(shape=(1, 1, cells), dx=(width, width, depth / cells))
+    return ArrayDataStructure(shape=(1, 1, cells), spacing=(width, width, depth / cells))
 
 
 def _balance(soil) -> dict:
@@ -99,7 +99,7 @@ def test_analytic_jacobian_solves_as_finite_differences(face_conductivity):
 
     results = []
     for component in (AnalyticSoil, FiniteDifferenceSoil):
-        grid = AdaptiveGridDataStructure(shape=(2, 1, 4), dx=(0.1, 0.1, 0.1), max_level=1, periodic=(True, True,
+        grid = AdaptiveGridDataStructure(shape=(2, 1, 4), spacing=(0.1, 0.1, 0.1), max_level=1, periodic=(True, True,
                                                                                                        False))
         grid.refine(np.arange(grid.n_nodes()) == 1)
         grid.simulation_time_step = 600.
@@ -118,7 +118,7 @@ def test_analytic_jacobian_solves_as_finite_differences(face_conductivity):
 # ── equilibria ───────────────────────────────────────────────────────────────
 
 def _adaptive_column():
-    grid = AdaptiveGridDataStructure(shape=(2, 2, 10), dx=(0.05, 0.05, 0.1), max_level=1,
+    grid = AdaptiveGridDataStructure(shape=(2, 2, 10), spacing=(0.05, 0.05, 0.1), max_level=1,
                                      periodic=(True, True, False))
     depth = grid.cell_centers()[:, 2]
     grid.refine((depth > 0.3) & (depth < 0.5) & (grid.cell_centers()[:, 0] < 0.05))
@@ -129,7 +129,7 @@ def _adaptive_column():
 def test_hydrostatic_equilibrium_holds(grid_kind):
     """With a water table at the bottom and no flux at the top, h = h_table - (L - z) is the equilibrium: no flux
     through any face (the hanging faces of an adaptive grid included), h - z unchanged."""
-    grid = (ArrayDataStructure(shape=(2, 2, 10), dx=(0.05, 0.05, 0.1), periodic=(True, True, False))
+    grid = (ArrayDataStructure(shape=(2, 2, 10), spacing=(0.05, 0.05, 0.1), periodic=(True, True, False))
             if grid_kind == "regular" else _adaptive_column())
     soil = _soil(grid, DAY, bottom_boundary="water_table")
     soil.set_pressure_head(lambda depth: -(1. - depth))

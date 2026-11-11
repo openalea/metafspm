@@ -88,9 +88,9 @@ class SceneSoil(EnvironmentModel):
     """An environment model building its grid."""
     compartment = "Soil"
 
-    def __init__(self, plant_data_structures, xrange, yrange, time_step):
-        super().__init__(plant_data_structures, xrange, yrange, time_step)
-        self.grid = ArrayDataStructure(shape=(2, 1, 4), dx=0.4)
+    def __init__(self, plant_data_structures, x_range, y_range, time_step):
+        super().__init__(plant_data_structures, x_range, y_range, time_step)
+        self.grid = ArrayDataStructure(shape=(2, 1, 4), spacing=0.4)
         self.nitrate = SceneSoilNitrate(data_structure=self.grid)
         self.components = [self.nitrate]
 
@@ -109,5 +109,5 @@ def doubles_planting(models, scenarios=None, **columns):
                                scenario=scenario) for i, (model, scenario) in enumerate(zip(models, scenarios))])
     for name, values in columns.items():
         table[name] = values
-    table.attrs.update(xrange=0.8, yrange=0.4)
+    table.attrs.update(x_range=0.8, y_range=0.4)
     return table

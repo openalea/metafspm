@@ -59,8 +59,8 @@ class Light(EnvironmentModel):
     compartment = "Atmosphere"
     schedule = (Step("sky", cadence=Cadence(DT, at="start")),)       # every step unless a scenario says otherwise
 
-    def __init__(self, plant_data_structures, xrange, yrange, time_step):
-        super().__init__(plant_data_structures, xrange, yrange, time_step)
+    def __init__(self, plant_data_structures, x_range, y_range, time_step):
+        super().__init__(plant_data_structures, x_range, y_range, time_step)
         self.sky = Sky(data_structure=self.plant_data_structure())
         self.components = [self.sky]
 

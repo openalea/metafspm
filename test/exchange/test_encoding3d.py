@@ -317,7 +317,7 @@ def test_a_model_lighting_the_plants_declares_its_variables_too():
     ds.register("PARa", 100., location="node")
     light = SimpleNamespace(components=[Light()])
     scene = SimpleNamespace(populations=[SimpleNamespace(name="plants", data_structure=ds, components=list(models))],
-                            environment=[light], mappings=[], time=0., iteration=0,
+                            environment=[light], mappings=[], time=0., step_count=0,
                             data_structures=lambda: {"plants": (ds, None, list(models) + light.components)})
     frame = scene_to_frame(scene)
     assert [data_structure.id for data_structure in frame.data_structures] == ["plants"]
@@ -371,11 +371,11 @@ def test_display_shapes_are_a_mesh_of_their_own():
 
 
 def test_grids_are_rebuilt_exactly():
-    grid = ArrayDataStructure(shape=(2, 3, 4), dx=(0.1, 0.1, 0.05), origin=(0., 0., 0.), periodic=(True, True, False))
+    grid = ArrayDataStructure(shape=(2, 3, 4), spacing=(0.1, 0.1, 0.05), origin=(0., 0., 0.), periodic=(True, True, False))
     grid.register("water_content", np.arange(24.).reshape(2, 3, 4) / 100., location="cell")
     grid.register("pools", np.arange(48.).reshape(2, 3, 4, 2), location="cell", shape=(2,))
     grid.register("vapour_factor", 0.25, location="scalar")
-    adaptive = AdaptiveGridDataStructure(shape=(2, 2, 3), dx=(0.1, 0.1, 0.05), max_level=2)
+    adaptive = AdaptiveGridDataStructure(shape=(2, 2, 3), spacing=(0.1, 0.1, 0.05), max_level=2)
     adaptive.register("temperature", np.full(adaptive.n_nodes(), 285.), location="cell")
     adaptive.refine(np.arange(adaptive.n_nodes()) == 0)
     again = _round_trip({"soil": grid, "fine_soil": adaptive})
@@ -392,7 +392,7 @@ def test_a_mapping_is_written():
     depth = np.arange(ds.n_nodes()) * 0.01
     for name, values in dict(x1=0.02, x2=0.02, y1=0.02, y2=0.02, z1=-depth, z2=-depth - 0.01).items():
         ds.register(name, values, location="node")
-    soil = ArrayDataStructure(shape=(4, 4, 4), dx=0.05, periodic=(True, True, False))
+    soil = ArrayDataStructure(shape=(4, 4, 4), spacing=0.05, periodic=(True, True, False))
     mapping = CrossMapping(ds, soil, method="overlap")
     rows, columns, weights = mapping.incidence()
     frame = to_frame({"plants": ds, "soil": soil}, mappings={"roots_in_soil": (mapping, "plants", "soil")})
@@ -485,7 +485,7 @@ def test_frames_written_to_and_read_from_files(tmp_path):
     rebuilt = import_frame(str(tmp_path / "frame.glb"))["plants"]
     for name in ("struct_mass", "length"):
         np.testing.assert_array_equal(rebuilt.get(name), ds.get(name))
-    scene = SimpleNamespace(populations=[], environment=[], mappings=[], time=3600., iteration=1,
+    scene = SimpleNamespace(populations=[], environment=[], mappings=[], time=3600., step_count=1,
                             data_structures=lambda: {"plants": (ds, None, list(models))})
     export_scene(str(tmp_path / "scene.glb"), scene)
     frame = encoding3d.read(str(tmp_path / "scene.glb"))

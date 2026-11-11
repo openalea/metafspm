@@ -43,7 +43,7 @@ class Slow(FunctionalComponent):
     def _seen(self, hour, struct_mass, integrated) -> dict:
         return {"seen_hour": np.array(hour, dtype=float), "seen_mass": np.array(struct_mass, dtype=float),
                 "seen_light": np.full(np.shape(hour), self.forcing("light", over="step")),
-                "integrated": integrated + hour * self.dt}
+                "integrated": integrated + hour * self.step_duration}
 
 
 class SlowRoots(CompositeModel):

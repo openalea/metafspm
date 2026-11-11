@@ -59,9 +59,9 @@ class Soil(test_soil.Soil):
     down from the surface, its conductivity by layer, the water table at the bottom), 2.5 cm cells here.
     """
 
-    def __init__(self, plant_data_structures, xrange, yrange, time_step, depth=0.4, voxel=0.025,
+    def __init__(self, plant_data_structures, x_range, y_range, time_step, depth=0.4, voxel=0.025,
                  topsoil_K=1.5, subsoil_K=0.6, topsoil_depth=0.2):
-        super().__init__(plant_data_structures, xrange, yrange, time_step, depth=depth, voxel=voxel,
+        super().__init__(plant_data_structures, x_range, y_range, time_step, depth=depth, voxel=voxel,
                          topsoil_K=topsoil_K, subsoil_K=subsoil_K, topsoil_depth=topsoil_depth)
 
 
@@ -77,9 +77,9 @@ class AdaptiveSoil(EnvironmentModel):
     compartment = "Soil"
     schedule = ("structure", "transport", "adapt")         # the grid adapted after each solve
 
-    def __init__(self, plant_data_structures, xrange, yrange, time_step, depth=0.4, voxel=0.025, max_level=2,
+    def __init__(self, plant_data_structures, x_range, y_range, time_step, depth=0.4, voxel=0.025, max_level=2,
                  refine_fraction=0.05, coarsen_fraction=0.005, topsoil_K=1.5, subsoil_K=0.6, topsoil_depth=0.2):
-        super().__init__(plant_data_structures, xrange, yrange, time_step)
+        super().__init__(plant_data_structures, x_range, y_range, time_step)
         self.grid = self.build_grid(voxel, depth, adaptive=True, max_level=max_level)
         self.structure = SoilStructure(data_structure=self.grid, time_step=time_step)
         self.transport = SoilWaterTransport(data_structure=self.grid, time_step=time_step)

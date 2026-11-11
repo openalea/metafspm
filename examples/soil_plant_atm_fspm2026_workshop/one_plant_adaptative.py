@@ -22,7 +22,7 @@ def scene(soil=AdaptiveSoil, soil_scenario=None, folder=None, tolerance=1e-6):
     stop condition: the seedling at the centre of a 0.2 m x 0.2 m soil column, a lagged plant-soil coupling through
     the root surface, stopped when the water potentials (and so the grid) no longer change.
     """
-    table = planting([Planting(x=0.1, y=0.1)], SeedlingWater, xrange=0.2, yrange=0.2)
+    table = planting([Planting(x=0.1, y=0.1)], SeedlingWater, x_range=0.2, y_range=0.2)
     stop = largest_change(tolerance)
     built = Scene(table, environment=[soil], environment_scenarios=[soil_scenario or {}],
                   translator=SCENE_TRANSLATOR, time_step="1 h", stop_when=stop,
@@ -42,7 +42,7 @@ def outcome(name, built, seconds):
     """The quantities compared between grids."""
     plant = built.populations[0].data_structure
     return dict(name=name, cells=built.environment[0].grid.n_nodes(), uptake=float(plant.get("root_uptake").sum()),
-                leaf_min=float(plant.get("water_potential").min()), steps=built.iteration, seconds=seconds)
+                leaf_min=float(plant.get("water_potential").min()), steps=built.step_count, seconds=seconds)
 
 
 def plots(built, folder):
@@ -63,7 +63,7 @@ def plots(built, folder):
 
 def summary(built, stop):
     plant, soil = built.populations[0].data_structure, built.environment[0].grid
-    print(f"converged in {built.iteration} steps; largest change of Ψ per step (MPa): "
+    print(f"converged in {built.step_count} steps; largest change of Ψ per step (MPa): "
           + ", ".join(f"{change:.1e}" for change in stop.history))
     print(f"transpiration {plant.get('evaporation').sum():.4f} mm3 s-1, root uptake "
           f"{plant.get('root_uptake').sum():.4f} mm3 s-1, soil evaporation {soil.get('evaporation').sum():.4f} "

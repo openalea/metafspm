@@ -54,7 +54,7 @@ def test_an_mpg_datastructure_loads_its_checkpoint_in_place(tmp_path):
 
 
 def test_a_grid_loads_its_checkpoint_in_place(tmp_path):
-    grid = ArrayDataStructure(shape=(3, 2, 2), dx=0.1)
+    grid = ArrayDataStructure(shape=(3, 2, 2), spacing=0.1)
     grid.register("nitrate", np.arange(12.).reshape(3, 2, 2), location="cell")
     grid.checkpoint(str(tmp_path / "grid"))
     grid.set("nitrate", -1.)
@@ -279,7 +279,7 @@ def test_alias_rejects_cycles_and_shadowing():
 
 
 def test_grid_accessors():
-    grid = ArrayDataStructure(shape=(3, 2, 2), dx=0.1)
+    grid = ArrayDataStructure(shape=(3, 2, 2), spacing=0.1)
     grid.register("T", default=10.)
     view = grid.get("T")
     grid.set("T", np.full((3, 2, 2), 12.))
@@ -305,10 +305,10 @@ def test_compartment_and_connection_labels_are_distinct():
 
 
 def test_a_grid_gives_its_cell_sizes():
-    grid = ArrayDataStructure(shape=(2, 3, 4), dx=(0.1, 0.2, 0.05))
-    np.testing.assert_array_equal(grid.dx, [0.1, 0.2, 0.05])
-    grid.dx[0] = 9.                                                       # a copy
-    assert grid.dx[0] == 0.1
+    grid = ArrayDataStructure(shape=(2, 3, 4), spacing=(0.1, 0.2, 0.05))
+    np.testing.assert_array_equal(grid.spacing, [0.1, 0.2, 0.05])
+    grid.spacing[0] = 9.                                                       # a copy
+    assert grid.spacing[0] == 0.1
 
 
 def test_a_scalar_is_written_from_a_one_value_array():

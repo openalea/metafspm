@@ -305,7 +305,7 @@ def test_one_component_declared_on_nodes_runs_on_a_plant_graph_and_on_a_grid():
     g, _ = generate_simple_mpg_seedling()
     g.populate_graph(g.scales.SubOrgan)
     g.convert_properties_to_arraydict()
-    plant, grid = MPGDataStructure(g, from_scale=g.scales.SubOrgan), ArrayDataStructure(shape=(2, 2, 3), dx=0.1)
+    plant, grid = MPGDataStructure(g, from_scale=g.scales.SubOrgan), ArrayDataStructure(shape=(2, 2, 3), spacing=0.1)
     for ds, node_location in ((plant, "node"), (grid, "cell")):
         NodesAndEdges(data_structure=ds)
         assert ds.location("potential") == node_location and ds.location("conductance") == "edge"
@@ -323,11 +323,11 @@ class ClockedByClass(Clocked):
 
 
 def test_a_component_takes_its_time_step_at_construction_or_from_the_simulation():
-    grid = ArrayDataStructure(shape=(2,), dx=0.1)
+    grid = ArrayDataStructure(shape=(2,), spacing=0.1)
     grid.simulation_time_step = 3600.                     # a Scene's step
-    assert Clocked(data_structure=grid).time_step == Clocked(data_structure=grid).dt == 3600.   # the simulation's
+    assert Clocked(data_structure=grid).time_step == Clocked(data_structure=grid).step_duration == 3600.   # the simulation's
     assert ClockedByClass(data_structure=grid).time_step == 60.                                 # its class's
-    assert Clocked(data_structure=grid, time_step=900.).dt == 900.                               # given explicitly
+    assert Clocked(data_structure=grid, time_step=900.).step_duration == 900.                               # given explicitly
 
 
 @dataclass
@@ -345,7 +345,7 @@ class Counted(FunctionalComponent):
 
 
 def test_a_component_runs_once_per_time_step_within_the_simulation_step():
-    grid = ArrayDataStructure(shape=(2,), dx=0.1)
+    grid = ArrayDataStructure(shape=(2,), spacing=0.1)
     grid.simulation_time_step = 3600.
     model = Counted(data_structure=grid, time_step=900.)
     model()
@@ -356,7 +356,7 @@ def test_a_component_runs_once_per_time_step_within_the_simulation_step():
 
 
 def test_a_time_step_must_divide_the_simulation_step():
-    grid = ArrayDataStructure(shape=(2,), dx=0.1)
+    grid = ArrayDataStructure(shape=(2,), spacing=0.1)
     grid.simulation_time_step = 3600.
     with pytest.raises(ValueError, match="must divide the simulation time step"):
         Counted(data_structure=grid, time_step=1000.)

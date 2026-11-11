@@ -604,7 +604,7 @@ class DataStructureComponent(Component):
         return maps[name]
 
     @property
-    def dt(self) -> float:
+    def step_duration(self) -> float:
         """Length of the current (sub-)step of a graph-system solve; the time step outside sub-stepping (every component's steps)."""
         step = self.__dict__.get("_current_dt", getattr(self, "time_step", None))
         if step is None:
@@ -653,7 +653,7 @@ class DataStructureComponent(Component):
             declared = getattr(type(self), "time_step", None)                 # a class attribute of a subclass
             self.time_step = declared if declared is not None else simulation_step
         # The component runs once per time_step: simulation step / time_step times per simulation step; once per
-        # call alone, or without a time step (then its equations may not read self.dt)
+        # call alone, or without a time step (then its equations may not read self.step_duration)
         if simulation_step is not None and self.time_step is not None:
             from openalea.metafspm.coupling.choregrapher import sub_steps
             sub_steps(simulation_step, self.time_step, type(self).__name__)

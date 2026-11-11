@@ -321,4 +321,4 @@ def test_frames_folded_into_the_pattern():
     with pytest.raises(ValueError, match="folded"):
         from_frame(frame)
     assert scene_to_frame(scene, fold=True).data_structure("RootPopulation").extras["metafspm"]["folded"] == [
-        [0., float(scene.xrange)], [0., float(scene.yrange)]]
+        [0., float(scene.x_range)], [0., float(scene.y_range)]]

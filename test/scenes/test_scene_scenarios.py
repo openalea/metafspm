@@ -45,10 +45,10 @@ class SoilSettings(FunctionalComponent):
 
 
 class Ground(EnvironmentModel):
-    def __init__(self, plant_data_structures, xrange, yrange, time_step, depth=0.4):
-        super().__init__(plant_data_structures, xrange, yrange, time_step)
+    def __init__(self, plant_data_structures, x_range, y_range, time_step, depth=0.4):
+        super().__init__(plant_data_structures, x_range, y_range, time_step)
         self.depth = depth
-        self.grid = ArrayDataStructure(shape=(2, 1, 2), dx=0.2)
+        self.grid = ArrayDataStructure(shape=(2, 1, 2), spacing=0.2)
         self.settings = SoilSettings(data_structure=self.grid, time_step=time_step)
         self.components = [self.settings]
 
@@ -96,8 +96,8 @@ class Optics(FunctionalComponent):
 
 
 class Light(EnvironmentModel):
-    def __init__(self, plant_data_structures, xrange, yrange, time_step):
-        super().__init__(plant_data_structures, xrange, yrange, time_step)
+    def __init__(self, plant_data_structures, x_range, y_range, time_step):
+        super().__init__(plant_data_structures, x_range, y_range, time_step)
         self.optics = Optics(data_structure=plant_data_structures[0], time_step=time_step)
         self.components = [self.optics]
 

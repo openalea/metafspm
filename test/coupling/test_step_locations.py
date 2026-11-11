@@ -29,7 +29,7 @@ class Supply(Organs):
 
     @state
     def _supply(self, supply_rate):
-        return supply_rate * self.dt                       # one value per plant: the plants' location
+        return supply_rate * self.step_duration                       # one value per plant: the plants' location
 
     @state
     def _kind_record(self, diameter):

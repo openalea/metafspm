@@ -32,8 +32,8 @@ def _check(grid):
 
 
 def test_regular_and_adaptive_grids_hold_their_descriptors():
-    _check(ArrayDataStructure(shape=(2, 3, 4), dx=(0.1, 0.2, 0.05), periodic=(True, True, False)))
-    grid = AdaptiveGridDataStructure(shape=(2, 2, 3), dx=(0.1, 0.1, 0.05), max_level=2, periodic=(True, True, False))
+    _check(ArrayDataStructure(shape=(2, 3, 4), spacing=(0.1, 0.2, 0.05), periodic=(True, True, False)))
+    grid = AdaptiveGridDataStructure(shape=(2, 2, 3), spacing=(0.1, 0.1, 0.05), max_level=2, periodic=(True, True, False))
     _check(grid)
     marked = np.zeros(grid.n_nodes(), dtype=bool)
     marked[0] = True
@@ -59,7 +59,7 @@ class Water(FunctionalComponent):
 
 
 def test_after_regrid_hooks_run_once_per_regridding_with_the_new_cells():
-    grid = AdaptiveGridDataStructure(shape=(2, 2, 2), dx=0.1, max_level=1)
+    grid = AdaptiveGridDataStructure(shape=(2, 2, 2), spacing=0.1, max_level=1)
     water = Water(data_structure=grid)
     content = np.linspace(0.1, 0.3, grid.n_nodes())
     grid.set("water_content", content)

@@ -94,7 +94,7 @@ def test_a_union_s_values_reach_a_suborgan_component_of_an_anatomy_mode_plant():
 
 def test_a_soil_mapping_maps_the_suborgans_and_their_masked_compartments():
     ds, ends, cells, segments = _plant()
-    soil_grid = ArrayDataStructure(shape=(1, 1, N_SEGMENTS + 1), dx=CELL)
+    soil_grid = ArrayDataStructure(shape=(1, 1, N_SEGMENTS + 1), spacing=CELL)
     soil = Soil(data_structure=soil_grid)
     mapping = CrossMapping(ds, soil_grid, method="overlap", mask="soil_nodes")
     assert mapping.location == "SubOrgan"

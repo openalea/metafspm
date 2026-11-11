@@ -130,7 +130,7 @@ class GridDiffusionProbe(FunctionalComponent):
 
 
 def test_a_restored_grid_continues_bit_for_bit(tmp_path):
-    grid = ArrayDataStructure(shape=(3, 2, 2), dx=(0.1, 0.2, 0.05), origin=(1., 0., 0.), periodic=(True, False, False))
+    grid = ArrayDataStructure(shape=(3, 2, 2), spacing=(0.1, 0.2, 0.05), origin=(1., 0., 0.), periodic=(True, False, False))
     model = GridDiffusionProbe(data_structure=grid)
     grid.set("nitrate", np.arange(12.).reshape(3, 2, 2))
     model()

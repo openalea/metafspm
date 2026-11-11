@@ -6,7 +6,7 @@ from openalea.metafspm.testing.soil import Soil
 
 
 def test_the_coarse_soil_solves_its_steady_profile():
-    soil = Soil([], xrange=0.2, yrange=0.2, time_step=3600.)
+    soil = Soil([], x_range=0.2, y_range=0.2, time_step=3600.)
     assert soil.grid.n_nodes() == 4 * 4 * 8                      # 5 cm cells, 40 cm deep
     soil.run()
     psi = np.asarray(soil.grid.get("water_potential")).reshape(4, 4, 8)

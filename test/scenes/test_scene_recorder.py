@@ -58,7 +58,7 @@ def test_a_failed_run_is_marked_with_its_error(tmp_path):
 
 
 def test_a_stopped_run_and_a_loop_of_steps(tmp_path):
-    scene = _scene(str(tmp_path / "a"), stop_when=lambda s: s.iteration == 2)
+    scene = _scene(str(tmp_path / "a"), stop_when=lambda s: s.step_count == 2)
     scene.simulate(5)
     assert _json(tmp_path / "a" / "run.json")["status"] == "stopped"
     scene = _scene(SceneRecorder(str(tmp_path / "b"), summary_period="2 h"))
@@ -73,7 +73,7 @@ def test_a_stopped_run_and_a_loop_of_steps(tmp_path):
 
 def test_tables_of_ones_own_in_memory():
     def soil_total(scene):
-        if scene.iteration % 2:
+        if scene.step_count % 2:
             return None                                   # no row at this step
         return {"time": scene.time, "nitrate": float(scene.environment[0].grid.get("soil_nitrate").sum())}
     recorder = SceneRecorder(tables={"soil": soil_total})

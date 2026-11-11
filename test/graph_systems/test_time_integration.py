@@ -1,6 +1,6 @@
 """
 Time integration of graph systems: sub-steps and adaptive
-step doubling within the component's time step, self.dt, and the previous() levels.
+step doubling within the component's time step, self.step_duration, and the previous() levels.
 """
 from dataclasses import dataclass
 
@@ -22,12 +22,12 @@ SHAPE, DX, DT = (6, 1, 1), 0.1, 1.
 
 
 class _Diffusion:
-    """Implicit Euler diffusion written with self.dt and self.previous() (required for sub-steps)."""
+    """Implicit Euler diffusion written with self.step_duration and self.previous() (required for sub-steps)."""
 
     @node_balance(field="solute")
     def _balance(self, solute, solute_flux):
         volume = self.data_structure.cell_volume()
-        return (solute - self.previous("solute")) / self.dt \
+        return (solute - self.previous("solute")) / self.step_duration \
             + np.asarray(self.graph_view.incidence @ solute_flux).reshape(-1) / volume
 
     @edge_law(field="solute_flux")
@@ -72,7 +72,7 @@ class TooStrict(Fields):
 
 
 def _grid(diffusivity=1e-3):
-    grid = ArrayDataStructure(shape=SHAPE, dx=DX)
+    grid = ArrayDataStructure(shape=SHAPE, spacing=DX)
     c0 = np.zeros(SHAPE)
     c0[0] = 1.
     grid.register("solute", c0, location="cell")
@@ -95,7 +95,7 @@ def _exact(grid, c, t, diffusivity=1e-3):
 def test_one_step_is_unchanged_and_dt_is_the_time_step():
     grid, c0 = _grid()
     model = OneStep(data_structure=grid)
-    assert model.dt == DT
+    assert model.step_duration == DT
     model()
     np.testing.assert_allclose(grid.get("solute").reshape(-1), _implicit_euler(grid, c0, DT, 1), atol=1e-9)
 
@@ -162,7 +162,7 @@ class _LogarithmicDecay:
     @node_balance(field="amount")
     def _balance(self, amount):
         with np.errstate(invalid="ignore", divide="ignore"):
-            return np.log(amount) - np.log(self.previous("amount")) + RATE * self.dt
+            return np.log(amount) - np.log(self.previous("amount")) + RATE * self.step_duration
 
 
 @dataclass
@@ -189,7 +189,7 @@ class DecayAdaptiveLongSteps(Decay):
 
 
 def _amounts():
-    grid = ArrayDataStructure(shape=SHAPE, dx=DX)
+    grid = ArrayDataStructure(shape=SHAPE, spacing=DX)
     grid.register("amount", np.ones(SHAPE), location="cell")
     return grid
 
