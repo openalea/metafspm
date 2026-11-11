@@ -9,8 +9,7 @@ import sys
 
 import numpy as np
 
-from openalea.metafspm.scene.population import planting, stand
-from openalea.metafspm.scene.scene import Scene, SceneRecorder
+from openalea.metafspm import planting, Scene, SceneRecorder, stand
 
 from models import SCENE_TRANSLATOR, SeedlingWater, Soil, largest_change
 from one_plant import plots, summary

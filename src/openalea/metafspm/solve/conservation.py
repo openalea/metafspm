@@ -159,25 +159,25 @@ def record_substep(component, data_structure, conserved, h: float) -> None:
     component.__dict__.setdefault("_conservation_pending", []).append(flows)
 
 
-def mark(component) -> int:
+def _mark(component) -> int:
     """The number of pending sub-steps (an adaptive trial's start)."""
     return len(component.__dict__.get("_conservation_pending", []))
 
 
-def reject(component, since: int) -> None:
+def _reject(component, since: int) -> None:
     """The pending sub-steps from *since* on dropped (a rejected or replaced trial)."""
     pending = component.__dict__.get("_conservation_pending")
     if pending is not None:
         del pending[since:]
 
 
-def begin_call(component, data_structure, method_name: str, conserved) -> None:
+def _begin_call(component, data_structure, method_name: str, conserved) -> None:
     """Before a call of the system: the amounts held, the pending sub-steps emptied."""
     component.__dict__["_conservation_pending"] = []
     component.__dict__.setdefault("_conservation_start", {}).setdefault(method_name, held(component, data_structure, conserved))
 
 
-def end_call(component, data_structure, method_name: str, conserved) -> None:
+def _end_call(component, data_structure, method_name: str, conserved) -> None:
     """After a call: its accepted sub-steps' flows added to the balance since the last reset."""
     pending = component.__dict__.pop("_conservation_pending", [])
     end = held(component, data_structure, conserved)

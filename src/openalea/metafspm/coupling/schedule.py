@@ -93,7 +93,7 @@ class ScheduledStep:
 
     def run(self) -> bool:
         """Run the step (its cadence's due calls only); whether it ran."""
-        from openalea.metafspm.coupling.cadence import run_cadenced
+        from openalea.metafspm.coupling.cadence import _run_cadenced
         if self.form == "model":
             self.target.run()
             return True
@@ -110,7 +110,7 @@ class ScheduledStep:
             self._call(None)
             due = True
         else:
-            due = run_cadenced(self.components, cadence, self._call, key=self.name)
+            due = _run_cadenced(self.components, cadence, self._call, key=self.name)
         if self.form == "component":
             component = self.components[0]
             component.__dict__["_wall_time"] = component.__dict__.get("_wall_time", 0.) + perf_counter() - started

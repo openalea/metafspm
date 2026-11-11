@@ -24,10 +24,7 @@ import os
 import sys
 
 from openalea.caribu.component import CaribuLightModel
-from openalea.metafspm.compute import Compute
-from openalea.metafspm.scene.population import planting, stand
-from openalea.metafspm.scene.recorder import SceneRecorder
-from openalea.metafspm.scene.scene import Scene
+from openalea.metafspm import Compute, planting, Scene, SceneRecorder, stand
 
 from component import RichardsSoilModel
 from models import (FRAME_VARIABLES, LIGHT_SCENARIO, SCENE_TRANSLATOR, SOIL_SCENARIO, TABLES, WHEAT_SCENARIO,

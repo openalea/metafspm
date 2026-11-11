@@ -482,8 +482,8 @@ def _declared_locations(instance):
         data_structure = getattr(instance, "data_structure", None)
         if data_structure is None:
             return {}
-        from openalea.metafspm.coupling.declaration import declared_specs
-        specs = declared_specs(instance, data_structure)
+        from openalea.metafspm.coupling.declaration import _declared_specs
+        specs = _declared_specs(instance, data_structure)
     return {name: spec.location for name, spec in specs.items()}
 
 
@@ -1394,9 +1394,9 @@ def _invoke_graph_system(self, method_name: str) -> None:
     if not conserved:
         _solve_call(self, method_name)
         return
-    conservation.begin_call(self, _live_ds(self), method_name, conserved)
+    conservation._begin_call(self, _live_ds(self), method_name, conserved)
     _solve_call(self, method_name)
-    conservation.end_call(self, _live_ds(self), method_name, conserved)
+    conservation._end_call(self, _live_ds(self), method_name, conserved)
 
 
 def _solve_call(self, method_name: str) -> None:
@@ -1605,11 +1605,11 @@ def _integrate_adaptive(self, method_name, spec_def, time_step, names) -> None:
         failure = None
         try:
             self.__dict__["_solve_offset"] = t
-            trial = conservation.mark(self)
+            trial = conservation._mark(self)
             _solve_substep(self, method_name, spec_def, h)
             coarse = _capture(data_structure, spec_def["node_unknowns"], self)
             _restore(data_structure, start, self)
-            conservation.reject(self, trial)              # the coarse step only measures the error
+            conservation._reject(self, trial)              # the coarse step only measures the error
             _solve_substep(self, method_name, spec_def, h / 2.)
             self.__dict__["_solve_offset"] = t + h / 2.
             _solve_substep(self, method_name, spec_def, h / 2.)
@@ -1626,7 +1626,7 @@ def _integrate_adaptive(self, method_name, spec_def, time_step, names) -> None:
             h *= min(2., max(0.2, 0.9 / np.sqrt(max(error, 1e-12))))
             continue
         _restore(data_structure, start, self)
-        conservation.reject(self, trial)
+        conservation._reject(self, trial)
         rejected += 1
         h *= 0.5 if failure is not None else max(0.2, 0.9 / np.sqrt(error))
         if h < min_step:

@@ -39,15 +39,13 @@ from dataclasses import dataclass
 import numpy as np
 from scipy.sparse import csr_matrix, diags
 
-from openalea.metafspm.coupling.component import (FunctionalComponent, StructuralComponent, after_regrid,
-                                                  display_end, input_variable, parameter, planting_variable,
-                                                  setting, state_variable)
-from openalea.metafspm.coupling.translator import Translator
+from openalea.metafspm import (boundary_condition, FunctionalComponent, graph_jacobian, graph_output, graph_system,
+                               input_variable, node_balance, parameter, planting_variable, setting, state,
+                               state_variable, StructuralComponent, Translator)
+from openalea.metafspm.coupling.component import after_regrid, display_end
 from openalea.metafspm.data_structure.configs import ScalesConfig
 from openalea.metafspm.scene.environment import EnvironmentModel
 from openalea.metafspm.solve.conservation import Conservation
-from openalea.metafspm.solve.decorator import (boundary_condition, graph_jacobian, graph_output, graph_system,
-                                               node_balance, state)
 
 WATER_DENSITY, GRAVITY = 1000., 9.81                          # kg m-3, m s-2
 # The soil's water, conserved by its solve: held θ V, in through the surface, out through the bottom and to the roots

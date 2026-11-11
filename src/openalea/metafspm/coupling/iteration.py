@@ -105,7 +105,7 @@ def _written(step) -> list:
     return out
 
 
-def snapshot(step) -> dict:
+def _snapshot(step) -> dict:
     """What a fixed-point iteration restores before running *step* again: its components' state (_RESTORED), the
     variables it writes, the topology versions of their DataStructures."""
     return {"components": [{key: copy.deepcopy(component.__dict__[key]) for key in _RESTORED
@@ -114,8 +114,8 @@ def snapshot(step) -> dict:
             "topology": {key: root.topology_version for key, root in _roots(step).items()}}
 
 
-def restore(step, kept: dict, name: str) -> None:
-    """Restore *step*'s state from *kept* (snapshot()), a ValueError when its DataStructures' topology changed."""
+def _restore(step, kept: dict, name: str) -> None:
+    """Restore *step*'s state from *kept* (_snapshot()), a ValueError when its DataStructures' topology changed."""
     for key, root in _roots(step).items():
         if root.topology_version != kept["topology"].get(key, root.topology_version):
             raise ValueError(f"FixedPoint: the topology of '{name}''s DataStructure changed after it ran (growth, a "

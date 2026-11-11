@@ -24,9 +24,7 @@ from openalea.cnwgrass.metafspm.gas_exchange import GasExchange                 
 from openalea.metafspm.coupling.geometry import CentreIn, FractionIn                 # noqa: E402
 from openalea.metafspm.coupling.units import conversion_factor                       # noqa: E402
 from openalea.metafspm.data_structure.data_api import EntityView, LocatedView        # noqa: E402
-from openalea.metafspm.scene.population import Planting, planting                   # noqa: E402
-from openalea.metafspm.scene.recorder import SceneRecorder                           # noqa: E402
-from openalea.metafspm.scene.scene import Scene                                      # noqa: E402
+from openalea.metafspm import Planting, planting, Scene, SceneRecorder
 
 EXAMPLE = os.path.join(os.path.dirname(__file__), "..")
 sys.path.insert(0, os.path.abspath(EXAMPLE))

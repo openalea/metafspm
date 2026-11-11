@@ -38,7 +38,7 @@ air_water_potential,,forcing,MPa,The air's water potential over the day (a table
   variable, here the air's water potential hour by hour over two days. It needs no model: forcings are the scene's.
 
 ```python
-from openalea.metafspm.scene.scenarios import read_scenarios
+from openalea.metafspm import read_scenarios
 
 scenarios = read_scenarios("scenarios/scenarios.csv")
 scenarios["dry"]
@@ -57,7 +57,7 @@ one, at the centre of a 0.2 m × 0.2 m column) or sown (`stand(plants, rows=, ro
 are named `p0`, `p1`, …
 
 ```python
-from openalea.metafspm.scene.population import Planting, planting
+from openalea.metafspm import Planting, planting
 
 table = planting([Planting(x=0.1, y=0.1)], SeedlingWater, scenario["SeedlingWater"], x_range=0.2, y_range=0.2)
 ```
@@ -68,8 +68,7 @@ differ per plant; the model's other entries are one for all.
 ## 3. The scene: forcings, recorder, run
 
 ```python
-from openalea.metafspm.scene.recorder import SceneRecorder
-from openalea.metafspm.scene.scene import Scene
+from openalea.metafspm import Scene, SceneRecorder
 
 forcings = scenario.pop("forcings")
 recorder = SceneRecorder("outputs/dry", frame_period="6 h", checkpoint_period="12 h", keep_checkpoints=1)
@@ -168,7 +167,7 @@ The dry air pulls more water through the seedling than the humid one, despite it
 declares (`min_value`, `max_value`). `variants` builds scenarios around a base one, within those bounds:
 
 ```python
-from openalea.metafspm.scene.scenarios import parameter_table, variants
+from openalea.metafspm import parameter_table, variants
 
 parameter_table(SeedlingStructure, main=("root_radial_k", "stomatal_conductance"))
 variants(scenarios["humid"]["SeedlingWater"], {"stomatal_conductance": None}, design="grid", levels=3,

@@ -51,7 +51,7 @@ from openalea.metafspm.compute import Compute
 from openalea.metafspm.coupling.choregrapher import sub_steps
 from openalea.metafspm.coupling.forcings import forcing_mean, forcing_table, is_spatial, spatial_mean
 from openalea.metafspm.coupling.cross import CrossMapping, Exchanges, UnionDataStructure, UnionMapping
-from openalea.metafspm.coupling.translator import Translator, link_pairs, matches, scene_name
+from openalea.metafspm.coupling.translator import Translator, link_pairs, _matches, _scene_name
 from openalea.metafspm.data_structure.data_api import MPGDataStructure, _root_data_structure
 from openalea.metafspm.scene.recorder import SceneRecorder
 from openalea.metafspm.scene.population import (Population, _apply_model_scenario, _flat_scenario, _model_arguments,
@@ -500,7 +500,7 @@ class Scene:
             declaring = [c for c in self.components
                          if getattr(getattr(c, "_variable_specs", {}).get(name), "role", None)
                          in ("input_variable", "parameter")]
-            free = [c for c in declaring if not any(link.variable == name and matches(link.receiver, c)
+            free = [c for c in declaring if not any(link.variable == name and _matches(link.receiver, c)
                                                     for link in self.translator.links)
                     and name not in getattr(c, "_derived_inputs", ())]
             if not free:
@@ -567,10 +567,10 @@ class Scene:
         iterated = self.coupling != "explicit"
         snapshots = {}
         if iterated:                                       # each iterated step's start kept, at its first run
-            from openalea.metafspm.coupling.iteration import snapshot
+            from openalea.metafspm.coupling.iteration import _snapshot
             for model in self.coupling.models():
                 model.__dict__["_before_step"] = lambda step: snapshots.setdefault(
-                    id(step), snapshot(step)) if self.coupling.watches(step) else None
+                    id(step), _snapshot(step)) if self.coupling.watches(step) else None
         for model in self.environment:
             if not self._due(model):
                 continue
@@ -604,7 +604,7 @@ class Scene:
     def _iterate(self, snapshots: dict) -> None:
         """A fixed-point coupling's iterations (coupling.iteration): the iterated steps run again from their start,
         after the exchanges into their models, until what they write no longer changes."""
-        from openalea.metafspm.coupling.iteration import (check_finite, converged, restore, values,
+        from openalea.metafspm.coupling.iteration import (_restore, check_finite, converged, values,
                                                           warn_not_converged)
         coupling = self.coupling
         for model in coupling.models():
@@ -616,7 +616,7 @@ class Scene:
         started = perf_counter()
         for _ in range(coupling.max_iterations):
             for name, model, step in bound:
-                restore(step, snapshots[id(step)], name)
+                _restore(step, snapshots[id(step)], name)
                 for data_structure in _own_data_structures(model):
                     self.exchanges.exchange(into=data_structure)
                 step.run()
@@ -776,7 +776,7 @@ class Scene:
         """{key: object} of the models and components whose non-variable state checkpoints keep (hooks)."""
         objects = {f"environment_{i}": model for i, model in enumerate(self.environment)}
         objects.update({f"population_{p.name}": p.instance for p in self.populations})
-        objects.update({f"component_{scene_name(c)}": c for c in self.components})
+        objects.update({f"component_{_scene_name(c)}": c for c in self.components})
         return objects
 
     def checkpoint(self, path: str, shared: str = None) -> None:
@@ -961,14 +961,14 @@ def _with_identity_links(translator, populations, environment):
             for plant in plants:
                 plant_inputs, plant_states = roles(plant)
                 for name in sorted(plant_inputs & light_states):            # into a plant model: one provider
-                    if (scene_name(plant), name) not in {(receiver, variable) for receiver, variable, _ in added} \
-                            and not any(link.variable == name and matches(link.receiver, plant)
+                    if (_scene_name(plant), name) not in {(receiver, variable) for receiver, variable, _ in added} \
+                            and not any(link.variable == name and _matches(link.receiver, plant)
                                         for link in translator.links):
-                        added.append((scene_name(plant), name, scene_name(light)))
+                        added.append((_scene_name(plant), name, _scene_name(light)))
                 for name in sorted(light_inputs & plant_states):            # into the union: one per population
-                    if not any(link.variable == name and matches(link.receiver, light) and matches(link.provider, plant)
+                    if not any(link.variable == name and _matches(link.receiver, light) and _matches(link.provider, plant)
                                for link in translator.links):
-                        added.append((scene_name(light), name, scene_name(plant)))
+                        added.append((_scene_name(light), name, _scene_name(plant)))
     if not added:
         return translator
     out = Translator()

@@ -68,9 +68,7 @@ sys.path.insert(0, HERE)
 from openalea.metafspm.solve import reduction as reduction_module    # noqa: E402
 
 from openalea.caribu.component import CaribuLightModel             # noqa: E402
-from openalea.metafspm.scene.population import planting, stand       # noqa: E402
-from openalea.metafspm.scene.recorder import SceneRecorder           # noqa: E402
-from openalea.metafspm.scene.scene import Scene                      # noqa: E402
+from openalea.metafspm import planting, Scene, SceneRecorder, stand
 
 from component import RichardsSoilModel                              # noqa: E402
 from models import (FRAME_VARIABLES, LIGHT_SCENARIO, SCENE_TRANSLATOR, SOIL_SCENARIO, TABLES,  # noqa: E402
@@ -171,7 +169,7 @@ class KindCounter:
         counter = self
 
         def counted(reduction, missing):
-            from openalea.metafspm.compute import Compute
+            from openalea.metafspm import Compute
             started = time.perf_counter()
             try:
                 return evaluate(reduction, missing)
@@ -528,7 +526,7 @@ def main(argv=None):
     parser.add_argument("--thread-scaling", action="store_true",
                         help="time the last step's large solves and parallel kernels at 1-12 threads")
     arguments = parser.parse_args(argv)
-    from openalea.metafspm.compute import Compute
+    from openalea.metafspm import Compute
     linear_solver = arguments.linear_solver
     if linear_solver is not None and linear_solver.lstrip().startswith("{"):
         linear_solver = json.loads(linear_solver)                  # a mapping: one backend per system

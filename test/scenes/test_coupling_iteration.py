@@ -80,16 +80,16 @@ def test_the_iterated_steps_are_checked():
 def test_a_step_whose_data_structure_changed_after_it_ran_is_refused():
     """A step is run again from its start: when its DataStructure's topology changed after its first run (a later
     step grew or regridded it), restoring it raises."""
-    from openalea.metafspm.coupling.iteration import restore, snapshot
+    from openalea.metafspm.coupling.iteration import _restore, _snapshot
     scene = _scene(coupling=FixedPoint(("SceneSoil.nitrate", "RootPopulation.carbon")))
     scene.run()                                                 # carbon runs after growth: allowed
     (step,) = [step for step in scene.population().instance.steps() if step.name == "carbon"]
-    kept = snapshot(step)
-    restore(step, kept, "RootPopulation.carbon")                # unchanged: restored
+    kept = _snapshot(step)
+    _restore(step, kept, "RootPopulation.carbon")                # unchanged: restored
     data_structure = scene.population().data_structure
     data_structure.__dict__["_topology_version"] = data_structure.topology_version + 1  # as a growth after it would
     with pytest.raises(ValueError, match="topology"):
-        restore(step, kept, "RootPopulation.carbon")
+        _restore(step, kept, "RootPopulation.carbon")
 
 
 def test_a_non_finite_iterate_is_not_converged():

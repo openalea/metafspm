@@ -82,7 +82,7 @@ def _scene_step(component) -> float:
     return float(step)
 
 
-def run_cadenced(components, cadence: Cadence, run, key: str = "step") -> bool:
+def _run_cadenced(components, cadence: Cadence, run, key: str = "step") -> bool:
     """Call *components* (a schedule step's, sharing *cadence*) at this scene step: their inputs accumulated (at
     "end"), then, when the interval is due (at "start": or their geometry changed since their last call), run(overrides)
     with their clocks, steps and inputs' means set for the interval (overrides: [{input: private name}] per component,

@@ -4,12 +4,17 @@ from typing import Literal, Optional
 from time import perf_counter
 import numpy as np
 
-from openalea.metafspm.solve.decorator import *
+import types
+import warnings
+
+from openalea.metafspm.coupling.choregrapher import Choregrapher
+from openalea.metafspm.solve import conservation
+from openalea.metafspm.solve.decorator import graph_system, postsegmentation, potential, rate, segmentation, state
 from openalea.metafspm.data_structure.mpg import MPG
-from openalea.metafspm.data_structure.data_api import (DataStructure, EntityView, GraphDataStructure,
+from openalea.metafspm.data_structure.data_api import (DataStructure, EntityView, GraphDataStructure, GraphView,
                                                       MPGDataStructure)
 from openalea.metafspm.data_structure.configs import ScalesConfig as _ScalesConfig
-from openalea.metafspm.coupling.declaration import declared_specs, DeclarationError, held_at_scale, holder_spec
+from openalea.metafspm.coupling.declaration import _declared_specs, DeclarationError, held_at_scale, _holder_spec
 from openalea.metafspm.coupling.declaration import scale_names as declared_scale_names
 
 # Map integer MPG scale constants to the generic "node"/"edge" vocabulary used
@@ -688,12 +693,12 @@ class DataStructureComponent(Component):
             return self._read(name)
 
     def _read(self, name: str) -> np.ndarray:
-        from openalea.metafspm.coupling.declaration import mapped_read
+        from openalea.metafspm.coupling.declaration import _mapped_read
         data_structure, spec = self.data_structure, self.variable_specs.get(name)
         if spec is None:
             raise KeyError(f"{type(self).__name__} declares no '{name}'")
         if held_at_scale(spec, data_structure):
-            return mapped_read(data_structure, spec)
+            return _mapped_read(data_structure, spec)
         if not data_structure.has(name) and self._optional(name):
             return np.full(tuple(data_structure._location_shape(spec.location)) + tuple(spec.shape or ()),
                            np.nan if spec.default is None else spec.default)
@@ -715,7 +720,7 @@ class DataStructureComponent(Component):
         property when the property exists (mapped from its scale), else with its declared default.
         Pre-registered variables are never overwritten; their location must match the declaration.
         """
-        self._variable_specs = declared_specs(self, data_structure)
+        self._variable_specs = _declared_specs(self, data_structure)
         for name, spec in self._variable_specs.items():
             pending = self.__dict__.get("_pending_parameters", {})
             if data_structure.has(name):
@@ -1338,7 +1343,7 @@ class StructuralComponent(DataStructureComponent):
         specs = [spec for spec in declared if not held_at_scale(spec, data_structure)]
         # its inputs another component holds at another location (an architecture's SubOrgan lengths read at the
         # Compartments): the MTG holds them at their holder's location, as their holder declares them
-        held = [holder_spec(spec, data_structure) for spec in declared if held_at_scale(spec, data_structure)]
+        held = [_holder_spec(spec, data_structure) for spec in declared if held_at_scale(spec, data_structure)]
         if hasattr(data_structure, "flush_mtg"):
             # The MPG-style code reads the MTG: the variables this component declares (its states, inputs and
             # parameters) changed since their last synchronisation are written first. Others are not: a step

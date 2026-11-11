@@ -60,12 +60,9 @@ from openalea.mecha.stand_ins import Development
 import numpy as np
 
 from openalea.caribu.simulation import clear_day_PAR
-from openalea.metafspm.coupling.composite_wrapper import CompositeModel
+from openalea.metafspm import as_forcing, CompositeModel, pulse, Summary, Translator
 from openalea.metafspm.coupling.durations import start_date
-from openalea.metafspm.coupling.forcings import as_forcing, pulse
-from openalea.metafspm.coupling.translator import Translator
 from openalea.metafspm.coupling.units import RADIUS_OF_DIAMETER, WATER_MOLAR_VOLUME
-from openalea.metafspm.scene.recorder import Summary
 
 from component import NodalRootEmergence, WheatCrown, scene_translator
 

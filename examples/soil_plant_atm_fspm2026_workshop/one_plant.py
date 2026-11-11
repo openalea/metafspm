@@ -7,8 +7,7 @@ scene step until the water potentials stop changing (a lagged fixed point), then
 import os
 import sys
 
-from openalea.metafspm.scene.population import Planting, planting
-from openalea.metafspm.scene.scene import Scene, SceneRecorder
+from openalea.metafspm import Planting, planting, Scene, SceneRecorder
 
 from models import SCENE_TRANSLATOR, SeedlingWater, Soil, largest_change
 import plotting

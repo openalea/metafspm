@@ -20,10 +20,7 @@ import sys
 import pandas as pd
 
 from openalea import encoding3d
-from openalea.metafspm.scene.population import Planting, planting
-from openalea.metafspm.scene.recorder import SceneRecorder
-from openalea.metafspm.scene.scenarios import parameter_table, read_scenarios, variants
-from openalea.metafspm.scene.scene import Scene
+from openalea.metafspm import parameter_table, Planting, planting, read_scenarios, Scene, SceneRecorder, variants
 
 from components import SeedlingStructure
 from models import SCENE_TRANSLATOR, SeedlingWater, Soil

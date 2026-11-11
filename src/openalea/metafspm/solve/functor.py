@@ -107,7 +107,7 @@ class Functor:
 
         is_parameter = [name not in settings and getattr(specs.get(name), "role", None) == "parameter"
                         and where(name) not in ("node", "edge", "cell") for name in self.input_names]
-        from openalea.metafspm.coupling.declaration import held_at_scale, mapped_read
+        from openalea.metafspm.coupling.declaration import held_at_scale, _mapped_read
         mapped = [name not in settings and not p and held_at_scale(specs.get(name), data_structure)
                   for name, p in zip(self.input_names, is_parameter)]
         others = [specs[name].location if m else where(name)
@@ -122,7 +122,7 @@ class Functor:
                 args.append(getattr(instance, name))
                 locations.append(None)
             elif down:
-                args.append(mapped_read(data_structure, specs[name]))
+                args.append(_mapped_read(data_structure, specs[name]))
                 locations.append(specs[name].location)
             elif name in missing:
                 spec = specs[name]                        # an optional input nothing provides: its default

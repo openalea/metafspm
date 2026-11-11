@@ -2,7 +2,7 @@ from contextvars import ContextVar
 from typing import Optional
 
 from openalea.metafspm.coupling.declaration import check_link
-from openalea.metafspm.coupling.translator import Translator, matches
+from openalea.metafspm.coupling.translator import Translator, _matches
 
 
 def _live_data_structure(component):
@@ -204,11 +204,11 @@ class CompositeModel:
                 rows.append(dict(receiver=receiver, variable=name, provider="the plants' structural components",
                                  coupling="geometry", sources="triangles()"))
             for name in table.loc[table["role"] == "input_variable", "name"]:
-                links = [link for link in translator.links if link.variable == name and matches(link.receiver, component)
-                         and not matches(link.provider, component)]
+                links = [link for link in translator.links if link.variable == name and _matches(link.receiver, component)
+                         and not _matches(link.provider, component)]
                 if links:
                     link = links[0]
-                    coupling = "scene" if not any(matches(link.provider, other) for other in components) \
+                    coupling = "scene" if not any(_matches(link.provider, other) for other in components) \
                         else link.coupling
                     sources = ", ".join(f"{source}" if factor in (1, 1.) else f"{source} * {factor}"
                                         for source, factor in link.sources.items()) if link.formula is None \
@@ -392,13 +392,13 @@ class CompositeModel:
         variable whose entities it weighs: the source's for a mean (up), the receiver's for a split (down).
         (None, the link's weight) when the locations are the same.
         """
-        from openalea.metafspm.coupling.declaration import DeclarationError, default_aggregation, link_direction
+        from openalea.metafspm.coupling.declaration import DeclarationError, default_aggregation, _link_direction
         source_locations = {data_structure.location(source) for source in link.sources}
         if len(source_locations) != 1 or location in source_locations:
             return None, link.weight
         (source_location,) = source_locations
         name = f"{link.receiver}.{link.variable} <- {link.provider}"
-        direction = link_direction(data_structure, source_location, location)
+        direction = _link_direction(data_structure, source_location, location)
         if direction is None:
             raise DeclarationError(f"{name}: from {source_location} to {location} has no default mapping, give "
                                    "aggregation=")

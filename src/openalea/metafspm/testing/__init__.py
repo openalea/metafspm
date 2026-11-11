@@ -38,9 +38,9 @@ def couplability_problems(component_cls, translator, name: str = None, data_stru
                     problems.append(f"{link.receiver}.{link.variable} reads {name}.{source}, which {name} does not declare")
     if data_structure is not None:
         from openalea.metafspm.coupling.composite_wrapper import CompositeModel
-        from openalea.metafspm.coupling.declaration import DeclarationError, declared_specs, kinds_agree
+        from openalea.metafspm.coupling.declaration import DeclarationError, _declared_specs, kinds_agree
         try:
-            specs = declared_specs(component_cls, data_structure)
+            specs = _declared_specs(component_cls, data_structure)
         except DeclarationError as error:
             problems.append(str(error))
             specs = {}

@@ -19,11 +19,10 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from openalea.metafspm.coupling.component import (FunctionalComponent, StructuralComponent, input_variable, parameter,
-                                                  state_variable)
+from openalea.metafspm import (boundary_condition, edge_law, FunctionalComponent, graph_output, graph_system,
+                               input_variable, node_balance, parameter, postsegmentation, state_variable,
+                               StructuralComponent)
 from openalea.metafspm.data_structure.configs import ScalesConfig as scales
-from openalea.metafspm.solve.decorator import (boundary_condition, edge_law, graph_output, graph_system,
-                                               node_balance, postsegmentation)
 
 from openalea.metafspm.testing.soil import (AIR_WATER_POTENTIAL, MM3, VAPOUR_FACTOR, SoilStructure,  # noqa: F401
                                            SoilWaterTransport, air_water_potential, vapour_factor)

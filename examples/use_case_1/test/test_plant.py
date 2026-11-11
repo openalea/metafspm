@@ -17,10 +17,8 @@ pytest.importorskip("openalea.archisimple")
 from openalea.adel.development import DAY, ScenarioShoot                              # noqa: E402
 from openalea.archisimple.architecture import RootArchitecture                        # noqa: E402
 from openalea.archisimple.parameter_sets import WHEAT_ON_A_SHOOT                      # noqa: E402
-from openalea.metafspm.coupling.composite_wrapper import CompositeModel                # noqa: E402
+from openalea.metafspm import CompositeModel, Planting, planting, Scene
 from openalea.metafspm.data_structure.data_api import EntityView                      # noqa: E402
-from openalea.metafspm.scene.population import Planting, planting                     # noqa: E402
-from openalea.metafspm.scene.scene import Scene                                       # noqa: E402
 
 EXAMPLE = os.path.join(os.path.dirname(__file__), "..")
 sys.path.insert(0, os.path.abspath(EXAMPLE))

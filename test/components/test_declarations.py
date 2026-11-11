@@ -8,7 +8,7 @@ import numpy as np
 import pytest
 
 from openalea.metafspm.coupling.component import FunctionalComponent, input_variable, parameter, state_variable
-from openalea.metafspm.coupling.declaration import DeclarationError, declared_specs, resolve_declaration
+from openalea.metafspm.coupling.declaration import DeclarationError, _declared_specs, resolve_declaration
 from openalea.metafspm.data_structure.configs import ScalesConfig as scales
 from openalea.metafspm.data_structure.data_api import ArrayDataStructure, MPGDataStructure
 from openalea.metafspm.solve.decorator import rate
@@ -208,7 +208,7 @@ def test_declaration_errors(seedling, name, message):
 def test_errors_name_the_component_and_field(seedling):
     _, _, data_structure = seedling
     with pytest.raises(DeclarationError, match=r"Errors\.unknown_location"):
-        declared_specs(Errors, data_structure)
+        _declared_specs(Errors, data_structure)
 
 
 # ---------------------------------------------------------------- registration on the DataStructure

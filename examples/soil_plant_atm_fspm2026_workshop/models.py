@@ -12,8 +12,7 @@ constant input of the components (components.AIR_WATER_POTENTIAL).
 """
 import numpy as np
 
-from openalea.metafspm.coupling.composite_wrapper import CompositeModel
-from openalea.metafspm.coupling.translator import Translator
+from openalea.metafspm import CompositeModel, Translator
 from openalea.metafspm.scene.environment import EnvironmentModel
 
 from openalea.metafspm.testing import soil as test_soil

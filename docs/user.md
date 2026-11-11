@@ -24,7 +24,7 @@ An MPG is an MTG with a solver graph: `populate_graph(scale)` creates one Compar
 graph's nodes) and one Connection per link (its edges).
 
 ```python
-from openalea.metafspm.data_structure.data_api import MPGDataStructure
+from openalea.metafspm import MPGDataStructure
 
 mtg.populate_graph(mtg.scales.SubOrgan)
 mtg.convert_properties_to_arraydict()
@@ -49,8 +49,7 @@ data_structure = MPGDataStructure(mtg, from_scale=mtg.scales.SubOrgan, nodes="Co
 ### Grids: `ArrayDataStructure` and `AdaptiveGridDataStructure`
 
 ```python
-from openalea.metafspm.data_structure.data_api import ArrayDataStructure
-from openalea.metafspm.data_structure.adaptive_grid import AdaptiveGridDataStructure
+from openalea.metafspm import AdaptiveGridDataStructure, ArrayDataStructure
 
 soil = ArrayDataStructure(shape=(20, 20, 50), spacing=(0.01, 0.01, 0.02), periodic=(True, True, False))
 adaptive = AdaptiveGridDataStructure(shape=(10, 10, 25), spacing=0.02, max_level=2, periodic=(True, True, False))
@@ -95,10 +94,8 @@ edit the structure), built on a DataStructure. Its fields declare its variables:
 
 ```python
 from dataclasses import dataclass
-from openalea.metafspm import FunctionalComponent
-from openalea.metafspm.coupling.component import input_variable, parameter, state_variable
+from openalea.metafspm import FunctionalComponent, input_variable, parameter, rate, state, state_variable
 from openalea.metafspm.data_structure.configs import ScalesConfig as scales
-from openalea.metafspm.solve.decorator import rate, state
 
 @dataclass
 class RootCarbon(FunctionalComponent):
@@ -247,7 +244,7 @@ Coupled equations over a graph (transport along a root system, diffusion in a so
 an inner class whose methods give the residuals of the node and edge unknowns.
 
 ```python
-from openalea.metafspm.solve.decorator import boundary_set, edge_law, graph_system, node_balance, node_rate
+from openalea.metafspm import boundary_set, edge_law, graph_system, node_balance, node_rate
 
 @dataclass
 class SoilDiffusion(FunctionalComponent):
@@ -1073,7 +1070,8 @@ summarises and under which protocol, so that observations made at that scale kno
 measure:
 
 ```python
-from openalea.metafspm.coupling.component import state_variable, upscaling
+from openalea.metafspm import state_variable
+from openalea.metafspm.coupling.component import upscaling
 from openalea.metafspm.solve.network import equivalent_conductance
 
 root_system_conductance: float = state_variable(

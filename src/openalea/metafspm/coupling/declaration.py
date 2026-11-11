@@ -183,7 +183,7 @@ def resolve_equivalences(link, receiver, provider):
     return replace(link, sources=sources)
 
 
-def link_direction(data_structure, from_location: str, to_location: str) -> Optional[str]:
+def _link_direction(data_structure, from_location: str, to_location: str) -> Optional[str]:
     """
     "up" from finer to coarser locations (nodes, then coarse scales, then the scalar plant scale), "down" the
     other way, None when edges are involved (node <-> edge aggregations have no default).
@@ -259,7 +259,7 @@ def held_at_scale(spec, data_structure) -> bool:
     DataStructure for every scale): read at the nodes from a coarser scale (mapped down: broadcast or split) while
     held at that scale's own location (a SubOrgan-scale architecture's length read at the Compartments), or read at
     its scale while held at the nodes as a broadcast from it (a segment's coordinates seen by its Compartments). It is
-    then that variable, read through the aggregation (mapped_read), not one of its own.
+    then that variable, read through the aggregation (_mapped_read), not one of its own.
     """
     if spec is None or spec.role == "state_variable" or spec.scale is None or not data_structure.has(spec.name):
         return False
@@ -273,7 +273,7 @@ def held_at_scale(spec, data_structure) -> bool:
             and meta.get("aggregation") == "broadcast")
 
 
-def holder_spec(spec, data_structure) -> "VariableSpec":
+def _holder_spec(spec, data_structure) -> "VariableSpec":
     """The spec, at its holder's location, of a variable *spec* reads held elsewhere (held_at_scale): what the MTG
     holds of it (an MPG-style step reads it at its scale's vertices), as the holder declares it."""
     from dataclasses import replace
@@ -283,7 +283,7 @@ def holder_spec(spec, data_structure) -> "VariableSpec":
     return replace(spec, location=held, aggregation=None)
 
 
-def mapped_read(data_structure, spec) -> np.ndarray:
+def _mapped_read(data_structure, spec) -> np.ndarray:
     """The values at *spec*'s location of a variable held elsewhere (held_at_scale): at the nodes through *spec*'s
     aggregation, or at its scale from the nodes' broadcast values (their mean)."""
     if spec.location != "node":
@@ -460,7 +460,7 @@ def _is_missing(value) -> bool:
     return value is MISSING
 
 
-def declared_specs(component_or_class, data_structure) -> dict:
+def _declared_specs(component_or_class, data_structure) -> dict:
     """{field name: VariableSpec} of every DataStructure variable declared by a component class."""
     cls = component_or_class if isinstance(component_or_class, type) else type(component_or_class)
     specs = {}
