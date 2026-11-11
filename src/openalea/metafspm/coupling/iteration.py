@@ -6,12 +6,12 @@ wrote at this step and those after it at the step before (use case 1's soil the 
 decision U-6's lag). A fixed-point coupling iterates chosen schedule steps of several models within the scene step,
 until what they write no longer changes::
 
-    Scene(..., coupling=FixedPoint(steps=("RichardsSoilModel.soil", "WheatPlant.hydraulics"), tolerance=1e-8))
+    Scene(..., coupling=FixedPoint(steps=("RichardsSoilModel.soil", "WheatPlant.hydraulics"), relative_tolerance=1e-8))
 
 After the explicit pass, each iterated step is run again, in the order they ran, from the state it started the scene
 step from (its components' kept state and balances, the variables it writes, as they were before its first run), after
 the exchanges into its model: a Gauss-Seidel iteration over the exchanges, until every variable the steps write moves
-by at most *absolute* + *tolerance* × its largest value between two iterations, or *max_iterations* (a warning). A
+by at most *absolute_tolerance* + *relative_tolerance* × its largest value between two iterations, or *max_iterations* (a warning). A
 NaN or an infinity in what they write is no convergence: when the iterations end on one, a FloatingPointError names
 the step, the variable and the time. The other steps run once. An iterated step must run every scene step (no cadence) and its DataStructures must keep their
 topology from its first run to the iteration (a step that grows or regrids, or a later step of its model doing so,
@@ -33,12 +33,12 @@ class FixedPoint:
     """
     A fixed-point coupling of a scene step (see the module): *steps*, the schedule steps iterated, each
     "<model>.<step>" (the model a population's name or an environment model's class name, the step its schedule's:
-    Scene.schedule()); *tolerance* (relative) and *absolute*, the change between two iterations at which the
+    Scene.schedule()); *relative_tolerance* and *absolute_tolerance*, the change between two iterations at which the
     iteration stops; *max_iterations*, beyond which it stops with a warning.
     """
     steps: tuple
-    tolerance: float = 1e-8
-    absolute: float = 0.
+    relative_tolerance: float = 1e-8
+    absolute_tolerance: float = 0.
     max_iterations: int = 20
     _bound: list = field(default_factory=list, repr=False, compare=False)
 
@@ -46,8 +46,8 @@ class FixedPoint:
         self.steps = tuple(self.steps)
         if len(self.steps) < 1 or any(not isinstance(name, str) or "." not in name for name in self.steps):
             raise ValueError(f"FixedPoint(steps=...): '<model>.<step>' names, got {self.steps!r}")
-        if self.max_iterations < 1 or self.tolerance < 0. or self.absolute < 0.:
-            raise ValueError("FixedPoint: max_iterations >= 1, tolerance and absolute >= 0")
+        if self.max_iterations < 1 or self.relative_tolerance < 0. or self.absolute_tolerance < 0.:
+            raise ValueError("FixedPoint: max_iterations >= 1, relative_tolerance and absolute_tolerance >= 0")
 
     def bind(self, models: dict) -> None:
         """The iterated steps of *models* ({model name: model}), checked: each known, every scene step (no cadence),
@@ -139,8 +139,8 @@ def names(bound) -> list:
     return [(step_name, name) for step_name, _, step in bound for _, name in _written(step)]
 
 
-def converged(before: list, after: list, tolerance: float, absolute: float) -> bool:
-    """Whether every variable moved by at most absolute + tolerance × its largest value; a NaN or an infinity in
+def converged(before: list, after: list, relative_tolerance: float, absolute_tolerance: float) -> bool:
+    """Whether every variable moved by at most absolute_tolerance + relative_tolerance × its largest value; a NaN or an infinity in
     either iterate is no convergence."""
     for old, new in zip(before, after):
         if old.shape != new.shape:
@@ -149,7 +149,7 @@ def converged(before: list, after: list, tolerance: float, absolute: float) -> b
             continue
         if not (np.isfinite(old).all() and np.isfinite(new).all()):
             return False
-        if np.max(np.abs(new - old)) > absolute + tolerance * np.max(np.abs(new)):
+        if np.max(np.abs(new - old)) > absolute_tolerance + relative_tolerance * np.max(np.abs(new)):
             return False
     return True
 
@@ -166,4 +166,4 @@ def check_finite(bound, after: list, time: float) -> None:
 
 def warn_not_converged(coupling: FixedPoint, time: float) -> None:
     warnings.warn(f"FixedPoint: not converged in {coupling.max_iterations} iterations at time {time} s "
-                  f"(steps {list(coupling.steps)}, tolerance {coupling.tolerance})")
+                  f"(steps {list(coupling.steps)}, relative tolerance {coupling.relative_tolerance})")

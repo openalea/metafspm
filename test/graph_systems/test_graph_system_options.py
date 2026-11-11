@@ -74,7 +74,7 @@ def test_a_solver_is_chosen_by_its_key_only():
 
 
 def test_the_former_option_names_raise():
-    for old in ("max_iter", "tol", "fd_eps", "n_substeps"):
+    for old in ("tolerance", "rtol", "atol"):
         with pytest.raises(TypeError, match="unexpected keyword"):
             graph_system(node_unknowns=["u"], **{old: 2})
     with pytest.raises(ValueError, match="integrate must be"):

@@ -57,14 +57,14 @@ def test_explicit_euler_time_loop_with_edge_recovery():
 
 def test_scipy_ivp_step_with_edge_unknowns():
     spec = _diffusion_spec()
-    packed = ScipyIVPSolver(SolverConfig(method="scipy_ivp_bdf", rtol=1e-8, atol=1e-10)).step_once(spec, dt=0.5)
+    packed = ScipyIVPSolver(SolverConfig(method="scipy_ivp_bdf", integration_relative_tolerance=1e-8, integration_absolute_tolerance=1e-10)).step_once(spec, dt=0.5)
     assert packed.shape == (3,)                            # nodes and edges
     np.testing.assert_allclose(packed[:2], _exact(0.5)[:2], rtol=1e-4)
     assert packed[2] == pytest.approx(K * (packed[0] - packed[1]), abs=1e-8)
 
 
 def test_scipy_ivp_time_loop_with_edge_unknowns():
-    solver = ScipyIVPSolver(SolverConfig(method="scipy_ivp_bdf", rtol=1e-8, atol=1e-10, max_step=0.25))
+    solver = ScipyIVPSolver(SolverConfig(method="scipy_ivp_bdf", integration_relative_tolerance=1e-8, integration_absolute_tolerance=1e-10, max_step=0.25))
     result = solver.solve(_diffusion_spec(), t_span=(0., 1.))
     assert result.success
     np.testing.assert_allclose(result.x[-1], _exact(1.), rtol=1e-4, atol=1e-8)
@@ -73,8 +73,8 @@ def test_scipy_ivp_time_loop_with_edge_unknowns():
 # ---------------------------------------------------------------- _make_solver configuration
 
 def test_make_solver_accepts_a_dict_config():
-    solver = _make_solver("newton", {"tol": 1e-3, "max_iter": 7})
-    assert (solver.config.tol, solver.config.max_iter, solver.config.method) == (1e-3, 7, "newton")
+    solver = _make_solver("newton", {"absolute_tolerance": 1e-3, "max_iterations": 7})
+    assert (solver.config.absolute_tolerance, solver.config.max_iterations, solver.config.method) == (1e-3, 7, "newton")
 
 
 def test_make_solver_rejects_unknown_options():

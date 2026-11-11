@@ -17,7 +17,7 @@ def test_texts_and_arrays():
     assert array_differences([1., np.nan, 3.], [1., np.nan, 3.]) == {}
     found = array_differences([1., 2., 3.], [1., 2.5, 3.1])
     assert found["count"] == 2 and found["first"] == (1,) and found["largest"] == pytest.approx(0.5)
-    assert array_differences([1., 2.], [1., 2. + 1e-9], rtol=1e-6) == {}
+    assert array_differences([1., 2.], [1., 2. + 1e-9], relative_tolerance=1e-6) == {}
     with pytest.raises(AssertionError, match="1 entries differ"):
         assert_arrays_equal(np.arange(3), [0, 1, 5])
 

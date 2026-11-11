@@ -63,12 +63,12 @@ class FourSubsteps(Fields):
 
 @dataclass
 class Adaptive(Fields):
-    _diffusion = _system(integrate="adaptive", rtol=1e-3, atol=1e-6)
+    _diffusion = _system(integrate="adaptive", integration_relative_tolerance=1e-3, integration_absolute_tolerance=1e-6)
 
 
 @dataclass
 class TooStrict(Fields):
-    _diffusion = _system(integrate="adaptive", rtol=1e-14, atol=1e-16, min_step=0.2)
+    _diffusion = _system(integrate="adaptive", integration_relative_tolerance=1e-14, integration_absolute_tolerance=1e-16, min_step=0.2)
 
 
 def _grid(diffusivity=1e-3):
@@ -135,7 +135,7 @@ def test_an_adaptive_step_below_min_step_raises():
 
 @dataclass
 class AdaptivePerUnknown(Fields):
-    _diffusion = _system(integrate="adaptive", rtol={"solute": 1e-3}, atol={"solute": 1e-6})
+    _diffusion = _system(integrate="adaptive", integration_relative_tolerance={"solute": 1e-3}, integration_absolute_tolerance={"solute": 1e-6})
 
 
 def test_tolerances_per_unknown_are_those_of_the_unknown():
@@ -145,9 +145,9 @@ def test_tolerances_per_unknown_are_those_of_the_unknown():
     AdaptivePerUnknown(data_structure=other)()
     np.testing.assert_array_equal(other.get("solute"), grid.get("solute"))
     with pytest.raises(ValueError, match="not node unknowns"):
-        graph_system(node_unknowns=["c"], integrate="adaptive", rtol={"d": 1e-3})
+        graph_system(node_unknowns=["c"], integrate="adaptive", integration_relative_tolerance={"d": 1e-3})
     with pytest.raises(ValueError, match="needs integrate='adaptive'"):
-        graph_system(node_unknowns=["c"], atol={"c": 1e-3})
+        graph_system(node_unknowns=["c"], integration_absolute_tolerance={"c": 1e-3})
 
 
 # ---------------------------------------------------------------- failed solves within adaptive steps
@@ -178,13 +178,13 @@ class DecayOnce(Decay):
 
 @dataclass
 class DecayAdaptive(Decay):
-    _decay = graph_system(node_unknowns=["amount"], transient=True, integrate="adaptive", rtol=1e-3,
-                          atol=1e-6)(_LogarithmicDecay)
+    _decay = graph_system(node_unknowns=["amount"], transient=True, integrate="adaptive", integration_relative_tolerance=1e-3,
+                          integration_absolute_tolerance=1e-6)(_LogarithmicDecay)
 
 
 @dataclass
 class DecayAdaptiveLongSteps(Decay):
-    _decay = graph_system(node_unknowns=["amount"], transient=True, integrate="adaptive", rtol=1e-3, atol=1e-6,
+    _decay = graph_system(node_unknowns=["amount"], transient=True, integrate="adaptive", integration_relative_tolerance=1e-3, integration_absolute_tolerance=1e-6,
                           min_step=0.6)(_LogarithmicDecay)
 
 

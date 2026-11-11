@@ -1336,16 +1336,17 @@ class _GraphSystemBuilder:
         sd = self._spec_def
         return SolverConfig(
             method       = sd["method"],
-            max_iter     = sd["max_iter"],
-            tol          = sd["tol"],
-            newton_rtol  = sd.get("relative_tolerance", 0.),
-            step_tol     = sd["step_tolerance"],
-            fd_eps       = sd["fd_eps"],
-            prefer_sparse= sd["prefer_sparse"],
-            linesearch   = sd["linesearch"],
-            rtol         = _tolerance(sd["rtol"], None, 1e-6),        # per unknown: step doubling only
-            atol         = _tolerance(sd["atol"], None, 1e-9),
-            max_step     = np.inf if sd["max_step"] is None else sd["max_step"],
+            max_iterations         = sd["max_iterations"],
+            absolute_tolerance     = sd["absolute_tolerance"],
+            relative_tolerance     = sd.get("relative_tolerance", 0.),
+            step_tolerance         = sd["step_tolerance"],
+            finite_difference_step = sd["finite_difference_step"],
+            prefer_sparse          = sd["prefer_sparse"],
+            linesearch             = sd["linesearch"],
+            # per unknown: step doubling only
+            integration_relative_tolerance = _tolerance(sd["integration_relative_tolerance"], None, 1e-6),
+            integration_absolute_tolerance = _tolerance(sd["integration_absolute_tolerance"], None, 1e-9),
+            max_step               = np.inf if sd["max_step"] is None else sd["max_step"],
         )
 
     def inject_result(self, packed: np.ndarray, spec: GraphDAESpec) -> None:
@@ -1559,7 +1560,7 @@ def _solve_graph_system(self, method_name: str, spec_def: dict) -> None:
             self.__dict__["_current_dt"] = time_step
             _solve_once(self, method_name, spec_def)
         elif integrate == "substeps":
-            n = int(spec_def["n_substeps"])
+            n = int(spec_def["substeps"])
             for k in range(n):
                 self.__dict__["_solve_offset"] = k * time_step / n
                 _solve_substep(self, method_name, spec_def, time_step / n)
@@ -1589,12 +1590,12 @@ def _tolerance(value, name, default) -> float:
 def _integrate_adaptive(self, method_name, spec_def, time_step, names) -> None:
     """
     Step doubling: a step of h is compared with two steps of h/2; accepted when the difference is within
-    rtol * |x| + atol on the node unknowns (per unknown when given as dicts), h being adapted after each trial. A
+    integration_relative_tolerance * |x| + integration_absolute_tolerance on the node unknowns (per unknown when given as dicts), h being adapted after each trial. A
     failed solve (SolverConvergenceError: no convergence, a residual that is not finite...) or a state that is not
     finite rejects the trial too, h halved. Raises when h falls below min_step.
     """
     ds = _live_ds(self)
-    rtol, atol = spec_def["rtol"], spec_def["atol"]
+    relative, absolute = spec_def["integration_relative_tolerance"], spec_def["integration_absolute_tolerance"]
     max_step = min(spec_def.get("max_step") or time_step, time_step)
     min_step = spec_def.get("min_step") or time_step * 1e-6
     t, h, steps, rejected = 0., max_step, 0, 0
@@ -1614,7 +1615,7 @@ def _integrate_adaptive(self, method_name, spec_def, time_step, names) -> None:
             _solve_substep(self, method_name, spec_def, h / 2.)
             fine = _capture(ds, spec_def["node_unknowns"], self)
             error = max((np.max(np.abs(_captured(fine, fn) - _captured(coarse, fn))
-                                / (_tolerance(atol, fn, 1e-9) + _tolerance(rtol, fn, 1e-6)
+                                / (_tolerance(absolute, fn, 1e-9) + _tolerance(relative, fn, 1e-6)
                                    * np.abs(_captured(fine, fn)))) for fn in fine), default=0.)
             if not np.isfinite(error):
                 failure = SolverConvergenceError("the solved state is not finite")
@@ -1762,7 +1763,7 @@ def graph_system(
     edge_unknowns          = (),
     solver                 = "newton",
     max_iterations         = 15,
-    tolerance              = 1e-10,
+    absolute_tolerance     = 1e-10,
     relative_tolerance     = 0.,
     step_tolerance         = 1e-10,
     finite_difference_step = 1e-8,
@@ -1773,8 +1774,8 @@ def graph_system(
     transient              = None,
     integrate              = "once",
     substeps               = 1,
-    rtol                   = 1e-6,
-    atol                   = 1e-9,
+    integration_relative_tolerance = 1e-6,
+    integration_absolute_tolerance = 1e-9,
     min_step               = None,
     max_step               = None,
     split                  = "whole",
@@ -1806,7 +1807,7 @@ def graph_system(
         a key registered by solve.solver.register_solver. The nonlinear method only: the linear algebra's backend
         is the run's (Compute(linear_solver=), by the system's qualified name or its declared properties).
 
-    max_iterations, tolerance (||R||_inf), relative_tolerance (converged when ||R||_inf < tolerance +
+    max_iterations, absolute_tolerance (||R||_inf), relative_tolerance (converged when ||R||_inf < absolute_tolerance +
         relative_tolerance ||R_0||_inf, R_0 the first iterate's residual; 0: absolute only), step_tolerance
         (converged too when a step ||dx||_inf <= step_tolerance max(1, ||x||_inf): below the unknowns' round-off,
         whatever the residual's floor eps ||J|| ||x||, e.g. a linear system at its second iteration; 1e-10 by
@@ -1826,12 +1827,14 @@ def graph_system(
         own time term (self.previous(...)).
 
     integrate: "once": one solve of the component's time_step (default); "substeps": *substeps* solves of
-        time_step / substeps; "adaptive": step doubling with rtol / atol, min_step / max_step, a failed solve (no
+        time_step / substeps; "adaptive": step doubling with integration_relative_tolerance /
+        integration_absolute_tolerance, min_step / max_step, a failed solve (no
         convergence, a residual that is not finite) rejecting the sub-step and halving it down to min_step. Equations
         write their time terms with self.dt and self.previous().
 
-    rtol, atol, max_step: the error control of "adaptive" and of the IVP solvers (scipy_ivp_bdf, scipy_ivp_radau).
-        With "adaptive", rtol and atol may be given per node unknown, {unknown: value} (1e-6 and 1e-9 for the
+    integration_relative_tolerance, integration_absolute_tolerance, max_step: the error control of "adaptive" and
+        of the IVP solvers (scipy_ivp_bdf, scipy_ivp_radau). With "adaptive", both tolerances may be given per node
+        unknown, {unknown: value} (1e-6 and 1e-9 for the
         unknowns not named).
 
     pool_unknowns: unknowns at a coarse scale, one per entity ({name: location} or {name: {"location": ...,
@@ -1873,7 +1876,8 @@ def graph_system(
         raise ValueError(f"graph_system: integrate must be 'once', 'substeps' or 'adaptive', got '{integrate}'")
     if integrate == "substeps" and int(substeps) < 1:
         raise ValueError("graph_system: substeps must be at least 1")
-    for tolerance_name, value in (("rtol", rtol), ("atol", atol)):
+    for tolerance_name, value in (("integration_relative_tolerance", integration_relative_tolerance),
+                                  ("integration_absolute_tolerance", integration_absolute_tolerance)):
         if isinstance(value, dict):
             if integrate != "adaptive":
                 raise ValueError(f"graph_system: {tolerance_name} per unknown ({{unknown: value}}) needs "
@@ -1901,19 +1905,19 @@ def graph_system(
         "edge_unknowns" : list(edge_unknowns),
         "solver_cls"    : solver_cls,
         "method"        : method_str,
-        "max_iter"      : max_iterations,
-        "tol"           : tolerance,
+        "max_iterations": max_iterations,
+        "absolute_tolerance": absolute_tolerance,
         "relative_tolerance": float(relative_tolerance),
         "step_tolerance": float(step_tolerance),
-        "fd_eps"        : finite_difference_step,
+        "finite_difference_step": finite_difference_step,
         "prefer_sparse" : prefer_sparse,
         "linesearch"    : linesearch,
         "schedule_as"   : schedule_as,
         "filters"       : filters,
         "integrate"     : integrate,
-        "n_substeps"    : substeps,
-        "rtol"          : rtol,
-        "atol"          : atol,
+        "substeps"      : substeps,
+        "integration_relative_tolerance": integration_relative_tolerance,
+        "integration_absolute_tolerance": integration_absolute_tolerance,
         "min_step"      : min_step,
         "max_step"      : max_step,
         "split"         : split,

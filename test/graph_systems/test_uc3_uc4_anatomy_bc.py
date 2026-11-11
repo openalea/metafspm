@@ -193,7 +193,7 @@ class ChainFields(FunctionalComponent):
 
 @dataclass
 class ChainDirichlet(ChainFields):
-    @graph_system(node_unknowns=["pressure"], solver="newton", max_iterations=50, tolerance=1e-12)
+    @graph_system(node_unknowns=["pressure"], solver="newton", max_iterations=50, absolute_tolerance=1e-12)
     class _solve:
         _balance = node_balance(field="pressure")(_laplacian)
         collar = boundary_set(filters={"is_collar": ">0"}, condition="dirichlet", value=2.0)
@@ -201,7 +201,7 @@ class ChainDirichlet(ChainFields):
 
 @dataclass
 class ChainNeumann(ChainFields):
-    @graph_system(node_unknowns=["pressure"], solver="newton", max_iterations=50, tolerance=1e-12)
+    @graph_system(node_unknowns=["pressure"], solver="newton", max_iterations=50, absolute_tolerance=1e-12)
     class _solve:
         @node_balance(field="pressure")
         def _balance(self, pressure, K):
@@ -248,7 +248,7 @@ def test_uc4_a_neumann_inflow_is_balanced_by_the_leakage():
 @dataclass
 class ChainDirichletSparse(ChainFields):
     """A Dirichlet set with a sparse analytic Jacobian: its rows become the identity's."""
-    @graph_system(node_unknowns=["pressure"], solver="newton", max_iterations=3, tolerance=1e-12)
+    @graph_system(node_unknowns=["pressure"], solver="newton", max_iterations=3, absolute_tolerance=1e-12)
     class _solve:
         _balance = node_balance(field="pressure")(_laplacian)
         collar = boundary_set(filters={"is_collar": ">0"}, condition="dirichlet", value=2.0)

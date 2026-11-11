@@ -44,7 +44,7 @@ def test_explicit_is_the_default_and_lags():
 
 def test_a_fixed_point_couples_the_soil_and_the_plants_within_the_step(tmp_path):
     explicit = _scene()
-    iterated = _scene(coupling=FixedPoint(ITERATED, tolerance=1e-12, max_iterations=50),
+    iterated = _scene(coupling=FixedPoint(ITERATED, relative_tolerance=1e-12, max_iterations=50),
                       recorder=SceneRecorder(str(tmp_path), summaries=False))
     for _ in range(3):
         start, _, _ = _state(iterated)
@@ -102,7 +102,7 @@ def test_a_non_finite_iterate_is_not_converged():
 
 
 def test_an_iteration_ending_on_a_non_finite_state_raises_naming_the_step_and_the_variable():
-    scene = _scene(coupling=FixedPoint(ITERATED, tolerance=1e-12, max_iterations=5))
+    scene = _scene(coupling=FixedPoint(ITERATED, relative_tolerance=1e-12, max_iterations=5))
     soil = scene.model("SceneSoil").grid
     nitrate = np.array(soil.get("soil_nitrate"), dtype=float)
     nitrate.flat[0] = np.nan

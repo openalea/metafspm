@@ -76,8 +76,8 @@ def assert_texts_equal(expected: str, actual: str, name: str = "text") -> None:
         raise AssertionError(f"{name} differs:\n{rows}")
 
 
-def array_differences(expected, actual, rtol: float = 0., atol: float = 0.) -> dict:
-    """{"count", "first", "largest"} of the entries where two arrays differ beyond *rtol*, *atol* (NaNs equal at the
+def array_differences(expected, actual, relative_tolerance: float = 0., absolute_tolerance: float = 0.) -> dict:
+    """{"count", "first", "largest"} of the entries where two arrays differ beyond *relative_tolerance*, *absolute_tolerance* (NaNs equal at the
     same places); {} when equal. Shapes must agree."""
     import numpy as np
     a, b = np.asarray(expected), np.asarray(actual)
@@ -87,7 +87,7 @@ def array_differences(expected, actual, rtol: float = 0., atol: float = 0.) -> d
         a64, b64 = a.astype(np.float64), b.astype(np.float64)
         both_nan = np.isnan(a64) & np.isnan(b64)
         with np.errstate(invalid="ignore"):
-            close = (a64 == b64) | (np.abs(a64 - b64) <= atol + rtol * np.abs(a64))
+            close = (a64 == b64) | (np.abs(a64 - b64) <= absolute_tolerance + relative_tolerance * np.abs(a64))
         differ = ~(close | both_nan)
         gaps = np.where(differ, np.abs(a64 - b64), 0.)
         largest = float(np.nanmax(gaps)) if differ.any() else 0.
@@ -100,11 +100,12 @@ def array_differences(expected, actual, rtol: float = 0., atol: float = 0.) -> d
     return {"count": int(differ.sum()), "first": first, "largest": largest}
 
 
-def assert_arrays_equal(expected, actual, rtol: float = 0., atol: float = 0., name: str = "array") -> None:
-    """Two arrays equal (bitwise by default, within *rtol*, *atol* when given): the number of differing entries,
+def assert_arrays_equal(expected, actual, relative_tolerance: float = 0., absolute_tolerance: float = 0.,
+                        name: str = "array") -> None:
+    """Two arrays equal (bitwise by default, within *relative_tolerance*, *absolute_tolerance* when given): the number of differing entries,
     the first one and the largest gap shown."""
     import numpy as np
-    found = array_differences(expected, actual, rtol, atol)
+    found = array_differences(expected, actual, relative_tolerance, absolute_tolerance)
     if found:
         index = found["first"]
         raise AssertionError(f"{name}: {found['count']} entries differ (largest gap {found['largest']}); the first at "

@@ -56,7 +56,7 @@ class Soil(FunctionalComponent):
     volume: float = parameter(unit="m3", **DOC, by="", default=0., location="cell")
     time_step = DT
     _transport = graph_system(node_unknowns=["solute"], edge_unknowns=["solute_flux"], transient=True,
-                              integrate="adaptive", rtol=1e-4, atol=1e-8, tolerance=1e-14,
+                              integrate="adaptive", integration_relative_tolerance=1e-4, integration_absolute_tolerance=1e-8, absolute_tolerance=1e-14,
                               conserved=WATER)(type("_transport", (_Equations,), {}))
 
 

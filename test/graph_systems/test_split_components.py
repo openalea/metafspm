@@ -41,7 +41,7 @@ class WholeDiffusion(FunctionalComponent):
     conductance: float = parameter(**DOC, by="", default=0.05)
     time_step = DT
     _solve = graph_system(node_unknowns=["sugar"], edge_unknowns=["sugar_flux"], transient=True,
-                          integrate="adaptive", rtol=1e-3, atol=1e-6)(type("_solve", (_Diffusion,), {}))
+                          integrate="adaptive", integration_relative_tolerance=1e-3, integration_absolute_tolerance=1e-6)(type("_solve", (_Diffusion,), {}))
 
 
 @dataclass
@@ -51,7 +51,7 @@ class SplitDiffusion(FunctionalComponent):
     conductance: float = parameter(**DOC, by="", default=0.05)
     time_step = DT
     _solve = graph_system(node_unknowns=["sugar"], edge_unknowns=["sugar_flux"], transient=True,
-                          integrate="adaptive", rtol=1e-3, atol=1e-6, split="components")(type("_solve", (_Diffusion,), {}))
+                          integrate="adaptive", integration_relative_tolerance=1e-3, integration_absolute_tolerance=1e-6, split="components")(type("_solve", (_Diffusion,), {}))
 
 
 @dataclass

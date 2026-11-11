@@ -104,21 +104,21 @@ def test_newton_linesearch_same_result_as_without(spec_nonlinear_1node):
 # ── 5. Non-convergence raises SolverConvergenceError ─────────────────────────
 
 def test_newton_non_convergence_raises(spec_nonlinear_1node):
-    solver = NewtonSolver(SolverConfig(max_iter=1, tol=1e-15))
+    solver = NewtonSolver(SolverConfig(max_iterations=1, absolute_tolerance=1e-15))
     with pytest.raises(SolverConvergenceError, match="Newton did not converge"):
         solver.step_once(spec_nonlinear_1node)
 
 
 def test_newton_non_convergence_message_has_residual(spec_nonlinear_1node):
-    solver = NewtonSolver(SolverConfig(max_iter=1, tol=1e-15))
+    solver = NewtonSolver(SolverConfig(max_iterations=1, absolute_tolerance=1e-15))
     with pytest.raises(SolverConvergenceError, match=r"\|\|R\|\|"):
         solver.step_once(spec_nonlinear_1node)
 
 
 def test_newton_relative_tolerance_stops_once_the_residual_fell_enough(spec_nonlinear_1node):
     with pytest.raises(SolverConvergenceError):
-        NewtonSolver(SolverConfig(max_iter=3, tol=1e-15)).step_once(spec_nonlinear_1node)
-    x_new = NewtonSolver(SolverConfig(max_iter=3, tol=1e-15, newton_rtol=1e-2)).step_once(spec_nonlinear_1node)
+        NewtonSolver(SolverConfig(max_iterations=3, absolute_tolerance=1e-15)).step_once(spec_nonlinear_1node)
+    x_new = NewtonSolver(SolverConfig(max_iterations=3, absolute_tolerance=1e-15, relative_tolerance=1e-2)).step_once(spec_nonlinear_1node)
     first = np.linalg.norm(spec_nonlinear_1node.residual(spec_nonlinear_1node.pack_unknowns(), None, None), np.inf)
     assert np.linalg.norm(spec_nonlinear_1node.residual(x_new, None, None), np.inf) < 1e-2 * first
 
@@ -164,7 +164,7 @@ def test_newton_ignores_dt(spec_nonlinear_1node):
     np.testing.assert_allclose(x_no_dt, x_with_dt, atol=1e-8)
 
 
-# ── 8. The step criterion (step_tol) ─────────────────────────────────────────
+# ── 8. The step criterion (step_tolerance) ─────────────────────────────────────────
 
 class _DenseSystem:
     """R(x) = residual(x), J = jacobian(x): a duck-typed spec for NewtonSolver._integrate_step, counting the
@@ -192,7 +192,7 @@ def test_a_linear_system_below_its_residual_floor_converges_on_its_step():
     """A linear system scaled to 1e6, its solution of order 1e4: its residual's round-off floor (~eps ||J|| ||x||)
     is far above tolerance=1e-12, so the residual test never holds; the step test stops at the second iteration."""
     system, solution = _scaled_linear()
-    x, _ = NewtonSolver(SolverConfig(tol=1e-12, max_iter=10))._integrate_step(system, 0., np.zeros(6), 1., {})
+    x, _ = NewtonSolver(SolverConfig(absolute_tolerance=1e-12, max_iterations=10))._integrate_step(system, 0., np.zeros(6), 1., {})
     assert system.iterations == 2
     np.testing.assert_allclose(x, solution, rtol=1e-12)
     assert np.linalg.norm(system.residual(x), np.inf) > 1e-12          # the residual test alone would not stop
@@ -201,7 +201,7 @@ def test_a_linear_system_below_its_residual_floor_converges_on_its_step():
 def test_without_the_step_test_the_floor_raises_with_its_history():
     system, _ = _scaled_linear()
     with pytest.raises(SolverConvergenceError, match=r"(?s)residuals .*round-off floor .*eps \|\|J\|\|inf"):
-        NewtonSolver(SolverConfig(tol=1e-12, max_iter=4, step_tol=0.))._integrate_step(system, 0., np.zeros(6), 1., {})
+        NewtonSolver(SolverConfig(absolute_tolerance=1e-12, max_iterations=4, step_tolerance=0.))._integrate_step(system, 0., np.zeros(6), 1., {})
     assert system.iterations == 4
 
 
@@ -209,7 +209,7 @@ def test_a_diverging_system_still_raises():
     """R(x) = x² + 1 has no root: Newton's steps never vanish, the step test does not stop it."""
     system = _DenseSystem(lambda x: x ** 2 + 1., lambda x: np.diag(2. * x))
     with pytest.raises(SolverConvergenceError, match="did not converge"):
-        NewtonSolver(SolverConfig(max_iter=30))._integrate_step(system, 0., np.array([0.3]), 1., {})
+        NewtonSolver(SolverConfig(max_iterations=30))._integrate_step(system, 0., np.array([0.3]), 1., {})
 
 
 def test_the_graph_system_option_reaches_the_solver():

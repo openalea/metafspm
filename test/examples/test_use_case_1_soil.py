@@ -89,7 +89,7 @@ def test_analytic_jacobian_solves_as_finite_differences(face_conductivity):
     """One solve (no step doubling) of infiltration with a root sink on an adaptive grid (hanging faces): with the
     analytic Jacobian and with a finite-difference one, Newton converges to the same h."""
     options = dict(node_unknowns=["pressure_head"], transient=True, integrate="once",
-                   tolerance=1e-11, max_iterations=30, linesearch=True, schedule_as="state")
+                   absolute_tolerance=1e-11, max_iterations=30, linesearch=True, schedule_as="state")
 
     class AnalyticSoil(RichardsSoil):
         _water = graph_system(solver="newton", **options)(RichardsSoil._water.equations)

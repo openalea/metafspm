@@ -622,7 +622,7 @@ class Scene:
                 step.run()
             done += 1
             after = values(bound)
-            if converged(before, after, coupling.tolerance, coupling.absolute):
+            if converged(before, after, coupling.relative_tolerance, coupling.absolute_tolerance):
                 break
             before = after
         else:

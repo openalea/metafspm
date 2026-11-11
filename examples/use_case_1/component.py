@@ -314,7 +314,7 @@ class RichardsSoil(FunctionalComponent):
 
     Solved by Newton with its analytic Jacobian (dθ/dh, dK/dh) and an Armijo line search (multi-day steps through
     a dry soil), to 1e-13 of the water contents, over the time step by step doubling (integrate="adaptive",
-    rtol 1e-3 and atol 1e-4 m on h). The water is declared conserved (graph_system(conserved=...)): over each
+    integration_relative_tolerance 1e-3 and integration_absolute_tolerance 1e-4 m on h). The water is declared conserved (graph_system(conserved=...)): over each
     call, the water held Σ θ V, what entered through the surface and what left through the bottom and to the roots,
     integrated over the accepted sub-steps by metafspm, so that the balance is checked at every step
     (Component.conservation(), the recorder's conservation.csv): its residual is the solver's tolerance.
@@ -475,7 +475,7 @@ class RichardsSoil(FunctionalComponent):
     # ── the equations ─────────────────────────────────────────────────────────
 
     @graph_system(node_unknowns=["pressure_head"], solver="newton", transient=True,
-                  integrate="adaptive", rtol=1e-3, atol=1e-4, tolerance=1e-13, max_iterations=30, linesearch=True,
+                  integrate="adaptive", integration_relative_tolerance=1e-3, integration_absolute_tolerance=1e-4, absolute_tolerance=1e-13, max_iterations=30, linesearch=True,
                   schedule_as="state", conserved={"water": WATER})
     class _water:
         """Richards' equation in mixed form, per cell volume."""

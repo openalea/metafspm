@@ -3,7 +3,7 @@
 Concerns:
   1. SolverConfig defaults
   2. _make_solver returns correct concrete class for every registered method
-  3. _make_solver preserves config fields (tol, max_iter, …)
+  3. _make_solver preserves config fields (absolute_tolerance, max_iterations, …)
   4. _make_solver raises on unknown method
   5. All registry entries are instantiable without error
 """
@@ -26,15 +26,15 @@ def test_default_method():
 
 
 def test_default_tol():
-    assert SolverConfig().tol == 1e-10
+    assert SolverConfig().absolute_tolerance == 1e-10
 
 
 def test_default_max_iter():
-    assert SolverConfig().max_iter == 15
+    assert SolverConfig().max_iterations == 15
 
 
-def test_default_fd_eps():
-    assert SolverConfig().fd_eps == 1e-8
+def test_default_finite_difference_step():
+    assert SolverConfig().finite_difference_step == 1e-8
 
 
 def test_default_linesearch_off():
@@ -75,15 +75,15 @@ def test_make_solver_error_mentions_valid_methods():
 # ── 3. Config preservation ────────────────────────────────────────────────────
 
 def test_make_solver_preserves_tol():
-    cfg = SolverConfig(tol=1e-5)
+    cfg = SolverConfig(absolute_tolerance=1e-5)
     s = _make_solver("newton", cfg)
-    assert s.config.tol == 1e-5
+    assert s.config.absolute_tolerance == 1e-5
 
 
 def test_make_solver_preserves_max_iter():
-    cfg = SolverConfig(max_iter=50)
+    cfg = SolverConfig(max_iterations=50)
     s = _make_solver("newton", cfg)
-    assert s.config.max_iter == 50
+    assert s.config.max_iterations == 50
 
 
 def test_make_solver_stamps_method_in_config():
@@ -93,7 +93,7 @@ def test_make_solver_stamps_method_in_config():
 
 def test_make_solver_none_config_uses_defaults():
     s = _make_solver("newton", None)
-    assert s.config.tol == SolverConfig().tol
+    assert s.config.absolute_tolerance == SolverConfig().absolute_tolerance
 
 
 # ── 4. Inheritance chain ──────────────────────────────────────────────────────

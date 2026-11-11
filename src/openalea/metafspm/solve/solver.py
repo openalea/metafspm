@@ -70,16 +70,17 @@ class SolverConvergenceError(RuntimeError):
 class SolverConfig:
     """Numerical settings, decoupled from system description."""
     method       : str   = "newton"
-    max_iter     : int   = 15
-    tol          : float = 1e-10
-    newton_rtol  : float = 0.          # Newton converged when ||R||inf < tol + newton_rtol ||R_0||inf,
-    step_tol     : float = 1e-10       # or when its step ||dx||inf <= step_tol max(1, ||x||inf) (0: never)
-    fd_eps       : float = 1e-8
-    prefer_sparse: bool  = True
-    linesearch   : bool  = False
+    max_iterations        : int   = 15
+    absolute_tolerance    : float = 1e-10
+    relative_tolerance    : float = 0.  # Newton converged when ||R||inf < absolute_tolerance + relative_tolerance
+                                        # ||R_0||inf, or when its step ||dx||inf <= step_tolerance max(1, ||x||inf)
+    step_tolerance        : float = 1e-10   # (0: never)
+    finite_difference_step: float = 1e-8
+    prefer_sparse         : bool  = True
+    linesearch            : bool  = False
     # ODESolver time-loop settings
-    rtol         : float = 1e-6
-    atol         : float = 1e-9
+    integration_relative_tolerance: float = 1e-6
+    integration_absolute_tolerance: float = 1e-9
     max_step     : float = np.inf
     max_steps    : int   = 100_000
     dense_output : bool  = False
@@ -91,23 +92,23 @@ class SolverConfig:
 # Level 1 — AbstractSolver
 # ═══════════════════════════════════════════════════════════════════════════════
 
-def _recover_edges(spec, x: np.ndarray, tol: float = 1e-10, max_iter: int = 50) -> np.ndarray:
+def _recover_edges(spec, x: np.ndarray, absolute_tolerance: float = 1e-10, max_iterations: int = 50) -> np.ndarray:
     """
     Solve the edge (algebraic) rows of the residual for the edge unknowns, the node unknowns of *x* held fixed.
     Returns the packed vector with converged edge unknowns. Residual rows are the node blocks, then the edge blocks.
     """
     n_node_dof = spec.graph.n_nodes * len(spec.unknowns.node_fields)
     packed = np.array(x, dtype=np.float64, copy=True)
-    for _ in range(max_iter):
+    for _ in range(max_iterations):
         residual = np.asarray(spec.residual(packed, None, None), dtype=np.float64)[n_node_dof:]
-        if residual.size == 0 or np.linalg.norm(residual, ord=np.inf) < tol:
+        if residual.size == 0 or np.linalg.norm(residual, ord=np.inf) < absolute_tolerance:
             return packed
         jac = spec.jacobian(packed, None, None)
         jac_ee = jac[n_node_dof:, n_node_dof:]
         if hasattr(jac_ee, "toarray"):
             jac_ee = jac_ee.toarray()
         packed[n_node_dof:] -= np.linalg.solve(np.asarray(jac_ee, dtype=np.float64), residual)
-    raise SolverConvergenceError(f"Edge recovery did not converge in {max_iter} iterations")
+    raise SolverConvergenceError(f"Edge recovery did not converge in {max_iterations} iterations")
 
 
 class AbstractSolver(ABC):
@@ -318,13 +319,13 @@ class ODESolver(AbstractSolver):
     def _error_norm(self, x: np.ndarray, x_ref: np.ndarray,
                     err: np.ndarray) -> float:
         """
-        Mixed atol/rtol norm (Hairer & Wanner)::
+        Mixed absolute/relative norm (Hairer & Wanner)::
 
             NORM = sqrt( mean( (err / scale)² ) )
-            scale_i = atol + rtol × max(|x_i|, |x_ref_i|)
+            scale_i = integration_absolute_tolerance + integration_relative_tolerance × max(|x_i|, |x_ref_i|)
         """
-        scale = (self.config.atol
-                 + self.config.rtol * np.maximum(np.abs(x), np.abs(x_ref)))
+        scale = (self.config.integration_absolute_tolerance
+                 + self.config.integration_relative_tolerance * np.maximum(np.abs(x), np.abs(x_ref)))
         return float(np.sqrt(np.mean((err / scale) ** 2)))
 
     def _initial_step(self, spec, p: dict, x: np.ndarray) -> float:
@@ -586,24 +587,24 @@ class NewtonSolver(DAESolver):
 
     def _integrate_step(self, spec, t, x, h, p, prev_fields=None):
         """
-        Newton iterations from *x*, converged when ||R||inf < tol + newton_rtol ||R_0||inf (R_0 the first iterate's
-        residual), or when a step is below the round-off of the unknowns: ||dx||inf <= step_tol max(1, ||x||inf)
+        Newton iterations from *x*, converged when ||R||inf < absolute_tolerance + relative_tolerance ||R_0||inf (R_0 the first iterate's
+        residual), or when a step is below the round-off of the unknowns: ||dx||inf <= step_tolerance max(1, ||x||inf)
         (a linear system then converges at its second iteration whatever its residual's floor, ~ eps ||J|| ||x||).
-        Not converged after max_iter iterations: SolverConvergenceError, with the residuals' history and the floor.
+        Not converged after max_iterations iterations: SolverConvergenceError, with the residuals' history and the floor.
         """
         packed   = np.array(x, dtype=np.float64, copy=True)
         force_fd = (self.config.method == "newton_fd")
         tolerance = None
         residuals, steps, jac = [], [], None
 
-        for _ in range(self.config.max_iter):
+        for _ in range(self.config.max_iterations):
             residual = spec.residual(packed, prev_fields, h)
             norm = np.linalg.norm(residual, ord=np.inf)
             residuals.append(norm)
             if not np.isfinite(norm):
                 raise SolverConvergenceError(f"Newton met a residual that is not finite (||R||inf = {norm})")
             if tolerance is None:                       # absolute, and relative to the first residual
-                tolerance = self.config.tol + self.config.newton_rtol * norm
+                tolerance = self.config.absolute_tolerance + self.config.relative_tolerance * norm
             if norm < tolerance:
                 return packed, np.zeros_like(packed)
 
@@ -624,17 +625,17 @@ class NewtonSolver(DAESolver):
             step = np.linalg.norm(moved - packed, ord=np.inf)
             steps.append(step)
             packed = moved
-            if step <= self.config.step_tol * max(1., np.linalg.norm(packed, ord=np.inf)):
+            if step <= self.config.step_tolerance * max(1., np.linalg.norm(packed, ord=np.inf)):
                 return packed, np.zeros_like(packed)
 
         final = np.linalg.norm(spec.residual(packed, prev_fields, h), ord=np.inf)
         floor = np.finfo(float).eps * _infinity_norm(jac) * np.linalg.norm(packed, ord=np.inf)
         raise SolverConvergenceError(
-            f"Newton did not converge in {self.config.max_iter} iterations; final ||R||inf = {final:.3e} "
+            f"Newton did not converge in {self.config.max_iterations} iterations; final ||R||inf = {final:.3e} "
             f"(tolerance {tolerance:.3e}; the residuals {', '.join(f'{r:.3e}' for r in residuals)}; the steps "
             f"||dx||inf {', '.join(f'{d:.3e}' for d in steps)}). The residual's round-off floor is about "
             f"eps ||J||inf ||x||inf = {floor:.3e}: a tolerance below it cannot be met (step_tolerance stops on the "
-            f"step instead, {self.config.step_tol:.1e} max(1, ||x||inf))"
+            f"step instead, {self.config.step_tolerance:.1e} max(1, ||x||inf))"
         )
 
     def _recover_algebraic(self, spec, x, y_prev, p):
@@ -689,7 +690,7 @@ class ExplicitEulerSolver(DAESolver):
             # ẋ = −R(x, y(x)): the edge unknowns are recovered at the current node state first (forward Euler
             # evaluates the fluxes at x_n, not those left by the previous step)
             if spec.unknowns.edge_fields:
-                x = _recover_edges(spec, x, tol=self.config.tol * 0.1, max_iter=self.config.max_iter)
+                x = _recover_edges(spec, x, absolute_tolerance=self.config.absolute_tolerance * 0.1, max_iterations=self.config.max_iterations)
             R        = spec.residual(x, prev_fields, None)
             rhs_node = -R[:n_node_dof]
 
@@ -711,7 +712,7 @@ class ExplicitEulerSolver(DAESolver):
         if isinstance(spec, ODESystemSpec) or not spec.unknowns.edge_fields:
             return np.zeros(0)
         n_node_dof = spec.graph.n_nodes * len(spec.unknowns.node_fields)
-        return _recover_edges(spec, x, tol=self.config.tol * 0.1, max_iter=self.config.max_iter)[n_node_dof:]
+        return _recover_edges(spec, x, absolute_tolerance=self.config.absolute_tolerance * 0.1, max_iterations=self.config.max_iterations)[n_node_dof:]
 
 
 class ScipyRootSolver(DAESolver):
@@ -744,7 +745,7 @@ class ScipyRootSolver(DAESolver):
         options = (
             {"maxfev": 200 * (1 + packed0.size)}
             if scipy_method == "hybr"
-            else {"maxiter": self.config.max_iter}
+            else {"maxiter": self.config.max_iterations}
         )
         import warnings
         from scipy.linalg import LinAlgWarning
@@ -758,14 +759,14 @@ class ScipyRootSolver(DAESolver):
                 x0     = packed0,
                 method = scipy_method,
                 jac    = jac_fn,
-                tol    = self.config.tol,
+                tol    = self.config.absolute_tolerance,
                 options= options,
             )
         if not result.success:
             actual = np.linalg.norm(
                 spec.residual(result.x, prev_fields, h), ord=np.inf
             )
-            if actual >= self.config.tol * 1e3:
+            if actual >= self.config.absolute_tolerance * 1e3:
                 raise SolverConvergenceError(
                     f"scipy.optimize.root ({scipy_method!r}) failed: "
                     f"{result.message}"
@@ -816,8 +817,8 @@ class ScipyIVPSolver(DAESolver):
                 t_span = (t, t + h),
                 y0     = x,
                 method = ivp_method,
-                rtol   = self.config.rtol,
-                atol   = self.config.atol,
+                rtol   = self.config.integration_relative_tolerance,
+                atol   = self.config.integration_absolute_tolerance,
                 dense_output = True,
             )
             # solve_ivp controls the error within [t, t + h] (rtol / atol): the outer loop accepts the step
@@ -827,12 +828,12 @@ class ScipyIVPSolver(DAESolver):
         n_node_dof = spec.graph.n_nodes * len(spec.unknowns.node_fields)
         has_edges  = bool(spec.unknowns.edge_fields)
         state      = np.array(x, dtype=np.float64, copy=True)
-        tol, max_iter = self.config.tol * 0.1, self.config.max_iter
+        tolerance, max_iterations = self.config.absolute_tolerance * 0.1, self.config.max_iterations
 
         def full_state(y_node):
             state[:n_node_dof] = y_node
             if has_edges:
-                state[:] = _recover_edges(spec, state, tol=tol, max_iter=max_iter)
+                state[:] = _recover_edges(spec, state, absolute_tolerance=tolerance, max_iterations=max_iterations)
             return state
 
         time_hook = getattr(spec, "parameters", {}).get("time_hook")
@@ -851,8 +852,8 @@ class ScipyIVPSolver(DAESolver):
             t_span       = (t, t + h),
             y0           = x[:n_node_dof],
             method       = ivp_method,
-            rtol         = self.config.rtol,
-            atol         = self.config.atol,
+            rtol         = self.config.integration_relative_tolerance,
+            atol         = self.config.integration_absolute_tolerance,
             jac_sparsity = sp_slice if (sp_slice.nnz > 0 and not has_edges) else None,
             dense_output = True,
         )
@@ -873,7 +874,7 @@ class ScipyIVPSolver(DAESolver):
             return np.zeros(0)
 
         n_node_dof = spec.graph.n_nodes * len(spec.unknowns.node_fields)
-        return _recover_edges(spec, x, tol=self.config.tol * 0.1, max_iter=self.config.max_iter)[n_node_dof:]
+        return _recover_edges(spec, x, absolute_tolerance=self.config.absolute_tolerance * 0.1, max_iterations=self.config.max_iterations)[n_node_dof:]
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

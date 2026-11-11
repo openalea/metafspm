@@ -278,7 +278,7 @@ class SoilDiffusion(FunctionalComponent):
   Euler with the Newton family, `u += dt * rate` with `"explicit_euler"`, an IVP integration with `"scipy_ivp_bdf"`
   or `"scipy_ivp_radau"`. One rate-form model can thus be solved by any solver; a residual can only be solved by
   Newton. The node unknowns of one system use one form. `integrate="substeps"` (with `substeps=`) or `"adaptive"`
-  (step doubling, `rtol` / `atol`, numbers or `{unknown: value}` per node unknown) integrate over the component's
+  (step doubling, `integration_relative_tolerance` / `integration_absolute_tolerance`, numbers or `{unknown: value}` per node unknown) integrate over the component's
   time step (`"once"` by default). A failed solve (Newton not converging, a residual that is not finite, a singular
   system) raises `solve.solver.SolverConvergenceError`; with `"adaptive"` it rejects the sub-step and halves it, as
   the error control does, and raises naming the component and the time only below `min_step`. The Newton
@@ -818,10 +818,10 @@ time (an event's, a planting time) is a duration since time 0 or a date (`"2026-
   `mapping=` options); others are given by `mappings=`. The coupling is explicit by default (`coupling="explicit"`:
   a model reads what the models after it wrote at the step before, e.g. a soil the plants' uptake). A fixed point
   iterates chosen schedule steps of several models within the step instead: `Scene(...,
-  coupling=FixedPoint(("Soil.water", "Wheat.hydraulics"), tolerance=1e-8, max_iterations=20))`
+  coupling=FixedPoint(("Soil.water", "Wheat.hydraulics"), relative_tolerance=1e-8, max_iterations=20))`
   (`coupling.iteration`): after the explicit pass each iterated step runs again from its start (its components'
   kept state and balances, the variables it writes), after the exchanges into its model, until what the steps write
-  moves by less than the tolerance; a NaN or an infinity never counts as converged, and iterations that end on one
+  moves by less than the tolerances; a NaN or an infinity never counts as converged, and iterations that end on one
   raise a FloatingPointError naming the step and the variable; `Scene.coupling_iterations` (and run.json) counts
   the iterations. An iterated
   step runs every step (no cadence) and its DataStructures keep their topology from its first run to the iteration
