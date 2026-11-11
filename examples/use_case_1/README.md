@@ -291,7 +291,9 @@ drawn as instances), 8 plants to day 8 take 357 s (334 s unrecorded), the frames
 8 (about 0.45 kB per node), the parts 81 MB (77 files), the folder 176 MB.
 On a machine with an NVIDIA GPU and CuPy, `benchmark.py --device cuda` runs the kinds' Kron reductions and the
 linear solves on the device (metafspm's docs/gpu.md, "Running on a GPU": what is offloaded, how to compare it with
-the CPU run, the transfers in the entry's `device`); not measured yet (no GPU on the development laptop).
+the CPU run, the transfers in the entry's `device`). The GPU path is experimental: it should work on suitable
+hardware but has not been tested on a GPU yet (no GPU on the development laptop), and its results would agree with
+the CPU's within round-off, not bit for bit.
 
 `benchmark.py` times it (its `build_scene`: `run.py`'s scene, in memory, with the benchmark's options; `python
 benchmark.py [--plants 2] [--days 3]`, under a memory bound): each hour's time by
@@ -434,6 +436,11 @@ the uptake.
 ### The assembly: open gaps
 
 What `run.py`'s run from the sowing shows (2026-11-04), the ports' gaps first:
+
+- **Growth is prescribed.** Adel grows the shoot on thermal time only. ArchiSimple grows the roots at their potential:
+  on the soil temperature (a constant 12 °C forcing) and an offered structural mass (`struct_mass_input`) that no
+  model provides, infinite by default. So growth responds neither to the soil's water nor to the light. No carbon is
+  allocated: the leaves' assimilation `An` is recorded but feeds no other model.
 
 - **Adel and ArchiSimple, a plant's stage.** The scenario's `start` (°Cd) advances Adel's shoot only: a shoot started
   at a few leaves has the roots of a seed; an older plant is a run resumed from a checkpoint.

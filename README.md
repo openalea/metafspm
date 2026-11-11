@@ -28,7 +28,6 @@ with step-by-step user tutorials (`example/tutorials/user/`) for newcomers and d
 | [Caribu](https://github.com/openalea/caribu/tree/to_metafspm) (`to_metafspm`) | light in canopies | `CaribuLight`, `CaribuLightModel` (environment model), `SimplePlant` |
 | [GRANAP](https://github.com/openalea-incubator/GRANAP-dev/tree/to_metafspm) (`to_metafspm`) | cross-section anatomies | `GranapAnatomy`, `RootAxis`, `Needle` |
 | [MECHA](https://github.com/openalea-incubator/MECHA-dev/tree/to_metafspm) (`to_metafspm`) | water and solutes across root and needle tissues | `MechaHydraulics`, `MechaSolutes`, `MechaOsmoticPresets` |
-| [CNW-Grass](https://github.com/openalea/cnwgrass/tree/to_metafspm) (`to_metafspm`) | leaves' gas exchange (photosynthesis, stomata, transpiration) | `GasExchange` (plant model `ExchangingWheat`, on Adel's shoots lit by Caribu) |
 
 Ports coming next, not available yet (the component, and the model it is ported from):
 
@@ -39,7 +38,8 @@ Ports coming next, not available yet (the component, and the model it is ported 
 - `CNMetabolism`, from openalea.rootbridges
 - `RootGrowth`, from openalea.rhizodep
 - `SimplifiedAnatomy`, from openalea.rhizodep
-- openalea.cnwgrass's components:
+- openalea.cnwgrass's components (its `GasExchange` is already a metafspm component, on the `to_metafspm`
+  branch, used by use case 1; the rest of the repository is not ported yet):
   - `Growth`
   - `Morphogenesis`
   - `Respiration`
@@ -149,7 +149,8 @@ goes through it on a seedling in a soil column
 
 How a run uses the machine is its `Compute` (`Scene(..., compute=Compute(threads="auto", device="cpu",
 memory="trim", linear_solver=None))`, the default): the threads (`"auto"`: the processors, each parallel part taking
-those that pay, a reduction's kinds included, the results the same at any number), an optional GPU, the memory (glibc's allocator held to two arenas, the memory freed given
+those that pay, a reduction's kinds included, the results the same at any number), an optional GPU (experimental:
+it should work on suitable hardware but has not been tested on a GPU yet), the memory (glibc's allocator held to two arenas, the memory freed given
 back after each step) and the graph systems' sparse solver (`linear_solver="superlu_reuse"`, say, for every system;
 a mapping such as `{"default": "superlu", "symmetric": "cholmod"}` gives each system its own, by its qualified name
 `"Component._system"`, else a property it declares, else `"default"`). `scene.timing` gives the time per model and per component.
@@ -161,8 +162,8 @@ For a model built on MetaFSPM, see [Root_CyNAPS](https://github.com/GeraultTr/Ro
 ## Exchange with other platforms
 
 `openalea.metafspm.io.encoding3d` writes scenes and DataStructures as [encoding3d](https://github.com/openalea/encoding3d)
-files: one glTF file per time step, which CPlantBox, GroIMP or VirtualPlantLab can read, and ParaView displays with
-encoding3d's reader plugin. A file holds:
+files: one glTF file per time step, which ParaView displays with encoding3d's reader plugin. CPlantBox, GroIMP and
+VirtualPlantLab read them only through encoding3d's adapters, first proposals tested by hand. A file holds:
 
 - each MPG scale as a table, with every variable at its declared unit, kind and standard name;
 - the soil grids, the mappings between plants and soil;

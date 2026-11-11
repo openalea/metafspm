@@ -11,7 +11,8 @@ systems' linear solves (the "cupy" LinearSolver)::
 
   "cpu"   HostBackend: numpy and scipy (SuperLU), nothing moved: the default, what every run without a GPU uses
   "cuda"  CupyBackend: cupy and cupyx.scipy.sparse (optional: pip install cupy-cuda12x, or conda install -c
-          conda-forge cupy). A factorisation is SuperLU's on the host (as cupyx's own splu does), its L and U copied
+          conda-forge cupy). Experimental: it should work on suitable hardware but has not been tested on a GPU yet
+          (its tests run on a fake CuPy); its results agree with the CPU's within round-off. A factorisation is SuperLU's on the host (as cupyx's own splu does), its L and U copied
           to the device once and the solves of many right-hand sides (a kind's X) made there, their triangular
           solves on the GPU; a right-hand side smaller than DEVICE_MIN_VALUES values is solved on the host (the
           copy would cost more than the solve). A linear system of at least DEVICE_MIN_NONZEROS entries is solved

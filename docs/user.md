@@ -138,8 +138,7 @@ carbon()                                  # one time step: every step, in the sc
   from the graph), or `location=` gives it directly (`"cell"` on grids). `kind=` (extensive, intensive,
   massic_concentration, descriptor: how its value depends on the size of what it describes) decides the default
   aggregations and the repartition after growth. Variables are registered at construction, from the MTG's property
-  when it exists, else from the default. The former `initialize=`, `state_variable_type=` and `mapping=` are
-  accepted with a warning for one release.
+  when it exists, else from the default.
 - **Parameters** without a place are stored per plant (`"Plant"`) on plant DataStructures, as a scalar elsewhere.
   Plants of a population may then differ. Steps and equations take parameters **as arguments**; reading
   `self.<parameter>` inside a step raises, while outside steps `model.k = value` sets every plant. Declared
@@ -148,16 +147,20 @@ carbon()                                  # one time step: every step, in the sc
   fields with `sections=` (a function giving `{"section.field": {default, unit, description, min_value,
   max_value}}`): `parameter_table` and `variants` list each as `name.section.field`, and a scenario may give one
   dotted, `{"root_anatomy.cortex.n_layers": 4}`, or nested.
-- **Steps** are methods decorated by their place in the schedule: `@stepinit`, `@rate`, `@totalrate`, `@state`,
-  `@totalstate`, `@deficit`, `@axial`, then the growth rows `@potential`, `@allocation`, `@actual`,
-  `@segmentation`, `@postsegmentation` (a structural component's steps, in that order: before, while and after it
-  changes the structure). Their arguments are variables, read from the DataStructure by name as whole arrays (one
+- **Steps** are methods decorated by their place in the schedule. A component runs them in this order: first the
+  growth steps, `@potential`, `@deficit`, `@allocation`, `@actual`, `@segmentation`, `@postsegmentation` (a
+  structural component's steps: before, while and after it changes the structure); then `@axial`; then the
+  metabolic steps, `@stepinit`, `@rate`, `@totalrate`, `@state`, `@totalstate`. So a component's `@stepinit` runs
+  after its growth steps, and its `@state` steps see the structure its `@postsegmentation` left
+  (`Choregrapher.consensus_scheduling`). Steps of the same decorator run in the order the class defines them, its
+  bases' first. Their arguments are variables, read from the DataStructure by name as whole arrays (one
   value per entity); a step written with scalar logic opts out with `@rate(vectorized=False)`. A step returns
   - one output, named after the method (`_exudation` writes `exudation`);
   - or several, named, as a dict, annotated `-> dict`: `return {"x1": x, "y1": y}` (the method's name, e.g.
     `_placement`, then only names the step);
+  - or several as a tuple, annotated `-> tuple[...]`: `return value, "other_name", other_value`, the first value
+    named after the method;
   - or `None`, writing nothing.
-  (The older form `-> tuple[...]`, `(value, "other_name", other_value)`, still works.)
 - **Selections.** Every decorator takes `filters=`, the entities it operates on, written as explicit key / values
   that must all hold: `@rate(filters={"label": "RootSegment", "length": ">0.01"})`. A value is matched, a list is
   one of several values, a comparison string (`">0"`, `"<=0.03"`) is tested, and label names are resolved. A key
@@ -680,9 +683,13 @@ translator in a package's own tests.
 **Units.** A declaration's unit follows one grammar: factors separated by spaces, signed integer exponents, `adim`
 for dimensionless, what an amount is of in `unit_comment` (`unit="mol s-1", unit_comment="of hexose"`). Units are
 read as quantities (`coupling.units.parse_unit`: SI dimensions and a scale; prefixes, `min`, `h`, `d`, `L`, `Pa`,
-`°C`, `°`, `%`, ...). Each link is checked: the receiver's and the source's units must be the same quantity, and the
-link's factor their conversion (`{"p_mpa": 1e4}` from MPa to hPa); `unit_check=False` on a link for a deliberate
-factor (a share, a calibration). Undeclared units agree with anything; unreadable ones must be spelled alike. Where
+`°C`, `°`, `%`, ...). Thermal time `°Cd` is a temperature times a time. A duration in `phyllochron` has its own
+dimension: its degree-days depend on the plant's phyllochron, so no factor converts it. A unit the grammar cannot read
+raises when the component class is defined, naming the component, the variable and the unit; so does a kind that is
+not one of the six. Each link is checked: the receiver's and the source's units must be declared and readable, the
+same quantity, and the link's factor their conversion (`{"p_mpa": 1e4}` from MPa to hPa); otherwise the models do not
+build. `unit_check=False` on a link is for a deliberate factor (a share, a calibration). A formula link's units must
+be declared and readable; its formula does its own conversion. Where
 the quantity changes, the factor is a named physical equivalence (`coupling.units.Equivalence(name, value, unit)`,
 e.g. `WATER_MOLAR_VOLUME`, 18e-3 cm3 mmol-1, and `RADIUS_OF_DIAMETER`, 0.5): `{"transpiration": WATER_MOLAR_VOLUME}`
 from mmol s-1 to cm3 d-1 is checked and its number computed from the units (18e-3 × 86400); a YAML translator gives
@@ -690,8 +697,8 @@ it by name (`"water_molar_volume"`; `units.register_equivalence` names a new one
 
 ### Across DataStructures: mappings and exchanges
 
-Links between components on different DataStructures are exchanged by `coupling.cross.Exchanges` at fixed points,
-through a mapping:
+Links between components on different DataStructures are exchanged by `coupling.cross.Exchanges` before each model
+runs, through a mapping:
 
 - `CrossMapping(plants, grid, method="barycentre" | "overlap", mask=, soil_surface=)`: segments to cells (by middle
   point, or by the length fraction in each cell), rebuilt after growth or coordinate changes. The Scene infers one
@@ -928,8 +935,8 @@ time (an event's, a planting time) is a duration since time 0 or a date (`"2026-
   declared=components)` builds scenarios within the declared `min_value` / `max_value`. `docs/tutorial.md` goes
   through the whole path.
 - **Exchange with other platforms.** `openalea.metafspm.io.encoding3d` writes a scene, or chosen DataStructures, as an
-  [encoding3d](https://github.com/openalea/encoding3d) frame: one glTF file that CPlantBox, GroIMP or VirtualPlantLab can
-  read, and that glTF viewers display. It holds each MPG scale as a table of vertices (ids, complex, parent, edge
+  [encoding3d](https://github.com/openalea/encoding3d) frame: one glTF file that glTF viewers display. CPlantBox,
+  GroIMP and VirtualPlantLab read it only through encoding3d's adapters, first proposals tested by hand. It holds each MPG scale as a table of vertices (ids, complex, parent, edge
   type), the variables and MPG properties as columns with their declared units, kinds and standard names, the soil
   grids, the mappings and the geometry: the DataStructure's triangles, and the shapes a component draws for display
   only (`display_triangles(where=None)`, e.g. GRANAP's sections), which light models never receive.
@@ -1210,7 +1217,8 @@ omitted) says how the scene uses the machine:
   mistake raises naming its key, never at the first solve. There is no `dense_solver` entry: the dense solves (a
   system declared `prefer_sparse=False`, the edge unknowns' recovery) are LAPACK's, with no other backend to
   choose.
-- `device`: `"cpu"` (default) or `"cuda"`: the array backend of the heavy linear algebra (`openalea.metafspm.backend`:
+- `device`: `"cpu"` (default) or `"cuda"` (experimental: it should work on suitable hardware but has not been
+  tested on a GPU yet; results within round-off of the CPU's): the array backend of the heavy linear algebra (`openalea.metafspm.backend`:
   numpy/scipy or CuPy). On `"cuda"`, the kinds' Kron reductions solve their many right-hand sides on the GPU (SuperLU's
   factors copied once), the linear solves go to `linear_solver="cupy"` (its default there: a system of at least
   100k entries solved whole on the device, cuDSS when nvmath-python is installed), and the components' setting named

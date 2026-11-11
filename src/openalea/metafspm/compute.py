@@ -25,7 +25,8 @@ A scene's run configuration: how many threads it uses, its device and its memory
                  kinds' Kron reductions, their dense solves on the GPU; the linear solves with linear_solver "cupy",
                  its default there) and the default of the components' setting named device (Caribu's near field).
                  "cuda" needs CuPy (optional: a missing CuPy, or no CUDA device, raises when the Scene is built, with
-                 the install line); nothing imports cupy otherwise
+                 the install line); nothing imports cupy otherwise. "cuda" is experimental: it should work on
+                 suitable hardware but has not been tested on a GPU yet (results within round-off of the CPU's)
   memory         "trim" (default): glibc's allocator held to ARENAS arenas (mallopt(M_ARENA_MAX), once per process, when
                  a Compute's limits() is first entered: the Scene's build, before the scene's worker threads; as the
                  environment's MALLOC_ARENA_MAX=2, which a set MALLOC_ARENA_MAX or GLIBC_TUNABLES arena_max overrides:

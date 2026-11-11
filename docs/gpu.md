@@ -4,6 +4,10 @@ metafspm runs on the CPU by default, and every model runs without a GPU. A GPU i
 moves the scene's heaviest linear algebra to it. This page says what moves, when it pays, how to install CuPy and
 how to check that it works.
 
+**The GPU path is experimental: it should work on suitable hardware but has not been tested on a GPU yet.** Its
+tests run on numba's CUDA simulator and on a fake CuPy. On a GPU, results agree with the CPU's within round-off, not
+bit for bit: the device sums in another order, and its compiler may fuse multiplies and adds.
+
 ```python
 from openalea.metafspm import Compute, Scene
 
@@ -117,7 +121,8 @@ Caribu's GPU near field needs numba's CUDA support (`numba.cuda.is_available()`;
    and every crossing is logged. The tests cover:
    - the dispatch;
    - the transfers (the factors copied once, a pattern once, only the values after);
-   - results equal to the CPU path (the same SuperLU: bit for bit);
+   - results equal to the CPU path (the fake's numpy and the same SuperLU: bit for bit; a real GPU agrees within
+     round-off);
    - the errors.
 3. **Use case 1 on the device, against the CPU:**
 
@@ -133,4 +138,4 @@ Caribu's GPU near field needs numba's CUDA support (`numba.cuda.is_available()`;
    host and moves only the kinds. Run it under a memory bound, one run at a time
    (`systemd-run --user --scope -p MemoryMax=8G ...`).
 
-None of the CuPy tests run in CI. The GPU path is run by hand on a GPU machine before a release.
+None of the CuPy tests run in CI, and the GPU path has not been run on a GPU yet: it is experimental.

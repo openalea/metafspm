@@ -9,10 +9,13 @@ processes, around the Multiscale Tree Graph (MTG) of OpenAlea.
   adaptive soil grids, and unions of populations. Steps receive their arrays, so the same model runs on one plant or
   a thousand.
 - **Coupling** goes through translators: within a DataStructure by aliases and derived variables, across
-  DataStructures (plants and soil, light, environment scalars) by mappings exchanged at fixed points.
+  DataStructures (plants and soil, light, environment scalars) by mappings exchanged before each model runs. The
+  coupling is explicit by default: a model reads what the models after it wrote at the step before (a one-step
+  lag). Iterating chosen steps to a fixed point within the step (`FixedPoint`) is an option.
 - **Scenes** build plant populations from a planting table and run them with their environment models.
-- **Exchange**: scenes and DataStructures are written as encoding3d files (one glTF file per time step), which other
-  platforms read and ParaView displays, and read back bit for bit; a metafspm model runs with another platform's
+- **Exchange**: scenes and DataStructures are written as encoding3d files (one glTF file per time step), which
+  ParaView displays and metafspm reads back bit for bit; other platforms read them only through encoding3d's
+  adapters, first proposals tested by hand; a metafspm model runs with another platform's
   model in an encoding3d coupling session, that model a component (`RemoteComponent`).
 
 ## Using models

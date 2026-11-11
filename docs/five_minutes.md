@@ -2,7 +2,8 @@
 
 This page is for those who want to **use** plant models built with metafspm: students, experimenters, modellers new
 to these models. It explains the core ideas through one real assembly, use case 1 (`examples/use_case_1`): wheat
-plants growing from their sowing in their soil and their light, hour by hour. Open its files beside this page:
+plants growing from their sowing, hour by hour, with the water of their soil and their light. Open its files beside
+this page:
 `run.py` (the run), `models.py` (the plant model and its links), `component.py` (the soil) and `README.md` (every
 detail).
 
@@ -17,6 +18,11 @@ Use case 1 couples seven models this way. Adel grows the shoot and ArchiSimple t
 anatomy of every section; MECHA computes the water flow from the soil to the leaves; CNW-Grass computes the leaves'
 gas exchange; Caribu computes the light. Richards' equation on a grid gives the soil's water. None of these models
 knows about the others: metafspm passes each the values it needs, in its own units, at each time step.
+
+What use case 1 does not do yet: its growth is prescribed. Adel grows the shoot on thermal time, and ArchiSimple
+grows the roots at their potential, on the soil temperature. So growth responds neither to the soil's water nor to
+the light. No carbon is allocated either: the leaves' photosynthesis feeds no other model. The water flow and the
+light are computed every hour, in the plants as they grow.
 
 ## Components: one process each
 
@@ -148,8 +154,8 @@ the gas exchange runs before MECHA: its stomata read the leaf water potential of
 is accepted at an hourly step (decision U-6); `plant_water.csv` and `soil_water.csv` record the water potentials'
 change from one hour to the next, to check that it stays small.
 
-Where the lag is too large, `Scene(coupling=FixedPoint(...))` repeats chosen steps within the step until what they
-write stops changing. It requires steps that keep their topology: use case 1's growing plants and adaptive soil
+The explicit coupling, with its one-step lag, is the default. Where the lag is too large, an option,
+`Scene(coupling=FixedPoint(...))`, repeats chosen steps within the step until what they write stops changing. It requires steps that keep their topology: use case 1's growing plants and adaptive soil
 grid do not, so it keeps the explicit coupling. `scene.schedule()` gives the step's order as a table: each model,
 its steps, and the variables each reads and writes.
 
@@ -207,8 +213,9 @@ nothing: everything is in its folder, after every hour:
 The tables are CSV files, readable while the run goes on: `pandas.read_csv("outputs/three_days/leaves.csv")`, or a
 spreadsheet.
 
-The frames are **encoding3d** files, a format shared with other plant modelling platforms (CPlantBox, GroIMP,
-VirtualPlantLab): each holds the whole scene at one time, every element's variables, the soil and the 3D shapes.
+The frames are **encoding3d** files: each holds the whole scene at one time, every element's variables, the soil and
+the 3D shapes. The format is meant to be shared with other plant modelling platforms. For now CPlantBox, GroIMP and
+VirtualPlantLab read the frames only through encoding3d's adapters, which are first proposals tested by hand.
 In ParaView, encoding3d's reader plugin opens `frames/scene.fspm.json` during the run, or `frames.fspm.zip` after
 it, and plays the time steps. `frame_views="default"` prepares the layers: the shoot coloured by its organs' rank,
 the roots by their type, the soil by its pressure head. The first plant's sections are drawn once a day
@@ -239,7 +246,6 @@ The models ported to metafspm are in their own packages, on their development br
 | [Caribu](https://github.com/openalea/caribu/tree/to_metafspm) (`to_metafspm`) | the light absorbed by each element of a canopy | `CaribuLight` (functional), `CaribuLightModel` (the scene's light, an environment model), `SimplePlant` (a simple plant to light) |
 | [GRANAP](https://github.com/openalea-incubator/GRANAP-dev/tree/to_metafspm) (`to_metafspm`) | the anatomy of plant organs' cross sections: their tissues and cells | `GranapAnatomy` (structural: the sections' cells), `RootAxis` and `Needle` (organs to carry the sections) |
 | [MECHA](https://github.com/openalea-incubator/MECHA-dev/tree/to_metafspm) (`to_metafspm`) | the flow of water (and solutes) across a root's or a needle's tissues | `MechaHydraulics` (water), `MechaSolutes` (sucrose and starch), `MechaOsmoticPresets` (osmotic potentials); on GRANAP's anatomies |
-| [CNW-Grass](https://github.com/openalea/cnwgrass/tree/to_metafspm) (`to_metafspm`) | the gas exchange of wheat leaves: photosynthesis, stomatal conductance, transpiration, leaf temperature | `GasExchange` (functional); the plant model `ExchangingWheat` puts it on Adel's shoots, lit by Caribu |
 
 Ports coming next, not available yet (the component, and the model it is ported from):
 
@@ -250,7 +256,8 @@ Ports coming next, not available yet (the component, and the model it is ported 
 - `CNMetabolism`, from openalea.rootbridges
 - `RootGrowth`, from openalea.rhizodep
 - `SimplifiedAnatomy`, from openalea.rhizodep
-- openalea.cnwgrass's components:
+- openalea.cnwgrass's components (its `GasExchange` is already a metafspm component, on the `to_metafspm`
+  branch, used by use case 1; the rest of the repository is not ported yet):
   - `Growth`
   - `Morphogenesis`
   - `Respiration`
@@ -287,7 +294,6 @@ git clone -b other_platforms_bindings https://github.com/openalea/encoding3d.git
 | Caribu | `git clone -b to_metafspm https://github.com/openalea/caribu.git caribu` (and Adel's, as above, for the wheat examples) | `mamba env create -n caribu -f caribu/conda/environment.yml`, `mamba activate caribu`, `pip install -e encoding3d`, `pip install -e metafspm` (and `pip install -e adel --no-deps`) |
 | GRANAP | `git clone -b to_metafspm https://github.com/openalea-incubator/GRANAP-dev.git GRANAP` | `mamba env create -f GRANAP/conda/environment.yaml`, `mamba activate granap`, `pip install -e encoding3d`, `pip install -e metafspm`, `pip install -e GRANAP` |
 | MECHA | GRANAP's, as above, and `git clone -b to_metafspm https://github.com/openalea-incubator/MECHA-dev.git MECHA-dev` | `mamba env create -f MECHA-dev/conda/environment.yaml`, `mamba activate mecha`, `pip install -e encoding3d`, `pip install -e metafspm`, `pip install -e GRANAP`, `pip install -e MECHA-dev` |
-| CNW-Grass | Caribu's and Adel's, as above, and `git clone -b to_metafspm https://github.com/openalea/cnwgrass.git cnwgrass` | Caribu's environment, as above, then `pip install -e cnwgrass --no-deps` |
 
 Keep the folder names above: the environment files find metafspm, encoding3d (and GRANAP) next to the package. Each package's
 README gives the same steps. To update, `git pull` in each repository; the editable installs follow.

@@ -23,7 +23,7 @@ class Choregrapher:
     universal_steps = UNIVERSAL_STEPS
     consensus_scheduling = [
             ["stepinit", "rate", "totalrate", "state", "totalstate"],  # metabolic models
-            ["axial"],  # subcategoy for metabolic models
+            ["axial"],  # subcategory for metabolic models
             ["potential", "deficit", "allocation", "actual", "segmentation", "postsegmentation"],  # growth models
         ]
 
