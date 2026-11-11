@@ -59,6 +59,12 @@ A scene's run configuration: how many threads it uses, its device and its memory
                                built for it, and compared bit for bit (solve.reduction.check_archetypes)
                  e.g. Compute(checks={"topology", "archetypes"}); an unknown name raises at the Compute. run.json's
                  provenance records them (scene.provenance)
+  processes      where the scene's populations run (scene.runner): 1 (default) in the scene's process, each in turn;
+                 an integer n, in n worker processes forked at the first step (each a group of whole populations, on
+                 its own cores, its threads held to them; the coordinator keeps the environment, the exchanges, the
+                 recorder and the checkpoints); "auto", as many workers as the populations, the cores and the memory
+                 budget allow (runner.placement). The results are the same bits at any count (the plant-order rule).
+                 run.json records the placement ("processes"). Linux and macOS (fork), the cpu, coupling "explicit"
 
 Within limits() (the Scene's build and each of its steps), Compute.current() is that Compute: what the code run
 there reads of it (a reduction's archetype batches) without being given it; outside, a default Compute().
@@ -120,6 +126,7 @@ class Compute:
     linear_solver: object = None           # a name, or {key: name}; None: "superlu" on the cpu, "cupy" on cuda
     archetype_batch: int = 200_000
     checks: tuple = ()                     # names among CHECKS (any collection; kept sorted, as a tuple)
+    processes: object = 1                  # 1, a positive integer (the worker processes) or "auto" (scene.runner)
     _controller: object = field(default=None, init=False, repr=False, compare=False)
     _linear: dict = field(default_factory=dict, init=False, repr=False, compare=False)
     _backend: object = field(default=None, init=False, repr=False, compare=False)
@@ -143,6 +150,9 @@ class Compute:
         if unknown:
             raise ValueError(f"Compute: unknown checks {unknown}; checks are among {CHECKS}")
         self.checks = tuple(sorted(set(self.checks)))
+        if self.processes != "auto" and (isinstance(self.processes, bool) or not isinstance(self.processes, int)
+                                         or self.processes < 1):
+            raise ValueError(f"Compute: processes is 'auto' or a positive integer, got {self.processes!r}")
         _COMPUTES[id(self)] = self
 
     def as_dict(self) -> dict:

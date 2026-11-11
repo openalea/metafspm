@@ -1212,6 +1212,9 @@ class SceneRecorder:
                          calls=dict(getattr(scene, "calls", {})))
         if getattr(scene, "coupling", "explicit") != "explicit":         # a fixed point's iterations (Scene)
             self._run["coupling_iterations"] = dict(scene.coupling_iterations)
+        runner = getattr(scene, "runner", None)
+        if runner is not None and runner.processes > 1:            # the workers' placement and memory (scene.runner)
+            self._run["processes"] = runner.info(scene)
         self._run["forcings"] = scene.forcing_summary.as_dict()      # the forcings applied: their per-step means'
         self._run.setdefault("compute", {})["timing"] = scene.compute.timing_info()     # the kernels' and solvers'
         device = scene.compute.device_info()     # the GPU used and its transfers, None on the cpu (not recorded)

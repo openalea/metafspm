@@ -172,6 +172,9 @@ class Scene:
                         periodic, flip_z, x_range, y_range, forcings, events, stop_when, mappings, recorder, start,
                         soil_surface)
             self._bind_coupling(coupling)
+        from openalea.metafspm.scene.runner import make_runner
+        self.runner = make_runner(self)             # where the populations run (Compute(processes=))
+        self._runner_started = False
 
     def _build(self, planting, environment, environment_scenarios, translator, time_step, mapping_method, periodic,
                flip_z, x_range, y_range, forcings, events, stop_when, mappings, recorder, start, soil_surface) -> None:
@@ -560,6 +563,9 @@ class Scene:
     def run(self) -> None:
         """One scene step: the environment, then the populations, each after the exchanges into it; the process's
         threads limited to the Compute's while it runs, and the freed memory given back after (memory "trim")."""
+        if not self._runner_started:                 # the workers forked once, after the build and a restore
+            self._runner_started = True
+            self.runner.start(self)
         with self.compute.limits():
             self._step()
         self.compute.trim()
@@ -594,16 +600,7 @@ class Scene:
             self._time("exchanges", exchanged - started)
             self._time(type(model).__name__, perf_counter() - exchanged)
             self._time_components(type(model).__name__, model.components)
-        for population in self.populations:
-            if not self._due(population.instance):
-                continue
-            started = perf_counter()
-            self.exchanges.exchange(into=population.data_structure)
-            exchanged = perf_counter()
-            population.instance.run()
-            self._time("exchanges", exchanged - started)
-            self._time(population.name, perf_counter() - exchanged)
-            self._time_components(population.name, population.components)
+        self.runner.run_populations(self)           # each after the exchanges into it (scene.runner)
         if iterated:
             self._iterate(snapshots)
         self.time += self.time_step
@@ -810,8 +807,7 @@ class Scene:
         store.referenced = set()
         for i, data_structure in enumerate(self._all_data_structures()):
             data_structure.checkpoint(os.path.join(path, f"data_structure_{i}"), shared=store)
-        states = {key: obj.checkpoint_state() for key, obj in self._stateful().items()
-                  if hasattr(obj, "checkpoint_state")}
+        states = self.runner.checkpoint_states(self)     # the populations' from their workers (processes > 1)
         with open(os.path.join(path, "states.pkl"), "wb") as f:
             store.dump(states, f)
         store.write_references(os.path.abspath(path))
@@ -839,6 +835,9 @@ class Scene:
         changed parameter (a parameter or setting a scenario gives; the others keep the checkpoint's). Every
         component's caches are dropped (Component.clear_caches: built on the topology before the load).
         """
+        if getattr(self, "_runner_started", False) and self.runner.processes > 1:
+            raise RuntimeError("Scene.load_checkpoint: this scene's workers run already (processes > 1): load a "
+                               "checkpoint into a freshly built scene (Scene.restore)")
         if scenario not in ("checkpoint", "current"):
             raise ValueError(f"Scene.load_checkpoint(scenario=...): 'checkpoint' or 'current', got {scenario!r}")
         import json
@@ -902,12 +901,21 @@ class Scene:
         records its state then.
         """
         self._finished = True
-        if self.recorder is None:
-            return
-        if not self._recording:
-            self._recording = True
-            self.recorder.begin(self)
-        self.recorder.finish(self, status, error)
+        try:
+            if self.recorder is None:
+                return
+            if not self._recording:
+                self._recording = True
+                self.recorder.begin(self)
+            self.recorder.finish(self, status, error)
+        finally:
+            self.runner.stop()                       # the workers, after the recorder's last state
+
+    def apply(self, function, population=None) -> list:
+        """[function(data_structure)] of the population *population* (scene.population's key): run where its
+        DataStructure lives, its worker's with processes > 1 (*function* and its result pickled: a module-level
+        function), the scene's process otherwise. One result per group (one)."""
+        return self.runner.apply(self, function, population)
 
     def __del__(self):
         if getattr(self, "_recording", False) and not getattr(self, "_finished", True):
