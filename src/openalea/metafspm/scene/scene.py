@@ -604,7 +604,8 @@ class Scene:
     def _iterate(self, snapshots: dict) -> None:
         """A fixed-point coupling's iterations (coupling.iteration): the iterated steps run again from their start,
         after the exchanges into their models, until what they write no longer changes."""
-        from openalea.metafspm.coupling.iteration import converged, restore, values, warn_not_converged
+        from openalea.metafspm.coupling.iteration import (check_finite, converged, restore, values,
+                                                          warn_not_converged)
         coupling = self.coupling
         for model in coupling.models():
             model.__dict__.pop("_before_step", None)
@@ -625,6 +626,7 @@ class Scene:
                 break
             before = after
         else:
+            check_finite(bound, after, self.time)
             warn_not_converged(coupling, self.time)
             self.coupling_iterations["not_converged"] += 1
         self._time("coupling iterations", perf_counter() - started)

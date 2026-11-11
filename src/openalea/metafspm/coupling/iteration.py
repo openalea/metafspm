@@ -11,8 +11,9 @@ until what they write no longer changes::
 After the explicit pass, each iterated step is run again, in the order they ran, from the state it started the scene
 step from (its components' kept state and balances, the variables it writes, as they were before its first run), after
 the exchanges into its model: a Gauss-Seidel iteration over the exchanges, until every variable the steps write moves
-by at most *absolute* + *tolerance* × its largest value between two iterations, or *max_iterations* (a warning). The
-other steps run once. An iterated step must run every scene step (no cadence) and its DataStructures must keep their
+by at most *absolute* + *tolerance* × its largest value between two iterations, or *max_iterations* (a warning). A
+NaN or an infinity in what they write is no convergence: when the iterations end on one, a FloatingPointError names
+the step, the variable and the time. The other steps run once. An iterated step must run every scene step (no cadence) and its DataStructures must keep their
 topology from its first run to the iteration (a step that grows or regrids, or a later step of its model doing so,
 cannot be iterated: a ValueError names it). Scene.coupling_iterations counts the iterations (run.json).
 """
@@ -133,14 +134,34 @@ def values(bound) -> list:
     return [np.array(root.get(name), dtype=float, copy=True) for _, _, step in bound for root, name in _written(step)]
 
 
+def names(bound) -> list:
+    """("<model>.<step>", variable) of the variables the iterated steps write, in values()' order."""
+    return [(step_name, name) for step_name, _, step in bound for _, name in _written(step)]
+
+
 def converged(before: list, after: list, tolerance: float, absolute: float) -> bool:
-    """Whether every variable moved by at most absolute + tolerance × its largest value."""
+    """Whether every variable moved by at most absolute + tolerance × its largest value; a NaN or an infinity in
+    either iterate is no convergence."""
     for old, new in zip(before, after):
         if old.shape != new.shape:
             return False
-        if old.size and np.nanmax(np.abs(new - old)) > absolute + tolerance * np.nanmax(np.abs(new)):
+        if not old.size:
+            continue
+        if not (np.isfinite(old).all() and np.isfinite(new).all()):
+            return False
+        if np.max(np.abs(new - old)) > absolute + tolerance * np.max(np.abs(new)):
             return False
     return True
+
+
+def check_finite(bound, after: list, time: float) -> None:
+    """A FloatingPointError naming the first iterated step and variable holding a NaN or an infinity in *after*."""
+    for (step_name, name), new in zip(names(bound), after):
+        bad = ~np.isfinite(new)
+        if bad.any():
+            raise FloatingPointError(f"FixedPoint: '{step_name}' wrote a non-finite '{name}' ({int(bad.sum())} of "
+                                     f"{new.size} values NaN or infinite) at time {time} s: the iteration cannot "
+                                     "converge")
 
 
 def warn_not_converged(coupling: FixedPoint, time: float) -> None:

@@ -90,3 +90,22 @@ def test_a_step_whose_data_structure_changed_after_it_ran_is_refused():
     ds.__dict__["_topology_version"] = ds.topology_version + 1  # as a growth after it would
     with pytest.raises(ValueError, match="topology"):
         restore(step, kept, "RootPopulation.carbon")
+
+
+def test_a_non_finite_iterate_is_not_converged():
+    """A NaN or an infinity in what the iterated steps write is no convergence: np.nanmax would skip it."""
+    from openalea.metafspm.coupling.iteration import converged
+    assert converged([np.array([1., 2.])], [np.array([1., 2.])], 1e-8, 0.)
+    assert not converged([np.array([1., 2.])], [np.array([1., np.nan])], 1e-8, 0.)
+    assert not converged([np.array([np.nan, np.nan])], [np.array([np.nan, np.nan])], 1e-8, 0.)
+    assert not converged([np.array([1., 2.])], [np.array([1., np.inf])], 1e-8, 0.)
+
+
+def test_an_iteration_ending_on_a_non_finite_state_raises_naming_the_step_and_the_variable():
+    scene = _scene(coupling=FixedPoint(ITERATED, tolerance=1e-12, max_iterations=5))
+    soil = scene.model("SceneSoil").grid
+    nitrate = np.array(soil.get("soil_nitrate"), dtype=float)
+    nitrate.flat[0] = np.nan
+    soil.set("soil_nitrate", nitrate)
+    with pytest.raises(FloatingPointError, match=r"SceneSoil\.nitrate.*soil_nitrate"):
+        scene.run()

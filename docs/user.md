@@ -814,7 +814,9 @@ time (an event's, a planting time) is a duration since time 0 or a date (`"2026-
   coupling=FixedPoint(("Soil.water", "Wheat.hydraulics"), tolerance=1e-8, max_iterations=20))`
   (`coupling.iteration`): after the explicit pass each iterated step runs again from its start (its components'
   kept state and balances, the variables it writes), after the exchanges into its model, until what the steps write
-  moves by less than the tolerance; `Scene.coupling_iterations` (and run.json) counts the iterations. An iterated
+  moves by less than the tolerance; a NaN or an infinity never counts as converged, and iterations that end on one
+  raise a FloatingPointError naming the step and the variable; `Scene.coupling_iterations` (and run.json) counts
+  the iterations. An iterated
   step runs every step (no cadence) and its DataStructures keep their topology from its first run to the iteration
   (a step that grows or regrids after it, as use case 1's adaptive soil, is refused).
 - **Forcings, the time-varying inputs.** `forcings={name: forcing}`, or a DataFrame indexed by time (s) with one
