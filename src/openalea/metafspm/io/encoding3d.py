@@ -53,6 +53,10 @@ from openalea.metafspm.data_structure.mpg import MPG
 
 PLATFORM = "openalea.metafspm"
 EXTRAS = "metafspm"
+# The format of the extras (extras["metafspm"]["format"]): 2 since the 2026 renames (QA-6: the declarations'
+# "aggregation" and "role", the kind values, a grid's "spacing"). A frame of an older format still displays (its
+# standard part), but is not rebuilt (from_frame): no converter, write it again.
+FRAME_FORMAT = 2
 NO_ID = -1
 EDGE_CODES = {1: "/", 2: "<", 3: "+"}               # the MPG's edge types (MPG.topology_arrays)
 LINK_COLUMNS = ("metafspm_complex", "metafspm_parent", "metafspm_edge_type")
@@ -513,7 +517,7 @@ def _mpg_data_structure(identifier: str, data_structure, metadata: dict, standar
     translator = dict(mtg.labels.translator)
     properties = _mpg_properties(mtg)                # the columns (mtg.property() builds a mapping)
     label_property, edge_property = properties.get("label", {}), properties.get("edge_type", {})
-    extras = {"class": "MPGDataStructure", "construction": data_structure._construction(), "last_id": int(mtg._id),
+    extras = {"format": FRAME_FORMAT, "class": "MPGDataStructure", "construction": data_structure._construction(), "last_id": int(mtg._id),
               "anchors": sorted(int(v) for v in anchors), "scales": {}, "label_codes": {}, "properties": {},
               "absent_rows": {}, "none_rows": {}, "variables": {},
               "tracked": sorted(data_structure.__dict__.get("_mtg_tracked", {})),
@@ -1241,8 +1245,8 @@ def _rows_up(sets: dict, ids: np.ndarray, set_names: list) -> dict:
 def _grid_data_structure(identifier: str, data_structure, metadata: dict, standard_names: dict):
     encoding3d = _encoding3d()
     adaptive = isinstance(data_structure, AdaptiveGridDataStructure)
-    extras = {"class": type(data_structure).__name__, "construction": data_structure._construction(), "variables": {},
-              "aliases": data_structure.aliases()}
+    extras = {"format": FRAME_FORMAT, "class": type(data_structure).__name__, "construction": data_structure._construction(),
+              "variables": {}, "aliases": data_structure.aliases()}
     count = data_structure.n_nodes()
     cells = {"id": np.asarray(data_structure.entity_ids("cell"), dtype=np.int64)}        # a regular grid's: the C-order index
     if adaptive:
@@ -1965,6 +1969,10 @@ def from_frame(frame) -> dict:
         if extras is None:
             warnings.warn(f"'{data_structure.id}' was not written by metafspm: not rebuilt")
             continue
+        if extras.get("format", 1) != FRAME_FORMAT:
+            raise ValueError(f"'{data_structure.id}' was written by a metafspm before its 2026 renames (frame extras "
+                             f"format {extras.get('format', 1)}, now {FRAME_FORMAT}: 'aggregation', 'role', 'spacing'): "
+                             "it still displays, but cannot be rebuilt; write the frame again")
         if "filtered" in extras:
             raise ValueError(f"'{data_structure.id}' was written filtered, for logging ({extras['filtered']}): "
                              "it cannot be rebuilt (write it unfiltered to exchange it)")
@@ -1972,9 +1980,6 @@ def from_frame(frame) -> dict:
             raise ValueError(f"'{data_structure.id}' was written folded into its pattern ({extras['folded']}), for "
                              "display: it cannot be rebuilt (write it unfolded to exchange it)")
         if extras["class"] == "MPGDataStructure":
-            if "absent_rows" not in extras:
-                raise ValueError(f"'{data_structure.id}' was written by a metafspm before 2026-11-09 (its properties' "
-                                 "absent vids listed one by one): rewrite the frame to rebuild it")
             out[data_structure.id] = _mpg_from(data_structure, extras)
         else:
             out[data_structure.id] = _grid_from(data_structure, extras)

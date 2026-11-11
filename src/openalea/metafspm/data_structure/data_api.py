@@ -52,6 +52,20 @@ except ImportError:
 # Solver-facing graph primitives  (formerly in graph_system.py)
 # ═══════════════════════════════════════════════════════════════════════════════
 
+# The format of the checkpoints (a DataStructure's manifest.json, a Scene's scene.json): 2 since the 2026 renames
+# (QA-6: the declarations' "aggregation" and "role", the kind values, archetypes, Scene.step_count), whose pickled
+# metadata and classes a checkpoint of format 1 holds under the former names. No converter: run again.
+CHECKPOINT_FORMAT = 2
+
+
+def check_checkpoint_format(path: str, found) -> None:
+    """A ValueError when the checkpoint in *path* has another format than CHECKPOINT_FORMAT."""
+    if found != CHECKPOINT_FORMAT:
+        raise ValueError(f"{path} is a checkpoint of format {found}, written before metafspm's 2026 renames (format "
+                         f"{CHECKPOINT_FORMAT}: 'aggregation', 'role', archetypes, step_count): it cannot be resumed "
+                         "from; run the simulation again")
+
+
 @dataclass(frozen=True)
 class BoundaryPort:
     """
@@ -1269,7 +1283,7 @@ class VariableStoreMixin:
         finally:
             self.__dict__.pop("_columns_detached", None)
         with open(os.path.join(path, "manifest.json"), "w") as f:
-            json.dump({"format": 1, "class": type(self).__name__, "construction": self._construction(),
+            json.dump({"format": CHECKPOINT_FORMAT, "class": type(self).__name__, "construction": self._construction(),
                        "variables": variables, "version": self.version, "topology_version": self.topology_version,
                        **({"shared": os.path.relpath(shared.folder, path)} if shared is not None else {})},
                       f, indent=1)
@@ -1286,6 +1300,7 @@ class VariableStoreMixin:
         import pickle
         with open(os.path.join(path, "manifest.json")) as f:
             manifest = json.load(f)
+        check_checkpoint_format(path, manifest.get("format", 1))
         if manifest["class"] != class_name:
             raise TypeError(f"{path} holds a {manifest['class']}, not a {class_name}")
         if shared is None and "shared" in manifest:          # its shared parts' folder, named by the manifest

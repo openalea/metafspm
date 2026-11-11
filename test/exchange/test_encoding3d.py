@@ -466,9 +466,23 @@ def test_absent_and_none_values_are_row_ranges():
     again = _round_trip({"plants": data_structure}, components={"plants": models})["plants"]
     _same_mpg(data_structure.structure, again.structure)
     assert again.structure.property("tag")[segments[0]] is None and segments[1] not in again.structure.property("tag")
-    del extras["absent_rows"]
-    with pytest.raises(ValueError, match="rewrite the frame"):
-        from_frame(frame)
+
+
+def test_a_frame_written_before_the_renames_is_refused():
+    """A frame whose metafspm extras have no format (written before the 2026 renames) or an older one: not
+    rebuilt, a message saying why (its standard part still displays)."""
+    data_structure = _population()
+    models = _models(data_structure)
+    frame = to_frame({"plants": data_structure}, components={"plants": models})
+    extras = frame.data_structure("plants").extras["metafspm"]
+    assert extras["format"] == 2
+    for older in (None, 1):
+        if older is None:
+            del extras["format"]
+        else:
+            extras["format"] = older
+        with pytest.raises(ValueError, match="before its 2026 renames .*write the frame again"):
+            from_frame(frame)
 
 
 def test_frames_written_to_and_read_from_files(tmp_path):

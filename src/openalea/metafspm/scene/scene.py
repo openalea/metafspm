@@ -52,7 +52,8 @@ from openalea.metafspm.coupling.choregrapher import sub_steps
 from openalea.metafspm.coupling.forcings import forcing_mean, forcing_table, is_spatial, spatial_mean
 from openalea.metafspm.coupling.cross import CrossMapping, Exchanges, UnionDataStructure, UnionMapping
 from openalea.metafspm.coupling.translator import Translator, link_pairs, _matches, _scene_name
-from openalea.metafspm.data_structure.data_api import MPGDataStructure, _root_data_structure
+from openalea.metafspm.data_structure.data_api import (CHECKPOINT_FORMAT, MPGDataStructure, _root_data_structure,
+                                                      check_checkpoint_format)
 from openalea.metafspm.scene.recorder import SceneRecorder
 from openalea.metafspm.scene.population import (Population, _apply_model_scenario, _flat_scenario, _model_arguments,
                                                 _model_keywords, planting as _planting, population_data_structure)
@@ -804,7 +805,7 @@ class Scene:
             store.dump(states, f)
         store.write_references(os.path.abspath(path))
         with open(os.path.join(path, "scene.json"), "w") as f:
-            json.dump({"time": self.time, "step_count": self.step_count, "stopped": self.stopped,
+            json.dump({"format": CHECKPOINT_FORMAT, "time": self.time, "step_count": self.step_count, "stopped": self.stopped,
                        "events_fired": self._n_events - len(self.events),
                        "data_structures": len(self._all_data_structures())}, f)
 
@@ -832,6 +833,7 @@ class Scene:
         from openalea.metafspm.scene.shared import SharedStore, references
         with open(os.path.join(path, "scene.json")) as f:
             saved = json.load(f)
+        check_checkpoint_format(path, saved.get("format", 1))
         folder, _ = references(path)
         store = SharedStore(folder) if folder is not None else None      # one object per shared part, every file
         data_structures = self._all_data_structures()

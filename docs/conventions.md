@@ -335,3 +335,26 @@ These raise; none of them is silently ignored:
 - a write to a derived variable.
 
 `data_structure.validate()` lists every inconsistency of a DataStructure at once.
+
+## Vocabulary
+
+One word per concept, in the API and in the docs:
+
+- **kind**: a variable's kind only (`state_variable(kind=)`: extensive, intensive, massic_concentration,
+  descriptor, non_inertial_extensive, non_inertial_intensive).
+- **archetype**: a reduction's group class, whose Kron reduction its groups share (`Archetype`,
+  `Reduction(archetype_variables=)`, `group_archetypes`, `archetype_batch`, `@archetype_derived`).
+- **condition**: a boundary condition's type, `"dirichlet"`, `"neumann"`, `"robin"` (`boundary_set(condition=)`,
+  `@boundary_condition(location, condition)`).
+- **role**: what a declaration is, its function's name (state_variable, input_variable, parameter, setting,
+  forcing_variable).
+- **aggregation**: a change of scale within one DataStructure (`aggregation=`: sum, mean, weighted_mean,
+  broadcast, split, child, parent). **mapping**: a passage between two DataStructures (`Link.mapping`,
+  `Scene(mappings=)`, `CrossMapping`).
+- **where**: the entities a decorator, a summary or a reduction applies to (`where=`, "a filter" in prose).
+- **absolute_tolerance**, **relative_tolerance**: the two tolerances of every stopping test; a time integration's
+  are `integration_absolute_tolerance`, `integration_relative_tolerance`.
+- **step_duration**: the length of the (sub-)step being computed; **time_step**: the component's declared step;
+  **step_count**: the scene steps run.
+- **data_structure**, **mtg**: a DataStructure and an MTG, never `ds` or `g`; **spacing**: a grid's voxel size per
+  axis; **x_range**, **y_range**: the scene's extent.

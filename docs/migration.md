@@ -164,3 +164,45 @@ class GrassBRIDGES(CompositeModel):
 5. A short `Scene` run gives the expected outputs for a fixed seed and a few steps, the way `test/scenes/test_scene_contract.py` does for the doubles.
 
 The legacy props path (the props branches of `CompositeModel`, the Functor and `FunctionalComponent`) and the per-process scene (`play_Orchestra`, `Transport`, `Coupler`) are already removed from metafspm. Migrated packages must target the current API.
+
+## 7. The 2026 renames (QA-6)
+
+One word per concept, full words, no aliases: a former keyword raises Python's TypeError, a former attribute its
+AttributeError. Checkpoints (format 2) and frames (extras format 2) written before are refused with a message
+naming the renames (a frame still displays in ParaView): run again, there is no converter. The environment variable
+`METAFSPM_CHECK_KINDS` does nothing any more: it is `METAFSPM_CHECK_ARCHETYPES`.
+
+| Former | Now |
+|---|---|
+| kind values `"NonInertialExtensive"`, `"NonInertialIntensive"` | `"non_inertial_extensive"`, `"non_inertial_intensive"` |
+| `solve.reduction.Kind` | `Archetype` |
+| `Reduction(kind={...})` | `Reduction(archetype_variables={...})` |
+| `Reduction.group_kinds` | `Reduction.group_archetypes` |
+| `Compute(kind_batch=)` | `Compute(archetype_batch=)` |
+| `METAFSPM_CHECK_KINDS=1` | `METAFSPM_CHECK_ARCHETYPES=1` |
+| `@kind_derived(name)` | `@archetype_derived(name)` |
+| `boundary_set(kind=, kinds=)`, `boundary_set.KINDS` | `boundary_set(condition=, condition_variable=)`, `boundary_set.CONDITIONS` |
+| `@boundary_condition(location, kind)` | `@boundary_condition(location, condition)` |
+| `BoundaryPort.kind` | `BoundaryPort.condition` |
+| `ScheduledStep.kind`, the steps table's `kind` column | `ScheduledStep.form`, `form` |
+| `MPGDataStructure.add_organ(..., kind="Shoot")` | `add_organ(..., complex_label="Shoot")` |
+| `graph_system(tolerance=)` | `graph_system(absolute_tolerance=)` |
+| `graph_system(rtol=, atol=)` | `graph_system(integration_relative_tolerance=, integration_absolute_tolerance=)` |
+| `FixedPoint(tolerance=, absolute=)` | `FixedPoint(relative_tolerance=, absolute_tolerance=)` |
+| `SolverConfig(max_iter, tol, newton_rtol, step_tol, fd_eps, rtol, atol)` | `max_iterations, absolute_tolerance, relative_tolerance, step_tolerance, finite_difference_step, integration_relative_tolerance, integration_absolute_tolerance` |
+| `testing.assert_arrays_equal(rtol=, atol=)`, `array_differences` | `relative_tolerance=`, `absolute_tolerance=` |
+| declaration metadata `"mapping"`, `VariableSpec.mapping`, `default_mapping` | `"aggregation"`, `VariableSpec.aggregation`, `default_aggregation` |
+| `filters=` (step decorators, `graph_system`, `@node_balance`, `@node_rate`, `@edge_law`, `@boundary_condition`, `boundary_set`, `@graph_output`) | `where=` |
+| declaration metadata `"variable_type"`, `VariableSpec.variable_type` | `"role"`, `VariableSpec.role` |
+| role values `"input"`, `"forcing"` | `"input_variable"`, `"forcing_variable"` |
+| `ds` (parameters, locals) | `data_structure` |
+| `g` (an MTG: `initiate_plant(cls, g, plant, scenario)`, …) | `mtg` |
+| `Component.dt`, `dt` parameters | `Component.step_duration`, `step_duration` |
+| `Scene.simulate(n_iterations)` | `Scene.simulate(steps)` |
+| `Scene.iteration`, the checkpoint's and run.json's `"iteration"` | `Scene.step_count`, `"step_count"` |
+| `xrange`, `yrange` | `x_range`, `y_range` |
+| grids' `dx=`, `.dx`, construction `"dx"` | `spacing=`, `.spacing`, `"spacing"` |
+| `declared_specs`, `holder_spec`, `link_direction`, `mapped_read`, `conservation.begin_call/end_call/mark/reject`, `iteration.snapshot/restore`, `run_cadenced`, `translator.matches/scene_name` | `_`-prefixed (internal) |
+| deep imports of the public names (`from openalea.metafspm.scene.scene import Scene`, …) | `from openalea.metafspm import Scene, ...` (its `__all__`) |
+| GRANAP's node variable `kind` (codes 0-4) | `compartment_type` |
+| MECHA's `collar_kind`, `soil_node_kind` | `collar_condition`, `soil_node_condition` |

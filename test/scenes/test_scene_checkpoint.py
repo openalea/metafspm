@@ -63,6 +63,21 @@ def _state(scene):
     return [{name: np.array(data_structure.get(name)) for name in data_structure.available_vars()} for data_structure, _, _ in scene.data_structures().values()]
 
 
+def test_a_scene_checkpoint_written_before_the_renames_is_refused(tmp_path):
+    """A scene.json without a format (written before the 2026 renames) is refused before anything is loaded."""
+    import json
+    scene = _scene()
+    scene.run()
+    scene.checkpoint(str(tmp_path / "checkpoint"))
+    path = tmp_path / "checkpoint" / "scene.json"
+    saved = json.loads(path.read_text())
+    assert saved["format"] == 2
+    del saved["format"]
+    path.write_text(json.dumps(saved))
+    with pytest.raises(ValueError, match="format 1, written before metafspm's 2026 renames"):
+        Scene.restore(str(tmp_path / "checkpoint"), **_scene_arguments())
+
+
 def test_a_restored_scene_continues_bit_for_bit(tmp_path):
     scene = _scene()
     scene.run()

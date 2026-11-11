@@ -89,6 +89,21 @@ def test_the_checkpoint_layout(tmp_path):
     assert list(restored.get("tags")) == [["a"]] * data_structure.n_nodes()
 
 
+def test_a_checkpoint_written_before_the_renames_is_refused(tmp_path):
+    """A checkpoint of format 1 (written before the 2026 renames: its pickled metadata under the former names) is
+    refused with a message saying why; no converter."""
+    data_structure = _population()
+    _models(data_structure)
+    data_structure.checkpoint(str(tmp_path / "c"))
+    manifest_path = tmp_path / "c" / "manifest.json"
+    manifest = json.loads(manifest_path.read_text())
+    assert manifest["format"] == 2
+    manifest["format"] = 1
+    manifest_path.write_text(json.dumps(manifest))
+    with pytest.raises(ValueError, match="format 1, written before metafspm's 2026 renames.*run the simulation"):
+        MPGDataStructure.restore(str(tmp_path / "c"))
+
+
 def test_the_mtg_can_be_given_back(tmp_path):
     data_structure = _population()
     _models(data_structure)
