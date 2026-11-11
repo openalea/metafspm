@@ -186,7 +186,8 @@ class Scene:
         self.planting = planting
         names = planting["population"] if "population" in planting.columns else \
             planting["model"].map(lambda model: model.__name__)
-        self.populations = [self._build_population(name, planting[(names == name).to_numpy()])
+        self.populations = [self._build_population(name, planting[(names == name).to_numpy()],
+                                                   np.flatnonzero((names == name).to_numpy()))
                             for name in dict.fromkeys(names)]
         population_ds = [population.data_structure for population in self.populations]
 
@@ -314,7 +315,9 @@ class Scene:
 
     # ── construction ──────────────────────────────────────────────────────────
 
-    def _build_population(self, name: str, rows: pd.DataFrame) -> Population:
+    def _build_population(self, name: str, rows: pd.DataFrame, ranks) -> Population:
+        """The population *name* of the planting table's *rows*, *ranks* their positions in the table: its
+        DataStructure's plant_ranks, the plant order of every scene-level operation over plants (cross.plant_ranks)."""
         rows = rows.reset_index(drop=True)
         models = list(dict.fromkeys(rows["model"]))
         if len(models) > 1:
@@ -324,6 +327,10 @@ class Scene:
         population = population_data_structure(rows, model, time_step=self.time_step,
                                                scenario=self._shared_scenario(model, rows),
                                                soil_surface=self.soil_surface, name=name)
+        rank_of = dict(zip((int(plant) for plant in population.plants), (int(rank) for rank in ranks)))
+        data_structure = population.data_structure
+        data_structure.plant_ranks = np.array([rank_of[int(plant)] for plant in data_structure.entity_ids("Plant")],
+                                              dtype=np.int64)
         if population.planted_later:
             self._setup_planting_times(population)
         return population

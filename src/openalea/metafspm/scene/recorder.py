@@ -80,6 +80,7 @@ from datetime import datetime
 import numpy as np
 import pandas as pd
 
+from openalea.metafspm.coupling.cross import plant_ranks
 from openalea.metafspm.coupling.declaration import EXTENSIVE_KINDS, INTENSIVE_KINDS, MASSIC_KINDS
 from openalea.metafspm.scene.provenance import frame_writer, provenance
 
@@ -126,6 +127,23 @@ class Grouping:
         self.every = bool(self.valid.all())
         self.owner = owner if self.every else owner[self.valid]
 
+    def weighted_sums(self, values, weights=None) -> tuple:
+        """Per group, (sum of values × weights, sum of weights) (weights 1 by default) over the entities with a
+        value and a weight: a mean's numerator and denominator."""
+        values = np.asarray(values, dtype=float)
+        if weights is not None:
+            weights = np.asarray(weights, dtype=float)
+        if not self.every:
+            values = values[self.valid]
+            weights = None if weights is None else weights[self.valid]
+        weights = np.ones(values.size) if weights is None else weights
+        kept = np.isfinite(values) & np.isfinite(weights)
+        owner = self.owner
+        if not kept.all():
+            owner, values, weights = owner[kept], values[kept], weights[kept]
+        return (np.bincount(owner, weights=values * weights, minlength=self.groups),
+                np.bincount(owner, weights=weights, minlength=self.groups))
+
     def aggregate(self, values, how: str, weights=None) -> np.ndarray:
         values = np.asarray(values, dtype=float)
         if not self.every:
@@ -154,6 +172,17 @@ class Grouping:
             out[~np.isfinite(out)] = np.nan
             return out
         raise ValueError(f"grouped(how=...): 'sum', 'mean', 'min' or 'max', got '{how}'")
+
+
+def _in_plant_order(per_plant) -> np.ndarray:
+    """One value: the per-plant values (in plant order) summed one after the other (the plant-order rule)."""
+    per_plant = np.asarray(per_plant, dtype=float)
+    if not per_plant.size:
+        return np.zeros(1)
+    total = per_plant[0]
+    for value in per_plant[1:]:
+        total = total + value
+    return np.array([total])
 
 
 def compartment(model) -> str:
@@ -355,49 +384,77 @@ class Summary:
             selected = self._selected(data_structure, location)
             if self.per == "plant":
                 owner = np.asarray(data_structure.owner("Plant") if location == "node" else data_structure.owner("Plant", of=location))
-            else:
-                owner = np.zeros(selected.size, dtype=np.int64)
+            else:                                        # the plant order: each entity's plant's rank, then summed
+                ranks = plant_ranks(data_structure, location)
+                owner = np.zeros(selected.size, dtype=np.int64) if ranks is None else ranks
             parts.append((population, data_structure, location, np.where(selected, owner, -1)))
         if not parts:
             raise ValueError(f"Summary: no population{' ' + repr(self.population) if self.population else ''} in "
                              "the scene (nor environment DataStructure of that id)")
         rows = []
         if self.per == "plant":
+            ranks = []
             for population, data_structure, location, owner in parts:
                 names = population.plant_names()
                 plants = np.asarray(data_structure.entity_ids("Plant"))
                 table = self._aggregated(recorder, scene, [(data_structure, location, owner)], plants.size)
                 rows.append(pd.DataFrame({"time": float(scene.time),
                                           "plant": [names.get(int(v), str(v)) for v in plants], **table}))
-            return pd.concat(rows, ignore_index=True)
+                ranks.append(plant_ranks(data_structure, "Plant"))
+            order = np.argsort(np.concatenate(ranks), kind="stable")       # the rows in plant order
+            return pd.concat(rows, ignore_index=True).iloc[order].reset_index(drop=True)
+        # per scene: per plant (the plants' ranks, dense), then summed over the plants in plant order
+        ranks = np.concatenate([np.asarray(owner, dtype=np.int64) for _, _, _, owner in parts])
+        plants, dense = np.unique(ranks[ranks >= 0], return_inverse=True)
+        grouped_parts, start = [], 0
+        index = np.full(ranks.size, -1, dtype=np.int64)
+        index[ranks >= 0] = dense
+        for _, data_structure, location, owner in parts:
+            grouped_parts.append((data_structure, location, index[start:start + owner.size]))
+            start += owner.size
         return pd.DataFrame({"time": [float(scene.time)], **self._aggregated(
-            recorder, scene, [(data_structure, location, owner) for _, data_structure, location, owner in parts], 1)})
+            recorder, scene, grouped_parts, max(plants.size, 1), over_plants=True)})
 
-    def _aggregated(self, recorder, scene, parts, groups: int) -> dict:
-        """{column: values per group} over the *parts* [(data_structure, location, group of each entity)] pooled."""
+    def _aggregated(self, recorder, scene, parts, groups: int, over_plants: bool = False) -> dict:
+        """{column: values per group} over the *parts* [(data_structure, location, group of each entity)] pooled;
+        *over_plants*: the groups are the plants in plant order, the columns one value, summed over them in that
+        order (the means' numerators and denominators)."""
         def pooled(name, factor=None):
             values = np.concatenate([self._values(data_structure, name, location) for data_structure, location, _ in parts])
             if factor is not None:
                 values = values * np.concatenate([self._values(data_structure, factor, location) for data_structure, location, _ in parts])
             return values
         grouping = Grouping(np.concatenate([np.asarray(owner, dtype=np.int64) for _, _, owner in parts]), groups)
+        def extreme(values, how):
+            per_group = grouping.aggregate(values, how)
+            if not over_plants:
+                return per_group
+            finite = per_group[np.isfinite(per_group)]
+            return np.array([(finite.min() if how == "min" else finite.max()) if finite.size else np.nan])
         out = {}
         for name, factor in self.sum.items():
-            out[name] = grouping.aggregate(pooled(name, factor), "sum")
+            per_group = grouping.aggregate(pooled(name, factor), "sum")
+            out[name] = _in_plant_order(per_group) if over_plants else per_group
         for name, weight in self.mean.items():
             if weight == "declared":
                 plans = [recorder.summary_plan(scene, data_structure).get(name) for data_structure, _, _ in parts]
                 declared = {plan[2] for plan in plans if plan is not None}
                 weight = declared.pop() if len(declared) == 1 else None
-            out[name] = grouping.aggregate(pooled(name), "mean", None if weight is None else pooled(weight))
+            weights = None if weight is None else pooled(weight)
+            if over_plants:
+                numerator, denominator = grouping.weighted_sums(pooled(name), weights)
+                numerator, denominator = _in_plant_order(numerator), _in_plant_order(denominator)
+                out[name] = np.divide(numerator, denominator, out=np.full(1, np.nan), where=denominator > 0)
+            else:
+                out[name] = grouping.aggregate(pooled(name), "mean", weights)
         for name in self.min:
-            out[f"{name}_min"] = grouping.aggregate(pooled(name), "min")
+            out[f"{name}_min"] = extreme(pooled(name), "min")
         for name in self.max:
-            out[f"{name}_max"] = grouping.aggregate(pooled(name), "max")
+            out[f"{name}_max"] = extreme(pooled(name), "max")
         for name in self.max_change:
             change = np.concatenate([np.abs(self._values(data_structure, name, location) - _previous(data_structure, name, location))
                                      for data_structure, location, _ in parts])
-            out[f"{name}_max_change"] = grouping.aggregate(change, "max")
+            out[f"{name}_max_change"] = extreme(change, "max")
         return out
 
 
@@ -748,7 +805,7 @@ class SceneRecorder:
     def _planned_values(data_structure, name, holder, part, layouts: dict = None):
         """The values of a summarised variable at its entities of *data_structure*: a union's at the entities of *data_structure*'s part it
         holds (by their ids: the union's layout may be a step behind the part's growth), NaN elsewhere. *layouts*: a
-        dict keeping each union part's layout (its offset in the union, which of its ids *data_structure* holds and where) for
+        dict keeping each union part's layout (its positions in the union, which of its ids *data_structure* holds and where) for
         the next variables of the same summaries."""
         if name == CELL_VOLUME:
             cells = int(np.prod(data_structure._location_shape("cell")))
@@ -758,17 +815,17 @@ class SceneRecorder:
         layout = None if layouts is None else layouts.get((id(holder), id(part)))
         if layout is None:
             k = next(j for j, other in enumerate(holder.parts) if other is part)
-            offset = int(sum(len(ids) for ids in holder._ids[:k]))
+            positions = holder.part_positions(k)
             ids = np.asarray(holder._ids[k], dtype=np.int64)
             location = part.__dict__.get("_at", "node")
             known = np.asarray(data_structure.entity_ids(location), dtype=np.int64)
             present = np.isin(ids, known)
-            layout = (offset, ids.size, known.size, present,
+            layout = (positions, known.size, present,
                       np.asarray(data_structure.index_of(ids[present], location), dtype=np.int64))
             if layouts is not None:
                 layouts[(id(holder), id(part))] = layout
-        offset, size, count, present, rows = layout
-        held = np.asarray(holder.get(name), dtype=float)[offset:offset + size]
+        positions, count, present, rows = layout
+        held = np.asarray(holder.get(name), dtype=float)[positions]
         out = np.full(count, np.nan)
         out[rows] = held[present]
         return out

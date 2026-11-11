@@ -4,6 +4,15 @@
 
 ### Added
 
+- The plant-order rule (route B, B1): every scene-level sum over plants is the sum of per-plant partial sums in the
+  planting table's order (`CrossMapping.up_partials`, `cross.sum_in_plant_order`, `cross.plant_ranks`,
+  `data_structure.plant_ranks`), the plants' union is in plant order (`UnionDataStructure.part_positions(k)` replaces
+  `part_slice(k)`; `part_of()`, `source_ids()`, `labels()` and `triangles()` in that order), and the recorder's
+  per-scene summaries sum per plant then in that order (per-plant rows in plant order). The same plants in one
+  population or split by `planting(..., population=)` now give the same bits. **The single-process results change
+  once** by round-off (use case 1, 2 plants x 3 days: the soil's plant_uptake by 2.4e-16 relative, one row; the roots'
+  psi by up to 2.8e-15 relative, propagated by the water solve; root_uptake by 1.6e-16 of its scale), not again.
+  A per-scene summary over no entity now writes 0.0 (was the integer 0). docs/conventions.md "The plant order".
 - Thread and fork safety of the module-level state (route B, B0): the archetype extraction's flag, the systems a
   reduction's library skips and `Compute.current()`'s stack are per context (ContextVars; the archetypes' threads
   run in a copy); the shared positions' cache holds its arrays weakly under a lock, `solve.reduction._FIELDS` is

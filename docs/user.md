@@ -497,7 +497,8 @@ reading its parameters with `cls.plant_parameters(scenario)` (the scenario over 
 against their bounds and dtype). A light model computes on the triangles and gives its results back per element
 (`Triangles.per_owner`). An environment model receives DataStructures, not components: `data_structure.triangles()` gives the
 triangles of the structural component built on it (the one with its own `triangles()` first; set
-`data_structure.geometry_provider` when several draw), and a `UnionDataStructure`'s concatenates its parts', in its node indices.
+`data_structure.geometry_provider` when several draw), and a `UnionDataStructure`'s gathers its parts', in its node indices: in plant order
+(the planting table's, whatever population holds a plant: conventions.md "The plant order"; `union.part_positions(k)` the positions of part k's nodes).
 On an anatomy-mode DataStructure, the frames and the light models take the triangles of its view at its from_scale
 (`data_structure.at("SubOrgan").triangles()`, the elements): a structural component working at a coarser scale (its finest
 declaration at Organ) registers its geometry on `data_structure.at("Organ")`, never drawn nor lit, and warns at its construction;
@@ -716,7 +717,8 @@ runs, through a mapping:
 - environment **scalars** (stored at `"scalar"`): population values reduced over every plant of every population,
   or a scalar broadcast to every node;
 - `LayerMapping(column, grid, axis="z")`: a 1-D column and a 3-D grid, by layer overlaps;
-- `UnionDataStructure(populations)` with `UnionMapping`: one component (a light model) over every population.
+- `UnionDataStructure(populations)` with `UnionMapping`: one component (a light model) over every population, their nodes in
+  plant order.
 
 An exchange into a plant's DataStructure (the Scene's, before the population runs) reaches its components on views
 of it too: those at its SubOrgans on an anatomy-mode plant (a gas exchange's PARa from the light's union), and

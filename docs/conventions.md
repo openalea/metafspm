@@ -232,6 +232,27 @@ work changes under another's:
 New module-level state follows the same rule: a ContextVar for a flag or a stack, a lock for a cache, and a fork hook
 for a thread, a lock or a counter the child must not inherit (test/scenes/test_thread_safety.py).
 
+## The plant order
+
+Every scene-level operation that spans plants orders them by plant, the planting table's order (each population's
+DataStructure carries its plants' ranks in it, `data_structure.plant_ranks`, set by the Scene; `cross.plant_ranks(data_structure,
+location)` gives each entity's), and within a plant by its entities' order; a sum over plants is the sequential sum
+of per-plant partial sums in that order:
+
+- `CrossMapping.up` (every exchange into a grid: a sum, a mean's numerator and denominator, a split's weight totals)
+  is a bincount per plant (`up_partials`: [(rank, numerator, denominator)]), the partials of every population
+  summed by `cross.sum_in_plant_order`; a population scalar (`_ScalarMapping`) alike;
+- `UnionDataStructure` holds its nodes in plant order (`part_positions(k)`: the union's positions of part k's
+  nodes; its triangles a node after the other in that order), so that a light model's sums over its triangles do not
+  depend on the populations;
+- the recorder's `Summary(per="scene")` sums and means over the plants per plant, then in plant order;
+  `per="plant"` gives its rows in plant order.
+
+The plants' own computations are layout-independent already (draws keyed by lineage, archetypes by their signature),
+so the same plants laid out in one population, in several (`planting(..., population=)`), or later in several
+processes give **the same bits** (test/scenes/test_plant_order.py). A developer writing a scene-level aggregation over
+plants sums per plant, in plant order, the same way.
+
 ## Couplings and derived variables
 
 - **Identity links:** components on one DataStructure share variables by name.

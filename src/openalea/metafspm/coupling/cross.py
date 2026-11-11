@@ -2,7 +2,7 @@
 Links between DataStructures::
 
       CrossMapping(plants, soil, method="barycentre" | "overlap")   plant segments <-> grid cells, a sparse incidence
-      UnionDataStructure([population_1, population_2])               the nodes of several DataStructures, one after the other
+      UnionDataStructure([population_1, population_2])               the nodes of several DataStructures, in plant order
       UnionMapping(union)                                            one-to-one between a union and its parts
       Exchanges(translator, components, mappings)                    translator links across DataStructures, run at the
                                                                      scene's fixed points by exchange(into=data_structure)
@@ -23,6 +23,60 @@ from openalea.metafspm.data_structure.data_api import DataStructure, EntityView,
 from openalea.metafspm.kernels import _count_pieces, _pieces
 
 SEGMENT_COORDINATES = ("x1", "x2", "y1", "y2", "z1", "z2")
+
+
+# ── The plant order: every scene-level operation over plants follows the planting table ──────────────
+
+def plant_ranks(data_structure, location: str = "node"):
+    """
+    The rank, in the scene's planting table, of the plant owning each entity of *location* of *data_structure* (a
+    population's DataStructure, or a view of it): -1 for an entity of no plant; None for a DataStructure without
+    plants (no Plant location). The Scene gives each population's ranks (data_structure.plant_ranks, one per Plant
+    entity); a population built alone ranks its plants in their order.
+    """
+    names = getattr(data_structure, "_coarse_scale_names", None)
+    try:
+        if names is None or "Plant" not in names():
+            return None
+    except (AttributeError, KeyError, ValueError):
+        return None
+    if location == "Plant":
+        owner = np.arange(len(data_structure.entity_ids("Plant")), dtype=np.int64)
+    else:
+        owner = np.asarray(data_structure.owner("Plant") if location == "node" else
+                           data_structure.owner("Plant", of=location), dtype=np.int64)
+    ranks = _underlying(data_structure).__dict__.get("plant_ranks")
+    ranks = np.arange(len(data_structure.entity_ids("Plant")), dtype=np.int64) if ranks is None else \
+        np.asarray(ranks, dtype=np.int64)
+    return np.where(owner >= 0, ranks[np.maximum(owner, 0)], -1) if ranks.size else np.full(owner.size, -1)
+
+
+def _grouped_by_rank(ranks, size: int) -> tuple:
+    """Entries grouped by their plant's rank (*ranks*, None: one group of every entry): (ranks ascending, order,
+    bounds), the k-th group's entries order[bounds[k]:bounds[k + 1]], in their order."""
+    if ranks is None:
+        ranks = np.zeros(size, dtype=np.int64)
+    order = np.argsort(ranks, kind="stable")
+    keys, starts = np.unique(ranks[order], return_index=True)
+    return keys.astype(np.int64), order, np.append(starts, size).astype(np.int64)
+
+
+def sum_in_plant_order(partials, size: int, paired: bool = False) -> tuple:
+    """
+    The scene-level (numerator, denominator) of per-plant *partials* [(key, numerator, denominator)], sorted by
+    key (a plant's rank, then a tie-breaker) and summed one after the other: the plant-order rule (conventions.md),
+    the same bits whatever the plants' layout in populations. No partial: zeros of *size* (and a zero denominator
+    when *paired*).
+    """
+    partials = sorted(partials, key=lambda partial: partial[0])
+    if not partials:
+        return np.zeros(size), (np.zeros(size) if paired else None)
+    numerator, denominator = partials[0][1], partials[0][2]
+    for _, plant_numerator, plant_denominator in partials[1:]:
+        numerator = numerator + plant_numerator
+        if denominator is not None:
+            denominator = denominator + plant_denominator
+    return numerator, denominator
 
 
 class CrossMapping:
@@ -221,34 +275,65 @@ class CrossMapping:
 
     # ── mapping values ────────────────────────────────────────────────────────
 
-    def up(self, values, aggregation: str = "sum", weights=None, location: str = None) -> tuple:
+    def _plant_groups(self, location: str) -> tuple:
+        """The incidence's entries of *location* grouped by plant: (ranks, order, bounds), the plants' ranks in
+        the planting table (plant_ranks) ascending, the entries of the k-th plant order[bounds[k]:bounds[k + 1]]
+        in their incidence order; kept until the incidence is rebuilt."""
+        incidence = self.incidence(location)
+        cache = self.__dict__.setdefault("_groups", {})
+        kept = cache.get(location)
+        if kept is None or kept[0] is not incidence:
+            ranks = plant_ranks(self.source, self._location(location))
+            kept = cache[location] = (incidence, _grouped_by_rank(None if ranks is None else ranks[incidence[0]],
+                                                                  incidence[0].size))
+        return kept[1]
+
+    def up_partials(self, values, aggregation: str = "sum", weights=None, location: str = None) -> list:
         """
-        Source values (at *location*: the mapping's by default) to the cells: (numerator, denominator) per cell, the
-        denominator None for "sum". Means are numerator / denominator, so that several sources (populations) pool
-        into one mean.
+        Source values (at *location*: the mapping's by default) to the cells, per plant: [(rank, numerator,
+        denominator)] in plant order (the planting table's: plant_ranks), each plant's entries in their incidence
+        order, the denominator None for "sum". A scene-level value is their sum in that order (sum_in_plant_order):
+        the same bits however the plants are laid out in populations.
         """
         rows, columns, fractions = self.incidence(location)
         n = self.target.n_nodes()
         values = np.asarray(values, dtype=float).reshape(-1)
         if aggregation == "sum":
-            return np.bincount(columns, weights=fractions * values[rows], minlength=n), None
-        if aggregation == "mean":
-            share = fractions
-        elif aggregation == "weighted_mean":
-            if weights is None:
+            share = None
+            numerators = fractions * values[rows]
+        elif aggregation in ("mean", "weighted_mean"):
+            if aggregation == "mean":
+                share = fractions
+            elif weights is None:
                 raise ValueError("weighted_mean needs a weight variable")
-            share = fractions * np.asarray(weights, dtype=float).reshape(-1)[rows]
+            else:
+                share = fractions * np.asarray(weights, dtype=float).reshape(-1)[rows]
+            numerators = share * values[rows]
         else:
             raise ValueError(f"unknown aggregation '{aggregation}' towards cells, expected one of {POOLED_UP_MAPPINGS}")
-        return (np.bincount(columns, weights=share * values[rows], minlength=n),
-                np.bincount(columns, weights=share, minlength=n))
+        ranks, order, bounds = self._plant_groups(location)
+        partials = []
+        for k, rank in enumerate(ranks.tolist()):
+            selection = slice(None) if ranks.size == 1 else order[bounds[k]:bounds[k + 1]]
+            plant_columns = columns[selection]
+            partials.append((rank, np.bincount(plant_columns, weights=numerators[selection], minlength=n),
+                             None if share is None else
+                             np.bincount(plant_columns, weights=share[selection], minlength=n)))
+        return partials
+
+    def up(self, values, aggregation: str = "sum", weights=None, location: str = None) -> tuple:
+        """
+        Source values (at *location*: the mapping's by default) to the cells: (numerator, denominator) per cell, the
+        denominator None for "sum", summed over the plants in plant order (up_partials). Means are numerator /
+        denominator, so that several sources (populations) pool into one mean.
+        """
+        return sum_in_plant_order(self.up_partials(values, aggregation, weights, location), self.target.n_nodes(),
+                                  aggregation != "sum")
 
     def weight_totals(self, weights, location: str = None) -> np.ndarray:
         """Per cell, the sum of the source entities' weights (at *location*) times their fraction in the cell (for
-        split)."""
-        rows, columns, fractions = self.incidence(location)
-        return np.bincount(columns, weights=fractions * np.asarray(weights, dtype=float).reshape(-1)[rows],
-                           minlength=self.target.n_nodes())
+        split), summed over the plants in plant order."""
+        return self.up(weights, "sum", location=location)[0]
 
     def down(self, values, aggregation: str = "broadcast", weights=None, totals=None, location: str = None) \
             -> np.ndarray:
@@ -293,19 +378,35 @@ class _ScalarMapping:
     def covered(self):
         return None
 
-    def up(self, values, aggregation: str = "sum", weights=None) -> tuple:
+    def up_partials(self, values, aggregation: str = "sum", weights=None) -> list:
+        """Per plant [(rank, numerator, denominator)] in plant order (CrossMapping.up_partials): each plant's
+        entities reduced in their order."""
         values = np.asarray(values, dtype=float).reshape(-1)
-        if aggregation == "sum":
-            return np.array([values.sum()]), None
-        if aggregation == "mean":
-            return np.array([values.sum()]), np.array([float(values.size)])
+        if aggregation not in POOLED_UP_MAPPINGS:
+            raise ValueError(f"unknown aggregation '{aggregation}' towards a scalar, expected one of "
+                             f"{POOLED_UP_MAPPINGS}")
         if aggregation == "weighted_mean":
             weights = np.asarray(weights, dtype=float).reshape(-1)
-            return np.array([(values * weights).sum()]), np.array([weights.sum()])
-        raise ValueError(f"unknown aggregation '{aggregation}' towards a scalar, expected one of {POOLED_UP_MAPPINGS}")
+        ranks, order, bounds = _grouped_by_rank(plant_ranks(self.source, self.location), values.size)
+        partials = []
+        for k, rank in enumerate(ranks.tolist()):
+            selection = slice(None) if ranks.size == 1 else order[bounds[k]:bounds[k + 1]]
+            plant_values = values[selection]
+            if aggregation == "sum":
+                partials.append((rank, np.array([plant_values.sum()]), None))
+            elif aggregation == "mean":
+                partials.append((rank, np.array([plant_values.sum()]), np.array([float(plant_values.size)])))
+            else:
+                plant_weights = weights[selection]
+                partials.append((rank, np.array([(plant_values * plant_weights).sum()]),
+                                 np.array([plant_weights.sum()])))
+        return partials
+
+    def up(self, values, aggregation: str = "sum", weights=None) -> tuple:
+        return sum_in_plant_order(self.up_partials(values, aggregation, weights), 1, aggregation != "sum")
 
     def weight_totals(self, weights) -> np.ndarray:
-        return np.array([np.asarray(weights, dtype=float).sum()])
+        return self.up(weights, "sum")[0]
 
     def down(self, values, aggregation: str = "broadcast", weights=None, totals=None) -> np.ndarray:
         value = float(np.asarray(values, dtype=float).reshape(-1)[0])
@@ -368,14 +469,18 @@ class LayerMapping:
         return np.broadcast_to(per_layer.reshape(shape), self.grid.shape).reshape(-1).copy()
 
 
-# ── The nodes of several DataStructures, one after the other ────────────────
+# ── The nodes of several DataStructures, in plant order ─────────────────────
 
 class UnionDataStructure(VariableStoreMixin, DataStructure):
     """
-    Flat DataStructure of the nodes of *parts* (e.g. the populations of an intercrop), in order: part 0's nodes, then
-    part 1's, ... A component that must see every population (a CARIBU-like light model) runs on it, its inputs and
-    outputs exchanged one-to-one with the parts through a UnionMapping. Locations "node" and "scalar"; a component
-    declared at the parts' node scale (e.g. scale=SubOrgan) runs on it unchanged.
+    Flat DataStructure of the nodes of *parts* (e.g. the populations of an intercrop), in plant order: the nodes of
+    the planting table's first plant, then its second's, ... (plant_ranks; each plant's nodes in its part's order),
+    whatever population holds them, so that a component reading them in order (a CARIBU-like light model's sums over
+    its triangles) gives the same bits however the plants are laid out in populations; the nodes of no plant after,
+    part by part. part_positions(k): the union's positions of part k's nodes. A component that must see every
+    population runs on it, its inputs and outputs exchanged one-to-one with the parts through a UnionMapping.
+    Locations "node" and "scalar"; a component declared at the parts' node scale (e.g. scale=SubOrgan) runs on it
+    unchanged.
 
     update_topology() follows the parts' growth: values are kept by (part, entity id), new nodes get the default.
     """
@@ -386,10 +491,29 @@ class UnionDataStructure(VariableStoreMixin, DataStructure):
         self.parts = list(parts)
         self._fields, self._scalars = {}, {}
         self._ids = [np.asarray(part.entity_ids("node"), dtype=np.int64).copy() for part in self.parts]
+        self._positions = self._plant_order(self._ids)
         self._layout = self._current_layout()
         from openalea.metafspm.coupling.declaration import node_scale
         scales = {node_scale(part) for part in self.parts}
         self.element_scale = scales.pop() if len(scales) == 1 else None   # declarations at the parts' node scale
+
+    def _plant_order(self, ids: list) -> list:
+        """The union's positions of each part's nodes (*ids*: theirs), in plant order: sorted by their plant's rank
+        (plant_ranks), then by part and by their order in it; the nodes of no plant last."""
+        sizes = [part_ids.size for part_ids in ids]
+        ranks = []
+        for part, size in zip(self.parts, sizes):
+            part_ranks = plant_ranks(part, "node") if size else None
+            part_ranks = np.full(size, -1, dtype=np.int64) if part_ranks is None else np.asarray(part_ranks, dtype=np.int64)
+            ranks.append(np.where(part_ranks >= 0, part_ranks, np.iinfo(np.int64).max))
+        total = int(sum(sizes))
+        if not total:
+            return [np.zeros(0, dtype=np.int64) for _ in ids]
+        order = np.lexsort((np.concatenate([np.arange(size) for size in sizes]),
+                            np.repeat(np.arange(len(sizes)), sizes), np.concatenate(ranks)))
+        positions = np.empty(total, dtype=np.int64)
+        positions[order] = np.arange(total, dtype=np.int64)
+        return np.split(positions, np.cumsum(sizes)[:-1])
 
     def _current_layout(self) -> tuple:
         return tuple((part.topology_version, part.n_nodes()) for part in self.parts)
@@ -415,37 +539,52 @@ class UnionDataStructure(VariableStoreMixin, DataStructure):
             raise ValueError(f"'{location}' has no entity ids")
         return np.arange(self.n_nodes(), dtype=np.int64)
 
-    def part_slice(self, index: int) -> slice:
-        start = int(sum(ids.size for ids in self._ids[:index]))
-        return slice(start, start + self._ids[index].size)
+    def part_positions(self, index: int) -> np.ndarray:
+        """The union's positions of part *index*'s nodes, in the part's order."""
+        return self._positions[index]
+
+    def _gathered(self, per_part: list, dtype) -> np.ndarray:
+        """One array of the union's nodes from one per part (in each part's order)."""
+        out = np.empty(self.n_nodes(), dtype=dtype)
+        for positions, values in zip(self._positions, per_part):
+            out[positions] = values
+        return out
 
     def part_of(self) -> np.ndarray:
         """Index of the part of each node."""
-        return np.repeat(np.arange(len(self.parts)), [ids.size for ids in self._ids])
+        return self._gathered([np.full(ids.size, k) for k, ids in enumerate(self._ids)], np.int64)
 
     def source_ids(self) -> np.ndarray:
         """Each node's entity id in its part."""
-        return np.concatenate(self._ids) if self._ids else np.empty(0, dtype=np.int64)
+        return self._gathered(self._ids, np.int64)
 
     def triangles(self, where=None):
-        """The parts' triangles (each part's geometry provider), their node indices those of the union; *where*: a
+        """The parts' triangles (each part's geometry provider), their node indices those of the union, in its
+        order (a node's triangles in its part's order; the triangles of no node after, part by part); *where*: a
         node mask of the union, or a mask's name (each part's)."""
         from openalea.metafspm.coupling.geometry import Triangles
         self.update_topology()                             # the parts' current nodes
-        slices = [self.part_slice(i) for i in range(len(self.parts))]
         if isinstance(where, str):
             selections = [where] * len(self.parts)
         else:
             mask = None if where is None else np.asarray(where, dtype=bool)
-            selections = [None if mask is None else mask[piece] for piece in slices]
-        return Triangles.concatenate([part.triangles(selection) for part, selection in zip(self.parts, selections)],
-                                     offsets=[piece.start for piece in slices])
+            selections = [None if mask is None else mask[positions] for positions in self._positions]
+        pieces = []
+        for part, selection, positions in zip(self.parts, selections, self._positions):
+            drawn = part.triangles(selection)
+            pieces.append(Triangles(drawn.vertices, np.where(drawn.owner >= 0, positions[np.maximum(drawn.owner, 0)]
+                                                             if positions.size else -1, -1),
+                                    drawn.owner_ids, drawn.attributes))
+        joined = Triangles.concatenate(pieces)
+        owner = np.where(joined.owner >= 0, joined.owner, np.iinfo(np.int64).max)
+        order = np.argsort(owner, kind="stable")
+        return joined if np.array_equal(order, np.arange(order.size)) else joined.select(order)
 
     def labels(self, location: str = None) -> np.ndarray:
         """The parts' node labels (MPGDataStructure.labels; with *location*, each node's entity's at that scale), in
         the union's order."""
         self.update_topology()
-        return np.concatenate([np.asarray(part.labels(location), dtype=object) for part in self.parts]) \
+        return self._gathered([np.asarray(part.labels(location), dtype=object) for part in self.parts], object) \
             if self.parts else np.zeros(0, dtype=object)
 
     def outdated(self) -> bool:
@@ -455,23 +594,21 @@ class UnionDataStructure(VariableStoreMixin, DataStructure):
         if not self.outdated():
             return
         new_ids = [np.asarray(part.entity_ids("node"), dtype=np.int64).copy() for part in self.parts]
-        old_slices = [self.part_slice(i) for i in range(len(self.parts))]
+        new_positions = self._plant_order(new_ids)
         n = int(sum(ids.size for ids in new_ids))
         for name, array in list(self._fields.items()):
             default = self._variable_meta().get(name, {}).get("default", 0.)
             new = np.empty((n,) + array.shape[1:], dtype=array.dtype)      # vector variables keep their components
             new[...] = default
-            start = 0
-            for old, ids, piece in zip(self._ids, new_ids, old_slices):
+            for old, ids, old_positions, positions in zip(self._ids, new_ids, self._positions, new_positions):
                 if old.size:
                     order = np.argsort(old, kind="stable")
                     position = np.searchsorted(old[order], ids).clip(0, old.size - 1)
                     known = old[order][position] == ids
-                    new[start:start + ids.size][known] = array[piece][order[position[known]]]
-                start += ids.size
+                    new[positions[known]] = array[old_positions[order[position[known]]]]
             self._fields[name] = new
             self.mark_written(name)
-        self._ids, self._layout = new_ids, self._current_layout()
+        self._ids, self._positions, self._layout = new_ids, new_positions, self._current_layout()
         self._topology_version = self.topology_version + 1
         self._bump_version()
 
@@ -479,12 +616,13 @@ class UnionDataStructure(VariableStoreMixin, DataStructure):
         return {"parts": len(self.parts)}
 
     def _checkpoint_extra(self) -> tuple:
-        return ("_ids", "_layout")
+        return ("_ids", "_positions", "_layout")
 
     def _load_construction(self, construction: dict, saved: dict) -> None:
         if construction["parts"] != len(self.parts):
             raise ValueError("the checkpointed union has another number of parts")
         self._ids = saved["state"]["_ids"]                 # the layout the arrays were saved with
+        self._positions = saved["state"]["_positions"]
 
     def extract_state(self, var_names: list) -> np.ndarray:
         return np.concatenate([np.ravel(self.get(name)) for name in var_names])
@@ -559,19 +697,27 @@ class _CrossLink:
         return _expanded(values, selection, data_structure.__dict__["_inner"].n_nodes())
 
 
-def _per_column(apply, values, components: int = 0, pair: bool = False):
+def _per_column(apply, values, components: int = 0):
     """
     *apply* on each component of a vector-valued variable (*components* per entity), stacked as columns
-    (entities, components); directly on a plain variable. *pair*: apply returns (numerator, denominator), the
-    denominator shared by the components.
+    (entities, components); directly on a plain variable.
     """
     if not components:
         return apply(values)
     flat = np.asarray(values, dtype=float).reshape(-1, components)
     results = [apply(flat[:, j]) for j in range(components)]
-    if pair:
-        return np.stack([np.asarray(r[0]).reshape(-1) for r in results], axis=1), results[0][1]
     return np.stack([np.asarray(r).reshape(-1) for r in results], axis=1)
+
+
+def _partials_per_column(apply, values, components: int = 0) -> list:
+    """*apply* (giving per-plant partials [(rank, numerator, denominator)]) on each component of a vector-valued
+    variable, each plant's numerators stacked as columns (cells, components), its denominator shared."""
+    if not components:
+        return apply(values)
+    flat = np.asarray(values, dtype=float).reshape(-1, components)
+    results = [apply(flat[:, j]) for j in range(components)]
+    return [(rank, np.stack([np.asarray(result[k][1]).reshape(-1) for result in results], axis=1), denominator)
+            for k, (rank, _, denominator) in enumerate(results[0])]
 
 
 def _plant_side(mapping, data_structure) -> bool:
@@ -720,18 +866,20 @@ class Exchanges:
                          "mapping links them, give a CrossMapping or a UnionMapping")
 
     def _split_totals(self, cross: _CrossLink) -> np.ndarray:
-        """Total weights per cell over every population receiving the same cell variable by split."""
-        totals = None
-        for other in self.links:
+        """Total weights per cell over every population receiving the same cell variable by split, summed over
+        their plants in plant order."""
+        partials, size = [], None
+        for index, other in enumerate(self.links):
             if (other.direction == "down" and other.aggregation == "split" and other.provider_ds is cross.provider_ds
                     and other.link.sources == cross.link.sources and other.link.weight == cross.link.weight):
                 weights = other.receiver_ds.get(other.link.weight)
                 selection = _selection(other.receiver_ds)
                 if selection is not None:               # an entity view's weights, among the mapped entities
                     weights = _expanded(weights, selection, other.receiver_ds.__dict__["_inner"].n_nodes())
-                part = other.mapping.weight_totals(weights, **other.options)
-                totals = part if totals is None else totals + part
-        return totals
+                partials += [((rank, index), numerator, None) for rank, numerator, _ in
+                             other.mapping.up_partials(weights, "sum", **other.options)]
+                size = other.mapping.target.n_nodes() if isinstance(other.mapping, CrossMapping) else 1
+        return None if size is None else sum_in_plant_order(partials, size)[0]
 
     def exchange(self, into) -> None:
         """Run the links into DataStructure (or component) *into*, and into the views of it its components work on
@@ -740,7 +888,7 @@ class Exchanges:
         if isinstance(data_structure, UnionDataStructure):
             data_structure.update_topology()
         pending, keep, receivers, missing = {}, {}, {}, {}
-        for cross in self.links:
+        for index, cross in enumerate(self.links):
             if _underlying(cross.receiver_ds) is not _underlying(data_structure):
                 continue
             receiver = cross.receiver_ds
@@ -751,9 +899,19 @@ class Exchanges:
             if cross.direction == "up":
                 weights = cross.expanded(cross.provider_ds.get(weight), cross.provider_ds) if weight is not None \
                     else None
-                numerator, denominator = _per_column(
-                    lambda v: cross.mapping.up(v, cross.aggregation, weights=weights, **cross.options), values,
-                    components, pair=True)
+                partials = _partials_per_column(
+                    lambda v: cross.mapping.up_partials(v, cross.aggregation, weights=weights, **cross.options),
+                    values, components)
+                if cross.aggregation != "sum":
+                    missing.setdefault(variable, cross.link.missing)
+                size = cross.mapping.target.n_nodes() if isinstance(cross.mapping, CrossMapping) else 1
+                if not partials:                         # no entity mapped: zeros, as a sum over none
+                    zeros = np.zeros((size, components) if components else size)
+                    partials = [(-1, zeros, None if cross.aggregation == "sum" else zeros[..., 0] if components
+                                 else zeros)]
+                pending.setdefault(variable, []).extend(((0, rank, index), numerator, denominator)
+                                                        for rank, numerator, denominator in partials)
+                continue
             elif cross.direction == "down":
                 selection = _selection(receiver) if isinstance(cross.mapping, CrossMapping) else None
                 weights = cross.receiver_ds.get(weight) if weight is not None else None
@@ -776,22 +934,15 @@ class Exchanges:
                 denominator = None
             elif cross.direction == "into_union":
                 numerator, denominator = np.zeros(data_structure.n_nodes()), None
-                numerator[data_structure.part_slice(cross.part)] = np.asarray(values, dtype=float).reshape(-1)
+                numerator[data_structure.part_positions(cross.part)] = np.asarray(values, dtype=float).reshape(-1)
             else:
                 numerator, denominator = np.asarray(values, dtype=float).reshape(-1)[
-                    cross.provider_ds.part_slice(cross.part)], None
-            if denominator is not None:
-                missing.setdefault(variable, cross.link.missing)
-            entry = pending.get(variable)
-            if entry is None:
-                pending[variable] = [numerator, denominator]
-            elif (entry[1] is None) != (denominator is None):
-                raise ValueError(f"'{variable[1]}' receives both sums and means from different providers")
-            else:
-                entry[0] = entry[0] + numerator
-                if denominator is not None:
-                    entry[1] = entry[1] + denominator
-        for key, (numerator, denominator) in pending.items():
+                    cross.provider_ds.part_positions(cross.part)], None
+            pending.setdefault(variable, []).append(((1, -1, index), numerator, denominator))
+        for key, contributions in pending.items():
+            if len({denominator is None for _, _, denominator in contributions}) > 1:
+                raise ValueError(f"'{key[1]}' receives both sums and means from different providers")
+            numerator, denominator = sum_in_plant_order(contributions, 0)
             data_structure, variable = receivers[key[0]], key[1]
             if not data_structure.has(variable):
                 data_structure.register(variable)

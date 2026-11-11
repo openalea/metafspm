@@ -223,3 +223,15 @@ checks run:
 
 Outside a Scene (a population run by hand, a test), `with Compute(checks={...}).limits(): ...`. An unknown name
 raises ValueError at the Compute; run.json's provenance records the checks under `"checks"`.
+
+## 9. The plant order (route B, B1)
+
+Scene-level sums over plants follow the planting table (docs/conventions.md, "The plant order"): the results of a
+scene of several plants change once by round-off (≤ 3e-15 relative on use case 1), then the layouts of its plants in
+populations give the same bits. Stored reference values of multi-plant scene sums are regenerated once.
+
+| Former | Now |
+|---|---|
+| `UnionDataStructure.part_slice(k)` (part k's nodes contiguous, parts one after the other) | `union.part_positions(k)`: the union's positions of part k's nodes (the union in plant order) |
+| `union.get(name)[union.part_slice(k)]` | `union.get(name)[union.part_positions(k)]` |
+| a union's node index taken across a growth step (append-only before) | by entity id (`union.source_ids()`, the part's `index_of`): a plant's new nodes come before the next plant's |

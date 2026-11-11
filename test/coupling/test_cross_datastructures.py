@@ -342,7 +342,7 @@ def test_a_light_model_over_two_populations_sees_the_shading_of_both():
     assert scene.location("intercepted") == "node" and scene.location("extinction") == "scalar"   # as on an MPG
     _step(scene, light, exchanges, (short, tall))
     assert scene.n_nodes() == short.n_nodes() + tall.n_nodes()
-    np.testing.assert_array_equal(scene.get("height")[scene.part_slice(1)], tall.get("height"))
+    np.testing.assert_array_equal(scene.get("height")[scene.part_positions(1)], tall.get("height"))
     above_short = tall.get("area").sum() + np.array([(short.get("area")[short.get("height") > h]).sum()
                                                     for h in short.get("height")])
     np.testing.assert_allclose(short.get("intercepted"), np.exp(-0.5 * above_short))
@@ -358,14 +358,19 @@ def test_the_union_follows_the_growth_of_its_parts():
     short, tall, scene, light, exchanges = _light_scene()
     growth = RootGrowthProbe(data_structure=tall)
     _step(scene, light, exchanges, (short, tall))
-    kept = scene.get("intercepted")[scene.part_slice(0)].copy()
+    kept = scene.get("intercepted")[scene.part_positions(0)].copy()
     for _ in range(4):
         growth()
     assert scene.outdated()
     exchanges.exchange(into=scene)
     assert scene.n_nodes() == short.n_nodes() + tall.n_nodes()
-    np.testing.assert_array_equal(scene.get("intercepted")[scene.part_slice(0)], kept)   # kept by (part, id)
-    np.testing.assert_array_equal(scene.part_of(), np.repeat([0, 1], [short.n_nodes(), tall.n_nodes()]))
+    np.testing.assert_array_equal(scene.get("intercepted")[scene.part_positions(0)], kept)   # kept by (part, id)
+    # in plant order: each population built alone ranks its plants from 0, its first plants' nodes first
+    part_of = scene.part_of()
+    np.testing.assert_array_equal(np.sort(part_of), np.repeat([0, 1], [short.n_nodes(), tall.n_nodes()]))
+    for part, data_structure in enumerate((short, tall)):
+        np.testing.assert_array_equal(scene.source_ids()[scene.part_positions(part)], data_structure.entity_ids("node"))
+        np.testing.assert_array_equal(part_of[scene.part_positions(part)], part)
 
 
 @dataclass
