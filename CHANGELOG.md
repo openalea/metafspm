@@ -4,6 +4,10 @@
 
 ### Added
 
+- Variable lookups cached (route A, A4): the DataStructure's stores dict is kept while its coarse scales stay and
+  each name's store is remembered while it holds the name (`_find`, `_var_stores`, the located views' alike):
+  `data_structure.get` of every variable of use case 1's 9 structures 9.2 -> 7.2 ms; use case 1, 2 plants x 3 days
+  at 1 thread, run 50.4 -> 49.5 s (-1.7 %, two runs each). Results unchanged, byte for byte.
 - The plant-order rule (route B, B1): every scene-level sum over plants is the sum of per-plant partial sums in the
   planting table's order (`CrossMapping.up_partials`, `cross.sum_in_plant_order`, `cross.plant_ranks`,
   `data_structure.plant_ranks`), the plants' union is in plant order (`UnionDataStructure.part_positions(k)` replaces

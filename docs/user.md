@@ -1145,6 +1145,8 @@ Its README describes each file and shows the figures.
 - The DataStructure's topology arrays (`entity_ids`, `owner`) are cached until the topology changes and read-only:
   copy one (`np.array(data_structure.owner("SubOrgan"))`) before writing into it.
 - Growth bookkeeping is incremental: only new vertices are read from the MTG.
+- Variable lookups (`get`, `set`, `has`, `location`) find a name's store once and keep it while the store holds the
+  name (about 2 µs a lookup on use case 1's structures): a step may look its variables up freely.
 - An MPG-style step sees only the MTG properties its component declares; keep MTG reads in such steps to those.
 - `split="components"` solves its pieces one after the other; a whole system made of independent blocks (the
   plants of a population) has its blocks solved apart, in threads within `Compute.threads` (solve.linear, below); graph systems are solved

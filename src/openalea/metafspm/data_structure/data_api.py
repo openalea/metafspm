@@ -523,9 +523,17 @@ class VariableStoreMixin:
 
     def _find(self, name: str):
         target = self._resolve(name)
-        for location, store in self._var_stores().items():
+        stores = self._var_stores()
+        found = self.__dict__.get("_found_cache")          # {name: (location, store, name)} while the stores stay
+        if found is None or found[0] is not stores:
+            found = self.__dict__["_found_cache"] = (stores, {})
+        entry = found[1].get(target)
+        if entry is not None and target in entry[1]:
+            return entry
+        for location, store in stores.items():
             if target in store:
-                return location, store, target
+                entry = found[1][target] = (location, store, target)
+                return entry
         raise KeyError(f"Variable '{name}' is not registered. Available: {self.available_vars()}.")
 
     def has(self, name: str) -> bool:
@@ -2431,9 +2439,14 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
         return data_structure
 
     def _var_stores(self) -> dict:
+        names = self._coarse_scale_names()
+        cache = self.__dict__.get("_var_stores_cache")    # the same dict while the coarse scales stay (every lookup asks)
+        if cache is not None and cache[0] is names:
+            return cache[1]
         stores = {"node": self._node_data, "edge": self._edge_data, "scalar": self._scalar_data}
-        for name in self._coarse_scale_names():
+        for name in names:
             stores[name] = self._scale_data.setdefault(name, {})
+        self.__dict__["_var_stores_cache"] = (names, stores)
         return stores
 
     def _location_shape(self, location: str) -> tuple:
@@ -4356,9 +4369,13 @@ class LocatedView(DataStructure):
 
     def _var_stores(self) -> dict:
         stores = self._base._var_stores()
+        cache = self.__dict__.get("_var_stores_cache")    # the same dict while the base's stays
+        if cache is not None and cache[0] is stores:
+            return cache[1]
         out = {"node": stores.get(self._at, {}), "scalar": stores.get("scalar", {})}
         for name in self._coarse_scale_names():
             out[name] = stores.get(name, {})
+        self.__dict__["_var_stores_cache"] = (stores, out)
         return out
 
     # ── the abstract DataStructure's ──
