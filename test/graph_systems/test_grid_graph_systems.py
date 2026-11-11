@@ -39,7 +39,7 @@ def _diffusion(groundwater=False, **options):
                             transient=True, **options)
     if groundwater:
         class _diffusion(_DiffusionEquations):
-            bottom = boundary_set(filters=lambda ds: ds.layer_mask(z=-1), condition="dirichlet", value=0.9)
+            bottom = boundary_set(where=lambda ds: ds.layer_mask(z=-1), condition="dirichlet", value=0.9)
     else:
         class _diffusion(_DiffusionEquations):
             pass
@@ -67,7 +67,7 @@ class FieldSoil(SoilFields):
 
 @dataclass
 class FrozenTopSoil(SoilFields):
-    _diffusion = _diffusion(filters="active")
+    _diffusion = _diffusion(where="active")
 
 
 def _grid(periodic=False):

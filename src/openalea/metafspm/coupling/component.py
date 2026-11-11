@@ -63,16 +63,16 @@ def _declare(role: str, unit: str = "", description: str = "", default=None, def
              references: str = "", DOI=None, upscaling=None, record=None, **extra):
     """
     The metadata of a declared field, shared by state_variable, input_variable, parameter, setting and
-    forcing_variable (see them for the arguments). *role*: "state_variable", "input", "parameter", "setting" or
-    "forcing"; *extra*: the role's own keys (a setting's choices, a forcing's required and aggregate).
+    forcing_variable (see them for the arguments). *role*: "state_variable", "input_variable", "parameter", "setting" or
+    "forcing_variable"; *extra*: the role's own keys (a setting's choices, a forcing's required and aggregate).
     """
     if aggregation in ("proximal", "distal"):
         raise ValueError(f"aggregation='{aggregation}' is 'child' or 'parent' (the value of the edge's child or "
                          "parent node)")
     metadata = dict(
         unit=unit, unit_comment=unit_comment, description=description, min_value=min_value, max_value=max_value,
-        value_comment=value_comment, references=references, DOI=list(DOI or []), variable_type=role, by=by,
-        kind=kind, scale=scale, on_grow=on_grow, location=location, mapping=aggregation, weight=weight,
+        value_comment=value_comment, references=references, DOI=list(DOI or []), role=role, by=by,
+        kind=kind, scale=scale, on_grow=on_grow, location=location, aggregation=aggregation, weight=weight,
         dtype=dtype, shape=tuple(shape) if shape is not None else None, upscaling=upscaling, record=record, **extra)
     if default_factory:
         return field(default_factory=default_factory, metadata=metadata)
@@ -120,7 +120,7 @@ def input_variable(unit: str = "", description: str = "", default=None, kind=Non
                    location=None, aggregation=None, weight=None, on_grow="default", dtype=None, shape=None,
                    min_value=None, max_value=None, unit_comment: str = "", value_comment: str = "",
                    references: str = "", DOI=None, optional: bool = False, record=None):
-    return _declare("input", **locals())
+    return _declare("input_variable", **locals())
 
 
 def parameter(unit: str = "", description: str = "", default=None, kind=None, by: str = None, scale=None,
@@ -209,7 +209,7 @@ def forcing_variable(unit: str = "", description: str = "", required: bool = Tru
     from openalea.metafspm.coupling.forcings import AGGREGATES
     if aggregate not in AGGREGATES:
         raise ValueError(f"forcing_variable(aggregate=...): one of {AGGREGATES}, got '{aggregate}'")
-    return _declare("forcing", unit=unit, description=description, default=None, unit_comment=unit_comment,
+    return _declare("forcing_variable", unit=unit, description=description, default=None, unit_comment=unit_comment,
                     references=references, DOI=DOI, required=required, aggregate=aggregate)
 
 
@@ -277,7 +277,7 @@ class Component:
         from openalea.metafspm.coupling.declaration import KIND_FAMILIES
         from openalea.metafspm.coupling.units import check_declared_unit
         for name, declared in list(cls.__dict__.items()):
-            if not isinstance(declared, Field) or "variable_type" not in declared.metadata:
+            if not isinstance(declared, Field) or "role" not in declared.metadata:
                 continue
             kind = declared.metadata.get("kind")
             if kind not in (None, "") and kind not in KIND_FAMILIES:
@@ -376,7 +376,7 @@ class Component:
     @classmethod
     def declared_parameters(cls) -> tuple:
         """The names of the parameters the class declares (parameter)."""
-        return tuple(f.name for f in fields(cls) if f.metadata.get("variable_type") == "parameter")
+        return tuple(f.name for f in fields(cls) if f.metadata.get("role") == "parameter")
 
     def pull_available_inputs(self):
         """Refresh the inputs derived by the coupling; FunctionalComponent implements it on its DataStructure."""
@@ -386,13 +386,13 @@ class Component:
     def declared_settings(cls) -> tuple:
         """The names of the settings the class declares (setting), read once per class."""
         if "_setting_names" not in cls.__dict__:
-            cls._setting_names = tuple(f.name for f in fields(cls) if f.metadata.get("variable_type") == "setting")
+            cls._setting_names = tuple(f.name for f in fields(cls) if f.metadata.get("role") == "setting")
         return cls._setting_names
 
     def check_settings(self) -> None:
         """Each setting with choices holds one of them."""
         for f in fields(self):
-            choices = f.metadata.get("choices") if f.metadata.get("variable_type") == "setting" else None
+            choices = f.metadata.get("choices") if f.metadata.get("role") == "setting" else None
             if choices is not None and getattr(self, f.name) not in choices:
                 raise ValueError(f"{type(self).__name__}.{f.name}: one of {list(choices)}, got "
                                  f"{getattr(self, f.name)!r}")
@@ -401,7 +401,7 @@ class Component:
     def declared_forcings(cls) -> dict:
         """{name: required} of the forcings the class declares (forcing_variable)."""
         return {f.name: f.metadata.get("required", True) for f in fields(cls)
-                if f.metadata.get("variable_type") == "forcing"}
+                if f.metadata.get("role") == "forcing_variable"}
 
     @classmethod
     def declarations(cls):
@@ -417,18 +417,18 @@ class Component:
         rows = []
         for f in fields(cls):
             meta = f.metadata
-            role = meta.get("variable_type")
+            role = meta.get("role")
             if role is None:
                 continue
             scale = meta.get("scale")
             if role == "setting":                           # one value of the model
                 place = "model"
-            elif role == "forcing":                         # a time series, the same for every entity
+            elif role == "forcing_variable":                         # a time series, the same for every entity
                 place = "time series"
             else:
                 place = scale_names.get(scale, scale) if scale is not None else meta.get("location")
             default = f.default if f.default is not MISSING else None
-            if role == "forcing":
+            if role == "forcing_variable":
                 default = "required" if meta.get("required", True) else "optional"
             rows.append(dict(name=f.name, role=role, kind=meta.get("kind"), scale=place,
                              unit=meta.get("unit"), description=meta.get("description"), default=default,
@@ -736,7 +736,7 @@ class DataStructureComponent(Component):
             # policy and kind; a component reading it as an input only fills what is still unknown.
             meta = ds._variable_meta().setdefault(name, {})
             declared = {key: value for key, value in spec.meta().items() if value is not None}
-            if spec.variable_type == "input":
+            if spec.role == "input_variable":
                 for key, value in declared.items():
                     meta.setdefault(key, value)
             else:
@@ -747,7 +747,7 @@ class DataStructureComponent(Component):
         self._check_mtg_sync()
         if self.mtg_sync == "lazy" and hasattr(ds, "_track_mtg"):
             for spec in self._variable_specs.values():
-                if spec.variable_type == "state_variable" and spec.mtg_backed:
+                if spec.role == "state_variable" and spec.mtg_backed:
                     ds._track_mtg(spec)
 
     def _check_mtg_sync(self) -> None:
@@ -764,7 +764,7 @@ class DataStructureComponent(Component):
         names = {}
         for f in fields(cls):
             meta = f.metadata
-            if (meta.get("variable_type") == "parameter"
+            if (meta.get("role") == "parameter"
                     and meta.get("dtype") in (None, float, int, "float", "int") and not isinstance(f.default, bool)
                     and isinstance(f.default, (int, float, np.integer, np.floating))):
                 names[f.name] = f.default
@@ -796,7 +796,7 @@ class DataStructureComponent(Component):
         values = {}
         for f in fields(cls):
             meta = f.metadata
-            if meta.get("variable_type") not in ("parameter", "setting"):
+            if meta.get("role") not in ("parameter", "setting"):
                 continue
             value = scenario.get(f.name, f.default if f.default is not MISSING else None)
             values[f.name] = value
@@ -962,7 +962,7 @@ class DataStructureComponent(Component):
         if self.mtg_sync == "never" or not hasattr(ds, "_write_mtg"):
             return
         for spec in getattr(self, "_variable_specs", {}).values():
-            if spec.variable_type == "state_variable" and spec.mtg_backed and ds.has(spec.name):
+            if spec.role == "state_variable" and spec.mtg_backed and ds.has(spec.name):
                 ds._write_mtg(spec)
 
     def _refresh_from_bio_scale(self) -> None:
@@ -977,7 +977,7 @@ class DataStructureComponent(Component):
         if not hasattr(ds, "_read_mtg"):
             return
         for spec in getattr(self, "_variable_specs", {}).values():
-            if spec.variable_type != "parameter" or not spec.mtg_backed or held_at_scale(spec, ds):
+            if spec.role != "parameter" or not spec.mtg_backed or held_at_scale(spec, ds):
                 continue                             # (one held at its scale by another component: its own)
             if hasattr(ds, "flush_mtg"):
                 ds.flush_mtg([spec.name])            # a value set on the DataStructure is not lost to a stale MTG one
@@ -1356,7 +1356,7 @@ class StructuralComponent(DataStructureComponent):
             active_before = dict(zip(ids, self._active_now(weights).tolist()))
         before = self._mpg_signature()
         g = getattr(ds, "_mtg", None)
-        states = [spec for spec in specs if spec.variable_type == "state_variable"]
+        states = [spec for spec in specs if spec.role == "state_variable"]
         properties = g.properties() if g is not None else {}
         versions = {spec.name: _property_version(properties.get(spec.name)) for spec in states}
         instanced = g is not None and getattr(g, "_instanced", lambda: False)()
@@ -1693,7 +1693,7 @@ def _own_scale_name(component, ds):
     finest = None
     for f in fields(component):
         meta = f.metadata
-        if meta.get("variable_type") not in ("state_variable", "input", "parameter"):
+        if meta.get("role") not in ("state_variable", "input_variable", "parameter"):
             continue
         scale = meta.get("scale")
         if meta.get("location") in ("node", "edge") or (scale is not None and scale >= g.scales.Compartment):

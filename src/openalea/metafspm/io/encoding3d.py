@@ -62,8 +62,8 @@ DISPLAYS = ("instances", "full", None)             # how display shapes draw a R
 _KINDS = {"intensive": "intensive", "extensive": "extensive", "massic_concentration": "massic_concentration",
           "volumic_concentration": "volumic_concentration", "descriptor": "descriptor",
           "non_inertial_intensive": "intensive", "non_inertial_extensive": "extensive"}
-_ROLES = {"state_variable": "state", "input": "input", "parameter": "parameter",
-          "setting": "setting", "forcing": "input"}
+_ROLES = {"state_variable": "state", "input_variable": "input", "parameter": "parameter",
+          "setting": "setting", "forcing_variable": "input"}
 _DIMENSIONLESS = {"", "adim", "-", "1", "dimensionless", "adimensional", "unitless"}
 _SYMBOLS = {"°C": "Cel", "°": "deg", "day": "d", "days": "d", "yr": "a", "°Cd": "K.d", "°C.d": "K.d"}
 _GRAPH_RESERVED = ("id", "label", "complex", "parent", "edge_type", "sibling_order", "level", "index")
@@ -123,7 +123,7 @@ def _declarations(components) -> dict:
         if not is_dataclass(component):
             continue
         for item in fields(type(component)):
-            if "variable_type" in item.metadata or "unit" in item.metadata:
+            if "role" in item.metadata or "unit" in item.metadata:
                 found.setdefault(item.name, dict(item.metadata))
     return found
 
@@ -164,7 +164,7 @@ def unrecorded(ds, components) -> set:
         if not is_dataclass(component):
             continue
         for item in fields(type(component)):
-            role = item.metadata.get("variable_type")
+            role = item.metadata.get("role")
             if role is None:
                 continue
             roles.setdefault(item.name, set()).add(role)
@@ -178,7 +178,7 @@ def unrecorded(ds, components) -> set:
         elif meta.get(name, {}).get("record") is not None:
             recorded = bool(meta[name]["record"])
         else:
-            recorded = bool(roles.get(name, set()) & {"state_variable", "input"})
+            recorded = bool(roles.get(name, set()) & {"state_variable", "input_variable"})
         if not recorded:
             out.add(name)
     return out
@@ -220,7 +220,7 @@ def _variable(name: str, metadata: dict, standard_names: dict, derived: bool = F
     references = (references,) if isinstance(references, str) and references.strip() else tuple(references or ())
     doi = tuple(str(item) for item in (metadata.get("DOI") or ()) if str(item).strip())
     return encoding3d.Variable(unit=unit, standard_name=standard_name, kind=_KINDS.get(metadata.get("kind")),
-                            role="derived" if derived else _ROLES.get(metadata.get("variable_type"), "state"),
+                            role="derived" if derived else _ROLES.get(metadata.get("role"), "state"),
                             description=description, minimum=number(metadata.get("min_value")),
                             maximum=number(metadata.get("max_value")), references=tuple(str(r) for r in references),
                             doi=doi)
@@ -1514,10 +1514,10 @@ def _shown_variable(declared: dict, entity_set, scale: str = None, location: str
     declare at *scale* (or *location*) that *entity_set* holds, else the first such input; None without one."""
     from openalea.metafspm.coupling.declaration import scale_names
     names = scale_names()
-    for wanted in ("state_variable", "input"):
+    for wanted in ("state_variable", "input_variable"):
         for name, metadata in declared.items():
             column = entity_set.columns.get(name)
-            if (metadata.get("variable_type") != wanted or metadata.get("kind") == "descriptor" or column is None
+            if (metadata.get("role") != wanted or metadata.get("kind") == "descriptor" or column is None
                     or column.dtype == object or column.dtype.kind not in "fiu"):
                 continue
             at = metadata.get("location") if location is not None else names.get(metadata.get("scale"))
@@ -2066,8 +2066,8 @@ def _mpg_from(data_structure, extras: dict):
     for name in extras["tracked"]:
         meta = ds._variable_meta()[name]
         ds._track_mtg(VariableSpec(name=name, location=extras["variables"][name]["location"], scale=meta.get("scale"),
-                                  mapping=meta.get("mapping"), weight=meta.get("weight"), kind=meta.get("kind"),
-                                  variable_type=meta.get("variable_type"), default=meta.get("default", 0.),
+                                  aggregation=meta.get("aggregation"), weight=meta.get("weight"), kind=meta.get("kind"),
+                                  role=meta.get("role"), default=meta.get("default", 0.),
                                   on_grow=meta.get("on_grow", "default"), dtype=meta.get("dtype", float),
                                   shape=tuple(meta.get("shape", ()))))
         ds._mark_mtg_synced(name)

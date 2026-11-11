@@ -240,7 +240,7 @@ in a functor is one of the platform's primitives (the tree kernels above, `ds.lo
 ## Boundary sets
 
 ```python
-leaves = boundary_set(filters={"label": "LeafElement"}, condition="robin", value="air_water_potential",
+leaves = boundary_set(where={"label": "LeafElement"}, condition="robin", value="air_water_potential",
                       weight="leaf_conductance")
 ```
 
@@ -253,7 +253,7 @@ leaves = boundary_set(filters={"label": "LeafElement"}, condition="robin", value
   | `neumann` | `− v` (`v` is an inflow) |
 
   With a user Jacobian, the framework adds the sets' terms.
-- **`filters`** is a `{variable: condition}` dict, a mask name, or a callable, as for every decorator. Membership follows its variables and the topology.
+- **`where`** is a `{variable: condition}` dict, a mask name, or a callable, as for every decorator. Membership follows its variables and the topology.
 - **Live values.** `value` and `weight` are read at each solve.
 - **Parameters of grown entities.** A parameter read from the MTG gets its value for new entities at the refresh before the next solve. Until then, masks built on it use its `on_grow` value.
 
@@ -317,10 +317,10 @@ the residuals' and the steps' history and the floor estimate, so a tolerance set
 ## Masks
 
 - **Defining.** `ds.define_mask(name, rule)` takes a `{variable: condition}` rule (a comparison such as `">0"` or `"<=0.03"`, a value, a list of values, label names; a variable at a coarser scale is read at each entity's entity of that scale) or a callable; `ds.define_mask(name, entities="GranapAnatomy.soil_nodes")` a named entity set.
-- **Named entity sets.** A component publishes the sets assemblies select, `entity_sets = {"soil_nodes": {"kind": 4.}}` (a class attribute, `{variable: condition}` rules); assemblies name them, `"Class.set"`: `define_mask(entities=)`, a `Reduction`'s `where=`, `ports=`, `keep=` (evaluated on a section template's properties too). A port's internal codes (a node kind, a label used as a code) never appear in an assembly, its tests or its examples. The decorators' `filters=` take the same rules, or a mask name. `ds.mask(name)` is recomputed when its variables were written; `ds.mask_version(name)` changes with its values.
+- **Named entity sets.** A component publishes the sets assemblies select, `entity_sets = {"soil_nodes": {"kind": 4.}}` (a class attribute, `{variable: condition}` rules); assemblies name them, `"Class.set"`: `define_mask(entities=)`, a `Reduction`'s `where=`, `ports=`, `keep=` (evaluated on a section template's properties too). A port's internal codes (a node kind, a label used as a code) never appear in an assembly, its tests or its examples. The decorators' `where=` take the same rules, or a mask name. `ds.mask(name)` is recomputed when its variables were written; `ds.mask_version(name)` changes with its values.
 - **The active mask.** A structural component's `active = {...}` defines the mask `"active"`.
-- **Vectorised steps** compute on the entities of the `"active"` mask when the DataStructure defines it: arguments at its location are restricted, and outputs are written on them only. `@rate(include_inactive=True)` lifts it; `filters=` restricts a step further. MPG-style steps always see every entity.
-- **Graph systems** solve on the whole graph unless `@graph_system(filters=...)`, e.g. `filters="active"`. With it, they solve on the selected nodes and the edges between them:
+- **Vectorised steps** compute on the entities of the `"active"` mask when the DataStructure defines it: arguments at its location are restricted, and outputs are written on them only. `@rate(include_inactive=True)` lifts it; `where=` restricts a step further. MPG-style steps always see every entity.
+- **Graph systems** solve on the whole graph unless `@graph_system(where=...)`, e.g. `where="active"`. With it, they solve on the selected nodes and the edges between them:
   - inactive nodes are frozen, and dropped edges carry no flux;
   - a steady system (`transient=False`, the default for Newton and root solvers) needs a Dirichlet anchor in every connected piece.
 

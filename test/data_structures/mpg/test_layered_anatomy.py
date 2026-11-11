@@ -138,8 +138,8 @@ class SectionHydraulics(FunctionalComponent):
 
     @graph_system(node_unknowns=["water_potential"], edge_unknowns=["water_flux"], solver="newton")
     class _hydraulics:
-        soil = boundary_set(filters={"compartment_type": "==1"}, condition="robin", value="soil_water_potential", weight=0.6)
-        collar = boundary_set(filters=lambda ds: (ds.get("label") == ds.mtg.labels.Cell.MetaXylem)
+        soil = boundary_set(where={"compartment_type": "==1"}, condition="robin", value="soil_water_potential", weight=0.6)
+        collar = boundary_set(where=lambda ds: (ds.get("label") == ds.mtg.labels.Cell.MetaXylem)
                               & (ds.owner("SubOrgan") == 0), condition="dirichlet", value="xylem_water_potential")
 
         @node_balance(field="water_potential")

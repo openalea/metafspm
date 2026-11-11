@@ -84,21 +84,21 @@ class PlantWaterTransport(FunctionalComponent):
             """The flux through a Connection, j = k (Ψ_a - Ψ_b)."""
             return conductance * np.asarray(self.graph_view.incidence.T @ water_potential).reshape(-1)
 
-        @boundary_condition("node", "neumann", field="water_potential", filters={"is_evaporating": ">0"})
+        @boundary_condition("node", "neumann", field="water_potential", where={"is_evaporating": ">0"})
         def _to_the_air(self, water_potential, air_water_potential, vapour_conductance):
             """Liquid to vapour at the stomatal cavities: the inflow k_vap (Ψ_air - Ψ), negative (water leaves)."""
             return vapour_conductance * (air_water_potential - water_potential)
 
-        @boundary_condition("node", "neumann", field="water_potential", filters={"is_soil_contact": ">0"})
+        @boundary_condition("node", "neumann", field="water_potential", where={"is_soil_contact": ">0"})
         def _from_the_soil(self, water_potential, soil_water_potential, soil_contact_conductance):
             """The inflow from the soil, an equation of the coupled soil water potential."""
             return soil_contact_conductance * (soil_water_potential - water_potential)
 
-        @graph_output("root_uptake", location="node", filters={"is_soil_contact": ">0"})
+        @graph_output("root_uptake", location="node", where={"is_soil_contact": ">0"})
         def _root_uptake(self, water_potential, soil_water_potential, soil_contact_conductance):
             return soil_contact_conductance * (soil_water_potential - water_potential)
 
-        @graph_output("evaporation", location="node", filters={"is_evaporating": ">0"})
+        @graph_output("evaporation", location="node", where={"is_evaporating": ">0"})
         def _evaporation(self, water_potential, air_water_potential, vapour_conductance):
             return vapour_conductance * (water_potential - air_water_potential)
 
@@ -199,11 +199,11 @@ class SeedlingStructure(StructuralComponent):
         k[chosen] = (np.broadcast_to(axial_k, k.shape) / np.maximum(conductance_length, 1e-12))[chosen]
         return k
 
-    @postsegmentation(filters={"is_soil_contact": ">0"})
+    @postsegmentation(where={"is_soil_contact": ">0"})
     def _soil_contact_conductance(self, contact_length, root_soil_k):
         return root_soil_k * contact_length
 
-    @postsegmentation(filters={"is_evaporating": ">0"})
+    @postsegmentation(where={"is_evaporating": ">0"})
     def _vapour_conductance(self, evaporating_area, stomatal_conductance, vapour_factor):
         return stomatal_conductance * evaporating_area * vapour_factor
 

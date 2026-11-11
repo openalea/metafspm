@@ -124,7 +124,7 @@ def _geometry_stamp(components):
     (a union's parts': their versions and sizes), and their triangles for "geometry"; None without any."""
     from dataclasses import fields
     relights = {f.metadata.get("relight") for component in components if hasattr(component, "__dataclass_fields__")
-                for f in fields(component) if f.metadata.get("variable_type") == "geometry"} - {None}
+                for f in fields(component) if f.metadata.get("role") == "geometry"} - {None}
     if not relights:
         return None
     stamp = ()
@@ -145,7 +145,7 @@ def _inputs(component) -> list:
     private = component.__dict__.get("_private_names") or {}
     found = []
     for name, spec in getattr(component, "_variable_specs", {}).items():
-        if spec.variable_type != "input" or spec.kind == "descriptor":
+        if spec.role != "input_variable" or spec.kind == "descriptor":
             continue
         stored = private.get(name, name)
         if not root.has(stored) or np.asarray(root.get(stored)).dtype.kind != "f":

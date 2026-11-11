@@ -114,7 +114,7 @@ class TransportDirichlet(NitrogenFields):
         _balance = node_balance(field="concentration")(balance)
         _fick = edge_law(field="axial_flux")(fick)
 
-        @boundary_condition("node", "dirichlet", field="concentration", filters={"is_root": ">0"})
+        @boundary_condition("node", "dirichlet", field="concentration", where={"is_root": ">0"})
         def _root(self, concentration, c_dirichlet):
             return concentration - c_dirichlet
 
@@ -126,6 +126,6 @@ class TransportNeumann(NitrogenFields):
         _balance = node_balance(field="concentration")(balance)
         _fick = edge_law(field="axial_flux")(fick)
 
-        @boundary_condition("node", "neumann", field="concentration", filters={"is_root": ">0"})
+        @boundary_condition("node", "neumann", field="concentration", where={"is_root": ">0"})
         def _root(self, q_boundary):
             return q_boundary                                          # an inflow

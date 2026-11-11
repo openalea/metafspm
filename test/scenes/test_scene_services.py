@@ -75,7 +75,7 @@ def test_declared_forcings():
     """A forcing declared is listed with the variables, never registered on the DataStructure, and checked when the
     scene is built: a required one missing raises then, an optional one only when read."""
     table = Lit.declarations().set_index("name")
-    assert table.loc["PARi", "role"] == "forcing" and table.loc["PARi", "default"] == "required"
+    assert table.loc["PARi", "role"] == "forcing_variable" and table.loc["PARi", "default"] == "required"
     assert table.loc["wind", "default"] == "optional"
     assert Lit.declared_forcings() == {"PARi": True, "wind": False}
     scene = _scene()

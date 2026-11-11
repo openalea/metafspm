@@ -684,7 +684,7 @@ class SceneRecorder:
                 (on, part) for part in getattr(on, "parts", ()) if base_of(part) is ds]
             for holder, part in parts:
                 for name, spec in getattr(component, "_variable_specs", {}).items():
-                    if spec.variable_type != "state_variable" or not holder.has(name):
+                    if spec.role != "state_variable" or not holder.has(name):
                         continue
                     if part is None:
                         location = ds.location(name)
@@ -850,7 +850,7 @@ class SceneRecorder:
         variables = []
         for component in self._components_on(scene, ds):
             for name, spec in getattr(component, "_variable_specs", {}).items():
-                if (spec.variable_type == "state_variable" and name not in variables and ds.has(name)
+                if (spec.role == "state_variable" and name not in variables and ds.has(name)
                         and ds.location(name) == "node" and np.asarray(ds.get(name)).dtype.kind == "f"):
                     variables.append(name)
         frame = ds.to_dataframe(names=variables, location="node")

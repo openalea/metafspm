@@ -63,8 +63,8 @@ class NodeHydraulics(FunctionalComponent):
 
     @graph_system(node_unknowns=["water_potential"], solver="newton")
     class _hydraulics:
-        soil = boundary_set(filters={"compartment_type": "==1"}, condition="robin", value="soil_water_potential", weight=0.6)
-        collar = boundary_set(filters=_collar, condition="dirichlet", value="xylem_water_potential")
+        soil = boundary_set(where={"compartment_type": "==1"}, condition="robin", value="soil_water_potential", weight=0.6)
+        collar = boundary_set(where=_collar, condition="dirichlet", value="xylem_water_potential")
 
         @node_balance(field="water_potential")
         def _balance(self, water_potential, K):

@@ -33,7 +33,7 @@ Replace the flat modules, following this table:
 ```python
 @dataclass
 class RootCNUnified(Model):
-    hexose: float = declare(default=1e-3, ..., variable_type="state_variable", ...)
+    hexose: float = declare(default=1e-3, ..., role="state_variable", ...)
     def __init__(self, g, time_step, **scenario):
         self.props = g.properties(); self.vertices = ...
         self.apply_scenario(**scenario); self.link_self_to_mtg()     # apply_scenario is removed: the Scene sets them

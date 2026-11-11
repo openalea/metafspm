@@ -134,7 +134,7 @@ carbon()                                  # one time step: every step, in the sc
   a parameter's or a setting's value. Each declaration is documented by keywords: `unit` and `description` at
   least, and optionally `min_value`, `max_value` (the bounds `variants` reads), `references`, `DOI`,
   `unit_comment`, `value_comment`; `declarations()` lists them all, with each variable's `role` (state_variable,
-  input, parameter, setting, forcing) and `kind`. `scale=` places a variable at an MTG scale (its location follows
+  input_variable, parameter, setting, forcing_variable) and `kind`. `scale=` places a variable at an MTG scale (its location follows
   from the graph), or `location=` gives it directly (`"cell"` on grids). `kind=` (extensive, intensive,
   massic_concentration, descriptor: how its value depends on the size of what it describes) decides the default
   aggregations and the repartition after growth. Variables are registered at construction, from the MTG's property
@@ -161,8 +161,8 @@ carbon()                                  # one time step: every step, in the sc
   - or several as a tuple, annotated `-> tuple[...]`: `return value, "other_name", other_value`, the first value
     named after the method;
   - or `None`, writing nothing.
-- **Selections.** Every decorator takes `filters=`, the entities it operates on, written as explicit key / values
-  that must all hold: `@rate(filters={"label": "RootSegment", "length": ">0.01"})`. A value is matched, a list is
+- **Selections.** Every decorator takes `where=`, the entities it operates on, written as explicit key / values
+  that must all hold: `@rate(where={"label": "RootSegment", "length": ">0.01"})`. A value is matched, a list is
   one of several values, a comparison string (`">0"`, `"<=0.03"`) is tested, and label names are resolved. A key
   may name a variable at a coarser scale (e.g. a segment's label for its anatomy Compartments). A mask name
   (`ds.define_mask`) or a callable `ds -> boolean array` select as well, for geometry or masks shared with mappings.
@@ -257,7 +257,7 @@ class SoilDiffusion(FunctionalComponent):
 
     @graph_system(node_unknowns=["solute"], edge_unknowns=["solute_flux"], transient=True, integrate="adaptive")
     class _diffusion:
-        bottom = boundary_set(filters=lambda ds: ds.layer_mask(z=-1), condition="dirichlet", value=0.)
+        bottom = boundary_set(where=lambda ds: ds.layer_mask(z=-1), condition="dirichlet", value=0.)
 
         @node_balance(field="solute")
         def _balance(self, solute, solute_flux):
@@ -289,33 +289,33 @@ class SoilDiffusion(FunctionalComponent):
   that a `@node_balance` writes its own time term (it only decides the anchoring check; inferred for `@node_rate`).
   `@edge_law(integrate=True)` adds the integrated amount `<field>_amount` (Q += q dt) as an edge unknown. Edge unknowns are algebraic
   (`@edge_law`), whatever the solver.
-- **Boundary sets.** `boundary_set(filters=..., condition="robin" | "dirichlet" | "neumann", value=..., weight=...)` on a
+- **Boundary sets.** `boundary_set(where=..., condition="robin" | "dirichlet" | "neumann", value=..., weight=...)` on a
   set of nodes, with values and weights read at each solve. `condition_variable="variable"`
   reads each node's condition from a node variable (`boundary_set.CODES`: 1 Dirichlet, 2 Neumann, 3 Robin, otherwise
   none), e.g. a collar switching between a pressure and a flux. `condition=None` is a selection only.
 - **Boundary conditions as equations.** When the condition is an expression rather than a variable,
-  `@boundary_condition("node", "dirichlet" | "neumann", field=..., filters=...)` tags a method that takes its
+  `@boundary_condition("node", "dirichlet" | "neumann", field=..., where=...)` tags a method that takes its
   arguments by name like the balances: unknowns and DataStructure variables (e.g. coupled ones), sliced to the
   selected nodes. A Dirichlet method returns the residual (`p - collar_pressure`), a Neumann one the inflow
   (`uptake_rate * (soil_concentration - concentration)`), with the same sign as a `boundary_set`'s value.
-- **Selections** (`filters=`, as for steps). Outside them:
+- **Selections** (`where=`, as for steps). Outside them:
   - a balance or an edge law contributes 0;
   - a boundary has no term;
-  - `@graph_output(..., filters=)` gives 0.
+  - `@graph_output(..., where=)` gives 0.
 
   The method's arguments are sliced to the selection; values read through `self` (e.g. `self.previous()`) are not.
 - **Pool unknowns.** `pool_unknowns={"shoot_sugar": {"location": "Plant", "exchange": "collar"}}` adds one unknown
   per plant, solved with the graph; its residual is a `@pool_balance(field=...)`, and equations exchange with it
   through `self.pool_exchange(name)` (a sparse node × pool map). Newton solvers only.
-- **Active subgraphs and pieces.** `@graph_system(filters=...)` solves on the subgraph of the selected nodes (the
-  others frozen, dropped edges without flux), e.g. `filters="active"`; `split="components"`
+- **Active subgraphs and pieces.** `@graph_system(where=...)` solves on the subgraph of the selected nodes (the
+  others frozen, dropped edges without flux), e.g. `where="active"`; `split="components"`
   solves each connected piece (each plant) on its own, with its own convergence and adaptive steps.
 - **Forcings.** `self.forcing(name)` reads a time series of the scene's forcings **over the (sub-)step** being
   computed, `[t, t + dt]` (`over="substep"`, the default; `over="step"`: the call's whole step, all its sub-steps), so
   that the results do not depend on the time step through the forcings; inside an IVP solve, at its evaluation time.
   A component declares the forcings it reads, `PARi: float = forcing_variable(unit="µmol m-2 s-1",
   description="...")`: unlike an input, written per entity by another model through the translator, a forcing is a
-  time series given from outside, the same for every entity. It is listed by `declarations()` (role "forcing"), not
+  time series given from outside, the same for every entity. It is listed by `declarations()` (role "forcing_variable"), not
   stored on the DataStructure, and a `Scene` checks at its construction that every required one is given
   (`required=False`: an optional one, which raises KeyError when read). What a read gives is declared once,
   `forcing_variable(aggregate=...)`: `"mean"` (the default: its mean over the step, a rate or a state of the air),

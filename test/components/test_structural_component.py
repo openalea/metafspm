@@ -98,7 +98,7 @@ def test_the_owner_of_a_variable_sets_its_growth_policy(plant):
     """RootGrowthProbe reads C_hexose_root first; CarbonProbe owns it with on_grow="inherit"."""
     _, ds, _, _, _ = plant
     meta = ds._variable_meta()["C_hexose_root"]
-    assert (meta["variable_type"], meta["on_grow"], meta["kind"]) == ("state_variable", "inherit",
+    assert (meta["role"], meta["on_grow"], meta["kind"]) == ("state_variable", "inherit",
                                                                       "massic_concentration")
 
 

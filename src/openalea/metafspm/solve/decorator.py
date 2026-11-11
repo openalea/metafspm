@@ -13,7 +13,7 @@ coupled equations over a DataStructure's graph.
         @node_rate(field)                        a node du/dt (time term by the framework; any solver)
         @edge_law(field=, integrate=False)       an edge residual (or an integrated edge flux)
         @pool_balance(field)                     the residual of a pool unknown (pool_unknowns=)
-        name = boundary_set(filters=, condition=, value=, weight=)  a boundary condition on a set of nodes
+        name = boundary_set(where=, condition=, value=, weight=)  a boundary condition on a set of nodes
         @boundary_condition(location, condition) a boundary condition written as a method
         @graph_jacobian                          an optional analytic Jacobian
         @graph_output(name, location=None)       a variable computed after the solve
@@ -73,12 +73,12 @@ def _step(name: str, *, total: bool = False, iterating: bool = False):
     for functions written with scalar logic.
     """
     def decorator(func=None, *, vectorized: bool = True, location: str = None, locations: dict = None,
-                  filters=None, include_inactive: bool = False, memo: bool = False):
+                  where=None, include_inactive: bool = False, memo: bool = False):
         """
         location:  of the step's output when it is not a declared field ("node", "edge", "scalar", "cell", or a
                    coarse scale name); locations: {output name: location} for the supplementary outputs.
-        filters:   the entities the step computes on ({variable: condition}, a mask name or a callable, see
-                   Filters); the others keep their values.
+        where:     the entities the step computes on ({variable: condition}, a mask name or a callable, see
+                   _EntityFilter); the others keep their values.
         include_inactive:
                    the step also computes on the entities outside the DataStructure's "active" mask (planting times,
                    dead tissues), which it skips by default.
@@ -88,9 +88,9 @@ def _step(name: str, *, total: bool = False, iterating: bool = False):
         """
         if func is None:
             return lambda f: decorator(f, vectorized=vectorized, location=location, locations=locations,
-                                       filters=filters, include_inactive=include_inactive, memo=memo)
-        _check_filters(filters, f"@{name} {func.__name__}")
-        func.__filters__ = filters
+                                       where=where, include_inactive=include_inactive, memo=memo)
+        _check_where(where, f"@{name} {func.__name__}")
+        func.__where__ = where
         func.__include_inactive__ = include_inactive
         func.__memo__ = memo
         func.__step_tag__ = {"name": name, "total": total, "iterating": iterating, "vectorized": vectorized}
@@ -120,14 +120,14 @@ postsegmentation = _step("postsegmentation")
 # Method-level decorators for graph systems  (public API)
 # ═══════════════════════════════════════════════════════════════════════════════
 
-def node_balance(field=None, filters=None):
+def node_balance(field=None, where=None):
     """
     Tag a method as a node residual block for *field*.
 
     Parameters
     ----------
     field    : str   node-unknown field this block contributes to.
-    filters  : the nodes the block applies on ({variable: condition}, a mask name or a callable: conventions.md), e.g.
+    where    : the nodes the block applies on ({variable: condition}, a mask name or a callable: conventions.md), e.g.
                {"tissue": CORTEX}; the method's node arguments are sliced to them, and it contributes 0 elsewhere.
                Values the method reads through self (self.previous(), self.data_structure) are not sliced.
     The method returns the residual (its time term written with self.previous() and self.dt); @node_rate is the
@@ -136,13 +136,13 @@ def node_balance(field=None, filters=None):
     def decorator(func):
         func.__graph_tag__ = {
             "term": "node_balance", "field": field,
-            "filters": filters, "explicit": False,
+            "where": where, "explicit": False,
         }
         return func
     return decorator
 
 
-def node_rate(field=None, filters=None):
+def node_rate(field=None, where=None):
     """
     Tag a method as the rate form of a node unknown's balance: it returns du/dt (sources minus the divergence of the
     fluxes, divided by the capacities), with no time term. The framework writes the time term for the solver
@@ -153,10 +153,10 @@ def node_rate(field=None, filters=None):
     Parameters
     ----------
     field   : node unknown the rate is of.
-    filters : the nodes, as for node_balance: the rate applies on the selected nodes (zero elsewhere).
+    where : the nodes, as for node_balance: the rate applies on the selected nodes (zero elsewhere).
     """
     def decorator(func):
-        func.__graph_tag__ = {"term": "node_rate", "field": field, "filters": filters}
+        func.__graph_tag__ = {"term": "node_rate", "field": field, "where": where}
         return func
     return decorator
 
@@ -172,7 +172,7 @@ def pool_balance(field):
     return decorator
 
 
-def edge_law(func=None, *, field=None, filters=None,
+def edge_law(func=None, *, field=None, where=None,
              explicit=False, integrate=False):
     """
     Tag a method as an edge residual block.
@@ -180,7 +180,7 @@ def edge_law(func=None, *, field=None, filters=None,
     Parameters
     ----------
     field    : str   edge-unknown field this block contributes to.
-    filters  : the edges the law applies on ({variable: condition} on edge variables, a mask name or a callable,
+    where    : the edges the law applies on ({variable: condition} on edge variables, a mask name or a callable,
                conventions.md).
     explicit : bool  method returns the value; R = unknown − value generated.
     integrate: bool  add the integrated amount "{field}_amount" (Q_new = Q_old + q dt) as an edge unknown.
@@ -188,7 +188,7 @@ def edge_law(func=None, *, field=None, filters=None,
     def _decorate(f):
         f.__graph_tag__ = {
             "term": "edge_law", "field": field,
-            "filters": filters, "explicit": explicit, "integrate": integrate,
+            "where": where, "explicit": explicit, "integrate": integrate,
         }
         return f
     if func is not None:
@@ -196,14 +196,14 @@ def edge_law(func=None, *, field=None, filters=None,
     return _decorate
 
 
-def boundary_condition(location, condition, field=None, filters=None, explicit=False):
+def boundary_condition(location, condition, field=None, where=None, explicit=False):
     """
     Tag a method as a boundary condition on a set of nodes, for conditions given by an equation: the method takes
     its arguments by name, like node_balance (unknowns, and DataStructure variables, e.g. coupled ones, read at
     each solve), node-located ones sliced to the selected nodes. For a condition given by a variable or a constant,
     a boundary_set is enough::
 
-        @boundary_condition("node", "neumann", field="concentration", filters={"is_collar": ">0"})
+        @boundary_condition("node", "neumann", field="concentration", where={"is_collar": ">0"})
         def _collar_uptake(self, concentration, soil_concentration, uptake_rate):
             return uptake_rate * (soil_concentration - concentration)          # an inflow
 
@@ -214,7 +214,7 @@ def boundary_condition(location, condition, field=None, filters=None, explicit=F
                ``p - collar_pressure``; with explicit=True, the prescribed value itself);
                "neumann": the method's values are an inflow, subtracted from the residual, as boundary_set's.
     field    : the node unknown it applies to.
-    filters  : the nodes ({variable: condition}, a mask name or a callable: conventions.md). Default: every node.
+    where    : the nodes ({variable: condition}, a mask name or a callable: conventions.md). Default: every node.
     explicit : for dirichlet, the method returns the prescribed value instead of a residual.
     """
     if location == "edge":
@@ -224,29 +224,29 @@ def boundary_condition(location, condition, field=None, filters=None, explicit=F
         raise ValueError(f"@boundary_condition: location must be 'node', got '{location}'")
     if condition not in ("dirichlet", "neumann"):
         raise ValueError(f"@boundary_condition: condition must be 'dirichlet' or 'neumann', got '{condition}'")
-    _check_filters(filters, "@boundary_condition")
+    _check_where(where, "@boundary_condition")
 
     def decorator(func):
         func.__graph_tag__ = {
             "term": "boundary_condition",
             "location": location, "condition": condition,
-            "field": field, "filters": filters, "explicit": explicit,
+            "field": field, "where": where, "explicit": explicit,
         }
         return func
     return decorator
 
 
-def _check_filters(filters, owner: str) -> None:
-    """Refuse a filters= that is not a {variable: condition} dict, a mask name or a callable."""
-    if filters is None or callable(filters) or isinstance(filters, str) or (isinstance(filters, dict) and filters):
+def _check_where(where, owner: str) -> None:
+    """Refuse a where= that is not a {variable: condition} dict, a mask name or a callable."""
+    if where is None or callable(where) or isinstance(where, str) or (isinstance(where, dict) and where):
         return
-    raise TypeError(f"{owner}: filters must be a {{variable: condition}} dict, a mask name or a callable, "
-                    f"got {filters!r}")
+    raise TypeError(f"{owner}: where must be a {{variable: condition}} dict, a mask name or a callable, "
+                    f"got {where!r}")
 
 
-class _Filters:
+class _EntityFilter:
     """
-    The elements a decorator operates on, from its filters= argument::
+    The elements a decorator operates on, from its where= argument::
 
         {variable: condition, ...}   every pair holding: a value, a list of values, or a comparison (">0", "<=0.03");
                                      label names are resolved, and a variable of a coarser scale is read at each
@@ -259,13 +259,13 @@ class _Filters:
     """
 
     def __init__(self, rule, key: str, location: str = "node"):
-        _check_filters(rule, key)
+        _check_where(rule, key)
         self.rule, self.key, self.location = rule, key, location
 
     def mask_name(self, ds) -> str:
         if isinstance(self.rule, str):
             if not ds.has_mask(self.rule):
-                raise KeyError(f"{self.key}: filters='{self.rule}' names no mask of the DataStructure "
+                raise KeyError(f"{self.key}: where='{self.rule}' names no mask of the DataStructure "
                                f"(masks: {ds.masks()}); give {{variable: condition}} for a selection by variables")
             return self.rule
         name, location = f"__filters:{self.key}", _entity_location(ds, self.location)
@@ -286,12 +286,12 @@ class boundary_set:
     """
     Boundary condition on a set of nodes, declared in a graph-system class and assembled by the framework::
 
-        leaves = boundary_set(filters={"label": "LeafElement"}, condition="robin", value="air_water_potential",
+        leaves = boundary_set(where={"label": "LeafElement"}, condition="robin", value="air_water_potential",
                               weight="leaf_conductance")
 
     Arguments::
 
-        filters {variable: condition} | a mask name | a callable ds -> boolean mask (conventions.md); membership
+        where   {variable: condition} | a mask name | a callable ds -> boolean mask (conventions.md); membership
                 follows the selecting variables and topology changes.
         condition "robin":     + w * (x - v) in the field's residual (an outflow towards the external value v);
                 "dirichlet": the residual row becomes x - v;
@@ -311,7 +311,7 @@ class boundary_set:
     # Codes of a per-node condition variable; other values (e.g. 0) apply no condition
     CODES = {"dirichlet": 1, "neumann": 2, "robin": 3}
 
-    def __init__(self, filters, condition=None, value=0., weight=1.0, field=None, condition_variable: str = None):
+    def __init__(self, where, condition=None, value=0., weight=1.0, field=None, condition_variable: str = None):
         if condition is not None and condition not in self.CONDITIONS:
             raise ValueError(f"boundary_set: condition must be one of {self.CONDITIONS}, got '{condition}'")
         if condition_variable is not None:
@@ -320,10 +320,10 @@ class boundary_set:
                                  "not both")
             condition = "per_node"
         self.condition_variable = condition_variable
-        if filters is None:
-            raise TypeError("boundary_set: filters= is required (the nodes of the set)")
-        _check_filters(filters, "boundary_set")
-        self.filters, self.condition, self.value, self.weight, self.field = filters, condition, value, weight, field
+        if where is None:
+            raise TypeError("boundary_set: where= is required (the nodes of the set)")
+        _check_where(where, "boundary_set")
+        self.where, self.condition, self.value, self.weight, self.field = where, condition, value, weight, field
         self.name = None
         self.__graph_tag__ = {"term": "boundary_set"}
 
@@ -337,7 +337,7 @@ class boundary_set:
 
     def members(self, instance, ds, size, take) -> np.ndarray:
         """Indices, in the solved graph, of the nodes of the set."""
-        return _Filters(self.filters, f"{type(instance).__name__}.{self.name}").members(ds, take)
+        return _EntityFilter(self.where, f"{type(instance).__name__}.{self.name}").members(ds, take)
 
 
 def graph_jacobian(func):
@@ -354,7 +354,7 @@ def explicit_term(field=None, jacobian=None):
     only). Without a reduction it is one more term of the balance.
     """
     def decorator(func):
-        func.__graph_tag__ = {"term": "node_balance", "field": field, "filters": None, "explicit": False,
+        func.__graph_tag__ = {"term": "node_balance", "field": field, "where": None, "explicit": False,
                               "explicit_term": True, "term_jacobian": jacobian}
         return func
     return decorator
@@ -444,22 +444,22 @@ def linear_systems(components) -> dict:
     return found
 
 
-def graph_output(name, location: str = None, filters=None):
+def graph_output(name, location: str = None, where=None):
     """
     Tag a method as a named post-solve output hook. *location* ("node" or "edge") is required when *name* is not a
     declared field and its size does not identify a single location.
 
-    filters: the nodes the output is computed on ({variable: condition}, a mask name or a callable: conventions.md);
+    where: the nodes the output is computed on ({variable: condition}, a mask name or a callable: conventions.md);
     the method's node arguments are sliced to them, and the other nodes get 0. Node outputs only.
     """
     if location not in (None, "node", "edge"):
         raise ValueError(f"@graph_output('{name}'): location must be 'node' or 'edge', got '{location}'")
-    if filters is not None and location == "edge":
-        raise ValueError(f"@graph_output('{name}'): filters= chooses nodes, not edges")
-    _check_filters(filters, f"@graph_output('{name}')")
+    if where is not None and location == "edge":
+        raise ValueError(f"@graph_output('{name}'): where= chooses nodes, not edges")
+    _check_where(where, f"@graph_output('{name}')")
 
     def decorator(func):
-        func.__graph_tag__ = {"term": "graph_output", "name": name, "location": location, "filters": filters}
+        func.__graph_tag__ = {"term": "graph_output", "name": name, "location": location, "where": where}
         return func
     return decorator
 
@@ -499,7 +499,7 @@ def _live_ds(instance):
 def _read_array(ds, name, location, size, owner=None, take=None, read_only=False):
     """
     Copy of variable *name* as a per-*location* array: scalars are broadcast; a missing name raises.
-    *take*: indices of the entities of an active subgraph (filters=), the others being left out.
+    *take*: indices of the entities of an active subgraph (where=), the others being left out.
     *read_only*: a read-only view instead of a copy when possible (parameters and inputs).
     """
     if not ds.has(name):
@@ -546,7 +546,7 @@ def _take(instance, location):
 
 class _Restriction:
     """
-    Active subgraph of a graph system solved with filters=, or one
+    Active subgraph of a graph system solved with where=, or one
     connected piece of it (split="components"): the selected nodes, the edges with both ends selected, and the
     corresponding GraphView. A piece leaves the other edges alone (drops_edges=False).
     """
@@ -641,7 +641,7 @@ def _restriction_for(instance, where):
         raise KeyError(f"{type(instance).__name__}: graph system filtered by mask '{where}' but the DataStructure "
                        "defines no such mask")
     if ds.__dict__["_masks"][where]["location"] not in ("node", "cell"):
-        raise ValueError(f"{type(instance).__name__}: the filters of a graph system select nodes (or grid cells)")
+        raise ValueError(f"{type(instance).__name__}: the filter of a graph system (where=) selects nodes (or grid cells)")
     key = (ds.topology_version, ds.mask_version(where))
     cache = instance.caches().setdefault("graph_restrictions", {})
     if where in cache and cache[where][0] == key:
@@ -691,7 +691,7 @@ def _snapshot(instance, required_names, node_vids_int, edge_vids_int,
     node_location = "cell" if "cell" in ds._var_stores() else "node"
     for name in required_names:
         spec = specs.get(name)
-        if (spec is not None and spec.variable_type == "parameter" and ds.has(name)
+        if (spec is not None and spec.role == "parameter" and ds.has(name)
                 and ds.location(name) not in ("node", "edge", "cell")):
             # A parameter stored per plant (or as a scalar) is seen by node equations per node and by edge laws per
             # edge, each edge taking its child's plant
@@ -795,8 +795,8 @@ class _GraphSystemBuilder:
                 term = tag["term"]
                 key   = f"{type(instance).__name__}.{inner_cls.__name__}.{attr_name}"
                 selection = None
-                if tag.get("filters") is not None:
-                    selection = _Filters(tag["filters"], key, "edge" if term == "edge_law" else "node")
+                if tag.get("where") is not None:
+                    selection = _EntityFilter(tag["where"], key, "edge" if term == "edge_law" else "node")
                 if term in ("node_balance", "node_rate") and tag.get("explicit_term"):
                     explicit_items.append((tag["field"], bound, tag.get("term_jacobian")))
                     if _EXTRACTING:
@@ -992,7 +992,7 @@ class _GraphSystemBuilder:
         # ── Evaluator factory ─────────────────────────────────────────────────
 
         def arg_location(aname):
-            """Entity ("node" or "edge") of an equation argument: filters slice only those of the filtered entity."""
+            """Entity ("node" or "edge") of an equation argument: a filter slices only those of the filtered entity."""
             if aname in node_unknowns or aname in node_snap:
                 return "node"
             if aname in all_edge_unknowns or aname in edge_snap:
@@ -1415,18 +1415,18 @@ def _solve_call(self, method_name: str) -> None:
     spec_def = type(self)._graph_system_specs[method_name]
     if _SKIPPED and declared_system(self, spec_def["inner_class"].__name__, _SKIPPED) is not None:
         return
-    filters = spec_def.get("filters")
-    # The active subgraph: the DataStructure mask of the system's filters
-    where = (None if filters is None
-             else _Filters(filters, f"{type(self).__name__}.{method_name}").mask_name(_live_ds(self)))
+    where = spec_def.get("where")
+    # The active subgraph: the DataStructure mask of the system's filter (where=)
+    mask_name = (None if where is None
+                 else _EntityFilter(where, f"{type(self).__name__}.{method_name}").mask_name(_live_ds(self)))
     split = spec_def.get("split", "whole") == "components"
-    if where is None and not split:
+    if mask_name is None and not split:
         _solve_graph_system(self, method_name, spec_def)
         return
     restriction = None
-    if where is not None:
+    if mask_name is not None:
         # Active subgraph: the equations see its GraphView through self._graph_view
-        restriction = _restriction_for(self, where)
+        restriction = _restriction_for(self, mask_name)
         if restriction.node_idx.size == 0:
             ds = _live_ds(self)
             for fn in spec_def["edge_unknowns"]:
@@ -1770,7 +1770,7 @@ def graph_system(
     prefer_sparse          = True,
     linesearch             = False,
     schedule_as            = "axial",
-    filters                = None,
+    where                  = None,
     transient              = None,
     integrate              = "once",
     substeps               = 1,
@@ -1817,7 +1817,7 @@ def graph_system(
 
     schedule_as: the schedule row the solve runs in ("axial", "state", ...).
 
-    filters: the nodes of the active subgraph the system is solved on ({variable: condition}, a mask name or a
+    where: the nodes of the active subgraph the system is solved on ({variable: condition}, a mask name or a
         callable, conventions.md, Filters): the nodes it selects and the edges between them; the other nodes are frozen, and
         dropped edges carry no flux. None: the whole graph.
 
@@ -1843,7 +1843,7 @@ def graph_system(
         self.pool_exchange(name), the sparse map between the nodes of the exchange set (default: every node) and the
         pool of their entity. Newton solvers only.
 
-    split: "components": each connected piece of the graph (of the active subgraph with filters=), e.g. each plant
+    split: "components": each connected piece of the graph (of the active subgraph with where=), e.g. each plant
         of a population, is solved on its own, with its own Newton convergence and integration steps. "whole": one
         system (default).
 
@@ -1863,7 +1863,7 @@ def graph_system(
         {"symmetric": "cholmod"} (CHOLMOD's Cholesky), or names the system itself ("Component._system").
     """
 
-    _check_filters(filters, "graph_system")
+    _check_where(where, "graph_system")
     pools = {}
     for pool_name, pool_spec in (pool_unknowns or {}).items():
         pool_spec = {"location": pool_spec} if isinstance(pool_spec, str) else dict(pool_spec)
@@ -1913,7 +1913,7 @@ def graph_system(
         "prefer_sparse" : prefer_sparse,
         "linesearch"    : linesearch,
         "schedule_as"   : schedule_as,
-        "filters"       : filters,
+        "where"       : where,
         "integrate"     : integrate,
         "substeps"      : substeps,
         "integration_relative_tolerance": integration_relative_tolerance,

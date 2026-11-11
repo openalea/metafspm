@@ -27,8 +27,8 @@ def couplability_problems(component_cls, translator, name: str = None, data_stru
     """
     name = name or component_cls.__name__
     declared = {f.name: f for f in fields(component_cls) if f.name not in _FRAMEWORK_FIELDS}
-    problems = [f"{name}.{f.name} has no declare() metadata (variable_type, by, unit, ...)"
-                for f in declared.values() if "variable_type" not in f.metadata]
+    problems = [f"{name}.{f.name} has no declare() metadata (role, by, unit, ...)"
+                for f in declared.values() if "role" not in f.metadata]
     for link in translator.links:
         if link.receiver == name and link.variable not in declared:
             problems.append(f"{name}.{link.variable} is linked from {link.provider} but {name} does not declare it")

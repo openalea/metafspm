@@ -105,7 +105,7 @@ class Functor:
         def where(name):                       # an optional input nothing provides: at its declared location
             return specs[name].location if name in missing else ds.location(name)
 
-        is_parameter = [name not in settings and getattr(specs.get(name), "variable_type", None) == "parameter"
+        is_parameter = [name not in settings and getattr(specs.get(name), "role", None) == "parameter"
                         and where(name) not in ("node", "edge", "cell") for name in self.input_names]
         from openalea.metafspm.coupling.declaration import held_at_scale, mapped_read
         mapped = [name not in settings and not p and held_at_scale(specs.get(name), ds)
@@ -213,7 +213,7 @@ class Functor:
 
     def _mask(self, instance, ds):
         """
-        (mask, location) restricting this step, or (None, None): the step's filters, and the DataStructure's "active"
+        (mask, location) restricting this step, or (None, None): the step's filter (where=), and the DataStructure's "active"
         mask unless include_inactive (both at the same location; an edge filter is not restricted by the active nodes).
         """
         if not hasattr(ds, "has_mask"):
@@ -222,20 +222,20 @@ class Functor:
         active = None
         if not getattr(self.fun, "__include_inactive__", False) and ds.has_mask("active"):
             active = (ds.mask("active"), masks["active"]["location"])
-        rule = getattr(self.fun, "__filters__", None)
+        rule = getattr(self.fun, "__where__", None)
         if rule is None:
             return active if active is not None else (None, None)
-        from openalea.metafspm.solve.decorator import _Filters
-        location = self._filters_location(ds, rule)
-        name = _Filters(rule, f"{type(instance).__name__}.{self.name}", location).mask_name(ds)
+        from openalea.metafspm.solve.decorator import _EntityFilter
+        location = self._filter_location(ds, rule)
+        name = _EntityFilter(rule, f"{type(instance).__name__}.{self.name}", location).mask_name(ds)
         mask, location = ds.mask(name), ds.__dict__["_masks"][name]["location"]
         if active is not None and active[1] == location:
             mask = mask & active[0]
         return mask, location
 
     @staticmethod
-    def _filters_location(ds, rule):
-        """The entities a step's filters select: edges when every key is an edge variable, else nodes (or cells)."""
+    def _filter_location(ds, rule):
+        """The entities a step's filter selects: edges when every key is an edge variable, else nodes (or cells)."""
         if isinstance(rule, dict) and all(ds.has(key) and ds.location(key) == "edge" for key in rule):
             return "edge"
         return "node"

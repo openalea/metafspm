@@ -4,7 +4,7 @@ Resolution of component field declarations into DataStructure variables.
 A declaration carries three keys:
   scale     where the MTG property lives (an MTG scale int, or None for solver-only variables);
   location  where the DataStructure stores it ("node", "edge", "scalar", "cell", or a coarse scale name);
-  mapping   how values go between *scale* and *location* when they differ (with *weight* if needed).
+  aggregation   how values go between *scale* and *location* when they differ (with *weight* if needed).
 
 `resolve_declaration` is the single interpreter of these keys: registration, the solver snapshot and the
 MTG write-back all use the VariableSpec it returns. "node" and "edge" are the entities of the graph built by
@@ -19,10 +19,10 @@ from typing import Optional
 from openalea.metafspm.data_structure.configs import ScalesConfig as _ScalesConfig
 
 SOLVER_LOCATIONS = ("node", "edge", "scalar", "cell")
-UP_MAPPINGS = ("sum", "mean", "weighted_mean", "max", "min")
+UP_AGGREGATIONS = ("sum", "mean", "weighted_mean", "max", "min")
 POOLED_UP_MAPPINGS = ("sum", "mean", "weighted_mean")    # across DataStructures: pooled over the populations
-DOWN_MAPPINGS = ("broadcast", "split")
-EDGE_MAPPINGS = ("child", "parent", "mean")
+DOWN_AGGREGATIONS = ("broadcast", "split")
+EDGE_AGGREGATIONS = ("child", "parent", "mean")
 
 EXTENSIVE_KINDS = ("extensive", "non_inertial_extensive")
 INTENSIVE_KINDS = ("intensive", "non_inertial_intensive")
@@ -35,10 +35,10 @@ class VariableSpec:
     name: str
     location: str
     scale: Optional[int] = None          # MTG scale of the property; None: solver-only variable
-    mapping: Optional[str] = None        # scale -> location mapping when they differ
+    aggregation: Optional[str] = None    # scale -> location aggregation when they differ
     weight: Optional[str] = None         # weight variable of "weighted_mean"
     kind: Optional[str] = None           # extensive, intensive, ... (its declaration's kind=)
-    variable_type: Optional[str] = None  # "state_variable" | "input" | "parameter"
+    role: Optional[str] = None           # "state_variable" | "input_variable" | "parameter" | ...
     default: float = 0.
     on_grow: str = "default"
     dtype: type = float                  # float, int or object
@@ -50,20 +50,20 @@ class VariableSpec:
 
     def meta(self) -> dict:
         """Metadata recorded on the DataStructure next to the values."""
-        return {"scale": self.scale, "mapping": self.mapping, "weight": self.weight, "kind": self.kind,
-                "variable_type": self.variable_type, "dtype": self.dtype, "shape": self.shape}
+        return {"scale": self.scale, "aggregation": self.aggregation, "weight": self.weight, "kind": self.kind,
+                "role": self.role, "dtype": self.dtype, "shape": self.shape}
 
 
 class DeclarationError(ValueError):
     """A declaration that cannot be resolved on the DataStructure it is bound to."""
 
 
-def legacy_edge_convention(mapping: str) -> str:
+def legacy_edge_convention(aggregation: str) -> str:
     """Name used by the DataStructure's MTG edge readers and writers."""
-    return {"child": "proximal", "parent": "distal"}.get(mapping, mapping)
+    return {"child": "proximal", "parent": "distal"}.get(aggregation, aggregation)
 
 
-def default_mapping(kind: Optional[str], direction: str, name: str, weight: Optional[str] = None) -> str:
+def default_aggregation(kind: Optional[str], direction: str, name: str, weight: Optional[str] = None) -> str:
     """
     Aggregation implied by the variable's kind when the declaration or the link gives none, within a
     DataStructure and across DataStructures (plant entities and cells) alike. direction: "up" (fine -> coarse,
@@ -99,7 +99,7 @@ def default_mapping(kind: Optional[str], direction: str, name: str, weight: Opti
             raise DeclarationError(f"'{name}' is extensive and goes from a coarse scale down to finer entities: "
                                    "give the weight of its split (weight=...: each entity gets its share of the "
                                    "amount), or aggregation= (copying it would multiply the amount)")
-    raise DeclarationError(f"'{name}' changes scale without a mapping, and its kind ({kind!r}) "
+    raise DeclarationError(f"'{name}' changes scale without an aggregation, and its kind ({kind!r}) "
                            "does not imply one: give aggregation=...")
 
 
@@ -186,7 +186,7 @@ def resolve_equivalences(link, receiver, provider):
 def link_direction(ds, from_location: str, to_location: str) -> Optional[str]:
     """
     "up" from finer to coarser locations (nodes, then coarse scales, then the scalar plant scale), "down" the
-    other way, None when edges are involved (node <-> edge mappings have no default).
+    other way, None when edges are involved (node <-> edge aggregations have no default).
     """
     def rank(location, source=False):
         if location == "scalar":
@@ -259,18 +259,18 @@ def held_at_scale(spec, ds) -> bool:
     DataStructure for every scale): read at the nodes from a coarser scale (mapped down: broadcast or split) while
     held at that scale's own location (a SubOrgan-scale architecture's length read at the Compartments), or read at
     its scale while held at the nodes as a broadcast from it (a segment's coordinates seen by its Compartments). It is
-    then that variable, read through the mapping (mapped_read), not one of its own.
+    then that variable, read through the aggregation (mapped_read), not one of its own.
     """
-    if spec is None or spec.variable_type == "state_variable" or spec.scale is None or not ds.has(spec.name):
+    if spec is None or spec.role == "state_variable" or spec.scale is None or not ds.has(spec.name):
         return False
     held, own = ds.location(spec.name), location_of_scale(ds, spec.scale)
     if spec.location == "node":                         # read at the nodes, held at its scale
-        return spec.mapping in DOWN_MAPPINGS and held == own != "node"
+        return spec.aggregation in DOWN_AGGREGATIONS and held == own != "node"
     # read at its scale, held at the nodes as a broadcast from that scale (e.g. a segment's coordinates seen by its
     # Compartments): its entities' values are the nodes' (their mean)
     meta = ds._variable_meta().get(spec.name, {}) if hasattr(ds, "_variable_meta") else {}
     return (spec.location == own != "node" and held == "node" and meta.get("scale") == spec.scale
-            and meta.get("mapping") == "broadcast")
+            and meta.get("aggregation") == "broadcast")
 
 
 def holder_spec(spec, ds) -> "VariableSpec":
@@ -279,21 +279,21 @@ def holder_spec(spec, ds) -> "VariableSpec":
     from dataclasses import replace
     held = ds.location(spec.name)
     if held == "node":                                  # held at the nodes as a broadcast from its scale
-        return replace(spec, location="node", mapping="broadcast")
-    return replace(spec, location=held, mapping=None)
+        return replace(spec, location="node", aggregation="broadcast")
+    return replace(spec, location=held, aggregation=None)
 
 
 def mapped_read(ds, spec) -> np.ndarray:
     """The values at *spec*'s location of a variable held elsewhere (held_at_scale): at the nodes through *spec*'s
-    mapping, or at its scale from the nodes' broadcast values (their mean)."""
+    aggregation, or at its scale from the nodes' broadcast values (their mean)."""
     if spec.location != "node":
         out = np.asarray(ds.map_to(ds.get(spec.name), "node", spec.location, "mean"))
         out.flags.writeable = False
         return out
-    if spec.mapping == "broadcast":
+    if spec.aggregation == "broadcast":
         return ds.parameter_view(spec.name, "node")
     held = ds.location(spec.name)
-    out = ds.map_to(ds.get(spec.name), held, "node", spec.mapping, weights=ds.get(spec.weight))
+    out = ds.map_to(ds.get(spec.name), held, "node", spec.aggregation, weights=ds.get(spec.weight))
     out.flags.writeable = False
     return out
 
@@ -329,10 +329,10 @@ def resolve_declaration(f, ds) -> Optional[VariableSpec]:
     without a location is stored at that scale.
     """
     meta = f.metadata
-    if meta.get("variable_type") in (None, "forcing", "setting"):   # a time series, a model's value: not stored
+    if meta.get("role") in (None, "forcing_variable", "setting"):   # a time series, a model's value: not stored
         return None
     raw_scale, location = meta.get("scale"), meta.get("location")
-    mapping, weight = meta.get("mapping"), meta.get("weight")
+    aggregation, weight = meta.get("aggregation"), meta.get("weight")
     kind = meta.get("kind")
     from openalea.metafspm.data_structure.data_api import _canonical_dtype
     dtype = _canonical_dtype(meta.get("dtype"))
@@ -344,7 +344,7 @@ def resolve_declaration(f, ds) -> Optional[VariableSpec]:
         # Other fields are not DataStructure variables.
         numeric = (dtype is not object and not isinstance(f.default, bool)
                    and isinstance(f.default, (int, float, np.integer, np.floating)))
-        if meta.get("variable_type") not in ("parameter", "input") or not numeric or mapping is not None:
+        if meta.get("role") not in ("parameter", "input_variable") or not numeric or aggregation is not None:
             return None
         plant = _scales_of(ds).Plant
         on_plants = _is_graph(ds) and "Plant" in getattr(ds, "_coarse_scale_names", lambda: [])()
@@ -358,7 +358,7 @@ def resolve_declaration(f, ds) -> Optional[VariableSpec]:
         except (TypeError, ValueError):
             raise DeclarationError(f"'{f.name}': a DataStructure variable needs a numeric default (or dtype='object'), "
                                    f"got {default!r}") from None
-    common = dict(name=f.name, kind=kind, variable_type=meta.get("variable_type"),
+    common = dict(name=f.name, kind=kind, role=meta.get("role"),
                   default=default, on_grow=meta.get("on_grow") or "default", dtype=dtype,
                   shape=tuple(meta.get("shape") or ()))
 
@@ -367,13 +367,13 @@ def resolve_declaration(f, ds) -> Optional[VariableSpec]:
         # nodes of its graph), so that one component class runs on plant graphs and on grids.
         if location == "node" and raw_scale is None and "cell" in getattr(ds, "_var_stores", dict)():
             location = "cell"
-        if location in ("cell", "scalar", "edge") and raw_scale is None and mapping is None:
+        if location in ("cell", "scalar", "edge") and raw_scale is None and aggregation is None:
             return VariableSpec(location=location, weight=weight, **common)
         element_scale = getattr(ds, "element_scale", None)
         if element_scale is not None and (raw_scale is not None or location == "node"):
             # The elements of several populations (UnionDataStructure): their nodes' scale, and "node"
             scale = _scale_value(ds, raw_scale) if raw_scale is not None else element_scale
-            if scale == element_scale and location in (None, "node") and mapping is None:
+            if scale == element_scale and location in (None, "node") and aggregation is None:
                 return VariableSpec(location="node", weight=weight, **common)
             raise DeclarationError(f"'{f.name}': a union of populations holds their nodes only (scale "
                                    f"{scale_names(ds).get(element_scale, element_scale)}), not scale "
@@ -386,7 +386,7 @@ def resolve_declaration(f, ds) -> Optional[VariableSpec]:
         pass    # anatomy mode: the Compartments are the MTG vertices behind the nodes, their properties are read
     elif scale == scales.Connection and node_scale(ds) == scales.Compartment:
         # anatomy mode: the edges are the Connections themselves, their properties are read and written
-        if location not in (None, "edge") or mapping is not None:
+        if location not in (None, "edge") or aggregation is not None:
             raise DeclarationError(f"'{f.name}': in anatomy mode, scale Connection is the edges themselves")
         return VariableSpec(location="edge", scale=scale, **common)
     elif scale in (scales.Compartment, scales.Connection):
@@ -397,8 +397,8 @@ def resolve_declaration(f, ds) -> Optional[VariableSpec]:
 
     if scale is None:
         location = resolve_location(ds, location)
-        if mapping is not None:
-            raise DeclarationError(f"'{f.name}' has no MTG scale, its mapping '{mapping}' maps nothing")
+        if aggregation is not None:
+            raise DeclarationError(f"'{f.name}' has no MTG scale, its aggregation '{aggregation}' aggregates nothing")
         if location == "cell":
             raise DeclarationError(f"'{f.name}': location 'cell' is a grid location, not a graph one")
         return VariableSpec(location=location, weight=weight, **common)
@@ -411,24 +411,24 @@ def resolve_declaration(f, ds) -> Optional[VariableSpec]:
     if location == "edge":
         if scale_location == "edge":
             return VariableSpec(location="edge", scale=None, weight=weight, **common)
-        if mapping is None:
+        if aggregation is None:
             raise DeclarationError(f"'{f.name}' maps scale {scale_names(ds)[scale]} to edges: give "
-                                   f"aggregation= one of {EDGE_MAPPINGS}")
-        if mapping not in EDGE_MAPPINGS:
-            raise DeclarationError(f"'{f.name}': edge mapping '{mapping}' is not one of {EDGE_MAPPINGS}")
-        if mapping == "mean" and common["variable_type"] == "state_variable":
-            raise DeclarationError(f"'{f.name}' is a state variable with edge mapping 'mean': it could not be "
+                                   f"aggregation= one of {EDGE_AGGREGATIONS}")
+        if aggregation not in EDGE_AGGREGATIONS:
+            raise DeclarationError(f"'{f.name}': edge aggregation '{aggregation}' is not one of {EDGE_AGGREGATIONS}")
+        if aggregation == "mean" and common["role"] == "state_variable":
+            raise DeclarationError(f"'{f.name}' is a state variable with edge aggregation 'mean': it could not be "
                                    "written back (no single owner), use 'child' or 'parent'")
-        if scale_location != "node" and common["variable_type"] == "state_variable":
+        if scale_location != "node" and common["role"] == "state_variable":
             raise DeclarationError(f"'{f.name}' is an edge state variable at scale {scale_names(ds)[scale]}, coarser "
                                    "than the nodes: several edges would write the same vertex")
-        return VariableSpec(location="edge", scale=scale, mapping=mapping, weight=weight, **common)
+        return VariableSpec(location="edge", scale=scale, aggregation=aggregation, weight=weight, **common)
 
     if location == scale_location:
-        if mapping is not None:
-            raise DeclarationError(f"'{f.name}' is stored at its own scale ({location}): mapping '{mapping}' "
+        if aggregation is not None:
+            raise DeclarationError(f"'{f.name}' is stored at its own scale ({location}): aggregation '{aggregation}' "
                                    "maps nothing")
-        # its weight (a mean's capacity, a split's share) is kept: the links mapping it use it
+        # its weight (a mean's capacity, a split's share) is kept: the links aggregation it use it
         return VariableSpec(location=location, scale=scale, weight=weight, **common)
 
     # Between the nodes and a coarse scale
@@ -437,22 +437,22 @@ def resolve_declaration(f, ds) -> Optional[VariableSpec]:
                                "between the graph's nodes and one coarser scale")
     location_scale = node_scale(ds) if location == "node" else _scale_value(ds, location)
     direction = "down" if location_scale > scale else "up"
-    allowed = DOWN_MAPPINGS if direction == "down" else UP_MAPPINGS
-    if mapping is None:
-        mapping = default_mapping(kind, direction, f.name, weight)
-    if mapping not in allowed:
+    allowed = DOWN_AGGREGATIONS if direction == "down" else UP_AGGREGATIONS
+    if aggregation is None:
+        aggregation = default_aggregation(kind, direction, f.name, weight)
+    if aggregation not in allowed:
         raise DeclarationError(f"'{f.name}' goes {direction} from scale {scale_names(ds)[scale]} to {location}: "
-                               f"mapping must be one of {allowed}, got '{mapping}'")
-    if mapping in ("weighted_mean", "split") and weight is None:
-        raise DeclarationError(f"'{f.name}': mapping '{mapping}' needs weight=")
-    if mapping == "split" and common["variable_type"] == "state_variable":
+                               f"aggregation must be one of {allowed}, got '{aggregation}'")
+    if aggregation in ("weighted_mean", "split") and weight is None:
+        raise DeclarationError(f"'{f.name}': aggregation '{aggregation}' needs weight=")
+    if aggregation == "split" and common["role"] == "state_variable":
         raise DeclarationError(f"'{f.name}' is a state variable split from scale {scale_names(ds)[scale]} to "
                                f"{location}: store it at its own scale and split it in a link")
-    if mapping == "sum" and common["variable_type"] == "state_variable":
+    if aggregation == "sum" and common["role"] == "state_variable":
         raise DeclarationError(f"'{f.name}' is a state variable summed from scale {scale_names(ds)[scale]} to "
                                f"{location}: it could not be written back to the finer scale, store it at its own "
                                f"scale (scale={location})")
-    return VariableSpec(location=location, scale=scale, mapping=mapping, weight=weight, **common)
+    return VariableSpec(location=location, scale=scale, aggregation=aggregation, weight=weight, **common)
 
 
 def _is_missing(value) -> bool:

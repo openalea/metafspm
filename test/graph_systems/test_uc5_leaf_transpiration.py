@@ -32,8 +32,8 @@ def _water(jacobian=False, **options):
     @graph_system(node_unknowns=["water_potential"], edge_unknowns=["axial_flux"], solver="newton",
                   schedule_as="state", **options)
     class _water:
-        leaves = boundary_set(filters=_is_leaf, condition="robin", value="air_water_potential", weight="leaf_conductance")
-        roots = boundary_set(filters={"root_surface": ">0"}, condition="robin", value="soil_water_potential",
+        leaves = boundary_set(where=_is_leaf, condition="robin", value="air_water_potential", weight="leaf_conductance")
+        roots = boundary_set(where={"root_surface": ">0"}, condition="robin", value="soil_water_potential",
                              weight="radial_conductance")
 
         @node_balance(field="water_potential")
@@ -101,7 +101,7 @@ class LeafTranspirationWithJacobian(TranspirationFields):
 
 @dataclass
 class ActiveLeafTranspiration(TranspirationFields):
-    _water = _water(filters="active")
+    _water = _water(where="active")
 
 
 
@@ -186,6 +186,6 @@ def test_robin_sets_anchor_steady_pieces_of_an_active_subgraph():
 
 def test_boundary_set_declarations_are_checked():
     with pytest.raises(ValueError, match="condition must be one of"):
-        boundary_set(filters="x", condition="flux", value=0.)
-    with pytest.raises(TypeError, match="filters must be"):
-        boundary_set(filters=3, condition="robin", value=0.)
+        boundary_set(where="x", condition="flux", value=0.)
+    with pytest.raises(TypeError, match="where must be"):
+        boundary_set(where=3, condition="robin", value=0.)

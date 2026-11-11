@@ -11,7 +11,7 @@ import pytest
 from openalea.metafspm.coupling.component import FunctionalComponent, parameter, state_variable
 from openalea.metafspm.data_structure.configs import PropsConfig, ScalesConfig as scales
 from openalea.metafspm.data_structure.data_api import MPGDataStructure
-from openalea.metafspm.solve.decorator import _Filters, graph_system, node_balance, rate
+from openalea.metafspm.solve.decorator import _EntityFilter, graph_system, node_balance, rate
 from simple_seedling import generate_simple_mpg_seedling
 
 DOC = dict(unit="adim", unit_comment="", description="", min_value=0., max_value=1., value_comment="", references="",
@@ -51,7 +51,7 @@ def test_label_names_in_masks_and_filters(seedling):
     labels = ds.get("label")
     np.testing.assert_array_equal(ds.mask("roots"), labels == g.labels.SubOrgan.RootSegment)
     np.testing.assert_array_equal(ds.mask("leaves"), labels == g.labels.SubOrgan.LeafElement)
-    selected = _Filters({"label": ["RootSegment", "StemElement"]}, "test").mask(ds)       # label names in filters
+    selected = _EntityFilter({"label": ["RootSegment", "StemElement"]}, "test").mask(ds)       # label names in filters
     np.testing.assert_array_equal(selected, np.isin(labels, [g.labels.SubOrgan.RootSegment,
                                                              g.labels.SubOrgan.StemElement]))
 

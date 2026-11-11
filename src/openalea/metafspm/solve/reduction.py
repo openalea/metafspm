@@ -1264,10 +1264,10 @@ def _parameter_fields(component_class) -> tuple:
     if component_class not in _FIELDS:
         from dataclasses import fields
         declared = fields(component_class)
-        settings = tuple(f.name for f in declared if f.metadata.get("variable_type") == "setting")
+        settings = tuple(f.name for f in declared if f.metadata.get("role") == "setting")
         located = frozenset(f.name for f in declared
                             if f.metadata.get("scale") is not None or f.metadata.get("location") is not None)
-        records = tuple(f.name for f in declared if f.metadata.get("variable_type") == "parameter"
+        records = tuple(f.name for f in declared if f.metadata.get("role") == "parameter"
                         and f.metadata.get("scale") == _plant_scale())
         _FIELDS[component_class] = (settings, tuple(component_class._plant_parameter_fields()), located, records)
     return _FIELDS[component_class]
@@ -1322,9 +1322,9 @@ def _library_components(instance, systems) -> list:
         return scale is not None and scale >= ScalesConfig.Compartment
 
     needed = {f.name for component in reducing for f in fields(component)
-              if f.metadata.get("variable_type") == "input" and at_cells(f)}
+              if f.metadata.get("role") == "input_variable" and at_cells(f)}
     return [component for component in functional
-            if component in reducing or any(f.metadata.get("variable_type") == "state_variable" and at_cells(f)
+            if component in reducing or any(f.metadata.get("role") == "state_variable" and at_cells(f)
                                             and f.name in needed for f in fields(component))]
 
 
@@ -1494,7 +1494,7 @@ class _Library:
         by_index = {plant_index[int(vertex)]: self.parameters[signature] for signature, vertex in self.plants.items()}
         first = self.parameters[next(iter(self.plants))]
         for component in instance.components:
-            names = {f.name for f in fields(component) if f.metadata.get("variable_type") in ("setting", "parameter")}
+            names = {f.name for f in fields(component) if f.metadata.get("role") in ("setting", "parameter")}
             for name, value in first.items():
                 if name not in names:
                     continue

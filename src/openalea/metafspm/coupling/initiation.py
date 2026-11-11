@@ -11,7 +11,7 @@ from dataclasses import fields, is_dataclass
 
 import numpy as np
 
-from openalea.metafspm.coupling.declaration import DOWN_MAPPINGS, UP_MAPPINGS, default_mapping
+from openalea.metafspm.coupling.declaration import DOWN_AGGREGATIONS, UP_AGGREGATIONS, default_aggregation
 from openalea.metafspm.coupling.translator import Translator
 from openalea.metafspm.data_structure.configs import ScalesConfig
 
@@ -30,7 +30,7 @@ def initiation_links(translator, initiators) -> dict:
             continue
         receiver, provider = names.index(link.receiver), names.index(link.provider)
         meta = _metadata(initiators[receiver], link.variable)
-        if meta is None or meta.get("variable_type") not in ("input", "parameter"):
+        if meta is None or meta.get("role") not in ("input_variable", "parameter"):
             continue
         if provider > receiver:
             raise ValueError(f"{link.receiver}.{link.variable} <- {link.provider}: the initiators build in order, "
@@ -69,8 +69,8 @@ def apply_link(g, plant: int, link, receiver, provider) -> None:
         vids = _vertices(g, plant, scale)
         direction = "down" if scale > source_scale else "up"
         kind = (_metadata(provider, sources[0]) or {}).get("kind")
-        aggregation = link.aggregation or default_mapping(kind, direction, link.variable, link.weight)
-        allowed = DOWN_MAPPINGS if direction == "down" else UP_MAPPINGS
+        aggregation = link.aggregation or default_aggregation(kind, direction, link.variable, link.weight)
+        allowed = DOWN_AGGREGATIONS if direction == "down" else UP_AGGREGATIONS
         if aggregation not in allowed:
             raise ValueError(f"{_name(link)}: aggregation '{aggregation}' does not go {direction} (one of {allowed})")
         if direction == "down":

@@ -224,7 +224,7 @@ def test_a_grids_intensive_variables_are_weighted_by_its_cells_volumes():
     theta = np.where(volume < volume.max(), 0.2, 0.4)
     for name, values in (("theta", theta), ("water", theta * volume), ("layer", np.ones(volume.size))):
         grid.register(name, values)
-    specs = {name: VariableSpec(name=name, location="cell", kind=kind, variable_type="state_variable")
+    specs = {name: VariableSpec(name=name, location="cell", kind=kind, role="state_variable")
              for name, kind in (("theta", "intensive"), ("water", "extensive"), ("layer", "descriptor"))}
     scene = SimpleNamespace(time=0., components=[SimpleNamespace(data_structure=grid, _variable_specs=specs)])
     row = SceneRecorder().environment_summary(scene, grid)

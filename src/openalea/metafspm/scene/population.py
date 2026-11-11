@@ -344,7 +344,7 @@ def _apply_plant_scenarios(ds, components, table: pd.DataFrame, plants: list) ->
                 raise ValueError(f"{type(component).__name__}.{name} is a setting, one value for the model: give "
                                  "every plant the same")
         for name, spec in getattr(component, "_variable_specs", {}).items():
-            if spec.variable_type != "parameter":
+            if spec.role != "parameter":
                 continue
             if ds.location(name) != "Plant":
                 if name in given and not _same_for_all([by_plant[p].get(name) for p in by_plant]):

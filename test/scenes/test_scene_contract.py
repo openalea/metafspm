@@ -109,7 +109,7 @@ def test_the_contract_models_run_in_a_scene(scene):
 @dataclass
 class TemperatureReader(FunctionalComponent):
     """A second component of the plant model reading the soil's temperature, as PlantCarbon does."""
-    soil_temperature: float = doubles_ds._var("input", default=10., by="SoilModel")
+    soil_temperature: float = doubles_ds._var("input_variable", default=10., by="SoilModel")
     felt_temperature: float = doubles_ds._var("state_variable", kind="intensive")
 
     @rate

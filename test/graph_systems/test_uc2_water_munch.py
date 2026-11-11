@@ -139,14 +139,14 @@ class WaterMunchTransport(FunctionalComponent):
         unit="MPa", unit_comment="",
         description="p_soil: prescribed soil water potential per node.",
         min_value=-5.0, max_value=0.5, value_comment="", references="", DOI=[],
-        role="input", by="SoilWaterModel",
+        role="input_variable", by="SoilWaterModel",
         kind="intensive", default=-0.05, location="node",
     )
     phloem_assimilate_loading: float = _declare(
         unit="MPa s-1", unit_comment="",
         description="s_ph: osmotic source from assimilate loading per node.",
         min_value=-1.0, max_value=1.0, value_comment="", references="", DOI=[],
-        role="input", by="CarbonModel",
+        role="input_variable", by="CarbonModel",
         kind="intensive", default=0.0, location="node",
     )
 

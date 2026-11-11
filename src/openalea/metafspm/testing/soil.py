@@ -106,7 +106,7 @@ class SoilWaterTransport(FunctionalComponent):
             """
             return conductance * np.asarray(self.graph_view.edge_difference @ water_potential).reshape(-1)
 
-        @boundary_condition("node", "neumann", field="water_potential", filters={"boundary_high_z": ">0"})
+        @boundary_condition("node", "neumann", field="water_potential", where={"boundary_high_z": ">0"})
         def _water_table(self, water_potential, water_table_potential, water_table_conductance):
             """
             The water table at the bottom face of the bottom cells, held at its potential: the inflow through that
@@ -114,7 +114,7 @@ class SoilWaterTransport(FunctionalComponent):
             """
             return water_table_conductance * (water_table_potential - water_potential)
 
-        @boundary_condition("node", "neumann", field="water_potential", filters={"boundary_low_z": ">0"})
+        @boundary_condition("node", "neumann", field="water_potential", where={"boundary_low_z": ">0"})
         def _to_the_air(self, water_potential, air_water_potential, vapour_conductance):
             """Liquid to vapour at the surface: the inflow k_vap (Ψ_air - Ψ), negative (water leaves)."""
             return vapour_conductance * (air_water_potential - water_potential)
@@ -123,7 +123,7 @@ class SoilWaterTransport(FunctionalComponent):
         def _taken_by_the_plants(self, plant_uptake):
             return -plant_uptake
 
-        @graph_output("evaporation", location="node", filters={"boundary_low_z": ">0"})
+        @graph_output("evaporation", location="node", where={"boundary_low_z": ">0"})
         def _evaporation(self, water_potential, air_water_potential, vapour_conductance):
             return vapour_conductance * (water_potential - air_water_potential)
 
@@ -174,11 +174,11 @@ class SoilStructure(StructuralComponent):
         K_face = 2. * K[tail] * K[head] / np.maximum(K[tail] + K[head], 1e-30)
         return K_face * face_area / face_distance
 
-    @postsegmentation(filters={"boundary_low_z": ">0"})
+    @postsegmentation(where={"boundary_low_z": ">0"})
     def _vapour_conductance(self, cell_section_z, soil_surface_conductance, vapour_factor):
         return soil_surface_conductance * cell_section_z * vapour_factor
 
-    @postsegmentation(filters={"boundary_high_z": ">0"})
+    @postsegmentation(where={"boundary_high_z": ">0"})
     def _water_table_conductance(self, K_sat, cell_section_z, cell_size_z):
         """K A / (h/2): from the bottom cells' centre to their bottom face."""
         return K_sat * cell_section_z / (cell_size_z / 2.)

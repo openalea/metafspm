@@ -8,7 +8,7 @@ import re
 import pytest
 
 from openalea.metafspm.coupling import declaration
-from openalea.metafspm.coupling.declaration import DeclarationError, default_mapping
+from openalea.metafspm.coupling.declaration import DeclarationError, default_aggregation
 
 PAGE = os.path.join(os.path.dirname(__file__), "..", "..", "docs", "conventions.md")
 
@@ -36,7 +36,7 @@ def test_the_locations_table_names_the_solver_locations():
 
 def test_the_mappings_table_names_every_mapping():
     documented = {_code(row[0])[0] for row in _table("Mapping")}
-    assert documented == set(declaration.UP_MAPPINGS) | set(declaration.DOWN_MAPPINGS) | set(declaration.EDGE_MAPPINGS)
+    assert documented == set(declaration.UP_AGGREGATIONS) | set(declaration.DOWN_AGGREGATIONS) | set(declaration.EDGE_AGGREGATIONS)
 
 
 def _documented_default(cell: str):
@@ -53,6 +53,6 @@ def test_the_default_mapping_table_matches_the_resolver(row):
             expected = _documented_default(cell)
             if expected is None:
                 with pytest.raises(DeclarationError):
-                    default_mapping(kind, direction, "x", weight="w")
+                    default_aggregation(kind, direction, "x", weight="w")
             else:
-                assert default_mapping(kind, direction, "x", weight="w") == expected
+                assert default_aggregation(kind, direction, "x", weight="w") == expected

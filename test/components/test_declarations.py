@@ -66,7 +66,7 @@ def test_places_and_their_locations(seedling):
                 "at_compartment": ("node", None, None), "at_connection": ("edge", None, None)}
     for name, (location, scale, mapping) in expected.items():
         spec = _spec(Places, name, ds)
-        assert (spec.location, spec.scale, spec.mapping) == (location, scale, mapping), name
+        assert (spec.location, spec.scale, spec.aggregation) == (location, scale, mapping), name
     assert _spec(Places, "undeclared_scale", ds) is None
 
 
@@ -95,7 +95,7 @@ def test_a_coarser_scale_is_stored_at_that_scale(seedling):
     """N1: no broadcast to the nodes unless asked for."""
     _, _, ds = seedling
     spec = _spec(Places, "at_organ", ds)
-    assert (spec.location, spec.scale, spec.mapping) == ("Organ", scales.Organ, None)
+    assert (spec.location, spec.scale, spec.aggregation) == ("Organ", scales.Organ, None)
 
 
 @dataclass
@@ -140,7 +140,7 @@ class Defaults:
 
 def test_default_mappings_follow_the_state_variable_type(seedling):
     _, _, ds = seedling
-    mappings = {name: _spec(Defaults, name, ds).mapping
+    mappings = {name: _spec(Defaults, name, ds).aggregation
                 for name in ("down_intensive", "down_massic", "down_explicit", "down_extensive_split", "up_extensive",
                              "up_intensive_weighted", "up_intensive_plain", "up_massic_weighted")}
     assert mappings == {"down_intensive": "broadcast", "down_massic": "broadcast", "down_explicit": "broadcast",
@@ -255,10 +255,10 @@ def test_declaration_metadata_is_recorded_and_survives_growth(seedling):
     _, _, ds = seedling
     OrganProbe(data_structure=ds)
     meta = ds._variable_meta()["organ_length"]
-    assert (meta["scale"], meta["mapping"], meta["kind"], meta["variable_type"]) == (
+    assert (meta["scale"], meta["aggregation"], meta["kind"], meta["role"]) == (
         scales.SubOrgan, "sum", "extensive", "parameter")
     ds.update_topology()
-    assert ds._variable_meta()["organ_length"]["mapping"] == "sum"
+    assert ds._variable_meta()["organ_length"]["aggregation"] == "sum"
 
 
 def test_a_pre_registered_variable_at_another_location_is_rejected(seedling):

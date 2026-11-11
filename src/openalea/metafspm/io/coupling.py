@@ -74,8 +74,8 @@ class RemoteComponent(StructuralComponent):
     # ── what it declares ───────────────────────────────────────────────────────────
     def _variables(self) -> dict:
         """{name: (role, metadata)} of its state variables and inputs."""
-        return {item.name: (item.metadata.get("variable_type"), dict(item.metadata)) for item in fields(type(self))
-                if item.metadata.get("variable_type") in ("state_variable", "input")}
+        return {item.name: (item.metadata.get("role"), dict(item.metadata)) for item in fields(type(self))
+                if item.metadata.get("role") in ("state_variable", "input_variable")}
 
     def _set_name(self, name: str) -> str:
         """The entity set (scale name) of variable *name*'s location."""
@@ -84,8 +84,8 @@ class RemoteComponent(StructuralComponent):
 
     @classmethod
     def _declared_variables(cls) -> dict:
-        return {item.name: (item.metadata.get("variable_type"), dict(item.metadata)) for item in fields(cls)
-                if item.metadata.get("variable_type") in ("state_variable", "input")}
+        return {item.name: (item.metadata.get("role"), dict(item.metadata)) for item in fields(cls)
+                if item.metadata.get("role") in ("state_variable", "input_variable")}
 
     @classmethod
     def _declaration(cls, set_name):
@@ -193,7 +193,7 @@ class RemoteComponent(StructuralComponent):
     def _send(self) -> None:
         from openalea import encoding3d as codec
         ds = self.data_structure
-        inputs = [name for name, (role, _) in self._variables().items() if role == "input"]
+        inputs = [name for name, (role, _) in self._variables().items() if role == "input_variable"]
         frame = to_frame({self.data_structure_id: ds}, geometry=False, variables=inputs)
         tables = {entity_set.name: entity_set for entity_set in frame.data_structures[0].entity_sets}
         declared = self._declared

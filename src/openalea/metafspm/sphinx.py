@@ -14,7 +14,7 @@ unit, description, default or provider) and its schedule (the steps in the order
 import importlib
 import inspect
 
-ROLES = (("input", "Inputs"), ("forcing", "Forcings"), ("state_variable", "State variables"),
+ROLES = (("input_variable", "Inputs"), ("forcing_variable", "Forcings"), ("state_variable", "State variables"),
          ("parameter", "Parameters"), ("setting", "Settings"))
 
 
@@ -46,13 +46,13 @@ def component_rst(cls, heading: str = "-") -> str:
         rows = table[table["role"] == role]
         if rows.empty:
             continue
-        last = "provider" if role == "input" else "default"
+        last = "provider" if role == "input_variable" else "default"
         lines += [title, heading * len(title), "", ".. list-table::", "   :header-rows: 1", "",
                   "   * - name", "     - scale", "     - unit", "     - description", f"     - {last}"]
         for row in rows.itertuples(index=False):
             lines += [f"   * - ``{row.name}``", f"     - {_cell(row.scale)}", f"     - {_cell(row.unit)}",
                       f"     - {_cell(row.description)}",
-                      f"     - {_cell(row.by if role == 'input' else row.default)}"]
+                      f"     - {_cell(row.by if role == 'input_variable' else row.default)}"]
         lines.append("")
     schedule = cls.schedule()
     if schedule:

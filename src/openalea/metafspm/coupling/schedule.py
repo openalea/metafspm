@@ -260,7 +260,7 @@ def component_reads(component) -> set:
     for root in _roots(component.data_structure):
         found.add((root, STRUCTURE))
         for name, spec in specs.items():
-            if spec.variable_type in ("input", "state_variable", "parameter") and root.has(private.get(name, name)):
+            if spec.role in ("input_variable", "state_variable", "parameter") and root.has(private.get(name, name)):
                 found.update((root, stored) for stored in _stored(root, name, private))
         if _reads_geometry(component):
             found.add((root, GEOMETRY))
@@ -275,7 +275,7 @@ def component_writes(component) -> set:
     found = set()
     for root in _roots(component.data_structure):
         for name, spec in specs.items():
-            if spec.variable_type == "state_variable" and root.has(name):
+            if spec.role == "state_variable" and root.has(name):
                 found.add((root, root.aliases().get(name, name)))
         if isinstance(component, StructuralComponent) and component.schedule():
             found.update({(root, STRUCTURE), (root, GEOMETRY)})
@@ -285,7 +285,7 @@ def component_writes(component) -> set:
 def _reads_geometry(component) -> bool:
     from dataclasses import fields
     return hasattr(component, "__dataclass_fields__") and any(
-        f.metadata.get("variable_type") == "geometry" for f in fields(component))
+        f.metadata.get("role") == "geometry" for f in fields(component))
 
 
 def conflicts(first: ScheduledStep, second: ScheduledStep) -> frozenset:

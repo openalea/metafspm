@@ -17,8 +17,8 @@ from typing import Mapping, Optional
 
 import numpy as np
 
-from openalea.metafspm.coupling.declaration import (DOWN_MAPPINGS, INTENSIVE_KINDS, MASSIC_KINDS, POOLED_UP_MAPPINGS,
-                                                    check_link, declared_kind, default_mapping)
+from openalea.metafspm.coupling.declaration import (DOWN_AGGREGATIONS, INTENSIVE_KINDS, MASSIC_KINDS, POOLED_UP_MAPPINGS,
+                                                    check_link, declared_kind, default_aggregation)
 from openalea.metafspm.data_structure.data_api import DataStructure, EntityView, LocatedView, VariableStoreMixin
 from openalea.metafspm.kernels import _count_pieces, _pieces
 
@@ -265,7 +265,7 @@ class CrossMapping:
         if aggregation == "broadcast":
             return np.bincount(rows, weights=fractions * values[columns], minlength=n)
         if aggregation != "split":
-            raise ValueError(f"unknown aggregation '{aggregation}' from cells, expected one of {DOWN_MAPPINGS}")
+            raise ValueError(f"unknown aggregation '{aggregation}' from cells, expected one of {DOWN_AGGREGATIONS}")
         if weights is None:
             raise ValueError("split needs a weight variable")
         weights = np.asarray(weights, dtype=float).reshape(-1)
@@ -312,7 +312,7 @@ class _ScalarMapping:
         if aggregation == "broadcast":
             return np.full(self._size(), value)
         if aggregation != "split":
-            raise ValueError(f"unknown aggregation '{aggregation}' from a scalar, expected one of {DOWN_MAPPINGS}")
+            raise ValueError(f"unknown aggregation '{aggregation}' from a scalar, expected one of {DOWN_AGGREGATIONS}")
         weights = np.asarray(weights, dtype=float).reshape(-1)
         total = (self.weight_totals(weights) if totals is None else totals)[0]
         return np.zeros(weights.size) if total == 0. else value * weights / total
@@ -656,7 +656,7 @@ class Exchanges:
                 if aggregation is None:
                     kind = received if received is not None else next(iter(
                         {declared_kind(provider, source) for source in link.sources}), None)
-                    aggregation = default_mapping(kind, "layer", name)
+                    aggregation = default_aggregation(kind, "layer", name)
             elif direction in ("into_union", "from_union"):
                 if aggregation not in (None, "identity"):
                     raise ValueError(f"{name}: a union exchanges values one to one, aggregation '{aggregation}' "
@@ -672,8 +672,8 @@ class Exchanges:
                             and (kind in INTENSIVE_KINDS or kind in MASSIC_KINDS)):
                         aggregation = "mean"              # an environment scalar: the plain mean
                     else:
-                        aggregation = default_mapping(kind, direction, name, weight=link.weight)
-                allowed = POOLED_UP_MAPPINGS if direction == "up" else DOWN_MAPPINGS
+                        aggregation = default_aggregation(kind, direction, name, weight=link.weight)
+                allowed = POOLED_UP_MAPPINGS if direction == "up" else DOWN_AGGREGATIONS
                 if aggregation not in allowed:
                     raise ValueError(f"{name}: aggregation '{aggregation}' does not go {direction}, expected one of "
                                      f"{allowed}")

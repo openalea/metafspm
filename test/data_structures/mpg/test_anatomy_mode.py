@@ -221,8 +221,8 @@ class AnatomyHydraulics(FunctionalComponent):
 
     @graph_system(node_unknowns=["water_potential"], edge_unknowns=["water_flux"], solver="newton")
     class _hydraulics:
-        soil = boundary_set(filters=_is("Apoplastic"), condition="robin", value="soil_water_potential", weight=0.6)
-        collar = boundary_set(filters=lambda ds: (ds.get("label") == ds.mtg.labels.Cell.MetaXylem)
+        soil = boundary_set(where=_is("Apoplastic"), condition="robin", value="soil_water_potential", weight=0.6)
+        collar = boundary_set(where=lambda ds: (ds.get("label") == ds.mtg.labels.Cell.MetaXylem)
                               & (ds.owner("SubOrgan") == 0), condition="dirichlet", value="xylem_water_potential")
 
         @node_balance(field="water_potential")
@@ -291,11 +291,11 @@ def test_a_missing_coarse_input_value_takes_its_declared_default():
     g, segments, anatomies, ds = _plant()
     g.properties()["supply"] = {int(segments[0]): 3.}
     spec = VariableSpec(name="supply", location="SubOrgan", scale=g.scales.SubOrgan, default=-1.,
-                        variable_type="input")
+                        role="input_variable")
     np.testing.assert_array_equal(ds._read_mtg(spec), [3., -1., -1.])
     with pytest.raises(ValueError, match="has no value for vertices"):
         ds._read_mtg(VariableSpec(name="supply", location="SubOrgan", scale=g.scales.SubOrgan, default=None,
-                                 variable_type="input"))
+                                 role="input_variable"))
 
 
 @dataclass

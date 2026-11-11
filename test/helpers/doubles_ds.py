@@ -20,9 +20,9 @@ from simple_seedling import generate_simple_mpg_seedling
 NAMES = {"RootCarbon": "PlantCarbon", "RootNitrogen": "PlantNitrogen", "SoilModel": "SoilModel"}
 
 
-def _var(variable_type, default=0., kind="", by=""):
+def _var(role, default=0., kind="", by=""):
     return _declare(default=default, unit="adim", unit_comment="", description="", min_value="", max_value="",
-                   value_comment="", references="", DOI="", role=variable_type, by=by,
+                   value_comment="", references="", DOI="", role=role, by=by,
                    kind=kind, location="node")
 
 
@@ -53,8 +53,8 @@ def make_plant_ds():
 
 @dataclass
 class PlantCarbon(FunctionalComponent):
-    soil_temperature: float = _var("input", default=10., by="SoilModel")
-    nitrogen_status: float = _var("input", by="PlantNitrogen")
+    soil_temperature: float = _var("input_variable", default=10., by="SoilModel")
+    nitrogen_status: float = _var("input_variable", by="PlantNitrogen")
 
     hexose: float = _var("state_variable", default=1., kind="massic_concentration")
     hexose_exudation: float = _var("state_variable", kind="non_inertial_extensive")
@@ -72,10 +72,10 @@ class PlantCarbon(FunctionalComponent):
 
 @dataclass
 class PlantNitrogen(FunctionalComponent):
-    hexose: float = _var("input", by="PlantCarbon")
-    sugar: float = _var("input", by="PlantCarbon")
-    carbon_supply: float = _var("input", by="PlantCarbon")
-    C_hexose_soil: float = _var("input", by="SoilModel")
+    hexose: float = _var("input_variable", by="PlantCarbon")
+    sugar: float = _var("input_variable", by="PlantCarbon")
+    carbon_supply: float = _var("input_variable", by="PlantCarbon")
+    C_hexose_soil: float = _var("input_variable", by="SoilModel")
 
     amino_acids: float = _var("state_variable", default=2., kind="massic_concentration")
     nitrate: float = _var("state_variable", default=4., kind="massic_concentration")
@@ -115,17 +115,17 @@ def make_chain_plant_ds(coordinates=(0.025, 0.025, -0.01), n_segments=3):
     return ds
 
 
-def _var_cell(variable_type, default=0.):
+def _var_cell(role, default=0.):
     return _declare(default=default, unit="adim", unit_comment="", description="", min_value="", max_value="",
-                   value_comment="", references="", DOI="", role=variable_type, by="",
+                   value_comment="", references="", DOI="", role=role, by="",
                    kind="", location="cell")
 
 
 @dataclass
 class GridSoil(FunctionalComponent):
     """Soil double on a 3-D ArrayDataStructure in (x, y, z), with the equations of the former props-based soil double."""
-    hexose_exudation_massic: float = _var_cell("input")
-    amino_acids_exudation: float = _var_cell("input")
+    hexose_exudation_massic: float = _var_cell("input_variable")
+    amino_acids_exudation: float = _var_cell("input_variable")
     DOC: float = _var_cell("state_variable")
     C_hexose_soil: float = _var_cell("state_variable")
     soil_temperature: float = _var_cell("state_variable", default=10.)

@@ -494,7 +494,7 @@ class RichardsSoil(FunctionalComponent):
             outflow = np.asarray(self.graph_view.incidence @ flux).reshape(-1)
             return water_content - previous_content + self.dt / cell_volume * (outflow + plant_uptake)
 
-        @boundary_condition("node", "neumann", field="pressure_head", filters={"boundary_low_z": ">0"})
+        @boundary_condition("node", "neumann", field="pressure_head", where={"boundary_low_z": ">0"})
         def _soil_surface(self, pressure_head, residual_water_content, saturated_water_content, van_genuchten_alpha,
                           van_genuchten_n, saturated_conductivity, pore_connectivity, cell_section_z, cell_size_z,
                           rainfall, potential_evaporation, surface_minimum_head, cell_volume):
@@ -505,7 +505,7 @@ class RichardsSoil(FunctionalComponent):
                                                     cell_size_z, rainfall, potential_evaporation,
                                                     surface_minimum_head)[0]
 
-        @boundary_condition("node", "neumann", field="pressure_head", filters={"boundary_high_z": ">0"})
+        @boundary_condition("node", "neumann", field="pressure_head", where={"boundary_high_z": ">0"})
         def _grid_bottom(self, pressure_head, residual_water_content, saturated_water_content, van_genuchten_alpha,
                          van_genuchten_n, saturated_conductivity, pore_connectivity, cell_section_z, cell_size_z,
                          water_table_head, cell_volume):
@@ -564,7 +564,7 @@ class RichardsSoil(FunctionalComponent):
             return _face_fluxes(self, pressure_head, conductivity, conductivity_slope, face_area, face_distance,
                                 face_normal_z)[0]
 
-        @graph_output("surface_inflow", location="node", filters={"boundary_low_z": ">0"})
+        @graph_output("surface_inflow", location="node", where={"boundary_low_z": ">0"})
         def _surface_inflow(self, pressure_head, residual_water_content, saturated_water_content,
                             van_genuchten_alpha, van_genuchten_n, saturated_conductivity, pore_connectivity,
                             cell_section_z, cell_size_z, rainfall, potential_evaporation, surface_minimum_head):
@@ -572,7 +572,7 @@ class RichardsSoil(FunctionalComponent):
                             van_genuchten_n, saturated_conductivity, pore_connectivity, cell_section_z, cell_size_z,
                             rainfall, potential_evaporation, surface_minimum_head)[0]
 
-        @graph_output("runoff", location="node", filters={"boundary_low_z": ">0"})
+        @graph_output("runoff", location="node", where={"boundary_low_z": ">0"})
         def _runoff(self, pressure_head, residual_water_content, saturated_water_content, van_genuchten_alpha,
                     van_genuchten_n, saturated_conductivity, pore_connectivity, cell_section_z, cell_size_z, rainfall,
                     potential_evaporation, surface_minimum_head):
@@ -580,7 +580,7 @@ class RichardsSoil(FunctionalComponent):
                             van_genuchten_n, saturated_conductivity, pore_connectivity, cell_section_z, cell_size_z,
                             rainfall, potential_evaporation, surface_minimum_head)[2]
 
-        @graph_output("drainage", location="node", filters={"boundary_high_z": ">0"})
+        @graph_output("drainage", location="node", where={"boundary_high_z": ">0"})
         def _drainage(self, pressure_head, residual_water_content, saturated_water_content, van_genuchten_alpha,
                       van_genuchten_n, saturated_conductivity, pore_connectivity, cell_section_z, cell_size_z,
                       water_table_head):

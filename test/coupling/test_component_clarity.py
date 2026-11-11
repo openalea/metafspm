@@ -120,6 +120,6 @@ def test_draw():
 
 def test_declarations_and_schedule():
     table = Named.declarations()
-    assert table.set_index("name").loc["length", ["role", "unit", "by"]].tolist() == ["input", "m", "Test"]
+    assert table.set_index("name").loc["length", ["role", "unit", "by"]].tolist() == ["input_variable", "m", "Test"]
     assert table.set_index("name").loc["factor", "default"] == 3.
     assert Named.schedule() == [(("postsegmentation",), ["_later"]), (("rate",), ["_measures"])]   # as they run

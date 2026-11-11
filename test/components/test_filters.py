@@ -1,5 +1,5 @@
 """
-filters=, the one selection argument of the decorators: {variable: condition} dicts (values, lists, comparisons,
+where=, the one selection argument of the decorators: {variable: condition} dicts (values, lists, comparisons,
 label names, variables of a coarser scale), mask names and callables, on steps (with the "active" mask), node
 balances, outputs and graph systems.
 """
@@ -10,7 +10,7 @@ import pytest
 
 from openalea.metafspm.coupling.component import FunctionalComponent, state_variable
 from openalea.metafspm.data_structure.data_api import MPGDataStructure
-from openalea.metafspm.solve.decorator import _Filters, graph_output, graph_system, node_balance, rate
+from openalea.metafspm.solve.decorator import _EntityFilter, graph_output, graph_system, node_balance, rate
 
 from anatomy import make_rooted_anatomy, wiring
 from plants import seedling_ds
@@ -31,26 +31,26 @@ def _ds():
 def test_several_keys_must_all_hold_and_comparisons_take_any_threshold():
     ds = _ds()
     length, rank = np.asarray(ds.get("length")), np.asarray(ds.get("rank"))
-    selected = _Filters({"length": "<=0.03", "rank": "!=2"}, "test").mask(ds)
+    selected = _EntityFilter({"length": "<=0.03", "rank": "!=2"}, "test").mask(ds)
     np.testing.assert_array_equal(selected, (length <= 0.03) & (rank != 2))
-    np.testing.assert_array_equal(_Filters({"rank": [1., 4.]}, "test").mask(ds), np.isin(rank, [1., 4.]))
-    np.testing.assert_array_equal(_Filters({"rank": 3.}, "test").mask(ds), rank == 3.)
+    np.testing.assert_array_equal(_EntityFilter({"rank": [1., 4.]}, "test").mask(ds), np.isin(rank, [1., 4.]))
+    np.testing.assert_array_equal(_EntityFilter({"rank": 3.}, "test").mask(ds), rank == 3.)
 
 
 def test_a_mask_name_and_a_callable_select_as_well():
     ds = _ds()
     ds.define_mask("first_half", {"rank": "<7"})
-    np.testing.assert_array_equal(_Filters("first_half", "test").mask(ds), np.asarray(ds.get("rank")) < 7)
-    np.testing.assert_array_equal(_Filters(lambda d: np.asarray(d.get("rank")) % 2 == 0, "test").mask(ds),
+    np.testing.assert_array_equal(_EntityFilter("first_half", "test").mask(ds), np.asarray(ds.get("rank")) < 7)
+    np.testing.assert_array_equal(_EntityFilter(lambda d: np.asarray(d.get("rank")) % 2 == 0, "test").mask(ds),
                                   np.arange(ds.n_nodes()) % 2 == 0)
 
 
 def test_a_filter_follows_the_variables_it_reads():
     ds = _ds()
-    filters = _Filters({"rank": ">10"}, "test")
-    assert filters.mask(ds).sum() == 3
+    entity_filter = _EntityFilter({"rank": ">10"}, "test")
+    assert entity_filter.mask(ds).sum() == 3
     ds.set("rank", np.full(ds.n_nodes(), 11.))
-    assert filters.mask(ds).all()
+    assert entity_filter.mask(ds).all()
 
 
 def test_a_key_at_a_coarser_scale_is_read_at_each_elements_entity():
@@ -58,17 +58,17 @@ def test_a_key_at_a_coarser_scale_is_read_at_each_elements_entity():
     g, segments, anatomies = make_rooted_anatomy(3)
     ds = MPGDataStructure(g, from_scale=g.scales.SubOrgan, nodes="Compartment", wiring=wiring(g))
     ds.register("segment_rank", np.arange(len(ds.entity_ids("SubOrgan")), dtype=float), location="SubOrgan")
-    selected = _Filters({"segment_rank": ">=1"}, "test").mask(ds)
+    selected = _EntityFilter({"segment_rank": ">=1"}, "test").mask(ds)
     owner = np.asarray(ds.owner("SubOrgan"))
     np.testing.assert_array_equal(selected, owner >= 1)
     assert selected.sum() == 2 * 4                           # the four Compartments of two segments
 
 
-def test_filters_of_another_kind_are_refused():
-    with pytest.raises(TypeError, match="filters must be"):
-        rate(filters=3)(lambda self: None)
-    with pytest.raises(TypeError, match="filters must be"):
-        _Filters({}, "test")
+def test_filters_of_another_type_are_refused():
+    with pytest.raises(TypeError, match="where must be"):
+        rate(where=3)(lambda self: None)
+    with pytest.raises(TypeError, match="where must be"):
+        _EntityFilter({}, "test")
 
 
 # ---------------------------------------------------------------- steps and the active mask
@@ -79,7 +79,7 @@ class FilteredSteps(FunctionalComponent):
     every: float = state_variable(**DOC, default=0., location="node")
     inactive_too: float = state_variable(**DOC, default=0., location="node")
 
-    @rate(filters={"length": ">0.03"})
+    @rate(where={"length": ">0.03"})
     def _long(self, length):
         return length
 
@@ -87,7 +87,7 @@ class FilteredSteps(FunctionalComponent):
     def _every(self, length):
         return length
 
-    @rate(filters={"length": ">0.03"}, include_inactive=True)
+    @rate(where={"length": ">0.03"}, include_inactive=True)
     def _inactive_too(self, length):
         return length
 
@@ -107,7 +107,7 @@ class EdgeStep(FunctionalComponent):
     k: float = state_variable(**DOC, default=1., location="edge")
     doubled: float = state_variable(**DOC, default=0., location="edge")
 
-    @rate(filters={"k": ">1"})
+    @rate(where={"k": ">1"})
     def _doubled(self, k):
         return 2. * k
 
@@ -131,15 +131,15 @@ class Relaxation(FunctionalComponent):
 
     @graph_system(node_unknowns=["u"])
     class _solve:
-        @node_balance(field="u", filters={"length": ">0.03"})
+        @node_balance(field="u", where={"length": ">0.03"})
         def _towards_one(self, u):
             return u - 1.
 
-        @node_balance(field="u", filters={"length": "<=0.03"})
+        @node_balance(field="u", where={"length": "<=0.03"})
         def _kept(self, u):
             return u                                          # held at 0
 
-        @graph_output("doubled_u", location="node", filters={"length": ">0.03"})
+        @graph_output("doubled_u", location="node", where={"length": ">0.03"})
         def _doubled(self, u):
             return 2. * u
 
@@ -156,7 +156,7 @@ def test_balances_and_outputs_apply_on_their_filters():
 class SubgraphRelaxation(FunctionalComponent):
     u: float = state_variable(**DOC, default=0., location="node")
 
-    @graph_system(node_unknowns=["u"], filters={"rank": "<5"}, transient=True)
+    @graph_system(node_unknowns=["u"], where={"rank": "<5"}, transient=True)
     class _solve:
         @node_balance(field="u")
         def _towards_one(self, u):

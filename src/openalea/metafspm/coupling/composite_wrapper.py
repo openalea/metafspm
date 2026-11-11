@@ -192,7 +192,7 @@ class CompositeModel:
             table = type(component).declarations()
             if table.empty:
                 continue
-            for name in table.loc[~table["role"].isin(["input", "parameter", "setting", "forcing"]), "name"]:
+            for name in table.loc[~table["role"].isin(["input_variable", "parameter", "setting", "forcing_variable"]), "name"]:
                 provided.setdefault(name, type(component).__name__)
         rows = []
         for component in components:
@@ -203,7 +203,7 @@ class CompositeModel:
             for name in table.loc[table["role"] == "geometry", "name"]:
                 rows.append(dict(receiver=receiver, variable=name, provider="the plants' structural components",
                                  coupling="geometry", sources="triangles()"))
-            for name in table.loc[table["role"] == "input", "name"]:
+            for name in table.loc[table["role"] == "input_variable", "name"]:
                 links = [link for link in translator.links if link.variable == name and matches(link.receiver, component)
                          and not matches(link.provider, component)]
                 if links:
@@ -392,7 +392,7 @@ class CompositeModel:
         variable whose entities it weighs: the source's for a mean (up), the receiver's for a split (down).
         (None, the link's weight) when the locations are the same.
         """
-        from openalea.metafspm.coupling.declaration import DeclarationError, default_mapping, link_direction
+        from openalea.metafspm.coupling.declaration import DeclarationError, default_aggregation, link_direction
         source_locations = {ds.location(source) for source in link.sources}
         if len(source_locations) != 1 or location in source_locations:
             return None, link.weight
@@ -414,7 +414,7 @@ class CompositeModel:
             declared = {meta.get(name_, {}).get("weight") for name_ in weighed}
             weight = declared.pop() if len(declared) == 1 else None
         try:
-            return default_mapping(kind, direction, name, weight=weight), weight
+            return default_aggregation(kind, direction, name, weight=weight), weight
         except DeclarationError as error:
             raise DeclarationError(f"{error} (link from {source_location} to {location})") from None
 

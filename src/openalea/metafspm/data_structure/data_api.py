@@ -21,7 +21,7 @@ from contextlib  import contextmanager
 from dataclasses import dataclass, field
 from typing      import Optional, Union
 
-from openalea.metafspm.coupling.declaration import UP_MAPPINGS
+from openalea.metafspm.coupling.declaration import UP_AGGREGATIONS
 from openalea.metafspm.data_structure.arraydict import ArrayDict, typed_array
 from openalea.metafspm.data_structure.columns import DataStructureColumn
 from types import MappingProxyType
@@ -2573,7 +2573,7 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
                                      "their section, not to a cell): sum to a scale owning them, or zero them")
                 owner, values = owner[kept], np.asarray(values)[kept]
                 weights = None if weights is None else np.asarray(weights)[kept]
-            if aggregation in UP_MAPPINGS:
+            if aggregation in UP_AGGREGATIONS:
                 return _aggregated(values, owner, entities.size, aggregation, weights)
         elif from_location in coarse and to_location == "node" and aggregation == "split":
             owner = self._membership(from_location)[1]
@@ -2606,7 +2606,7 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
                 if aggregation == "split":
                     return _split(values, owner, weights, from_location)
             else:
-                if aggregation in UP_MAPPINGS:
+                if aggregation in UP_AGGREGATIONS:
                     return _aggregated(values, owner, coarse_ids.size, aggregation, weights)
         elif to_location == "scalar" and from_location != "scalar":
             return np.asarray(self._reduce(values, aggregation, weights))
@@ -2916,7 +2916,7 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
             return values.tolist() if values.dtype == object else np.array(values, dtype=np.float64)
         dtype = getattr(spec, "dtype", float)
         if dtype is object:
-            if spec.mapping is not None or spec.location == "edge":
+            if spec.aggregation is not None or spec.location == "edge":
                 raise ValueError(f"'{spec.name}' holds objects: only node or coarse variables at their own scale are "
                                  "read")
             if spec.location != "node":                 # one object per entity of a coarse location (e.g. SubOrgan)
@@ -2929,8 +2929,8 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
         if spec.location == "edge":
             if self._anatomy and spec.scale == self._mtg.scales.Connection:
                 return self._mtg_values(spec.name, self.entity_ids("edge"), fill=fill)  # the Connections themselves
-            return self._mtg_to_edge_array(spec.name, convention=spec.mapping, scale=spec.scale)
-        if spec.mapping is None:
+            return self._mtg_to_edge_array(spec.name, convention=spec.aggregation, scale=spec.scale)
+        if spec.aggregation is None:
             # Stored at its own coarse scale: the values of the vertices of that scale (missing: the declared default)
             return self._mtg_values(spec.name, self.entity_ids(spec.location), fill=fill)
         values = self._mtg_to_node_array(spec.name, fill=fill)
@@ -2941,7 +2941,7 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
             if not self.has(spec.weight):
                 raise ValueError(f"'{spec.name}' is aggregated with weight '{spec.weight}', which is not registered")
             weights = self.get(spec.weight)
-        return self._map(values, "node", spec.location, spec.mapping, weights)
+        return self._map(values, "node", spec.location, spec.aggregation, weights)
 
     def _mtg_objects(self, name: str, vids, instanced: bool):
         """The objects of MTG property *name* at *vids* (None where a vertex has none), as a list, in one bulk read:
@@ -3037,13 +3037,13 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
             return False
         scales = self._mtg.scales
         if location == "node":
-            return spec.mapping is None and (spec.scale is None or spec.scale == self._node_scale())
+            return spec.aggregation is None and (spec.scale is None or spec.scale == self._node_scale())
         if location == "edge":
             if self._anatomy:
                 return spec.scale == scales.Connection
-            return _EDGE_CONVENTIONS.get(spec.mapping, spec.mapping) == "proximal" and \
+            return _EDGE_CONVENTIONS.get(spec.aggregation, spec.aggregation) == "proximal" and \
                 (spec.scale is None or spec.scale == self._node_scale())
-        return spec.mapping is None and spec.scale == getattr(scales, location, None)
+        return spec.aggregation is None and spec.scale == getattr(scales, location, None)
 
     def _own_view(self, spec):
         """The MPG's view of *spec*'s column when it is this DataStructure's at *spec*'s location, else None."""
@@ -3194,7 +3194,7 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
                 prop[int(vid)] = value
             return
         if spec.location == "node":
-            if spec.mapping is None:
+            if spec.aggregation is None:
                 self._write_node_to_mtg(spec.name, values)
                 return
             coarse = self._scale_name(spec.scale)
@@ -3205,8 +3205,8 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
             if self._anatomy and spec.scale == self._mtg.scales.Connection:
                 self._write_at(spec.name, self.entity_ids("edge"), values)      # at the Connections themselves
             else:
-                self._write_edge_to_mtg(spec.name, values, convention=spec.mapping)
-        elif spec.mapping is None:
+                self._write_edge_to_mtg(spec.name, values, convention=spec.aggregation)
+        elif spec.aggregation is None:
             self._write_at(spec.name, self.entity_ids(spec.location), values)
         else:
             self._write_node_to_mtg(spec.name, self._map(values, spec.location, "node", "broadcast",
@@ -3410,14 +3410,14 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
         are not instanced (junctions, a leaf's surface, ...), not at the instanced ones (held by the DataStructure
         only). Variables mapped to a coarse scale are written there as without instances."""
         g = self._mtg
-        if spec.location == "node" and spec.mapping is not None:
+        if spec.location == "node" and spec.aggregation is not None:
             coarse = self._scale_name(spec.scale)
             weights = self.get(spec.weight) if spec.weight else None
             means = self._map(values, "node", coarse, "weighted_mean" if weights is not None else "mean", weights)
             self._write_at(spec.name, self.entity_ids(coarse), means)
             return
         if spec.location == "edge" and not (self._anatomy and spec.scale == g.scales.Connection):
-            self._write_edge_to_mtg(spec.name, values, convention=spec.mapping)
+            self._write_edge_to_mtg(spec.name, values, convention=spec.aggregation)
             return
         vids = np.asarray(self._idx_to_vid if spec.location == "node" else self.entity_ids("edge"), dtype=np.int64)
         explicit = ~self._instanced_at(spec.location)
@@ -4253,7 +4253,7 @@ class LocatedView(DataStructure):
         if base.has(name) and base.location(name) != target:
             # the base's nodes may read it mapped down from this scale (held_at_scale), nothing else
             meta = base._variable_meta().get(name, {})
-            if not (meta.get("scale") == self._node_scale() and meta.get("mapping") in ("broadcast", "split")):
+            if not (meta.get("scale") == self._node_scale() and meta.get("aggregation") in ("broadcast", "split")):
                 raise ValueError(f"'{name}' is registered at the base's {base.location(name)}, it cannot be "
                                  f"registered at {target} too: one variable per name on one DataStructure")
         return base.register(name, values, location=target, **options)

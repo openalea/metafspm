@@ -271,7 +271,7 @@ class Scene:
         owners += [model.components for model in self.environment]
         for components, named in zip(owners, given):
             for component in components:
-                settings = {f.name for f in fields(component) if f.metadata.get("variable_type") == "setting"}
+                settings = {f.name for f in fields(component) if f.metadata.get("role") == "setting"}
                 for name in ("threads", "device"):
                     if name in settings and name not in named:
                         setattr(component, name, getattr(self.compute, name))
@@ -339,7 +339,7 @@ class Scene:
         initiators = model_initiators(model)
         per_plant = {key for initiator in initiators for key in getattr(initiator, "scenario_keys", ())}
         per_plant |= {f.name for initiator in initiators if is_dataclass(initiator) for f in fields(initiator)
-                      if f.metadata.get("variable_type") == "parameter" and f.metadata.get("scale") == ScalesConfig.Plant}
+                      if f.metadata.get("role") == "parameter" and f.metadata.get("scale") == ScalesConfig.Plant}
         named = _model_arguments(model)
         scenarios = [_flat_scenario(s) for s in rows["scenario"]]
         first = scenarios[0]
@@ -498,8 +498,8 @@ class Scene:
             if any(name in getattr(c, "declared_forcings", lambda: {})() for c in self.components):
                 continue
             declaring = [c for c in self.components
-                         if getattr(getattr(c, "_variable_specs", {}).get(name), "variable_type", None)
-                         in ("input", "parameter")]
+                         if getattr(getattr(c, "_variable_specs", {}).get(name), "role", None)
+                         in ("input_variable", "parameter")]
             free = [c for c in declaring if not any(link.variable == name and matches(link.receiver, c)
                                                     for link in self.translator.links)
                     and name not in getattr(c, "_derived_inputs", ())]
@@ -948,7 +948,7 @@ def _with_identity_links(translator, populations, environment):
         table = type(component).declarations()
         if table.empty:
             return set(), set()
-        return (set(table.loc[table["role"] == "input", "name"]),
+        return (set(table.loc[table["role"] == "input_variable", "name"]),
                 set(table.loc[table["role"] == "state_variable", "name"]))
 
     added = []

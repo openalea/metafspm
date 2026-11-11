@@ -11,7 +11,7 @@ import pytest
 
 from openalea.metafspm.coupling.component import FunctionalComponent, input_variable, parameter, state_variable
 from openalea.metafspm.coupling.cross import CrossMapping, Exchanges, UnionDataStructure, UnionMapping
-from openalea.metafspm.coupling.declaration import DeclarationError, default_mapping
+from openalea.metafspm.coupling.declaration import DeclarationError, default_aggregation
 from openalea.metafspm.coupling.translator import Translator
 from openalea.metafspm.data_structure.configs import ScalesConfig as scales
 from openalea.metafspm.data_structure.data_api import ArrayDataStructure, MPGDataStructure
@@ -265,9 +265,9 @@ def test_links_are_checked():
     with pytest.raises(ValueError, match="does not go up"):
         Exchanges(Translator().link("Soil", "exudation", "RootGeometry", {"exudation": 1.}, aggregation="split",
                                     weight="length"), components, mappings)
-    assert default_mapping("extensive", "up", "q") == "sum"            # one rule within and across DataStructures
-    assert default_mapping("intensive", "down", "c") == "broadcast"
-    assert default_mapping("intensive", "layer", "c") == "mean"
+    assert default_aggregation("extensive", "up", "q") == "sum"            # one rule within and across DataStructures
+    assert default_aggregation("intensive", "down", "c") == "broadcast"
+    assert default_aggregation("intensive", "layer", "c") == "mean"
 
 
 def test_formula_links_are_evaluated_on_the_provider_then_mapped():

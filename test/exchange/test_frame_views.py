@@ -53,8 +53,8 @@ def test_default_views_of_roots_and_a_soil_grid():
 @dataclass
 class _ShootLight:
     """A shoot component's declarations: an Organ state variable and a SubOrgan descriptor."""
-    leaf_area: float = field(default=0., metadata=dict(variable_type="state_variable", kind="descriptor", scale=6))
-    organ_PARa: float = field(default=0., metadata=dict(variable_type="state_variable", kind="extensive", scale=5))
+    leaf_area: float = field(default=0., metadata=dict(role="state_variable", kind="descriptor", scale=6))
+    organ_PARa: float = field(default=0., metadata=dict(role="state_variable", kind="extensive", scale=5))
 
 
 def test_a_shoot_coloured_by_an_organ_variable_and_display_meshes_hidden():
@@ -178,7 +178,7 @@ def test_the_recorded_variables(tmp_path):
     assert not left & soil
     plants, _, components = scene.data_structures()["RootPopulation"]
     parameters = {name for component in components for name, field in type(component).__dataclass_fields__.items()
-                  if field.metadata.get("variable_type") == "parameter"} & set(plants.available_vars())
+                  if field.metadata.get("role") == "parameter"} & set(plants.available_vars())
     assert parameters and parameters <= unrecorded(plants, components)             # parameters: not recorded
     assert not parameters & _columns(out)
 

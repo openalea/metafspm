@@ -284,8 +284,8 @@ def test_standard_names_come_from_the_vocabulary():
 
     @dataclass
     class Declared:
-        x1: float = field(default=0., metadata=dict(unit="mm", variable_type="state_variable"))
-        length: float = field(default=0., metadata=dict(unit="s", variable_type="state_variable"))   # not a length
+        x1: float = field(default=0., metadata=dict(unit="mm", role="state_variable"))
+        length: float = field(default=0., metadata=dict(unit="s", role="state_variable"))   # not a length
 
     ds = _population()
     _SegmentsProbe(data_structure=ds)
@@ -310,7 +310,7 @@ def test_a_model_lighting_the_plants_declares_its_variables_too():
 
     @dataclass
     class Light:
-        PARa: float = field(default=0., metadata=dict(unit="µmol m-2 s-1", variable_type="state_variable"))
+        PARa: float = field(default=0., metadata=dict(unit="µmol m-2 s-1", role="state_variable"))
 
     ds = _population()
     models = _models(ds)
