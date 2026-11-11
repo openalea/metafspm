@@ -78,7 +78,6 @@ what the model computes on the reduced structure itself, so that every term is c
 computes it live or the archetype holds it.
 """
 import copy
-import os
 from contextlib import contextmanager
 from dataclasses import dataclass
 
@@ -928,14 +927,15 @@ class Reduction:
         Evaluate the archetypes *missing* ({signature: (a plant's parameters, {archetype key: (a representative group vertex,
         its reduced template key, its archetype values)})}): every signature's in the same batches, in one library
         (_evaluate_missing), each batch's archetypes in threads (_archetypes_of_batch), added in the requests' order
-        (deterministic, the same archetypes at any thread count). With METAFSPM_CHECK_ARCHETYPES=1, every archetype evaluated is
+        (deterministic, the same archetypes at any thread count). With Compute(checks={"archetypes"}), every archetype evaluated is
         evaluated again alone, in a freshly built library, and compared bit for bit (check_archetypes).
         """
         described = {signature: (parameters, {archetype_key: (_describe(self.mtg, vertex), key, values)
                                               for archetype_key, (vertex, key, values) in requests.items()})
                      for signature, (parameters, requests) in missing.items()}
         self._evaluate_missing(described)
-        if os.environ.get("METAFSPM_CHECK_ARCHETYPES") == "1" and not self.library:
+        from openalea.metafspm.compute import Compute
+        if Compute.current().checking("archetypes") and not self.library:
             check_archetypes(self, described)
 
     def _evaluate_missing(self, described: dict) -> None:
@@ -1544,7 +1544,7 @@ def _evaluate(reduction: Reduction, parameters: dict, requests: dict) -> dict:
 
 def check_archetypes(reduction: Reduction, described: dict) -> None:
     """
-    METAFSPM_CHECK_ARCHETYPES=1: each archetype of *described* (_evaluate_requests') evaluated again alone, in a library built
+    Compute(checks={"archetypes"}): each archetype of *described* (_evaluate_requests') evaluated again alone, in a library built
     for it (one plant, its signature's), and compared with the archetype the batches gave, bit for bit: its terms, inputs,
     outputs, interior and recovery (a difference: a group property outside the archetype's key changed it, or the
     library's batches left state on its groups). Raises AssertionError at the first difference.
@@ -1557,7 +1557,7 @@ def check_archetypes(reduction: Reduction, described: dict) -> None:
             for system, archetype in alone.items():
                 difference = _difference(reduction._archetypes[archetype_key][system], archetype)
                 if difference is not None:
-                    raise AssertionError(f"METAFSPM_CHECK_ARCHETYPES: the archetype {archetype_key[:2]} of {system} differs from "
+                    raise AssertionError(f"Compute(checks={{'archetypes'}}): the archetype {archetype_key[:2]} of {system} differs from "
                                          f"its evaluation alone: {difference}")
 
 

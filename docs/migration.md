@@ -170,8 +170,9 @@ The legacy props path (the props branches of `CompositeModel`, the Functor and `
 
 One word per concept, full words, no aliases: a former keyword raises Python's TypeError, a former attribute its
 AttributeError. Checkpoints (format 2) and frames (extras format 2) written before are refused with a message
-naming the renames (a frame still displays in ParaView): run again, there is no converter. The environment variable
-`METAFSPM_CHECK_KINDS` does nothing any more: it is `METAFSPM_CHECK_ARCHETYPES`.
+naming the renames (a frame still displays in ParaView): run again, there is no converter. The environment variables
+`METAFSPM_CHECK_KINDS` and `METAFSPM_CHECK_TOPOLOGY` do nothing any more: the checks are `Compute(checks=...)`'s
+(section 8).
 
 | Former | Now |
 |---|---|
@@ -180,7 +181,7 @@ naming the renames (a frame still displays in ParaView): run again, there is no 
 | `Reduction(kind={...})` | `Reduction(archetype_variables={...})` |
 | `Reduction.group_kinds` | `Reduction.group_archetypes` |
 | `Compute(kind_batch=)` | `Compute(archetype_batch=)` |
-| `METAFSPM_CHECK_KINDS=1` | `METAFSPM_CHECK_ARCHETYPES=1` |
+| `METAFSPM_CHECK_KINDS=1` | `Compute(checks={"archetypes"})` (section 8) |
 | `@kind_derived(name)` | `@archetype_derived(name)` |
 | `boundary_set(kind=, kinds=)`, `boundary_set.KINDS` | `boundary_set(condition=, condition_variable=)`, `boundary_set.CONDITIONS` |
 | `@boundary_condition(location, kind)` | `@boundary_condition(location, condition)` |
@@ -207,3 +208,17 @@ naming the renames (a frame still displays in ParaView): run again, there is no 
 | deep imports of the public names (`from openalea.metafspm.scene.scene import Scene`, …) | `from openalea.metafspm import Scene, ...` (its `__all__`) |
 | GRANAP's node variable `kind` (codes 0-4) | `compartment_type` |
 | MECHA's `collar_kind`, `soil_node_kind` | `collar_condition`, `soil_node_condition` |
+
+## 8. The self-checks are a Compute option (QA-10)
+
+The environment variables are gone (none is read any more, not even as a fallback); the scene's Compute names the
+checks run:
+
+| Former | Now |
+|---|---|
+| `METAFSPM_CHECK_TOPOLOGY=1` | `Scene(..., compute=Compute(checks={"topology"}))` |
+| `METAFSPM_CHECK_ARCHETYPES=1` (formerly `METAFSPM_CHECK_KINDS=1`) | `Scene(..., compute=Compute(checks={"archetypes"}))` |
+| both | `Compute(checks={"topology", "archetypes"})` |
+
+Outside a Scene (a population run by hand, a test), `with Compute(checks={...}).limits(): ...`. An unknown name
+raises ValueError at the Compute; run.json's provenance records the checks under `"checks"`.

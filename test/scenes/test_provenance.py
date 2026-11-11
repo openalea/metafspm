@@ -43,6 +43,12 @@ def test_run_json_records_the_provenance_and_the_forcings_applied(tmp_path):
     assert exudation["steps"] == 2 and 0.1 <= exudation["min"] <= exudation["mean"] <= exudation["max"] <= 0.3
 
 
+def test_the_provenance_records_the_checks_run():
+    from openalea.metafspm.compute import Compute
+    assert provenance(_scene())["checks"] == []
+    assert provenance(_scene(compute=Compute(checks={"topology"})))["checks"] == ["topology"]
+
+
 def test_the_parameters_hash_and_their_non_default_values():
     default, changed = provenance(_scene()), provenance(_scene(exudation_rate=0.4))
     assert default["parameters"]["hash"] != changed["parameters"]["hash"]

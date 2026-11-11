@@ -66,7 +66,7 @@ def test_the_instances_tables_follow_appends_insertions_and_removals():
 
 import pytest                                                               # noqa: E402
 
-from openalea.metafspm.data_structure import mpg as mpg_module               # noqa: E402
+from openalea.metafspm.compute import Compute                                # noqa: E402
 from openalea.metafspm.data_structure.data_api import MPGDataStructure       # noqa: E402
 
 from layered_anatomy import (grow_instanced_segment, grow_layered_segment, make_instanced_anatomy,  # noqa: E402
@@ -74,9 +74,10 @@ from layered_anatomy import (grow_instanced_segment, grow_layered_segment, make_
 
 
 @pytest.fixture
-def checked(monkeypatch):
-    """Every patched cache checked against its build (METAFSPM_CHECK_TOPOLOGY)."""
-    monkeypatch.setattr(mpg_module, "_CHECK_TOPOLOGY", True)
+def checked():
+    """Every patched cache checked against its build (Compute(checks={"topology"}))."""
+    with Compute(checks={"topology"}).limits():
+        yield
 
 
 def _topology(data_structure):

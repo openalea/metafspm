@@ -35,10 +35,27 @@ def _blas_threads() -> set:
 
 
 @pytest.mark.parametrize("given", [dict(threads=0), dict(threads=1.5), dict(threads="all"), dict(device="gpu"),
-                                   dict(memory="free"), dict(linear_solver="umfpack"), dict(archetype_batch=0)])
+                                   dict(memory="free"), dict(linear_solver="umfpack"), dict(archetype_batch=0),
+                                   dict(checks={"kinds"}), dict(checks="topology"), dict(checks=True)])
 def test_a_compute_checks_its_values(given):
     with pytest.raises(ValueError):
         Compute(**given)
+
+
+def test_the_checks_are_named_and_kept_sorted():
+    """Compute.checks: a collection of names among CHECKS (none by default), kept as a sorted tuple; checking(name)
+    says whether one runs, and refuses an unknown name."""
+    assert Compute().checks == () and not Compute().checking("topology")
+    compute = Compute(checks=["topology", "archetypes", "topology"])
+    assert compute.checks == ("archetypes", "topology") == compute_module.CHECKS
+    assert compute.checking("archetypes") and compute.as_dict()["checks"] == ["archetypes", "topology"]
+    with pytest.raises(ValueError, match="unknown checks \\['kinds'\\]"):
+        Compute(checks={"kinds"})
+    with pytest.raises(ValueError, match="checking"):
+        compute.checking("kinds")
+    assert not Compute.current().checking("topology")
+    with Compute(checks={"topology"}).limits():
+        assert Compute.current().checking("topology") and not Compute.current().checking("archetypes")
 
 
 def test_a_compute_has_no_process_pool():

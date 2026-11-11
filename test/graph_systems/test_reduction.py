@@ -558,18 +558,20 @@ def _factored_conductance_model(reduced):
     return FactoredPlant
 
 
-def test_plants_of_different_parameters_share_one_library_one_plant_each(monkeypatch):
+def test_plants_of_different_parameters_share_one_library_one_plant_each():
     """The archetypes of plants of different parameters (signatures) are evaluated in the same batches of one library,
     one plant per signature: the potentials are the full model's, each archetype the one it gives alone in a library
-    built for it (METAFSPM_CHECK_ARCHETYPES=1, bit for bit); a plant's parameter changed, its archetypes are evaluated again
+    built for it (Compute(checks={"archetypes"}), bit for bit); a plant's parameter changed, its archetypes are evaluated again
     (the plants' parameters and signatures kept only while they are)."""
-    monkeypatch.setenv("METAFSPM_CHECK_ARCHETYPES", "1")
+    from openalea.metafspm.compute import Compute
+    checked = Compute(checks={"archetypes"})
     solved = {}
     for reduced in (False, True):
         model = _factored_conductance_model(reduced)
         population = population_data_structure(planting([Planting(), Planting(x=1.)], model, plant_scenarios=[
             {"factor": 2.}, {"factor": 5.}]), model)
-        population.instance.run()
+        with checked.limits():
+            population.instance.run()
         solved[reduced] = population
     full, reduced = solved[False].data_structure, solved[True].data_structure
     reduction = reduced.structure.reduction
@@ -581,7 +583,8 @@ def test_plants_of_different_parameters_share_one_library_one_plant_each(monkeyp
     np.testing.assert_allclose(reduced.get("water_potential"), full.get("water_potential")[rows], rtol=1e-11)
     before = set(reduction._archetypes)
     reduced.set("factor", np.array([2., 7.]))
-    solved[True].instance.run()
+    with checked.limits():
+        solved[True].instance.run()
     assert len(set(reduction._archetypes) - before) == 1                  # the second plant's archetype, evaluated again
     assert len(library.plants) == 1                                   # that batch's one signature: one plant
 

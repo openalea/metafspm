@@ -2365,7 +2365,7 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
         A per-node array *compute(node ids)* (an entry per node, each depending on its node only), patched (O-14):
         after a structural change of the MPG, the kept nodes' entries are kept and the new nodes' (the last ones,
         their ids being larger) computed alone; computed whole when the MPG gives no delta (structure_delta) or the
-        nodes are not the kept ones followed by new ones. With METAFSPM_CHECK_TOPOLOGY=1 a patch is checked against
+        nodes are not the kept ones followed by new ones. With Compute(checks={"topology"}) a patch is checked against
         the whole computation.
         """
         from openalea.metafspm.data_structure import mpg as mpg_module
@@ -2382,7 +2382,7 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
                 count = int(keep.sum())
                 if nodes.size >= count and np.array_equal(nodes[:count], old_nodes[keep]):
                     result = np.concatenate((old_values[keep], np.asarray(compute(nodes[count:]))))
-                    if mpg_module._CHECK_TOPOLOGY:
+                    if mpg_module._check_topology():
                         mpg_module._check_same(name, result, np.asarray(compute(nodes)))
         if result is None:
             result = np.asarray(compute(nodes))
@@ -2497,12 +2497,12 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
         if base is not None and np.array_equal(base[1], plants):
             delta = mtg.structure_delta(base[0])
             if delta is not None:
-                from openalea.metafspm.data_structure.mpg import _kept, _check_same, _CHECK_TOPOLOGY
+                from openalea.metafspm.data_structure.mpg import _kept, _check_same, _check_topology
                 removed, added = delta
                 kept = base[2][_kept(base[2], removed)]
                 new = added[(arrays["scale"][added] == scale) & ~arrays["is_anchor"][added]]
                 result = np.concatenate((kept, in_plants(new)))
-                if _CHECK_TOPOLOGY:
+                if _check_topology():
                     _check_same(("in_plants", scale), result,
                                 in_plants(np.flatnonzero((arrays["scale"] == scale) & ~arrays["is_anchor"])))
         if result is None:

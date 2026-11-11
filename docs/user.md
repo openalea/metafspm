@@ -372,7 +372,7 @@ class SoilDiffusion(FunctionalComponent):
   interior cells (the Scene's Compute, `Compute.current()`; the memory freed between batches), every plant
   parameters' archetypes in the same batches, in one library population kept on the reduction (one plant per plant
   parameters of the batch; each batch's groups replacing the former's, its components reset to their built state
-  but for the caches they keep themselves, `keep(name, saved=False)`); `METAFSPM_CHECK_ARCHETYPES=1` evaluates every archetype
+  but for the caches they keep themselves, `keep(name, saved=False)`); `Compute(checks={"archetypes"})` evaluates every archetype
   again alone in a library built for it and checks the two are the same, bit for bit; after the library's run,
   the batch's archetypes are worked out in threads (`Compute.threads`: their Kron reductions outside the GIL; the same
   archetypes, bit for bit, at any number). The archetypes are checkpointed with the population (`Archetype`, a shared part
@@ -1247,6 +1247,11 @@ omitted) says how the scene uses the machine:
   Both are no-ops where the C library is not glibc (macOS, Windows, musl).
 - `archetype_batch=200_000`: the most interior cells a reduction evaluates at once (its missing archetypes in batches, the
   memory freed between them: a blade's archetype is about 10k cells, a stem's 45k).
+- `checks=()`: the self-checks run, for development (slow; each raises AssertionError at the first difference): a
+  collection of names among `"topology"` (every structure-derived value an MPG patches after growth or pruning
+  compared with its build) and `"archetypes"` (every archetype a reduction's batches evaluate compared, bit for bit,
+  with its evaluation alone in a library built for it), e.g. `Compute(checks={"topology", "archetypes"})`. An
+  unknown name raises ValueError; run.json's provenance records them (`"checks"`).
 
 Within the scene's build and steps, `Compute.current()` is the scene's Compute (what runs there reads it without
 being given it: a reduction's batches, the linear solvers resolved per system); outside, a default `Compute()`.

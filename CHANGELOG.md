@@ -4,6 +4,10 @@
 
 ### Breaking
 
+- The environment variables `METAFSPM_CHECK_TOPOLOGY` and `METAFSPM_CHECK_ARCHETYPES` are removed (QA-10, no
+  fallback): the self-checks are `Compute(checks={"topology", "archetypes"})` (any collection of names among
+  `compute.CHECKS`, none by default; an unknown name raises ValueError), recorded in run.json's provenance
+  (`"checks"`) and in scenario.json's `"compute"`. docs/migration.md section 8.
 - run.json's `"versions"` is replaced by `"provenance"` (QA-9): python's version, every package the scene's models
   and components come from with its version and, for a clone, git commit and modified flag (numpy, scipy, pandas,
   numba, openalea.mtg, encoding3d too), the start date, coupling, links, seeds and the parameters (their hash and

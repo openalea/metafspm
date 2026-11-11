@@ -1,6 +1,5 @@
 from collections import defaultdict
 from openalea.mtg import MTG
-import os
 import re
 
 from types import MappingProxyType
@@ -957,7 +956,7 @@ class MPG(MTG):
     def _derived(self, name, build, patch, token=None):
         """The structure-derived value *name*: *build(arrays)* at its first read, kept until the structure changes,
         then *patch(value, arrays, removed, added)* from the structure's delta (structure_delta), or built again when
-        there is none (or when *token*, e.g. a property's size, changed without a structural change). Its arrays are read-only. With METAFSPM_CHECK_TOPOLOGY=1 a patched value is checked against
+        there is none (or when *token*, e.g. a property's size, changed without a structural change). Its arrays are read-only. With Compute(checks={"topology"}) a patched value is checked against
         a build (equal arrays, element for element)."""
         arrays = self.topology_arrays()
         epoch = self.__dict__.get("_structure_epoch", 0)
@@ -972,7 +971,7 @@ class MPG(MTG):
             value = build(arrays)
         else:
             value = patch(hit[1], arrays, *delta)
-            if _CHECK_TOPOLOGY:
+            if _check_topology():
                 _check_same(name, value, build(arrays))
         value = _read_only_arrays(value)
         cache[name] = (epoch, value, token)
@@ -1881,7 +1880,10 @@ class MPG(MTG):
         return MappingProxyType(dict(zip(keys.tolist(), values.tolist())))
 
 
-_CHECK_TOPOLOGY = os.environ.get("METAFSPM_CHECK_TOPOLOGY", "") not in ("", "0")
+def _check_topology() -> bool:
+    """Whether the running Compute checks the topology (Compute(checks={"topology"}): each patch against a build)."""
+    from openalea.metafspm.compute import Compute
+    return Compute.current().checking("topology")
 
 
 def _kept(vids, removed) -> np.ndarray:
@@ -1901,7 +1903,7 @@ def _read_only_arrays(value):
 
 
 def _check_same(name, patched, built) -> None:
-    """METAFSPM_CHECK_TOPOLOGY: a patched structure-derived value equals its build, element for element."""
+    """Compute(checks={"topology"}): a patched structure-derived value equals its build, element for element."""
     patched = patched if isinstance(patched, tuple) else (patched,)
     built = built if isinstance(built, tuple) else (built,)
     for a, b in zip(patched, built):

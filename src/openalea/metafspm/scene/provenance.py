@@ -3,7 +3,7 @@ A run's provenance: what produced it, recorded in run.json, in every checkpoint'
 writer, so that a run can be reproduced from its folder::
 
   provenance(scene)            {"packages": {distribution: {"version", "commit", "dirty"}}, "python", "start",
-                                "coupling", "links", "seeds", "parameters": {"hash", "non_default"}}
+                                "coupling", "links", "seeds", "parameters": {"hash", "non_default"}, "checks"}
   mismatches(recorded, current)
                                ["openalea.mecha: commit 9bcb3f9 (clean) then, 1a2b3c4 (modified) now", ...]
 
@@ -11,7 +11,7 @@ packages: python's and every distribution the scene's models and components come
 numpy, scipy, pandas, numba, openalea.mtg and encoding3d; an editable install (a clone) adds its git commit and
 whether its tracked files were modified (dirty). seeds: each component's random_seed (Component.random's streams).
 parameters: the hash of every component's parameters and settings as the scene runs them, and those differing from
-their declared default. links: the scene translator's links (Translator.to_nested). The forcings applied are
+their declared default. checks: the self-checks the run ran (Compute.checks). links: the scene translator's links (Translator.to_nested). The forcings applied are
 summarised apart (ForcingSummary: the mean, least and greatest of each forcing's per-step means), in run.json.
 
 Scene.load_checkpoint compares the checkpoint's provenance with the scene's and warns with each difference (another
@@ -161,7 +161,8 @@ def provenance(scene, variables: bool = False) -> dict:
                "links": _json(scene.translator.to_nested()),
                "seeds": {component.__dict__.get("_scene_name", type(component).__name__): _json(component.random_seed)
                          for component in scene.components if hasattr(component, "random_seed")},
-               "parameters": parameters(scene)}
+               "parameters": parameters(scene),
+               "checks": list(scene.compute.checks)}
     if variables:
         content["variables"] = {component.__dict__.get("_scene_name", type(component).__name__):
                                 sorted(type(component).declarations()["name"])

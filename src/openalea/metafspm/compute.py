@@ -51,6 +51,14 @@ A scene's run configuration: how many threads it uses, its device and its memory
                  are scipy's, outside the registry
   archetype_batch     the most interior cells evaluated at once in a reduction's library (its archetypes' batches; the
                  library's transients freed between batches)
+  checks         the self-checks run (slow, for development: each raises AssertionError at the first difference), a
+                 collection of names among CHECKS, none by default:
+                 "topology"    every structure-derived value an MPG patches after a structural change (its caches,
+                               a DataStructure's entities and edges) compared, element for element, with its build
+                 "archetypes"  every archetype a reduction's batches evaluate evaluated again alone, in a library
+                               built for it, and compared bit for bit (solve.reduction.check_archetypes)
+                 e.g. Compute(checks={"topology", "archetypes"}); an unknown name raises at the Compute. run.json's
+                 provenance records them (scene.provenance)
 
 Within limits() (the Scene's build and each of its steps), Compute.current() is that Compute: what the code run
 there reads of it (a reduction's archetype batches) without being given it; outside, a default Compute().
@@ -92,6 +100,7 @@ BLAS_THREADS = 1              # the BLAS/OpenMP threads within a scene, whatever
 BANDWIDTH_THREADS_RULE = 4    # the bandwidth-bound kernels' threads, at most (the reduction's scatter): a laptop's
                               # measured ceiling (Core Ultra 7 255U: the scatter 1.7x at 2-4 threads, flat beyond; a
                               # triad 1.5x at 4 then flat)
+CHECKS = ("archetypes", "topology")  # Compute.checks' names
 SECTIONS = ("compute", "bandwidth")   # a parallel section's ceiling: the budget, or machine()'s bandwidth_threads
 
 
@@ -102,6 +111,7 @@ class Compute:
     memory: str = "trim"
     linear_solver: object = None           # a name, or {key: name}; None: "superlu" on the cpu, "cupy" on cuda
     archetype_batch: int = 200_000
+    checks: tuple = ()                     # names among CHECKS (any collection; kept sorted, as a tuple)
     _controller: object = field(default=None, init=False, repr=False, compare=False)
     _linear: dict = field(default_factory=dict, init=False, repr=False, compare=False)
     _backend: object = field(default=None, init=False, repr=False, compare=False)
@@ -118,15 +128,28 @@ class Compute:
         self.linear_solver = checked_setting(self.linear_solver, self.device)
         if isinstance(self.archetype_batch, bool) or not isinstance(self.archetype_batch, int) or self.archetype_batch < 1:
             raise ValueError(f"Compute: archetype_batch is a positive integer (interior cells), got {self.archetype_batch!r}")
+        if isinstance(self.checks, str) or not hasattr(self.checks, "__iter__"):
+            raise ValueError(f"Compute: checks is a collection of names among {CHECKS}, e.g. {{'topology'}}, "
+                             f"got {self.checks!r}")
+        unknown = sorted(str(name) for name in self.checks if name not in CHECKS)
+        if unknown:
+            raise ValueError(f"Compute: unknown checks {unknown}; checks are among {CHECKS}")
+        self.checks = tuple(sorted(set(self.checks)))
 
     def as_dict(self) -> dict:
         """The configuration ({name: value}), as scenario.json records it."""
-        return {f.name: getattr(self, f.name) for f in fields(self) if f.init}
+        return {f.name: list(self.checks) if f.name == "checks" else getattr(self, f.name) for f in fields(self) if f.init}
 
     def __getstate__(self):
         state = dict(self.__dict__)
         state.update(_controller=None, _linear={}, _backend=None, _timings={})
         return state
+
+    def checking(self, name: str) -> bool:
+        """Whether the check *name* (one of CHECKS) runs."""
+        if name not in CHECKS:
+            raise ValueError(f"Compute.checking: a check is one of {CHECKS}, got {name!r}")
+        return name in self.checks
 
     @staticmethod
     def current() -> "Compute":
