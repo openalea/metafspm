@@ -271,7 +271,16 @@ frame byte-identical at 1, 2 and 4 processes. Mean step over day 2, 4 plants: **
 publication (each worker's arrays raw through /dev/shm, its MTG pickled only when it grew: here every hour) costs
 about 0.05-0.06 s per plant and step, half the first runner's checkpoint-based one (ccb2d2f: 1.58 s at 2, 1.25 s at
 4). Workers' resident memory 1.9-2.3 GB each (shared pages counted; the scope held them all), balance 1.01-1.04.
-Larger, older plants are where it pays.
+
+The largest scene within the 8 GB bound (B3, the scene's process unpinned): **6 plants**. From the sowing, 12 hours:
+95.4 s at 1 process, 85.3 s at 2, 75.8 s at 4 (the archetypes' first evaluations, the scope's peak 6.5 / 7.6 /
+8.0 GB); 8 plants at 4 processes ran out of memory in the first steps. Resumed at day 2 for a day (hours 48-72): **60 s
+at 1 process (59.8, 60.7), 59-61 s at 2 (59.4-61.1)**, 4 processes out of memory at hour ~60; tables and frames
+byte-identical. At 2 processes the publication takes 10-12 s of the day, and a plant's step is ~1.5x slower in a
+worker (efficient cores) than in the scene's process (performance cores): 37 s per worker of 3 plants against 24 s for
+3 plants in one process. A forked worker costs ~470 MB per plant beyond one process's run (the shared pages the scene's
+process rewrites stay alive): the scope's peak 4.3-4.7 GB at 1 process, 7.3-7.7 GB at 2. On this laptop processes
+pay at the sowing's heavy first steps, not later; machines of equal cores and more memory are where they pay.
 
 **Scaling** (measured 2026-11-07 on the same laptop, metafspm f3a2148, GRANAP c626201, after the incremental
 topology updates; `benchmark.py --variability 1`: each plant its own root draws, the plants sharing their archetypes;

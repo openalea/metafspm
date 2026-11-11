@@ -246,7 +246,7 @@ def test_the_placement_on_equal_cores_and_the_larger_groups():
 def test_auto_follows_the_cores_and_the_memory_budget():
     topology = _topology(performance=2, efficient=8)
     assert runner.placement("auto", [1] * 8, topology, budget_mb=1e6, coordinator_mb=0)["count"] == 8
-    fits = 2 * runner.predicted_mb(3) + runner.predicted_mb(2) + 1000 + 1      # three workers: 3, 3 and 2 plants
+    fits = 2 * runner.predicted_mb(3) + runner.predicted_mb(2) + 1000 + 8 * runner.COPY_PER_PLANT_MB + 1   # 3, 3, 2
     assert runner.placement("auto", [1] * 8, topology, budget_mb=fits, coordinator_mb=1000)["count"] == 3
     with pytest.warns(UserWarning, match="memory budget"):
         assert runner.placement("auto", [1] * 8, topology, budget_mb=10, coordinator_mb=0)["count"] == 0
@@ -257,8 +257,11 @@ def test_the_topology_of_this_machine_and_a_worker_on_its_cores():
     topology = runner.cpu_topology()
     assert topology["cores"] and set(sum(topology["cores"], [])) == set(topology["kinds"])
     scene = _scene(2, threads="auto")
+    affinity = os.sched_getaffinity(0) if hasattr(os, "sched_getaffinity") else None
     scene.run()
     plan = scene.runner.plan
+    if hasattr(os, "sched_getaffinity"):                            # the coordinator is not pinned
+        assert os.sched_getaffinity(0) == affinity
     for handle, cores in zip(scene.runner._handles, plan["worker_cores"]):
         if hasattr(os, "sched_getaffinity"):
             assert os.sched_getaffinity(handle["pid"]) == set(cores)

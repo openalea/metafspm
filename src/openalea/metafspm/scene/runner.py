@@ -40,9 +40,9 @@ the step) and an environment model working on a population's own DataStructure k
 names.
 
 Placement (placement(), §11.1 of route B's plan): the physical cores of the processors the process may run on
-(hyperthread siblings counted once, the low-power cores of a hybrid CPU left out), the coordinator on the performance
-cores (the environment, Caribu), the workers on the efficient cores, each process its own core set
-(os.sched_setaffinity) and every thread pool held to it (numba through Compute(threads=), BLAS/OpenMP at one: Compute).
+(hyperthread siblings counted once, the low-power cores of a hybrid CPU left out), the workers on the efficient cores,
+each its own core set (os.sched_setaffinity), the performance cores left to the coordinator, which is not pinned (its
+environment phase runs while the workers wait at the barrier, on every core: measured faster, B3) and every thread pool held to it (numba through Compute(threads=), BLAS/OpenMP at one: Compute).
 "auto": the most workers the populations, the cores and the memory budget allow (MemAvailable and the cgroup's limit,
 less 10 %; PRIVATE_FIXED_MB + PER_PLANT_MB per plant predicted per worker). run.json records it ("processes").
 
@@ -68,7 +68,11 @@ from multiprocessing.connection import Pipe
 from time import perf_counter
 
 PRIVATE_FIXED_MB = 500.       # a forked worker's own memory before its plants (copy-on-write measured: route B §7)
-PER_PLANT_MB = 300.           # a worker's memory per plant (day 12 of use case 1: route B §7), a rule of thumb
+PER_PLANT_MB = 500.           # a worker's memory per plant: its private pages and the coordinator's pages it keeps
+                              # alive after the coordinator rewrites them (use case 1, 6 plants at day 2-3, the
+                              # scope's peak at 2 and 4 processes less its peak at 1: ~470 MB per plant, B3)
+COPY_PER_PLANT_MB = 500.      # the coordinator's growth per plant in its copies (use case 1 at day 2-3, the peak at 1
+                              # process less its build: (4.5 - 1.3) GB / 6 plants, B3)
 MEMORY_MARGIN = 0.10          # the memory budget's margin: 10 % of what is available kept free
 LOW_POWER_RATIO = 0.75        # a hybrid CPU's efficient core whose top frequency is below this ratio of the fastest
                               # efficient one's is a low-power core (left out: 2.2x slower on the laptop measured)
@@ -197,7 +201,10 @@ def placement(processes, plants: list, topology: dict = None, budget_mb: float =
 
         count                    the worker processes (0: the populations run in the scene's process)
         groups                   each worker's populations (their indices)
-        coordinator_cores        the coordinator's processors (None: left as they are)
+        coordinator_cores        the processors the workers leave to the coordinator (None: no worker); the
+                                 coordinator itself is not pinned: its environment phase runs while the workers wait
+                                 at the barrier and may use their cores (Caribu 35 % faster than on the performance
+                                 cores alone, the step equal or faster: B3)
         worker_cores             each worker's processors
         threads_per_process      {"coordinator": n, "workers": [n, ...]}
         disjoint                 whether the core sets are disjoint (False: fewer cores than processes)
@@ -207,7 +214,7 @@ def placement(processes, plants: list, topology: dict = None, budget_mb: float =
     whose efficient cores are at least the workers, the coordinator takes the performance cores and the workers share
     the efficient ones; otherwise every core is equal, the coordinator taking a worker's share and the remainder.
     "auto": the most workers, at most the populations and the cores less one, whose predicted memory (predicted_mb
-    of their groups) and the coordinator's fit the budget; none fitting, or one population, the scene's process alone.
+    of their groups) and the coordinator's (its own now and COPY_PER_PLANT_MB per plant of its copies) fit the budget; none fitting, or one population, the scene's process alone.
     """
     if topology is None:
         topology = cpu_topology()
@@ -223,7 +230,8 @@ def placement(processes, plants: list, topology: dict = None, budget_mb: float =
         count = 0
         for candidate in range(min(populations, max(1, len(usable) - 1)), 1, -1):
             groups = deal(plants, candidate)
-            need = sum(predicted_mb(sum(plants[k] for k in group)) for group in groups) + (coordinator_mb or 0.)
+            need = sum(predicted_mb(sum(plants[k] for k in group)) for group in groups) + (coordinator_mb or 0.) \
+                + sum(plants) * COPY_PER_PLANT_MB
             if budget_mb is None or need <= budget_mb:
                 count = candidate
                 break
@@ -577,7 +585,6 @@ class ProcessRunner:
         self._handles, self._folder, self._finalizer = [], None, None
         self._synced = {}               # {population name: the write counts of its last publication}
         self._shared = None             # the coordinator's SharedStore reading the publications' shared parts
-        self._original_affinity = None
         self._measured = {}             # {group: {"resident_MB": last, "peak_MB": most, "seconds": its steps' total}}
         self._balance = []              # each step's slowest group's time over the groups' mean
 
@@ -620,7 +627,7 @@ class ProcessRunner:
 
     def start(self, scene) -> None:
         """The workers forked (once, at the scene's first step: after its build, a restore and the numba kernels'
-        load), each on its core set; the coordinator on its own."""
+        load), each on its core set; the coordinator left on every processor."""
         from openalea.metafspm.compute import fork_safe_threading
         from openalea.metafspm.scene.shared import SharedStore
         if self._handles:
@@ -660,18 +667,12 @@ class ProcessRunner:
                             "exit": None})
         self._handles = handles
         self._finalizer = weakref.finalize(self, _end_workers, handles, self._folder)
-        if self.plan["coordinator_cores"] and hasattr(os, "sched_setaffinity"):
-            self._original_affinity = os.sched_getaffinity(0)
-            os.sched_setaffinity(0, self.plan["coordinator_cores"])
 
     def stop(self) -> None:
-        """The workers stopped, their folder removed, the coordinator's processors given back."""
+        """The workers stopped, their folder removed."""
         if self._finalizer is not None:
             self._finalizer()
             self._finalizer = None
-        if self._original_affinity is not None:
-            os.sched_setaffinity(0, self._original_affinity)
-            self._original_affinity = None
 
     # ── the step ──
 

@@ -6,8 +6,8 @@
 
 - Populations in worker processes (route B, B2): `Compute(processes=1 | n | "auto")` (default 1). With n, the scene's
   process forks n workers at the first step, each running a group of whole populations on a core set of its own
-  (`os.sched_setaffinity`; on a hybrid CPU the scene's process on the performance cores, the workers on the
-  efficient ones, the low-power cores left out), its threads held to it; the scene's process keeps the environment
+  (`os.sched_setaffinity`; on a hybrid CPU the workers on the efficient cores, the low-power cores left out; the
+  scene's process unpinned, its environment phase on every core while the workers wait: measured faster, B3), its threads held to it; the scene's process keeps the environment
   models, the exchanges, the recorder and the checkpoints, and a copy of each population's DataStructure, published
   by its worker after each step (its arrays raw through /dev/shm, its state, its MTG only when the topology moved;
   loaded in place) (`scene.runner`: `SequentialRunner`,

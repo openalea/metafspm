@@ -1299,10 +1299,15 @@ scene.population("wheat3").data_structure.get("psi")        # the scene process'
   populations raises.
 - `1` (default): the populations in the scene's process, in turn. `"auto"`: the most workers that the populations, the
   physical cores (less one, the scene's process's) and the memory budget allow (MemAvailable and a cgroup's limit,
-  less 10 %; each worker predicted at `runner.PRIVATE_FIXED_MB` + `runner.PER_PLANT_MB` per plant), else 1.
-- Cores: each process runs on a core set of its own (`os.sched_setaffinity`, Linux), its threads held to it; on a
-  hybrid CPU the scene's process takes the performance cores (the environment, Caribu) and the workers the efficient
-  ones, the low-power cores left out. `run.json` records the placement under `"processes"` (groups, core sets,
+  less 10 %; each worker predicted at `runner.PRIVATE_FIXED_MB` + `runner.PER_PLANT_MB` per plant, the scene's
+  process at its memory now + `runner.COPY_PER_PLANT_MB` per plant), else 1. A forked worker costs more than its
+  private pages: the scene's process rewrites its copies every step, and the pages the workers still share stay
+  alive (use case 1, 6 plants at day 2-3: the scope's peak 4.3-4.7 GB at 1 process, 7.3-7.7 GB at 2, out of 8 GB at
+  4).
+- Cores: each worker runs on a core set of its own (`os.sched_setaffinity`, Linux), its threads held to it; on a
+  hybrid CPU the workers take the efficient cores, the low-power cores left out; the scene's process is not pinned:
+  its environment phase (the soil, Caribu) runs while the workers wait, on every core (Caribu 3.6 s instead of 5.7 s
+  over a day of use case 1, the step equal or faster, the same bits). `run.json` records the placement under `"processes"` (groups, core sets,
   threads, memory budget, predicted and measured memory per worker, the balance: the slowest group's time over the
   mean), and the time of the publications (`"timing"` `"publication"`).
 - Limits: Linux and macOS (fork), the cpu, `coupling="explicit"` (a FixedPoint across processes is a later phase); a
@@ -1315,6 +1320,9 @@ scene.population("wheat3").data_structure.get("psi")        # the scene process'
 - When it pays: a population's step must outweigh its publication (its variables' arrays and state through RAM each
   step, its MTG too when it grew: about 50-60 ms per young growing wheat plant) and the environment's step, which stays serial. Small scenes
   (one or two young plants) gain little or lose; measure with your scene (use case 1's README gives the numbers).
+  On a laptop whose workers get the efficient cores, a plant's step is also ~1.5x slower in a worker than in the
+  scene's process on the performance cores (use case 1, day 2-3): there, 6 plants run a day in 60 s at 1 and at 2
+  processes alike. Processes pay on machines of equal cores and enough memory, with plants of steps of seconds.
 
 ### Repeated runs: `run_variants`
 
