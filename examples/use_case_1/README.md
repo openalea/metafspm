@@ -264,6 +264,15 @@ suite, a browser, a second run), the run can be moved to the slower cores; `task
 on the performance cores (`lscpu --extended` or `/sys/devices/cpu_core/cpus` lists them; Linux only, macOS has no
 affinity setting). `threads="auto"` then counts the processors given (4 here).
 
+**Populations in processes** (`Compute(processes=n)`, metafspm's `scene.runner`; measured 2026-11-11, metafspm
+ccb2d2f, each plant its own population, `planting(..., population=["wheat0", ...])`, 8 GB scope, OPENBLAS/OMP/MKL at
+1). Every table and frame byte-identical at 1, 2 and 4 processes. Mean step over day 2, 4 plants: **1.69 s at 1
+process, 1.58 s at 2 (x1.07), 1.25 s at 4 (x1.36)**; 2 plants, day 3: 0.91 s at 1, 1.02 s at 2 (slower: the
+publication, each worker's DataStructure checkpointed into /dev/shm and loaded back, about 0.2 s per step there and
+0.4-0.5 s at 4 plants, outweighs the young plants' own step). Workers' resident memory 1.9-2.3 GB each (shared
+pages counted; the scope held them all), balance 1.01-1.04. Larger, older plants are where it pays; a lighter
+publication (shared-memory mirrors) is the next step.
+
 **Scaling** (measured 2026-11-07 on the same laptop, metafspm f3a2148, GRANAP c626201, after the incremental
 topology updates; `benchmark.py --variability 1`: each plant its own root draws, the plants sharing their archetypes;
 under an 8 GB bound, the memory the scope's peak, the process pool of the time included (its processes in the
