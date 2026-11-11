@@ -398,6 +398,7 @@ class Reduction:
         state.pop("_table", None)          # the groups' arrays: per DataStructure and topology
         state.pop("_assigned", None)
         state.pop("_parameters_kept", None)  # the plants' parameters read: per DataStructure
+        state["_merged"] = {}              # merged_into's groups: made again from the templates (MBs a plant)
         return state
 
     def __setstate__(self, state):

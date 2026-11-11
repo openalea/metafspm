@@ -25,12 +25,15 @@ scene.population(name).data_structure read. Within a step:
   2. worker: those variables written into its DataStructure (in place, the counts kept), the population's run, its
      components' wall times, calls and conservation balances, then the publication (publish()): every numeric
      variable's array raw into one buffer of the worker's folder in /dev/shm (Linux's shared memory: RAM), the
-     DataStructure's state (counters, derivations, masks) beside it, and its MPG (the MTG) only when the topology
-     or the set of variables changed;
+     DataStructure's state (counters, derivations, masks) beside it, and when the topology moved its MPG's delta
+     since the last publication (MPG.copy_delta), the whole MPG only when the variables or the MPG itself changed;
   3. coordinator: each publication loaded into its copy (load_publication), in the populations' order: the arrays
-     written in place when the topology stayed, else as a checkpoint is loaded (the mappings then rebuild their
-     incidence, their stamps having moved, the union too). Before a checkpoint of the scene every copy is made whole
-     (synchronize: the MTG's stored properties written and sent).
+     written in place where their shapes stayed, a delta patching the copy's MPG in place
+     (MPG.apply_structure_delta; the mappings then rebuild their incidence, their stamps having moved, the union
+     too). Before a checkpoint of the scene every copy is made whole (synchronize: the MTG's stored properties
+     written and sent). At the fork the copies are the workers' DataStructures: the first publication is a delta,
+     the shared parts both hold since go by their id (SharedStore(forked=)), and the copies keep the pages they
+     share with the workers (counted once).
 
 A population's values are therefore the same bits at any process count: its computations do not depend on the process
 running them, its inputs are the coordinator's exchanges either way, and every scene-level sum over plants is taken in
@@ -274,7 +277,7 @@ def placement(processes, plants: list, topology: dict = None, budget_mb: float =
 
 # ── publication: a worker's DataStructure into its coordinator's copy ─────
 
-def publish(data_structure, folder: str, store, full: bool) -> dict:
+def publish(data_structure, folder: str, store, mode: str, marks: dict = None, check: bool = False) -> dict:
     """
     *data_structure* published into *folder* (in /dev/shm: memory) for its copy in another process (load_publication),
     the reply's small layout returned:
@@ -283,10 +286,17 @@ def publish(data_structure, folder: str, store, full: bool) -> dict:
                    the layout), however it was written (set, a view, a derivation, a read from the MTG);
       state.pkl    the object variables and the DataStructure's state (its counters, derivations, masks, metadata:
                    what checkpoint() keeps), pickled with *store* (the shared parts, the sections' templates, written
-                   once); when *full*, also its MPG (the MTG) and its construction: the topology moved.
+                   once), and by *mode*:
+                     "values"  nothing more: the topology is the copy's;
+                     "delta"   the topology moved: its MPG's change since the copy's state (MPG.copy_delta, from
+                               *marks*: the MPG's copy_marks() at the last publication);
+                     "full"    its MPG (the MTG) whole and its construction: the copy loads it as a checkpoint.
+      check.pkl    with *check* (Compute(checks={"publication"})) and mode "delta": the MPG whole and the entity ids,
+                   which the copy patched is compared with (check_publication).
 
-    *full* False (the topology the copy's): the MTG is not sent; its stored properties (beyond the variables' columns)
-    reach the copy at the next full publication (synchronize before a checkpoint).
+    The layout holds the MPG's copy_marks() of a "delta" or "full" publication, kept by the publishing worker for
+    the next. In mode "values" the MTG's stored properties (beyond the variables' columns) reach the copy at the next
+    "delta" or "full" publication (synchronize before a checkpoint publishes in full).
     """
     import numpy as np
     os.makedirs(folder, exist_ok=True)
@@ -306,35 +316,52 @@ def publish(data_structure, folder: str, store, full: bool) -> dict:
              for name in data_structure._CHECKPOINT_STATE + data_structure._checkpoint_extra()
              if name in data_structure.__dict__}
     content = {"objects": objects, "state": state}
-    if full:
-        content["mtg"] = getattr(data_structure, "_mtg", None)
+    mtg = getattr(data_structure, "_mtg", None)
+    if mode == "delta":
+        content["delta"] = mtg.copy_delta(marks)
+    elif mode == "full":
+        content["mtg"] = mtg
         content["construction"] = data_structure._construction()
-        content["ids"] = {location: np.asarray(data_structure.entity_ids(location))
-                          for location in {entry[0] for entry in layout} | {key.split("::")[0] for key in objects}
-                          if location != "scalar"}
+        content["ids"] = _entity_ids(data_structure, layout, objects)
     data_structure.__dict__["_columns_detached"] = True      # the MPG's views of the columns pickled without them
     try:
         with open(os.path.join(folder, "state.pkl"), "wb") as file:
             store.dump(content, file)
+        check = check and mode == "delta"
+        if check:                         # a pickle of its own: none of its objects shared with the delta's
+            with open(os.path.join(folder, "check.pkl"), "wb") as file:
+                store.dump({"mtg": mtg, "ids": _entity_ids(data_structure, layout, objects)}, file)
     finally:
         data_structure.__dict__.pop("_columns_detached", None)
-    return {"layout": layout, "order": order, "full": full}
+    marks = _marks(data_structure) if mode != "values" else None
+    return {"layout": layout, "order": order, "mode": mode, "check": check, "marks": marks}
 
 
-def load_publication(data_structure, folder: str, store, publication: dict) -> None:
+def _entity_ids(data_structure, layout: list, objects: dict) -> dict:
+    """{location: entity ids} of the locations of a publication's variables (but "scalar")."""
+    import numpy as np
+    return {location: np.asarray(data_structure.entity_ids(location))
+            for location in {entry[0] for entry in layout} | {key.split("::")[0] for key in objects}
+            if location != "scalar"}
+
+
+def load_publication(data_structure, folder: str, store, publication: dict) -> set:
     """The publication of *folder* (publish(); *publication* its layout) loaded into *data_structure*, the copy, in
-    place: full, as a checkpoint is (load_checkpoint: its MTG, its stores and caches anew); otherwise its variables'
-    arrays written in place (the views on them kept) and its state taken."""
+    place, by its mode: "full", as a checkpoint is (load_checkpoint: its MTG, its stores and caches anew); "delta",
+    its MPG patched and its variables' arrays written in place where their shapes stayed
+    (MPGDataStructure._load_copy_delta), then compared with the MPG whole when the publication holds a check;
+    "values", its variables' arrays written in place (the views on them kept) and its state taken. Returns the keys of
+    the shared parts it refers to (SharedStore.load_referring)."""
     import numpy as np
     with open(os.path.join(folder, "state.pkl"), "rb") as file:
-        content = store.load(file)
+        content, referred = store.load_referring(file)
     with open(os.path.join(folder, "values.bin"), "rb") as file:
         buffer = file.read()
     arrays = {}
     for location, name, dtype, shape, offset in publication["layout"]:
         count = math.prod(shape)
         arrays[f"{location}::{name}"] = np.frombuffer(buffer, dtype=dtype, count=count, offset=offset).reshape(shape)
-    if publication["full"]:
+    if publication["mode"] == "full":
         variables = {}
         for key in publication["order"]:                  # the variables in their stores' order
             location, name = key.split("::", 1)
@@ -343,12 +370,80 @@ def load_publication(data_structure, folder: str, store, publication: dict) -> N
             arrays[f"_ids::{location}"] = ids
         data_structure._load_construction(content["construction"], content)
         data_structure._apply_checkpoint(folder, {"variables": variables}, content, arrays)
-        return
+        return referred
+    if publication["mode"] == "delta":
+        data_structure._load_copy_delta(content["delta"], publication["order"], content, arrays)
+        if publication["check"]:
+            with open(os.path.join(folder, "check.pkl"), "rb") as file:
+                check_publication(data_structure, store.load(file))
+        return referred
     stores = data_structure._var_stores()
     for key, values in list(arrays.items()) + list(content["objects"].items()):
         location, name = key.split("::", 1)
         stores[location][name][...] = values
     data_structure.__dict__.update(content["state"])
+    return referred
+
+
+def check_publication(data_structure, whole: dict) -> None:
+    """
+    Compute(checks={"publication"}): the copy *data_structure*, patched from a "delta" publication, compared with its
+    owner's MPG sent whole (*whole*: {"mtg", "ids"}, publish()'s check.pkl): the id counter, the topology's dicts,
+    the instances, every property column (its keys and values, a view's overlay and synchronised ids), the topology
+    arrays and the entity ids of every location. AssertionError at the first difference.
+    """
+    import numpy as np
+    from openalea.metafspm.data_structure.columns import DataStructureColumn
+    copy, full = data_structure._mtg, whole["mtg"]
+
+    def same(left, right) -> bool:
+        if isinstance(left, np.ndarray) or isinstance(right, np.ndarray):
+            left, right = np.asarray(left), np.asarray(right)
+            if left.dtype == object or right.dtype == object:
+                return left.shape == right.shape and all(same(a, b) for a, b in zip(left.ravel(), right.ravel()))
+            return left.shape == right.shape and left.dtype == right.dtype and np.array_equal(left, right, equal_nan=True)
+        if isinstance(left, dict) and isinstance(right, dict):
+            return left.keys() == right.keys() and all(same(left[key], right[key]) for key in left)
+        if isinstance(left, (list, tuple)) and isinstance(right, (list, tuple)):
+            return type(left) is type(right) and len(left) == len(right) and all(map(same, left, right))
+        if isinstance(left, float) and isinstance(right, float) and left != left and right != right:
+            return True
+        return type(left) is type(right) and left == right
+
+    def column_state(column) -> tuple:
+        if isinstance(column, DataStructureColumn):
+            overlay = column.overlay
+            return (type(column).__name__, column.location, overlay.keys_array(), overlay.values_array(),
+                    column._synced, column._hidden_keys())
+        return type(column).__name__, column.keys_array(), column.values_array()
+
+    def expect(condition: bool, what: str) -> None:
+        if not condition:
+            raise AssertionError(f"publication check: the copy of {what} differs from its owner's (patched from a "
+                                 "delta publication, compared with the MPG sent whole)")
+
+    expect(copy._id == full._id, "the id counter")
+    for name in ("_parent", "_children", "_complex", "_components", "_scale"):
+        expect(same(getattr(copy, name), getattr(full, name)), name)
+    expect(list(copy._properties) == list(full._properties), "the property names")
+    for name, column in full._properties.items():
+        expect(same(column_state(copy._properties[name]), column_state(column)), f"the property {name!r}")
+    instances = (copy.__dict__.get("_instances"), full.__dict__.get("_instances"))
+    expect((instances[0] is None) == (instances[1] is None), "the instances")
+    if instances[1] is not None:
+        copied_instances, owned = instances
+        for name in owned.COLUMNS:
+            expect(np.array_equal(getattr(copied_instances, name), getattr(owned, name)), f"the instances' {name}")
+        expect(copied_instances.template == owned.template and copied_instances.codes == owned.codes
+               and copied_instances.templates.keys() == owned.templates.keys(),
+               "the instances' templates")
+        expect(all(copied_instances.templates[key].same_as(template) for key, template in owned.templates.items()),
+               "the instances' templates")
+    copied, built = copy.topology_arrays(), full._full_topology_arrays()
+    for name, values in built.items():
+        expect(np.array_equal(copied[name][:values.size], values), f"the topology array {name!r}")
+    for location, ids in whole["ids"].items():
+        expect(np.array_equal(np.asarray(data_structure.entity_ids(location)), ids), f"the entity ids at {location}")
 
 
 # ── the runners ───────────────────────────────────────────────────────────
@@ -408,8 +503,37 @@ def _shared_dumps(value) -> bytes:
     return buffer.getvalue()
 
 
+def _marks(data_structure):
+    """The copy_marks() of *data_structure*'s MPG, None without one (publish: in full when the topology moves)."""
+    mtg = getattr(data_structure, "_mtg", None)
+    return mtg.copy_marks() if hasattr(mtg, "copy_marks") else None
+
+
 def _write_counts(data_structure) -> dict:
     return dict(data_structure.__dict__.get("_writes", {}))
+
+
+def _forked_parts(scene) -> dict:
+    """{id: part} of the shared parts (scene.shared) the populations' DataStructures refer to (their MPG, their state,
+    their object variables): shared_objects of what a publication pickles."""
+    from openalea.metafspm.scene.shared import shared_objects
+    contents = []
+    for population in scene.populations:
+        data_structure = population.data_structure
+        state = {name: data_structure.__dict__[name]
+                 for name in data_structure._CHECKPOINT_STATE + data_structure._checkpoint_extra()
+                 if name in data_structure.__dict__}
+        objects = [array for variables in data_structure._var_stores().values() for array in variables.values()
+                   if array.dtype == object]
+        contents.append((getattr(data_structure, "_mtg", None), state, objects))
+    detached = [population.data_structure for population in scene.populations]
+    for data_structure in detached:
+        data_structure.__dict__["_columns_detached"] = True
+    try:
+        return shared_objects(contents)
+    finally:
+        for data_structure in detached:
+            data_structure.__dict__.pop("_columns_detached", None)
 
 
 def _set_parent_death_signal() -> None:
@@ -424,12 +548,18 @@ def _set_parent_death_signal() -> None:
 class _Worker:
     """A worker process's command loop: its group's populations stepped, published, checkpointed, applied on."""
 
-    def __init__(self, scene, indices: list, connection, folder: str, cores: list):
+    def __init__(self, scene, indices: list, connection, folder: str, cores: list, forked: dict = None):
         from openalea.metafspm.scene.shared import SharedStore
         self.scene, self.connection, self.folder = scene, connection, folder
         self.populations = [scene.populations[index] for index in indices]
-        self.store = SharedStore(os.path.join(folder, "shared"))
-        self.published = {}             # {population name: its last publication's topology version and variables}
+        self.store = SharedStore(os.path.join(folder, "shared"), forked=forked)
+        # {population name: its last publication's topology version, variables, shapes, MPG and the MPG's marks
+        # (MPG.copy_marks)}: at the fork, the copy's state (the coordinator's copy is this DataStructure, forked), so
+        # that the first publication is a delta and the copy keeps what did not change (its pages shared with the
+        # workers: counted once)
+        self.published = {population.name: self._published(population.data_structure,
+                                                           _marks(population.data_structure))
+                          for population in self.populations}
         if cores and hasattr(os, "sched_setaffinity"):
             os.sched_setaffinity(0, cores)
         compute = scene.compute
@@ -493,17 +623,36 @@ class _Worker:
         timings, scene.compute._timings = scene.compute._timings, {}
         return {"populations": results, "timings": timings, "resident_MB": resident_mb()}
 
+    @staticmethod
+    def _published(data_structure, marks) -> dict:
+        """What the next publication of *data_structure* compares with (publish): its topology version, its variables
+        (location, name, dtype), their shapes, its MPG and *marks*, the MPG's copy_marks() the copy is equal to."""
+        stores = data_structure._var_stores()
+        return {"topology": data_structure.topology_version,
+                "variables": tuple((location, name, array.dtype.str) for location, store in stores.items()
+                                   for name, array in store.items()),
+                "shapes": tuple(array.shape for store in stores.values() for array in store.values()),
+                "mtg": getattr(data_structure, "_mtg", None), "marks": marks}
+
     def publish(self, population, full: bool) -> dict:
-        """*population*'s DataStructure published into the worker's folder (publish()); the MPG's whole state when
-        *full* or when its topology or its variables (their names, dtypes, shapes) changed since the last one."""
+        """*population*'s DataStructure published into the worker's folder (publish()), by mode: "full" when *full*,
+        or when its MPG or its variables (their names, locations, dtypes) changed since the last one (or the fork);
+        else "values" when its topology and its arrays' shapes stayed; else "delta" (its MPG's change since the last
+        publication, from that publication's marks)."""
         data_structure = population.data_structure
-        shapes = (data_structure.topology_version,
-                  tuple((location, name, array.dtype.str, array.shape)
-                        for location, variables in data_structure._var_stores().items()
-                        for name, array in variables.items()))
-        full = full or self.published.get(population.name) != shapes
-        self.published[population.name] = shapes
-        return publish(data_structure, os.path.join(self.folder, population.name), self.store, full)
+        last, now = self.published[population.name], self._published(data_structure, None)
+        if full or last["variables"] != now["variables"] or last["mtg"] is not now["mtg"] or last["marks"] is None:
+            mode = "full"
+        elif last["topology"] == now["topology"] and last["shapes"] == now["shapes"]:
+            mode = "values"
+        else:
+            mode = "delta"
+        publication = publish(data_structure, os.path.join(self.folder, population.name), self.store, mode,
+                              marks=last["marks"], check=self.scene.compute.checking("publication"))
+        marks = publication.pop("marks")
+        now["marks"] = last["marks"] if mode == "values" else marks
+        self.published[population.name] = now
+        return publication
 
     def synchronize(self, names: list) -> dict:
         """The populations *names* published whole, their MTG written first (flush_mtg): what a checkpoint of the
@@ -584,6 +733,7 @@ class ProcessRunner:
         self.processes = plan["count"]
         self._handles, self._folder, self._finalizer = [], None, None
         self._synced = {}               # {population name: the write counts of its last publication}
+        self._parts = {}                # {population name: the shared parts its last publications refer to}
         self._shared = None             # the coordinator's SharedStore reading the publications' shared parts
         self._measured = {}             # {group: {"resident_MB": last, "peak_MB": most, "seconds": its steps' total}}
         self._balance = []              # each step's slowest group's time over the groups' mean
@@ -638,7 +788,11 @@ class ProcessRunner:
             scene.recorder.wait_for_frames()             # no frame writer thread across the fork
         base = "/dev/shm" if os.path.isdir("/dev/shm") else None
         self._folder = tempfile.mkdtemp(prefix=f"metafspm-{os.getpid()}-", dir=base)
-        self._shared = SharedStore(os.path.join(self._folder, "shared"))
+        # The shared parts the coordinator's copies and the workers' DataStructures hold at the fork: referred to by
+        # their id in the publications, each process keeping its own (the coordinator's pages shared with the
+        # workers', counted once, instead of a copy of every part loaded)
+        forked = _forked_parts(scene)
+        self._shared = SharedStore(os.path.join(self._folder, "shared"), forked=forked)
         for population in scene.populations:
             self._synced[population.name] = _write_counts(population.data_structure)
         handles = []
@@ -656,7 +810,7 @@ class ProcessRunner:
                     parent_end.close()
                     for other in handles:
                         other["connection"].close()
-                    _Worker(scene, indices, child_end, self._folder, cores).loop()
+                    _Worker(scene, indices, child_end, self._folder, cores, forked).loop()
                 except BaseException:
                     traceback.print_exc()
                     status = 1
@@ -785,11 +939,24 @@ class ProcessRunner:
             group_seconds.append(seconds)
         if group_seconds and sum(group_seconds) > 0:
             self._balance.append(max(group_seconds) / (sum(group_seconds) / len(group_seconds)))
+        started = perf_counter()
+        self._retain_parts()
+        scene._time("publication", perf_counter() - started)
 
     def _load(self, population, publication: dict) -> None:
-        load_publication(population.data_structure, os.path.join(self._folder, population.name), self._shared,
-                         publication)
+        referred = load_publication(population.data_structure, os.path.join(self._folder, population.name),
+                                    self._shared, publication)
         self._synced[population.name] = _write_counts(population.data_structure)
+        held = self._parts.setdefault(population.name, {"mtg": set(), "state": set()})
+        held["state"] = referred
+        if publication["mode"] != "values":
+            held["mtg"] = referred
+
+    def _retain_parts(self) -> None:
+        """The shared parts the copies' last publications (the last carrying each MPG, and the last of each) refer to
+        kept, the others let go and their files removed (SharedStore.retain): the coordinator holds only the parts
+        loaded since the fork that its copies refer to."""
+        self._shared.retain(set().union(*(held["mtg"] | held["state"] for held in self._parts.values())))
 
     def synchronize(self, scene) -> None:
         """Every population's copy made whole (its MTG's stored properties too): before a checkpoint of the scene."""
@@ -800,6 +967,7 @@ class ProcessRunner:
         for handle in self._handles:
             for name, publication in self._receive(scene, handle).items():
                 self._load(by_name[name], publication)
+        self._retain_parts()
 
     def _written(self, population) -> dict:
         """{name: (values, write count)} of the variables the coordinator wrote into *population*'s DataStructure

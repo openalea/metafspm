@@ -263,11 +263,21 @@ the frames, the checkpoints and `scene.population(name).data_structure` read, un
 
 - after its run, a worker **publishes** its DataStructure (`runner.publish`) into its folder of `/dev/shm` (RAM):
   every numeric variable's array raw in one buffer (whatever wrote it: a `set`, a view, a derivation, a read from
-  the MTG), its state (counters, derivations, masks) pickled beside it, and its MPG (the MTG; the sections' templates
-  written once) only when the topology or the variables changed. The coordinator loads it into its copy
-  (`runner.load_publication`), in the populations' order: the arrays written in place when the topology stayed, else
-  as a checkpoint is loaded, the mappings and the union then rebuilding what moved (their stamps). Before a
-  checkpoint of the scene every copy is made whole (`synchronize`: the MTG's stored properties written and sent);
+  the MTG), its state (counters, derivations, masks) pickled beside it, and, when the topology moved, its MPG's
+  **delta** since the last publication (`MPG.copy_delta`): every attribute of the MPG (its topology's dicts, the id
+  counter, the instances, the anchors, the reduction) but its structure's caches, and the property columns that may
+  have changed (a numeric column when new, replaced or written since: its version; an object column and a view of a
+  DataStructure's column always), the unchanged numeric columns, the bulk of an MTG, left out. The coordinator loads
+  it into its copy (`runner.load_publication`), in the populations' order: the arrays written in place when their
+  shape stayed; a delta patches the copy's MPG in place (`MPG.apply_structure_delta`, the copy's structure caches
+  then patched from its own log), the copy's index and topology caches rebuilt. The whole MPG goes (and is loaded as
+  a checkpoint is) only when the variables or the MPG itself changed, and before a checkpoint of the scene
+  (`synchronize`: the MTG's stored properties written and sent). At the fork the copy is the worker's DataStructure:
+  the first publication is a delta, and the shared parts both processes hold since (the sections' templates, a
+  reduction's archetypes) go by their id (`SharedStore(forked=)`), neither written nor loaded again, so the copy
+  keeps its pages shared with the workers' (counted once); the parts loaded since that no copy refers to any more
+  are let go, their files removed. `Compute(checks={"publication"})` compares every patched copy with the MPG sent
+  whole beside the delta (`runner.check_publication`);
 - before a worker's run, what the coordinator wrote into its copy since the last publication (the forcings, the
   planting mask, the exchanges into the population, a user's or an event's `set`: the DataStructure's write counters
   tell which) goes in the step message, with the write counts;

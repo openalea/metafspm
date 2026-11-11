@@ -2427,6 +2427,37 @@ class MPGDataStructure(VariableStoreMixin, MTGDataStructure):
         self._membership_cache = {}
         self._build_index_map()
 
+    def _load_copy_delta(self, delta: dict, order: list, saved: dict, arrays: dict) -> None:
+        """
+        A copy's update from a publication of its owner in another process (scene.runner, the topology moved): in
+        place, as a checkpoint's load would make it (_load_construction, _apply_checkpoint) but without a new MPG.
+        The MPG patched (MPG.apply_structure_delta), the index and the caches built on the topology dropped, every
+        variable of *order* ("location::name", the owner's stores' order, the copy's too) written in place when its
+        shape stayed, else replaced by a copy of *arrays*' (or *saved*'s objects'), the state taken, the MPG's views
+        of the columns bound.
+        """
+        self._mtg.apply_structure_delta(delta)
+        self._B_cached = None
+        self._membership_cache = {}
+        self._build_index_map()
+        for name in self._TOPOLOGY_CACHES:
+            self.__dict__.pop(name, None)
+        for view in self.__dict__.get("_entity_views", {}).values():
+            view._forget()
+        stores = self._var_stores()
+        for key in order:
+            location, name = key.split("::", 1)
+            values = saved["objects"][key] if key in saved["objects"] else arrays[key]
+            current = stores[location].get(name)
+            if current is not None and current.shape == values.shape and current.dtype == values.dtype:
+                current[...] = values
+            else:
+                stores[location][name] = np.array(values, copy=True)
+        self.__dict__.update(saved["state"])
+        for name in self._TOPOLOGY_CACHES:
+            self.__dict__.pop(name, None)
+        self._bind_columns()
+
     @classmethod
     def _from_construction(cls, construction: dict, saved: dict):
         mtg = construction.pop("mtg", None) or saved["mtg"]

@@ -282,6 +282,14 @@ worker (efficient cores) than in the scene's process (performance cores): 37 s p
 process rewrites stay alive): the scope's peak 4.3-4.7 GB at 1 process, 7.3-7.7 GB at 2. On this laptop processes
 pay at the sowing's heavy first steps, not later; machines of equal cores and more memory are where they pay.
 
+With the MTG's delta publication (2026-11-12: a worker sends its MTG's change since the last step, the scene's copy
+patched in place; the first publication after the fork a delta, the shared parts both processes hold since by their
+id, so the copies keep the pages they share with the workers): the same day resumed at hour 48, 6 plants, **59.8 s at
+1 process, 56.6 s at 2** (was 59.8), the publication **4.3 s** of the day (was 12.6), the scope's peak **5.1 GB**
+at 2 (was 7.5; 4.2 GB at 1), and 4 processes now fit: 53.0 s, 6.9 GB (out of memory before); 4 plants from the sowing, 2 days: mean step over day 2 1.69 / 1.50 / 1.15 s at 1 / 2 / 4
+processes, the publication 7.5 s at 2 and 9.2 s at 4 (was 11.4 and 13.5). Tables and frames byte-identical at every
+count; `Compute(checks={"publication"})` passed on the 6-plant day.
+
 **Scaling** (measured 2026-11-07 on the same laptop, metafspm f3a2148, GRANAP c626201, after the incremental
 topology updates; `benchmark.py --variability 1`: each plant its own root draws, the plants sharing their archetypes;
 under an 8 GB bound, the memory the scope's peak, the process pool of the time included (its processes in the

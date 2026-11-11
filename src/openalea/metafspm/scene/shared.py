@@ -69,11 +69,16 @@ class SharedStore:
     reference to one part gives the same object.
     """
 
-    def __init__(self, folder: str):
+    def __init__(self, folder: str, forked: dict = None):
         self.folder = os.fspath(folder)
         self._keys = {}                 # {id(value): (value, key)}: the values shared so far, by object
         self._loaded = {}               # {key: value}: within a load
         self.referenced = set()         # the keys the checkpoint being written refers to
+        # {id(value): value} of the shared values a process and its forked workers both hold since the fork
+        # (shared_objects): referred to by their id, neither written nor read (each process its own, the same bits)
+        self.forked = forked if forked is not None else {}
+        self._inner = {}                # {key: the keys its part refers to}: the parts loaded
+        self._referring = None          # the keys a load_referring() met (with the parts they refer to)
 
     # ── writing ──
     def key_of(self, name: str, value) -> str:
@@ -125,14 +130,50 @@ class SharedStore:
                 raise FileNotFoundError(f"the checkpoint refers to the shared part '{key}', missing from "
                                         f"{self.folder} (removed with the checkpoints that referred to it? a checkpoint "
                                         "is restored with the shared folder it was written with)")
-            with open(path, "rb") as file:
-                value = self.load(file)
+            outer, self._referring = self._referring, (None if self._referring is None else set())
+            try:
+                with open(path, "rb") as file:
+                    value = self.load(file)
+            finally:
+                inner, self._referring = self._referring, outer
             self._loaded[key] = value
             self._keys[id(value)] = (value, key)       # not written again while it is the same object
+            if inner is not None:
+                self._inner[key] = inner
+        self._refer(key)
         return self._loaded[key]
+
+    def _refer(self, key: str) -> None:
+        if self._referring is not None and key not in self._referring:
+            self._referring.add(key)
+            for inner in self._inner.get(key, ()):
+                self._refer(inner)
 
     def end_load(self) -> None:
         self._loaded = {}
+
+    # ── a reader kept over many loads (scene.runner's coordinator) ──
+    def load_referring(self, file) -> tuple:
+        """(the pickle of *file*, load()'s, the keys of the parts it refers to, those they refer to included)."""
+        self._referring = set()
+        try:
+            return self.load(file), self._referring
+        finally:
+            self._referring = None
+
+    def retain(self, keys) -> list:
+        """The parts loaded but *keys* forgotten (their values let go) and their files removed: a reader kept over
+        many loads holds only what its last ones refer to (a writer whose part was removed writes it again: key_of).
+        The keys removed."""
+        removed = [key for key in self._loaded if key not in keys]
+        for key in removed:
+            value = self._loaded.pop(key)
+            self._keys.pop(id(value), None)
+            self._inner.pop(key, None)
+            path = os.path.join(self.folder, key + ".pkl")
+            if os.path.exists(path):
+                os.remove(path)
+        return removed
 
     # ── a checkpoint's references ──
     def write_references(self, path: str) -> None:
@@ -190,7 +231,10 @@ class _Pickler(pickle.Pickler):
         name = _shared_name(obj)
         if name is None:
             return None
-        return "metafspm.shared", self.store.key_of(name, obj.value if isinstance(obj, Shared) else obj)
+        value = obj.value if isinstance(obj, Shared) else obj
+        if self.store.forked.get(id(value)) is value:
+            return "metafspm.forked", id(value)
+        return "metafspm.shared", self.store.key_of(name, value)
 
 
 class _Unpickler(pickle.Unpickler):
@@ -200,9 +244,43 @@ class _Unpickler(pickle.Unpickler):
 
     def persistent_load(self, pid):
         tag, key = pid
+        if tag == "metafspm.forked":
+            return self.store.forked[key]
         if tag != "metafspm.shared":
             raise pickle.UnpicklingError(f"unknown persistent id {pid!r}")
         return self.store.value(key)
+
+
+class _Collector(pickle.Pickler):
+    """shared_objects' pickler: the shared values met recorded, not pickled, nothing written."""
+
+    def __init__(self, found: dict):
+        super().__init__(_Discard(), protocol=PROTOCOL)
+        self.found = found
+
+    def persistent_id(self, obj):
+        if type(obj) in _NEVER_SHARED:
+            return None
+        name = _shared_name(obj)
+        if name is None:
+            return None
+        value = obj.value if isinstance(obj, Shared) else obj
+        self.found[id(value)] = value
+        return "metafspm.forked", id(value)
+
+
+class _Discard:
+    def write(self, data) -> int:
+        return len(data)
+
+
+def shared_objects(value) -> dict:
+    """{id(part): part} of the shared values (the parts a SharedStore would write: Shared, the classes'
+    shared_in_checkpoints) *value* refers to, those inside them left out: e.g. what a process and the workers it
+    forks both hold (SharedStore(forked=)), found by one pickling of *value* without them, written nowhere."""
+    found = {}
+    _Collector(found).dump(value)
+    return found
 
 
 def _identity(value):

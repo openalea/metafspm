@@ -4,6 +4,18 @@
 
 ### Added
 
+- MTG delta publication for `Compute(processes=n)`: when the topology moves, a worker sends its MPG's change since
+  the last publication (`MPG.copy_delta`: the MPG's attributes but its structure caches, the property columns that
+  may have changed; unchanged numeric columns left out) and the coordinator patches its copy in place
+  (`MPG.apply_structure_delta`, `MPGDataStructure._load_copy_delta`; arrays written in place when their shape
+  stayed); the whole MPG only when the variables or the MPG changed and before checkpoints. The first publication
+  after the fork is a delta, and the shared parts both processes hold since the fork go by id
+  (`SharedStore(forked=)`, `shared_objects`), so the coordinator's copies keep their pages shared with the workers;
+  parts no copy refers to any more are let go (`SharedStore.load_referring`, `retain`). New check
+  `Compute(checks={"publication"})` compares each patched copy with the MPG sent whole. A reduction's `merged_into`
+  cache is no longer pickled (made again; MBs a plant). Use case 1, 6 plants resumed at hour 48 for 24 h at 2
+  processes: publication 12.6 -> 4.3 s, scope peak 7.5 -> 5.1 GB, total 59.8 -> 56.6 s; tables and frames
+  byte-identical to 1 process.
 - Populations in worker processes (route B, B2): `Compute(processes=1 | n | "auto")` (default 1). With n, the scene's
   process forks n workers at the first step, each running a group of whole populations on a core set of its own
   (`os.sched_setaffinity`; on a hybrid CPU the workers on the efficient cores, the low-power cores left out; the

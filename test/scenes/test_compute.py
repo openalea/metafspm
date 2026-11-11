@@ -47,7 +47,8 @@ def test_the_checks_are_named_and_kept_sorted():
     says whether one runs, and refuses an unknown name."""
     assert Compute().checks == () and not Compute().checking("topology")
     compute = Compute(checks=["topology", "archetypes", "topology"])
-    assert compute.checks == ("archetypes", "topology") == compute_module.CHECKS
+    assert compute.checks == ("archetypes", "topology")
+    assert compute_module.CHECKS == ("archetypes", "publication", "topology")
     assert compute.checking("archetypes") and compute.as_dict()["checks"] == ["archetypes", "topology"]
     with pytest.raises(ValueError, match="unknown checks \\['kinds'\\]"):
         Compute(checks={"kinds"})

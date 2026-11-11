@@ -1318,11 +1318,13 @@ scene.population("wheat3").data_structure.get("psi")        # the scene process'
   the scene's process, its message prefixed with the group, the worker's traceback appended.
 - Checkpoints: as in one process; one written at any process count resumes at any other.
 - When it pays: a population's step must outweigh its publication (its variables' arrays and state through RAM each
-  step, its MTG too when it grew: about 50-60 ms per young growing wheat plant) and the environment's step, which stays serial. Small scenes
+  step, and when it grew its MTG's change since the last step, not the whole MTG: about 30 ms per wheat plant at
+  day 2-3 on an efficient core) and the environment's step, which stays serial. Small scenes
   (one or two young plants) gain little or lose; measure with your scene (use case 1's README gives the numbers).
   On a laptop whose workers get the efficient cores, a plant's step is also ~1.5x slower in a worker than in the
-  scene's process on the performance cores (use case 1, day 2-3): there, 6 plants run a day in 60 s at 1 and at 2
-  processes alike. Processes pay on machines of equal cores and enough memory, with plants of steps of seconds.
+  scene's process on the performance cores (use case 1, day 2-3): there, 6 plants run a day in 60 s at 1 process and
+  57 s at 2 (the publication 4.3 s of it; the scope's peak 4.2 GB at 1, 5.1 GB at 2: the scene's copies keep the
+  pages they share with the workers since the fork). Processes pay on machines of equal cores and enough memory, with plants of steps of seconds.
 
 ### Repeated runs: `run_variants`
 

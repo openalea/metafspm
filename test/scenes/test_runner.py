@@ -56,13 +56,14 @@ class ShadeModel(EnvironmentModel):
         self.components = [self.shade]
 
 
-def _scene(processes=1, recorder=None, populations=LAYOUT, coupling="explicit", threads=1):
+def _scene(processes=1, recorder=None, populations=LAYOUT, coupling="explicit", threads=1, checks=()):
     table = doubles_planting([RootPopulation] * PLANTS, scenarios=[{"exudation_rate": rate} for rate in RATES],
                              population=list(populations))
     translator = soil_translator("SceneExudation")
     translator.link("OrderedShade", "struct_mass", "RootGrowthProbe", {"struct_mass": 1.})
     return Scene(table, environment=[SceneSoil, ShadeModel], translator=translator, time_step=DT,
-                 compute=Compute(threads=threads, processes=processes), recorder=recorder, coupling=coupling)
+                 compute=Compute(threads=threads, processes=processes, checks=checks), recorder=recorder,
+                 coupling=coupling)
 
 
 def _outcome(scene) -> dict:
@@ -98,6 +99,15 @@ def test_the_workers_give_the_bits_of_one_process(processes):
     assert outcome.keys() == reference.keys()
     for key, values in reference.items():
         np.testing.assert_array_equal(outcome[key], values, err_msg=f"processes={processes}: {key}")
+
+
+def test_the_copies_patched_from_the_workers_deltas_are_checked_against_their_mpgs():
+    """The plants grow every step: each copy is patched from its worker's delta publication (scene.runner), checked
+    against the MPG sent whole (Compute(checks={"publication"})), and the outcome is one process's."""
+    reference = _run(1)
+    outcome = _run(2, checks={"publication"})
+    for key, values in reference.items():
+        np.testing.assert_array_equal(outcome[key], values, err_msg=key)
 
 
 def test_the_layouts_and_the_process_counts_give_the_same_bits():

@@ -1866,6 +1866,66 @@ class MPG(MTG):
             elif isinstance(v, dict) and not isinstance(v, ArrayDict):
                 props[k] = ArrayDict.from_items(keys, values, dtype=object)
 
+    # ── A copy in another process (scene.runner's publication): this MPG's change since the copy's state ──
+
+    # The caches a copy keeps its own (each keyed by the structure's signature or epoch: rebuilt or patched from the
+    # copy's own log, as the owner's are), and the owner's records of its last bulk creations (consumed by its own
+    # topology_arrays)
+    _COPY_KEEPS = ("_topology_arrays", "_structure_epoch", "_structure_log", "_derived_cache", "derived_counts",
+                   "_valid_vids", "_linked_parents", "_linked_parent_arrays", "_owner_csr", "_owner_maps")
+    _COPY_SKIPS = _COPY_KEEPS + ("_bulk_created", "_properties")
+
+    def copy_marks(self) -> dict:
+        """{name: (column, its version)} of the numeric stored property columns: what copy_delta compares with at the
+        next publication (the column held, so that a replaced one is never mistaken for it)."""
+        from openalea.metafspm.data_structure.columns import DataStructureColumn
+        return {name: (column, column.version) for name, column in self._properties.items()
+                if not isinstance(column, DataStructureColumn) and column.arr.dtype != object}
+
+    def copy_delta(self, marks: dict) -> dict:
+        """
+        What a copy of this MPG in another process, made equal to it when copy_marks() gave *marks*, needs to become
+        equal to it again (apply_structure_delta): every attribute (the topology's dicts, the id counter, the
+        instances, the anchors, the reduction) but the structure's caches (_COPY_KEEPS: the copy's own, patched from
+        its own log by the structure's signature), the property names in their order,
+        and the property columns that may have changed since: a numeric stored column when it is new, replaced or
+        written since *marks* (its version), an object column (values like lists may change inside it) and a
+        DataStructure's column's view (its overlay, its synchronised ids) always. The numeric columns left out are
+        the bulk of the MPG; the rest is small (tens of kB a plant, the shared parts referred to: scene.shared).
+        """
+        from openalea.metafspm.data_structure.columns import DataStructureColumn
+        columns = {}
+        for name, column in self._properties.items():
+            marked = marks.get(name)
+            unchanged = (marked is not None and marked[0] is column and marked[1] == column.version
+                         and not isinstance(column, DataStructureColumn))
+            if not unchanged:
+                columns[name] = column
+        attributes = {name: value for name, value in self.__dict__.items() if name not in self._COPY_SKIPS}
+        return {"attributes": attributes, "names": list(self._properties), "columns": columns}
+
+    def apply_structure_delta(self, delta: dict) -> None:
+        """
+        This MPG, a copy, made equal to the one copy_delta() described *delta* from (in another process): its
+        attributes taken, its structure's caches kept (_COPY_KEEPS: built or patched at their next read, the structure's
+        signature having moved), its property columns those of *delta* or, left out there (unchanged since), its own. The
+        reduction taken is bound to this MPG and to the plant model of the one it replaces (as a checkpoint's load
+        does: MPGDataStructure._load_construction). A DataStructure on this MPG then binds the views of its columns
+        (MPGDataStructure._load_copy_delta).
+        """
+        from openalea.metafspm.data_structure.columns import ColumnStore
+        kept, bound = self._properties, self.__dict__.get("reduction")
+        caches = {name: self.__dict__[name] for name in self._COPY_KEEPS if name in self.__dict__}
+        self.__dict__.clear()
+        self.__dict__.update(delta["attributes"])
+        self.__dict__.update(caches)
+        sent = delta["columns"]
+        self._properties = ColumnStore({name: sent[name] if name in sent else kept[name] for name in delta["names"]})
+        loaded = self.__dict__.get("reduction")
+        if loaded is not None and bound is not None:
+            loaded.mtg = self
+            loaded.bind(bound.model, bound.instance)
+
     # (last in the class: the name shadows the builtin decorator in the class body below it)
     def property(self, name):
         """

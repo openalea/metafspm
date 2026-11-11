@@ -57,6 +57,9 @@ A scene's run configuration: how many threads it uses, its device and its memory
                                a DataStructure's entities and edges) compared, element for element, with its build
                  "archetypes"  every archetype a reduction's batches evaluate evaluated again alone, in a library
                                built for it, and compared bit for bit (solve.reduction.check_archetypes)
+                 "publication" processes > 1: every copy a worker's "delta" publication patches (scene.runner:
+                               its MPG's change since the last publication) compared with the MPG the worker sends
+                               whole beside it, element for element (scene.runner.check_publication)
                  e.g. Compute(checks={"topology", "archetypes"}); an unknown name raises at the Compute. run.json's
                  provenance records them (scene.provenance)
   processes      where the scene's populations run (scene.runner): 1 (default) in the scene's process, each in turn;
@@ -114,7 +117,7 @@ BLAS_THREADS = 1              # the BLAS/OpenMP threads within a scene, whatever
 BANDWIDTH_THREADS_RULE = 4    # the bandwidth-bound kernels' threads, at most (the reduction's scatter): a laptop's
                               # measured ceiling (Core Ultra 7 255U: the scatter 1.7x at 2-4 threads, flat beyond; a
                               # triad 1.5x at 4 then flat)
-CHECKS = ("archetypes", "topology")  # Compute.checks' names
+CHECKS = ("archetypes", "publication", "topology")  # Compute.checks' names
 SECTIONS = ("compute", "bandwidth")   # a parallel section's ceiling: the budget, or machine()'s bandwidth_threads
 
 
