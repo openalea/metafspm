@@ -60,6 +60,7 @@ def test_a_restored_scene_carries_on_its_frames(tmp_path):
     restored = Scene.restore(str(tmp_path / "checkpoint"), **_arguments(out))
     restored.run()
     restored.run()
+    restored.recorder.wait_for_frames()                    # frame 4, written in the background
     assert [entry["step"] for entry in _index(out)] == [0, 2, 4]
 
 
