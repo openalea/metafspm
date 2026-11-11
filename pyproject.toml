@@ -22,7 +22,7 @@ authors = [
   { name = "Christophe Pradal", email = "christophe.pradal@cirad.fr" },
   { name = "Fabrice Bauget" },
 ]
-description = "Generic Management of FSPM dynamic processes and scheduling for OpenAlea"
+description = "Minimal tools for functional-structural plant modellers (FSPM) to write readable models and couple them in OpenAlea around a Multiscale Tree Graph (MTG)"
 readme = "README.md"
 license = "CECILL-C"
 license-files = ["LICEN[CS]E*"]
@@ -95,7 +95,7 @@ doc = [
 ]
 
 [project.urls]
-Repository = "https://github.com/openalea/metafpsm"
+Repository = "https://github.com/openalea/metafspm"
 Homepage = "https://metafspm.readthedocs.io/"
 "Bug Tracker" = "https://github.com/openalea/metafspm/issues"
 Discussions = "https://github.com/openalea/metafspm/discussions"
