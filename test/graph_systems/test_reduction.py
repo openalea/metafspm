@@ -449,7 +449,7 @@ def test_the_librarys_ids_stay_bounded_and_its_kinds_do_not_depend_on_the_batche
         np.testing.assert_array_equal(archetypes[name], fresh_archetypes[name])
 
 
-def test_a_kind_derived_value_is_computed_once_per_kind_while_its_factorisation_is_live():
+def test_an_archetype_derived_value_is_computed_once_per_archetype_while_its_factorisation_is_live():
     """@archetype_derived(name) on the reduced system's component: run once per archetype, on the library (its
     DataStructure's full group nodes given, in the kron's order), the archetype's factorisation live; its value in
     archetype.outputs[name]. A second solve of the same archetypes runs it no more."""

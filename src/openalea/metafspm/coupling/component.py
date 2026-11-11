@@ -1559,7 +1559,7 @@ class StructuralComponent(DataStructureComponent):
           massic_concentration      the amount c_p * b_p is split by f, 1 - f       parent's value   c * b / w
           extensive                 x_v = f x_p (+ its own when it existed),         0                unchanged
                                     x_p = (1 - f) x_p
-          (NonInertial)Intensive    parent's value                                   parent's value   unchanged
+          (non_inertial_)intensive parent's value                                   parent's value   unchanged
           non_inertial_extensive      x_v = f x_p, the parent unchanged                0                unchanged
           descriptor or none        its on_grow value                                on_grow          unchanged
 
