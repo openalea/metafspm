@@ -1312,8 +1312,8 @@ scene.population("wheat3").data_structure.get("psi")        # the scene process'
   the step, its last memory and the last checkpoint (run.json "failed"); an exception in a worker is raised again in
   the scene's process, its message prefixed with the group, the worker's traceback appended.
 - Checkpoints: as in one process; one written at any process count resumes at any other.
-- When it pays: a population's step must outweigh its publication (its DataStructure checkpointed into RAM and loaded
-  back each step, tens of ms for a young wheat plant) and the environment's step, which stays serial. Small scenes
+- When it pays: a population's step must outweigh its publication (its variables' arrays and state through RAM each
+  step, its MTG too when it grew: about 50-60 ms per young growing wheat plant) and the environment's step, which stays serial. Small scenes
   (one or two young plants) gain little or lose; measure with your scene (use case 1's README gives the numbers).
 
 ### Repeated runs: `run_variants`

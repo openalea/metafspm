@@ -9,7 +9,8 @@
   (`os.sched_setaffinity`; on a hybrid CPU the scene's process on the performance cores, the workers on the
   efficient ones, the low-power cores left out), its threads held to it; the scene's process keeps the environment
   models, the exchanges, the recorder and the checkpoints, and a copy of each population's DataStructure, published
-  by its worker after each step (a checkpoint into /dev/shm, loaded in place) (`scene.runner`: `SequentialRunner`,
+  by its worker after each step (its arrays raw through /dev/shm, its state, its MTG only when the topology moved;
+  loaded in place) (`scene.runner`: `SequentialRunner`,
   `ProcessRunner`, `placement`, `cpu_topology`, `memory_budget_mb`). `"auto"` picks the most workers the
   populations, the cores and the memory budget allow. `scene.apply(function, population=)` runs a function on the
   live DataStructure where it lives. A worker's death or exception ends the run naming its group, plants, step and

@@ -23,11 +23,14 @@ scene.population(name).data_structure read. Within a step:
      variables it wrote there since the last publication (the forcings, the planting mask, the exchanges, a user's or
      an event's set: the DataStructure's write counters tell which) go in the step message, with their write counts;
   2. worker: those variables written into its DataStructure (in place, the counts kept), the population's run, its
-     components' wall times, calls and conservation balances, then the publication: the DataStructure written to the
-     worker's folder of /dev/shm (Linux's shared memory: RAM) as a checkpoint (data_structure.checkpoint: its
-     variables, its MPG, its counters; the parts saved once, its sections' templates, written once);
-  3. coordinator: each publication loaded into its copy, in place (data_structure.load_checkpoint), in the
-     populations' order; the mappings rebuild their incidence when the topology moved (their stamps), the union too.
+     components' wall times, calls and conservation balances, then the publication (publish()): every numeric
+     variable's array raw into one buffer of the worker's folder in /dev/shm (Linux's shared memory: RAM), the
+     DataStructure's state (counters, derivations, masks) beside it, and its MPG (the MTG) only when the topology
+     or the set of variables changed;
+  3. coordinator: each publication loaded into its copy (load_publication), in the populations' order: the arrays
+     written in place when the topology stayed, else as a checkpoint is loaded (the mappings then rebuild their
+     incidence, their stamps having moved, the union too). Before a checkpoint of the scene every copy is made whole
+     (synchronize: the MTG's stored properties written and sent).
 
 A population's values are therefore the same bits at any process count: its computations do not depend on the process
 running them, its inputs are the coordinator's exchanges either way, and every scene-level sum over plants is taken in
@@ -49,6 +52,7 @@ coordinator, of its class when it can be, its message prefixed by the group, the
 coordinator's end ends the workers (their parent's death signal, their pipe's end).
 """
 import ctypes
+import math
 import io
 import os
 import pickle
@@ -260,6 +264,85 @@ def placement(processes, plants: list, topology: dict = None, budget_mb: float =
             "predicted_MB_per_process": [round(predicted_mb(size)) for size in sizes]}
 
 
+# ── publication: a worker's DataStructure into its coordinator's copy ─────
+
+def publish(data_structure, folder: str, store, full: bool) -> dict:
+    """
+    *data_structure* published into *folder* (in /dev/shm: memory) for its copy in another process (load_publication),
+    the reply's small layout returned:
+
+      values.bin   every numeric variable's array, raw (one write, no format: their dtypes, shapes and offsets in
+                   the layout), however it was written (set, a view, a derivation, a read from the MTG);
+      state.pkl    the object variables and the DataStructure's state (its counters, derivations, masks, metadata:
+                   what checkpoint() keeps), pickled with *store* (the shared parts, the sections' templates, written
+                   once); when *full*, also its MPG (the MTG) and its construction: the topology moved.
+
+    *full* False (the topology the copy's): the MTG is not sent; its stored properties (beyond the variables' columns)
+    reach the copy at the next full publication (synchronize before a checkpoint).
+    """
+    import numpy as np
+    os.makedirs(folder, exist_ok=True)
+    layout, objects, order, offset = [], {}, [], 0
+    with open(os.path.join(folder, "values.bin"), "wb") as file:
+        for location, variables in data_structure._var_stores().items():
+            for name, array in variables.items():
+                order.append(f"{location}::{name}")
+                if array.dtype == object:
+                    objects[f"{location}::{name}"] = array
+                    continue
+                contiguous = np.ascontiguousarray(array)
+                file.write(contiguous)
+                layout.append((location, name, contiguous.dtype.str, contiguous.shape, offset))
+                offset += contiguous.nbytes
+    state = {name: data_structure.__dict__[name]
+             for name in data_structure._CHECKPOINT_STATE + data_structure._checkpoint_extra()
+             if name in data_structure.__dict__}
+    content = {"objects": objects, "state": state}
+    if full:
+        content["mtg"] = getattr(data_structure, "_mtg", None)
+        content["construction"] = data_structure._construction()
+        content["ids"] = {location: np.asarray(data_structure.entity_ids(location))
+                          for location in {entry[0] for entry in layout} | {key.split("::")[0] for key in objects}
+                          if location != "scalar"}
+    data_structure.__dict__["_columns_detached"] = True      # the MPG's views of the columns pickled without them
+    try:
+        with open(os.path.join(folder, "state.pkl"), "wb") as file:
+            store.dump(content, file)
+    finally:
+        data_structure.__dict__.pop("_columns_detached", None)
+    return {"layout": layout, "order": order, "full": full}
+
+
+def load_publication(data_structure, folder: str, store, publication: dict) -> None:
+    """The publication of *folder* (publish(); *publication* its layout) loaded into *data_structure*, the copy, in
+    place: full, as a checkpoint is (load_checkpoint: its MTG, its stores and caches anew); otherwise its variables'
+    arrays written in place (the views on them kept) and its state taken."""
+    import numpy as np
+    with open(os.path.join(folder, "state.pkl"), "rb") as file:
+        content = store.load(file)
+    with open(os.path.join(folder, "values.bin"), "rb") as file:
+        buffer = file.read()
+    arrays = {}
+    for location, name, dtype, shape, offset in publication["layout"]:
+        count = math.prod(shape)
+        arrays[f"{location}::{name}"] = np.frombuffer(buffer, dtype=dtype, count=count, offset=offset).reshape(shape)
+    if publication["full"]:
+        variables = {}
+        for key in publication["order"]:                  # the variables in their stores' order
+            location, name = key.split("::", 1)
+            variables[name] = {"location": location}
+        for location, ids in content["ids"].items():
+            arrays[f"_ids::{location}"] = ids
+        data_structure._load_construction(content["construction"], content)
+        data_structure._apply_checkpoint(folder, {"variables": variables}, content, arrays)
+        return
+    stores = data_structure._var_stores()
+    for key, values in list(arrays.items()) + list(content["objects"].items()):
+        location, name = key.split("::", 1)
+        stores[location][name][...] = values
+    data_structure.__dict__.update(content["state"])
+
+
 # ── the runners ───────────────────────────────────────────────────────────
 
 class SequentialRunner:
@@ -281,6 +364,9 @@ class SequentialRunner:
             scene._time("exchanges", exchanged - started)
             scene._time(population.name, perf_counter() - exchanged)
             scene._time_components(population.name, population.components)
+
+    def synchronize(self, scene) -> None:
+        """Nothing to synchronize: the populations' DataStructures are the scene's own."""
 
     def checkpoint_states(self, scene) -> dict:
         """{key: checkpoint_state()} of the models and components (Scene._stateful) whose state checkpoints keep."""
@@ -335,6 +421,7 @@ class _Worker:
         self.scene, self.connection, self.folder = scene, connection, folder
         self.populations = [scene.populations[index] for index in indices]
         self.store = SharedStore(os.path.join(folder, "shared"))
+        self.published = {}             # {population name: its last publication's topology version and variables}
         if cores and hasattr(os, "sched_setaffinity"):
             os.sched_setaffinity(0, cores)
         compute = scene.compute
@@ -391,12 +478,35 @@ class _Worker:
                                      component.__dict__.get("_conservation"),
                                      component.__dict__.get("_conservation_start")))
                 published = perf_counter()
-                data_structure.checkpoint(os.path.join(self.folder, population.name), shared=self.store)
+                publication = self.publish(population, full=False)
                 results[population.name] = {"seconds": seconds, "publication": perf_counter() - published,
-                                            "counters": counters}
+                                            "counters": counters, "published": publication}
         scene.compute.trim()
         timings, scene.compute._timings = scene.compute._timings, {}
         return {"populations": results, "timings": timings, "resident_MB": resident_mb()}
+
+    def publish(self, population, full: bool) -> dict:
+        """*population*'s DataStructure published into the worker's folder (publish()); the MPG's whole state when
+        *full* or when its topology or its variables (their names, dtypes, shapes) changed since the last one."""
+        data_structure = population.data_structure
+        shapes = (data_structure.topology_version,
+                  tuple((location, name, array.dtype.str, array.shape)
+                        for location, variables in data_structure._var_stores().items()
+                        for name, array in variables.items()))
+        full = full or self.published.get(population.name) != shapes
+        self.published[population.name] = shapes
+        return publish(data_structure, os.path.join(self.folder, population.name), self.store, full)
+
+    def synchronize(self, names: list) -> dict:
+        """The populations *names* published whole, their MTG written first (flush_mtg): what a checkpoint of the
+        coordinator's copies needs (the MTG's stored properties, not published while the topology stays)."""
+        out = {}
+        for population in self.populations:
+            if population.name in names:
+                if hasattr(population.data_structure, "flush_mtg"):
+                    population.data_structure.flush_mtg()
+                out[population.name] = self.publish(population, full=True)
+        return out
 
     def states(self, keys: list) -> bytes:
         objects = self.scene._stateful()
@@ -636,8 +746,7 @@ class ProcessRunner:
             for name, result in reply["populations"].items():
                 population = by_name[name]
                 started = perf_counter()
-                population.data_structure.load_checkpoint(os.path.join(self._folder, name), shared=self._shared)
-                self._synced[name] = _write_counts(population.data_structure)
+                self._load(population, result["published"])
                 scene._time("publication", perf_counter() - started + result["publication"])
                 scene._time(name, result["seconds"])
                 seconds += result["seconds"]
@@ -675,6 +784,21 @@ class ProcessRunner:
             group_seconds.append(seconds)
         if group_seconds and sum(group_seconds) > 0:
             self._balance.append(max(group_seconds) / (sum(group_seconds) / len(group_seconds)))
+
+    def _load(self, population, publication: dict) -> None:
+        load_publication(population.data_structure, os.path.join(self._folder, population.name), self._shared,
+                         publication)
+        self._synced[population.name] = _write_counts(population.data_structure)
+
+    def synchronize(self, scene) -> None:
+        """Every population's copy made whole (its MTG's stored properties too): before a checkpoint of the scene."""
+        for handle in self._handles:
+            names = [scene.populations[index].name for index in handle["populations"]]
+            handle["connection"].send(("synchronize", names))
+        by_name = {population.name: population for population in scene.populations}
+        for handle in self._handles:
+            for name, publication in self._receive(scene, handle).items():
+                self._load(by_name[name], publication)
 
     def _written(self, population) -> dict:
         """{name: (values, write count)} of the variables the coordinator wrote into *population*'s DataStructure

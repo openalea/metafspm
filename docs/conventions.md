@@ -261,10 +261,13 @@ components writing it: a population's is its worker, an environment model's (a g
 coordinator. The coordinator keeps a **copy** of each population's DataStructure, which its exchanges, the recorder,
 the frames, the checkpoints and `scene.population(name).data_structure` read, unchanged code:
 
-- after its run, a worker **publishes** its DataStructure: `data_structure.checkpoint(...)` into its folder of
-  `/dev/shm` (RAM; the parts saved once, its sections' templates, written once), loaded by the coordinator into its
-  copy in place (`load_checkpoint`), in the populations' order; the mappings and the union rebuild what the topology
-  moved (their stamps);
+- after its run, a worker **publishes** its DataStructure (`runner.publish`) into its folder of `/dev/shm` (RAM):
+  every numeric variable's array raw in one buffer (whatever wrote it: a `set`, a view, a derivation, a read from
+  the MTG), its state (counters, derivations, masks) pickled beside it, and its MPG (the MTG; the sections' templates
+  written once) only when the topology or the variables changed. The coordinator loads it into its copy
+  (`runner.load_publication`), in the populations' order: the arrays written in place when the topology stayed, else
+  as a checkpoint is loaded, the mappings and the union then rebuilding what moved (their stamps). Before a
+  checkpoint of the scene every copy is made whole (`synchronize`: the MTG's stored properties written and sent);
 - before a worker's run, what the coordinator wrote into its copy since the last publication (the forcings, the
   planting mask, the exchanges into the population, a user's or an event's `set`: the DataStructure's write counters
   tell which) goes in the step message, with the write counts;
