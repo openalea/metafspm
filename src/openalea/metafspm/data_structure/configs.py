@@ -138,6 +138,7 @@ class LabelsConfig:
         Blade: int = "Blade"                        # a grass leaf's blade (lamina)
         Peduncle: int = "Peduncle"
         Ear: int = "Ear"
+        Awn: int = "Awn"                            # a grass ear's awns (Adel's, drawn as one organ)
 
     class SubOrgan:
         scale = ScalesConfig.SubOrgan

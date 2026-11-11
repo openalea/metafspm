@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+### Added
+
+- The Organ label `Awn` (`labels.Organ.Awn`): a grass ear's awns, an organ of their own (Adel's, formerly
+  labelled `Ear`).
+
 ### Breaking
 
 - The environment variables `METAFSPM_CHECK_TOPOLOGY` and `METAFSPM_CHECK_ARCHETYPES` are removed (QA-10, no
