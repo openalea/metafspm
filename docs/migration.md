@@ -1,7 +1,7 @@
 # Migrating downstream packages to DataStructure coupling
 
 This guide applies to rootbridges, rootcynaps, cnwgrass, rhizosoil and grassbridges.
-The design is in `coupling_through_datastructures.md`, and the full list of API changes is in `CHANGELOG.md`.
+The design is in `coupling_through_datastructures.md`.
 
 Every step below has a **working, tested reference** in `test/helpers/doubles_ds.py`, whose contract tests reproduce the numbers of the props-based coupling:
 
@@ -17,7 +17,7 @@ Every step below has a **working, tested reference** in `test/helpers/doubles_ds
 
 ## 1. Imports
 
-Replace the flat modules, following the table in `CHANGELOG.md`:
+Replace the flat modules, following this table:
 
 | Old | New |
 |---|---|
@@ -133,7 +133,7 @@ class GrassBRIDGES(CompositeModel):
   - variables without a declared kind need an explicit `aggregation=`.
 - **The scene** (`openalea.metafspm.scene.scene.Scene`, see `test/provide_usage_examples/scene_example.py`):
   - builds one population per plant model of the planting table (`planting(...)`, with `stand(...)` for a sown stand), then the environment models;
-  - infers the mappings (barycentre by default, `mapping_method="overlap"` as an option) and runs one `Exchanges` at fixed points: each environment model after the exchanges into it, then each population after the exchanges into it;
+  - infers the mappings (barycentre by default, `mapping_method="overlap"` as an option) and runs one `Exchanges` before each model: each environment model after the exchanges into it, then each population after the exchanges into it;
   - several plants feed one soil in one write, without zeroing.
 - **Replaced:** `compute_mtg_voxel_neighbors_fast`, `apply_to_voxel_fast` and `get_from_voxel_fast` by `CrossMapping`. `play_Orchestra`, `Transport`, `Coupler` and the queue protocol are removed.
 - **Light model:** known bug to fix at the same time: the first `run` crashes when there is no light at t=0 (`previous_Erel` is None).

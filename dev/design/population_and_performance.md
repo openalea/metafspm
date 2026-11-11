@@ -1,6 +1,6 @@
 # Design note: a plant population in one MPG, vectorised traversals, scheduling and persistence (step 5)
 
-> **Historical.** This note records a design decision as it was made; the API it describes has changed since (see CHANGELOG.md and docs/). It is kept for the reasoning, not as a reference.
+> **Historical.** This note records a design decision as it was made; the API it describes has changed since (see docs/). It is kept for the reasoning, not as a reference.
 
 Status: **agreed** (2026-10-02: S1–S11 answered in §8 and §11, with refinements in §9–§12). 5a done (`bb36bd4`); F1–F2 agreed (§13). The steps after 5a continue in `devplan_population_scene.md` (P1–P8). It covers step 5 of `devplan_datastructures.md` §7, reordered by your answers to PA1–PA2 in `devplan_scene_paralellization.md`:
 - the population prototype first: DS14b (MPG array mirrors), DS14a (tree kernels on the DataStructure), and N plants in one MPG;
