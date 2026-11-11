@@ -268,6 +268,26 @@ class Component:
     # calls: kept after each call, aligned by id at the next (no state variable of its own to copy them into)
     kept_from_last_call = ()
 
+    def __init_subclass__(cls, **options):
+        """Each declaration of the class checked when it is defined: its kind none ("" or None) or one of
+        KIND_FAMILIES, its unit none or readable by the unit grammar (coupling.units); a DeclarationError names the component, the variable and
+        the kind or the unit."""
+        super().__init_subclass__(**options)
+        from dataclasses import Field
+        from openalea.metafspm.coupling.declaration import KIND_FAMILIES
+        from openalea.metafspm.coupling.units import check_declared_unit
+        for name, declared in list(cls.__dict__.items()):
+            if not isinstance(declared, Field) or "variable_type" not in declared.metadata:
+                continue
+            kind = declared.metadata.get("kind")
+            if kind not in (None, "") and kind not in KIND_FAMILIES:
+                raise DeclarationError(f"{cls.__name__}.{name}: unknown kind {kind!r} (one of "
+                                       f"{sorted(KIND_FAMILIES)}, or none)")
+            try:
+                check_declared_unit(declared.metadata.get("unit"), f"{cls.__name__}.{name}")
+            except ValueError as error:
+                raise DeclarationError(str(error)) from None
+
     def __call__(self):
         started = perf_counter()
         self._call()

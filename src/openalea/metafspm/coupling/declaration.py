@@ -109,8 +109,12 @@ KIND_FAMILIES = {"extensive": "extensive", "NonInertialExtensive": "extensive",
 
 
 def kinds_agree(a: Optional[str], b: Optional[str]) -> bool:
-    """Whether two kinds can be linked (same family); unknown kinds agree with anything."""
-    if a is None or b is None or a not in KIND_FAMILIES or b not in KIND_FAMILIES:
+    """Whether two kinds can be linked (same family); an undeclared kind (None or "") agrees with any, an unknown one
+    raises (declarations check theirs: Component.__init_subclass__)."""
+    for kind in (a, b):
+        if kind not in (None, "") and kind not in KIND_FAMILIES:
+            raise DeclarationError(f"unknown kind {kind!r} (one of {sorted(KIND_FAMILIES)}, or none)")
+    if a in (None, "") or b in (None, ""):
         return True
     return KIND_FAMILIES[a] == KIND_FAMILIES[b]
 
@@ -134,9 +138,10 @@ def declared_kind(component, name: str) -> Optional[str]:
 
 def check_link(link, receiver, provider):
     """A link's kinds agree (extensive with extensive, intensive or massic with intensive or massic) and its factors
-    convert the provider's declared units into the receiver's (unless unit_check is off or it is a formula); the link
-    returned, its named equivalences (coupling.units.Equivalence) turned into their numbers from the units."""
-    from openalea.metafspm.coupling.units import check_link_units
+    convert the provider's declared units into the receiver's (unless unit_check is off); a formula's units declared
+    and readable (its conversion is its own); the link returned, its named equivalences (coupling.units.Equivalence)
+    turned into their numbers from the units."""
+    from openalea.metafspm.coupling.units import check_link_units, check_readable
     name = f"{link.receiver}.{link.variable} <- {link.provider}"
     received = declared_kind(receiver, link.variable)
     for source in ([] if link.formula is not None else link.sources):
@@ -145,9 +150,13 @@ def check_link(link, receiver, provider):
             raise ValueError(f"{link.receiver}.{link.variable} ({received}) <- {link.provider}.{source} ({provided}): "
                              "the kinds do not agree (extensive with extensive, intensive or massic with intensive or "
                              "massic)")
-    if link.formula is not None:
-        return link
     received_unit = declared_unit(receiver, link.variable)
+    if link.formula is not None:
+        if link.unit_check:
+            for source in link.sources:
+                unit = source.unit if not isinstance(source, str) else declared_unit(provider, source)
+                check_readable(received_unit, unit, f"{name}.{source}")
+        return link
     for source, factor in link.sources.items():
         unit = source.unit if not isinstance(source, str) else declared_unit(provider, source)
         if isinstance(factor, (int, float)) and link.unit_check:     # an expression: its conversion is its own

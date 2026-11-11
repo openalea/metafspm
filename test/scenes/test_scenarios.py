@@ -10,7 +10,7 @@ import pytest
 from openalea.metafspm.coupling.component import FunctionalComponent, parameter, setting
 from openalea.metafspm.scene.scenarios import parameter_table, read_scenarios, variants
 
-DOC = dict(unit="", description="")
+DOC = dict(unit="adim", description="")
 
 
 @dataclass

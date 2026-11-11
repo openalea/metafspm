@@ -18,7 +18,7 @@ from openalea.metafspm.data_structure.data_api import MPGDataStructure
 from openalea.metafspm.scene.population import population_data_structure
 from openalea.metafspm.solve.decorator import rate
 
-DOC = dict(unit="", unit_comment="", description="", min_value=None, max_value=None, value_comment="", references="",
+DOC = dict(unit="adim", unit_comment="", description="", min_value=None, max_value=None, value_comment="", references="",
            DOI=[])
 AREAS = (1., 2., 3., 4.)
 

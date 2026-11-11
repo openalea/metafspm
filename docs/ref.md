@@ -107,7 +107,7 @@ The solvers are chosen by key in `graph_system(solver=...)`: `"newton"`, `"newto
    :members: CrossMapping, LayerMapping, UnionDataStructure, UnionMapping, Exchanges
 
 .. automodule:: openalea.metafspm.coupling.units
-   :members: parse_unit, conversion_factor, canonical, units_agree, check_link_units, Equivalence,
+   :members: parse_unit, conversion_factor, canonical, check_readable, check_link_units, check_declared_unit, Equivalence,
              register_equivalence
 
 .. automodule:: openalea.metafspm.coupling.schedule

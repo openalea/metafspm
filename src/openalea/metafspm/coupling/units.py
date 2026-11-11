@@ -7,8 +7,18 @@ exponent (`mol m-2 s-1`, `mm3 s-1 MPa-1`), dimensionless written `adim`; what th
 factors, `^` or `**` before exponents, `-`, `1` and `dimensionless` for adim, "of <name>" qualifiers (ignored),
 "per (...)" (the group's exponents negated), `%`.
 
-    parse_unit("mmol m-2 s-1")            ((−2, 0, −1, 1, 0), 1e-3): dimensions (m, kg, s, mol, K) and SI scale
+Thermal time is a temperature times a time: `°Cd` is `°C d` (degree-days, a temperature difference: no offset). A
+duration counted in phyllochrons (`phyllochron`, the thermal time between two successive leaves) has its own
+dimension: its number of degree-days is the plant's phyllochron, a parameter, not a constant, so a link between
+phyllochrons and degree-days is refused.
+
+    parse_unit("mmol m-2 s-1")            ((−2, 0, −1, 1, 0, 0), 1e-3): dimensions (m, kg, s, mol, K, phyllochron)
+                                          and SI scale
     conversion_factor("cm", "m")          100.0: a value in m times it is the value in cm
+
+A declaration's unit is checked when its component class is defined (Component.__init_subclass__): a unit this
+grammar cannot read raises, naming the component, the variable and the unit. A link is checked when the models are
+built: both units must be declared and readable (unit_check=False on a link skips it).
 
 A link between two quantities that are not the same (an amount of water and its volume, a diameter and a radius) is
 unit-checked through a named equivalence, the physical factor between them with its unit (Equivalence: the water's
@@ -21,16 +31,17 @@ import re
 from dataclasses import dataclass
 from typing import Optional
 
-# dimensions: length, mass, time, amount, temperature
-_ONE = (0, 0, 0, 0, 0)
+# dimensions: length, mass, time, amount, temperature, phyllochron (a duration counted in phyllochrons)
+_ONE = (0, 0, 0, 0, 0, 0)
 _UNITS = {
-    "m": ((1, 0, 0, 0, 0), 1.), "g": ((0, 1, 0, 0, 0), 1e-3), "s": ((0, 0, 1, 0, 0), 1.),
-    "mol": ((0, 0, 0, 1, 0), 1.), "K": ((0, 0, 0, 0, 1), 1.), "°C": ((0, 0, 0, 0, 1), 1.),
-    "min": ((0, 0, 1, 0, 0), 60.), "h": ((0, 0, 1, 0, 0), 3600.), "d": ((0, 0, 1, 0, 0), 86400.),
-    "day": ((0, 0, 1, 0, 0), 86400.), "yr": ((0, 0, 1, 0, 0), 365.25 * 86400.),
-    "L": ((3, 0, 0, 0, 0), 1e-3), "l": ((3, 0, 0, 0, 0), 1e-3),
-    "Pa": ((-1, 1, -2, 0, 0), 1.), "bar": ((-1, 1, -2, 0, 0), 1e5), "N": ((1, 1, -2, 0, 0), 1.),
-    "J": ((2, 1, -2, 0, 0), 1.), "W": ((2, 1, -3, 0, 0), 1.),
+    "m": ((1, 0, 0, 0, 0, 0), 1.), "g": ((0, 1, 0, 0, 0, 0), 1e-3), "s": ((0, 0, 1, 0, 0, 0), 1.),
+    "mol": ((0, 0, 0, 1, 0, 0), 1.), "K": ((0, 0, 0, 0, 1, 0), 1.), "°C": ((0, 0, 0, 0, 1, 0), 1.),
+    "°Cd": ((0, 0, 1, 0, 1, 0), 86400.), "phyllochron": ((0, 0, 0, 0, 0, 1), 1.),
+    "min": ((0, 0, 1, 0, 0, 0), 60.), "h": ((0, 0, 1, 0, 0, 0), 3600.), "d": ((0, 0, 1, 0, 0, 0), 86400.),
+    "day": ((0, 0, 1, 0, 0, 0), 86400.), "yr": ((0, 0, 1, 0, 0, 0), 365.25 * 86400.),
+    "L": ((3, 0, 0, 0, 0, 0), 1e-3), "l": ((3, 0, 0, 0, 0, 0), 1e-3),
+    "Pa": ((-1, 1, -2, 0, 0, 0), 1.), "bar": ((-1, 1, -2, 0, 0, 0), 1e5), "N": ((1, 1, -2, 0, 0, 0), 1.),
+    "J": ((2, 1, -2, 0, 0, 0), 1.), "W": ((2, 1, -3, 0, 0, 0), 1.),
     "°": (_ONE, math.pi / 180.), "rad": (_ONE, 1.), "adim": (_ONE, 1.), "%": (_ONE, 0.01),
     "pixel": (_ONE, 1.),
 }
@@ -48,15 +59,15 @@ def _symbol(text: str):
     element = _OF_ELEMENT.match(text)
     if element:
         return _symbol(element.group(1))
-    if len(text) > 1 and text[0] in _PREFIXES and text[1:] in _UNITS and text[1:] not in ("°C", "°", "%", "adim"):
+    if len(text) > 1 and text[0] in _PREFIXES and text[1:] in _UNITS and text[1:] not in ("°C", "°Cd", "°", "%", "adim"):
         dimensions, scale = _UNITS[text[1:]]
         return dimensions, scale * _PREFIXES[text[0]]
     return None
 
 
 def parse_unit(unit) -> Optional[tuple]:
-    """((length, mass, time, amount, temperature) exponents, SI scale) of a declared unit; None when undeclared
-    ("" or None) or not readable."""
+    """((length, mass, time, amount, temperature, phyllochron) exponents, SI scale) of a declared unit; None when
+    undeclared ("" or None) or not readable."""
     if unit is None:
         return None
     text = str(unit).strip()
@@ -68,7 +79,7 @@ def parse_unit(unit) -> Optional[tuple]:
     text = text.replace("(", " ( ").replace(")", " ) ")
     text = re.sub(r"(?<=[A-Za-zµ°%\d])\.(?=[A-Za-zµ°%])", " ", text)          # "mol.m-2" → "mol m-2"
     tokens = [token for token in text.split() if token not in (".", "..")]
-    dimensions, scale = [0, 0, 0, 0, 0], 1.
+    dimensions, scale = [0] * len(_ONE), 1.
     sign, in_group, group_sign = 1, False, 1
     skip_next = False
     for token in tokens:
@@ -98,7 +109,7 @@ def parse_unit(unit) -> Optional[tuple]:
         exponent *= group_sign if in_group else sign
         if not in_group and sign == -1:
             sign = 1                                    # "per x": only the next factor
-        for axis in range(5):
+        for axis in range(len(_ONE)):
             dimensions[axis] += found[0][axis] * exponent
         scale *= found[1] ** exponent
     return tuple(dimensions), scale
@@ -131,36 +142,39 @@ def canonical(unit) -> Optional[str]:
     return " ".join(token.strip(".") for token in text.split() if token.strip("."))
 
 
-def normalized_unit(unit) -> Optional[str]:
-    """A unit string without its spelling variants (spaces, dots, carets, '**'), or None when undeclared."""
-    if unit is None or not str(unit).strip():
-        return None
-    text = str(unit).replace("**", "").replace("^", "").replace("·", "").replace(".", "")
-    return "".join(text.split())
-
-
-def units_agree(a, b) -> bool:
-    """Whether two declared units are the same (undeclared units agree with anything)."""
-    a, b = normalized_unit(a), normalized_unit(b)
-    return a is None or b is None or a == b
+def check_readable(received_unit, provided_unit, name: str) -> tuple:
+    """The parsed units of a link's receiver and provider (parse_unit), a ValueError naming the link when either is
+    undeclared or unreadable: such units cannot be compared."""
+    received, provided = parse_unit(received_unit), parse_unit(provided_unit)
+    for unit, parsed, side in ((received_unit, received, "receiver"), (provided_unit, provided, "provider")):
+        if parsed is None:
+            state = ("has no declared unit" if unit is None or not str(unit).strip()
+                     else f"has the unit '{unit}', which is not readable")
+            raise ValueError(f"{name}: the {side} {state}, so the link cannot be unit-checked; declare its unit "
+                             "(\"adim\" for a dimensionless one), or unit_check=False on a deliberate link")
+    return received, provided
 
 
 def check_link_units(received_unit, provided_unit, factor, name: str) -> None:
-    """A translator link's units against its coefficient: undeclared units agree with anything; readable units must
-    be the same quantity and the coefficient (its absolute value) their conversion factor; unreadable ones must be
-    spelled alike when the coefficient is ±1. Raises ValueError naming the link."""
-    received, provided = parse_unit(received_unit), parse_unit(provided_unit)
-    if received is not None and provided is not None:
-        if received[0] != provided[0]:
-            raise ValueError(f"{name}: '{provided_unit}' cannot feed '{received_unit}', not the same quantity")
-        expected = provided[1] / received[1]
-        if not math.isclose(abs(float(factor)), expected, rel_tol=1e-9):
-            raise ValueError(f"{name}: the coefficient {factor} does not convert '{provided_unit}' into "
-                             f"'{received_unit}' ({expected:g}); give it, or unit_check=False for a deliberate one")
+    """A translator link's units against its coefficient: both declared and readable (check_readable), the same
+    quantity, and the coefficient (its absolute value) their conversion factor. Raises ValueError naming the link."""
+    received, provided = check_readable(received_unit, provided_unit, name)
+    if received[0] != provided[0]:
+        raise ValueError(f"{name}: '{provided_unit}' cannot feed '{received_unit}', not the same quantity")
+    expected = provided[1] / received[1]
+    if not math.isclose(abs(float(factor)), expected, rel_tol=1e-9):
+        raise ValueError(f"{name}: the coefficient {factor} does not convert '{provided_unit}' into "
+                         f"'{received_unit}' ({expected:g}); give it, or unit_check=False for a deliberate one")
+
+
+def check_declared_unit(unit, name: str) -> None:
+    """A declaration's unit: empty (undeclared) or readable by the grammar; a ValueError naming *name* (its
+    "<Component>.<variable>") and the unit otherwise."""
+    if unit is None or not str(unit).strip() or parse_unit(unit) is not None:
         return
-    if factor in (1., -1.) and not units_agree(received_unit, provided_unit):
-        raise ValueError(f"{name}: the units differ ('{received_unit}' <- '{provided_unit}') and the link has no "
-                         "conversion factor")
+    raise ValueError(f"{name}: unit '{unit}' is not readable by metafspm's unit grammar (coupling.units: factors "
+                     "separated by spaces with integer exponents, 'mol m-2 s-1'; 'adim' for dimensionless; what an "
+                     "amount is of in unit_comment)")
 
 
 @dataclass(frozen=True)

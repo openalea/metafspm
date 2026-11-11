@@ -24,7 +24,7 @@ from openalea.metafspm.solve.solver import NewtonSolver
 from simple_seedling import generate_simple_mpg_seedling
 from growth import RootGrowthProbe
 
-DOC = dict(unit="", unit_comment="", description="", min_value=0., max_value=1., value_comment="", references="",
+DOC = dict(unit="adim", unit_comment="", description="", min_value=0., max_value=1., value_comment="", references="",
            DOI=[])
 DT, K = 2., 0.3
 

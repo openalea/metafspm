@@ -15,7 +15,7 @@ from openalea.metafspm.coupling.component import FunctionalComponent, after_regr
 from openalea.metafspm.data_structure.adaptive_grid import AdaptiveGridDataStructure
 from openalea.metafspm.data_structure.data_api import ArrayDataStructure, _aggregated
 
-DOC = dict(unit="", description="")
+DOC = dict(unit="adim", description="")
 
 
 def _check(grid):

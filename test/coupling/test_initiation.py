@@ -16,7 +16,7 @@ from openalea.metafspm.data_structure.configs import PropsConfig
 from openalea.metafspm.data_structure.configs import ScalesConfig as scales
 from openalea.metafspm.scene.population import _build_population
 
-DOC = dict(unit="", unit_comment="", description="", min_value=0., max_value=1e6, value_comment="", references="",
+DOC = dict(unit="adim", unit_comment="", description="", min_value=0., max_value=1e6, value_comment="", references="",
            DOI=[])
 DIAMETERS, AREAS = (2e-3, 3e-3), ((1., 2.), (3., 4.))
 

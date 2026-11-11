@@ -16,7 +16,7 @@ from simple_seedling import generate_simple_mpg_seedling
 from openalea.metafspm.data_structure.arraydict import ArrayDict
 from plants import seedling_ds
 
-DOC = dict(unit="", unit_comment="", description="", min_value=0., max_value=1., value_comment="", references="",
+DOC = dict(unit="adim", unit_comment="", description="", min_value=0., max_value=1., value_comment="", references="",
            DOI=[])
 
 

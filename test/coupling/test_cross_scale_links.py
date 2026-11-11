@@ -7,14 +7,14 @@ from dataclasses import dataclass
 import numpy as np
 import pytest
 
-from openalea.metafspm.coupling.component import FunctionalComponent, input_variable, state_variable
+from openalea.metafspm.coupling.component import FunctionalComponent, input_variable, parameter, state_variable
 from openalea.metafspm.coupling.composite_wrapper import CompositeModel
 from openalea.metafspm.coupling.declaration import DeclarationError
 from openalea.metafspm.data_structure.configs import ScalesConfig as scales
 from openalea.metafspm.data_structure.data_api import MPGDataStructure
 from simple_seedling import generate_simple_mpg_seedling
 
-DOC = dict(unit="", unit_comment="", description="", min_value=0., max_value=1., value_comment="", references="",
+DOC = dict(unit="adim", unit_comment="", description="", min_value=0., max_value=1., value_comment="", references="",
            DOI=[])
 
 
@@ -228,8 +228,6 @@ def test_python_translators_keep_link_options_through_the_composite(tmp_path):
 
 
 def test_a_link_between_different_units_needs_a_conversion_factor():
-    from openalea.metafspm.coupling.units import units_agree
-
     @dataclass
     class InHectopascal(FunctionalComponent):
         p_hpa: float = input_variable(**{**DOC, "unit": "hPa"}, by="InMegapascal", default=0.,
@@ -254,20 +252,60 @@ def test_a_link_between_different_units_needs_a_conversion_factor():
     np.testing.assert_allclose(ds.get("p_hpa"), 1e4)
     model._couple_on_data_structures({"InHectopascal": {"InMegapascal": {"p_hpa": {"sources": {"p_mpa": 0.5},
                                                                                  "unit_check": False}}}})
-    assert units_agree("cm3 d-1", "cm3.d-1") and units_agree("", "MPa") and not units_agree("MPa", "hPa")
 
 
 def test_units_are_read_as_quantities():
     from openalea.metafspm.coupling.units import canonical, check_link_units, conversion_factor, parse_unit
-    assert parse_unit("mol.m-2.s-1") == parse_unit("mol m-2 s-1") == ((-2, 0, -1, 1, 0), 1.)
+    assert parse_unit("mol.m-2.s-1") == parse_unit("mol m-2 s-1") == ((-2, 0, -1, 1, 0, 0), 1.)
     assert conversion_factor("cm", "m") == pytest.approx(100.) and conversion_factor("mm3 s-1", "m3 s-1") == pytest.approx(1e9)
-    assert parse_unit("gC.g-1.s-1")[0] == (0, 0, -1, 0, 0) and parse_unit("mm/h")[0] == (1, 0, -1, 0, 0)
-    assert parse_unit("adim") == parse_unit("-") == parse_unit("dimensionless") == ((0,) * 5, 1.)
+    assert parse_unit("gC.g-1.s-1")[0] == (0, 0, -1, 0, 0, 0) and parse_unit("mm/h")[0] == (1, 0, -1, 0, 0, 0)
+    assert parse_unit("adim") == parse_unit("-") == parse_unit("dimensionless") == ((0,) * 6, 1.)
     assert parse_unit("") is None and parse_unit("furlong") is None
     assert canonical("mol of hexose.s-1") == "mol s-1" and canonical("-") == "adim" and canonical(".m-1") == "m-1"
     with pytest.raises(ValueError, match="not the same quantity"):
         check_link_units("m", "s", 1., "a link")
-    check_link_units("", "MPa", 1., "undeclared")                                   # agrees with anything
-    check_link_units("furlong", "furlong", 1., "unreadable, spelled alike")
+    with pytest.raises(ValueError, match="receiver has no declared unit"):      # cannot be compared
+        check_link_units("", "MPa", 1., "undeclared")
+    with pytest.raises(ValueError, match="'furlong', which is not readable"):
+        check_link_units("furlong", "furlong", 1., "unreadable, even spelled alike")
     with pytest.raises(ValueError):
         conversion_factor("m", "kg")
+
+
+def test_thermal_time_and_phyllochrons_are_read_as_quantities():
+    """°Cd is a temperature times a time (degree-days); a duration in phyllochrons has its own dimension: its
+    degree-days are the plant's phyllochron, a parameter, so no factor converts it."""
+    from openalea.metafspm.coupling.units import check_link_units, conversion_factor, parse_unit
+    assert parse_unit("°Cd") == parse_unit("°C d") == ((0, 0, 1, 0, 1, 0), 86400.)
+    assert conversion_factor("°Cd", "K s") == pytest.approx(1. / 86400.)
+    assert conversion_factor("°Cd", "°C h") == pytest.approx(1. / 24.)
+    assert parse_unit("phyllochron") == ((0, 0, 0, 0, 0, 1), 1.)
+    assert parse_unit("phyllochron")[0] != parse_unit("°Cd")[0] != parse_unit("adim")[0]
+    check_link_units("°Cd", "°Cd", 1., "thermal time")
+    with pytest.raises(ValueError, match="not the same quantity"):
+        check_link_units("°Cd", "phyllochron", 1., "phyllochrons into degree-days")
+    with pytest.raises(ValueError, match="not the same quantity"):
+        check_link_units("°Cd", "d", 1., "a time into thermal time")
+
+
+def test_an_unknown_kind_or_an_unreadable_unit_raises_at_declaration():
+    from openalea.metafspm.coupling.declaration import DeclarationError, kinds_agree
+    with pytest.raises(DeclarationError, match=r"Misspelled\.amount: unknown kind 'extensiv'"):
+        @dataclass
+        class Misspelled(FunctionalComponent):
+            amount: float = state_variable(**DOC, default=0., kind="extensiv")
+    with pytest.raises(DeclarationError, match=r"Furlongs\.distance: unit 'kilo_furlongs' is not readable"):
+        @dataclass
+        class Furlongs(FunctionalComponent):
+            distance: float = state_variable(**{**DOC, "unit": "kilo_furlongs"}, default=0., kind="extensive")
+    with pytest.raises(DeclarationError, match="not readable"):
+        @dataclass
+        class Either(FunctionalComponent):
+            boundary: float = parameter(**{**DOC, "unit": "hPa or cm3 d-1"}, default=0.)
+
+    @dataclass
+    class Undeclared(FunctionalComponent):                         # no unit: allowed (labels, records)
+        label: float = state_variable(**{**DOC, "unit": ""}, default=0., kind="descriptor")
+    with pytest.raises(DeclarationError, match="unknown kind"):
+        kinds_agree("extensiv", "intensive")
+    assert kinds_agree(None, "intensive") and not kinds_agree("extensive", "intensive")

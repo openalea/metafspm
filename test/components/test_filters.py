@@ -15,7 +15,7 @@ from openalea.metafspm.solve.decorator import _Filters, graph_output, graph_syst
 from anatomy import make_rooted_anatomy, wiring
 from plants import seedling_ds
 
-DOC = dict(unit="", unit_comment="", description="", min_value=-1e9, max_value=1e9, value_comment="", references="",
+DOC = dict(unit="adim", unit_comment="", description="", min_value=-1e9, max_value=1e9, value_comment="", references="",
            DOI=[])
 
 

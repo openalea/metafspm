@@ -32,7 +32,7 @@ from openalea.metafspm.scene.population import Planting, planting
 from openalea.metafspm.scene.scene import Scene, SceneRecorder
 from openalea.metafspm.solve.decorator import actual, edge_law, graph_system, node_balance, rate, segmentation, state
 
-DOC = dict(unit="", unit_comment="", description="", min_value=0., max_value=1., value_comment="", references="",
+DOC = dict(unit="adim", unit_comment="", description="", min_value=0., max_value=1., value_comment="", references="",
            DOI=[])
 DT = 3600.
 SEGMENT_LENGTH = 0.01

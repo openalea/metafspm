@@ -75,8 +75,9 @@ def _soil_links(nested):
         for provider, links in providers.items():
             if doubles_ds.SOIL in (receiver, provider) and receiver != provider:
                 for variable, sources in links.items():
-                    translator.link(receiver, variable, provider, dict(sources),
-                                    aggregation="sum" if receiver == doubles_ds.SOIL else "broadcast")
+                    options = {} if "sources" not in sources else {"unit_check": sources["unit_check"]}
+                    translator.link(receiver, variable, provider, dict(sources.get("sources", sources)),
+                                    aggregation="sum" if receiver == doubles_ds.SOIL else "broadcast", **options)
     return translator
 
 

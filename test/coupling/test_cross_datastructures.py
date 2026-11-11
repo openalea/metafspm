@@ -172,7 +172,7 @@ def _two_populations_and_soil(method="barycentre"):
 def _translator(**links):
     translator = Translator()
     for provider in ("RootGeometry", "OtherRootGeometry"):
-        translator.link("Soil", "exudation", provider, {"exudation": 2.})
+        translator.link("Soil", "exudation", provider, {"exudation": 2.}, unit_check=False)   # a deliberate factor
         if "temperature" in links:
             translator.link("Soil", "root_temperature", provider, {"temperature": 1.}, **links["temperature"])
         translator.link(provider, "soil_nitrate", "Soil", {"soil_nitrate": 1.})

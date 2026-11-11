@@ -19,7 +19,7 @@ from openalea.metafspm.data_structure.mpg import MPG
 from openalea.metafspm.solve.decorator import boundary_set, graph_jacobian, graph_output, graph_system, node_balance
 from simple_seedling import generate_simple_mpg_seedling
 
-DOC = dict(unit="", unit_comment="", description="", min_value=-10., max_value=10., value_comment="", references="",
+DOC = dict(unit="adim", unit_comment="", description="", min_value=-10., max_value=10., value_comment="", references="",
            DOI=[])
 SOIL_WEIGHT, XYLEM_WEIGHT = 0.6, 1.0
 

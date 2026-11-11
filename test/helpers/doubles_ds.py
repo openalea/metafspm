@@ -21,18 +21,27 @@ NAMES = {"RootCarbon": "PlantCarbon", "RootNitrogen": "PlantNitrogen", "SoilMode
 
 
 def _var(variable_type, default=0., kind="", by=""):
-    return _declare(default=default, unit="", unit_comment="", description="", min_value="", max_value="",
+    return _declare(default=default, unit="adim", unit_comment="", description="", min_value="", max_value="",
                    value_comment="", references="", DOI="", role=variable_type, by=by,
                    kind=kind, location="node")
 
 
 def translator(soil="SoilModel"):
-    """doubles.TRANSLATOR with the DataStructure-backed component names (and the soil component named *soil*)."""
+    """doubles.TRANSLATOR with the DataStructure-backed component names (and the soil component named *soil*); its
+    links with a factor other than 1 (the doubles' arbitrary weights, not unit conversions: their variables are all
+    "adim") in the long form with unit_check=False."""
     names = dict(NAMES, SoilModel=soil)
     renamed = {}
     for receiver, providers in copy.deepcopy(doubles.TRANSLATOR).items():
-        renamed[names[receiver]] = {names[provider]: links for provider, links in providers.items()}
+        renamed[names[receiver]] = {names[provider]: {variable: _deliberate(sources) for variable, sources in links.items()}
+                                    for provider, links in providers.items()}
     return renamed
+
+
+def _deliberate(sources: dict) -> dict:
+    if all(factor == 1. for factor in sources.values()):
+        return sources
+    return {"sources": sources, "unit_check": False}
 
 
 def make_plant_ds():
@@ -107,7 +116,7 @@ def make_chain_plant_ds(coordinates=(0.025, 0.025, -0.01), n_segments=3):
 
 
 def _var_cell(variable_type, default=0.):
-    return _declare(default=default, unit="", unit_comment="", description="", min_value="", max_value="",
+    return _declare(default=default, unit="adim", unit_comment="", description="", min_value="", max_value="",
                    value_comment="", references="", DOI="", role=variable_type, by="",
                    kind="", location="cell")
 

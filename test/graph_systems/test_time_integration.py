@@ -15,7 +15,7 @@ from openalea.metafspm.data_structure.data_api import ArrayDataStructure
 from openalea.metafspm.solve.decorator import edge_law, graph_system, node_balance
 from openalea.metafspm.solve.solver import SolverConvergenceError
 
-DOC = dict(unit="", unit_comment="", description="", min_value=0., max_value=1., value_comment="", references="",
+DOC = dict(unit="adim", unit_comment="", description="", min_value=0., max_value=1., value_comment="", references="",
            DOI=[])
 SHAPE, DX, DT = (6, 1, 1), 0.1, 1.
 

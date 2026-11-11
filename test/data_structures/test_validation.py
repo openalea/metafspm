@@ -15,7 +15,7 @@ from openalea.metafspm.solve.decorator import _Filters, _read_array, boundary_co
 from openalea.metafspm.testing import couplability_problems
 from simple_seedling import generate_simple_mpg_seedling
 
-DOC = dict(unit="", unit_comment="", description="", min_value=0., max_value=1., value_comment="", references="",
+DOC = dict(unit="adim", unit_comment="", description="", min_value=0., max_value=1., value_comment="", references="",
            DOI=[])
 
 

@@ -20,7 +20,7 @@ from openalea.metafspm.solve.decorator import actual, potential, postsegmentatio
 
 SEGMENT_LENGTH = 1.0
 DENSITY = 2.0
-DOC = dict(unit="", unit_comment="", description="", min_value=0., max_value=1., value_comment="", references="",
+DOC = dict(unit="adim", unit_comment="", description="", min_value=0., max_value=1., value_comment="", references="",
            DOI=[])
 
 

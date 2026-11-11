@@ -15,7 +15,7 @@ from openalea.metafspm.data_structure.adaptive_grid import AdaptiveGridDataStruc
 from openalea.metafspm.data_structure.data_api import ArrayDataStructure
 from openalea.metafspm.solve.decorator import edge_law, graph_system, node_balance
 
-DOC = dict(unit="", unit_comment="", description="", min_value=0., max_value=1., value_comment="", references="",
+DOC = dict(unit="adim", unit_comment="", description="", min_value=0., max_value=1., value_comment="", references="",
            DOI=[])
 DT, D = 0.5, 1e-3
 

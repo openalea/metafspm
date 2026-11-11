@@ -12,7 +12,7 @@ from openalea.metafspm.data_structure.data_api import MPGDataStructure
 from openalea.metafspm.solve.decorator import boundary_condition, edge_law, graph_output, graph_system, node_balance
 from simple_seedling import generate_simple_mpg_seedling
 
-DOC = dict(unit="", unit_comment="", description="", min_value=-1e4, max_value=1e4, value_comment="", references="",
+DOC = dict(unit="adim", unit_comment="", description="", min_value=-1e4, max_value=1e4, value_comment="", references="",
            DOI=[])
 DT, K = 0.5, 0.07
 SCALES = {"SubOrgan": (14, 13), "Organ": (8, 7)}
