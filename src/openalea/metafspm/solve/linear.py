@@ -17,8 +17,8 @@ What a backend solves, for the system resolved:
   solve        a Newton step's J δ = −R (LinearSolver.solve: its caches per system, its independent blocks apart)
   solve_once   a system solved once, nothing kept: a static condensation's systems (solve.network.condensed_solve),
                a network's equivalent conductance (solve.network.equivalent_conductance)
-  factorize    a factorisation kept for many right-hand sides (solve(rhs, trans)): a static condensation's kinds of
-               group, a reduction's kinds' interiors (solve.network.KronReduction)
+  factorize    a factorisation kept for many right-hand sides (solve(rhs, trans)): a static condensation's archetypes of
+               group, a reduction's archetypes' interiors (solve.network.KronReduction)
 
   "superlu"        scipy's SuperLU: solve with the MMD_AT_PLUS_A ordering, solve_once and factorize with its default
                    (COLAMD; factorize the Compute's device's: backend.HostBackend, or SuperLU's factors copied to the
@@ -267,7 +267,7 @@ class LinearSolver:
 
     def factorize(self, matrix, symmetric: bool = False):
         """A factorisation of *matrix* (sparse) kept for many right-hand sides: solve(rhs, trans="N") (a static
-        condensation's kinds of group, a Kron reduction's interior). SuperLU's, its default ordering, on the current
+        condensation's archetypes, a Kron reduction's interior). SuperLU's, its default ordering, on the current
         Compute's device (backend.HostBackend.factorize; on "cuda" its factors copied to the GPU)."""
         from openalea.metafspm.compute import Compute
         return Compute.current().backend().factorize(csc_matrix(matrix))

@@ -106,7 +106,7 @@ _RECORD = """
 _KINDS = """
     *kind*: how its value depends on the size of what it describes: "extensive" (an amount, summed up),
     "intensive" (a concentration, a potential, averaged up by *weight*), "massic_concentration", "descriptor",
-    "NonInertialExtensive", "NonInertialIntensive"; links between kinds that disagree raise."""
+    "non_inertial_extensive", "non_inertial_intensive"; links between kinds that disagree raise."""
 
 
 def state_variable(unit: str = "", description: str = "", default=None, kind=None, scale=None, location=None,
@@ -1555,7 +1555,7 @@ class StructuralComponent(DataStructureComponent):
           extensive                 x_v = f x_p (+ its own when it existed),         0                unchanged
                                     x_p = (1 - f) x_p
           (NonInertial)Intensive    parent's value                                   parent's value   unchanged
-          NonInertialExtensive      x_v = f x_p, the parent unchanged                0                unchanged
+          non_inertial_extensive      x_v = f x_p, the parent unchanged                0                unchanged
           descriptor or none        its on_grow value                                on_grow          unchanged
 
         w is the partition weight after the step and b the weight the concentration refers to: the weight before
@@ -1580,7 +1580,7 @@ class StructuralComponent(DataStructureComponent):
                 continue
             kind = meta.get(name, {}).get("kind")
             group = {"massic_concentration": "massic", "extensive": "extensive", "intensive": "intensive",
-                     "NonInertialIntensive": "intensive", "NonInertialExtensive": "non_inertial_extensive"}.get(kind)
+                     "non_inertial_intensive": "intensive", "non_inertial_extensive": "non_inertial_extensive"}.get(kind)
             if group is not None:
                 groups[group].append(name)
         if not any(groups.values()):

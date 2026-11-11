@@ -104,7 +104,7 @@ def test_the_devices_linear_solver():
         Compute(linear_solver="cupy")
 
 
-# ── the kinds' Kron reductions on the device ──
+# ── the archetypes' Kron reductions on the device ──
 
 def test_a_kron_reduction_on_the_device_equals_the_cpus_its_transfers_explicit(fake):
     matrix = _network()
@@ -141,17 +141,17 @@ def test_a_small_right_hand_side_stays_on_the_host(monkeypatch):
 def test_a_reductions_kinds_on_the_device_equal_the_cpus(fake):
     lengths = [0.3 + 0.37 * i for i in range(N_SEGMENTS)]
 
-    def kinds(compute):
+    def archetypes(compute):
         population = length_population(ExactLengthPlant, lengths)
         ds = population.data_structure
         reduction = ds.structure.reduction
         with compute.limits():
             return {i: by_system[SYSTEM] for i, by_system in
-                    reduction.group_kinds(ds, reduction.reduced_groups(ds), release=True).items()}
+                    reduction.group_archetypes(ds, reduction.reduced_groups(ds), release=True).items()}
 
-    reference = kinds(Compute())
+    reference = archetypes(Compute())
     compute = Compute(device="cuda")
-    found = kinds(compute)
+    found = archetypes(compute)
     assert found.keys() == reference.keys()
     for i in reference:
         for name in ("D", "e", "interior_source", "kept_rows", "interior_rows"):

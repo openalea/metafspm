@@ -57,7 +57,7 @@ class PlantCarbon(FunctionalComponent):
     nitrogen_status: float = _var("input", by="PlantNitrogen")
 
     hexose: float = _var("state_variable", default=1., kind="massic_concentration")
-    hexose_exudation: float = _var("state_variable", kind="NonInertialExtensive")
+    hexose_exudation: float = _var("state_variable", kind="non_inertial_extensive")
 
     exudation_rate: float = _var("parameter", default=0.1)
 
@@ -79,7 +79,7 @@ class PlantNitrogen(FunctionalComponent):
 
     amino_acids: float = _var("state_variable", default=2., kind="massic_concentration")
     nitrate: float = _var("state_variable", default=4., kind="massic_concentration")
-    amino_acids_exudation: float = _var("state_variable", kind="NonInertialExtensive")
+    amino_acids_exudation: float = _var("state_variable", kind="non_inertial_extensive")
 
     @rate
     def _amino_acids_exudation(self, amino_acids, carbon_supply):

@@ -77,24 +77,24 @@ def _make_simple_graph_view(n=4, edges=None, boundary_ports=()):
 # ── BoundaryPort ──────────────────────────────────────────────────────────────
 
 def test_boundary_port_fields():
-    p = BoundaryPort(name='soil', node_id=3, kind='dirichlet',
+    p = BoundaryPort(name='soil', node_id=3, condition='dirichlet',
                      value=-0.5, weight=1.0, orientation=1.0)
     assert p.name == 'soil'
     assert p.node_id == 3
-    assert p.kind == 'dirichlet'
+    assert p.condition == 'dirichlet'
     assert p.value == pytest.approx(-0.5)
     assert p.weight == pytest.approx(1.0)
     assert p.orientation == pytest.approx(1.0)
 
 
 def test_boundary_port_default_weight_orientation():
-    p = BoundaryPort(name='atm', node_id=0, kind='neumann', value=0.0)
+    p = BoundaryPort(name='atm', node_id=0, condition='neumann', value=0.0)
     assert p.weight == pytest.approx(1.0)
     assert p.orientation == pytest.approx(1.0)
 
 
 def test_boundary_port_is_frozen():
-    p = BoundaryPort(name='atm', node_id=0, kind='neumann', value=0.0)
+    p = BoundaryPort(name='atm', node_id=0, condition='neumann', value=0.0)
     with pytest.raises((AttributeError, TypeError)):
         p.value = 1.0
 

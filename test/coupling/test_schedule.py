@@ -56,7 +56,7 @@ def test_a_nested_model_gives_its_components_initiators_and_links():
     assert [type(c).__name__ for c in plant.components] == ["RootGrowthProbe", "CarbonProbe", "Uptake"]
     assert plant.roots.growth is plant.components[0] and Plant.initiator_classes() == (RootGrowthProbe,)
     assert {link.variable for link in plant.translator.links} == {"sugar"}      # the nested model's link
-    assert [(step.name, step.kind) for step in plant.steps()] == [("roots", "model"), ("uptake", "component")]
+    assert [(step.name, step.form) for step in plant.steps()] == [("roots", "model"), ("uptake", "component")]
     scene.run()
     ds = scene.populations[0].data_structure
     np.testing.assert_allclose(ds.get("uptake"), 2. * np.asarray(ds.get("C_hexose_root")))
@@ -142,7 +142,7 @@ def test_the_scenes_schedule_table():
     light = table.set_index("step").loc["light"]
     assert light["stages"] == ("rate",) and light["cadence"] == Cadence(3 * DT, at="start")
     assert "LitRoots:relative" in light["writes"] and "LitRoots:topology" in light["reads"]
-    assert table.set_index("step").loc["count", "kind"] == "method"
+    assert table.set_index("step").loc["count", "form"] == "method"
 
 
 @dataclass

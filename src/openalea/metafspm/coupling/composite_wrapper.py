@@ -126,7 +126,7 @@ class CompositeModel:
                 checked.append(ds)
 
     def steps(self) -> list:
-        """The model's schedule bound (coupling.schedule.ScheduledStep: name, kind, components, stages, cadence,
+        """The model's schedule bound (coupling.schedule.ScheduledStep: name, form, components, stages, cadence,
         reads, writes), the cadences its scenario's "cadence" sets included."""
         steps = self.__dict__.get("_steps")
         if steps is None:

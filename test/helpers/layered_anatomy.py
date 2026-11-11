@@ -6,7 +6,7 @@ junction (shared by several cells) Compartments anchored to the segment.
 Per SubOrgan segment:
     Layer cortex (CorticalParenchyma): Cells c0, c1, c2, their protoplasts Symplastic
     Layer xylem  (MetaXylem):          Cells x0, x1 (vessel_index 0, 1), their protoplasts labelled MetaXylem
-    protoplasts kind 0; walls w0..w3 (Apoplastic, kind 1), junction j (Apoplastic, kind 2), anchored to the segment
+    protoplasts compartment_type 0; walls w0..w3 (Apoplastic, compartment_type 1), junction j (Apoplastic, compartment_type 2), anchored to the segment
     membranes (Transmembrane): c0-w0, c1-w0, c1-w1, c2-w1, c2-w2, x0-w2, x0-w3, x1-w3
     plasmodesmata (Symplastic): c0-c1, c1-c2
     wall paths (Apoplastic):    w0-j, w1-j
@@ -43,12 +43,12 @@ def add_section(g, segment, bulk=True):
         cells = g.add_components_bulk(cortex, 3, **props(s.Cell, label=L.Cell.CorticalParenchyma))
         cells += g.add_components_bulk(xylem, 2, **props(s.Cell, label=L.Cell.MetaXylem, vessel_index=[0., 1.]))
         protoplasts = g.add_components_bulk(cells[:3], 3, **props(s.Compartment, label=L.Compartment.Symplastic,
-                                                                  kind=PROTOPLAST))
+                                                                  compartment_type=PROTOPLAST))
         protoplasts += g.add_components_bulk(cells[3:], 2, **props(s.Compartment, label=L.Cell.MetaXylem,
-                                                                   vessel_index=[0., 1.], kind=PROTOPLAST))
+                                                                   vessel_index=[0., 1.], compartment_type=PROTOPLAST))
         apoplast = g.add_components_bulk(node_anchor, 5, topo_parents=[segment] * 5,
                                          **props(s.Compartment, label=L.Compartment.Apoplastic,
-                                                 kind=[WALL] * 4 + [JUNCTION]))
+                                                 compartment_type=[WALL] * 4 + [JUNCTION]))
     else:
         def component(complex_, **props):
             return g.add_component(complex_, **PropsConfig(edge_type='/', **props))
@@ -56,13 +56,13 @@ def add_section(g, segment, bulk=True):
                          for label in (L.Layer.CorticalParenchyma, L.Layer.MetaXylem))
         cells = [component(cortex, scale=s.Cell, label=L.Cell.CorticalParenchyma) for _ in range(3)]
         cells += [component(xylem, scale=s.Cell, label=L.Cell.MetaXylem, vessel_index=float(i)) for i in range(2)]
-        protoplasts = [component(c, scale=s.Compartment, label=L.Compartment.Symplastic, kind=PROTOPLAST)
+        protoplasts = [component(c, scale=s.Compartment, label=L.Compartment.Symplastic, compartment_type=PROTOPLAST)
                        for c in cells[:3]]
         protoplasts += [component(c, scale=s.Compartment, label=L.Cell.MetaXylem, vessel_index=float(i),
-                                  kind=PROTOPLAST) for i, c in enumerate(cells[3:])]
+                                  compartment_type=PROTOPLAST) for i, c in enumerate(cells[3:])]
         apoplast = [g.add_component_with_topo(node_anchor, segment, **PropsConfig(
-            scale=s.Compartment, edge_type='/', label=L.Compartment.Apoplastic, kind=kind))
-            for kind in [WALL] * 4 + [JUNCTION]]
+            scale=s.Compartment, edge_type='/', label=L.Compartment.Apoplastic, compartment_type=compartment_type))
+            for compartment_type in [WALL] * 4 + [JUNCTION]]
     v.update(cortex=cortex, xylem=xylem)
     for name, cell, protoplast in zip(("c0", "c1", "c2", "x0", "x1"), cells, protoplasts):
         v["cell_" + name], v[name] = cell, protoplast

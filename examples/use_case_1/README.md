@@ -133,8 +133,8 @@ per population, its nodes the Compartments of GRANAP's sections (anatomy mode).
   (`node_dirichlet`) and no collar condition, MECHA's sections reduced onto their conduits (`reduction =
   staticmethod(scenario_reduction)`, the scenario's `reduced`, `reduced_where`: a filter of the SubOrgans, every
   section, the root segments and apices, the stem elements (the internodes' and the sheaths'), the blades and the
-  seed), their kinds by length class (`length_classes`: 0.1, a section between two classes their kinds'
-  blend; each class evaluated once and shared by the plants, checkpointed: `"exact"` for a kind per length). ArchiSimple's root apices (`RootApex`, an axis' tip beyond its last segment) are root sections
+  seed), their archetypes by length class (`length_classes`: 0.1, a section between two classes their archetypes'
+  blend; each class evaluated once and shared by the plants, checkpointed: `"exact"` for an archetype per length). ArchiSimple's root apices (`RootApex`, an axis' tip beyond its last segment) are root sections
   with the root's anatomy once they have a length, their barriers by their distance from the tip as the segments'
   (a growing apex's distance is its length: a Casparian strip; at barrier 0 MECHA's xylem would be immature, the apex
   cut off).
@@ -229,7 +229,7 @@ every hour (the tables can be read while it runs):
   into `frames/` again, the next ones added, all packed again at the end.
 
 The run's configuration, `Compute(threads="auto")` (metafspm's default, shown in `run.py`): the
-processors for numba's kernels, the plant system's blocks and the reduction's kinds (each kind's Kron reduction in
+processors for numba's kernels, the plant system's blocks and the reduction's archetypes (each archetype's Kron reduction in
 a thread), each part taking those that pay (the plant system's blocks in the count found fastest on its own solves:
 4 on this laptop; BLAS stays at one thread at any `threads`: the results are the same bit for bit at any number;
 8 plants, day 13: 4.27 s per hour at 1 thread, 3.92 with "auto", measured 2026-11-08 after the generic kernels'
@@ -243,18 +243,18 @@ sends MECHA's standard problem (declared symmetric) to CHOLMOD (scikit-sparse 0.
 Kron reductions and the soil keeping SuperLU (`benchmark.py --linear-solver '{"symmetric": "cholmod"}'`). Measured
 2026-11-09 at 2 plants over 3 days: its 38 solves 0.50 s against SuperLU's 0.88 s, the run 60.2 s against 56.0-59.4
 (within the runs' spread), the results within 1.6e-14 relative (the standard uptake), the frames identical: not
-worth it at this size. The reduction's kinds
+worth it at this size. The reduction's archetypes
 are worked out in the run's process, each in a thread (metafspm's process pool was removed on 2026-11-08, QG-3 of
 its devplan_generic_kernels): measured that day on this 14-thread laptop, 8 plants to day 8 take 292.6 s at
 "auto" (the scope's peak 3.15 GB) against 283.1 s and 3.83 GB with the former pool ("auto": 7 processes), every
 step's results identical bit for bit; resumed from day 8, day 12 and 13 take 3.59 and 4.27 s per hour at 1 thread,
 3.27 and 3.92 at "auto" (the scope's peak 3.9 GB, the checkpoint's load included). `benchmark.py --threads auto|n
 --linear-solver superlu|superlu_reuse|cholmod|pardiso|mumps` compares them (`--threads`: the budget of numba's
-kernels, the plant system's blocks and the kinds, "auto" by default; BLAS stays at one thread; the benchmark's entry
+kernels, the plant system's blocks and the archetypes, "auto" by default; BLAS stays at one thread; the benchmark's entry
 records the threads chosen and each kernel's and solver's time, per step).
 
 **Cores of a hybrid CPU.** A step is one chain of components on the main thread (the other threads only take
-Caribu's projections, the kinds, the plant system's blocks and numba's kernels), so its time follows the core the
+Caribu's projections, the archetypes, the plant system's blocks and numba's kernels), so its time follows the core the
 main thread runs on. This laptop's Core Ultra 7 255U has 2 performance cores (processors 0-3), 8 efficient cores
 (4-11) and 2 low-power efficient cores (12-13): resumed from day 12, 8 plants take 4.02 s per hour at 1 thread on
 the performance cores, **5.19 s (+29 %) on the efficient cores and 8.92 s (+122 %) on the low-power ones** (measured
@@ -265,12 +265,12 @@ on the performance cores (`lscpu --extended` or `/sys/devices/cpu_core/cpus` lis
 affinity setting). `threads="auto"` then counts the processors given (4 here).
 
 **Scaling** (measured 2026-11-07 on the same laptop, metafspm f3a2148, GRANAP c626201, after the incremental
-topology updates; `benchmark.py --variability 1`: each plant its own root draws, the plants sharing their kinds;
+topology updates; `benchmark.py --variability 1`: each plant its own root draws, the plants sharing their archetypes;
 under an 8 GB bound, the memory the scope's peak, the process pool of the time included (its processes in the
 "workers" column; the pool is removed since); each row the day's mean step, and
 before them, at metafspm d2e708e, every step's results identical):
 
-| plants, day | pool processes (then) | s per step (before) | kinds evaluated that day (s per step) | nodes | memory peak |
+| plants, day | pool processes (then) | s per step (before) | archetypes evaluated that day (s per step) | nodes | memory peak |
 |---|---|---|---|---|---|
 | 2, day 8 (identical plants) | auto (7) | 1.44 (1.49) | 139 | 13,924 | 3.6 GB |
 | 8, day 8 (the day-13 run) | 1 | 2.65 (2.85) | 115 (0.60) | 56,598 | |
@@ -279,7 +279,7 @@ before them, at metafspm d2e708e, every step's results identical):
 | 8, day 13 | 1 | 6.05 (7.21) | 83 (0.44) | 252,478 | 6.2 GB |
 | 8, day 14 (metafspm db12072; stopped at h334 by the run's 6.5 GB guard) | 1 | 7.8 at h313–329, 8.5 at h333 (9.8, 10.2: final pass, GRANAP 9464738) | 60 | 326,034 | 7.0 GB |
 
-The kinds saturate (a few hundred a day in the first week, 50 to 90 a day from day 9: the organs' new classes, a
+The archetypes saturate (a few hundred a day in the first week, 50 to 90 a day from day 9: the organs' new classes, a
 few tenths of a second per step); the step grows with the plants' nodes (the roots' sections and their kept nodes:
 about 25 µs per node per step from day 10 on, MECHA's plant solve first, then GRANAP's anatomies and the topology
 updates), and so does the memory (about 10 kB per node beyond 1.5 GB). Extrapolated, 40 plants at day 14 would hold
@@ -289,7 +289,7 @@ large scene (the pages of the main process its forked processes touched were cop
 is the run's process alone. Recorded (`benchmark.py --frames`: a frame a day, p0's sections
 drawn as instances), 8 plants to day 8 take 357 s (334 s unrecorded), the frames 1.1 MB at the sowing to 25 MB at day
 8 (about 0.45 kB per node), the parts 81 MB (77 files), the folder 176 MB.
-On a machine with an NVIDIA GPU and CuPy, `benchmark.py --device cuda` runs the kinds' Kron reductions and the
+On a machine with an NVIDIA GPU and CuPy, `benchmark.py --device cuda` runs the archetypes' Kron reductions and the
 linear solves on the device (metafspm's docs/gpu.md, "Running on a GPU": what is offloaded, how to compare it with
 the CPU run, the transfers in the entry's `device`). The GPU path is experimental: it should work on suitable
 hardware but has not been tested on a GPU yet (no GPU on the development laptop), and its results would agree with
@@ -297,15 +297,15 @@ the CPU's within round-off, not bit for bit.
 
 `benchmark.py` times it (its `build_scene`: `run.py`'s scene, in memory, with the benchmark's options; `python
 benchmark.py [--plants 2] [--days 3]`, under a memory bound): each hour's time by
-model, the kinds of the reduction evaluated, the nodes, the memory (after each hour, after `malloc_trim` and the
+model, the archetypes of the reduction evaluated, the nodes, the memory (after each hour, after `malloc_trim` and the
 peak), written to `outputs/benchmarks/<commit>.json`, one entry per mode; `--checkpoint-at 168` checkpoints the
-scene after those hours and `--resume <checkpoint>` runs on from one (its kinds loaded, none evaluated again).
+scene after those hours and `--resume <checkpoint>` runs on from one (its archetypes loaded, none evaluated again).
 `--scenario KEY=VALUE ...` updates the plants' scenario, e.g. MECHA's lumped shoot nodes, `--scenario
 leaf_ports=bundles vapour_path=air_spaces` (`plant_reduction`'s options: the shoot's conduits per vascular bundle,
 a leaf's evaporating walls per air space); each step records the reduced groups' dense blocks (their nonzeros), the
-end the kinds held and their pickled size. `--memory` adds what the scene holds at the end by owner
+end the archetypes held and their pickled size. `--memory` adds what the scene holds at the end by owner
 (`memory_probe.report`: the DataStructure's columns, the MPG's properties and topology, the Instances, the GRANAP
-templates, the kinds' parts, the group tables, the libraries, the solver's caches, and the
+templates, the archetypes' parts, the group tables, the libraries, the solver's caches, and the
 process before and after `malloc_trim`), `--tracemalloc 8` the allocations alive at the end by line and by stack
 (about 8 times slower), `--thread-scaling` the last step's large linear solves, its parallel kernels (a
 reduction's terms among them) and the memory bandwidth timed at 1 to 12 threads, `--threads` the run's
@@ -314,10 +314,10 @@ work by call site (devplan_scene_parallel.md, P0).
 
 The use case keeps MECHA's defaults (each conduit and evaporating wall its own node). Measured with the options (2
 plants, day 8, against the defaults; 2026-11-06): `leaf_ports="bundles"` keeps 12,060 nodes (13,924), 1.09M dense
-nonzeros (1.96M), the plant solve 19 s over the run (30 s; the step 1.66 s on the last day, 1.77 s), the kinds 494 MB
+nonzeros (1.96M), the plant solve 19 s over the run (30 s; the step 1.66 s on the last day, 1.77 s), the archetypes 494 MB
 (613 MB), the transpiration, uptake, An and gs within 0.04 %, the leaves' water potential 0.45 % above (0.8 % of
 their drop below the roots'); with `vapour_path="air_spaces"` too, 10,250 nodes, 0.30M nonzeros, the solve 12 s (the
-step 1.55 s), the kinds 337 MB, the fluxes within 0.2 %, the leaves' water potential 3 % above. Both are options
+step 1.55 s), the archetypes 337 MB, the fluxes within 0.2 %, the leaves' water potential 3 % above. Both are options
 only, not recommendations, at any scene size. `leaf_ports="bundles"` gives up each vessel's own axial path and its
 own junction to its successor section (a bundle's vessels are held at one potential and joined bundle to bundle),
 and the leaves' water potential, which Tuzet's stomata read, comes out biased (beyond the 0.5 % bound as the plants
@@ -334,7 +334,7 @@ model hourly:
 | | calls | steps (hourly 56 s) | the model's own time | what changes |
 |---|---|---|---|---|
 | GRANAP's anatomies every 3 h (`WheatPlant.anatomy="3 h"`) | 24 | 52 s | 10.0 → 8.8 s; MECHA 34 → 31 s | fluxes within 1e-7; the roots' mean ψ up to 74 hPa off (its range −131 to −50 hPa): the sections wait for their anatomy |
-| GRANAP's anatomies every day | 3 | 36 s | 10.0 → 7.6 s; MECHA 34 → 17 s (fewer sections), the kinds 27 → 11 s | fluxes within 1e-6; the roots' ψ up to 98 hPa off (−4 instead of −102 hPa at the first day's end) |
+| GRANAP's anatomies every day | 3 | 36 s | 10.0 → 7.6 s; MECHA 34 → 17 s (fewer sections), the archetypes 27 → 11 s | fluxes within 1e-6; the roots' ψ up to 98 hPa off (−4 instead of −102 hPa at the first day's end) |
 | Caribu's whole light (lighting and PARa) every 3 h, from the interval's start | 24 | 50 s | 2.8 → 1.0 s | PARa held at its 3-hour mean: up to 36 % off at an hour; over the run PARa +1.5 %, An +6 %, transpiration +0.5 % |
 | Caribu's light every day, from its start | 3 | 52 s | 2.8 → 0.2 s | PARa held at the day's mean, night included: transpiration ×1.9, An −14 % |
 | the former light model's `interval` of 3 h or 1 d | 72 | 52 s | unchanged | identical: the light is relit whenever elements appear (its geometry_input), every hour here |
@@ -376,8 +376,8 @@ segment ends), and:
 **The sections in the frames.** MECHA solves each section reduced (its conduits, soil node and vapour path kept),
 so the frames draw the first plant's sections as *instances* (metafspm's `display="instances"`, the recorder's
 default; `SceneRecorder(display="full")` for the former drawing): per section its transform and its kept nodes' `psi`; once
-per template and per kind, in `frames/parts/` (listed in `scene.fspm.json`), the template's shape and nodes (their
-`tissue`) and the kind's recovery operator; `psi` on every cell is a derived field, rebuilt for the sections you
+per template and per archetype, in `frames/parts/` (listed in `scene.fspm.json`), the template's shape and nodes (their
+`tissue`) and the archetype's recovery operator; `psi` on every cell is a derived field, rebuilt for the sections you
 select. In ParaView (encoding3d's plugin): show the hidden layer "WheatPlant GranapAnatomy instances", pick a
 section, apply "encoding3d Select at scale" (scale SubOrgan): the section is drawn with `psi` on each cell (or tick
 the reader's "Evaluate Derived Fields" for every section). `run.py`'s last line, `scene.recorder.pack()`, writes
@@ -398,10 +398,10 @@ variables; "+parts": the parts the frame added to `frames/parts`, the second dis
 | 2 plants, day 8 | 5.8 MB | 6.0 MB, 2.9 s (+52 MB) | 146.5 MB, 11.5 s | 6.0 MB, 1.4 s (+5.0 MB) | 148.3 MB, 11.3 s | 69 / 25 / 295 MB |
 
 A display frame costs about 0.1 MB more than the data frame; the parts are written once (the templates, then a
-kind's operator, 0.6 to 5.7 MB as its sparse system, when a new kind is drawn: they saturate with the kinds), so a
-run's frames grow by the kinds drawn, not by the frames. A 2-day run (1 plant, 5 frames, 3 drawing the sections):
+archetype's operator, 0.6 to 5.7 MB as its sparse system, when a new archetype is drawn: they saturate with the archetypes), so a
+run's frames grow by the archetypes drawn, not by the frames. A 2-day run (1 plant, 5 frames, 3 drawing the sections):
 frames 0.3 to 0.6 MB, parts 34 MB, the folder 37 MB, packed 14 MB. A checkpoint is 8 MB at day 3 (1 plant), 36 MB at
-day 8 (2 plants), the anatomy templates and the kinds (0.4 to 0.9 GB) written once in `checkpoints/shared`.
+day 8 (2 plants), the anatomy templates and the archetypes (0.4 to 0.9 GB) written once in `checkpoints/shared`.
 
 The recorder's cost at larger sizes (measured 2026-11-10, after the bulk frame build, the copy-free GLB writer,
 the streamed checkpoints, the summaries' groupings and the background frame writer; resumed scenes, one step, the

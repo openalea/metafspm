@@ -1,7 +1,7 @@
 """
 Graph-system options through components: the solver argument and its errors, solver keys giving the same steady
 solution, previous() at the start of the solve or of the sub-step, boundary_set variants (Neumann, Robin with a
-constant or per-node weight, per-node kinds, field= with several unknowns), boundary conditions written as
+constant or per-node weight, per-node conditions, field= with several unknowns), boundary conditions written as
 equations of coupled variables (@boundary_condition), pool unknowns given by their location
 only, forcings given as callables or (times, values) pairs, @graph_output write-back (location checks, active
 subgraphs), integrated edge amounts on an active subgraph, and filtered node balances.
@@ -163,7 +163,7 @@ class Neumann(FunctionalComponent):
 
     @graph_system(node_unknowns=["u"], transient=True)
     class _solve:
-        collar = boundary_set(filters={"is_collar": ">0"}, kind="neumann", value=0.25)
+        collar = boundary_set(filters={"is_collar": ">0"}, condition="neumann", value=0.25)
         _balance = node_balance(field="u")(_diffusion_residual)
 
 
@@ -182,7 +182,7 @@ class ConstantRobin(FunctionalComponent):
 
     @graph_system(node_unknowns=["u"], transient=True)
     class _solve:
-        collar = boundary_set(filters={"is_collar": ">0"}, kind="robin", value=0.5, weight=2.)
+        collar = boundary_set(filters={"is_collar": ">0"}, condition="robin", value=0.5, weight=2.)
         _balance = node_balance(field="u")(_diffusion_residual)
 
 
@@ -199,18 +199,18 @@ def test_a_robin_set_with_a_constant_weight_is_an_exchange_towards_its_value():
 @dataclass
 class RobinByCode(FunctionalComponent):
     u: float = state_variable(**DOC, default=1., scale=scales.SubOrgan)
-    kind_code: float = state_variable(**DOC, default=0., scale=scales.SubOrgan, dtype="int")
+    condition_code: float = state_variable(**DOC, default=0., scale=scales.SubOrgan, dtype="int")
     conductance: float = parameter(**DOC, by="", default=0., location="node")
     time_step = DT
 
     @graph_system(node_unknowns=["u"], transient=True)
     class _solve:
-        tips = boundary_set(filters=lambda ds: np.ones(ds.n_nodes(), dtype=bool), kinds="kind_code", value=3.,
+        tips = boundary_set(filters=lambda ds: np.ones(ds.n_nodes(), dtype=bool), condition_variable="condition_code", value=3.,
                             weight="conductance")
         _balance = node_balance(field="u")(_diffusion_residual)
 
 
-def test_per_node_kinds_apply_robin_where_the_code_says_so_with_per_node_weights():
+def test_per_node_conditions_apply_robin_where_the_code_says_so_with_per_node_weights():
     ds = _ds()
     model = RobinByCode(data_structure=ds)
     u0 = np.linspace(1., 2., ds.n_nodes())
@@ -219,7 +219,7 @@ def test_per_node_kinds_apply_robin_where_the_code_says_so_with_per_node_weights
     codes = np.zeros(ds.n_nodes(), dtype=np.int64)
     codes[leaves] = boundary_set.CODES["robin"]
     weights = np.linspace(0.5, 1.5, ds.n_nodes())
-    ds.set("kind_code", codes)
+    ds.set("condition_code", codes)
     ds.set("conductance", weights)
     model()
     expected = _implicit_step(ds, u0, np.where(codes == 3, weights, 0.), 3.)
@@ -234,7 +234,7 @@ class TwoUnknowns(FunctionalComponent):
 
     @graph_system(node_unknowns=["u", "w"], transient=True)
     class _solve:
-        collar = boundary_set(filters={"is_collar": ">0"}, kind="dirichlet", value=4., field="w")
+        collar = boundary_set(filters={"is_collar": ">0"}, condition="dirichlet", value=4., field="w")
         _u = node_balance(field="u")(_diffusion_residual)
 
         @node_balance(field="w")
@@ -251,7 +251,7 @@ class TwoUnknownsWithoutField(FunctionalComponent):
 
     @graph_system(node_unknowns=["u", "w"], transient=True)
     class _solve:
-        collar = boundary_set(filters={"is_collar": ">0"}, kind="dirichlet", value=4.)
+        collar = boundary_set(filters={"is_collar": ">0"}, condition="dirichlet", value=4.)
         _u = node_balance(field="u")(_diffusion_residual)
 
         @node_balance(field="w")
@@ -271,11 +271,11 @@ def test_field_chooses_the_unknown_of_a_set_and_is_required_with_several_unknown
 
 def test_boundary_set_arguments_are_checked():
     with pytest.raises(ValueError, match="not both"):
-        boundary_set(filters={"is_collar": ">0"}, kind="robin", kinds="kind_code")
-    with pytest.raises(ValueError, match="kind must be one of"):
-        boundary_set(filters={"is_collar": ">0"}, kind="flux")
+        boundary_set(filters={"is_collar": ">0"}, condition="robin", condition_variable="condition_code")
+    with pytest.raises(ValueError, match="condition must be one of"):
+        boundary_set(filters={"is_collar": ">0"}, condition="flux")
     with pytest.raises(TypeError, match="filters must be"):
-        boundary_set(filters=3, kind="dirichlet")
+        boundary_set(filters=3, condition="dirichlet")
 
 
 

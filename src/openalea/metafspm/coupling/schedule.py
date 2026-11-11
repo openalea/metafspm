@@ -70,18 +70,18 @@ class Together(Step):
 
 class ScheduledStep:
     """
-    A step of a model's schedule, bound to it: *name*, *kind* ("component", "together", "model": a nested model's
+    A step of a model's schedule, bound to it: *name*, *form* ("component", "together", "model": a nested model's
     schedule, "method"), its *components* (the components it runs: a method's or a nested model's, all of theirs),
     *stages*, *cadence* (a Cadence or None) and its reads and writes (frozensets of (DataStructure, variable), the
     DataStructure the root one: reads(), writes()).
     """
 
-    def __init__(self, model, name: str, kind: str, components, target=None, stages=None, cadence=None):
-        self.model, self.name, self.kind = model, name, kind
+    def __init__(self, model, name: str, form: str, components, target=None, stages=None, cadence=None):
+        self.model, self.name, self.form = model, name, form
         self.components, self.target, self.stages, self.cadence = list(components), target, stages, cadence
 
     def __repr__(self) -> str:
-        return f"ScheduledStep({self.name!r}, {self.kind}, {[type(c).__name__ for c in self.components]})"
+        return f"ScheduledStep({self.name!r}, {self.form}, {[type(c).__name__ for c in self.components]})"
 
     @property
     def reads(self) -> frozenset:
@@ -94,14 +94,14 @@ class ScheduledStep:
     def run(self) -> bool:
         """Run the step (its cadence's due calls only); whether it ran."""
         from openalea.metafspm.coupling.cadence import run_cadenced
-        if self.kind == "model":
+        if self.form == "model":
             self.target.run()
             return True
-        if self.kind == "method":
+        if self.form == "method":
             self.target()
             return True
         cadence = _effective(self.cadence, self.components[0])
-        if self.kind == "component" and cadence is None and self.stages is None:
+        if self.form == "component" and cadence is None and self.stages is None:
             self.components[0]()                        # its call (Component.__call__: timed)
             self.components[0].__dict__["_ran"] = True
             return True
@@ -111,13 +111,13 @@ class ScheduledStep:
             due = True
         else:
             due = run_cadenced(self.components, cadence, self._call, key=self.name)
-        if self.kind == "component":
+        if self.form == "component":
             component = self.components[0]
             component.__dict__["_wall_time"] = component.__dict__.get("_wall_time", 0.) + perf_counter() - started
         return due
 
     def _call(self, overrides) -> None:
-        if self.kind == "component":
+        if self.form == "component":
             self.components[0]._call(overrides[0] if overrides else None, stages=self.stages)
         else:
             from openalea.metafspm.coupling.composite_wrapper import _run_together
@@ -164,19 +164,19 @@ def bind(model) -> list:
             cadence = with_interval(given, declared.at if declared is not None else None)
         targets = [_resolve(model, target) for target in entry.targets]
         if isinstance(entry, Together):
-            if not all(kind == "component" for kind, _ in targets):
+            if not all(form == "component" for form, _ in targets):
                 raise TypeError(f"{type(model).__name__}.schedule: Together runs components, {entry.targets}")
             steps.append(ScheduledStep(model, entry.name, "together", [t for _, t in targets], cadence=cadence))
             continue
-        ((kind, target),) = targets
-        if kind == "component":
-            steps.append(ScheduledStep(model, entry.name, kind, [target], target, entry.stages, cadence))
+        ((form, target),) = targets
+        if form == "component":
+            steps.append(ScheduledStep(model, entry.name, form, [target], target, entry.stages, cadence))
             continue
         if entry.stages is not None or cadence is not None:
             raise ValueError(f"{type(model).__name__}.schedule: {entry.name}: stages and a cadence are a component's "
                              "step's (or Together's), not a method's or a nested model's")
-        components = target.components if kind == "model" else model.components
-        steps.append(ScheduledStep(model, entry.name, kind, components, target))
+        components = target.components if form == "model" else model.components
+        steps.append(ScheduledStep(model, entry.name, form, components, target))
     unknown = set(overrides) - names
     if unknown:
         raise KeyError(f"{type(model).__name__}: cadence for {sorted(unknown)}: no such step (its steps: "
@@ -200,7 +200,7 @@ def _base_call():
 
 
 def _resolve(model, name: str) -> tuple:
-    """(kind, target) of a schedule entry's name: a component or a nested model of the model's, or its method."""
+    """(form, target) of a schedule entry's name: a component or a nested model of the model's, or its method."""
     from openalea.metafspm.coupling.composite_wrapper import CompositeModel
     target = getattr(model, name, None)
     if isinstance(target, CompositeModel):

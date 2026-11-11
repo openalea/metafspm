@@ -3,7 +3,7 @@ Instanced sections: the vertices of a section (e.g. an anatomy's Layers, Cells, 
 once in a SectionTemplate, and each segment carrying it an instance: a block of vertex ids reserved under its owner,
 with no MTG vertex of its own.
 
-    template = SectionTemplate.capture(g, owner, vids)      once per kind of section, from one copy of it
+    template = SectionTemplate.capture(g, owner, vids)      once per section archetype, from one copy of it
     vids = g.add_instance(segment, template)                 the segment's block of ids (as a copy would get)
     g.remove_instance(segment)
 

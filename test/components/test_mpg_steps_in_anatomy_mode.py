@@ -19,7 +19,7 @@ from openalea.metafspm.solve.decorator import postsegmentation, rate
 from anatomy import add_anatomy, make_rooted_anatomy, wiring
 from growth import DOC
 
-SURFACE = 3.                    # the kind of the Compartment the step adds (a leaf surface, say)
+SURFACE = 3.                    # the compartment type of the Compartment the step adds (a leaf surface, say)
 
 
 @dataclass
@@ -34,12 +34,12 @@ class Elements(FunctionalComponent):
 
 @dataclass
 class Cells(StructuralComponent):
-    """MPG-style: reads the SubOrgans' lengths in the MPG; adds, when asked, a Compartment of kind SURFACE to the
+    """MPG-style: reads the SubOrgans' lengths in the MPG; adds, when asked, a Compartment of compartment_type SURFACE to the
     first segment (its water inherited from the Compartment the DataStructure's inheritance rule gives, once the
-    kind is carried over to the new topology)."""
+    compartment_type is carried over to the new topology)."""
     length: float = input_variable(**DOC, by="Elements", default=0., scale=scales.SubOrgan, location="node",
                                    kind="intensive")
-    kind: float = state_variable(**DOC, default=0., scale=scales.Compartment, location="node", kind="descriptor")
+    compartment_type: float = state_variable(**DOC, default=0., scale=scales.Compartment, location="node", kind="descriptor")
     water: float = state_variable(**DOC, default=0., scale=scales.Compartment, location="node", kind="intensive",
                                   on_grow="inherit")
 
@@ -51,7 +51,7 @@ class Cells(StructuralComponent):
         if self.kept("grow", False):
             anchor = g.scales.anchors[g.scales.Compartment]
             g.add_component_with_topo(anchor, segments[0], **PropsConfig(
-                scale=g.scales.Compartment, edge_type='/', label=g.labels.Compartment.Apoplastic, kind=SURFACE))
+                scale=g.scales.Compartment, edge_type='/', label=g.labels.Compartment.Apoplastic, compartment_type=SURFACE))
 
 
 def _anatomy_data_structure():
@@ -82,9 +82,9 @@ def test_the_compartments_an_mpg_style_step_creates_keep_its_values():
     cells.keep("grow", True)
     cells()
     assert read and ds.n_nodes() == n_nodes + 1
-    kind = np.asarray(ds.get("kind"))
-    assert (kind == SURFACE).sum() == 1
-    (surface,) = ds.entity_ids("node")[kind == SURFACE].tolist()
-    assert ds.structure.property("kind")[surface] == SURFACE
+    compartment_type = np.asarray(ds.get("compartment_type"))
+    assert (compartment_type == SURFACE).sum() == 1
+    (surface,) = ds.entity_ids("node")[compartment_type == SURFACE].tolist()
+    assert ds.structure.property("compartment_type")[surface] == SURFACE
     owner = ds.entity_ids("SubOrgan")[np.asarray(ds.owner("SubOrgan"))[ds.index_of([surface])]]
     assert owner.tolist() == [segments[0]]

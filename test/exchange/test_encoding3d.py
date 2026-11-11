@@ -178,13 +178,13 @@ def test_a_variable_at_instanced_vertices_is_framed_with_the_data_structures_val
     g, _, _ = make_instanced_anatomy(n_segments=2)
     ds = MPGDataStructure(g, from_scale=g.scales.SubOrgan, nodes="Compartment", wiring=wiring(g))
     assert ds._instanced_at("node").all()
-    ds.register("kind", np.arange(ds.n_nodes(), dtype=float) + 1., location="node")      # the template's: 0
+    ds.register("compartment_type", np.arange(ds.n_nodes(), dtype=float) + 1., location="node")      # the template's: 0
     compartments = to_frame({"section": ds}).data_structures[0].entity_set("Compartment")
     rows = np.searchsorted(compartments.columns["id"], ds.entity_ids("node"))
-    np.testing.assert_array_equal(np.asarray(compartments.columns["kind"])[rows], ds.get("kind"))
+    np.testing.assert_array_equal(np.asarray(compartments.columns["compartment_type"])[rows], ds.get("compartment_type"))
     assert "metafspm_kind" not in compartments.columns
     again = _round_trip({"section": ds})["section"]
-    np.testing.assert_array_equal(again.get("kind"), ds.get("kind"))
+    np.testing.assert_array_equal(again.get("compartment_type"), ds.get("compartment_type"))
 
 
 def test_the_instanced_properties_are_read_through_one_plan_per_scale():

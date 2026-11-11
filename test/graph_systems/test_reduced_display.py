@@ -2,7 +2,7 @@
 A reduced plant's sections drawn whole in an encoding3d frame: a component's display_triangles() draws a reduced
 section's interior cells too (owner -1, owner_ids their display ids: solve.reduction.display_ids), and the frame writes
 the interiors as display rows (metafspm_display_only) of their scales' entity sets: the reduced system's unknown
-recovered (Reduction.recover_interiors, one factorisation per kind) equal to the full plant's solve, their template's
+recovered (Reduction.recover_interiors, one factorisation per archetype) equal to the full plant's solve, their template's
 properties, linked to their Cells, Layers and section; the mesh's triangles on them. from_frame leaves them out (the
 DataStructure stays reduced); a selection by entity brings a section's interior with it.
 """
@@ -74,8 +74,8 @@ def test_the_interiors_are_display_rows_with_the_full_solve_s_values(solved):
         assert template.scale[row] == scales.Compartment
     np.testing.assert_allclose(compartments["water_potential"][shown], expected, rtol=1e-11)
     np.testing.assert_allclose(compartments["water_potential"][~shown], reduced.get("water_potential"))
-    # their template's properties (kind), linked to their Cells (themselves display rows) and section
-    assert np.isfinite(compartments["kind"][shown]).all()
+    # their template's properties (archetype), linked to their Cells (themselves display rows) and section
+    assert np.isfinite(compartments["compartment_type"][shown]).all()
     cells = plants.entity_set("Cell").columns
     assert np.asarray(cells[DISPLAY_ONLY], dtype=bool).sum() == 3 * len(sections)      # the cortex's cells
     assert np.isin(compartments["complex"][shown], np.concatenate([cells["id"], np.asarray(sections)])).all()

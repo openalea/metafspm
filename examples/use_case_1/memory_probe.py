@@ -10,7 +10,7 @@ owner): the plants' DataStructure columns (their variables), its other arrays (d
 its metadata; the MPG's properties (dicts per vertex: entries counted, their bytes estimated from a sample), its
 topology dicts (openalea.mtg's parent, children, complex, components, scale) and arrays (topology_arrays, the
 O-14 derived arrays and log), its Instances tables, its object registries (GRANAP's templates); the reduction's
-kinds (D and e, their Kron reductions' kept S and interior matrices, rows, inputs, recovery), templates, group tables and library populations; each
+archetypes (D and e, their Kron reductions' kept S and interior matrices, rows, inputs, recovery), templates, group tables and library populations; each
 component's own attributes (MECHA's, Caribu's buffers); the Compute's linear solver caches (patterns, factors); the
 environment's DataStructures; the recorder; the rest of the scene. The process's resident memory (anon, file), after
 glibc's malloc_trim, completes it:
@@ -330,21 +330,21 @@ def ds_report(sizer: Sizer, ds) -> dict:
 
 
 def reduction_report(sizer: Sizer, reduction) -> dict:
-    """The reduction's kinds (their parts: D/e, factorisations, X, inputs, recovery), templates, group tables and
+    """The reduction's archetypes (their parts: D/e, factorisations, X, inputs, recovery), templates, group tables and
     libraries."""
     out = {}
     if reduction is None:
         return out
     parts = defaultdict(int)
-    kinds = 0
-    for by_system in reduction._kinds.values():
-        kinds += 1
-        for kind in (by_system.values() if isinstance(by_system, dict) else [by_system]):
-            if kind is None or not hasattr(kind, "D"):
-                parts["other"] += sizer.size(kind)
+    archetypes = 0
+    for by_system in reduction._archetypes.values():
+        archetypes += 1
+        for archetype in (by_system.values() if isinstance(by_system, dict) else [by_system]):
+            if archetype is None or not hasattr(archetype, "D"):
+                parts["other"] += sizer.size(archetype)
                 continue
-            parts["D_e"] += sizer.size(kind.D) + sizer.size(kind.e)
-            kron = kind.reduction
+            parts["D_e"] += sizer.size(archetype.D) + sizer.size(archetype.e)
+            kron = archetype.reduction
             if kron is not None and hasattr(kron, "_A_II"):   # a KronReduction: its matrices, then the rest
                 parts["kron reduced S (dense)"] += sizer.size(kron.__dict__.get("reduced"))
                 parts["kron A_II (sparse)"] += sizer.size(kron.__dict__.get("_A_II"))
@@ -353,14 +353,14 @@ def reduction_report(sizer: Sizer, reduction) -> dict:
                 parts["kron LU and X (live)"] += sizer.size(kron.__dict__.get("_lu")) + sizer.size(
                     kron.__dict__.get("_X"))
             parts["factorisation"] += sizer.size(kron)
-            parts["recovery"] += sizer.size(kind.recovery)
-            parts["inputs_outputs"] += sizer.size(kind.inputs) + sizer.size(kind.outputs)
-            parts["rows"] += sum(sizer.size(getattr(kind, name)) for name in
+            parts["recovery"] += sizer.size(archetype.recovery)
+            parts["inputs_outputs"] += sizer.size(archetype.inputs) + sizer.size(archetype.outputs)
+            parts["rows"] += sum(sizer.size(getattr(archetype, name)) for name in
                                  ("interior_source", "kept_rows", "interior_rows", "contraction", "merged_rows",
                                   "merged_kept"))
-            parts["other"] += sizer.size(kind)
+            parts["other"] += sizer.size(archetype)
         parts["other"] += sizer.size(by_system)
-    out["kinds"] = {"kinds": kinds, "bytes": sum(parts.values()), "parts": dict(parts)}
+    out["archetypes"] = {"archetypes": archetypes, "bytes": sum(parts.values()), "parts": dict(parts)}
     out["templates"] = {"bytes": sum(sizer.size(reduction.__dict__.get(name)) for name in
                                      ("_full", "_reduced", "_kept", "_rows", "_merged", "_blends"))}
     out["group_tables"] = {"bytes": sum(sizer.size(reduction.__dict__.get(name)) for name in ("_table", "_assigned"))}
@@ -456,10 +456,10 @@ def summary(found: dict) -> str:
                 extra = ""
                 if key == "mpg_properties":
                     extra = f" ({value['entries']} entries, {value['bytes_per_entry']:.0f} B each)"
-                if key == "kinds":
-                    extra = f" ({value['kinds']})"
+                if key == "archetypes":
+                    extra = f" ({value['archetypes']})"
                 line(key + extra, value["bytes"])
-                if key == "kinds":
+                if key == "archetypes":
                     for part, bytes_ in value["parts"].items():
                         line("   " + part, bytes_)
     for name, bytes_ in found["components"].items():
@@ -559,10 +559,10 @@ class Captured:
         self._tree._segmented_scan, self._tree._path_window = scanned, windowed
         scatter = self._scatter
 
-        def scattered(data, slots, kinds, weights, blocks, chunks):
+        def scattered(data, slots, archetypes, weights, blocks, chunks):
             if slots.size >= 100_000 and len(captured.scatters) < 2:       # a reduction's terms, the large blocks
-                captured.scatters.append((data.size, slots, kinds.copy(), weights.copy(), blocks, chunks))
-            return scatter(data, slots, kinds, weights, blocks, chunks)
+                captured.scatters.append((data.size, slots, archetypes.copy(), weights.copy(), blocks, chunks))
+            return scatter(data, slots, archetypes, weights, blocks, chunks)
         self._kernels.scatter_weighted_blocks = scattered
         return self
 

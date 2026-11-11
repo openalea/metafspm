@@ -18,19 +18,19 @@ from openalea.metafspm.solve.reduction import Reduction
 from layered_anatomy import section_template, wiring
 from test_reduction import N_SEGMENTS, NodeHydraulics, _soil_walls, _xylem
 
-PROBE = 3.                                         # the added nodes' kind (no boundary set holds on them)
+PROBE = 3.                                         # the added nodes' archetype (no boundary set holds on them)
 _TEMPLATE = {}
 
 
 def merge_template():
-    """The toy section with n4 and n5 (kind PROBE, merge_group 1, area 2 and 3), each joined to c0 and c2 by a
+    """The toy section with n4 and n5 (archetype PROBE, merge_group 1, area 2 and 3), each joined to c0 and c2 by a
     membrane; and each named vertex's local index."""
     if not _TEMPLATE:
         from openalea.metafspm.data_structure.mpg import MPG
         labels = MPG().labels
         template, names = section_template("toy merge section")
         nodes = template.extended(template.key, [scales.Compartment] * 2, [ANCHOR] * 2, [OWNER] * 2,
-                                  {"kind": [PROBE, PROBE], "label": [float(labels.Compartment.Apoplastic)] * 2,
+                                  {"compartment_type": [PROBE, PROBE], "label": [float(labels.Compartment.Apoplastic)] * 2,
                                    "merge_group": [1., 1.], "area": [2., 3.], "edge_type": np.array(["/", "/"]),
                                    "isanchor": [0., 0.], "type": [0., 0.], "scale": [float(scales.Compartment)] * 2,
                                    "up_scale_parent": np.array([None] * 2), "down_scale_children": np.array([None] * 2)})
@@ -47,7 +47,7 @@ def merge_template():
 
 
 def _probes(template):
-    rows, values = template.properties["kind"]
+    rows, values = template.properties["compartment_type"]
     out = np.zeros(template.size, dtype=bool)
     out[rows] = np.asarray(values, dtype=float) == PROBE
     return out

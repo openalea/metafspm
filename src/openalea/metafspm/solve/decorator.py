@@ -13,8 +13,8 @@ coupled equations over a DataStructure's graph.
         @node_rate(field)                        a node du/dt (time term by the framework; any solver)
         @edge_law(field=, integrate=False)       an edge residual (or an integrated edge flux)
         @pool_balance(field)                     the residual of a pool unknown (pool_unknowns=)
-        name = boundary_set(filters=, kind=, value=, weight=)  a boundary condition on a set of nodes
-        @boundary_condition(location, kind)      a boundary condition written as a method
+        name = boundary_set(filters=, condition=, value=, weight=)  a boundary condition on a set of nodes
+        @boundary_condition(location, condition) a boundary condition written as a method
         @graph_jacobian                          an optional analytic Jacobian
         @graph_output(name, location=None)       a variable computed after the solve
 """
@@ -135,7 +135,7 @@ def node_balance(field=None, filters=None):
     """
     def decorator(func):
         func.__graph_tag__ = {
-            "kind": "node_balance", "field": field,
+            "term": "node_balance", "field": field,
             "filters": filters, "explicit": False,
         }
         return func
@@ -156,7 +156,7 @@ def node_rate(field=None, filters=None):
     filters : the nodes, as for node_balance: the rate applies on the selected nodes (zero elsewhere).
     """
     def decorator(func):
-        func.__graph_tag__ = {"kind": "node_rate", "field": field, "filters": filters}
+        func.__graph_tag__ = {"term": "node_rate", "field": field, "filters": filters}
         return func
     return decorator
 
@@ -167,7 +167,7 @@ def pool_balance(field):
     and takes the pool's values as an argument named after it, like any unknown.
     """
     def decorator(func):
-        func.__graph_tag__ = {"kind": "pool_balance", "field": field}
+        func.__graph_tag__ = {"term": "pool_balance", "field": field}
         return func
     return decorator
 
@@ -187,7 +187,7 @@ def edge_law(func=None, *, field=None, filters=None,
     """
     def _decorate(f):
         f.__graph_tag__ = {
-            "kind": "edge_law", "field": field,
+            "term": "edge_law", "field": field,
             "filters": filters, "explicit": explicit, "integrate": integrate,
         }
         return f
@@ -196,7 +196,7 @@ def edge_law(func=None, *, field=None, filters=None,
     return _decorate
 
 
-def boundary_condition(location, kind, field=None, filters=None, explicit=False):
+def boundary_condition(location, condition, field=None, filters=None, explicit=False):
     """
     Tag a method as a boundary condition on a set of nodes, for conditions given by an equation: the method takes
     its arguments by name, like node_balance (unknowns, and DataStructure variables, e.g. coupled ones, read at
@@ -210,7 +210,7 @@ def boundary_condition(location, kind, field=None, filters=None, explicit=False)
     Parameters
     ----------
     location : "node"
-    kind     : "dirichlet": the selected nodes' residual rows become the method's values (a residual, e.g.
+    condition: "dirichlet": the selected nodes' residual rows become the method's values (a residual, e.g.
                ``p - collar_pressure``; with explicit=True, the prescribed value itself);
                "neumann": the method's values are an inflow, subtracted from the residual, as boundary_set's.
     field    : the node unknown it applies to.
@@ -222,14 +222,14 @@ def boundary_condition(location, kind, field=None, filters=None, explicit=False)
                                   "on nodes (use a boundary_set on the nodes)")
     if location != "node":
         raise ValueError(f"@boundary_condition: location must be 'node', got '{location}'")
-    if kind not in ("dirichlet", "neumann"):
-        raise ValueError(f"@boundary_condition: kind must be 'dirichlet' or 'neumann', got '{kind}'")
+    if condition not in ("dirichlet", "neumann"):
+        raise ValueError(f"@boundary_condition: condition must be 'dirichlet' or 'neumann', got '{condition}'")
     _check_filters(filters, "@boundary_condition")
 
     def decorator(func):
         func.__graph_tag__ = {
-            "kind": "boundary_condition",
-            "location": location, "bc_kind": kind,
+            "term": "boundary_condition",
+            "location": location, "condition": condition,
             "field": field, "filters": filters, "explicit": explicit,
         }
         return func
@@ -286,18 +286,20 @@ class boundary_set:
     """
     Boundary condition on a set of nodes, declared in a graph-system class and assembled by the framework::
 
-        leaves = boundary_set(filters={"label": "LeafElement"}, kind="robin", value="air_water_potential",
+        leaves = boundary_set(filters={"label": "LeafElement"}, condition="robin", value="air_water_potential",
                               weight="leaf_conductance")
 
     Arguments::
 
         filters {variable: condition} | a mask name | a callable ds -> boolean mask (conventions.md); membership
                 follows the selecting variables and topology changes.
-        kind    "robin":     + w * (x - v) in the field's residual (an outflow towards the external value v);
+        condition "robin":     + w * (x - v) in the field's residual (an outflow towards the external value v);
                 "dirichlet": the residual row becomes x - v;
                 "neumann":   - v in the residual (v is an inflow);
                 None:        a selection only (no term), e.g. the nodes exchanging with a pool unknown.
-        kinds   instead of kind, a node variable name: each node's kind is read at each solve from that variable,
+        condition_variable
+                instead of condition, a node variable name: each node's condition is read at each solve from that
+                variable,
                 as boundary_set.CODES (1 dirichlet, 2 neumann, 3 robin, anything else no condition), e.g. a collar
                 switching between a pressure and a flux.
         value, weight
@@ -305,32 +307,33 @@ class boundary_set:
         field   the node unknown it applies to; default: the only node unknown.
     """
 
-    KINDS = ("robin", "dirichlet", "neumann")
-    # Codes of a per-node kind variable; other values (e.g. 0) apply no condition
+    CONDITIONS = ("robin", "dirichlet", "neumann")
+    # Codes of a per-node condition variable; other values (e.g. 0) apply no condition
     CODES = {"dirichlet": 1, "neumann": 2, "robin": 3}
 
-    def __init__(self, filters, kind=None, value=0., weight=1.0, field=None, kinds: str = None):
-        if kind is not None and kind not in self.KINDS:
-            raise ValueError(f"boundary_set: kind must be one of {self.KINDS}, got '{kind}'")
-        if kinds is not None:
-            if kind is not None:
-                raise ValueError("boundary_set: give kind= (one kind) or kinds= (a node variable), not both")
-            kind = "per_node"
-        self.kind_variable = kinds
+    def __init__(self, filters, condition=None, value=0., weight=1.0, field=None, condition_variable: str = None):
+        if condition is not None and condition not in self.CONDITIONS:
+            raise ValueError(f"boundary_set: condition must be one of {self.CONDITIONS}, got '{condition}'")
+        if condition_variable is not None:
+            if condition is not None:
+                raise ValueError("boundary_set: give condition= (one condition) or condition_variable= (a node variable), "
+                                 "not both")
+            condition = "per_node"
+        self.condition_variable = condition_variable
         if filters is None:
             raise TypeError("boundary_set: filters= is required (the nodes of the set)")
         _check_filters(filters, "boundary_set")
-        self.filters, self.kind, self.value, self.weight, self.field = filters, kind, value, weight, field
+        self.filters, self.condition, self.value, self.weight, self.field = filters, condition, value, weight, field
         self.name = None
-        self.__graph_tag__ = {"kind": "boundary_set"}
+        self.__graph_tag__ = {"term": "boundary_set"}
 
     def __set_name__(self, owner, name):
         self.name = name
 
     def variables(self) -> list:
         """DataStructure variables read by the solve (value and weight given by name)."""
-        weight = self.weight if self.kind in ("robin", "per_node") else None
-        return [x for x in (self.value, weight, self.kind_variable) if isinstance(x, str)]
+        weight = self.weight if self.condition in ("robin", "per_node") else None
+        return [x for x in (self.value, weight, self.condition_variable) if isinstance(x, str)]
 
     def members(self, instance, ds, size, take) -> np.ndarray:
         """Indices, in the solved graph, of the nodes of the set."""
@@ -339,7 +342,7 @@ class boundary_set:
 
 def graph_jacobian(func):
     """Tag a method as the optional analytic Jacobian evaluator."""
-    func.__graph_tag__ = {"kind": "graph_jacobian"}
+    func.__graph_tag__ = {"term": "graph_jacobian"}
     return func
 
 
@@ -351,7 +354,7 @@ def explicit_term(field=None, jacobian=None):
     only). Without a reduction it is one more term of the balance.
     """
     def decorator(func):
-        func.__graph_tag__ = {"kind": "node_balance", "field": field, "filters": None, "explicit": False,
+        func.__graph_tag__ = {"term": "node_balance", "field": field, "filters": None, "explicit": False,
                               "explicit_term": True, "term_jacobian": jacobian}
         return func
     return decorator
@@ -364,43 +367,43 @@ def input_jacobian(name):
     changes act through it, carried to the kept nodes.
     """
     def decorator(func):
-        func.__graph_tag__ = {"kind": "input_jacobian", "name": name}
+        func.__graph_tag__ = {"term": "input_jacobian", "name": name}
         return func
     return decorator
 
 
-def kind_derived(name: str):
+def archetype_derived(name: str):
     """
-    Tag a method of a reduced graph system's component as a value its reduction's kinds derive (solve.reduction):
-    method(self, kind, full_template, kron, nodes) -> value, run once per kind of the systems the component declares,
+    Tag a method of a reduced graph system's component as a value its reduction's archetypes derive (solve.reduction):
+    method(self, archetype, full_template, kron, nodes) -> value, run once per archetype of the systems the component declares,
     on the reduction's library (self its library component, self.data_structure the library's DataStructure),
-    while the kind's interior factorisation is live (before kron.release()); its value is stored in
-    kind.outputs[name]. *kind*: the Kind (D, e, kept_rows, interior_rows: its full template's Compartment rows),
+    while the archetype's interior factorisation is live (before kron.release()); its value is stored in
+    archetype.outputs[name]. *archetype*: the Archetype (D, e, kept_rows, interior_rows: its full template's Compartment rows),
     *full_template*: the full SectionTemplate, *kron*: its KronReduction (kron.shares, kron.recover: no
     refactorisation), *nodes*: the full group's node indices in the library's DataStructure, in the kron's local
     order (its kept nodes nodes[kron.kept_nodes]; with merged nodes, Reduction(merge=), a merged group's
-    representative only: kind.contract(values per full template Compartment) sums them into the kron's order). E.g.
+    representative only: archetype.contract(values per full template Compartment) sums them into the kron's order). E.g.
     the kept nodes' share of the interior's volumes.
     """
     def decorator(func):
-        func.__kind_derived__ = name
+        func.__archetype_derived__ = name
         return func
     return decorator
 
 
-def kind_derived_methods(component) -> dict:
-    """{name: method} of *component*'s @kind_derived methods (its class's and its bases', the most derived
+def _archetype_derived_methods(component) -> dict:
+    """{name: method} of *component*'s @archetype_derived methods (its class's and its bases', the most derived
     first)."""
     out = {}
     for cls in type(component).__mro__:
         for attribute in vars(cls).values():
-            name = getattr(attribute, "__kind_derived__", None)
+            name = getattr(attribute, "__archetype_derived__", None)
             if name is not None and name not in out:
                 out[name] = attribute.__get__(component, type(component))
     return out
 
 
-# Reading a kind's operator (solve.reduction): the system's equations alone, without its boundary sets, explicit
+# Reading an archetype's operator (solve.reduction): the system's equations alone, without its boundary sets, explicit
 # terms and reduced terms
 _EXTRACTING = []
 # The graph systems not solved while a reduction's library runs (their operators are read, not their solutions)
@@ -456,7 +459,7 @@ def graph_output(name, location: str = None, filters=None):
     _check_filters(filters, f"@graph_output('{name}')")
 
     def decorator(func):
-        func.__graph_tag__ = {"kind": "graph_output", "name": name, "location": location, "filters": filters}
+        func.__graph_tag__ = {"term": "graph_output", "name": name, "location": location, "filters": filters}
         return func
     return decorator
 
@@ -766,7 +769,7 @@ class _GraphSystemBuilder:
         seen:              set[str] = set()
         node_balance_items = []   # (field, types, attr_name, bound, raw, explicit)
         edge_law_items     = []   # (field, types, attr_name, bound, raw, explicit, integrate)
-        bc_items           = []   # (field, types, bc_kind, attr_name, bound, raw, explicit)
+        bc_items           = []   # (field, types, condition, attr_name, bound, raw, explicit)
         jacobian_raw       = None
         explicit_items     = []   # (field, bound method, its Jacobian's method name): @explicit_term
         self.input_jacobians = {} # {variable: (bound, raw)}: @input_jacobian
@@ -785,42 +788,42 @@ class _GraphSystemBuilder:
                 tag = getattr(obj, "__graph_tag__", None)
                 if tag is None:
                     continue
-                if tag["kind"] == "boundary_set":
+                if tag["term"] == "boundary_set":
                     boundary_sets.append(obj)          # declared data, not a method
                     continue
                 bound = obj.__get__(instance, type(instance))
-                kind  = tag["kind"]
+                term = tag["term"]
                 key   = f"{type(instance).__name__}.{inner_cls.__name__}.{attr_name}"
                 selection = None
                 if tag.get("filters") is not None:
-                    selection = _Filters(tag["filters"], key, "edge" if kind == "edge_law" else "node")
-                if kind in ("node_balance", "node_rate") and tag.get("explicit_term"):
+                    selection = _Filters(tag["filters"], key, "edge" if term == "edge_law" else "node")
+                if term in ("node_balance", "node_rate") and tag.get("explicit_term"):
                     explicit_items.append((tag["field"], bound, tag.get("term_jacobian")))
                     if _EXTRACTING:
-                        continue                       # the kind's operator: the equations alone
+                        continue                       # the archetype's operator: the equations alone
                     node_balance_items.append((tag["field"], selection, attr_name, bound, obj, False))
-                elif kind in ("node_balance", "node_rate"):
+                elif term in ("node_balance", "node_rate"):
                     node_balance_items.append((
                         tag["field"], selection, attr_name, bound, obj,
-                        "rate" if kind == "node_rate" else tag.get("explicit", False)
+                        "rate" if term == "node_rate" else tag.get("explicit", False)
                     ))
-                elif kind == "input_jacobian":
+                elif term == "input_jacobian":
                     self.input_jacobians[tag["name"]] = (bound, obj)
-                elif kind == "edge_law":
+                elif term == "edge_law":
                     edge_law_items.append((
                         tag.get("field"), selection, attr_name, bound, obj,
                         tag.get("explicit", False), tag.get("integrate", False)
                     ))
-                elif kind == "boundary_condition":
+                elif term == "boundary_condition":
                     bc_items.append((
-                        tag.get("field"), selection, tag.get("bc_kind"),
+                        tag.get("field"), selection, tag.get("condition"),
                         attr_name, bound, obj, tag.get("explicit", False)
                     ))
-                elif kind == "pool_balance":
+                elif term == "pool_balance":
                     pool_items.append((tag["field"], bound, obj))
-                elif kind == "graph_jacobian":
+                elif term == "graph_jacobian":
                     jacobian_raw = (bound, obj)
-                elif kind == "graph_output":
+                elif term == "graph_output":
                     output_items.append((tag["name"], bound, obj, selection))
                     self.output_locations[tag["name"]] = tag.get("location")
 
@@ -841,7 +844,7 @@ class _GraphSystemBuilder:
             raise ValueError(f"{system_name}: @graph_jacobian is the Jacobian of residuals, not of @node_rate")
         if rate_solver:
             dirichlet = [an for _, _, bk, an, _, _, _ in bc_items if bk == "dirichlet"]
-            dirichlet += [b.name for b in boundary_sets if b.kind in ("dirichlet", "per_node")]
+            dirichlet += [b.name for b in boundary_sets if b.condition in ("dirichlet", "per_node")]
             if dirichlet:
                 raise ValueError(f"{system_name}: Dirichlet conditions ({dirichlet}) fix a value, which {spec_def['method']} "
                                  "cannot integrate: use a Newton solver, or a Robin condition")
@@ -901,11 +904,11 @@ class _GraphSystemBuilder:
         )
 
         # Boundary sets: members on the solved graph, values and weights read now
-        set_terms = defaultdict(list)    # field -> [(kind, idx, value, weight)]
-        if _EXTRACTING:                  # a kind's operator: the equations alone (the groups' conditions stay live)
+        set_terms = defaultdict(list)    # field -> [(condition, idx, value, weight)]
+        if _EXTRACTING:                  # an archetype's operator: the equations alone (the groups' conditions stay live)
             boundary_sets, bc_items = [], []
         for bset in boundary_sets:
-            if bset.kind is None:
+            if bset.condition is None:
                 continue                      # a selection only (e.g. a pool's exchange set)
             if bset.field is not None:
                 field = bset.field
@@ -917,27 +920,27 @@ class _GraphSystemBuilder:
 
             def read(x, idx=idx):
                 return node_snap[x][idx] if isinstance(x, str) else np.full(idx.size, float(x))
-            if bset.kind == "per_node":
-                codes = np.asarray(read(bset.kind_variable)).round().astype(np.int64)
+            if bset.condition == "per_node":
+                codes = np.asarray(read(bset.condition_variable)).round().astype(np.int64)
                 value, weight = read(bset.value), read(bset.weight)
-                for kind, code in boundary_set.CODES.items():
+                for condition, code in boundary_set.CODES.items():
                     chosen = codes == code
-                    set_terms[field].append((kind, idx[chosen], value[chosen],
-                                             weight[chosen] if kind == "robin" else None))
+                    set_terms[field].append((condition, idx[chosen], value[chosen],
+                                             weight[chosen] if condition == "robin" else None))
                 continue
-            set_terms[field].append((bset.kind, idx, read(bset.value), read(bset.weight) if bset.kind == "robin"
+            set_terms[field].append((bset.condition, idx, read(bset.value), read(bset.weight) if bset.condition == "robin"
                                      else None))
 
         if instance.__dict__.get("_restriction") is not None and not (spec_def.get("transient", False) or rate_form):
             anchored = np.zeros(n, dtype=bool)
-            for _, tf, bc_kind, _, _, _, _ in bc_items:
-                if bc_kind == "dirichlet":
+            for _, tf, condition, _, _, _, _ in bc_items:
+                if condition == "dirichlet":
                     anchored |= tf.mask(ds, _take(instance, "node")) if tf is not None else True
             for terms in set_terms.values():
-                for kind, idx, _, weight in terms:
-                    if kind == "dirichlet":
+                for condition, idx, _, weight in terms:
+                    if condition == "dirichlet":
                         anchored[idx] = True
-                    elif kind == "robin":
+                    elif condition == "robin":
                         anchored[idx[weight > 0]] = True
             _check_well_posed(instance, spec_def["inner_class"].__name__, gv, anchored)
 
@@ -1042,7 +1045,7 @@ class _GraphSystemBuilder:
         # ── BC factory ────────────────────────────────────────────────────────
 
         def make_bc_eval(raw_func, bound_method, type_filter,
-                          bc_kind="dirichlet", field=None, explicit=False):
+                          condition="dirichlet", field=None, explicit=False):
             arg_names = inspect.getfullargspec(raw_func)[0][1:]
             sliced    = [arg_location(aname) == "node" for aname in arg_names]
 
@@ -1072,7 +1075,7 @@ class _GraphSystemBuilder:
                     idx  = np.arange(n)
                     vals = np.asarray(_in_equation(instance, bound_method, args), dtype=np.float64)
 
-                if explicit and bc_kind == "dirichlet" and field is not None:
+                if explicit and condition == "dirichlet" and field is not None:
                     vals = ctx.node_unknowns[field][idx] - vals
                 return idx, vals
 
@@ -1088,19 +1091,19 @@ class _GraphSystemBuilder:
                 for w in bulk_evals:
                     result += w(ctx)
                 x = ctx.node_unknowns[field] if terms else None
-                for kind, idx, value, weight in terms:
-                    if kind == "robin":
+                for condition, idx, value, weight in terms:
+                    if condition == "robin":
                         result[idx] += weight * (x[idx] - value)
-                    elif kind == "neumann":
+                    elif condition == "neumann":
                         result[idx] -= value * neumann_scale
-                for bkind, bc_ev in bc_specs:
+                for condition, bc_ev in bc_specs:
                     idx, vals = bc_ev(ctx)
-                    if bkind == "dirichlet":
+                    if condition == "dirichlet":
                         result[idx] = vals
                     else:
                         result[idx] -= vals * neumann_scale         # an inflow, as a boundary_set's value
-                for kind, idx, value, _ in terms:
-                    if kind == "dirichlet":
+                for condition, idx, value, _ in terms:
+                    if condition == "dirichlet":
                         result[idx] = x[idx] - value
                 return result
             return evaluator
@@ -1110,8 +1113,8 @@ class _GraphSystemBuilder:
             node_groups[field_name].append((tf, bound, raw, ex))
 
         bc_groups: dict[str, list] = defaultdict(list)
-        for field_name, tf, bc_kind, _, bound, raw, ex in bc_items:
-            bc_groups[field_name].append((tf, bc_kind, bound, raw, ex))
+        for field_name, tf, condition, _, bound, raw, ex in bc_items:
+            bc_groups[field_name].append((tf, condition, bound, raw, ex))
 
         reduced = None if _EXTRACTING else _reduced_terms(instance, spec_def, ds, gv)
         if reduced is not None:
@@ -1152,7 +1155,7 @@ class _GraphSystemBuilder:
                 else:
                     bulk_wrapped.append(inner)
             bc_wrapped = [
-                (bk, make_bc_eval(r, b, tf, bc_kind=bk, field=field_name, explicit=ex))
+                (bk, make_bc_eval(r, b, tf, condition=bk, field=field_name, explicit=ex))
                 for tf, bk, b, r, ex in bc_grp
             ]
             neumann_scale = dt_inst if any_explicit else 1.0
@@ -1251,11 +1254,11 @@ class _GraphSystemBuilder:
                     added, fixed = np.zeros(J.shape[0]), np.zeros(J.shape[0], dtype=bool)
                     for field, terms in set_terms.items():
                         offset = list(node_unknowns).index(field) * n
-                        for kind, idx, _, weight in terms:
+                        for condition, idx, _, weight in terms:
                             rows = offset + idx
-                            if kind == "robin":
+                            if condition == "robin":
                                 np.add.at(added, rows, np.broadcast_to(weight, rows.shape))
-                            elif kind == "dirichlet":
+                            elif condition == "dirichlet":
                                 fixed[rows] = True
                     J = J + diags(added)
                     if fixed.any():
@@ -1265,11 +1268,11 @@ class _GraphSystemBuilder:
                 sparse = False
                 for field, terms in set_terms.items():
                     offset = list(node_unknowns).index(field) * n
-                    for kind, idx, _, weight in terms:
+                    for condition, idx, _, weight in terms:
                         rows = offset + idx
-                        if kind == "robin":
+                        if condition == "robin":
                             J[rows, rows] = np.asarray(J[rows, rows]).reshape(-1) + weight
-                        elif kind == "dirichlet":
+                        elif condition == "dirichlet":
                             J[rows, :] = 0.
                             J[rows, rows] = 1.
                 return J.tocsr() if sparse else J
@@ -1302,14 +1305,14 @@ class _GraphSystemBuilder:
             owner = np.asarray(ds.owner(location), dtype=np.int64)
             take = _take(instance, "node")
             kept = np.zeros(n, dtype=bool)
-            for _, tf, bc_kind, _, _, _, _ in bc_items:
-                if bc_kind == "dirichlet":
+            for _, tf, condition, _, _, _, _ in bc_items:
+                if condition == "dirichlet":
                     kept |= tf.mask(ds, take) if tf is not None else True
             for terms in set_terms.values():
-                for kind, idx, _, weight in terms:
-                    if kind in ("dirichlet", "robin"):
+                for condition, idx, _, weight in terms:
+                    if condition in ("dirichlet", "robin"):
                         kept[idx] = True
-            cache = instance.__dict__.setdefault("_condensation_kinds", {}).setdefault(spec_def["inner_class"].__name__,
+            cache = instance.__dict__.setdefault("_condensation_archetypes", {}).setdefault(spec_def["inner_class"].__name__,
                                                                                       {})
             spec.parameters["condensation"] = (owner if take is None else owner[take], kept, cache)
         return spec, node_snap, edge_snap
@@ -1842,7 +1845,7 @@ def graph_system(
         system (default).
 
     condense: the linear solves by static condensation (solve.network.condensed_solve) on the nodes' entities at a
-        coarse location (e.g. "SubOrgan": each section's interior eliminated, one factorisation per kind of section),
+        coarse location (e.g. "SubOrgan": each section's interior eliminated, one factorisation per section archetype),
         or a function of the component giving that location or None (e.g. a setting choosing the solver). The nodes
         of a Robin or Dirichlet condition are kept. Newton solvers, one node unknown, no edge or pool unknowns.
 

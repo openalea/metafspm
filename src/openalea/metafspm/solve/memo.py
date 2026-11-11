@@ -20,7 +20,7 @@ def content_key(*values, pickles: dict = None) -> str:
     equal keys, from one process to the next (an object of the default repr, its address, is digested by content: a
     model's LeafShapes, the same after a checkpoint's load). *pickles*: {id: (object, its pickle)}, the objects'
     pickles kept from one call to the next (the same digest; an object changed in place is then not seen: the
-    plants' parameter objects of a reduction's kinds, read at every solve)."""
+    plants' parameter objects of a reduction's archetypes, read at every solve)."""
     digest = hashlib.blake2b(digest_size=16)
 
     def pickled(value) -> bytes:

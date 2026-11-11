@@ -108,7 +108,7 @@ def test_edge_boundary_conditions_are_rejected_until_boundary_sets():
 
 
 def test_boundary_condition_arguments_are_checked():
-    with pytest.raises(ValueError, match="kind must be 'dirichlet' or 'neumann'"):
+    with pytest.raises(ValueError, match="condition must be 'dirichlet' or 'neumann'"):
         boundary_condition("node", "robin", field="flux")
     with pytest.raises(TypeError, match="filters must be"):
         boundary_condition("node", "dirichlet", field="flux", filters=3)

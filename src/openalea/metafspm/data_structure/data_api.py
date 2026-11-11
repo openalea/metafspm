@@ -57,12 +57,12 @@ class BoundaryPort:
     """
     External port attached to one node — spatial boundary condition.
 
-    ``kind`` is descriptive metadata.  The utility does not enforce one
+    ``condition`` is descriptive metadata.  The utility does not enforce one
     algebraic treatment; model equations decide how to use boundary ports.
     """
     name       : str
     node_id    : int
-    kind       : str
+    condition  : str
     value      : float
     weight     : float = 1.0
     orientation: float = 1.0

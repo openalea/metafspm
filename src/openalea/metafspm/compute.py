@@ -5,7 +5,7 @@ A scene's run configuration: how many threads it uses, its device and its memory
 
   threads        the threads' budget of the scene's parallel work while it builds and runs: numba's kernels
                  (numba.set_num_threads), the linear solves' independent blocks (solve.linear: in threads, each
-                 block's factorisation sequential) and the kinds of a reduction's batch (solve.reduction: each kind's
+                 block's factorisation sequential) and the archetypes of a reduction's batch (solve.reduction: each archetype's
                  work after the library's run in a thread, its SuperLU factorisation outside the GIL); the default of
                  the components' setting named threads (Caribu's projection threads). "auto" (default): the
                  processors this process may run on (machine(): its CPU affinity); an integer: that many. Each
@@ -22,7 +22,7 @@ A scene's run configuration: how many threads it uses, its device and its memory
                  chosen (thread_info) and the time of each kernel, solver and step (timing_info: the functors'
                  functor.<Class>.<step>)
   device         "cpu" (default) or "cuda": the array backend of the scene's heavy linear algebra (backend: the
-                 kinds' Kron reductions, their dense solves on the GPU; the linear solves with linear_solver "cupy",
+                 archetypes' Kron reductions, their dense solves on the GPU; the linear solves with linear_solver "cupy",
                  its default there) and the default of the components' setting named device (Caribu's near field).
                  "cuda" needs CuPy (optional: a missing CuPy, or no CUDA device, raises when the Scene is built, with
                  the install line); nothing imports cupy otherwise. "cuda" is experimental: it should work on
@@ -49,11 +49,11 @@ A scene's run configuration: how many threads it uses, its device and its memory
                  dense solves (a system declared prefer_sparse=False, the edge unknowns' recovery) are LAPACK's
                  (numpy.linalg.solve), with no other backend to choose; solve_ivp's and root's own factorisations
                  are scipy's, outside the registry
-  kind_batch     the most interior cells evaluated at once in a reduction's library (its kinds' batches; the
+  archetype_batch     the most interior cells evaluated at once in a reduction's library (its archetypes' batches; the
                  library's transients freed between batches)
 
 Within limits() (the Scene's build and each of its steps), Compute.current() is that Compute: what the code run
-there reads of it (a reduction's kind batches) without being given it; outside, a default Compute().
+there reads of it (a reduction's archetype batches) without being given it; outside, a default Compute().
 
 numba's kernels compile at their first call (a cold start of about 95 s for metafspm and the ports together, once
 per machine: their cache, NUMBA_CACHE_DIR for a read-only install): warm_up(), or
@@ -66,7 +66,7 @@ runs every kernel on tiny inputs, metafspm's (kernels.warm_up) and every install
 The allocator's arenas: glibc gives each thread that allocates its own arena, up to 8 per core, and keeps the memory
 freed in each; two arenas keep 0.4-0.6 GB less on use case 1 (8 plants, day 12) at no time cost. glibc fixes its
 limit when the ninth arena is made and never lowers it, the arenas made before staying: limit_arenas() therefore runs
-when a Compute's limits() is first entered (the Scene's build, before its kernels', solves' and kinds' threads), and
+when a Compute's limits() is first entered (the Scene's build, before its kernels', solves' and archetypes' threads), and
 matches the environment variable set at the process's start (measured: the same memory, the same time).
 """
 import argparse
@@ -85,7 +85,7 @@ ARENAS = 2                    # glibc's arenas with memory "trim" (limit_arenas)
 M_ARENA_MAX = -8              # glibc's mallopt parameter (malloc.h)
 WARM_UP_GROUP = "openalea.metafspm.warm_up"   # the entry points of the ports' warm_up() (warm_up runs them)
 _ACTIVE = []                  # the Computes whose limits() are entered, the innermost last
-_COUNTING = threading.Lock()  # Compute.count's: timings counted from several threads (the kinds')
+_COUNTING = threading.Lock()  # Compute.count's: timings counted from several threads (the archetypes')
 BLAS_THREADS = 1              # the BLAS/OpenMP threads within a scene, whatever Compute.threads: a threaded BLAS
                               # changes the results' last bits with its thread count (up to 1.5e-11 relative on use
                               # case 1's potentials) and only oversubscribes the step's small dense work (measured)
@@ -101,7 +101,7 @@ class Compute:
     device: str = "cpu"
     memory: str = "trim"
     linear_solver: object = None           # a name, or {key: name}; None: "superlu" on the cpu, "cupy" on cuda
-    kind_batch: int = 200_000
+    archetype_batch: int = 200_000
     _controller: object = field(default=None, init=False, repr=False, compare=False)
     _linear: dict = field(default_factory=dict, init=False, repr=False, compare=False)
     _backend: object = field(default=None, init=False, repr=False, compare=False)
@@ -116,8 +116,8 @@ class Compute:
             if value not in choices:
                 raise ValueError(f"Compute: {name} is one of {choices}, got {value!r}")
         self.linear_solver = checked_setting(self.linear_solver, self.device)
-        if isinstance(self.kind_batch, bool) or not isinstance(self.kind_batch, int) or self.kind_batch < 1:
-            raise ValueError(f"Compute: kind_batch is a positive integer (interior cells), got {self.kind_batch!r}")
+        if isinstance(self.archetype_batch, bool) or not isinstance(self.archetype_batch, int) or self.archetype_batch < 1:
+            raise ValueError(f"Compute: archetype_batch is a positive integer (interior cells), got {self.archetype_batch!r}")
 
     def as_dict(self) -> dict:
         """The configuration ({name: value}), as scenario.json records it."""
@@ -197,7 +197,7 @@ class Compute:
     def count(self, name: str, seconds: float, threads: int = None) -> None:
         """A call of *seconds* counted under *name* (a kernel's, a solver's: run.json's "compute"/"timing"), and its
         *threads* ("threads": {threads: calls})."""
-        with _COUNTING:                        # counted from the kinds' threads too
+        with _COUNTING:                        # counted from the archetypes' threads too
             entry = self._timings.setdefault(name, {"seconds": 0., "calls": 0})
             entry["seconds"] += seconds
             entry["calls"] += 1
@@ -364,10 +364,10 @@ def core_types(among=None) -> dict:
     processors *among* (default: processors()); None where the kernel does not tell them apart."""
     among = set(processors() if among is None else among)
     found = {}
-    for device, kind in (("cpu_core", "performance"), ("cpu_atom", "efficient")):
+    for device, core_type in (("cpu_core", "performance"), ("cpu_atom", "efficient")):
         try:
             with open(f"/sys/devices/{device}/cpus") as file:
-                found[kind] = len(_cpu_list(file.read()) & among)
+                found[core_type] = len(_cpu_list(file.read()) & among)
         except (OSError, ValueError):
             continue
     return found or None

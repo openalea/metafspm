@@ -20,7 +20,7 @@ from anatomy import make_rooted_anatomy, wiring
 from growth import DOC
 
 N_SEGMENTS, CELL = 3, 0.4                # vertical root segments, each in one soil cell of 0.4
-SURFACE = 1.                             # the kind of a segment's soil node (its epidermis here)
+SURFACE = 1.                             # the compartment type of a segment's soil node (its epidermis here)
 
 
 def _descriptor():
@@ -42,7 +42,7 @@ class RootEnds(FunctionalComponent):
 @dataclass
 class Cells(FunctionalComponent):
     """At the Compartments: the soil nodes' uptake (extensive) and the soil's potential they receive."""
-    kind: float = state_variable(**DOC, default=0., location="node", kind="descriptor")
+    compartment_type: float = state_variable(**DOC, default=0., location="node", kind="descriptor")
     uptake: float = state_variable(**DOC, default=0., location="node", kind="extensive")
     soil_potential: float = input_variable(**DOC, by="Soil", default=0., location="node")
 
@@ -65,7 +65,7 @@ class Soil(FunctionalComponent):
 
 def _plant():
     """Three vertical root segments, from the surface down, each with its anatomy (four Compartments, its epidermis
-    the soil node: kind SURFACE)."""
+    the soil node: compartment_type SURFACE)."""
     g, segments, anatomies = make_rooted_anatomy(n_segments=N_SEGMENTS)
     ds = MPGDataStructure(g, from_scale=g.scales.SubOrgan, nodes="Compartment", wiring=wiring(g))
     ends, cells = RootEnds(data_structure=ds), Cells(data_structure=ds)
@@ -73,10 +73,10 @@ def _plant():
     values = dict(x1=0.2, x2=0.2, y1=0.2, y2=0.2, z1=-depth, z2=-(depth + CELL))
     for name, value in values.items():
         ds.set(name, np.broadcast_to(value, (N_SEGMENTS,)).astype(float))
-    kind = np.zeros(ds.n_nodes())
-    kind[ds.index_of([anatomy["epidermis"] for anatomy in anatomies.values()])] = SURFACE
-    ds.set("kind", kind)
-    ds.define_mask("soil_nodes", {"kind": SURFACE})
+    compartment_type = np.zeros(ds.n_nodes())
+    compartment_type[ds.index_of([anatomy["epidermis"] for anatomy in anatomies.values()])] = SURFACE
+    ds.set("compartment_type", compartment_type)
+    ds.define_mask("soil_nodes", {"compartment_type": SURFACE})
     return ds, ends, cells, segments
 
 
@@ -101,7 +101,7 @@ def test_a_soil_mapping_maps_the_suborgans_and_their_masked_compartments():
     rows, columns, weights = mapping.incidence()
     assert rows.tolist() == [0, 1, 2] and columns.tolist() == [0, 1, 2]
     np.testing.assert_allclose(weights, 1.)
-    soil_nodes = np.flatnonzero(np.asarray(ds.get("kind")) == SURFACE)
+    soil_nodes = np.flatnonzero(np.asarray(ds.get("compartment_type")) == SURFACE)
     uptake = np.zeros(ds.n_nodes())
     uptake[soil_nodes] = [1., 2., 4.]
     uptake[soil_nodes[0] + 1] = 100.              # a Compartment other than the soil nodes: not exchanged

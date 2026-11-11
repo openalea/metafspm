@@ -643,7 +643,7 @@ class Scene:
     def schedule(self):
         """
         A table (pandas DataFrame) of what a scene step runs, in order: before each model, the exchanges into its
-        DataStructures, then its schedule's steps (CompositeModel.steps); per row the model, the step's name and kind
+        DataStructures, then its schedule's steps (CompositeModel.steps); per row the model, the step's name and form
         ("exchanges", "component", "together", "model", "method"), its components, stages and cadence, and its
         reads and writes ("<owner>:<variable>", the owner a population's or an environment model's name; coupling.
         schedule: the variables stored, "topology", "geometry"). The rows without a conflict between them may run
@@ -678,14 +678,14 @@ class Scene:
                     reads.update((root, str(source)) for root in _roots(provider.data_structure)
                                  for source in link.sources)
             if writes:
-                rows.append(dict(model=owner, step="exchanges", kind="exchanges", components=[], stages=None,
+                rows.append(dict(model=owner, step="exchanges", form="exchanges", components=[], stages=None,
                                  cadence=None, reads=named(reads), writes=named(writes)))
             for step in model.steps() if hasattr(model, "steps") else ():
-                rows.append(dict(model=owner, step=step.name, kind=step.kind,
+                rows.append(dict(model=owner, step=step.name, form=step.form,
                                  components=[type(component).__name__ for component in step.components],
                                  stages=step.stages, cadence=step.cadence, reads=named(step.reads),
                                  writes=named(step.writes)))
-        return pd.DataFrame(rows, columns=["model", "step", "kind", "components", "stages", "cadence", "reads",
+        return pd.DataFrame(rows, columns=["model", "step", "form", "components", "stages", "cadence", "reads",
                                            "writes"])
 
     def _time(self, key: str, seconds: float) -> None:

@@ -9,7 +9,7 @@ potential); the operator solves it once.
 
 Every factorisation and solve here is the run's linear solver's (Compute(linear_solver=), solve.linear's registry:
 LinearSolver.solve_once, factorize), resolved for the graph system the work belongs to (*system*, a
-solve.linear.LinearSystem: a graph system's static condensation, a reduction's kinds), else under "default".
+solve.linear.LinearSystem: a graph system's static condensation, a reduction's archetypes), else under "default".
 """
 import numpy as np
 from scipy.sparse import csr_matrix, diags
@@ -96,7 +96,7 @@ def equivalent_conductance(view, edge_conductance, sources, sinks, source_conduc
     return float(inflow.sum()), inflow
 
 
-# ── Static condensation: a sparse system solved through its groups' interiors, factorised once per kind of group ──
+# ── Static condensation: a sparse system solved through its groups' interiors, factorised once per archetype ──
 
 def condensed_solve(matrix, rhs, groups, kept=None, cache: dict = None, system=None,
                     _local: bool = True) -> np.ndarray:
@@ -106,7 +106,7 @@ def condensed_solve(matrix, rhs, groups, kept=None, cache: dict = None, system=N
 
     A node of a group is interior unless it is *kept* (a mask, e.g. the nodes a boundary condition holds or joins to
     a reservoir) or coupled to a node outside its group. Each group's interior is eliminated: one sparse
-    factorisation per kind of group, the groups whose interior block (and its coupling to their kept nodes) is the
+    factorisation per archetype, the groups whose interior block (and its coupling to their kept nodes) is the
     same, up to a positive factor, sharing it; the system on the kept and ungrouped nodes is then solved, and the
     interiors recovered from it. Exact up to round-off (an inexact solve within Newton iterations is corrected by the
     next one).
@@ -117,10 +117,10 @@ def condensed_solve(matrix, rhs, groups, kept=None, cache: dict = None, system=N
     those in none.
 
     *cache*: a dict kept between calls (e.g. by the graph system): the partition of the matrix's pattern (computed
-    once per pattern) and the factorisations of the kinds of group, reused while their blocks are unchanged (each
-    block is compared with its kind's at every call).
+    once per pattern) and the factorisations of the archetypes, reused while their blocks are unchanged (each
+    block is compared with its archetype's at every call).
 
-    *system*: the solve.linear.LinearSystem whose backend factorises the kinds and solves the systems left
+    *system*: the solve.linear.LinearSystem whose backend factorises the archetypes and solves the systems left
     (Compute(linear_solver=)); None: "default".
     """
     from scipy.sparse import coo_matrix
@@ -135,29 +135,29 @@ def condensed_solve(matrix, rhs, groups, kept=None, cache: dict = None, system=N
     plan = _condensation_plan(A, groups, kept, cache.setdefault("plans", {}))
     if plan is None:
         return solver.solve_once(A.tocsc(), b, symmetric)
-    kinds = cache.setdefault("kinds", {})
+    archetypes = cache.setdefault("archetypes", {})
     interior, kept_nodes, position = plan["interior"], plan["kept_nodes"], plan["position"]
     data = A.data
     reduced_values = []
     b_K = b[kept_nodes].copy()
-    pending = {}                                          # kind -> [(group, factor)]
+    pending = {}                                          # archetype -> [(group, factor)]
     for g, (block_s, coupling_s, back_s) in enumerate(plan["structures"]):
         block, coupling, back = (csr_matrix((data[where], indices, indptr), shape=shape)
                                  for where, indices, indptr, shape in (block_s, coupling_s, back_s))
         factor = float(block.data[0]) if block.nnz and block.data[0] != 0 else 1.
-        pending.setdefault(_condensation_kind(block, coupling, back, factor, kinds, solver, symmetric),
+        pending.setdefault(_condensation_archetype(block, coupling, back, factor, archetypes, solver, symmetric),
                            []).append((g, factor))
     starts, ends, columns = plan["starts"], plan["ends"], plan["columns"]
     solutions = {}
     reduction_order = []
-    for kind, members in pending.items():
-        entry = kinds[kind]
+    for archetype, members in pending.items():
+        entry = archetypes[archetype]
         Z = entry["lu"].solve(np.stack([b[interior[starts[g]:ends[g]]] for g, _ in members], axis=1))
         for j, (g, factor) in enumerate(members):
             reduction_order.append(g)
             reduced_values.append(-(factor * entry["S"]).ravel())    # minus A_KI A_II⁻¹ A_IK, scaled
             b_K[position[kept_nodes[columns[g]]]] -= entry["back"] @ Z[:, j]   # (c A_KI_ref) (A_ref⁻¹ b_I / c)
-        solutions[kind] = (members, Z)
+        solutions[archetype] = (members, Z)
     rows = np.concatenate([plan["reduced_rows"][g] for g in reduction_order])
     cols = np.concatenate([plan["reduced_cols"][g] for g in reduction_order])
     where_KK, indices_KK, indptr_KK, shape_KK = plan["A_KK"]
@@ -166,15 +166,15 @@ def condensed_solve(matrix, rhs, groups, kept=None, cache: dict = None, system=N
     shared = plan["shared"]
     if _local and not shared[kept_nodes].all():           # the groups' own kept nodes, eliminated within each
         local = cache.setdefault("local", {})
-        local["kinds"] = {}                               # their terms change between calls: nothing kept
+        local["archetypes"] = {}                               # their terms change between calls: nothing kept
         x_K = condensed_solve(reduced, b_K, groups[kept_nodes], shared[kept_nodes], cache=local, system=system,
                               _local=False)
     else:
         x_K = solver.solve_once(reduced.tocsc(), b_K, symmetric).reshape(-1)
     x = np.empty(n, dtype=np.float64)
     x[kept_nodes] = x_K
-    for kind, (members, Z) in solutions.items():
-        X = kinds[kind]["X"]
+    for archetype, (members, Z) in solutions.items():
+        X = archetypes[archetype]["X"]
         for j, (g, factor) in enumerate(members):
             x[interior[starts[g]:ends[g]]] = Z[:, j] / factor - X @ x_K[position[kept_nodes[columns[g]]]]
     return x
@@ -240,17 +240,17 @@ def _condensation_plan(A, groups, kept, plans: dict):
     return plan
 
 
-def _condensation_kind(block, coupling, back, factor, kinds: dict, solver, symmetric: bool):
-    """The kind of a group (its key in *kinds*): its blocks divided by *factor*, matched with a kind's within
-    round-off; a new kind is factorised by *solver* (its interior's factorisation, X = A_II⁻¹ A_IK and S = A_KI X,
+def _condensation_archetype(block, coupling, back, factor, archetypes: dict, solver, symmetric: bool):
+    """The archetype of a group (its key in *archetypes*): its blocks divided by *factor*, matched with an archetype's within
+    round-off; a new archetype is factorised by *solver* (its interior's factorisation, X = A_II⁻¹ A_IK and S = A_KI X,
     for factor 1)."""
     scaled = [m.multiply(1. / factor).tocsr() for m in (block, coupling, back)]
     structure = tuple(bytes(m.indptr.tobytes()) + bytes(m.indices.tobytes()) + bytes(np.int64(m.shape[1]).tobytes())
                       for m in scaled)
     signature = hash(structure + tuple(np.round(m.data, 9).tobytes() for m in scaled))
     slot = 0
-    while (signature, slot) in kinds:                     # the kinds of that signature (a collision: the next slot)
-        entry = kinds[(signature, slot)]
+    while (signature, slot) in archetypes:                     # the archetypes of that signature (a collision: the next slot)
+        entry = archetypes[(signature, slot)]
         if all(np.allclose(m.data, r.data, rtol=1e-11, atol=0.) for m, r in zip(scaled, entry["blocks"])):
             return signature, slot
         slot += 1
@@ -258,7 +258,7 @@ def _condensation_kind(block, coupling, back, factor, kinds: dict, solver, symme
     block, coupling, back = scaled
     lu = solver.factorize(block.tocsc(), symmetric)
     X = lu.solve(coupling.toarray()) if coupling.shape[1] else np.zeros((block.shape[0], 0))
-    kinds[key] = {"blocks": scaled, "lu": lu, "X": X, "S": np.asarray(back @ X), "back": back}
+    archetypes[key] = {"blocks": scaled, "lu": lu, "X": X, "S": np.asarray(back @ X), "back": back}
     return key
 
 
@@ -303,7 +303,7 @@ class KronReduction:
         self.symmetric = bool(difference.nnz == 0 or difference.max() <= 1e-14 * abs(A).max())
         self._lu, self._keep, self._system = None, True, system
         from openalea.metafspm.compute import Compute
-        with Compute.current().timed("solve.kron_reduction"):          # run.json's timing (a kind's reduction)
+        with Compute.current().timed("solve.kron_reduction"):          # run.json's timing (an archetype's reduction)
             self._X = (self._factorisation().solve(self._A_IK) if I.size and K.size
                        else np.zeros((I.size, K.size)))
         self.reduced = np.asarray(A[K][:, K].toarray() - self._A_KI @ self._X)
@@ -321,7 +321,7 @@ class KronReduction:
     def release(self) -> None:
         """Free the interior's factorisation, X and the reduced matrix S, and keep none from now on: inject,
         injection, shares and recover factorise the interior again at each call (a reduction kept for recovery,
-        recovered from rarely: what was derived from S was taken before, e.g. a kind's D); pairs and shunts need S,
+        recovered from rarely: what was derived from S was taken before, e.g. an archetype's D); pairs and shunts need S,
         so are not available after."""
         self._lu, self._X, self._keep, self.reduced = None, None, False, None
 

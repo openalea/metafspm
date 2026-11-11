@@ -28,14 +28,14 @@
 .. automodule:: openalea.metafspm.solve.decorator
    :members: rate, state, totalrate, totalstate, stepinit, deficit, axial, potential, allocation, actual,
              segmentation, postsegmentation, graph_system, node_balance, node_rate, edge_law, boundary_condition,
-             boundary_set, pool_balance, graph_output, graph_jacobian, explicit_term, input_jacobian, kind_derived,
+             boundary_set, pool_balance, graph_output, graph_jacobian, explicit_term, input_jacobian, archetype_derived,
              linear_system, linear_systems
 
 .. automodule:: openalea.metafspm.solve.network
    :members: equivalent_conductance, condensed_solve, kron_reduction, KronReduction
 
 .. automodule:: openalea.metafspm.solve.reduction
-   :members: Reduction, Relative, Kind, RecoveryTerms, display_ids, is_display_id
+   :members: Reduction, Relative, Archetype, RecoveryTerms, display_ids, is_display_id
 
 .. automodule:: openalea.metafspm.solve.linear
    :members: LinearSolver, SuperLU, SuperLUReuse, Cholmod, Cupy, Pardiso, Mumps, LINEAR_SOLVERS, OPTIONAL_SOLVERS,

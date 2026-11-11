@@ -33,7 +33,7 @@ from growth import DOC
 
 N_SEGMENTS = 5
 PIPE, LADDER, SOIL, PROBE = 0., 1., 2., 3.
-# the network of a segment: its nodes (name, kind, port, merge group) and edges
+# the network of a segment: its nodes (name, compartment type, port, merge group) and edges
 NODES = (("p0", PIPE, 0., np.nan), ("p1", PIPE, 1., np.nan), ("a0", LADDER, np.nan, np.nan),
          ("a1", LADDER, np.nan, np.nan), ("a2", LADDER, np.nan, np.nan), ("a3", LADDER, np.nan, np.nan),
          ("s", SOIL, np.nan, np.nan), ("m0", PROBE, np.nan, 1.), ("m1", PROBE, np.nan, 1.))
@@ -51,10 +51,10 @@ def _network(g, segment) -> dict:
     s, L = g.scales, g.labels
     node_anchor, edge_anchor = s.anchors[s.Compartment], s.anchors[s.Connection]
     vids = {}
-    for name, kind, port, group in NODES:
+    for name, compartment_type, port, group in NODES:
         vids[name] = g.add_component_with_topo(node_anchor, segment, **PropsConfig(
-            scale=s.Compartment, edge_type='/', label=L.Compartment.Symplastic if kind == PIPE
-            else L.Compartment.Apoplastic, kind=kind, port=port, merge_group=group))
+            scale=s.Compartment, edge_type='/', label=L.Compartment.Symplastic if compartment_type == PIPE
+            else L.Compartment.Apoplastic, compartment_type=compartment_type, port=port, merge_group=group))
     for a, b in EDGES:
         g.add_component_with_topo(edge_anchor, segment, **PropsConfig(scale=s.Connection, edge_type='/',
                                                                       label=L.Connection.Apoplastic, n_id_a=vids[a],
@@ -109,13 +109,13 @@ class NetworkSegments(StructuralComponent):
 
 def _inlet(ds):
     """The first segment's pipe node of port 0 (held)."""
-    return (ds.get("kind") == PIPE) & (ds.get("port") == 0.) & (ds.owner("SubOrgan") == 0)
+    return (ds.get("compartment_type") == PIPE) & (ds.get("port") == 0.) & (ds.owner("SubOrgan") == 0)
 
 
-def _conductances(view, K, kind, length) -> np.ndarray:
+def _conductances(view, K, compartment_type, length) -> np.ndarray:
     """Each edge's conductance: K times its segment's length on the edges reaching the soil node."""
     ends = abs(view.incidence)
-    on_soil = np.asarray(ends.T @ (np.asarray(kind) == SOIL).astype(float)).reshape(-1) > 0
+    on_soil = np.asarray(ends.T @ (np.asarray(compartment_type) == SOIL).astype(float)).reshape(-1) > 0
     edge_length = 0.5 * np.asarray(ends.T @ np.asarray(length, dtype=float)).reshape(-1)
     return np.asarray(K, dtype=float) * np.where(on_soil, edge_length, 1.)
 
@@ -125,7 +125,7 @@ class NetworkHydraulics(FunctionalComponent):
     """Steady water potential on the network: the soil nodes joined to the soil, the inlet held."""
     water_potential: float = state_variable(**DOC, default=-0.5, location="node")
     K: float = parameter(**DOC, by="", default=1., location="edge")
-    kind: float = parameter(**DOC, by="", default=0., location="node")
+    compartment_type: float = parameter(**DOC, by="", default=0., location="node")
     port: float = parameter(**DOC, by="", default=np.nan, location="node")
     length: float = parameter(**DOC, by="", default=1., location="node")
     soil_water_potential: float = parameter(**DOC, by="", default=-0.2, location="node")
@@ -133,24 +133,24 @@ class NetworkHydraulics(FunctionalComponent):
 
     @graph_system(node_unknowns=["water_potential"], solver="newton")
     class _hydraulics:
-        soil = boundary_set(filters={"kind": "==2"}, kind="robin", value="soil_water_potential", weight=0.6)
-        inlet = boundary_set(filters=_inlet, kind="dirichlet", value="inlet_water_potential")
+        soil = boundary_set(filters={"compartment_type": "==2"}, condition="robin", value="soil_water_potential", weight=0.6)
+        inlet = boundary_set(filters=_inlet, condition="dirichlet", value="inlet_water_potential")
 
         @node_balance(field="water_potential")
-        def _balance(self, water_potential, K, kind, length):
+        def _balance(self, water_potential, K, compartment_type, length):
             B = self.graph_view.incidence
-            conductance = _conductances(self.graph_view, K, kind, length)
+            conductance = _conductances(self.graph_view, K, compartment_type, length)
             return np.asarray(B @ (conductance * np.asarray(B.T @ water_potential).reshape(-1))).reshape(-1)
 
         @graph_jacobian
-        def _jacobian(self, K, kind, length):
+        def _jacobian(self, K, compartment_type, length):
             B = self.graph_view.incidence
-            return (B @ diags(_conductances(self.graph_view, K, kind, length)) @ B.T).tocsr()
+            return (B @ diags(_conductances(self.graph_view, K, compartment_type, length)) @ B.T).tocsr()
 
 
 def _of_kind(value):
     def rule(template):
-        rows, values = template.properties["kind"]
+        rows, values = template.properties["compartment_type"]
         out = np.zeros(template.size, dtype=bool)
         out[rows] = np.asarray(values, dtype=float) == value
         return out
@@ -165,7 +165,7 @@ def _model(reduced=True, merge=True):
     class NetworkPlant(CompositeModel):
         from_scale, nodes, initiators = "SubOrgan", "Compartment", (NetworkSegments,)
         reduction = Reduction(location="SubOrgan", where={"label": "RootSegment"}, ports=_pipes,
-                              keep=(_soil, _probes), kind={"length": CLASSES}, systems=(SYSTEM,),
+                              keep=(_soil, _probes), archetype_variables={"length": CLASSES}, systems=(SYSTEM,),
                               merge={"where": _probes, "by": ("merge_group",)} if merge else None) \
             if reduced else None
 
@@ -312,12 +312,12 @@ def test_the_groups_are_instances_whose_derived_field_is_the_recovery(solved):
     evaluated = encoding3d.evaluate(frame, "water_potential")
     for owner, values in zip(sections.columns["owner"].tolist(), evaluated):
         np.testing.assert_allclose(values, expected[owner], rtol=1e-12, atol=1e-14)
-    # the template's nodes: their rows' constant properties (label names, kind, port)
+    # the template's nodes: their rows' constant properties (label names, compartment type, port)
     nodes = templates[0].entity_set("Compartment").columns
     template, rows = network_template()
     np.testing.assert_array_equal(nodes["id"], np.flatnonzero(template.scale == scales.Compartment))
     assert set(nodes["label"].tolist()) == {"Symplastic", "Apoplastic"}
-    np.testing.assert_array_equal(nodes["kind"], [kind for _, kind, _, _ in NODES])
+    np.testing.assert_array_equal(nodes["compartment_type"], [compartment_type for _, compartment_type, _, _ in NODES])
     assert validate_bytes(encoding3d.to_bytes(frame, embed_parts=True)).ok
 
 

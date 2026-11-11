@@ -24,8 +24,8 @@ POOLED_UP_MAPPINGS = ("sum", "mean", "weighted_mean")    # across DataStructures
 DOWN_MAPPINGS = ("broadcast", "split")
 EDGE_MAPPINGS = ("child", "parent", "mean")
 
-EXTENSIVE_KINDS = ("extensive", "NonInertialExtensive")
-INTENSIVE_KINDS = ("intensive", "NonInertialIntensive")
+EXTENSIVE_KINDS = ("extensive", "non_inertial_extensive")
+INTENSIVE_KINDS = ("intensive", "non_inertial_intensive")
 MASSIC_KINDS = ("massic_concentration",)
 
 
@@ -103,8 +103,8 @@ def default_mapping(kind: Optional[str], direction: str, name: str, weight: Opti
                            "does not imply one: give aggregation=...")
 
 
-KIND_FAMILIES = {"extensive": "extensive", "NonInertialExtensive": "extensive",
-                 "intensive": "intensive", "NonInertialIntensive": "intensive", "massic_concentration": "intensive",
+KIND_FAMILIES = {"extensive": "extensive", "non_inertial_extensive": "extensive",
+                 "intensive": "intensive", "non_inertial_intensive": "intensive", "massic_concentration": "intensive",
                  "descriptor": "descriptor"}
 
 

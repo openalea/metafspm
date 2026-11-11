@@ -35,7 +35,7 @@ def _blas_threads() -> set:
 
 
 @pytest.mark.parametrize("given", [dict(threads=0), dict(threads=1.5), dict(threads="all"), dict(device="gpu"),
-                                   dict(memory="free"), dict(linear_solver="umfpack"), dict(kind_batch=0)])
+                                   dict(memory="free"), dict(linear_solver="umfpack"), dict(archetype_batch=0)])
 def test_a_compute_checks_its_values(given):
     with pytest.raises(ValueError):
         Compute(**given)
@@ -161,7 +161,7 @@ def test_the_current_compute_is_the_scenes_within_its_steps(monkeypatch):
     """Compute.current(): the Compute whose limits() the code runs in (the scene's, in its build and steps: what a
     reduction's batches read), the innermost when nested, a default one outside."""
     seen = []
-    outer, inner = Compute(kind_batch=7), Compute(kind_batch=3)
+    outer, inner = Compute(archetype_batch=7), Compute(archetype_batch=3)
     with outer.limits():
         seen.append(Compute.current())
         with inner.limits():
@@ -169,7 +169,7 @@ def test_the_current_compute_is_the_scenes_within_its_steps(monkeypatch):
         seen.append(Compute.current())
     assert seen == [outer, inner, outer] and seen[0] is outer and seen[1] is inner
     assert Compute.current() == Compute()
-    scene = _scene(compute=Compute(kind_batch=11))
+    scene = _scene(compute=Compute(archetype_batch=11))
     during = []
     monkeypatch.setattr(scene, "_step", lambda *args, **kwargs: during.append(Compute.current()))
     scene.run()
@@ -292,11 +292,11 @@ def test_a_components_threads_and_device_settings_default_to_the_computes(monkey
 
 
 def test_scenario_and_run_record_the_compute(tmp_path):
-    scene = _scene(compute=Compute(kind_batch=1000), recorder=SceneRecorder(str(tmp_path)))
+    scene = _scene(compute=Compute(archetype_batch=1000), recorder=SceneRecorder(str(tmp_path)))
     scene.run()
     scene.finish()
     with open(tmp_path / "scenario.json") as f:
-        assert json.load(f)["compute"] == Compute(kind_batch=1000).as_dict()
+        assert json.load(f)["compute"] == Compute(archetype_batch=1000).as_dict()
     with open(tmp_path / "run.json") as f:
         run = json.load(f)["compute"]
     budget = Compute().thread_count()

@@ -22,7 +22,7 @@ class Pools(FunctionalComponent):
     amount: float = state_variable(**DOC, default=4., scale=scales.SubOrgan, kind="extensive")
     temperature: float = state_variable(**DOC, default=20., scale=scales.SubOrgan, kind="intensive")
     uptake: float = state_variable(**DOC, default=5., scale=scales.SubOrgan,
-                                   kind="NonInertialExtensive")
+                                   kind="non_inertial_extensive")
     tag: float = state_variable(**DOC, default=7., scale=scales.SubOrgan, kind="descriptor")
 
 

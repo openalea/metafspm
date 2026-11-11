@@ -72,8 +72,8 @@ flux:    float = state_variable(..., location="edge")                       # so
 
 | `kind` | up | down |
 |---|---|---|
-| extensive, NonInertialExtensive | `sum` | `split` by `weight=` (without a weight: error) |
-| intensive, NonInertialIntensive | `weighted_mean` by `weight=`, its capacity (without a weight: error; `aggregation="mean"` for an unweighted mean) | `broadcast` |
+| extensive, non_inertial_extensive | `sum` | `split` by `weight=` (without a weight: error) |
+| intensive, non_inertial_intensive | `weighted_mean` by `weight=`, its capacity (without a weight: error; `aggregation="mean"` for an unweighted mean) | `broadcast` |
 | massic_concentration | `weighted_mean` by `weight=`, a mass (without a weight: error) | `broadcast` |
 | none | error | error |
 
@@ -166,7 +166,7 @@ in a functor is one of the platform's primitives (the tree kernels above, `ds.lo
 `graph_view.laplacian`): the ports declare what they compute, metafspm owns the kernels.
 
 1. **numpy first.** Per-group quantities by `np.unique(owner, return_index=True)`, `np.bincount`/`np.add.at`,
-   `searchsorted`; work batched by kind or template (all groups of a kind at once: groups × members arrays), not
+   `searchsorted`; work batched by archetype or template (all groups of an archetype at once: groups × members arrays), not
    group by group (`Reduction.assignment`, `kept_outputs`; MECHA's condensed volumes and kr).
 2. **Topology-derived arrays cached per topology version** and read-only (`setflags(write=False)`): `entity_ids` of
    every location, `owner`, the index maps, `Reduction.group_table`, the sparse pattern of a reduction's terms
@@ -178,7 +178,7 @@ in a functor is one of the platform's primitives (the tree kernels above, `ds.lo
    sorted by id stay sorted). A port edits the MPG as before and calls `ds.update_topology()`, nothing else; a cache
    of its own derived from the structure can use `MPG._derived(name, build, patch)`. A change no delta describes (a
    kept vertex moved, ids given again) rebuilds. `METAFSPM_CHECK_TOPOLOGY=1` checks every patch against a build;
-   `METAFSPM_CHECK_KINDS=1` checks every kind of a reduction's batches against its evaluation alone.
+   `METAFSPM_CHECK_ARCHETYPES=1` checks every archetype of a reduction's batches against its evaluation alone.
    `update_topology` carries a location's float and int variables over as one block per dtype, each a row taken
    from its old array through the location's match in one gather, without copying the old arrays first.
    Read edges as arrays: `ds.edge_endpoints()` ((edges, 2), read-only), not `ds.edges()` (Python tuples).
@@ -240,13 +240,13 @@ in a functor is one of the platform's primitives (the tree kernels above, `ds.lo
 ## Boundary sets
 
 ```python
-leaves = boundary_set(filters={"label": "LeafElement"}, kind="robin", value="air_water_potential",
+leaves = boundary_set(filters={"label": "LeafElement"}, condition="robin", value="air_water_potential",
                       weight="leaf_conductance")
 ```
 
 - **Declared** in a graph-system class, and assembled by the framework in the field's residual:
 
-  | kind | residual term |
+  | condition | residual term |
   |---|---|
   | `robin` | `+ w·(x − v)` |
   | `dirichlet` | the row becomes `x − v` |
@@ -309,7 +309,7 @@ the residuals' and the steps' history and the floor estimate, so a tolerance set
   - **massic concentrations:** an amount split by weight, or diluted when the weight grew;
   - **extensive:** split;
   - **intensive:** copied;
-  - **NonInertialExtensive:** a weighted copy, the parent unchanged;
+  - **non_inertial_extensive:** a weighted copy, the parent unchanged;
   - **descriptors:** `on_grow`.
 
   A new entity that is inactive (e.g. a zero-mass primordium) copies concentrations and holds no amount. It is split from its parent when it becomes active.

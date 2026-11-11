@@ -410,10 +410,10 @@ def group_pattern(local, offsets, n):
 
 
 @njit(cache=True, nogil=True, parallel=True)
-def scatter_weighted_blocks(data, slots, kinds, weights, blocks, chunks):
+def scatter_weighted_blocks(data, slots, archetypes, weights, blocks, chunks):
     """
-    data[slots[g, i, j]] = the weighted sum of the groups' kinds' blocks: for each group g of one template (k × k
-    blocks), from 0, corner by corner (kinds[g, c] >= 0: blocks[kinds[g, c]], weighted by weights[g, c]), as
+    data[slots[g, i, j]] = the weighted sum of the groups' archetypes' blocks: for each group g of one template (k × k
+    blocks), from 0, corner by corner (archetypes[g, c] >= 0: blocks[archetypes[g, c]], weighted by weights[g, c]), as
     numpy's corner by corner accumulation gives it. Parallel over *chunks* (group boundaries, made from the work
     only): each entry written once, the same bits for any thread count.
     """
@@ -422,11 +422,11 @@ def scatter_weighted_blocks(data, slots, kinds, weights, blocks, chunks):
         total = np.empty((k, k))                 # one buffer a chunk: no allocation per group (threads contend)
         for g in range(chunks[chunk], chunks[chunk + 1]):
             total[:] = 0.
-            for c in range(kinds.shape[1]):
-                kind = kinds[g, c]
-                if kind < 0:
+            for c in range(archetypes.shape[1]):
+                archetype = archetypes[g, c]
+                if archetype < 0:
                     continue
-                block, weight = blocks[kind], weights[g, c]
+                block, weight = blocks[archetype], weights[g, c]
                 for i in range(k):
                     for j in range(k):
                         total[i, j] += weight * block[i, j]

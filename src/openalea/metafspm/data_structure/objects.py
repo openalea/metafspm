@@ -18,7 +18,7 @@ from openalea.metafspm.scene.shared import Shared
 
 class ObjectRegistry:
     """
-    Objects of one kind (*name*, e.g. "anatomy_templates"), by key, in the order they were added (an object's index,
+    Objects of one type (*name*, e.g. "anatomy_templates"), by key, in the order they were added (an object's index,
     stable across checkpoints). *saved*: a function value -> the form a checkpoint saves (picklable: a module-level
     function), by default the value itself; False: none (a cache of what is rebuilt when missing, e.g. a port's
     derived tables: a loaded registry is empty).

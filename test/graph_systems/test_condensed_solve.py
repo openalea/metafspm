@@ -46,9 +46,9 @@ def test_condensation_solves_the_system():
     cache = {}
     x = condensed_solve(A, b, groups, kept, cache=cache)
     np.testing.assert_allclose(x, spsolve(A.tocsc(), b), rtol=1e-10, atol=1e-12)
-    # three kinds: the first section (linked below only), the three middle ones (linked both ways, their factors
+    # three archetypes: the first section (linked below only), the three middle ones (linked both ways, their factors
     # 1, 2.5 and 1 sharing one factorisation), the last (linked above only)
-    assert len(cache["kinds"]) == 3
+    assert len(cache["archetypes"]) == 3
 
 
 def test_a_changed_block_is_factorised_again_and_the_cache_is_reused():
@@ -62,7 +62,7 @@ def test_a_changed_block_is_factorised_again_and_the_cache_is_reused():
     b = rng.normal(size=A.shape[0])
     x = condensed_solve(A, b, groups, kept, cache=cache)
     np.testing.assert_allclose(x, spsolve(A.tocsc(), b), rtol=1e-10, atol=1e-12)
-    assert len(cache["kinds"]) == 3 + 1                               # the first, middle and last kinds, and the changed one
+    assert len(cache["archetypes"]) == 3 + 1                               # the first, middle and last archetypes, and the changed one
 
 
 def test_without_groups_or_interiors_it_is_the_direct_solve():

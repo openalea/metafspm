@@ -43,7 +43,7 @@ scene's steps, or "step" (every step); an output is written when the scene's tim
                                       display_period, a reduction's groups as instances of their templates
                                       (display="instances", the default)
     frames/parts/<key>.glb            the parts the frames share (encoding3d 0.4): each template drawn and each
-                                      kind's recovery operator, written once (its key: its content's hash), listed
+                                      archetype's recovery operator, written once (its key: its content's hash), listed
                                       in scene.fspm.json; those no frame refers to removed (a resumed run)
     frames.fspm.zip                   with pack_at_finish (or recorder.pack()): the frames folder in one archive
                                       (encoding3d.pack), written when the run finishes and checked (every file a
@@ -463,7 +463,7 @@ class SceneRecorder:
     *display*: how those frames draw the groups of a population's Reduction (io.encoding3d.to_frame's display):
     "instances" (default; a population without a reduction is drawn as with "full") each group an instance of its
     template, its unknown on the template's nodes a derived field the reader rebuilds for the instances it selects
-    (ParaView: Select at scale), the templates and the kinds' recovery operators shared parts written once in
+    (ParaView: Select at scale), the templates and the archetypes' recovery operators shared parts written once in
     frames/parts; "full" every interior recovered and written in every display frame; None the reduced groups not
     drawn. *pack_at_finish*: the frames folder packed into frames.fspm.zip when the run finishes (*pack_compression*
     "deflate", the default, "lzma": about 3 times smaller, 5 times slower to pack, or "stored"), the archive checked,

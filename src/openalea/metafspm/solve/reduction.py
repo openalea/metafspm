@@ -1,7 +1,7 @@
 """
 Reduction of graph systems by groups: a graph system whose nodes come in many repeated groups (sections, voxels,
 motifs) solved on a reduced form. Each group of the reduced location holds only its kept nodes; its interior is
-eliminated exactly, once per kind of group, from a full instance evaluated on a library; its interior's values are
+eliminated exactly, once per archetype, from a full instance evaluated on a library; its interior's values are
 recovered on request. Exact when the eliminated interior is linear in the unknowns; a nonlinear term is an
 @explicit_term of the graph system, its nodes kept.
 
@@ -10,7 +10,7 @@ Declared on the plant model, before its structure is built (as nodes= and wiring
     class Plant(CompositeModel):
         reduction = Reduction(location="SubOrgan", where={"label": "RootSegment"}, ports="GranapAnatomy.conduits",
                               keep=("GranapAnatomy.soil_nodes", vapour_path),
-                              kind={"barrier": None, "length": Relative(0.1)},
+                              archetype_variables={"barrier": None, "length": Relative(0.1)},
                               inputs={"osmotic_potential": dict(by="tissue", group="tissue_osmotic_potential",
                                                                 kept="conduit_osmotic_potential")},
                               systems=("MechaHydraulics._plant_problem",))
@@ -35,46 +35,47 @@ Declared on the plant model, before its structure is built (as nodes= and wiring
                      as its square, e.g. a conduit's area in its Poiseuille conductance) or a callable values ->
                      value; the others its representative's, its first member's)}. The merged node is its
                      representative (its first member), the others dropped from the reduced template, the explicit
-                     edges of a member joined to it (one between two members of a group: dropped); its kind is the
+                     edges of a member joined to it (one between two members of a group: dropped); its archetype is the
                      full group's matrix with the members' rows and columns summed (the members held equal), then
                      reduced. The model's live terms on a merged node are its representative's and those of the
                      explicit edges joined to it: merge nodes without boundary sets of their own
-  kind               the group variables a kind depends on, {name: None (its value) | Relative(width) (its classes:
-                     a group between two the blend of their kinds, interpolate=True; its nearest, False)}; the
+  archetype_variables
+                     the group variables an archetype depends on, {name: None (its value) | Relative(width) (its classes:
+                     a group between two the blend of their archetypes, interpolate=True; its nearest, False)}; the
                      plant's parameters and the components' settings are always in it
   inputs             the per-group right-hand-side inputs {node variable: {"by": a template property (its categories
                      over the interior), "group": the group's {category: value} input, "kept": the kept nodes' input
-                     (NaN: the kind's)}}, acting through the graph system's @input_jacobian(variable)
+                     (NaN: the archetype's)}}, acting through the graph system's @input_jacobian(variable)
   systems            the graph systems reduced, "Component._system"
-  outputs            the group variables a kind gives its groups (their values on its library's full group, e.g. a
+  outputs            the group variables an archetype gives its groups (their values on its library's full group, e.g. a
                      section's kr): Reduction.outputs(ds, name)
 
-The kinds of classes are kept once evaluated while their family (template, exact values, parameters) is in use: they
-saturate; an exact kind no group has any more is released. The missing kinds are evaluated in batches of at most
-Compute.current().kind_batch interior cells, in one library population per plant parameters kept on the Reduction;
-the kinds are checkpointed (shared parts, saved once), so a resumed run evaluates none again. The groups are arrays
-(group_table, cached per topology; assignment: each group's corners, their weights and kinds), batched by template
-and kind: the solve's terms fill a sparse pattern cached per topology and node set, the outputs (outputs,
-kept_outputs) and the recoveries are the kinds' values weighted; no Python loop over the groups.
+The archetypes of classes are kept once evaluated while their family (template, exact values, parameters) is in use: they
+saturate; an exact archetype no group has any more is released. The missing archetypes are evaluated in batches of at most
+Compute.current().archetype_batch interior cells, in one library population per plant parameters kept on the Reduction;
+the archetypes are checkpointed (shared parts, saved once), so a resumed run evaluates none again. The groups are arrays
+(group_table, cached per topology; assignment: each group's corners, their weights and archetypes), batched by template
+and archetype: the solve's terms fill a sparse pattern cached per topology and node set, the outputs (outputs,
+kept_outputs) and the recoveries are the archetypes' values weighted; no Python loop over the groups.
 
-A value a kind derives (a section's condensed volumes, say) is a method of the reduced system's component tagged
-@kind_derived(name) (solve.decorator): run once per kind on the library, while the kind's interior factorisation
-is live (KronReduction.shares, recover), its value in kind.outputs[name]. A kind's interior is factorised once.
+A value an archetype derives (a section's condensed volumes, say) is a method of the reduced system's component tagged
+@archetype_derived(name) (solve.decorator): run once per archetype on the library, while the archetype's interior factorisation
+is live (KronReduction.shares, recover), its value in archetype.outputs[name]. An archetype's interior is factorised once.
 
 The structural model asks for a group's reduced template (Reduction.template_for) when it instances its anatomy:
 the full cells never enter the plant's DataStructure. For display only (an encoding3d frame's sections, drawn whole),
-Reduction.recover_interiors gives every reduced group's interior values at once (one factorisation per kind),
+Reduction.recover_interiors gives every reduced group's interior values at once (one factorisation per archetype),
 full_rows the full template's rows a reduced one holds, and display_ids the ids the interior's vertices are written
 under (never a vertex id); for a frame drawing the groups as instances (io.encoding3d's display="instances"),
-Reduction.recovery_terms gives each group's kept values and its kinds' weights, Kind.recovery_operator each kind's
+Reduction.recovery_terms gives each group's kept values and its archetypes' weights, Archetype.recovery_operator each archetype's
 recovery as one linear operator (dense, derived while its factorisation is live up to DISPLAY_DENSE_MAX values, else
-its sparse system). A kind: (the full template, the kind variables' values or
+its sparse system). An archetype: (the full template, the archetype variables' values or
 classes, the plant's parameters and the settings), evaluated on a library population of the plant model (its own
 components, those of the reduced systems and of their inputs at the cells run): the graph system's own residual and
 Jacobian (decorator._EXTRACTING: without its boundary sets and its explicit terms), on a full instance and on a
 reduced one; the group's term is the full one's Kron reduction minus
 what the model computes on the reduced structure itself, so that every term is counted once, whether the model
-computes it live or the kind holds it.
+computes it live or the archetype holds it.
 """
 import copy
 import os
@@ -111,9 +112,9 @@ def is_display_id(ids) -> np.ndarray:
 class Relative:
     """
     Classes of relative width *width*: the values (1 + width)^k. With *interpolate* (default), a value between two
-    classes is given both, weighted linearly by its place between them (its group's terms the two kinds' blend: exact
+    classes is given both, weighted linearly by its place between them (its group's terms the two archetypes' blend: exact
     at the class values and for terms affine in the value, a curvature's error width²/8 of it between them); without,
-    its nearest class (its kind's terms as they are: an error up to width times the terms' change).
+    its nearest class (its archetype's terms as they are: an error up to width times the terms' change).
     """
     width: float
     interpolate: bool = True
@@ -161,7 +162,7 @@ class Relative:
 
 CLASS_ROUNDING = 1e-12          # a value within this fraction of the class interval from a class: that class alone
 
-# A kind's recovery operator (Kind.recovery_operator: display instances) derived dense while its factorisation is
+# An archetype's recovery operator (Archetype.recovery_operator: display instances) derived dense while its factorisation is
 # live when it holds at most this many values (its full template's Compartments × (kept nodes + 1)); beyond, its
 # sparse system is stored instead (the reader solves it), smaller and exact
 DISPLAY_DENSE_MAX = 1 << 15
@@ -238,12 +239,12 @@ def _extracting():
 
 
 @dataclass
-class Kind:
+class Archetype:
     """
-    A kind's reduction: its term on the kept nodes (D, e), the inputs' responses, and its interior for recovery. A
-    blend (a group between two classes of a Relative variable: Reduction.group_kinds) has its parts ((weight, Kind),
+    An archetype's reduction: its term on the kept nodes (D, e), the inputs' responses, and its interior for recovery. A
+    blend (a group between two classes of a Relative variable: Reduction.group_archetypes) has its parts ((weight, Archetype),
     ...): its D, e and outputs their weighted sums, its inputs' terms and its interior its parts' weighted.
-    Checkpointed as a shared part (scene.shared), saved once: a resumed run evaluates no kind again.
+    Checkpointed as a shared part (scene.shared), saved once: a resumed run evaluates no archetype again.
     """
     D: np.ndarray
     e: np.ndarray
@@ -253,23 +254,23 @@ class Kind:
     interior_rows: np.ndarray
     inputs: dict
     outputs: dict = None
-    key: tuple = None                            # its key in its Reduction's kinds: (reduced template key, kind
+    key: tuple = None                            # its key in its Reduction's archetypes: (reduced template key, archetype
                                                  # values, plant parameters' signature), the same when evaluated again
     system: str = None                           # the system it reduces
-    parts: tuple = None                          # a blend's ((weight, Kind), ...)
+    parts: tuple = None                          # a blend's ((weight, Archetype), ...)
     contraction: np.ndarray = None               # merged nodes (Reduction(merge=)): per full template Compartment,
-                                                 # its node in the kind's (the kron's) order; None: none merged
+                                                 # its node in the archetype's (the kron's) order; None: none merged
     merged_rows: np.ndarray = None               # the merged members dropped (their full template rows) ...
     merged_kept: np.ndarray = None               # ... and their representative's place among the kept nodes
     recovery: np.ndarray = None                  # its recovery operator, dense (recovery_operator's), derived while
                                                  # its factorisation is live when it holds at most DISPLAY_DENSE_MAX
                                                  # values; None: built from its sparse system when asked
 
-    shared_in_checkpoints = "kind"               # class attribute (not a field): scene.shared's part name
+    shared_in_checkpoints = "archetype"               # class attribute (not a field): scene.shared's part name
 
     def release(self) -> None:
-        """Free its arrays: a kind no group of its DataStructure has any more (Reduction.group_kinds' release), its
-        memory freed even where a cache still holds it. Its derived values (@kind_derived, in its outputs) go with
+        """Free its arrays: an archetype no group of its DataStructure has any more (Reduction.group_archetypes' release), its
+        memory freed even where a cache still holds it. Its derived values (@archetype_derived, in its outputs) go with
         it, computed again with it."""
         self.D = self.e = self.reduction = self.interior_source = None
         self.kept_rows = self.interior_rows = None
@@ -277,8 +278,8 @@ class Kind:
         self.inputs, self.outputs, self.parts = {}, {}, None
 
     def contract(self, values) -> np.ndarray:
-        """Values per full template Compartment (its order) summed per node of the kind (the kron's order): a merged
-        node's its members' sum (e.g. their volumes); the values themselves when none is merged. For @kind_derived
+        """Values per full template Compartment (its order) summed per node of the archetype (the kron's order): a merged
+        node's its members' sum (e.g. their volumes); the values themselves when none is merged. For @archetype_derived
         methods."""
         values = np.asarray(values, dtype=float)
         if self.contraction is None:
@@ -307,12 +308,12 @@ class Kind:
         full template (rows(), ascending) = M · [x_K; 1], x_K its kept nodes' values (their order in its reduced
         template), the last column its interior's sources: a kept node's row the identity, an interior node's
         A_II⁻¹(−A_IK x_K − c_I) (recover's, exact), a merged member's its representative's value. ("dense", M) when
-        derived while its factorisation was live (Kind.recovery: at most DISPLAY_DENSE_MAX values), else
+        derived while its factorisation was live (Archetype.recovery: at most DISPLAY_DENSE_MAX values), else
         ("solve", S, R): M = S⁻¹R, S and R sparse (its interior's own blocks, no solve made here; S the identity
         on the kept and merged rows). Not for a blend: its parts' operators are weighted (Reduction.recovery_terms).
         """
         if self.parts:
-            raise ValueError("Kind.recovery_operator: a blend's recovery is its parts' weighted")
+            raise ValueError("Archetype.recovery_operator: a blend's recovery is its parts' weighted")
         if self.recovery is not None:
             return ("dense", self.recovery)
         rows = self.rows()
@@ -335,25 +336,25 @@ class Kind:
         return ("solve", S, R)
 
 
-def _dense_recovery(kind: Kind, kron) -> np.ndarray:
-    """*kind*'s recovery operator, dense (Kind.recovery_operator's M), from its live KronReduction *kron* (X and its
+def _dense_recovery(archetype: Archetype, kron) -> np.ndarray:
+    """*archetype*'s recovery operator, dense (Archetype.recovery_operator's M), from its live KronReduction *kron* (X and its
     factorisation: one solve, of its interior's sources)."""
-    rows = kind.rows()
-    kept = kind.kept_rows.size
+    rows = archetype.rows()
+    kept = archetype.kept_rows.size
     out = np.zeros((rows.size, kept + 1))
-    out[np.searchsorted(rows, kind.kept_rows), np.arange(kept)] = 1.
-    if kind.merged_rows is not None and kind.merged_rows.size:
-        out[np.searchsorted(rows, kind.merged_rows), kind.merged_kept] = 1.
-    if kind.interior_rows.size:
-        interior = np.searchsorted(rows, kind.interior_rows)
+    out[np.searchsorted(rows, archetype.kept_rows), np.arange(kept)] = 1.
+    if archetype.merged_rows is not None and archetype.merged_rows.size:
+        out[np.searchsorted(rows, archetype.merged_rows), archetype.merged_kept] = 1.
+    if archetype.interior_rows.size:
+        interior = np.searchsorted(rows, archetype.interior_rows)
         if kept:
             out[interior, :kept] = -kron._X if kron._X is not None else kron.recover(np.eye(kept))
-        out[interior, kept] = kron.recover(np.zeros(kept), -np.asarray(kind.interior_source, dtype=float))
+        out[interior, kept] = kron.recover(np.zeros(kept), -np.asarray(archetype.interior_source, dtype=float))
     return out
 
 
-def _blend(parts) -> Kind:
-    """The Kind of a group between classes: *parts* ((weight, Kind), ...: the weights summing to 1) blended, its D, e
+def _blend(parts) -> Archetype:
+    """The Archetype of a group between classes: *parts* ((weight, Archetype), ...: the weights summing to 1) blended, its D, e
     and numeric outputs weighted (an output that is not a number: the heaviest part's)."""
     weights = [weight for weight, _ in parts]
     heaviest = parts[int(np.argmax(weights))][1]
@@ -366,7 +367,7 @@ def _blend(parts) -> Kind:
             outputs[name] = float(blended) if np.ndim(blended) == 0 and not isinstance(value, np.ndarray) else blended
         except (KeyError, TypeError, ValueError):
             outputs[name] = value
-    return Kind(D=sum(weight * part.D for weight, part in parts), e=sum(weight * part.e for weight, part in parts),
+    return Archetype(D=sum(weight * part.D for weight, part in parts), e=sum(weight * part.e for weight, part in parts),
                 reduction=None, interior_source=None, kept_rows=first.kept_rows, interior_rows=first.interior_rows,
                 inputs={}, outputs=outputs, key=None, system=first.system, parts=tuple(parts),
                 contraction=first.contraction, merged_rows=first.merged_rows, merged_kept=first.merged_kept)
@@ -374,23 +375,23 @@ def _blend(parts) -> Kind:
 
 class Reduction:
     def __init__(self, location: str = "SubOrgan", where=None, ports=None, keep=None, explicit_edges=None,
-                 kind: dict = None, inputs: dict = None, systems=(), outputs=(), merge=None):
+                 archetype_variables: dict = None, inputs: dict = None, systems=(), outputs=(), merge=None):
         if where is not None and not isinstance(where, (dict, str)):
             raise TypeError(f"Reduction: where is a {{variable: condition}} filter of the {location}s or an entity "
                             f"set's name, got {where!r}")
         self.location, self.where = location, (dict(where) if isinstance(where, dict) else where)
         self.ports, self.keep, self.explicit_edges = ports, keep, explicit_edges
         self.merge = _merge_specs(merge)
-        self.kind, self.inputs, self.systems = dict(kind or {}), dict(inputs or {}), tuple(systems)
+        self.archetype_variables, self.inputs, self.systems = dict(archetype_variables or {}), dict(inputs or {}), tuple(systems)
         self.output_names = tuple(outputs)
         self._reduced, self._full, self._kept, self._rows, self._merged = {}, {}, {}, {}, {}
-        self._kinds, self._blends, self._libraries = {}, {}, {}
+        self._archetypes, self._blends, self._libraries = {}, {}, {}
         self.model, self.instance, self.g = None, None, None
-        self.library = False                     # a library's: its groups' kinds are not evaluated (no library of
+        self.library = False                     # a library's: its groups' archetypes are not evaluated (no library of
                                                  # its own)
 
     def __getstate__(self):
-        state = dict(self.__dict__)        # a checkpoint: the declaration, the templates and the kinds (shared parts)
+        state = dict(self.__dict__)        # a checkpoint: the declaration, the templates and the archetypes (shared parts)
         state.update(_blends={}, _libraries={}, _pickles={}, model=None, instance=None, g=None)
         state.pop("_display_parts", None)  # the frames' parts built from it (io.encoding3d): made again
         state.pop("_table", None)          # the groups' arrays: per DataStructure and topology
@@ -406,10 +407,10 @@ class Reduction:
     # ── The population's own (Scene, population_data_structure) ──
 
     def for_population(self, g) -> "Reduction":
-        """A copy for one population's MPG *g*: its templates (full and reduced) and kinds its own, nothing kept on
+        """A copy for one population's MPG *g*: its templates (full and reduced) and archetypes its own, nothing kept on
         the model's Reduction (two Scenes of the model in one process share none: each freed with its population)."""
         out = copy.copy(self)
-        out._kinds, out._blends, out._libraries, out._pickles, out.g = {}, {}, {}, {}, g
+        out._archetypes, out._blends, out._libraries, out._pickles, out.g = {}, {}, {}, {}, g
         out._reduced, out._full, out._kept, out._rows, out._merged = {}, {}, {}, {}, {}
         out.__dict__.pop("_table", None)
         out.__dict__.pop("_assigned", None)
@@ -614,8 +615,8 @@ class Reduction:
 
     def terms(self, component, system: str, ds, node_ids) -> tuple:
         """(D, e) on the solved nodes *node_ids*: the reduced groups' interiors' terms (sparse, nodes × nodes, and a
-        vector), or None when no solved group is reduced. Batched by template and kind: the sparse pattern is cached
-        per topology and node set, only its values (each group's kinds' weighted D) filled at each call."""
+        vector), or None when no solved group is reduced. Batched by template and archetype: the sparse pattern is cached
+        per topology and node set, only its values (each group's archetypes' weighted D) filled at each call."""
         if self.library:
             return None
         assignment = self.assignment(ds, release=True)
@@ -631,9 +632,9 @@ class Reduction:
         blocks = assignment.blocks(system, "D")
         for (rows, local), slots, chunks in zip(pattern.blocks, pattern.slots, pattern.chunks):
             with compute.parallel("kernels.scatter_weighted_blocks", chunks.size - 1, "bandwidth"):
-                kernels.scatter_weighted_blocks(data, slots, assignment.kind[rows], assignment.weights[rows], blocks,
+                kernels.scatter_weighted_blocks(data, slots, assignment.archetype[rows], assignment.weights[rows], blocks,
                                                 chunks)
-            vector = assignment.combine(rows, lambda kind: kind[system].e)
+            vector = assignment.combine(rows, lambda archetype: archetype[system].e)
             vector = vector + self._input_terms(ds, assignment, system, rows)
             e[local.reshape(-1)] += vector.reshape(-1)
         return csr_matrix((data, pattern.indices, pattern.indptr), shape=(n, n)), e
@@ -651,7 +652,7 @@ class Reduction:
         return out
 
     def outputs(self, ds, name: str) -> np.ndarray:
-        """Group variable *name* of each group of the location: its kind's (its library full group's value; a blend's
+        """Group variable *name* of each group of the location: its archetype's (its library full group's value; a blend's
         its parts' weighted) for a reduced group, NaN elsewhere."""
         out = np.full(len(ds.entity_ids(self.location)), np.nan)
         assignment = None if self.library else self.assignment(ds)
@@ -659,8 +660,8 @@ class Reduction:
             return out
         rows = np.arange(assignment.table.index.size)
 
-        def value(kind):
-            found = (next(iter(kind.values())).outputs or {}).get(name, np.nan)
+        def value(archetype):
+            found = (next(iter(archetype.values())).outputs or {}).get(name, np.nan)
             try:
                 return float(found)
             except (TypeError, ValueError):
@@ -669,15 +670,15 @@ class Reduction:
         return out
 
     def kept_outputs(self, ds, name: str, system: str = None) -> list:
-        """[(kept nodes, values), ...] per reduced template: a kind's output *name* of one value per kept node (a
-        @kind_derived vector, e.g. the condensed volumes) on each reduced group's kept nodes (DataStructure indices,
-        groups × kept), its kinds' weighted; [] without a reduced group."""
+        """[(kept nodes, values), ...] per reduced template: an archetype's output *name* of one value per kept node (a
+        @archetype_derived vector, e.g. the condensed volumes) on each reduced group's kept nodes (DataStructure indices,
+        groups × kept), its archetypes' weighted; [] without a reduced group."""
         assignment = None if self.library else self.assignment(ds)
         if assignment is None:
             return []
         system = system or self.systems[0]
         table = assignment.table
-        return [(table.kept_of(rows), assignment.combine(rows, lambda kind: kind[system].outputs[name]))
+        return [(table.kept_of(rows), assignment.combine(rows, lambda archetype: archetype[system].outputs[name]))
                 for rows in table.by_template]
 
     def _reduced_scale(self, key):
@@ -685,27 +686,27 @@ class Reduction:
 
     def _input_terms(self, ds, assignment, system: str, rows) -> np.ndarray:
         """The change of the groups *rows* (table rows of one template)'s kept sources for their own inputs, their
-        kinds' weighted (groups × kept): the kept nodes' (kept input, NaN: the kind's) and their categories'
+        archetypes' weighted (groups × kept): the kept nodes' (kept input, NaN: the archetype's) and their categories'
         ({category: value} group input, read per group: a record each)."""
         table = assignment.table
         kept = table.kept_of(rows)
         out = np.zeros(kept.shape)
         if not self.inputs:
             return out
-        for corner in range(assignment.kind.shape[1]):
-            chosen = assignment.kind[rows, corner]
+        for corner in range(assignment.archetype.shape[1]):
+            chosen = assignment.archetype[rows, corner]
             for k in np.unique(chosen[chosen >= 0]).tolist():
                 at = np.flatnonzero(chosen == k)
                 weight = assignment.weights[rows[at], corner][:, None]
-                out[at] += weight * self._part_input_terms(ds, assignment.kinds[k][system], table.index[rows[at]],
+                out[at] += weight * self._part_input_terms(ds, assignment.archetypes[k][system], table.index[rows[at]],
                                                            kept[at])
         return out
 
-    def _part_input_terms(self, ds, kind, groups, kept) -> np.ndarray:
-        """One (not blended) kind's input terms for its *groups* (entity indices) of *kept* nodes (DataStructure
+    def _part_input_terms(self, ds, archetype, groups, kept) -> np.ndarray:
+        """One (not blended) archetype's input terms for its *groups* (entity indices) of *kept* nodes (DataStructure
         indices, groups × kept)."""
         out = np.zeros(kept.shape)
-        for name, response in kind.inputs.items():
+        for name, response in archetype.inputs.items():
             declared = self.inputs[name]
             if declared.get("kept") and ds.has(declared["kept"]):
                 values = np.asarray(ds.get(declared["kept"]), dtype=float)[kept]
@@ -721,16 +722,16 @@ class Reduction:
                             out[row] += float(value) * unit - base
         return out
 
-    # ── Kinds ──
+    # ── Archetypes ──
 
     def _corners(self, ds, table) -> tuple:
-        """(weights, values): each group's corners (groups × corners) and their kind variables' values or classes
-        (groups × corners × variables): one kind's values, or the corners of the classes it lies between
+        """(weights, values): each group's corners (groups × corners) and their archetype variables' values or classes
+        (groups × corners × variables): one archetype's values, or the corners of the classes it lies between
         (Relative(interpolate=True): two per such variable, their weights' products; a corner of weight 0 pads a
         group of fewer corners)."""
         size = table.index.size
         weights, values = np.ones((size, 1)), np.zeros((size, 1, 0))
-        for name, classes in self.kind.items():
+        for name, classes in self.archetype_variables.items():
             raw = np.asarray(ds.get(name))
             picked = np.asarray(raw[table.first_node] if ds.location(name) == "node" else raw[table.index],
                                 dtype=float)
@@ -744,14 +745,14 @@ class Reduction:
         return weights, values
 
     def _parameters(self, ds, plant_index) -> dict:
-        """The plant's parameters and the components' settings ({name: value}), for its kinds' key and library."""
+        """The plant's parameters and the components' settings ({name: value}), for its archetypes' key and library."""
         return self._plant_parameters(ds)[plant_index]
 
     def _plant_parameters(self, ds) -> dict:
         """{plant index: its parameters and the components' settings}, for every plant of *ds*: the fields read once
         per component class, each parameter's values once for all the plants. Those of the components the library
         runs only (_library_components): another component's (a root architecture's random draws, a shoot's
-        development) changes no kind, so plants differing in them only share their kinds. Kept while the parameters
+        development) changes no archetype, so plants differing in them only share their archetypes. Kept while the parameters
         are (_parameters_stamp: their write counts where the DataStructure stores them, the components' values
         else), with their signatures (_plant_signatures)."""
         stamp = self._parameters_stamp(ds)
@@ -798,7 +799,7 @@ class Reduction:
                 for p in out:
                     out[p][name] = value
             for name in numeric:
-                if name in located:          # per entity (an edge's, a node's): the DataStructure's, not a kind's
+                if name in located:          # per entity (an edge's, a node's): the DataStructure's, not an archetype's
                     continue
                 try:
                     values = np.asarray(component.parameter_values(name, "Plant"), dtype=float).reshape(-1)
@@ -819,12 +820,12 @@ class Reduction:
 
     def assignment(self, ds, release: bool = False):
         """
-        The kinds of the DataStructure's reduced groups (_Assignment: each group's corners, their weights and kinds),
-        None without a reduced group; the missing kinds evaluated (per plant's parameters, in batches:
-        _evaluate_missing). Vectorised: the groups' corners as arrays, a loop over the distinct kinds only. *release*:
-        the kinds no group has are released (their memory freed, evaluated again if a group comes back to one),
-        except a class's whose exact kind values, template and parameters a current group has (a growing section's
-        former classes: kept, a bounded set, so that the kinds saturate). Without classes the kinds kept are those of
+        The archetypes of the DataStructure's reduced groups (_Assignment: each group's corners, their weights and archetypes),
+        None without a reduced group; the missing archetypes evaluated (per plant's parameters, in batches:
+        _evaluate_missing). Vectorised: the groups' corners as arrays, a loop over the distinct archetypes only. *release*:
+        the archetypes no group has are released (their memory freed, evaluated again if a group comes back to one),
+        except a class's whose exact archetype values, template and parameters a current group has (a growing section's
+        former classes: kept, a bounded set, so that the archetypes saturate). Without classes the archetypes kept are those of
         the plant's current groups only.
         """
         table = self.group_table(ds)
@@ -832,11 +833,11 @@ class Reduction:
             return None
         parameters = self._plant_parameters(ds)
         signatures = self._plant_signatures(ds, np.unique(table.plant).tolist())
-        stamp = (id(table), tuple(ds.write_count(name) for name in self.kind), tuple(sorted(signatures.items())))
+        stamp = (id(table), tuple(ds.write_count(name) for name in self.archetype_variables), tuple(sorted(signatures.items())))
         cached = self.__dict__.get("_assigned")
         if (cached is not None and cached[0] == stamp
-                and all(self._kinds.get(key) is kind for key, kind in zip(cached[1].keys, cached[1].kinds))):
-            if release:                    # the same groups, values and parameters as the last call: its kinds
+                and all(self._archetypes.get(key) is archetype for key, archetype in zip(cached[1].keys, cached[1].archetypes))):
+            if release:                    # the same groups, values and parameters as the last call: its archetypes
                 self._release(set(cached[1].keys))
             return cached[1]
         weights, values = self._corners(ds, table)
@@ -854,46 +855,46 @@ class Reduction:
         for u in np.argsort(first, kind="stable").tolist():                 # in order of first appearance
             at = int(first[u])
             g = int(group[at])
-            kind_values = tuple(float(value) for value in chosen[at])
+            archetype_values = tuple(float(value) for value in chosen[at])
             signature = signature_names[int(signature_code[g])]
-            key = (table.keys[int(table.code[g])], kind_values, signature)
+            key = (table.keys[int(table.code[g])], archetype_values, signature)
             if key not in position:                      # -0. and 0.: one key
                 position[key] = len(keys)
                 keys.append(key)
-                if key not in self._kinds:
+                if key not in self._archetypes:
                     plant = int(table.plant[g])
                     missing.setdefault(signature, (parameters[plant], {}))[1].setdefault(
-                        key, (int(table.owner[g]), key[0], kind_values))
+                        key, (int(table.owner[g]), key[0], archetype_values))
             local[u] = position[key]
         if missing:
             self._evaluate_requests(missing)
-        kind = np.full(weights.shape, -1, dtype=np.int64)
-        kind[group, corner] = local[np.asarray(inverse).reshape(-1)]
-        out = _Assignment(table=table, weights=weights, kind=kind, keys=keys,
-                          kinds=[self._kinds[key] for key in keys])
+        archetype = np.full(weights.shape, -1, dtype=np.int64)
+        archetype[group, corner] = local[np.asarray(inverse).reshape(-1)]
+        out = _Assignment(table=table, weights=weights, archetype=archetype, keys=keys,
+                          archetypes=[self._archetypes[key] for key in keys])
         if release:
             self._release(set(keys))
         self.__dict__["_assigned"] = (stamp, out)
         return out
 
     def _release(self, used: set) -> None:
-        """The kinds not in *used* released, a class's of a current family kept (assignment's rule); the blends
+        """The archetypes not in *used* released, a class's of a current family kept (assignment's rule); the blends
         dropped (made again when asked)."""
-        exact = [position for position, classes in enumerate(self.kind.values()) if classes is None]
-        current = {self._class_family(kind_key, exact) for kind_key in used}
-        for kind_key in [k for k in self._kinds if k not in used]:
-            if len(exact) < len(self.kind) and self._class_family(kind_key, exact) in current:
+        exact = [position for position, classes in enumerate(self.archetype_variables.values()) if classes is None]
+        current = {self._class_family(archetype_key, exact) for archetype_key in used}
+        for archetype_key in [k for k in self._archetypes if k not in used]:
+            if len(exact) < len(self.archetype_variables) and self._class_family(archetype_key, exact) in current:
                 continue                              # a class of a current group's family: kept
-            for kind in self._kinds.pop(kind_key).values():
-                kind.release()
+            for archetype in self._archetypes.pop(archetype_key).values():
+                archetype.release()
         self.__dict__["_blends"] = {}
 
-    def group_kinds(self, ds, groups, release: bool = False) -> dict:
+    def group_archetypes(self, ds, groups, release: bool = False) -> dict:
         """
-        {group: {system: Kind}}: the kinds of *groups* (entity indices, e.g. reduced_groups' keys), the missing ones
+        {group: {system: Archetype}}: the archetypes of *groups* (entity indices, e.g. reduced_groups' keys), the missing ones
         evaluated (assignment's); a group between two classes of a Relative variable gets their blend (_blend, kept
         until the next release). *release*: as assignment's (*groups* all the DataStructure's reduced groups). For
-        a group's own kind; the solve's terms, the outputs and the recoveries use assignment's arrays.
+        a group's own archetype; the solve's terms, the outputs and the recoveries use assignment's arrays.
         """
         assignment = self.assignment(ds, release=release)
         if assignment is None:
@@ -904,49 +905,49 @@ class Reduction:
         out = {}
         for i in groups:
             row = row_of[int(i)]
-            on = np.flatnonzero(assignment.kind[row] >= 0)
-            chosen = tuple((float(assignment.weights[row, c]), assignment.keys[assignment.kind[row, c]]) for c in on)
+            on = np.flatnonzero(assignment.archetype[row] >= 0)
+            chosen = tuple((float(assignment.weights[row, c]), assignment.keys[assignment.archetype[row, c]]) for c in on)
             if len(chosen) == 1:
-                out[i] = self._kinds[chosen[0][1]]
+                out[i] = self._archetypes[chosen[0][1]]
                 continue
             if chosen not in blends:
-                blends[chosen] = {system: _blend([(weight, self._kinds[kind_key][system])
-                                                  for weight, kind_key in chosen])
-                                  for system in self._kinds[chosen[0][1]]}
+                blends[chosen] = {system: _blend([(weight, self._archetypes[archetype_key][system])
+                                                  for weight, archetype_key in chosen])
+                                  for system in self._archetypes[chosen[0][1]]}
             out[i] = blends[chosen]
         return out
 
     @staticmethod
-    def _class_family(kind_key, exact) -> tuple:
-        """A kind key without its classed values: (template key, the exact kind values, signature)."""
-        key, values, signature = kind_key
+    def _class_family(archetype_key, exact) -> tuple:
+        """An archetype key without its classed values: (template key, the exact archetype values, signature)."""
+        key, values, signature = archetype_key
         return key, tuple(values[position] for position in exact), signature
 
     def _evaluate_requests(self, missing: dict) -> None:
         """
-        Evaluate the kinds *missing* ({signature: (a plant's parameters, {kind key: (a representative group vertex,
-        its reduced template key, its kind values)})}): every signature's in the same batches, in one library
-        (_evaluate_missing), each batch's kinds in threads (_kinds_of_batch), added in the requests' order
-        (deterministic, the same kinds at any thread count). With METAFSPM_CHECK_KINDS=1, every kind evaluated is
-        evaluated again alone, in a freshly built library, and compared bit for bit (check_kinds).
+        Evaluate the archetypes *missing* ({signature: (a plant's parameters, {archetype key: (a representative group vertex,
+        its reduced template key, its archetype values)})}): every signature's in the same batches, in one library
+        (_evaluate_missing), each batch's archetypes in threads (_archetypes_of_batch), added in the requests' order
+        (deterministic, the same archetypes at any thread count). With METAFSPM_CHECK_ARCHETYPES=1, every archetype evaluated is
+        evaluated again alone, in a freshly built library, and compared bit for bit (check_archetypes).
         """
-        described = {signature: (parameters, {kind_key: (_describe(self.g, vertex), key, values)
-                                              for kind_key, (vertex, key, values) in requests.items()})
+        described = {signature: (parameters, {archetype_key: (_describe(self.g, vertex), key, values)
+                                              for archetype_key, (vertex, key, values) in requests.items()})
                      for signature, (parameters, requests) in missing.items()}
         self._evaluate_missing(described)
-        if os.environ.get("METAFSPM_CHECK_KINDS") == "1" and not self.library:
-            check_kinds(self, described)
+        if os.environ.get("METAFSPM_CHECK_ARCHETYPES") == "1" and not self.library:
+            check_archetypes(self, described)
 
     def _evaluate_missing(self, described: dict) -> None:
-        """Evaluate the kinds *described* ({signature: (its plants' parameters, {kind key: (its representative
-        group's description (_describe), its reduced template key, its kind values)})}), every signature's in the
-        same batches of at most Compute.current().kind_batch interior cells (one kind at least), in the requests'
+        """Evaluate the archetypes *described* ({signature: (its plants' parameters, {archetype key: (its representative
+        group's description (_describe), its reduced template key, its archetype values)})}), every signature's in the
+        same batches of at most Compute.current().archetype_batch interior cells (one archetype at least), in the requests'
         order, in the reduction's one library (one plant per signature); the library's transients freed between
         batches (Compute.trim)."""
         parameters = {signature: values for signature, (values, _) in described.items()}
-        requests = {kind_key: request for _, (_, by_kind) in described.items() for kind_key, request in by_kind.items()}
+        requests = {archetype_key: request for _, (_, by_archetype) in described.items() for archetype_key, request in by_archetype.items()}
         for batch in _batches(self, requests):
-            self._kinds.update(_evaluate(self, parameters, batch))
+            self._archetypes.update(_evaluate(self, parameters, batch))
 
     def _interior_cells(self, key) -> int:
         """The interior cells of the reduced template of key *key* (its full template's Compartments not kept)."""
@@ -966,7 +967,7 @@ class Reduction:
         """
         {group: (its vertex, its reduced template key, its full template, its interior's Compartment rows in it, the
         unknown of *system* there)} of the reduced *groups* (entity indices of the location; default: all), from their
-        kept nodes' values in *ds* (recover's, the same values): batched by kind, one factorisation of each kind's
+        kept nodes' values in *ds* (recover's, the same values): batched by archetype, one factorisation of each archetype's
         interior for all its groups (its columns at once), freed after. For outputs (a frame's sections drawn whole):
         the DataStructure stays reduced.
         """
@@ -991,9 +992,9 @@ class Reduction:
             if not at.size:
                 continue
             columns = values[table.kept_of(at)]                          # groups × kept
-            chosen = assignment.kind[at]
-            for k in np.unique(chosen[chosen >= 0]).tolist():          # each kind solved once, its groups at once
-                part = assignment.kinds[k][system]
+            chosen = assignment.archetype[at]
+            for k in np.unique(chosen[chosen >= 0]).tolist():          # each archetype solved once, its groups at once
+                part = assignment.archetypes[k][system]
                 members, corners = np.nonzero(chosen == k)
                 interior = np.asarray(part.recover(columns[members].T)).reshape(len(part.interior_rows),
                                                                                members.size)
@@ -1019,9 +1020,9 @@ class Reduction:
         The reduced *groups* (entity indices of the location; default: all) as linear recoveries of their kept values,
         for outputs drawing them as instances of their full templates (an encoding3d frame's display instances):
         RecoveryTerms, the groups in their table's order. Group i's unknown of *system* on its full template's
-        Compartments is Σ_c weights[i, c] · M_kinds[kind[i, c]] · inputs[i] (kind −1: no term), M a kind's
+        Compartments is Σ_c weights[i, c] · M_archetypes[archetype[i, c]] · inputs[i] (archetype −1: no term), M an archetype's
         recovery_operator, inputs[i] its kept nodes' values in *ds* then 1: recover_interiors' values on the
-        interior, the kept nodes' own on them. None without a reduced group (or without its kinds: a library's).
+        interior, the kept nodes' own on them. None without a reduced group (or without its archetypes: a library's).
         """
         assignment = None if self.library else self.assignment(ds)
         if assignment is None:
@@ -1041,24 +1042,24 @@ class Reduction:
                 kept = values[table.kept_of(at)]
                 for row, vector in zip(at.tolist(), np.hstack([kept, np.ones((at.size, 1))])):
                     inputs[position[row]] = vector
-        kind = assignment.kind[rows]
-        used = np.unique(kind[kind >= 0])
-        renumber = np.full(len(assignment.kinds), -1, dtype=np.int64)
+        archetype = assignment.archetype[rows]
+        used = np.unique(archetype[archetype >= 0])
+        renumber = np.full(len(assignment.archetypes), -1, dtype=np.int64)
         renumber[used] = np.arange(used.size)
         return RecoveryTerms(system=system, unknown=self.unknown(system), index=table.index[rows],
                              owner=table.owner[rows], full_keys=[self._full[table.template[row]].key
                                                                  for row in rows.tolist()],
                              full_templates={self._full[key].key: self._full[key] for key in set(table.template)},
-                             inputs=inputs, kind=np.where(kind >= 0, renumber[np.maximum(kind, 0)], -1),
-                             weights=np.where(kind >= 0, assignment.weights[rows], 0.),
-                             kinds=[assignment.kinds[k][system] for k in used.tolist()],
-                             kind_keys=[assignment.keys[k] for k in used.tolist()])
+                             inputs=inputs, archetype=np.where(archetype >= 0, renumber[np.maximum(archetype, 0)], -1),
+                             weights=np.where(archetype >= 0, assignment.weights[rows], 0.),
+                             archetypes=[assignment.archetypes[k][system] for k in used.tolist()],
+                             archetype_keys=[assignment.keys[k] for k in used.tolist()])
 
     def recover(self, ds, group: int, values, system: str = None) -> tuple:
         """A reduced group's interior: (its full template's local rows, the values of the system's unknown there),
-        from its kind and its kept nodes' *values* (the unknown on them, DataStructure order)."""
-        kind = self.group_kinds(ds, (group,))[group][system or self.systems[0]]
-        return kind.interior_rows, kind.recover(values)
+        from its archetype and its kept nodes' *values* (the unknown on them, DataStructure order)."""
+        archetype = self.group_archetypes(ds, (group,))[group][system or self.systems[0]]
+        return archetype.interior_rows, archetype.recover(values)
 
 
 @dataclass
@@ -1070,9 +1071,9 @@ class RecoveryTerms:
       index, owner        the groups' entity indices at the location and their vertices
       full_keys           each group's full template key (full_templates: {key: SectionTemplate})
       inputs              each group's operator input: its kept nodes' values of the unknown, then 1
-      kind, weights       (groups × corners) each corner's kind (its position in kinds; −1: none) and weight: a group
-                          between two classes of a Relative variable the weighted sum of their two kinds' operators
-      kinds, kind_keys    the distinct kinds (their recovery_operator) and their keys (stable across steps)
+      archetype, weights       (groups × corners) each corner's archetype (its position in archetypes; −1: none) and weight: a group
+                          between two classes of a Relative variable the weighted sum of their two archetypes' operators
+      archetypes, archetype_keys    the distinct archetypes (their recovery_operator) and their keys (stable across steps)
     """
     system: str
     unknown: str
@@ -1081,10 +1082,10 @@ class RecoveryTerms:
     full_keys: list
     full_templates: dict
     inputs: list
-    kind: np.ndarray
+    archetype: np.ndarray
     weights: np.ndarray
-    kinds: list
-    kind_keys: list
+    archetypes: list
+    archetype_keys: list
 
 
 class _GroupTable:
@@ -1215,34 +1216,34 @@ class _Pattern:
 
 @dataclass
 class _Assignment:
-    """The kinds of a DataStructure's reduced groups (Reduction.assignment): table (its _GroupTable); weights and
-    kind (table rows × corners: each corner's weight and its kind's position in keys and kinds, -1 for a padding
-    corner of weight 0); keys and kinds ({system: Kind}) the distinct kinds."""
+    """The archetypes of a DataStructure's reduced groups (Reduction.assignment): table (its _GroupTable); weights and
+    archetype (table rows × corners: each corner's weight and its archetype's position in keys and archetypes, -1 for a padding
+    corner of weight 0); keys and archetypes ({system: Archetype}) the distinct archetypes."""
     table: _GroupTable
     weights: np.ndarray
-    kind: np.ndarray
+    archetype: np.ndarray
     keys: list
-    kinds: list
+    archetypes: list
 
     def blocks(self, system: str, name: str):
-        """Each kind's dense value *name* of *system* (e.g. its D: kept × kept), in kinds' order, as a numba typed
+        """Each archetype's dense value *name* of *system* (e.g. its D: kept × kept), in archetypes' order, as a numba typed
         List (kernels.scatter_weighted_blocks' blocks), made once per assignment."""
         cache = self.__dict__.setdefault("_blocks", {})
         if (system, name) not in cache:
             from numba.typed import List
-            cache[system, name] = List([np.ascontiguousarray(np.asarray(getattr(kind[system], name), dtype=float))
-                                        for kind in self.kinds])
+            cache[system, name] = List([np.ascontiguousarray(np.asarray(getattr(archetype[system], name), dtype=float))
+                                        for archetype in self.archetypes])
         return cache[system, name]
 
     def combine(self, rows, value_of) -> np.ndarray:
-        """Each of the table *rows*' value: its corners' kinds' value_of(kind) weighted ((rows,) + the values'
-        shape), in the corners' order (a single kind's value as it is); a loop over the distinct kinds only."""
+        """Each of the table *rows*' value: its corners' archetypes' value_of(archetype) weighted ((rows,) + the values'
+        shape), in the corners' order (a single archetype's value as it is); a loop over the distinct archetypes only."""
         rows = np.asarray(rows, dtype=np.int64)
-        chosen = self.kind[rows]
+        chosen = self.archetype[rows]
         used = np.unique(chosen[chosen >= 0])
         if not used.size:
             return np.zeros(rows.size)
-        stacked = np.stack([np.asarray(value_of(self.kinds[k]), dtype=float) for k in used.tolist()])
+        stacked = np.stack([np.asarray(value_of(self.archetypes[k]), dtype=float) for k in used.tolist()])
         out = np.zeros((rows.size,) + stacked.shape[1:])
         trailing = (1,) * (stacked.ndim - 1)
         for corner in range(chosen.shape[1]):
@@ -1305,7 +1306,7 @@ def _library_components(instance, systems) -> list:
     """
     The components a library runs, in the plant model's order: those of the reduced *systems*, and the functional
     components giving them an input at the cells (Compartment or Connection scale: per-cell osmotic potentials from
-    their templates, say). The others are not: their inputs at coarser scales are the kinds' values or the
+    their templates, say). The others are not: their inputs at coarser scales are the archetypes' values or the
     boundaries' (not the library's), their own tables and forcings the plant's (a shoot's development).
     """
     from dataclasses import fields
@@ -1335,8 +1336,8 @@ class _Library:
     A reduction's library population at the scene's time step: a population of the plant model (its own components,
     those of the reduced systems and of their inputs at the cells run) of one plant per plant parameters (their
     signature) of the batch it evaluates, built once and kept on the Reduction (_libraries, not checkpointed), its
-    components reset to their built state at each batch (no state left from the former groups). Each batch of kinds
-    gets one full and one reduced group per kind (a representative group's complexes, label and properties, its
+    components reset to their built state at each batch (no state left from the former groups). Each batch of archetypes
+    gets one full and one reduced group per archetype (a representative group's complexes, label and properties, its
     template's instance) under its signature's plant; the next batch's replace them (removed in the same update of
     the library's DataStructure: a library of no group would have no plant), a plant whose signature the batch has
     not removed with them and a new signature's plant added.
@@ -1350,15 +1351,15 @@ class _Library:
         self.placed = []                 # the last batch's vertices (each group's complexes, then the group)
 
     def place(self, g, items) -> dict:
-        """{group vertex: (k, "full" | "reduced")}: the groups of the kinds *items* placed in the library's MPG *g*
+        """{group vertex: (k, "full" | "reduced")}: the groups of the archetypes *items* placed in the library's MPG *g*
         under their signature's plant, each as its representative's description (_describe: its complexes, label
         and properties)."""
         from openalea.metafspm.data_structure.configs import PropsConfig
         reduction = self.reduction
         made = {}
-        for k, (kind_key, (description, key, _)) in enumerate(items):
+        for k, (archetype_key, (description, key, _)) in enumerate(items):
             chain, (scale, label), properties = description
-            plant = self.plants[kind_key[2]]
+            plant = self.plants[archetype_key[2]]
             for which, template in (("full", reduction._full[key]),
                                     ("reduced", reduction._reduced[reduction._full[key].key])):
                 parent, vertices = plant, []
@@ -1384,8 +1385,8 @@ class _Library:
 
     @staticmethod
     def signatures(items) -> list:
-        """The signatures of the kinds *items*, in their order of first appearance."""
-        return list(dict.fromkeys(kind_key[2] for kind_key, _ in items))
+        """The signatures of the archetypes *items*, in their order of first appearance."""
+        return list(dict.fromkeys(archetype_key[2] for archetype_key, _ in items))
 
     def groups(self, items, parameters: dict) -> dict:
         """{group vertex: (k, which)} of the batch *items* ({signature: parameters} *parameters*): the population
@@ -1534,29 +1535,29 @@ def _library(reduction: Reduction) -> _Library:
 
 
 def _evaluate(reduction: Reduction, parameters: dict, requests: dict) -> dict:
-    """{kind key: {system: Kind}} of *requests* ({kind key: (a representative group's description, its reduced
-    template key, its kind values)}, the signature its key's last part; *parameters* {signature: its plants'
-    parameters}): one full and one reduced group per kind in the reduction's library (_Library), under its
+    """{archetype key: {system: Archetype}} of *requests* ({archetype key: (a representative group's description, its reduced
+    template key, its archetype values)}, the signature its key's last part; *parameters* {signature: its plants'
+    parameters}): one full and one reduced group per archetype in the reduction's library (_Library), under its
     signature's plant, isolated, replaced by the next batch's."""
     return _evaluate_in(reduction, _library(reduction), list(requests.items()), parameters)
 
 
-def check_kinds(reduction: Reduction, described: dict) -> None:
+def check_archetypes(reduction: Reduction, described: dict) -> None:
     """
-    METAFSPM_CHECK_KINDS=1: each kind of *described* (_evaluate_requests') evaluated again alone, in a library built
-    for it (one plant, its signature's), and compared with the kind the batches gave, bit for bit: its terms, inputs,
-    outputs, interior and recovery (a difference: a group property outside the kind's key changed it, or the
+    METAFSPM_CHECK_ARCHETYPES=1: each archetype of *described* (_evaluate_requests') evaluated again alone, in a library built
+    for it (one plant, its signature's), and compared with the archetype the batches gave, bit for bit: its terms, inputs,
+    outputs, interior and recovery (a difference: a group property outside the archetype's key changed it, or the
     library's batches left state on its groups). Raises AssertionError at the first difference.
     """
     time_step = _time_step(reduction)
     for signature, (parameters, requests) in described.items():
-        for kind_key, request in requests.items():
-            alone = _evaluate_in(reduction, _Library(reduction, time_step), [(kind_key, request)],
-                                 {signature: parameters})[kind_key]
-            for system, kind in alone.items():
-                difference = _difference(reduction._kinds[kind_key][system], kind)
+        for archetype_key, request in requests.items():
+            alone = _evaluate_in(reduction, _Library(reduction, time_step), [(archetype_key, request)],
+                                 {signature: parameters})[archetype_key]
+            for system, archetype in alone.items():
+                difference = _difference(reduction._archetypes[archetype_key][system], archetype)
                 if difference is not None:
-                    raise AssertionError(f"METAFSPM_CHECK_KINDS: the kind {kind_key[:2]} of {system} differs from "
+                    raise AssertionError(f"METAFSPM_CHECK_ARCHETYPES: the archetype {archetype_key[:2]} of {system} differs from "
                                          f"its evaluation alone: {difference}")
 
 
@@ -1564,13 +1565,13 @@ _KIND_FIELDS = ("D", "e", "interior_source", "kept_rows", "interior_rows", "inpu
                 "contraction", "merged_rows", "merged_kept", "recovery")
 
 
-def _difference(first, second, path: str = "kind"):
-    """Where *first* and *second* differ (a path and the two values' kinds), None when they are the same bit for bit:
-    Kinds by their fields, KronReductions by their blocks, arrays (NaN equal to NaN) and sparse matrices by their
+def _difference(first, second, path: str = "archetype"):
+    """Where *first* and *second* differ (a path and the two values' archetypes), None when they are the same bit for bit:
+    Archetypes by their fields, KronReductions by their blocks, arrays (NaN equal to NaN) and sparse matrices by their
     entries, dicts, sequences and numbers by their parts."""
     from scipy.sparse import issparse
     from openalea.metafspm.solve.network import KronReduction
-    if isinstance(first, Kind) or isinstance(second, Kind):
+    if isinstance(first, Archetype) or isinstance(second, Archetype):
         if type(first) is not type(second):
             return f"{path}: {type(first).__name__} and {type(second).__name__}"
         for name in _KIND_FIELDS:
@@ -1651,19 +1652,19 @@ def _describe(plant_g, vertex: int) -> tuple:
 
 
 def _batches(reduction: Reduction, requests: dict):
-    """*requests* ({kind key: request}) in batches of at most Compute.current().kind_batch interior cells (one kind
+    """*requests* ({archetype key: request}) in batches of at most Compute.current().archetype_batch interior cells (one archetype
     at least), in their order; the transients freed (Compute.trim) before each batch but the first, as the caller
     evaluates them (a generator)."""
     from openalea.metafspm.compute import Compute
     compute = Compute.current()
     batch, cells = {}, 0
-    for kind_key, request in requests.items():
+    for archetype_key, request in requests.items():
         size = reduction._interior_cells(request[1])
-        if batch and cells + size > compute.kind_batch:
+        if batch and cells + size > compute.archetype_batch:
             yield batch
             compute.trim()
             batch, cells = {}, 0
-        batch[kind_key], cells = request, cells + size
+        batch[archetype_key], cells = request, cells + size
     if batch:
         yield batch
 
@@ -1686,8 +1687,8 @@ def _contraction(reduction: Reduction, full_template, compartments) -> tuple:
 
 
 def _evaluate_in(reduction: Reduction, library: _Library, items: list, parameters: dict) -> dict:
-    """_evaluate's kinds *items* in *library* (*parameters*: {signature: its plants' parameters})."""
-    from openalea.metafspm.solve.decorator import (_GraphSystemBuilder, declared_system, kind_derived_methods,
+    """_evaluate's archetypes *items* in *library* (*parameters*: {signature: its plants' parameters})."""
+    from openalea.metafspm.solve.decorator import (_GraphSystemBuilder, declared_system, _archetype_derived_methods,
                                                    linear_system)
     from openalea.metafspm.data_structure.configs import ScalesConfig
     groups_made = library.groups(items, parameters)
@@ -1697,7 +1698,7 @@ def _evaluate_in(reduction: Reduction, library: _Library, items: list, parameter
     entity = {int(v): i for i, v in enumerate(ids)}
     group_of = {(k, which): entity[int(vertex)] for vertex, (k, which) in groups_made.items()}
     owner = np.asarray(ds.owner(reduction.location))
-    for position, (name, classes) in enumerate(reduction.kind.items()):        # the kinds' values (their classes)
+    for position, (name, classes) in enumerate(reduction.archetype_variables.items()):        # the archetypes' values (their classes)
         values = np.array(ds.get(name), dtype=float, copy=True)
         location = ds.location(name)
         for (k, which), i in group_of.items():
@@ -1715,7 +1716,7 @@ def _evaluate_in(reduction: Reduction, library: _Library, items: list, parameter
             component()
     finally:
         decorator._SKIPPED.difference_update(reduction.systems)
-    out = {kind_key: {} for kind_key, _ in items}
+    out = {archetype_key: {} for archetype_key, _ in items}
     node_ids = np.asarray(ds.entity_ids("node"))
     for system in reduction.systems:
         component_name, attr = system.split(".")
@@ -1734,22 +1735,22 @@ def _evaluate_in(reduction: Reduction, library: _Library, items: list, parameter
         batch = _Batch(system=system, linear_system=linear_system(component, attr), A=A, c=c,
                        input_jacobians=input_jacobians, owner=owner, group_of=group_of,
                        node_of={int(v): j for j, v in enumerate(spec.graph.node_ids.tolist())}, node_ids=node_ids,
-                       derived=kind_derived_methods(component),
+                       derived=_archetype_derived_methods(component),
                        inputs={name: np.asarray(ds.get(name), dtype=float) for name in input_jacobians
                                if name in reduction.inputs},
                        outputs={name: (np.asarray(ds.get(name), dtype=float), ds.location(name) == reduction.location)
                                 for name in reduction.output_names if ds.has(name)})
-        for k, kind in enumerate(_kinds_of_batch(reduction, batch, items)):
-            out[items[k][0]][system] = kind
+        for k, archetype in enumerate(_archetypes_of_batch(reduction, batch, items)):
+            out[items[k][0]][system] = archetype
     return out
 
 
 @dataclass
 class _Batch:
-    """What each kind of a library batch is taken from (_kind_from_batch), for one reduced system: its Jacobian A
+    """What each archetype of a library batch is taken from (_archetype_from_batch), for one reduced system: its Jacobian A
     and constant c over the library's nodes, its inputs' Jacobians, the nodes' groups (owner: their entity at the
-    groups' location; group_of: each kind's (k, "full" | "reduced") group), each node's position in the system
-    (node_of, by vertex; node_ids: the DataStructure's node vertices), the component's @kind_derived methods, the
+    groups' location; group_of: each archetype's (k, "full" | "reduced") group), each node's position in the system
+    (node_of, by vertex; node_ids: the DataStructure's node vertices), the component's @archetype_derived methods, the
     declared inputs' base values and the outputs' values (and whether at the groups' location); linear_system the
     system as the run's linear solver resolves it (its Kron reductions' factorisations: Compute(linear_solver=))."""
     system: str
@@ -1766,13 +1767,13 @@ class _Batch:
     outputs: dict
 
 
-def _kinds_of_batch(reduction: Reduction, batch: _Batch, items: list) -> list:
+def _archetypes_of_batch(reduction: Reduction, batch: _Batch, items: list) -> list:
     """
-    The Kinds of the batch *items* for *batch*'s system, in their order: _kind_from_batch for each, in threads
-    (Compute.section_threads over the kinds, "compute": the budget, one per kind at most), the largest interior
-    first. Each kind's work is its own (its blocks, one sequential SuperLU factorisation, which runs outside the GIL;
-    its Python parts take turns), so its bits are the same at any thread count; numba's kernels within a kind's
-    work run on one thread (its thread is the parallel unit). Timed under "kinds.tails".
+    The Archetypes of the batch *items* for *batch*'s system, in their order: _archetype_from_batch for each, in threads
+    (Compute.section_threads over the archetypes, "compute": the budget, one per archetype at most), the largest interior
+    first. Each archetype's work is its own (its blocks, one sequential SuperLU factorisation, which runs outside the GIL;
+    its Python parts take turns), so its bits are the same at any thread count; numba's kernels within an archetype's
+    work run on one thread (its thread is the parallel unit). Timed under "archetypes.tails".
     """
     from openalea.metafspm.compute import Compute
     compute = Compute.current()
@@ -1780,29 +1781,29 @@ def _kinds_of_batch(reduction: Reduction, batch: _Batch, items: list) -> list:
     threads = compute.section_threads(count, "compute") if count > 1 else 1
 
     def one(k):
-        return _kind_from_batch(reduction, batch, k, items[k][0], items[k][1][1])
+        return _archetype_from_batch(reduction, batch, k, items[k][0], items[k][1][1])
 
-    with compute.timed("kinds.tails", threads):
+    with compute.timed("archetypes.tails", threads):
         if threads <= 1:
             return [one(k) for k in range(count)]
         import numba
         from concurrent.futures import ThreadPoolExecutor
 
         def in_thread(k):
-            numba.set_num_threads(1)              # thread-local: the kind's thread is the parallel unit
+            numba.set_num_threads(1)              # thread-local: the archetype's thread is the parallel unit
             return one(k)
         order = sorted(range(count), key=lambda k: -reduction._interior_cells(items[k][1][1]))
-        with ThreadPoolExecutor(max_workers=threads, thread_name_prefix="metafspm-kinds") as executor:
+        with ThreadPoolExecutor(max_workers=threads, thread_name_prefix="metafspm-archetypes") as executor:
             futures = {k: executor.submit(in_thread, k) for k in order}
             return [futures[k].result() for k in range(count)]
 
 
-def _kind_from_batch(reduction: Reduction, batch: _Batch, k: int, kind_key, key) -> Kind:
+def _archetype_from_batch(reduction: Reduction, batch: _Batch, k: int, archetype_key, key) -> Archetype:
     """
-    The *k*-th kind of a library batch (key *kind_key*, reduced template key *key*) for *batch*'s system: its full
+    The *k*-th archetype of a library batch (key *archetype_key*, reduced template key *key*) for *batch*'s system: its full
     and reduced groups' blocks of the batch's operator, the full one's Kron reduction (its interior factorised
-    once), its inputs' responses, its outputs, its @kind_derived values (while the factorisation is live), its
-    recovery operator for display (small kinds), then the factorisation released. Reads *batch* only (no
+    once), its inputs' responses, its outputs, its @archetype_derived values (while the factorisation is live), its
+    recovery operator for display (small archetypes), then the factorisation released. Reads *batch* only (no
     DataStructure write).
     """
     from openalea.metafspm.data_structure.configs import ScalesConfig
@@ -1854,19 +1855,19 @@ def _kind_from_batch(reduction: Reduction, batch: _Batch, k: int, kind_key, key)
     group_outputs = {}
     for name, (values, at_groups) in batch.outputs.items():
         group_outputs[name] = float(values[full_group] if at_groups else values[np.flatnonzero(owner == full_group)[0]])
-    kind = Kind(D=S - A_red, e=s - c_red, reduction=kron, interior_source=c_full[I],
+    archetype = Archetype(D=S - A_red, e=s - c_red, reduction=kron, interior_source=c_full[I],
                 kept_rows=compartments[K], interior_rows=compartments[I], inputs=inputs,
-                outputs=group_outputs, key=kind_key, system=batch.system)
+                outputs=group_outputs, key=archetype_key, system=batch.system)
     if contract is not None:
         full_entities = full_entities[alive]
-        kind.contraction = contraction
+        archetype.contraction = contraction
         members = np.flatnonzero(~alive)
-        kind.merged_rows = np.flatnonzero(full_template.scale == ScalesConfig.Compartment)[members]
-        kind.merged_kept = np.searchsorted(K, contraction[members])
+        archetype.merged_rows = np.flatnonzero(full_template.scale == ScalesConfig.Compartment)[members]
+        archetype.merged_kept = np.searchsorted(K, contraction[members])
     for name, method in batch.derived.items():   # while the factorisation is live
-        kind.outputs[name] = method(kind, full_template, kron, full_entities)
+        archetype.outputs[name] = method(archetype, full_template, kron, full_entities)
     if np.count_nonzero(full_template.scale == ScalesConfig.Compartment) * (K.size + 1) \
             <= DISPLAY_DENSE_MAX:              # its recovery operator, for display instances
-        kind.recovery = _dense_recovery(kind, kron)
+        archetype.recovery = _dense_recovery(archetype, kron)
     kron.release()                     # its factorisation (the full interior's), X and S: made again on recovery
-    return kind
+    return archetype

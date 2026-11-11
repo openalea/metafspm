@@ -1,7 +1,7 @@
 """
 Use case 1's benchmark (devplan_release_optimisation.md §5): the use case's scene (build_scene: run.py's, in memory:
 no frames, no checkpoints) run hour by hour from the sowing, each step's time by model and by component
-(Scene.timing: "Model" and "Model.Component"), the kinds of the reduction evaluated (their number and time), the plants' nodes, the step's
+(Scene.timing: "Model" and "Model.Component"), the archetypes of the reduction evaluated (their number and time), the plants' nodes, the step's
 results (results(): transpiration, uptake, the leaves' gas exchange, the roots' water potential, the plant's and the
 soil's balance residuals, to compare runs), and the memory (RSS after each step; after malloc_trim and the peak at the
 end).
@@ -20,16 +20,16 @@ frames one step apart with the sections of DISPLAY_PLANTS drawn as instances (di
 recorder's default: their frames, the parts they share, the folder packed with deflate) and whole ("full"), the use
 case's frame variables, and two checkpoints sharing their unchanging parts: their size and time. --checkpoint-at writes the scene's checkpoint after those hours (outputs/benchmarks/checkpoints/<label>/, the
 shared parts once); --resume loads one into the freshly built scene and runs on from its hour to --days (the load's
-time and memory, then each step's: a resumed run evaluates no kind again); --scenario updates the plants' scenario
+time and memory, then each step's: a resumed run evaluates no archetype again); --scenario updates the plants' scenario
 (models.WHEAT_SCENARIO; a value read as JSON when it is, e.g. length_classes=0.2, else a string); --threads and
---linear-solver the Compute's (the threads' budget of the kernels, solves and kinds, "auto" by default, the sparse
+--linear-solver the Compute's (the threads' budget of the kernels, solves and archetypes, "auto" by default, the sparse
 solver; the threads chosen recorded, "threads", and each kernel's, solver's and step's
 (functor.<Class>.<step>) time, per step and in all, "kernels"),
---device its device (cuda: the kinds' Kron
+--device its device (cuda: the archetypes' Kron
 reductions and the linear solves on the GPU, CuPy needed, docs/gpu.md; the device's transfers recorded at the end,
 "device"), and the memory of the process's control group (run it in its own systemd-run --scope), now and at its
 peak. --variability gives each plant its own seeded root draws (plant_variability: ArchiSimple's
-random_choice; identical plants share every kind, which flatters a scaling); --frames records the run (a frame every
+random_choice; identical plants share every archetype, which flatters a scaling); --frames records the run (a frame every
 24 h, the sections of DISPLAY_PLANTS drawn as instances, no checkpoint) under outputs/benchmarks/frames/<label>,
 its size at the end; --profile-hours cProfiles the main process over those steps (outputs/benchmarks/profiles/);
 --cadence gives a model's schedule steps ("<model>.<step>": WheatPlant.anatomy, GRANAP's; CaribuLightModel.light, the
@@ -37,15 +37,15 @@ lighting, its PARa every step) a cadence (coupling.cadence.Cadence: the duration
 one by default: CaribuLightModel.light's at its start, the others' at the interval's end; set_cadences, the scenario's
 "cadence"), to measure what running them less often saves and changes.
 --memory measures at the end what the scene holds by owner (memory_probe.report: the DataStructure's columns, the
-MPG's properties and topology, the Instances, the registries, the kinds, the components, the solver's caches, before
+MPG's properties and topology, the Instances, the registries, the archetypes, the components, the solver's caches, before
 and after malloc_trim), "memory"; --tracemalloc traces the allocations from before the
 scene's build (FRAMES frames each: slower, more memory) and records those alive at the end by file and line,
 "allocations"; --thread-scaling captures the last step's large linear solves and parallel kernels' inputs and times
 them at 1, 2, 4, 8 and 12 threads (memory_probe.thread_scaling), "thread_scaling". The process's memory after its
 imports and after the scene's build is recorded either way ("baseline").
-Each step also records its kinds' batches (kinds, interior cells, seconds, processes: "auto"'s estimate checked
+Each step also records its archetypes' batches (archetypes, interior cells, seconds, processes: "auto"'s estimate checked
 against them). Each step records the
-plants' nodes and the reduced groups' dense blocks (their nonzeros: kept nodes squared, summed), the end the kinds
+plants' nodes and the reduced groups' dense blocks (their nonzeros: kept nodes squared, summed), the end the archetypes
 held and their pickled size (as checkpointed). The results go to
 outputs/benchmarks/<commit>.json (untracked), one entry per mode ("2p_3d") updated in place, and a summary is
 printed. Run it under a memory bound, one at a time (systemd-run --user --scope -p MemoryMax=8G ...).
@@ -161,12 +161,12 @@ def trim_memory() -> None:
 
 
 class KindCounter:
-    """Counts the kinds the reductions evaluate (Reduction._evaluate_requests' requests) and the time they take."""
+    """Counts the archetypes the reductions evaluate (Reduction._evaluate_requests' requests) and the time they take."""
 
     def __init__(self):
-        self.kinds, self.seconds, self.templates = 0, 0., 0
-        self.batches = []                 # each evaluation's (kinds, interior cells, seconds, the kinds' threads)
-        self.seen = set()                 # the (reduced template, signature) of the kinds evaluated so far
+        self.archetypes, self.seconds, self.templates = 0, 0., 0
+        self.batches = []                 # each evaluation's (archetypes, interior cells, seconds, the archetypes' threads)
+        self.seen = set()                 # the (reduced template, signature) of the archetypes evaluated so far
         self._evaluate = evaluate = reduction_module.Reduction._evaluate_requests
         counter = self
 
@@ -178,14 +178,14 @@ class KindCounter:
             finally:
                 seconds = time.perf_counter() - started
                 counter.seconds += seconds
-                kinds = sum(len(requests) for _, requests in missing.values())
+                archetypes = sum(len(requests) for _, requests in missing.values())
                 cells = sum(reduction._interior_cells(request[1]) for _, requests in missing.values()
                             for request in requests.values())
-                threads = Compute.current().section_threads(kinds, "compute") if kinds > 1 else 1
-                counter.batches.append((kinds, cells, seconds, threads))
+                threads = Compute.current().section_threads(archetypes, "compute") if archetypes > 1 else 1
+                counter.batches.append((archetypes, cells, seconds, threads))
                 for _, requests in missing.values():
-                    counter.kinds += len(requests)
-                    for key, _, signature in requests:    # the kinds of a template not seen before (a new anatomy)
+                    counter.archetypes += len(requests)
+                    for key, _, signature in requests:    # the archetypes of a template not seen before (a new anatomy)
                         if (key, signature) not in counter.seen:
                             counter.seen.add((key, signature))
                             counter.templates += 1
@@ -193,8 +193,8 @@ class KindCounter:
         reduction_module.Reduction._evaluate_requests = counted
 
     def take(self) -> tuple:
-        out = (self.kinds, self.seconds, self.templates, self.batches)
-        self.kinds, self.seconds, self.templates, self.batches = 0, 0., 0, []
+        out = (self.archetypes, self.seconds, self.templates, self.batches)
+        self.archetypes, self.seconds, self.templates, self.batches = 0, 0., 0, []
         return out
 
 
@@ -228,13 +228,13 @@ def dense_blocks(scene) -> int:
     return total
 
 
-def kinds_size(scene) -> tuple:
-    """(the kinds the reductions hold, their pickled size in MB: as checkpointed), one kind pickled at a time."""
+def archetypes_size(scene) -> tuple:
+    """(the archetypes the reductions hold, their pickled size in MB: as checkpointed), one archetype pickled at a time."""
     import pickle
     count, size = 0, 0
     for population in scene.populations:
         reduction = getattr(population.data_structure.structure, "reduction", None)
-        for by_system in (reduction._kinds.values() if reduction is not None else ()):
+        for by_system in (reduction._archetypes.values() if reduction is not None else ()):
             count += 1
             size += len(pickle.dumps(by_system, protocol=pickle.HIGHEST_PROTOCOL))
     return count, size / 1e6
@@ -242,7 +242,7 @@ def kinds_size(scene) -> tuple:
 
 def plant_variability(plants: int, seed: int) -> list:
     """Each plant's own scenario entries, seeded: ArchiSimple's random_choice (its root system's random draws: the
-    daughter roots' diameters, CVDD), so that the plants differ in shape (identical plants share every kind)."""
+    daughter roots' diameters, CVDD), so that the plants differ in shape (identical plants share every archetype)."""
     draws = np.random.default_rng(seed).integers(1, 2 ** 31 - 1, size=plants)
     return [{"random_choice": int(draw)} for draw in draws]
 
@@ -281,10 +281,10 @@ def benchmark(plants: int, days: float, measure_outputs: bool = False, checkpoin
         scene.load_checkpoint(resume)
         first_hour = int(round(scene.time / HOUR))
         loaded = {"path": resume, "hour": first_hour, "seconds": time.perf_counter() - load_started,
-                  "rss_gb": resident_memory(), "kinds": sum(len(population.data_structure.structure.reduction._kinds)
+                  "rss_gb": resident_memory(), "archetypes": sum(len(population.data_structure.structure.reduction._archetypes)
                                                            for population in scene.populations
                                                            if population.data_structure.structure.reduction)}
-        print(f"loaded {resume} (hour {first_hour}, {loaded['kinds']} kinds) in {loaded['seconds']:.1f} s, "
+        print(f"loaded {resume} (hour {first_hour}, {loaded['archetypes']} archetypes) in {loaded['seconds']:.1f} s, "
               f"RSS {loaded['rss_gb']:.2f} GB", flush=True)
     checkpoints = os.path.join(BENCHMARKS, "checkpoints", label)
     steps = []
@@ -310,7 +310,7 @@ def benchmark(plants: int, days: float, measure_outputs: bool = False, checkpoin
             profiler.dump_stats(profiled)
             profiler = None
             print(f"profile of h {profile_hours[0]}-{profile_hours[-1]} written to {profiled}", flush=True)
-        kinds, kind_seconds, templates, batches = counter.take()
+        archetypes, archetype_seconds, templates, batches = counter.take()
         timing = {name: value - previous.get(name, 0.) for name, value in scene.timing.items()}
         previous = dict(scene.timing)
         kernels = scene.compute.timing_info()
@@ -321,13 +321,13 @@ def benchmark(plants: int, days: float, measure_outputs: bool = False, checkpoin
         dense = dense_blocks(scene)
         steps.append({"hour": hour + 1, "seconds": seconds, "dense_nnz": dense,
                       "models": {name: value for name, value in timing.items() if "." not in name},
-                      "components": {name: value for name, value in timing.items() if "." in name}, "kinds": kinds,
+                      "components": {name: value for name, value in timing.items() if "." in name}, "archetypes": archetypes,
                       "kernels": kernel_seconds,
                       "new_templates": templates,
-                      "kind_seconds": kind_seconds, "kind_batches": batches, "nodes": nodes,
+                      "archetype_seconds": archetype_seconds, "archetype_batches": batches, "nodes": nodes,
                       "rss_gb": resident_memory(), "scope_gb": scope_memory(),
                       "results": results(scene)})
-        print(f"h {hour + 1:4d}  {seconds:7.2f} s  kinds {kinds:3d} ({kind_seconds:6.2f} s)  nodes {nodes:6d}  "
+        print(f"h {hour + 1:4d}  {seconds:7.2f} s  archetypes {archetypes:3d} ({archetype_seconds:6.2f} s)  nodes {nodes:6d}  "
               f"dense {dense:8d}  RSS {steps[-1]['rss_gb']:.2f} GB  scope {steps[-1]['scope_gb']:.2f} GB "
               f"(peak {scope_peak_memory():.2f})", flush=True)
         if hour + 1 in checkpoint_at:
@@ -354,7 +354,7 @@ def benchmark(plants: int, days: float, measure_outputs: bool = False, checkpoin
     rss = resident_memory()
     trim_memory()
     after_trim, peak = resident_memory(), peak_memory()
-    kinds_held, kinds_mb = kinds_size(scene)
+    archetypes_held, archetypes_mb = archetypes_size(scene)
     measured = outputs(scene) if measure_outputs else None
     compute = getattr(scene, "compute", None)
     result = {"commit": commit(), "date": time.strftime("%Y-%m-%d %H:%M:%S"), "plants": plants, "days": days,
@@ -369,7 +369,7 @@ def benchmark(plants: int, days: float, measure_outputs: bool = False, checkpoin
               "rss_end_gb": rss, "rss_after_trim_gb": after_trim, "peak_rss_gb": peak,
               "scope_peak_gb": scope_peak_memory(), "scenario": scenario or {},
               "device": compute.device_info() if compute is not None else None,
-              "kinds_held": kinds_held, "kinds_MB": kinds_mb, "variability": variability,
+              "archetypes_held": archetypes_held, "archetypes_MB": archetypes_mb, "variability": variability,
               "cadences": dict(cadences or {}), "calls": dict(scene.calls),
               "plant_scenarios": plant_scenarios,
               "frames": {"folder": folder, "MB": folder_size(folder) / 1e6} if folder else None,
@@ -447,18 +447,18 @@ def outputs(scene) -> dict:
 def summary(result: dict) -> str:
     steps = result["steps"]
     seconds = np.array([step["seconds"] for step in steps])
-    kinds = np.array([step["kinds"] for step in steps])
+    archetypes = np.array([step["archetypes"] for step in steps])
     lines = [f"{result['plants']} plants, {result['days']} days ({len(steps)} steps) at {result['commit']}: "
              f"built in {result['build_seconds']:.1f} s, run {seconds.sum():.1f} s, first step {seconds[0]:.1f} s, "
              f"mean step {seconds[1:].mean() if seconds.size > 1 else seconds[0]:.2f} s, "
              f"last day's mean {seconds[-24:].mean():.2f} s"]
-    lines.append(f"kinds evaluated {kinds.sum()} ({kinds[-24:].sum()} on the last day), "
-                 f"{sum(step['kind_seconds'] for step in steps):.1f} s")
+    lines.append(f"archetypes evaluated {archetypes.sum()} ({archetypes[-24:].sum()} on the last day), "
+                 f"{sum(step['archetype_seconds'] for step in steps):.1f} s")
     lines.append(f"memory: RSS at the end {result['rss_end_gb']:.2f} GB, after trim {result['rss_after_trim_gb']:.2f} GB, "
                  f"peak {result['peak_rss_gb']:.2f} GB, the scope's peak "
                  f"{result.get('scope_peak_gb', float('nan')):.2f} GB")
-    lines.append(f"nodes at the end {steps[-1]['nodes']}, dense blocks {steps[-1]['dense_nnz']} nonzeros; kinds held "
-                 f"{result['kinds_held']} ({result['kinds_MB']:.1f} MB pickled)"
+    lines.append(f"nodes at the end {steps[-1]['nodes']}, dense blocks {steps[-1]['dense_nnz']} nonzeros; archetypes held "
+                 f"{result['archetypes_held']} ({result['archetypes_MB']:.1f} MB pickled)"
                  + (f"; scenario {result['scenario']}" if result.get("scenario") else ""))
     if result.get("frames"):
         lines.append(f"frames: {result['frames']['folder']}, {result['frames']['MB']:.1f} MB")
@@ -505,7 +505,7 @@ def main(argv=None):
                         help="the plants' scenario entries (e.g. leaf_ports=bundles vapour_path=air_spaces)")
     parser.add_argument("--threads", default="auto",
                         help="Compute(threads=): auto (default) or a number, the budget of numba's kernels, the "
-                             "solves' blocks and the kinds (BLAS stays at 1)")
+                             "solves' blocks and the archetypes (BLAS stays at 1)")
     parser.add_argument("--linear-solver", default=None,
                         help="Compute(linear_solver=): the device's default (superlu on cpu, cupy on cuda), "
                              "superlu_reuse, cholmod, pardiso, mumps; or a mapping in JSON, one backend per system, "

@@ -32,8 +32,8 @@ def _water(jacobian=False, **options):
     @graph_system(node_unknowns=["water_potential"], edge_unknowns=["axial_flux"], solver="newton",
                   schedule_as="state", **options)
     class _water:
-        leaves = boundary_set(filters=_is_leaf, kind="robin", value="air_water_potential", weight="leaf_conductance")
-        roots = boundary_set(filters={"root_surface": ">0"}, kind="robin", value="soil_water_potential",
+        leaves = boundary_set(filters=_is_leaf, condition="robin", value="air_water_potential", weight="leaf_conductance")
+        roots = boundary_set(filters={"root_surface": ">0"}, condition="robin", value="soil_water_potential",
                              weight="radial_conductance")
 
         @node_balance(field="water_potential")
@@ -72,7 +72,7 @@ class TranspirationFields(FunctionalComponent):
     stomatal_conductance: float = input_variable(**DOC, by="Stomata", default=0.01, scale=scales.SubOrgan)
     exchange_surface: float = parameter(**DOC, by="", default=2., scale=scales.SubOrgan)
     leaf_conductance: float = state_variable(**DOC, default=0., scale=scales.SubOrgan,
-                                             kind="NonInertialIntensive")
+                                             kind="non_inertial_intensive")
     radial_conductance: float = parameter(**DOC, by="", default=0.5, scale=scales.SubOrgan)
 
 
@@ -82,7 +82,7 @@ class Stomata(FunctionalComponent):
     stomatal_conductance: float = input_variable(**DOC, by="Microclimate", default=0.01, scale=scales.SubOrgan)
     exchange_surface: float = parameter(**DOC, by="", default=2., scale=scales.SubOrgan)
     leaf_conductance: float = state_variable(**DOC, default=0., scale=scales.SubOrgan,
-                                             kind="NonInertialIntensive")
+                                             kind="non_inertial_intensive")
 
     @rate
     def _leaf_conductance(self, stomatal_conductance, exchange_surface):
@@ -185,7 +185,7 @@ def test_robin_sets_anchor_steady_pieces_of_an_active_subgraph():
 
 
 def test_boundary_set_declarations_are_checked():
-    with pytest.raises(ValueError, match="kind must be one of"):
-        boundary_set(filters="x", kind="flux", value=0.)
+    with pytest.raises(ValueError, match="condition must be one of"):
+        boundary_set(filters="x", condition="flux", value=0.)
     with pytest.raises(TypeError, match="filters must be"):
-        boundary_set(filters=3, kind="robin", value=0.)
+        boundary_set(filters=3, condition="robin", value=0.)

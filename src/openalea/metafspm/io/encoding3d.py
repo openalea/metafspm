@@ -20,7 +20,7 @@ What a frame holds:
   (display_triangles(), e.g. GRANAP's sections, its vertices shared by its triangles; display_meshes=False leaves them
   out, SceneRecorder writes them every display_period steps only; display_plants= draws them for some plants only);
   the groups of its Reduction (any, at any location) drawn as instances of their templates (display="instances",
-  the default: an instance set per component giving display_instances, its templates and each kind's recovery
+  the default: an instance set per component giving display_instances, its templates and each archetype's recovery
   operator shared parts written once, the reduced system's unknown on the templates' nodes a derived field the reader
   rebuilds for the instances it selects), or whole with every interior as display rows (display="full").
   The MPG's own links (the raw complex and parent of each
@@ -61,7 +61,7 @@ DISPLAYS = ("instances", "full", None)             # how display shapes draw a R
 
 _KINDS = {"intensive": "intensive", "extensive": "extensive", "massic_concentration": "massic_concentration",
           "volumic_concentration": "volumic_concentration", "descriptor": "descriptor",
-          "NonInertialIntensive": "intensive", "NonInertialExtensive": "extensive"}
+          "non_inertial_intensive": "intensive", "non_inertial_extensive": "extensive"}
 _ROLES = {"state_variable": "state", "input": "input", "parameter": "parameter",
           "setting": "setting", "forcing": "input"}
 _DIMENSIONLESS = {"", "adim", "-", "1", "dimensionless", "adimensional", "unitless"}
@@ -906,9 +906,9 @@ def _instance_sets(ds, components, entity_sets: list, scale_of: dict, names: dic
     the component's shape in template coordinates, on the full template's nodes, with their constant properties),
     placed by its transform, owned by its group's vertex (an entity of the reduction's location); its vector the kept
     nodes' values of each reduced system's unknown, then 1; a derived field per system, the unknown on the template's
-    nodes, the weighted sum of its kinds' recovery operators (shared parts: Kind.recovery_operator, a class blend's two
-    kinds weighted) applied to it, as Reduction.recover_interiors recovers them (the kept nodes their own values).
-    The parts are kept on the Reduction (built once per template and kind, as long as the kind is held). *plants*:
+    nodes, the weighted sum of its archetypes' recovery operators (shared parts: Archetype.recovery_operator, a class blend's two
+    archetypes weighted) applied to it, as Reduction.recover_interiors recovers them (the kept nodes their own values).
+    The parts are kept on the Reduction (built once per template and archetype, as long as the archetype is held). *plants*:
     the Plant vids whose groups are drawn (None: all). *variables*: a variables filter (filter_frame's), the
     templates' node columns kept by it as the node set's (their id and label always).
     """
@@ -931,9 +931,9 @@ def _instance_sets(ds, components, entity_sets: list, scale_of: dict, names: dic
     terms = [item for item in terms if item is not None]
     full_of = {int(owner): reduction.full_template(key) for owner, key in groups.values()}
     parts_cache = reduction.__dict__.setdefault("_display_parts", {})
-    held = set(reduction._kinds)
+    held = set(reduction._archetypes)
     for cached in [key for key in parts_cache if key[0] == "operator" and key[1] not in held]:
-        del parts_cache[cached]                    # a kind released: its operator too
+        del parts_cache[cached]                    # an archetype released: its operator too
     out = []
     for component in components:
         component_name = type(component).__name__
@@ -966,13 +966,13 @@ def _instance_sets(ds, components, entity_sets: list, scale_of: dict, names: dic
         for item in terms:
             row_of = dict(zip(item.owner.tolist(), range(item.owner.size)))
             rows = np.array([row_of.get(owner, -1) for owner in shapes.owners.tolist()], dtype=np.int64)
-            operator_of = np.array([part_of(("operator", key, item.system), lambda kind=kind: _operator_part(kind))
-                                    for key, kind in zip(item.kind_keys, item.kinds)], dtype=np.int64)
-            corners = item.kind.shape[1]
+            operator_of = np.array([part_of(("operator", key, item.system), lambda archetype=archetype: _operator_part(archetype))
+                                    for key, archetype in zip(item.archetype_keys, item.archetypes)], dtype=np.int64)
+            corners = item.archetype.shape[1]
             operators = np.full((rows.size, corners), NO_ID, dtype=np.int64)
             weights = np.zeros((rows.size, corners))
             found = rows >= 0
-            chosen = item.kind[rows[found]]
+            chosen = item.archetype[rows[found]]
             operators[found] = np.where(chosen >= 0, operator_of[np.maximum(chosen, 0)], NO_ID)
             weights[found] = item.weights[rows[found]]
             unknown_column = extras["variables"].get(item.unknown, {}).get("column", item.unknown)
@@ -1033,11 +1033,11 @@ def _template_part(full, shape, node_set: str, mesh_name: str, translator: dict,
                                                        indices=indices)])
 
 
-def _operator_part(kind):
-    """The encoding3d Operator of *kind*'s recovery (Kind.recovery_operator): dense, or its sparse system solved by
+def _operator_part(archetype):
+    """The encoding3d Operator of *archetype*'s recovery (Archetype.recovery_operator): dense, or its sparse system solved by
     the reader."""
     encoding3d = _encoding3d()
-    found = kind.recovery_operator()
+    found = archetype.recovery_operator()
     return encoding3d.Operator.dense(found[1]) if found[0] == "dense" else encoding3d.Operator.solve(found[1],
                                                                                                     found[2])
 
@@ -1301,7 +1301,7 @@ def to_frame(data_structures: dict, components: dict = None, mappings: dict = No
       "instances"   (default) each reduced group an instance of its full template (an encoding3d instance set per
                     component giving display_instances: the template's shape and nodes once, a shared part; per
                     group its transform, owner, kept values; the unknown on the template's nodes a derived field,
-                    its kinds' recovery operators shared parts too, rebuilt by the reader for the instances it
+                    its archetypes' recovery operators shared parts too, rebuilt by the reader for the instances it
                     selects: encoding3d.evaluate, ParaView's Select at scale); a DataStructure without such a
                     component draws its groups as with "full"
       "full"        the groups drawn whole in the display mesh, their interiors recovered as display rows

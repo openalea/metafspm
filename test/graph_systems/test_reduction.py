@@ -1,7 +1,7 @@
 """
 solve.reduction: a graph system reduced by groups. A plant model of toy sections (test/helpers/layered_anatomy.py)
 declaring a Reduction keeps its xylem (the ports, joined across sections) and its soil walls (their Robin terms,
-live) and eliminates the rest, once per kind, from a library of full instances: the same potentials on the kept
+live) and eliminates the rest, once per archetype, from a library of full instances: the same potentials on the kept
 nodes as the full model; the interior recovered.
 """
 from dataclasses import dataclass
@@ -27,7 +27,7 @@ N_SEGMENTS = 4
 class ToySegments(StructuralComponent):
     """A chain of root segments under each plant, each an instance of the toy section (reduced when the plant model
     declares a reduction); its sections' walls published as an entity set."""
-    entity_sets = {"walls": {"kind": WALL}}
+    entity_sets = {"walls": {"compartment_type": WALL}}
 
     @classmethod
     def initiate_plant(cls, g, plant, scenario):
@@ -57,14 +57,14 @@ class NodeHydraulics(FunctionalComponent):
     water_potential: float = state_variable(**DOC, default=-0.5, location="node")
     K: float = parameter(**DOC, by="", default=1., location="edge")
     label: float = parameter(**DOC, by="", default=0., scale=scales.Compartment)
-    kind: float = parameter(**DOC, by="", default=0., scale=scales.Compartment)
+    compartment_type: float = parameter(**DOC, by="", default=0., scale=scales.Compartment)
     soil_water_potential: float = parameter(**DOC, by="", default=-0.2, location="node")
     xylem_water_potential: float = parameter(**DOC, by="", default=-1., location="node")
 
     @graph_system(node_unknowns=["water_potential"], solver="newton")
     class _hydraulics:
-        soil = boundary_set(filters={"kind": "==1"}, kind="robin", value="soil_water_potential", weight=0.6)
-        collar = boundary_set(filters=_collar, kind="dirichlet", value="xylem_water_potential")
+        soil = boundary_set(filters={"compartment_type": "==1"}, condition="robin", value="soil_water_potential", weight=0.6)
+        collar = boundary_set(filters=_collar, condition="dirichlet", value="xylem_water_potential")
 
         @node_balance(field="water_potential")
         def _balance(self, water_potential, K):
@@ -86,7 +86,7 @@ def _xylem(template):
 
 
 def _soil_walls(template):
-    rows, values = template.properties["kind"]
+    rows, values = template.properties["compartment_type"]
     out = np.zeros(template.size, dtype=bool)
     out[rows] = np.asarray(values, dtype=float) == WALL
     return out
@@ -233,7 +233,7 @@ def test_a_reduction_chosen_by_the_scenario():
 
 def test_the_library_gets_every_per_plant_parameter_and_keys_its_kinds_by_them():
     """A plant's object parameter (e.g. a component's dict of options) reaches the reduction's library runs and tells
-    kinds apart: two plants differing in it only have kinds of their own."""
+    archetypes apart: two plants differing in it only have archetypes of their own."""
     from openalea.metafspm.solve.reduction import _signature
 
     @dataclass
@@ -253,9 +253,9 @@ def test_the_library_gets_every_per_plant_parameter_and_keys_its_kinds_by_them()
     assert _signature(reduction, first) == _signature(reduction, dict(first))     # by content
 
 
-def test_plants_differing_only_in_a_parameter_the_library_does_not_read_share_their_kinds():
-    """The kinds are keyed by the parameters of the components the library runs only: two plants differing in a
-    parameter of another component (a root architecture's random draws, say) share every kind, as many as one
+def test_plants_differing_only_in_a_parameter_the_library_does_not_read_share_their_archetypes():
+    """The archetypes are keyed by the parameters of the components the library runs only: two plants differing in a
+    parameter of another component (a root architecture's random draws, say) share every archetype, as many as one
     plant's, and solve as the full model."""
     from openalea.metafspm.solve.reduction import _signature
 
@@ -286,7 +286,7 @@ def test_plants_differing_only_in_a_parameter_the_library_does_not_read_share_th
     first, second = (reduction._parameters(reduced, k) for k in (0, 1))
     assert "draw" not in first
     assert _signature(reduction, first) == _signature(reduction, second)
-    assert len(reduction._kinds) == len(_solved(True).data_structure.structure.reduction._kinds)
+    assert len(reduction._archetypes) == len(_solved(True).data_structure.structure.reduction._archetypes)
     row = {place: i for i, place in enumerate(_places(full))}
     rows = [row[place] for place in _places(reduced)]
     np.testing.assert_allclose(reduced.get("water_potential"), full.get("water_potential")[rows], rtol=1e-11)
@@ -389,12 +389,12 @@ def test_a_reduction_chosen_by_the_scenario_owns_its_keys_while_off():
 
 
 def test_the_kinds_no_group_has_any_more_are_released():
-    """A group's kind follows its kind variables (a growing section's length class, say): a solve keeps the kinds of
+    """A group's archetype follows its archetype variables (a growing section's length class, say): a solve keeps the archetypes of
     the current groups only, the former ones released (their arrays freed, a cache holding one finds it empty); the
     potentials and the recovered interior are those of a plant solved with the new values from the start."""
     class KindedPlant(_model(False)):
         reduction = Reduction(location="SubOrgan", where={"label": "RootSegment"}, ports=_xylem, keep=_soil_walls,
-                              kind={"soil_water_potential": None}, systems=("NodeHydraulics._hydraulics",))
+                              archetype_variables={"soil_water_potential": None}, systems=("NodeHydraulics._hydraulics",))
 
     def solved(soil_water_potential):
         population = population_data_structure(planting([Planting()], KindedPlant, {}), KindedPlant)
@@ -406,11 +406,11 @@ def test_the_kinds_no_group_has_any_more_are_released():
     population = solved(-0.2)
     ds = population.data_structure
     reduction = ds.structure.reduction
-    former = [kind for by_system in reduction._kinds.values() for kind in by_system.values()]
-    assert len(reduction._kinds) == 1 and former[0].D is not None
+    former = [archetype for by_system in reduction._archetypes.values() for archetype in by_system.values()]
+    assert len(reduction._archetypes) == 1 and former[0].D is not None
     ds.set("soil_water_potential", np.full(ds.n_nodes(), -0.3))
     population.instance.run()
-    assert len(reduction._kinds) == 1 and all(kind.D is None and kind.reduction is None for kind in former)
+    assert len(reduction._archetypes) == 1 and all(archetype.D is None and archetype.reduction is None for archetype in former)
     fresh = solved(-0.3).data_structure
     np.testing.assert_allclose(ds.get("water_potential"), fresh.get("water_potential"), rtol=1e-12)
     kept = np.flatnonzero(np.asarray(ds.owner("SubOrgan")) == 2)
@@ -421,12 +421,12 @@ def test_the_kinds_no_group_has_any_more_are_released():
 
 
 def test_the_librarys_ids_stay_bounded_and_its_kinds_do_not_depend_on_the_batches_before():
-    """Each batch of kinds replaces the library's former groups and is given their ids again (MPG.reuse_ids, its
+    """Each batch of archetypes replaces the library's former groups and is given their ids again (MPG.reuse_ids, its
     DataStructure forgetting the removed entities): the library's id range stays the same batch after batch, and a
-    kind evaluated after other batches is the one a fresh library gives, bit for bit."""
+    archetype evaluated after other batches is the one a fresh library gives, bit for bit."""
     class KindedPlant(_model(False)):
         reduction = Reduction(location="SubOrgan", where={"label": "RootSegment"}, ports=_xylem, keep=_soil_walls,
-                              kind={"soil_water_potential": None}, systems=("NodeHydraulics._hydraulics",))
+                              archetype_variables={"soil_water_potential": None}, systems=("NodeHydraulics._hydraulics",))
 
     def solved(population, soil_water_potential):
         ds = population.data_structure
@@ -434,32 +434,32 @@ def test_the_librarys_ids_stay_bounded_and_its_kinds_do_not_depend_on_the_batche
         population.instance.run()
         reduction = ds.structure.reduction
         (library,) = reduction.__dict__["_libraries"].values()
-        (by_system,) = reduction._kinds.values()
-        return library.population.data_structure.structure._id, {name: kind.D.copy()
-                                                                 for name, kind in by_system.items()}
+        (by_system,) = reduction._archetypes.values()
+        return library.population.data_structure.structure._id, {name: archetype.D.copy()
+                                                                 for name, archetype in by_system.items()}
 
     population = population_data_structure(planting([Planting()], KindedPlant, {}), KindedPlant)
     ids = [solved(population, value)[0] for value in (-0.2, -0.3, -0.4)]
-    last_id, kinds = solved(population, -0.5)
+    last_id, archetypes = solved(population, -0.5)
     assert ids[1] == ids[2] == last_id                  # bounded: the second batch on, the same ids
     fresh = population_data_structure(planting([Planting()], KindedPlant, {}), KindedPlant)
-    _, fresh_kinds = solved(fresh, -0.5)
-    assert kinds.keys() == fresh_kinds.keys()
-    for name in kinds:
-        np.testing.assert_array_equal(kinds[name], fresh_kinds[name])
+    _, fresh_archetypes = solved(fresh, -0.5)
+    assert archetypes.keys() == fresh_archetypes.keys()
+    for name in archetypes:
+        np.testing.assert_array_equal(archetypes[name], fresh_archetypes[name])
 
 
 def test_a_kind_derived_value_is_computed_once_per_kind_while_its_factorisation_is_live():
-    """@kind_derived(name) on the reduced system's component: run once per kind, on the library (its
-    DataStructure's full group nodes given, in the kron's order), the kind's factorisation live; its value in
-    kind.outputs[name]. A second solve of the same kinds runs it no more."""
-    from openalea.metafspm.solve.decorator import kind_derived
+    """@archetype_derived(name) on the reduced system's component: run once per archetype, on the library (its
+    DataStructure's full group nodes given, in the kron's order), the archetype's factorisation live; its value in
+    archetype.outputs[name]. A second solve of the same archetypes runs it no more."""
+    from openalea.metafspm.solve.decorator import archetype_derived
     calls = []
 
     @dataclass
     class DerivingHydraulics(NodeHydraulics):
-        @kind_derived("interior_share")
-        def _interior_share(self, kind, full_template, kron, nodes):
+        @archetype_derived("interior_share")
+        def _interior_share(self, archetype, full_template, kron, nodes):
             calls.append((kron._lu is not None, self.data_structure.structure.reduction.library, len(nodes),
                           full_template.rows_at_scale(scales.Compartment).size))
             return kron.shares(np.ones(kron.kept_nodes.size, dtype=bool), np.ones(kron.interior_nodes.size))
@@ -473,12 +473,12 @@ def test_a_kind_derived_value_is_computed_once_per_kind_while_its_factorisation_
     population = population_data_structure(planting([Planting()], DerivingPlant, {}), DerivingPlant)
     population.instance.run()
     reduction = population.data_structure.structure.reduction
-    kinds = [kind for by_system in reduction._kinds.values() for kind in by_system.values()]
-    assert len(calls) == len(kinds) == 1
+    archetypes = [archetype for by_system in reduction._archetypes.values() for archetype in by_system.values()]
+    assert len(calls) == len(archetypes) == 1
     live, library, nodes, compartments = calls[0]
     assert live and library and nodes == compartments
-    interior = kinds[0].interior_rows.size
-    np.testing.assert_allclose(kinds[0].outputs["interior_share"].sum(), interior, rtol=1e-12)
+    interior = archetypes[0].interior_rows.size
+    np.testing.assert_allclose(archetypes[0].outputs["interior_share"].sum(), interior, rtol=1e-12)
     population.instance.run()
     assert len(calls) == 1
 
@@ -488,7 +488,7 @@ def test_entity_sets_select_by_name_on_templates_groups_and_data_structures():
     reduction's ports or keep), on a DataStructure (define_mask(entities=)); where= filters the reduced groups by
     their labels and their complexes' (the label names resolved at their scale)."""
     from openalea.metafspm.coupling.declaration import entity_set, template_selection
-    assert entity_set("ToySegments.walls") == {"kind": WALL}
+    assert entity_set("ToySegments.walls") == {"compartment_type": WALL}
     with pytest.raises(KeyError, match="publishes"):
         entity_set("ToySegments.conduits")
     with pytest.raises(KeyError, match="no component class"):
@@ -502,9 +502,9 @@ def test_entity_sets_select_by_name_on_templates_groups_and_data_structures():
     assert by_name.template_for(template).size == by_rule.template_for(template).size < template.size
     ds = _solved(False).data_structure
     ds.define_mask("walls", entities="ToySegments.walls")
-    np.testing.assert_array_equal(ds.mask("walls"), ds.get("kind") == WALL)
+    np.testing.assert_array_equal(ds.mask("walls"), ds.get("compartment_type") == WALL)
     with pytest.raises(TypeError):
-        ds.define_mask("both", {"kind": WALL}, entities="ToySegments.walls")
+        ds.define_mask("both", {"compartment_type": WALL}, entities="ToySegments.walls")
     g = ds.structure
     segment = int(ds.entity_ids("SubOrgan")[0])
     assert Reduction(where={"label": "RootSegment", "Organ.label": "RootInternode"}).reduces(g, segment)
@@ -517,7 +517,7 @@ def test_entity_sets_select_by_name_on_templates_groups_and_data_structures():
 
 def test_a_group_description_builds_no_key_dict_of_the_plants_properties():
     """_describe reads each array-backed property at its group by binary search: describing many groups (the new
-    kinds of a step) leaves the plants' properties without their key dicts (vid2idx, ~100 B per entry each)."""
+    archetypes of a step) leaves the plants' properties without their key dicts (vid2idx, ~100 B per entry each)."""
     from openalea.metafspm.data_structure.arraydict import SEARCHES_BEFORE_INDEX, ArrayDict
     from openalea.metafspm.data_structure.mpg import MPG
     from openalea.metafspm.solve.reduction import _describe
@@ -527,18 +527,18 @@ def test_a_group_description_builds_no_key_dict_of_the_plants_properties():
     vids = [g.add_component(plant, **PropsConfig(scale=g.scales.SubOrgan, edge_type='/', label=segment))
             for _ in range(3 * SEARCHES_BEFORE_INDEX)]
     g._properties["length"] = ArrayDict.from_items(vids, np.arange(len(vids)) * 0.5)
-    g._properties["kind_class"] = {v: "lateral" for v in vids[::2]}
+    g._properties["archetype_class"] = {v: "lateral" for v in vids[::2]}
     for k, v in enumerate(vids):
         chain, (scale, label), properties = _describe(g, v)
         assert label == segment
         assert properties["length"] == k * 0.5 and type(properties["length"]) is float
-        assert properties.get("kind_class") == ("lateral" if k % 2 == 0 else None)
+        assert properties.get("archetype_class") == ("lateral" if k % 2 == 0 else None)
     assert g._properties["length"]._index is None
 
 
 def _factored_conductance_model(reduced):
     """The toy plant with its Connections' conductances a per-plant factor (a parameter of the library's components:
-    plants of different factors have kinds of their own)."""
+    plants of different factors have archetypes of their own)."""
     @dataclass
     class FactoredConductance(FunctionalComponent):
         factor: float = parameter(**DOC, default=1., scale=scales.Plant)
@@ -559,11 +559,11 @@ def _factored_conductance_model(reduced):
 
 
 def test_plants_of_different_parameters_share_one_library_one_plant_each(monkeypatch):
-    """The kinds of plants of different parameters (signatures) are evaluated in the same batches of one library,
-    one plant per signature: the potentials are the full model's, each kind the one it gives alone in a library
-    built for it (METAFSPM_CHECK_KINDS=1, bit for bit); a plant's parameter changed, its kinds are evaluated again
+    """The archetypes of plants of different parameters (signatures) are evaluated in the same batches of one library,
+    one plant per signature: the potentials are the full model's, each archetype the one it gives alone in a library
+    built for it (METAFSPM_CHECK_ARCHETYPES=1, bit for bit); a plant's parameter changed, its archetypes are evaluated again
     (the plants' parameters and signatures kept only while they are)."""
-    monkeypatch.setenv("METAFSPM_CHECK_KINDS", "1")
+    monkeypatch.setenv("METAFSPM_CHECK_ARCHETYPES", "1")
     solved = {}
     for reduced in (False, True):
         model = _factored_conductance_model(reduced)
@@ -573,45 +573,45 @@ def test_plants_of_different_parameters_share_one_library_one_plant_each(monkeyp
         solved[reduced] = population
     full, reduced = solved[False].data_structure, solved[True].data_structure
     reduction = reduced.structure.reduction
-    assert len({key[2] for key in reduction._kinds}) == 2
+    assert len({key[2] for key in reduction._archetypes}) == 2
     (library,) = reduction._libraries.values()
     assert len(library.plants) == 2 and len(library.population.data_structure.entity_ids("Plant")) == 2
     row = {place: i for i, place in enumerate(_places(full))}
     rows = [row[place] for place in _places(reduced)]
     np.testing.assert_allclose(reduced.get("water_potential"), full.get("water_potential")[rows], rtol=1e-11)
-    before = set(reduction._kinds)
+    before = set(reduction._archetypes)
     reduced.set("factor", np.array([2., 7.]))
     solved[True].instance.run()
-    assert len(set(reduction._kinds) - before) == 1                  # the second plant's kind, evaluated again
+    assert len(set(reduction._archetypes) - before) == 1                  # the second plant's archetype, evaluated again
     assert len(library.plants) == 1                                   # that batch's one signature: one plant
 
 
 def test_a_batchs_kinds_are_the_same_bit_for_bit_in_threads():
-    """Each kind of a batch is worked out in its own thread (Compute.threads: the Kron reductions' SuperLU outside the
-    GIL): the kinds are those of one thread, bit for bit, in the requests' order, and the threads were used."""
+    """Each archetype of a batch is worked out in its own thread (Compute.threads: the Kron reductions' SuperLU outside the
+    GIL): the archetypes are those of one thread, bit for bit, in the requests' order, and the threads were used."""
     from openalea.metafspm.compute import Compute
 
     class KindedPlant(_model(False)):
         reduction = Reduction(location="SubOrgan", where={"label": "RootSegment"}, ports=_xylem, keep=_soil_walls,
-                              kind={"soil_water_potential": None}, systems=("NodeHydraulics._hydraulics",))
+                              archetype_variables={"soil_water_potential": None}, systems=("NodeHydraulics._hydraulics",))
 
-    def kinds(threads):
+    def archetypes(threads):
         compute = Compute(threads=threads)
         with compute.limits():
             population = population_data_structure(planting([Planting()], KindedPlant, {}), KindedPlant)
             ds = population.data_structure
             section = np.asarray(ds.owner("SubOrgan"))
-            ds.set("soil_water_potential", -0.2 - 0.05 * section.astype(float))     # one kind per section
+            ds.set("soil_water_potential", -0.2 - 0.05 * section.astype(float))     # one archetype per section
             population.instance.run()
         reduction = ds.structure.reduction
-        return compute, list(reduction._kinds), [by_system["NodeHydraulics._hydraulics"]
-                                                 for by_system in reduction._kinds.values()]
+        return compute, list(reduction._archetypes), [by_system["NodeHydraulics._hydraulics"]
+                                                 for by_system in reduction._archetypes.values()]
 
-    _, keys, alone = kinds(1)
-    compute, threaded_keys, threaded = kinds(4)
+    _, keys, alone = archetypes(1)
+    compute, threaded_keys, threaded = archetypes(4)
     assert len(keys) == N_SEGMENTS and threaded_keys == keys
-    assert compute.timing_info()["kinds.tails"]["threads"] == {"4": 1}
-    for kind, again in zip(alone, threaded):
+    assert compute.timing_info()["archetypes.tails"]["threads"] == {"4": 1}
+    for archetype, again in zip(alone, threaded):
         for name in ("D", "e", "interior_source", "kept_rows", "interior_rows"):
-            np.testing.assert_array_equal(getattr(kind, name), getattr(again, name))
-        assert kind.reduction.reduced is None and kind.reduction._lu is None           # released, S freed
+            np.testing.assert_array_equal(getattr(archetype, name), getattr(again, name))
+        assert archetype.reduction.reduced is None and archetype.reduction._lu is None           # released, S freed

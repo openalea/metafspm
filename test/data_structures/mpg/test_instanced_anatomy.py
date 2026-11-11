@@ -37,7 +37,7 @@ def _same(copied, instanced):
         np.testing.assert_array_equal(ds.owner(scale), other.owner(scale))
     assert ds.labels().tolist() == other.labels().tolist()
     assert _junction_pairs(g) == _junction_pairs(h)
-    for name in ("kind", "vessel_index", "label"):
+    for name in ("compartment_type", "vessel_index", "label"):
         vids = ds.entity_ids("node")
         assert g.values_of(name, vids) == h.values_of(name, vids), name
 
@@ -191,7 +191,7 @@ def test_the_ids_freed_at_the_end_are_given_again():
 
 def test_a_view_reads_vertex_by_vertex_as_the_copy():
     (g, segments, sections, _), (h, other_segments, other_sections, _) = _pair()
-    for name in ("vessel_index", "kind", "label", "n_id_a"):
+    for name in ("vessel_index", "compartment_type", "label", "n_id_a"):
         copied, instanced = g.property(name), h.view(name)
         for vid in range(1, g._id + 1):
             assert (vid in copied) == (vid in instanced), (name, vid)
@@ -218,15 +218,15 @@ def _hydraulics(condense):
         water_potential: float = state_variable(**DOC, default=-0.5, location="node")
         K: float = parameter(**DOC, by="", default=1., location="edge")
         label: float = parameter(**DOC, by="", default=0., scale=scales.Compartment)
-        kind: float = parameter(**DOC, by="", default=0., scale=scales.Compartment)
+        compartment_type: float = parameter(**DOC, by="", default=0., scale=scales.Compartment)
         soil_water_potential: float = parameter(**DOC, by="", default=-0.2, location="node")
         xylem_water_potential: float = parameter(**DOC, by="", default=-1., location="node")
 
         @graph_system(node_unknowns=["water_potential"], solver="newton", condense=condense)
         class _hydraulics:
-            soil = boundary_set(filters={"kind": "==1"}, kind="robin", value="soil_water_potential", weight=0.6)
+            soil = boundary_set(filters={"compartment_type": "==1"}, condition="robin", value="soil_water_potential", weight=0.6)
             collar = boundary_set(filters=lambda ds: (ds.get("label") == ds.mtg.labels.Cell.MetaXylem)
-                                  & (ds.owner("SubOrgan") == 0), kind="dirichlet", value="xylem_water_potential")
+                                  & (ds.owner("SubOrgan") == 0), condition="dirichlet", value="xylem_water_potential")
 
             @node_balance(field="water_potential")
             def _balance(self, water_potential, K):
@@ -241,7 +241,7 @@ def _hydraulics(condense):
 
 
 def test_a_graph_system_condensed_on_its_sections_solves_as_the_direct_solve():
-    """condense="SubOrgan": each section's interior eliminated, one factorisation per kind of section (here the
+    """condense="SubOrgan": each section's interior eliminated, one factorisation per section archetype (here the
     first, the middle ones and the tip); the kept nodes: the junctions' ends, the soil walls, the held xylem."""
     results = []
     for condense in (None, "SubOrgan"):
@@ -252,8 +252,8 @@ def test_a_graph_system_condensed_on_its_sections_solves_as_the_direct_solve():
         model()
         results.append((ds.get("water_potential").copy(), model))
     np.testing.assert_allclose(results[1][0], results[0][0], rtol=1e-10, atol=1e-12)
-    kinds = results[1][1].__dict__["_condensation_kinds"]["_hydraulics"]
-    assert 1 <= len(kinds["kinds"]) <= 3
+    archetypes = results[1][1].__dict__["_condensation_archetypes"]["_hydraulics"]
+    assert 1 <= len(archetypes["archetypes"]) <= 3
 
 
 def test_a_restricted_and_extended_template_is_instanced_as_its_vertices():
@@ -269,7 +269,7 @@ def test_a_restricted_and_extended_template_is_instanced_as_its_vertices():
     renumbered = {v: i for i, v in enumerate(sorted(rows))}
     a, b = renumbered[xylem[0]], renumbered[xylem[1]]
     small = small.extended("xylem and its link", scale=[s.Connection], complex_=[ANCHOR], parent=[OWNER],
-                           properties={"n_id_a": [a], "n_id_b": [b], "kind": [8.],
+                           properties={"n_id_a": [a], "n_id_b": [b], "compartment_type": [8.],
                                        "edge_type": np.array(["/"], dtype=object)})
     g, segments, _ = make_instanced_anatomy(1)
     segment = g.add_child(segments[0], **PropsConfig(scale=s.SubOrgan, edge_type='<',
@@ -281,7 +281,7 @@ def test_a_restricted_and_extended_template_is_instanced_as_its_vertices():
     owner = ds.entity_ids("SubOrgan")[ds.owner("SubOrgan")]
     assert (owner[np.isin(nodes, vids)] == segment).all()
     edge = vids[-1]
-    assert g.values_of("n_id_a", [edge]) == {edge: float(vids[a])} and g.values_of("kind", [edge])[edge] == 8.
+    assert g.values_of("n_id_a", [edge]) == {edge: float(vids[a])} and g.values_of("compartment_type", [edge])[edge] == 8.
 
 
 def test_the_segments_topology_when_the_nodes_are_compartments():

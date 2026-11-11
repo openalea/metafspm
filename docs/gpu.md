@@ -19,7 +19,7 @@ scene = Scene(planting, ..., compute=Compute(device="cuda"))
 `device="cuda"` hands the arrays to one small backend (`openalea.metafspm.backend`). There are two backends:
 numpy and scipy (`"cpu"`) and CuPy (`"cuda"`). The backend takes the following work:
 
-- **A reduction's kinds** (their Kron reductions, `KronReduction`). Each kind solves its interior once per kept node
+- **A reduction's archetypes** (their Kron reductions, `KronReduction`). Each archetype solves its interior once per kept node
   (X = A_II⁻¹ A_IK, a few dozen right-hand sides over tens of thousands of cells), and this is where the evaluation
   spends its time. (This is the factorisation of the reduced system's backend, `LinearSolver.factorize`: SuperLU's
   on the device's backend, under `"cupy"` and `"superlu"` alike; a symmetric system mapped to `"cholmod"` is
@@ -27,7 +27,7 @@ numpy and scipy (`"cpu"`) and CuPy (`"cuda"`). The backend takes the following w
   - The factorisation is SuperLU's, on the host, the same one the CPU uses (cupyx's own `splu` also factorises on
     the host).
   - Its L and U factors are copied to the device once, and the right-hand sides are solved there.
-  - A_IK goes to the device sparse and is made dense there; X comes back once, because the kind keeps it on the
+  - A_IK goes to the device sparse and is made dense there; X comes back once, because the archetype keeps it on the
     host for its injection, its volume shares and its display recovery.
   - A right-hand side smaller than `backend.DEVICE_MIN_VALUES` (200 000 values) stays on the host: copying it would
     cost more than solving it.
@@ -63,8 +63,8 @@ context.
 
 ## When it pays
 
-- **A single run on a laptop: the CPU.** Use case 1's work is many small sparse solves (a kind takes about 0.16 s on
-  one core). Copies and kernel launches cost about as much as they save, and the reduction's kinds saturate after a
+- **A single run on a laptop: the CPU.** Use case 1's work is many small sparse solves (an archetype takes about 0.16 s on
+  one core). Copies and kernel launches cost about as much as they save, and the reduction's archetypes saturate after a
   few days (see the framework guide, "Performance notes").
 - **Repeated runs (sensitivity analyses, calibrations): several CPU processes first.** `scenarios.run_variants` runs
   one scene per variant in parallel processes. Its gain is the number of cores, with no new dependency:
@@ -79,7 +79,7 @@ context.
   `run_one(name, scenario, compute)` is a module-level function. It builds its scene with `compute=compute`, runs
   it, finishes it and returns what is kept (a table, a path). Each variant runs in a fresh process, and the results
   come back in the scenarios' order.
-- **Large scenes or many plants on a GPU workstation.** Batches of large kinds (stems and blades of tens of
+- **Large scenes or many plants on a GPU workstation.** Batches of large archetypes (stems and blades of tens of
   thousands of cells each, at the start of a run or when organs emerge) and whole-population systems above 100 000
   entries are what the device takes. Measure it before relying on it (below).
 
@@ -94,7 +94,7 @@ context.
 `variant_processes` checks the bound before anything starts:
 - several variant processes turn a scene's `threads="auto"` into `processors // processes` (the processors shared);
 - an integer is kept if `processes × Compute.threads ≤ processors` (numba's kernels, the solves' blocks and the
-  kinds);
+  archetypes);
 - anything else raises "oversubscribe".
 
 ## Installing CuPy
@@ -132,10 +132,10 @@ Caribu's GPU near field needs numba's CUDA support (`numba.cuda.is_available()`;
    python benchmark.py --plants 2 --days 3 --device cuda --label cuda_2p3d
    ```
 
-   Both entries go to `outputs/benchmarks/<commit>.json`. Compare each step's `results`: with cupyx, the kinds
+   Both entries go to `outputs/benchmarks/<commit>.json`. Compare each step's `results`: with cupyx, the archetypes
    should agree to round-off, because the triangular solves on the device sum in another order. Compare also the
    step times and the `device` entry (its transfers). `--linear-solver superlu` keeps the linear solves on the
-   host and moves only the kinds. Run it under a memory bound, one run at a time
+   host and moves only the archetypes. Run it under a memory bound, one run at a time
    (`systemd-run --user --scope -p MemoryMax=8G ...`).
 
 None of the CuPy tests run in CI, and the GPU path has not been run on a GPU yet: it is experimental.

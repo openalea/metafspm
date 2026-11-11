@@ -57,7 +57,7 @@ def test_bulk_and_per_vertex_creation_build_the_same_anatomy():
         assert ds.edges() == other.edges()
         for scale in ("SubOrgan", "Layer", "Cell"):
             np.testing.assert_array_equal(ds.owner(scale), other.owner(scale))
-        for name in ("scale", "label", "kind", "vessel_index", "n_id_a", "n_id_b", "edge_type", "isanchor"):
+        for name in ("scale", "label", "compartment_type", "vessel_index", "n_id_a", "n_id_b", "edge_type", "isanchor"):
             assert dict(g.property(name)) == dict(h.property(name)), name
 
 
@@ -132,15 +132,15 @@ class SectionHydraulics(FunctionalComponent):
     water_flux: float = state_variable(**DOC, default=0., location="edge")
     K: float = parameter(**DOC, by="", default=1., location="edge")
     label: float = parameter(**DOC, by="", default=0., scale=scales.Compartment)
-    kind: float = parameter(**DOC, by="", default=0., scale=scales.Compartment)
+    compartment_type: float = parameter(**DOC, by="", default=0., scale=scales.Compartment)
     soil_water_potential: float = parameter(**DOC, by="", default=-0.2, location="node")
     xylem_water_potential: float = parameter(**DOC, by="", default=-1., location="node")
 
     @graph_system(node_unknowns=["water_potential"], edge_unknowns=["water_flux"], solver="newton")
     class _hydraulics:
-        soil = boundary_set(filters={"kind": "==1"}, kind="robin", value="soil_water_potential", weight=0.6)
+        soil = boundary_set(filters={"compartment_type": "==1"}, condition="robin", value="soil_water_potential", weight=0.6)
         collar = boundary_set(filters=lambda ds: (ds.get("label") == ds.mtg.labels.Cell.MetaXylem)
-                              & (ds.owner("SubOrgan") == 0), kind="dirichlet", value="xylem_water_potential")
+                              & (ds.owner("SubOrgan") == 0), condition="dirichlet", value="xylem_water_potential")
 
         @node_balance(field="water_potential")
         def _balance(self, water_flux):
@@ -155,7 +155,7 @@ def test_a_graph_system_solves_on_the_layered_graph():
     g, _, _, ds = _plant()
     SectionHydraulics(data_structure=ds)()
     B = ds._incidence_matrix().toarray()
-    walls = ds.get("kind") == WALL
+    walls = ds.get("compartment_type") == WALL
     collar = (ds.get("label") == g.labels.Cell.MetaXylem) & (ds.owner("SubOrgan") == 0)
     A = B @ B.T + np.diag(np.where(walls, 0.6, 0.))
     rhs = np.where(walls, 0.6 * -0.2, 0.)
@@ -262,7 +262,7 @@ def test_a_pruned_segment_takes_its_whole_anatomy_with_it():
     gone = sections[segments[-1]]
     g.remove_vertex(segments[-1])
     assert not any(v in g._scale for v in gone.values())                  # Layers, Cells, protoplasts, walls
-    assert not any(v in g.property("kind") for v in gone.values())       # and their properties
+    assert not any(v in g.property("compartment_type") for v in gone.values())       # and their properties
     ds.update_topology()
     assert ds.n_nodes() == 2 * 10 and len(ds.entity_ids("Cell")) == 2 * 5
     assert len(g.junction_vids()) == 2                                    # only the remaining link

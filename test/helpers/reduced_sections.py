@@ -48,11 +48,11 @@ def _collar(ds):
     return (ds.get("label") == ds.mtg.labels.Cell.MetaXylem) & (ds.owner("SubOrgan") == 0)
 
 
-def _conductances(view, K, kind, length) -> np.ndarray:
+def _conductances(view, K, compartment_type, length) -> np.ndarray:
     """Each edge's conductance: K, times its section's length on the membranes and wall paths reaching a wall (a
     lateral surface), the others' K alone (a cross-section's)."""
     ends = abs(view.incidence)
-    on_wall = np.asarray(ends.T @ (np.asarray(kind) == WALL).astype(float)).reshape(-1) > 0
+    on_wall = np.asarray(ends.T @ (np.asarray(compartment_type) == WALL).astype(float)).reshape(-1) > 0
     edge_length = 0.5 * np.asarray(ends.T @ np.asarray(length, dtype=float)).reshape(-1)
     return np.asarray(K, dtype=float) * np.where(on_wall, edge_length, 1.)
 
@@ -64,26 +64,26 @@ class LengthHydraulics(FunctionalComponent):
     water_potential: float = state_variable(**DOC, default=-0.5, location="node")
     K: float = parameter(**DOC, by="", default=1., location="edge")
     label: float = parameter(**DOC, by="", default=0., scale=scales.Compartment)
-    kind: float = parameter(**DOC, by="", default=0., scale=scales.Compartment)
+    compartment_type: float = parameter(**DOC, by="", default=0., scale=scales.Compartment)
     length: float = parameter(**DOC, by="", default=1., location="node")
     soil_water_potential: float = parameter(**DOC, by="", default=-0.2, location="node")
     xylem_water_potential: float = parameter(**DOC, by="", default=-1., location="node")
 
     @graph_system(node_unknowns=["water_potential"], solver="newton")
     class _hydraulics:
-        soil = boundary_set(filters={"kind": "==1"}, kind="robin", value="soil_water_potential", weight=0.6)
-        collar = boundary_set(filters=_collar, kind="dirichlet", value="xylem_water_potential")
+        soil = boundary_set(filters={"compartment_type": "==1"}, condition="robin", value="soil_water_potential", weight=0.6)
+        collar = boundary_set(filters=_collar, condition="dirichlet", value="xylem_water_potential")
 
         @node_balance(field="water_potential")
-        def _balance(self, water_potential, K, kind, length):
+        def _balance(self, water_potential, K, compartment_type, length):
             B = self.graph_view.incidence
-            conductance = _conductances(self.graph_view, K, kind, length)
+            conductance = _conductances(self.graph_view, K, compartment_type, length)
             return np.asarray(B @ (conductance * np.asarray(B.T @ water_potential).reshape(-1))).reshape(-1)
 
         @graph_jacobian
-        def _jacobian(self, K, kind, length):
+        def _jacobian(self, K, compartment_type, length):
             B = self.graph_view.incidence
-            return (B @ diags(_conductances(self.graph_view, K, kind, length)) @ B.T).tocsr()
+            return (B @ diags(_conductances(self.graph_view, K, compartment_type, length)) @ B.T).tocsr()
 
 
 def _xylem(template):
@@ -95,7 +95,7 @@ def _xylem(template):
 
 
 def _soil_walls(template):
-    rows, values = template.properties["kind"]
+    rows, values = template.properties["compartment_type"]
     out = np.zeros(template.size, dtype=bool)
     out[rows] = np.asarray(values, dtype=float) == WALL
     return out
@@ -110,7 +110,7 @@ def _length_plant(classes):
         from_scale, nodes, initiators = "SubOrgan", "Compartment", (LengthSegments,)
         reduction = None if classes is False else Reduction(
             location="SubOrgan", where={"label": "RootSegment"}, ports=_xylem, keep=_soil_walls,
-            kind={"length": classes}, systems=(SYSTEM,))
+            archetype_variables={"length": classes}, systems=(SYSTEM,))
 
         @staticmethod
         def wiring(g):

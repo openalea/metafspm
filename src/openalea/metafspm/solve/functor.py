@@ -259,7 +259,7 @@ class Functor:
     def __call__(self, instance, data, *args):
         """Run the step on *data*, the component's DataStructure (iterating steps only receive the instance). Its
         wall time and calls are counted under functor.<Class>.<step> (Compute.timed: run.json's "compute"/"timing"),
-        inclusive of the steps it runs inside (e.g. a reduction's library components evaluating its kinds)."""
+        inclusive of the steps it runs inside (e.g. a reduction's library components evaluating its archetypes)."""
         from openalea.metafspm.compute import Compute
         with Compute.current().timed(self.timing_name):
             self._run(instance, data)

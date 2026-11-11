@@ -135,7 +135,7 @@ class SteadyPotential(FunctionalComponent):
         def _balance(self, water_flux):
             return np.asarray(self.graph_view.incidence @ water_flux).reshape(-1)
 
-        collar = boundary_set(filters={"is_collar": [1]}, kind="dirichlet", value=-0.1)
+        collar = boundary_set(filters={"is_collar": [1]}, condition="dirichlet", value=-0.1)
 
         @edge_law(field="water_flux")
         def _darcy(self, potential, water_flux, K):

@@ -149,7 +149,7 @@ goes through it on a seedling in a soil column
 
 How a run uses the machine is its `Compute` (`Scene(..., compute=Compute(threads="auto", device="cpu",
 memory="trim", linear_solver=None))`, the default): the threads (`"auto"`: the processors, each parallel part taking
-those that pay, a reduction's kinds included, the results the same at any number), an optional GPU (experimental:
+those that pay, a reduction's archetypes included, the results the same at any number), an optional GPU (experimental:
 it should work on suitable hardware but has not been tested on a GPU yet), the memory (glibc's allocator held to two arenas, the memory freed given
 back after each step) and the graph systems' sparse solver (`linear_solver="superlu_reuse"`, say, for every system;
 a mapping such as `{"default": "superlu", "symmetric": "cholmod"}` gives each system its own, by its qualified name
@@ -182,7 +182,7 @@ scene = Scene(..., recorder=SceneRecorder("outputs", frame_period="1 d"))   # a 
 
 A reduction's groups (e.g. the cells of reduced cross sections) are written as instances of their templates
 (`SceneRecorder(display="instances")`, the default; `"full"` draws every recovered interior, `None` leaves them out):
-the templates and the kinds' recovery operators are shared parts written once, and the reader rebuilds the values
+the templates and the archetypes' recovery operators are shared parts written once, and the reader rebuilds the values
 of the instances it selects. `SceneRecorder(pack_at_finish=True)` packs the frames into one `frames.fspm.zip` at
 the end (`recorder.pack()`), checks it (every file a member, read back unchanged, the archive valid), then removes
 the folder (`pack_keep_folder=True` keeps it; `encoding3d unpack ARCHIVE.fspm.zip FOLDER` restores it; encoding3d

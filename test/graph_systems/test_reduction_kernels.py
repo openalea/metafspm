@@ -43,13 +43,13 @@ def test_the_values_are_numpys_corner_by_corner_sums(threads):
     n, nodes = _groups(random)
     groups, k = nodes.shape
     blocks = [random.normal(size=(k, k)) for _ in range(7)]
-    kinds = random.integers(-1, len(blocks), size=(groups, 4))
-    weights = np.where(kinds >= 0, random.random(size=kinds.shape), 0.)
+    archetypes = random.integers(-1, len(blocks), size=(groups, 4))
+    weights = np.where(archetypes >= 0, random.random(size=archetypes.shape), 0.)
     expected = np.zeros((groups, k, k))                     # _Assignment.combine's accumulation
     stacked = np.stack(blocks)
-    for corner in range(kinds.shape[1]):
-        on = np.flatnonzero(kinds[:, corner] >= 0)
-        expected[on] += weights[on, corner][:, None, None] * stacked[kinds[on, corner]]
+    for corner in range(archetypes.shape[1]):
+        on = np.flatnonzero(archetypes[:, corner] >= 0)
+        expected[on] += weights[on, corner][:, None, None] * stacked[archetypes[on, corner]]
     indptr, indices, slots = kernels.group_pattern(nodes.reshape(-1), np.arange(0, nodes.size + 1, k), n)
     data = np.empty(indices.size)
     previous = numba.get_num_threads()
@@ -57,7 +57,7 @@ def test_the_values_are_numpys_corner_by_corner_sums(threads):
     try:
         for chunks in (np.array([0, groups], dtype=np.int64), kernels.work_chunks(groups, k * k, target=3 * k * k)):
             data[:] = np.nan
-            kernels.scatter_weighted_blocks(data, slots.reshape(groups, k, k), kinds, weights, List(blocks), chunks)
+            kernels.scatter_weighted_blocks(data, slots.reshape(groups, k, k), archetypes, weights, List(blocks), chunks)
             found = np.empty((groups, k, k))
             found.reshape(-1)[:] = data[slots]
             assert found.tobytes() == expected.tobytes()

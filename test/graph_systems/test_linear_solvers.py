@@ -312,28 +312,28 @@ class _Chain(FunctionalComponent):
     water_potential: float = state_variable(**DOC, default=-0.5, location="node")
     K: float = parameter(**DOC, by="", default=1., location="edge")
     label: float = parameter(**DOC, by="", default=0., scale=scales.Compartment)
-    kind: float = parameter(**DOC, by="", default=0., scale=scales.Compartment)
+    compartment_type: float = parameter(**DOC, by="", default=0., scale=scales.Compartment)
     length: float = parameter(**DOC, by="", default=1., location="node")
     soil_water_potential: float = parameter(**DOC, by="", default=-0.2, location="node")
     xylem_water_potential: float = parameter(**DOC, by="", default=-1., location="node")
 
 
-def _balance(self, water_potential, K, kind, length):
+def _balance(self, water_potential, K, compartment_type, length):
     B = self.graph_view.incidence
-    conductance = _conductances(self.graph_view, K, kind, length)
+    conductance = _conductances(self.graph_view, K, compartment_type, length)
     return np.asarray(B @ (conductance * np.asarray(B.T @ water_potential).reshape(-1))).reshape(-1)
 
 
-def _jacobian(self, K, kind, length):
+def _jacobian(self, K, compartment_type, length):
     B = self.graph_view.incidence
-    return (B @ sp.diags(_conductances(self.graph_view, K, kind, length)) @ B.T).tocsr()
+    return (B @ sp.diags(_conductances(self.graph_view, K, compartment_type, length)) @ B.T).tocsr()
 
 
 @dataclass
 class SoilOnly(_Chain):
     @graph_system(node_unknowns=["water_potential"], solver="newton", symmetric=True)
     class _hydraulics:
-        soil = boundary_set(filters={"kind": "==1"}, kind="robin", value="soil_water_potential", weight=0.6)
+        soil = boundary_set(filters={"compartment_type": "==1"}, condition="robin", value="soil_water_potential", weight=0.6)
         _balance = node_balance(field="water_potential")(_balance)
         _jacobian = graph_jacobian(_jacobian)
 
@@ -342,14 +342,14 @@ class SoilOnly(_Chain):
 class HeldCollar(_Chain):
     @graph_system(node_unknowns=["water_potential"], solver="newton", symmetric=True)
     class _hydraulics:
-        soil = boundary_set(filters={"kind": "==1"}, kind="robin", value="soil_water_potential", weight=0.6)
-        collar = boundary_set(filters=_collar, kind="dirichlet", value="xylem_water_potential")
+        soil = boundary_set(filters={"compartment_type": "==1"}, condition="robin", value="soil_water_potential", weight=0.6)
+        collar = boundary_set(filters=_collar, condition="dirichlet", value="xylem_water_potential")
         _balance = node_balance(field="water_potential")(_balance)
         _jacobian = graph_jacobian(_jacobian)
 
 
-def _advected_balance(self, water_potential, K, kind, length):
-    return _balance(self, water_potential, K, kind, length) + 0.3 * (_upwind(self) @ water_potential)
+def _advected_balance(self, water_potential, K, compartment_type, length):
+    return _balance(self, water_potential, K, compartment_type, length) + 0.3 * (_upwind(self) @ water_potential)
 
 
 def _upwind(self):
@@ -364,12 +364,12 @@ def _upwind(self):
 class Advected(_Chain):
     @graph_system(node_unknowns=["water_potential"], solver="newton", symmetric=True)
     class _hydraulics:
-        soil = boundary_set(filters={"kind": "==1"}, kind="robin", value="soil_water_potential", weight=0.6)
+        soil = boundary_set(filters={"compartment_type": "==1"}, condition="robin", value="soil_water_potential", weight=0.6)
         _balance = node_balance(field="water_potential")(_advected_balance)
 
         @graph_jacobian
-        def _jacobian(self, K, kind, length):
-            return (_jacobian(self, K, kind, length) + 0.3 * _upwind(self)).tocsr()
+        def _jacobian(self, K, compartment_type, length):
+            return (_jacobian(self, K, compartment_type, length) + 0.3 * _upwind(self)).tocsr()
 
 
 def _run(component_class):

@@ -3,13 +3,13 @@ The reduction's benchmark (devplan_release_optimisation.md §5): solve.reduction
 of a few hundred cells (a chain of cortical cells and their walls, two xylem vessels: the ports, three soil walls:
 kept), standalone (no port). Not part of the test suite: it asserts nothing and prints a table.
 
-    python test/benchmarks/bench_reduction.py [--cells 200] [--kinds 8] [--groups 1000,10000,80000] [--check]
+    python test/benchmarks/bench_reduction.py [--cells 200] [--archetypes 8] [--groups 1000,10000,80000] [--check]
 
-- the time per kind evaluation (Reduction.group_kinds on --kinds groups of distinct kinds: their soil potentials
-  differ, so each is its own kind);
-- Reduction.terms() on a plant of 1k, 10k, 80k groups of one kind (the kind evaluated before the timed call; the
+- the time per archetype evaluation (Reduction.group_archetypes on --archetypes groups of distinct archetypes: their soil potentials
+  differ, so each is its own archetype);
+- Reduction.terms() on a plant of 1k, 10k, 80k groups of one archetype (the archetype evaluated before the timed call; the
   first call builds the groups' table and the terms' sparse pattern, the next ones fill its values), and
-  Reduction.assignment (the groups' kinds, group_kinds' arrays): linear in the groups (O-5), --check asserts it
+  Reduction.assignment (the groups' archetypes, group_archetypes' arrays): linear in the groups (O-5), --check asserts it
   (10× the groups within 15× the time).
 """
 import argparse
@@ -57,12 +57,12 @@ def section_template(cells: int):
     cortical = g.add_components_bulk(cortex, cells, **props(s.Cell, label=L.Cell.CorticalParenchyma))
     vessels = g.add_components_bulk(xylem, 2, **props(s.Cell, label=L.Cell.MetaXylem, vessel_index=[0., 1.]))
     protoplasts = g.add_components_bulk(cortical, cells, **props(s.Compartment, label=L.Compartment.Symplastic,
-                                                                 kind=PROTOPLAST))
+                                                                 compartment_type=PROTOPLAST))
     protoplasts += g.add_components_bulk(vessels, 2, **props(s.Compartment, label=L.Cell.MetaXylem,
-                                                             vessel_index=[0., 1.], kind=PROTOPLAST))
+                                                             vessel_index=[0., 1.], compartment_type=PROTOPLAST))
     walls = g.add_components_bulk(s.anchors[s.Compartment], cells, topo_parents=[segment] * cells,
                                   **props(s.Compartment, label=L.Compartment.Apoplastic,
-                                          kind=[SOIL_WALL] * 3 + [WALL] * (cells - 3)))
+                                          compartment_type=[SOIL_WALL] * 3 + [WALL] * (cells - 3)))
     links = [(protoplasts[i], walls[i], L.Connection.Transmembrane) for i in range(cells)]
     links += [(protoplasts[i], protoplasts[i + 1], L.Connection.Symplastic) for i in range(cells - 1)]
     links += [(walls[i], walls[i + 1], L.Connection.Apoplastic) for i in range(cells - 1)]
@@ -114,14 +114,14 @@ class BenchHydraulics(FunctionalComponent):
     water_potential: float = state_variable(**DOC, default=-0.5, location="node")
     K: float = parameter(**DOC, by="", default=1., location="edge")
     label: float = parameter(**DOC, by="", default=0., scale=scales.Compartment)
-    kind: float = parameter(**DOC, by="", default=0., scale=scales.Compartment)
+    compartment_type: float = parameter(**DOC, by="", default=0., scale=scales.Compartment)
     soil_water_potential: float = parameter(**DOC, by="", default=-0.2, location="node")
     xylem_water_potential: float = parameter(**DOC, by="", default=-1., location="node")
 
     @graph_system(node_unknowns=["water_potential"], solver="newton")
     class _hydraulics:
-        soil = boundary_set(filters={"kind": "==1"}, kind="robin", value="soil_water_potential", weight=0.6)
-        collar = boundary_set(filters=_collar, kind="dirichlet", value="xylem_water_potential")
+        soil = boundary_set(filters={"compartment_type": "==1"}, condition="robin", value="soil_water_potential", weight=0.6)
+        collar = boundary_set(filters=_collar, condition="dirichlet", value="xylem_water_potential")
 
         @node_balance(field="water_potential")
         def _balance(self, water_potential, K):
@@ -142,7 +142,7 @@ def _xylem(section):
 
 
 def _soil_walls(section):
-    rows, values = section.properties["kind"]
+    rows, values = section.properties["compartment_type"]
     out = np.zeros(section.size, dtype=bool)
     out[rows] = np.asarray(values, dtype=float) == SOIL_WALL
     return out
@@ -156,7 +156,7 @@ def _wiring(g):
 class BenchPlant(CompositeModel):
     from_scale, nodes, initiators = "SubOrgan", "Compartment", (BenchSegments,)
     reduction = Reduction(location="SubOrgan", where={"label": "RootSegment"}, ports=_xylem, keep=_soil_walls,
-                          kind={"soil_water_potential": None}, systems=("BenchHydraulics._hydraulics",))
+                          archetype_variables={"soil_water_potential": None}, systems=("BenchHydraulics._hydraulics",))
     wiring = staticmethod(_wiring)
 
     parts = {"hydraulics": BenchHydraulics}
@@ -169,23 +169,23 @@ def plant(groups: int, cells: int):
     return population, population.data_structure.structure.reduction
 
 
-def kind_evaluation(kinds: int, cells: int) -> tuple:
-    """(seconds per kind, interior cells per kind): *kinds* groups of distinct soil potentials, evaluated at once."""
-    population, reduction = plant(kinds, cells)
+def archetype_evaluation(archetypes: int, cells: int) -> tuple:
+    """(seconds per archetype, interior cells per archetype): *archetypes* groups of distinct soil potentials, evaluated at once."""
+    population, reduction = plant(archetypes, cells)
     ds = population.data_structure
     owner = np.asarray(ds.owner("SubOrgan"))
     ds.set("soil_water_potential", -0.1 - 0.01 * owner.astype(float))
     groups = reduction.reduced_groups(ds)
     started = time.perf_counter()
-    found = reduction.group_kinds(ds, groups)
+    found = reduction.group_archetypes(ds, groups)
     seconds = time.perf_counter() - started
-    kind = next(iter(found[0].values()))
-    return seconds / kinds, len(kind.interior_rows)
+    archetype = next(iter(found[0].values()))
+    return seconds / archetypes, len(archetype.interior_rows)
 
 
 def terms(groups: int, cells: int) -> tuple:
-    """(seconds of one terms() call, seconds of its first call, which evaluates the kind, seconds of one
-    assignment) on *groups* groups of one kind."""
+    """(seconds of one terms() call, seconds of its first call, which evaluates the archetype, seconds of one
+    assignment) on *groups* groups of one archetype."""
     population, reduction = plant(groups, cells)
     ds = population.data_structure
     component, system = population.instance.hydraulics, "BenchHydraulics._hydraulics"
@@ -204,13 +204,13 @@ def terms(groups: int, cells: int) -> tuple:
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.strip().splitlines()[0])
     parser.add_argument("--cells", type=int, default=200)
-    parser.add_argument("--kinds", type=int, default=8)
+    parser.add_argument("--archetypes", type=int, default=8)
     parser.add_argument("--groups", default="1000,10000,80000")
     parser.add_argument("--check", action="store_true", help="assert terms() and assignment linear in the groups")
     arguments = parser.parse_args(argv)
-    per_kind, interior = kind_evaluation(arguments.kinds, arguments.cells)
+    per_archetype, interior = archetype_evaluation(arguments.archetypes, arguments.cells)
     print(f"{'measure':<40} {'value':>12}")
-    print(f"{f'kind evaluation ({interior} interior nodes)':<40} {per_kind:>10.3f} s")
+    print(f"{f'archetype evaluation ({interior} interior nodes)':<40} {per_archetype:>10.3f} s")
     measured = {}
     for groups in [int(value) for value in arguments.groups.split(",") if value]:
         seconds, first, assigned = terms(groups, arguments.cells)

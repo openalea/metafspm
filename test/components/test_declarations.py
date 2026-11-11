@@ -125,9 +125,9 @@ class Defaults:
     down_explicit: float = inp(default=0., scale=scales.Organ, location="node", aggregation="broadcast")
     up_extensive: float = par(default=0., scale=scales.SubOrgan, location="Organ", kind="extensive")
     up_intensive: float = sv(default=0., scale=scales.SubOrgan, location="Organ",
-                             kind="NonInertialIntensive")
+                             kind="non_inertial_intensive")
     up_intensive_weighted: float = sv(default=0., scale=scales.SubOrgan, location="Organ",
-                                      kind="NonInertialIntensive", weight="mass")
+                                      kind="non_inertial_intensive", weight="mass")
     up_intensive_plain: float = sv(default=0., scale=scales.SubOrgan, location="Organ",
                                    kind="intensive", aggregation="mean")
     down_extensive_split: float = inp(default=0., scale=scales.Organ, location="node",

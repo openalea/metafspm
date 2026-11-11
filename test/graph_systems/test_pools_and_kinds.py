@@ -1,6 +1,6 @@
 """
 Graph-system extensions: pool unknowns at a coarse scale solved with the graph (a shoot
-pool per plant exchanging with its collar), boundary kinds chosen per node at each solve, and forcings read at
+pool per plant exchanging with its collar), boundary conditions chosen per node at each solve, and forcings read at
 the end of each (sub-)step.
 """
 from dataclasses import dataclass
@@ -123,13 +123,13 @@ def test_pools_of_split_solves_agree_with_the_whole_solve():
 @dataclass
 class SwitchingCollar(FunctionalComponent):
     sugar: float = state_variable(**DOC, default=1., scale=scales.SubOrgan)
-    collar_kind: float = state_variable(**DOC, default=0., scale=scales.SubOrgan, dtype="int")
+    collar_condition: float = state_variable(**DOC, default=0., scale=scales.SubOrgan, dtype="int")
     collar_value: float = state_variable(**DOC, default=0., scale=scales.SubOrgan)
     time_step = DT
 
     @graph_system(node_unknowns=["sugar"], transient=True)
     class _solve:
-        collar = boundary_set(filters={"is_collar": ">0"}, kinds="collar_kind", value="collar_value")
+        collar = boundary_set(filters={"is_collar": ">0"}, condition_variable="collar_condition", value="collar_value")
 
         @node_balance(field="sugar")
         def _balance(self, sugar):
@@ -137,21 +137,21 @@ class SwitchingCollar(FunctionalComponent):
             return (sugar - self.previous("sugar")) / self.dt + K * np.asarray(B @ (B.T @ sugar)).reshape(-1)
 
 
-def test_boundary_kinds_are_read_per_node_at_each_solve():
+def test_boundary_conditions_are_read_per_node_at_each_solve():
     ds, plants = _population()
     model = SwitchingCollar(data_structure=ds)
     collar = np.flatnonzero(ds.parents() < 0)
     owner = np.asarray(ds.owner("Plant"))
-    kinds, values = np.zeros(ds.n_nodes(), dtype=np.int64), np.zeros(ds.n_nodes())
-    kinds[collar[owner[collar] == 0]], values[collar[owner[collar] == 0]] = 1, 5.        # Dirichlet: a pressure
-    kinds[collar[owner[collar] == 1]], values[collar[owner[collar] == 1]] = 2, 0.25      # Neumann: an inflow
-    ds.set("collar_kind", kinds)
+    conditions, values = np.zeros(ds.n_nodes(), dtype=np.int64), np.zeros(ds.n_nodes())
+    conditions[collar[owner[collar] == 0]], values[collar[owner[collar] == 0]] = 1, 5.        # Dirichlet: a pressure
+    conditions[collar[owner[collar] == 1]], values[collar[owner[collar] == 1]] = 2, 0.25      # Neumann: an inflow
+    ds.set("collar_condition", conditions)
     ds.set("collar_value", values)
     total = ds.get("sugar")[owner == 1].sum()
     model()
     np.testing.assert_allclose(ds.get("sugar")[collar[owner[collar] == 0]], 5.)
     assert ds.get("sugar")[owner == 1].sum() == pytest.approx(total + 0.25 * DT)        # the inflow, integrated
-    ds.set("collar_kind", 0)                                                           # no condition any more
+    ds.set("collar_condition", 0)                                                           # no condition any more
     total = ds.get("sugar").sum()
     model()
     assert ds.get("sugar").sum() == pytest.approx(total)

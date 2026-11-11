@@ -110,16 +110,16 @@ class EquationContext:
     parameters           : dict[str, Any]
     pool_unknowns        : dict = field(default_factory=dict)
 
-    def boundary_values(self, kind: str = None) -> np.ndarray:
+    def boundary_values(self, condition: str = None) -> np.ndarray:
         ports = self.boundary_ports
-        if kind is not None:
-            ports = tuple(p for p in ports if p.kind == kind)
+        if condition is not None:
+            ports = tuple(p for p in ports if p.condition == condition)
         return np.asarray([p.value for p in ports], dtype=np.float64)
 
-    def boundary_weights(self, kind: str = None) -> np.ndarray:
+    def boundary_weights(self, condition: str = None) -> np.ndarray:
         ports = self.boundary_ports
-        if kind is not None:
-            ports = tuple(p for p in ports if p.kind == kind)
+        if condition is not None:
+            ports = tuple(p for p in ports if p.condition == condition)
         return np.asarray([p.weight for p in ports], dtype=np.float64)
 
 

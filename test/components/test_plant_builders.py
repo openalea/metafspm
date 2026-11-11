@@ -145,7 +145,7 @@ def test_a_phytomer_bears_on_its_node_s_element():
     top = next(v for v in g.children(hidden) if g.edge_type(v) == "<")
     phytomer = g.complex_at_scale(hidden, g.scales.Phytomer)
     g.add_element("RootSegment", complex=g.add_organ(g.complex_at_scale(hidden, g.scales.Plant), "RootInternode",
-                                                     kind="Root"),
+                                                     complex_label="Root"),
                   parent=int(top), direction=(0., 0., -1.), length=0.01)
     g.populate_graph(g.scales.SubOrgan)
     g.convert_properties_to_arraydict()

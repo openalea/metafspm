@@ -257,7 +257,7 @@ class SoilDiffusion(FunctionalComponent):
 
     @graph_system(node_unknowns=["solute"], edge_unknowns=["solute_flux"], transient=True, integrate="adaptive")
     class _diffusion:
-        bottom = boundary_set(filters=lambda ds: ds.layer_mask(z=-1), kind="dirichlet", value=0.)
+        bottom = boundary_set(filters=lambda ds: ds.layer_mask(z=-1), condition="dirichlet", value=0.)
 
         @node_balance(field="solute")
         def _balance(self, solute, solute_flux):
@@ -289,10 +289,10 @@ class SoilDiffusion(FunctionalComponent):
   that a `@node_balance` writes its own time term (it only decides the anchoring check; inferred for `@node_rate`).
   `@edge_law(integrate=True)` adds the integrated amount `<field>_amount` (Q += q dt) as an edge unknown. Edge unknowns are algebraic
   (`@edge_law`), whatever the solver.
-- **Boundary sets.** `boundary_set(filters=..., kind="robin" | "dirichlet" | "neumann", value=..., weight=...)` on a
-  set of nodes, with values and weights read at each solve. `kinds="variable"`
-  reads each node's kind from a node variable (`boundary_set.CODES`: 1 Dirichlet, 2 Neumann, 3 Robin, otherwise
-  none), e.g. a collar switching between a pressure and a flux. `kind=None` is a selection only.
+- **Boundary sets.** `boundary_set(filters=..., condition="robin" | "dirichlet" | "neumann", value=..., weight=...)` on a
+  set of nodes, with values and weights read at each solve. `condition_variable="variable"`
+  reads each node's condition from a node variable (`boundary_set.CODES`: 1 Dirichlet, 2 Neumann, 3 Robin, otherwise
+  none), e.g. a collar switching between a pressure and a flux. `condition=None` is a selection only.
 - **Boundary conditions as equations.** When the condition is an expression rather than a variable,
   `@boundary_condition("node", "dirichlet" | "neumann", field=..., filters=...)` tags a method that takes its
   arguments by name like the balances: unknowns and DataStructure variables (e.g. coupled ones), sliced to the
@@ -346,13 +346,13 @@ class SoilDiffusion(FunctionalComponent):
   gives an analytic Jacobian (finite differences with graph colouring otherwise).
 
 - **Reductions.** A plant model may reduce its graph systems by groups (`solve.reduction.Reduction(location=, where=,
-  ports=, keep=, explicit_edges=, kind=, inputs=, systems=, outputs=)`): the groups of a location (the SubOrgans
+  ports=, keep=, explicit_edges=, archetype_variables=, inputs=, systems=, outputs=)`): the groups of a location (the SubOrgans
   `where=` selects: a filter of the entities' syntax, `{"label": "RootSegment"}`, `"<Scale>.label"` their complex's
   label, `{"label": "StemElement", "Organ.label": "StemInternode"}` the internodes' elements and not the sheaths', or
   a published entity set's name; all without) keep their ports and kept nodes (`ports=`, `keep=`: entity set names,
   `"GranapAnatomy.conduits"`, `{variable: condition}` rules on the template's properties, callables, or tuples of
-  them), their interiors eliminated once per kind (a library population of
-  the model's own components, each kind its group's template, kind values and the parameters of the components
+  them), their interiors eliminated once per archetype (a library population of
+  the model's own components, each archetype its group's template, archetype values and the parameters of the components
   the library runs, objects included, digested by content; the library runs the components of the reduced systems and those giving them inputs
   at the cells (per-cell osmotic presets), not the others (a shoot's development, its tables)). It is the model's
   `reduction` class attribute, or a function of its scenario choosing one, or None: `reduction = staticmethod(lambda
@@ -362,33 +362,33 @@ class SoilDiffusion(FunctionalComponent):
   system's terms the reduction must keep explicit are declared `@explicit_term`, its inputs' derivatives
   `@input_jacobian`. A structural model takes a group's reduced template from `reduction.template_for(full)`; a
   component reading a reduced group's full template (its volumes, its geometry) gets it from
-  `reduction.full_template(key)`, the key of the reduced template its instance holds. A kind variable is exact
-  (`kind={"barrier": None}`: a kind per value) or classed: `Relative(width, interpolate=True)` gives the classes
-  (1 + width)^k, and a group between two classes their two kinds' blend, weighted linearly by its value's place
+  `reduction.full_template(key)`, the key of the reduced template its instance holds. An archetype variable is exact
+  (`archetype={"barrier": None}`: an archetype per value) or classed: `Relative(width, interpolate=True)` gives the classes
+  (1 + width)^k, and a group between two classes their two archetypes' blend, weighted linearly by its value's place
   between them (its D, e, inputs' terms, outputs and recovered interior; exact at the class values and for terms
   affine in the value, within width²/8 of the curvature between them: MECHA's sections within 10⁻⁶ of their own
   length's at width 0.1); `interpolate=False` takes the nearest class as it is. Classes are evaluated once each: a
-  class kind no group has any more is kept while its family (its template, exact kind values and parameters) is in
-  use, so a growing plant's kinds saturate; an exact kind no group has any more is released at the next solve (its
-  arrays freed, evaluated again if a group comes back to it). The plants of one population share their kinds when
-  those parameters are the same (plants differing in another component's only, their root draws say, share them). The missing kinds are evaluated in batches of at most `Compute.kind_batch`
+  class archetype no group has any more is kept while its family (its template, exact archetype values and parameters) is in
+  use, so a growing plant's archetypes saturate; an exact archetype no group has any more is released at the next solve (its
+  arrays freed, evaluated again if a group comes back to it). The plants of one population share their archetypes when
+  those parameters are the same (plants differing in another component's only, their root draws say, share them). The missing archetypes are evaluated in batches of at most `Compute.archetype_batch`
   interior cells (the Scene's Compute, `Compute.current()`; the memory freed between batches), every plant
-  parameters' kinds in the same batches, in one library population kept on the reduction (one plant per plant
+  parameters' archetypes in the same batches, in one library population kept on the reduction (one plant per plant
   parameters of the batch; each batch's groups replacing the former's, its components reset to their built state
-  but for the caches they keep themselves, `keep(name, saved=False)`); `METAFSPM_CHECK_KINDS=1` evaluates every kind
+  but for the caches they keep themselves, `keep(name, saved=False)`); `METAFSPM_CHECK_ARCHETYPES=1` evaluates every archetype
   again alone in a library built for it and checks the two are the same, bit for bit; after the library's run,
-  the batch's kinds are worked out in threads (`Compute.threads`: their Kron reductions outside the GIL; the same
-  kinds, bit for bit, at any number). The kinds are checkpointed with the population (`Kind`, a shared part
-  of `scene.shared`, saved once; never a factorisation): a resumed run evaluates none again. A value derived from a kind (a section's condensed volumes)
-  is a method of the reduced system's component tagged `@kind_derived(name)`: `method(self, kind, full_template,
-  kron, nodes)`, run once per kind on its library while the kind's factorisation is live (`kron.shares(targets,
+  the batch's archetypes are worked out in threads (`Compute.threads`: their Kron reductions outside the GIL; the same
+  archetypes, bit for bit, at any number). The archetypes are checkpointed with the population (`Archetype`, a shared part
+  of `scene.shared`, saved once; never a factorisation): a resumed run evaluates none again. A value derived from an archetype (a section's condensed volumes)
+  is a method of the reduced system's component tagged `@archetype_derived(name)`: `method(self, archetype, full_template,
+  kron, nodes)`, run once per archetype on its library while the archetype's factorisation is live (`kron.shares(targets,
   values)`, the interior's values shared among kept nodes by the recovery weights; `kron.recover`; no
-  refactorisation), its value in `kind.outputs[name]`, released with the kind. Each kind's interior is factorised
+  refactorisation), its value in `archetype.outputs[name]`, released with the archetype. Each archetype's interior is factorised
   once: its reduced term and its inputs' injection (−Xᵀ for a symmetric operator, computed only when the reduction
   declares an input) come from that one factorisation;
-  a kind keeps its term and the sparse blocks of its full interior, not their factorisation (made again for a
-  recovery, `recover`), so the memory follows the plant's size, not the kinds it went through. For outputs,
-  `reduction.recover_interiors(ds)` gives every reduced group's interior values at once (batched by kind, one
+  an archetype keeps its term and the sparse blocks of its full interior, not their factorisation (made again for a
+  recovery, `recover`), so the memory follows the plant's size, not the archetypes it went through. For outputs,
+  `reduction.recover_interiors(ds)` gives every reduced group's interior values at once (batched by archetype, one
   factorisation each), `reduction.full_rows(key)` the full template's rows a reduced template holds and
   `reduction.unknown()` the reduced system's node unknown; a plant model's structural component asks
   `reduction.reduces(g, vertex)` for each group it instances (where= on the vertex as it is: its label, its
@@ -400,11 +400,11 @@ class SoilDiffusion(FunctionalComponent):
   an integer label per vertex, < 0 not merged), `properties` the merged node's values of template properties from
   its members' (`"sum"`, `"mean"`, `"min"`, `"max"`, `"root_sum_square"`, or a picklable callable; the others its
   representative's, its first member's). The reduced template holds the representative only; a member's explicit
-  edges join it (one between two members: dropped); the kind contracts its full group's matrix and sources (the
+  edges join it (one between two members: dropped); the archetype contracts its full group's matrix and sources (the
   members' rows and columns summed, PᵀAP, Pᵀc: the members held at one potential) before reducing it, exact when the
   members' potentials are equal in the full group. The model's live terms on a merged node are its representative's
-  and those of the edges joined to it, so merge nodes without boundary sets of their own. A `@kind_derived` method
-  sees the contracted nodes (`nodes`, the kron's order): `kind.contract(values)` sums per-Compartment values of the
+  and those of the edges joined to it, so merge nodes without boundary sets of their own. A `@archetype_derived` method
+  sees the contracted nodes (`nodes`, the kron's order): `archetype.contract(values)` sums per-Compartment values of the
   full template into them; `recover_interiors` gives a member its node's value. MECHA's
   `plant_reduction(leaf_ports="bundles", vapour_path="air_spaces")` lumps the shoot's conduits per vascular bundle
   and a leaf's evaporating walls per air space this way. These are options only; the defaults (`"conduits"`,
@@ -436,13 +436,13 @@ class SoilDiffusion(FunctionalComponent):
     centre and its frame, a voxel's corner and size); `TemplateShapes.placed()` gives the triangles placed, as
     `display_triangles` draws them (a test that both agree is cheap).
 
-  The rest is the reduction's: `reduction.recovery_terms(ds)` gives each group's kept values and its kinds' weights
-  (`RecoveryTerms`: a group between two classes of a `Relative` kind variable is the weighted sum of the two class
-  kinds), and `kind.recovery_operator()` each kind's recovery as one linear operator M over its full template's
+  The rest is the reduction's: `reduction.recovery_terms(ds)` gives each group's kept values and its archetypes' weights
+  (`RecoveryTerms`: a group between two classes of a `Relative` archetype variable is the weighted sum of the two class
+  archetypes), and `archetype.recovery_operator()` each archetype's recovery as one linear operator M over its full template's
   Compartments, the unknown there being M · [x_kept; 1] (the identity on the kept nodes, A_II⁻¹(−A_IK x − c_I) on
-  the interior, a merged member its node's value): dense, derived while the kind's factorisation is live
-  (`Kind.recovery`) when it holds at most `solve.reduction.DISPLAY_DENSE_MAX` values (32768), else its sparse system
-  (S, R with M = S⁻¹R, from the blocks the kind keeps anyway: no solve when written). A model without the hook gets
+  the interior, a merged member its node's value): dense, derived while the archetype's factorisation is live
+  (`Archetype.recovery`) when it holds at most `solve.reduction.DISPLAY_DENSE_MAX` values (32768), else its sparse system
+  (S, R with M = S⁻¹R, from the blocks the archetype keeps anyway: no solve when written). A model without the hook gets
   its groups drawn whole as before (`display="full"`).
 ## 4. Structure: `StructuralComponent`
 
@@ -493,7 +493,7 @@ anatomy's 3D placement, an element's height for a gas exchange) take the display
 elements' ends: its first element's base, or the end of its last element along its axis (a Phytomer's node, where
 its nodal roots start); `ds.bearer(location)` gives that last element, where a model grows the axes an entity bears
 (a root model its nodal roots, on the node's element: their base at its end); `ds.check_connectivity(tolerance=)`
-lists the elements whose base is not at their parent's end. An initiator places its elements with the MPG's builders: `g.add_organ(plant, "StemInternode", kind="Shoot")`
+lists the elements whose base is not at their parent's end. An initiator places its elements with the MPG's builders: `g.add_organ(plant, "StemInternode", complex_label="Shoot")`
 (the Axis, GrowthUnit, Phytomer between) and `g.add_element("StemElement", parent=element, direction=(0, 0, 1),
 length=0.01, radius=5e-4)` (its ends from its parent's end; `direction=(0, 0, 0)` a point; `display=(start, end)`),
 reading its parameters with `cls.plant_parameters(scenario)` (the scenario over the declared defaults, checked
@@ -956,12 +956,12 @@ time (an event's, a planting time) is a duration since time 0 or a date (`"2026-
   - `"instances"` (the default): each reduced group an *instance* of its template (encoding3d 0.4's instance sets,
     one per component giving `display_instances`, named after it; see *Drawing a reduction's groups* above). What a
     frame stores per group is small: its owner (the group's vertex, e.g. its SubOrgan), its transform, its template's
-    index, its kept nodes' values of the reduced system's unknown (then 1) and its kinds' indices and weights. What
+    index, its kept nodes' values of the reduced system's unknown (then 1) and its archetypes' indices and weights. What
     groups share is stored once, as *parts* in `frames/parts/<key>.glb` (the key: the SHA-256 of the part's bytes, a
     part written only when its key is new): each template (the shape, and the full template's nodes with their
-    constant properties, e.g. `tissue`, those the frame's variables filter keeps) and each kind's recovery operator.
+    constant properties, e.g. `tissue`, those the frame's variables filter keeps) and each archetype's recovery operator.
     The unknown on every node of the template (e.g. MECHA's `psi` on every protoplast) is a *derived field*, the
-    weighted sum of the kinds' operators applied to the kept values, which the reader rebuilds for the instances it
+    weighted sum of the archetypes' operators applied to the kept values, which the reader rebuilds for the instances it
     selects: `encoding3d.evaluate(frame, "psi", instances=rows)` in Python, ParaView's "encoding3d Select at scale"
     (or the reader's "Evaluate Derived Fields" for all). The values are those of `"full"` (exact: the same linear
     recovery). The index `scene.fspm.json` lists the parts its frames use (`"parts"`); the recorder removes the parts
@@ -974,14 +974,14 @@ time (an event's, a planting time) is a duration since time 0 or a date (`"2026-
     writes each reduced group's interior (its full template's Compartments, Cells and Layers the reduced one does not
     hold; not its Connections) as display rows of their entity sets, marked by the column `metafspm_display_only`,
     linked to their Cells, Layers and section (a selection by entity brings a section's interior with it), with the
-    reduced system's unknown recovered (`Reduction.recover_interiors(ds)`, one factorisation per kind for all its
+    reduced system's unknown recovered (`Reduction.recover_interiors(ds)`, one factorisation per archetype for all its
     groups, freed after), their template's properties, NaN otherwise. Every display frame then holds every value, as
     large as the full anatomy's.
   - `None`: the reduced groups not drawn (the other groups' shapes are).
 
   Instances and display rows are output only: `from_frame` leaves them out (the DataStructure stays reduced). In use
   case 1 (1 plant drawn, day 3) a display frame is 0.8 MB as instances against 33 MB whole, written in 0.3 s instead
-  of 3 s once its parts exist (the first frame writes them: 33 MB, then a new kind's operator at a time); see
+  of 3 s once its parts exist (the first frame writes them: 33 MB, then a new archetype's operator at a time); see
   `examples/use_case_1/README.md` for the day-8 and 2-plant numbers.
   **One file to share:** `SceneRecorder(pack_at_finish=True)` packs the frames folder into `frames.fspm.zip` when
   the run finishes (`pack_compression="deflate"`, the default, about a third of the folder for instances' frames;
@@ -1082,9 +1082,9 @@ root_system_conductance: float = state_variable(
                         protocol="uniform soil potential, collar fixed: Krs = Q_collar / (psi_soil - psi_collar)"))
 
 @totalstate
-def _root_system_conductance(self, conductance, soil_conductance, collar_kind):
+def _root_system_conductance(self, conductance, soil_conductance, collar_condition):
     krs, inflow = equivalent_conductance(self.data_structure.to_graph_view(), conductance,
-                                         sources=soil_conductance > 0, sinks=collar_kind == 1,
+                                         sources=soil_conductance > 0, sinks=collar_condition == 1,
                                          source_conductance=soil_conductance)
     ...
 ```
@@ -1126,7 +1126,7 @@ Its README describes each file and shows the figures.
 - Steps, graph systems, tree kernels and exchanges work on whole-population arrays: a step of 1000 plants of 2 000
   segments takes about 2 s in one process.
 - A reduction's groups are arrays (`Reduction.group_table`, `assignment`): its terms, outputs (`outputs`, a value per
-  group; `kept_outputs`, a value per kept node) and recoveries batched by template and kind, the terms' sparse
+  group; `kept_outputs`, a value per kept node) and recoveries batched by template and archetype, the terms' sparse
   pattern cached per topology (80k groups: 0.03 s per solve's terms).
 - The DataStructure's topology arrays (`entity_ids`, `owner`) are cached until the topology changes and read-only:
   copy one (`np.array(ds.owner("SubOrgan"))`) before writing into it.
@@ -1143,7 +1143,7 @@ omitted) says how the scene uses the machine:
 
 - `threads`: the threads' budget of the scene's parallel work while it builds and runs: numba's kernels
   (`numba.set_num_threads`), the independent blocks of a linear solve (in threads, each block factorised in one)
-  and the kinds of a reduction's batch (each kind's blocks, Kron reduction and derived values in a thread, its
+  and the archetypes of a reduction's batch (each archetype's blocks, Kron reduction and derived values in a thread, its
   SuperLU factorisation outside the GIL, the largest first).
   `"auto"` (default): the processors the process may run on (its CPU affinity: `compute.machine()`, which also
   records the core types of a hybrid CPU); an integer: that many. Each parallel section takes at most the budget,
@@ -1161,10 +1161,10 @@ omitted) says how the scene uses the machine:
   "budget", "processors", "core_types", ...}}`) and each kernel's and solver's time, calls and threads (`"compute":
   {"timing": {"solve.superlu": {"seconds", "calls", "threads": {threads: calls}}, "kernels.scatter_weighted_blocks":
   ...}}`), and each step's (`"functor.<Class>.<step>": {"seconds", "calls"}`, its wall time inclusive of the steps
-  it runs inside, e.g. a reduction's library components while it evaluates kinds): where a step's time goes, without
+  it runs inside, e.g. a reduction's library components while it evaluates archetypes): where a step's time goes, without
   a profiler.
   A component's setting named `threads` that its scenario does not give takes the Compute's (Caribu's projection
-  threads). The kinds' threads took the place of a pool of processes (measured on use case 1, 8 plants: to day 8,
+  threads). The archetypes' threads took the place of a pool of processes (measured on use case 1, 8 plants: to day 8,
   298.0 s at a scope peak of 3.21 GB, against 286.5 s and 4.06 GB for 4 processes; at day 13, 4.15 s per step
   against 4.13–4.14; devplan_generic_kernels GK-5): 4 % slower to day 8, level at day 13, 0.85–1.4 GB less.
 - `linear_solver`: the sparse solver of the graph systems' linear algebra (`solve.linear`: their Newton steps'
@@ -1207,7 +1207,7 @@ omitted) says how the scene uses the machine:
   or a base class declaring the system, as `Reduction(systems=)` names it); else that of a property it declares
   (`solve.linear.SYSTEM_PROPERTIES`: `"symmetric"`, from `@graph_system(symmetric=True)`); else `"default"` (the
   device's, `"superlu"` or `"cupy"`, when the mapping does not give it). A Kron reduction's and a static
-  condensation's factorisations and solves are those of the system they belong to (MECHA's sections' kinds: its
+  condensation's factorisations and solves are those of the system they belong to (MECHA's sections' archetypes: its
   plant problem's); what belongs to none (a network's equivalent conductance) is `"default"`'s. Within a backend,
   `"superlu"` solves a Newton step with the MMD ordering, and a condensation's systems and the factorisations kept
   for many right-hand sides with SuperLU's default ordering (COLAMD), as before the registry: the same bits. The
@@ -1219,7 +1219,7 @@ omitted) says how the scene uses the machine:
   choose.
 - `device`: `"cpu"` (default) or `"cuda"` (experimental: it should work on suitable hardware but has not been
   tested on a GPU yet; results within round-off of the CPU's): the array backend of the heavy linear algebra (`openalea.metafspm.backend`:
-  numpy/scipy or CuPy). On `"cuda"`, the kinds' Kron reductions solve their many right-hand sides on the GPU (SuperLU's
+  numpy/scipy or CuPy). On `"cuda"`, the archetypes' Kron reductions solve their many right-hand sides on the GPU (SuperLU's
   factors copied once), the linear solves go to `linear_solver="cupy"` (its default there: a system of at least
   100k entries solved whole on the device, cuDSS when nvmath-python is installed), and the components' setting named
   `device` defaults to it (Caribu's near field). CuPy is optional: a missing one, or no CUDA device, raises when the
@@ -1233,8 +1233,8 @@ omitted) says how the scene uses the machine:
   3.83-3.85; measured 2026-11-10), as the environment variable `MALLOC_ARENA_MAX=2` does at the process's start (the
   same numbers). A `MALLOC_ARENA_MAX` (or `GLIBC_TUNABLES` `glibc.malloc.arena_max`) set in the environment is kept.
   Both are no-ops where the C library is not glibc (macOS, Windows, musl).
-- `kind_batch=200_000`: the most interior cells a reduction evaluates at once (its missing kinds in batches, the
-  memory freed between them: a blade's kind is about 10k cells, a stem's 45k).
+- `archetype_batch=200_000`: the most interior cells a reduction evaluates at once (its missing archetypes in batches, the
+  memory freed between them: a blade's archetype is about 10k cells, a stem's 45k).
 
 Within the scene's build and steps, `Compute.current()` is the scene's Compute (what runs there reads it without
 being given it: a reduction's batches, the linear solvers resolved per system); outside, a default `Compute()`.
@@ -1244,7 +1244,7 @@ being given it: a reduction's batches, the linear solvers resolved per system); 
 ### Cores of a hybrid CPU
 
 A step is one chain of components on the main thread; the other threads only take the parallel sections (numba's
-kernels, the linear solves' blocks, the kinds, Caribu's projections). Its time therefore follows the core the main
+kernels, the linear solves' blocks, the archetypes, Caribu's projections). Its time therefore follows the core the main
 thread runs on. On a hybrid CPU (performance and efficient cores) the scheduler keeps a busy thread on a performance
 core when the machine is idle, so pinning gains nothing there; beside other work (a test suite, a browser, a second
 run), the run can be moved to slower cores. Use case 1, 8 plants resumed from day 12, at 1 thread on a Core Ultra 7

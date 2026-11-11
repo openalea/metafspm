@@ -105,11 +105,11 @@ class MPG(MTG):
         return v
 
 
-    def add_organ(self, within, label, kind: str = "Shoot") -> int:
+    def add_organ(self, within, label, complex_label: str = "Shoot") -> int:
         """
         A new Organ *label* (a LabelsConfig.Organ name, e.g. "StemInternode", "RootInternode", or its code) in the
-        complex *within* (a Plant, an Axis, ... vertex), the scales between them added too, each labelled *kind*
-        ("Shoot" or "Root": an Axis, its GrowthUnit and its Phytomer of that kind); its vid. An initiator builds an
+        complex *within* (a Plant, an Axis, ... vertex), the scales between them added too, each labelled *complex_label*
+        ("Shoot" or "Root": an Axis, its GrowthUnit and its Phytomer of that label); its vid. An initiator builds an
         element's complexes with it (then add_element).
         """
         scales, labels = self.scales, self.labels
@@ -120,7 +120,7 @@ class MPG(MTG):
             if scale <= self.scale(complex_):
                 continue
             complex_ = self.add_component(complex_, **PropsConfig(scale=scale, edge_type='/',
-                                                                  label=getattr(getattr(labels, name), kind)))
+                                                                  label=getattr(getattr(labels, name), complex_label)))
         code = getattr(labels.Organ, label) if isinstance(label, str) else label
         return self.add_component(complex_, **PropsConfig(scale=scales.Organ, edge_type='/', label=code))
 

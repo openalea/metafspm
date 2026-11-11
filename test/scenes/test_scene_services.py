@@ -159,7 +159,7 @@ def test_environment_model_schedule_and_helpers():
     for _ in range(7):
         scene.run()
     assert scene.calls["CadencedSoil.SceneSoilNitrate"] == 3 and soil.calls == [DT * k for k in range(7)]
-    assert [(step.name, step.kind) for step in soil.steps()] == [("nitrate", "component"), ("after", "method")]
+    assert [(step.name, step.form) for step in soil.steps()] == [("nitrate", "component"), ("after", "method")]
     assert soil.checkpoint_state() == {}
     union = soil.plant_data_structure()                                       # one population: a union of one
     assert type(union).__name__ == "UnionDataStructure" and union.parts == [scene.populations[0].data_structure]

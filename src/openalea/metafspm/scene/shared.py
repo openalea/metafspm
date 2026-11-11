@@ -51,13 +51,13 @@ _SHARED_BY_TYPE = {}            # {type: its instances' shared name (shared_in_c
 def _shared_name(obj):
     """The name under which *obj* is shared (a Shared's, or its class' shared_in_checkpoints), else None. The
     builtin containers and scalars at once (_NEVER_SHARED), another class' name looked up once (_SHARED_BY_TYPE)."""
-    kind = type(obj)
-    if kind in _NEVER_SHARED:
+    object_type = type(obj)
+    if object_type in _NEVER_SHARED:
         return None
-    if kind not in _SHARED_BY_TYPE:
-        _SHARED_BY_TYPE[kind] = Shared if issubclass(kind, Shared) else None if issubclass(kind, type) else \
-            getattr(kind, "shared_in_checkpoints", None)
-    name = _SHARED_BY_TYPE[kind]
+    if object_type not in _SHARED_BY_TYPE:
+        _SHARED_BY_TYPE[object_type] = Shared if issubclass(object_type, Shared) else None if issubclass(object_type, type) \
+            else getattr(object_type, "shared_in_checkpoints", None)
+    name = _SHARED_BY_TYPE[object_type]
     return obj.name if name is Shared else name
 
 
@@ -199,8 +199,8 @@ class _Unpickler(pickle.Unpickler):
         self.store = store
 
     def persistent_load(self, pid):
-        kind, key = pid
-        if kind != "metafspm.shared":
+        tag, key = pid
+        if tag != "metafspm.shared":
             raise pickle.UnpicklingError(f"unknown persistent id {pid!r}")
         return self.store.value(key)
 
