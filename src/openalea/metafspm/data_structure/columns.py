@@ -14,6 +14,10 @@ writes were read back: _mark_mtg_synced).
     column.at(vids)                         # (found, values), in bulk
     mtg.values_at("radius", vids)             # the MPG's bulk read, the same values
 """
+import os
+import threading
+import weakref
+
 import numpy as np
 
 from openalea.metafspm.data_structure.arraydict import ArrayDict, typed_array
@@ -393,27 +397,43 @@ class DataStructureColumn(ArrayDict):
         return bool(np.all(keys[:-1] < keys[1:])) if keys.size > 1 else True
 
 
-_SHARED_POSITIONS = {}          # (id(sorted keys), id(values)) -> (sorted keys, values, positions, found)
+_SHARED_POSITIONS = {}          # (id(sorted keys), id(values)) -> (weak refs to both, positions, found)
+_SHARED_POSITIONS_LOCK = threading.Lock()   # read and filled from several threads (two populations' steps)
 SHARED_POSITIONS_KEPT = 8
+
+
+def _after_fork() -> None:
+    global _SHARED_POSITIONS_LOCK
+    _SHARED_POSITIONS_LOCK = threading.Lock()   # a forked child's own (a parent's thread may have held it)
+
+
+if hasattr(os, "register_at_fork"):
+    os.register_at_fork(after_in_child=_after_fork)
 
 
 def _positions_shared(sorted_keys, values) -> tuple:
     """(positions of *values* in *sorted_keys* (ascending), clipped; whether each is there), by binary search: kept
     for the next reads of the same two arrays when both are read-only (a location's sorted ids and a read plan's
-    vids, read by every variable of the location), else computed."""
+    vids, read by every variable of the location), else computed. The kept entries hold the two arrays weakly and
+    are hits only for those very arrays (an id reused by another array is a miss), under a lock."""
     values = np.asarray(values, dtype=np.int64)
     shared = not sorted_keys.flags.writeable and not values.flags.writeable
+    key = (id(sorted_keys), id(values))
     if shared:
-        hit = _SHARED_POSITIONS.get((id(sorted_keys), id(values)))
-        if hit is not None and hit[0] is sorted_keys and hit[1] is values:
+        with _SHARED_POSITIONS_LOCK:
+            hit = _SHARED_POSITIONS.get(key)
+        if hit is not None and hit[0]() is sorted_keys and hit[1]() is values:
             return hit[2], hit[3]
     at = np.searchsorted(sorted_keys, values).clip(0, sorted_keys.size - 1)
     found = sorted_keys[at] == values
     if shared:
         at.flags.writeable = found.flags.writeable = False
-        if len(_SHARED_POSITIONS) >= SHARED_POSITIONS_KEPT:
-            _SHARED_POSITIONS.pop(next(iter(_SHARED_POSITIONS)))
-        _SHARED_POSITIONS[(id(sorted_keys), id(values))] = (sorted_keys, values, at, found)
+        entry = (weakref.ref(sorted_keys), weakref.ref(values), at, found)
+        with _SHARED_POSITIONS_LOCK:
+            _SHARED_POSITIONS.pop(key, None)
+            while len(_SHARED_POSITIONS) >= SHARED_POSITIONS_KEPT:
+                _SHARED_POSITIONS.pop(next(iter(_SHARED_POSITIONS)))
+            _SHARED_POSITIONS[key] = entry
     return at, found
 
 

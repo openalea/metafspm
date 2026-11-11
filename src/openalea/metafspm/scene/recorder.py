@@ -74,6 +74,7 @@ import re
 import shutil
 import sys
 import warnings
+import weakref
 from datetime import datetime
 
 import numpy as np
@@ -434,6 +435,19 @@ def _snapshot(value):
     return copy.deepcopy(value)
 
 
+_RECORDERS = weakref.WeakValueDictionary()     # {id: SceneRecorder}: their writer threads dropped in a forked child
+
+
+def _after_fork() -> None:
+    """In a forked child: no recorder's writer thread (a thread is not forked; the child's frames make their own)."""
+    for recorder in list(_RECORDERS.values()):
+        recorder._writer, recorder._writing = None, None
+
+
+if hasattr(os, "register_at_fork"):
+    os.register_at_fork(after_in_child=_after_fork)
+
+
 class SceneRecorder:
     """
     The outputs of a Scene (see the module; every period a duration, "12 h", or "step"): *folder* (None: in memory,
@@ -511,6 +525,7 @@ class SceneRecorder:
             raise ValueError(f"SceneRecorder(frame_writing=...): one of {FRAME_WRITINGS}, got {frame_writing!r}")
         self.frame_writing = frame_writing
         self._writer = None            # the frames' writer thread (frame_writing "background"), made at the first frame
+        _RECORDERS[id(self)] = self    # its writer dropped in a forked child (_after_fork)
         self._writing = None           # the frame being written there (a Future)
         self.pack_at_finish, self.pack_compression = bool(pack_at_finish), str(pack_compression)
         self.pack_keep_folder = bool(pack_keep_folder)
@@ -1040,6 +1055,10 @@ class SceneRecorder:
         state = dict(self.__dict__)
         state.update(_writer=None, _writing=None)
         return state
+
+    def __setstate__(self, state):
+        self.__dict__.update(state)
+        _RECORDERS[id(self)] = self
 
     def pack(self, keep_folder: bool = None) -> str:
         """The frames folder packed into frames.fspm.zip next to it (encoding3d.pack, pack_compression: each file

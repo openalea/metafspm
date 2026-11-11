@@ -25,6 +25,7 @@ import sys
 import types
 import inspect
 from collections import defaultdict
+from contextvars import ContextVar
 import warnings
 from dataclasses import fields as dc_fields
 from typing      import Optional
@@ -404,10 +405,11 @@ def _archetype_derived_methods(component) -> dict:
 
 
 # Reading an archetype's operator (solve.reduction): the system's equations alone, without its boundary sets, explicit
-# terms and reduced terms
-_EXTRACTING = []
-# The graph systems not solved while a reduction's library runs (their operators are read, not their solutions)
-_SKIPPED = set()
+# terms and reduced terms. Per context (a thread's own): another thread's steady solve keeps its boundary sets
+_EXTRACTING = ContextVar("metafspm_extracting", default=False)
+# The graph systems not solved while a reduction's library runs (their operators are read, not their solutions); per
+# context, as _EXTRACTING
+_SKIPPED = ContextVar("metafspm_skipped", default=frozenset())
 
 
 def declared_system(instance, inner_name: str, systems) -> str:
@@ -799,7 +801,7 @@ class _GraphSystemBuilder:
                     selection = _EntityFilter(tag["where"], key, "edge" if term == "edge_law" else "node")
                 if term in ("node_balance", "node_rate") and tag.get("explicit_term"):
                     explicit_items.append((tag["field"], bound, tag.get("term_jacobian")))
-                    if _EXTRACTING:
+                    if _EXTRACTING.get():
                         continue                       # the archetype's operator: the equations alone
                     node_balance_items.append((tag["field"], selection, attr_name, bound, obj, False))
                 elif term in ("node_balance", "node_rate"):
@@ -905,7 +907,7 @@ class _GraphSystemBuilder:
 
         # Boundary sets: members on the solved graph, values and weights read now
         set_terms = defaultdict(list)    # field -> [(condition, idx, value, weight)]
-        if _EXTRACTING:                  # an archetype's operator: the equations alone (the groups' conditions stay live)
+        if _EXTRACTING.get():            # an archetype's operator: the equations alone (the groups' conditions stay live)
             boundary_sets, bc_items = [], []
         for bset in boundary_sets:
             if bset.condition is None:
@@ -1116,7 +1118,7 @@ class _GraphSystemBuilder:
         for field_name, tf, condition, _, bound, raw, ex in bc_items:
             bc_groups[field_name].append((tf, condition, bound, raw, ex))
 
-        reduced = None if _EXTRACTING else _reduced_terms(instance, spec_def, data_structure, gv)
+        reduced = None if _EXTRACTING.get() else _reduced_terms(instance, spec_def, data_structure, gv)
         if reduced is not None:
             if len(node_unknowns) != 1 or edge_unknowns:
                 raise ValueError(f"{system_name}: a reduction needs one node unknown and no edge unknowns")
@@ -1225,7 +1227,7 @@ class _GraphSystemBuilder:
         self.input_jacobian_evaluators = {name: make_evaluator(raw, bound, None, "node")
                                           for name, (bound, raw) in self.input_jacobians.items()}
         added_jacobians = []             # the explicit terms' own, and the reduced terms'
-        if not _EXTRACTING:
+        if not _EXTRACTING.get():
             for _, _, name in explicit_items:
                 if name is not None:
                     method = getattr(inner_cls, name)
@@ -1413,7 +1415,8 @@ def _solve_call(self, method_name: str) -> None:
     if hasattr(self, "_refresh_from_bio_scale"):
         self._refresh_from_bio_scale()
     spec_def = type(self)._graph_system_specs[method_name]
-    if _SKIPPED and declared_system(self, spec_def["inner_class"].__name__, _SKIPPED) is not None:
+    skipped = _SKIPPED.get()
+    if skipped and declared_system(self, spec_def["inner_class"].__name__, skipped) is not None:
         return
     where = spec_def.get("where")
     # The active subgraph: the DataStructure mask of the system's filter (where=)

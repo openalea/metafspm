@@ -81,9 +81,12 @@ import argparse
 import ctypes
 import ctypes.util
 import os
+import sys
 import threading
 import time
+import weakref
 from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass, field, fields
 
 DEVICES = ("cpu", "cuda")
@@ -92,8 +95,13 @@ ARENAS = 2                    # glibc's arenas with memory "trim" (limit_arenas)
                               # time cost (8 plants, day 12: as MALLOC_ARENA_MAX=2)
 M_ARENA_MAX = -8              # glibc's mallopt parameter (malloc.h)
 WARM_UP_GROUP = "openalea.metafspm.warm_up"   # the entry points of the ports' warm_up() (warm_up runs them)
-_ACTIVE = []                  # the Computes whose limits() are entered, the innermost last
+_ACTIVE = ContextVar("metafspm_compute", default=())   # the Computes whose limits() this context (thread) entered,
+                                                        # the innermost last; the archetypes' threads run in a copy
 _COUNTING = threading.Lock()  # Compute.count's: timings counted from several threads (the archetypes')
+_BLAS_LOCK = threading.Lock() # the BLAS/OpenMP hold, shared by the threads inside a limits() (process-wide limits)
+_BLAS_HOLD = {"depth": 0, "limiter": None}   # the limits() entered in any thread; the original restored by the last out
+_COMPUTES = weakref.WeakValueDictionary()    # {id: Compute}: their timings cleared in a forked child (_after_fork)
+FORK_UNSAFE_LAYERS = ("workqueue",)          # numba threading layers a forked child cannot use (numba's docs)
 BLAS_THREADS = 1              # the BLAS/OpenMP threads within a scene, whatever Compute.threads: a threaded BLAS
                               # changes the results' last bits with its thread count (up to 1.5e-11 relative on use
                               # case 1's potentials) and only oversubscribes the step's small dense work (measured)
@@ -135,6 +143,7 @@ class Compute:
         if unknown:
             raise ValueError(f"Compute: unknown checks {unknown}; checks are among {CHECKS}")
         self.checks = tuple(sorted(set(self.checks)))
+        _COMPUTES[id(self)] = self
 
     def as_dict(self) -> dict:
         """The configuration ({name: value}), as scenario.json records it."""
@@ -145,6 +154,10 @@ class Compute:
         state.update(_controller=None, _linear={}, _backend=None, _timings={})
         return state
 
+    def __setstate__(self, state):
+        self.__dict__.update(state)
+        _COMPUTES[id(self)] = self
+
     def checking(self, name: str) -> bool:
         """Whether the check *name* (one of CHECKS) runs."""
         if name not in CHECKS:
@@ -154,7 +167,8 @@ class Compute:
     @staticmethod
     def current() -> "Compute":
         """The Compute whose limits() the code runs in (the innermost), else a default Compute()."""
-        return _ACTIVE[-1] if _ACTIVE else Compute()
+        active = _ACTIVE.get()
+        return active[-1] if active else Compute()
 
     # ── threads ──
 
@@ -184,15 +198,23 @@ class Compute:
         self.limit_arenas()
         if self._controller is None:
             self._controller = ThreadpoolController()
-        numba_threads = numba.get_num_threads()
-        with self._controller.limit(limits=BLAS_THREADS):
-            numba.set_num_threads(min(self.thread_count(), numba.config.NUMBA_NUM_THREADS))
-            _ACTIVE.append(self)
-            try:
-                yield self
-            finally:
-                _ACTIVE.pop()
-                numba.set_num_threads(numba_threads)
+        numba_threads = numba.get_num_threads()          # numba's thread count is the calling thread's own
+        with _BLAS_LOCK:                                 # BLAS's limits are the process's: held while any thread is in
+            if _BLAS_HOLD["depth"] == 0:
+                _BLAS_HOLD["limiter"] = self._controller.limit(limits=BLAS_THREADS)
+            _BLAS_HOLD["depth"] += 1
+        numba.set_num_threads(min(self.thread_count(), numba.config.NUMBA_NUM_THREADS))
+        token = _ACTIVE.set(_ACTIVE.get() + (self,))
+        try:
+            yield self
+        finally:
+            _ACTIVE.reset(token)
+            numba.set_num_threads(numba_threads)
+            with _BLAS_LOCK:
+                _BLAS_HOLD["depth"] -= 1
+                if _BLAS_HOLD["depth"] == 0:
+                    _BLAS_HOLD["limiter"].restore_original_limits()
+                    _BLAS_HOLD["limiter"] = None
 
     @contextmanager
     def parallel(self, name: str, work: int, section: str = "compute"):
@@ -318,6 +340,40 @@ class Compute:
             return False
         trim(0)
         return True
+
+
+def fork_safe_threading() -> str:
+    """numba's threading layer when a process may fork workers from here: its name ("tbb", "omp"; None before numba's
+    first parallel kernel, or without numba loaded). Raises RuntimeError with the workqueue layer, which a forked child
+    cannot use (numba's docs): NUMBA_THREADING_LAYER=tbb (or omp) chooses another."""
+    if "numba" not in sys.modules:
+        return None
+    import numba
+    try:
+        layer = numba.threading_layer()
+    except ValueError:                    # no parallel kernel launched yet: no thread pool to inherit
+        return None
+    if layer in FORK_UNSAFE_LAYERS:
+        raise RuntimeError(f"numba's threading layer {layer!r} is not fork-safe: set NUMBA_THREADING_LAYER=tbb "
+                           "(pip install tbb) or omp before the first parallel kernel")
+    return layer
+
+
+def _after_fork() -> None:
+    """In a forked child: the locks made anew (a thread of the parent may have held one), the BLAS hold kept as the
+    forking thread had it, each Compute's timings cleared (the child counts its own), numba's threads back to its
+    default (the child's own limits() sets them)."""
+    global _COUNTING, _BLAS_LOCK
+    _COUNTING, _BLAS_LOCK = threading.Lock(), threading.Lock()
+    for compute in list(_COMPUTES.values()):
+        compute._timings = {}
+    if "numba" in sys.modules:
+        import numba
+        numba.set_num_threads(numba.config.NUMBA_NUM_THREADS)
+
+
+if hasattr(os, "register_at_fork"):
+    os.register_at_fork(after_in_child=_after_fork)
 
 
 _LIBC = []

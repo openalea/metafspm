@@ -78,6 +78,8 @@ what the model computes on the reduced structure itself, so that every term is c
 computes it live or the archetype holds it.
 """
 import copy
+import os
+import threading
 from contextlib import contextmanager
 from dataclasses import dataclass
 
@@ -230,11 +232,11 @@ def _within_one_node(template, into) -> np.ndarray:
 @contextmanager
 def _extracting():
     from openalea.metafspm.solve import decorator
-    decorator._EXTRACTING.append(True)
+    token = decorator._EXTRACTING.set(True)
     try:
         yield
     finally:
-        decorator._EXTRACTING.pop()
+        decorator._EXTRACTING.reset(token)
 
 
 @dataclass
@@ -1256,12 +1258,24 @@ class _Assignment:
 
 
 _FIELDS = {}
+_FIELDS_LOCK = threading.RLock()  # _FIELDS filled from several threads (two populations' steps)
+
+
+def _after_fork() -> None:
+    global _FIELDS_LOCK
+    _FIELDS_LOCK = threading.RLock()     # a forked child's own (a parent's thread may have held it)
+
+
+if hasattr(os, "register_at_fork"):
+    os.register_at_fork(after_in_child=_after_fork)
 
 
 def _parameter_fields(component_class) -> tuple:
     """(settings, Plant parameters, those located per entity, Plant-scale parameters of any value) of a component
     class: its fields read once (Reduction._plant_parameters)."""
-    if component_class not in _FIELDS:
+    with _FIELDS_LOCK:
+        if component_class in _FIELDS:
+            return _FIELDS[component_class]
         from dataclasses import fields
         declared = fields(component_class)
         settings = tuple(f.name for f in declared if f.metadata.get("role") == "setting")
@@ -1270,7 +1284,7 @@ def _parameter_fields(component_class) -> tuple:
         records = tuple(f.name for f in declared if f.metadata.get("role") == "parameter"
                         and f.metadata.get("scale") == _plant_scale())
         _FIELDS[component_class] = (settings, tuple(component_class._plant_parameter_fields()), located, records)
-    return _FIELDS[component_class]
+        return _FIELDS[component_class]
 
 
 def _first_nodes(owner) -> np.ndarray:
@@ -1710,12 +1724,12 @@ def _evaluate_in(reduction: Reduction, library: _Library, items: list, parameter
         data_structure.set(name, values)
     from openalea.metafspm.solve import decorator
     reducing = _library_components(instance, reduction.systems)
-    decorator._SKIPPED.update(reduction.systems)                 # the reduced systems: read, not solved
+    token = decorator._SKIPPED.set(decorator._SKIPPED.get() | frozenset(reduction.systems))  # read, not solved
     try:
         for component in reducing:
             component()
     finally:
-        decorator._SKIPPED.difference_update(reduction.systems)
+        decorator._SKIPPED.reset(token)
     out = {archetype_key: {} for archetype_key, _ in items}
     node_ids = np.asarray(data_structure.entity_ids("node"))
     for system in reduction.systems:
@@ -1786,6 +1800,7 @@ def _archetypes_of_batch(reduction: Reduction, batch: _Batch, items: list) -> li
     with compute.timed("archetypes.tails", threads):
         if threads <= 1:
             return [one(k) for k in range(count)]
+        import contextvars
         import numba
         from concurrent.futures import ThreadPoolExecutor
 
@@ -1794,7 +1809,7 @@ def _archetypes_of_batch(reduction: Reduction, batch: _Batch, items: list) -> li
             return one(k)
         order = sorted(range(count), key=lambda k: -reduction._interior_cells(items[k][1][1]))
         with ThreadPoolExecutor(max_workers=threads, thread_name_prefix="metafspm-archetypes") as executor:
-            futures = {k: executor.submit(in_thread, k) for k in order}
+            futures = {k: executor.submit(contextvars.copy_context().run, in_thread, k) for k in order}  # Compute.current
             return [futures[k].result() for k in range(count)]
 
 

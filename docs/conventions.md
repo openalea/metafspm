@@ -206,6 +206,32 @@ in a functor is one of the platform's primitives (the tree kernels above, `data_
    `openalea.metafspm.warm_up` in its `pyproject.toml`; at install and in CI before the suites. `NUMBA_CACHE_DIR`
    for a read-only install. No ahead-of-time compilation.
 
+## Threads and forks
+
+A process may step several populations, or the soil and the light, in threads of its own, and fork worker processes
+(route B). The module-level state is therefore either per context or locked, never a plain global that one thread's
+work changes under another's:
+
+- **Per context (`contextvars.ContextVar`)**: `solve.decorator._EXTRACTING` (an archetype's operator being read: the
+  equations without their boundary sets), `solve.decorator._SKIPPED` (the systems a reduction's library reads but does
+  not solve), `compute._ACTIVE` (the Computes whose `limits()` are entered: `Compute.current()`), and
+  `coupling.composite_wrapper._NESTED`. Set with a token and reset in a `finally`; a thread pool whose tasks read them
+  (the archetypes' threads read `Compute.current()`) submits each task in `contextvars.copy_context().run`.
+- **Locked caches**: `data_structure.columns._SHARED_POSITIONS` (weak references to its two arrays, a hit only for
+  those very arrays), `solve.reduction._FIELDS`, `Compute.count`'s timings. Idempotent memos filled once
+  (`_MACHINE`, `scene.shared._SHARED_BY_TYPE`, the provenance's `lru_cache`s, the choregrapher's `_PROCESSES` filled at
+  import) need no lock: two threads computing one entry store equal values.
+- **Process-wide settings**: numba's thread count is the calling thread's own (`numba.set_num_threads`); BLAS/OpenMP
+  limits are the process's, so `Compute.limits()` holds them at `BLAS_THREADS` while any thread is inside one and the
+  last one out restores them.
+- **Forks**: `os.register_at_fork(after_in_child=...)` makes the locks anew in the child, clears each Compute's
+  timings, sets numba's threads back to its default (the child's own `limits()` sets them) and drops every recorder's
+  frame writer thread. `compute.fork_safe_threading()` is called before forking: numba's `tbb` and `omp` layers are
+  fork-safe, `workqueue` raises a RuntimeError naming `NUMBA_THREADING_LAYER`.
+
+New module-level state follows the same rule: a ContextVar for a flag or a stack, a lock for a cache, and a fork hook
+for a thread, a lock or a counter the child must not inherit (test/scenes/test_thread_safety.py).
+
 ## Couplings and derived variables
 
 - **Identity links:** components on one DataStructure share variables by name.

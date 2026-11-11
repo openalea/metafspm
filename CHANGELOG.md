@@ -4,6 +4,14 @@
 
 ### Added
 
+- Thread and fork safety of the module-level state (route B, B0): the archetype extraction's flag, the systems a
+  reduction's library skips and `Compute.current()`'s stack are per context (ContextVars; the archetypes' threads
+  run in a copy); the shared positions' cache holds its arrays weakly under a lock, `solve.reduction._FIELDS` is
+  locked; the BLAS/OpenMP hold of `Compute.limits()` lasts while any thread is inside one; `os.register_at_fork`
+  hooks renew the locks and clear the timings, numba's thread count and the recorder's writer in a child;
+  `compute.fork_safe_threading()` refuses numba's workqueue layer. Two populations stepped in two threads give the
+  sequential bits (they could fail: "piece has no Dirichlet anchor", or wrong values); use case 1 unchanged, byte
+  for byte. docs/conventions.md "Threads and forks".
 - The Organ label `Awn` (`labels.Organ.Awn`): a grass ear's awns, an organ of their own (Adel's, formerly
   labelled `Ear`).
 
